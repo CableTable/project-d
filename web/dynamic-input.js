@@ -6,18 +6,31 @@ export const hasTyped = (s) => !!(s.prefix || s.values.some(Boolean));
 
 const rectangle = (T) => T.kind === 'rect' || T.kind === 'rrect';
 // Measure, Dimension, Set length and the Modify tools are shown by app.js as tools of mm points; Measure types only its first point, its second is a read-only length.
-// Move / Copy take a base point only (their target stays the prompt); Rotate then types an Angle, Scale a Factor: one number, no point.
+// Shape dimensions keep their existing fields; every other point uses the same first / later rule.
 // Circle types its centre then one Radius; Ellipse its centre, Length + Angle of axis 1, then one Length (the other half-axis); Arc its first point, then Length + Angle from the previous point twice.
-const STAGES = { measure: ['xy'], setlen: ['xy', 'polar'], dimension: ['xy', 'polar', 'xy'], move: ['xy'], copy: ['xy'], stretch: ['xy'], rotate: ['xy', 'angle'], scale: ['xy', 'factor'],
+const STAGES = { measure: ['xy'], setlen: ['xy', 'polar'], dimension: ['xy', 'polar', 'xy'],
   circle: ['xy', 'radius'], ellipse: ['xy', 'polar', 'length'], arc: ['xy', 'polar', 'polar'] };
 export const isSingle = (mode) => ['angle', 'factor', 'radius', 'length'].includes(mode);
-export const inputMode = (T) => STAGES[T.kind] ? STAGES[T.kind][T.pts.length] ?? null : T.stage !== 'radius' && ['line', 'polyline', 'rect', 'rrect'].includes(T.kind)
+export const inputMode = (T) => T.point ? T.valueMode || (firstPoint(T) ? 'xy' : 'polar') : STAGES[T.kind] ? STAGES[T.kind][T.pts.length] ?? null : T.stage !== 'radius' && ['line', 'polyline', 'rect', 'rrect'].includes(T.kind)
   ? !T.pts.length ? 'xy' : rectangle(T) ? 'size' : 'polar' : null;
 export const readOnlyLength = (T) => T.kind === 'measure' && T.pts.length === 1;
 
 /** Rectangles anchor at the first corner, an ellipse's last half-axis at its centre, chains at their latest vertex, a dimension line's place at nothing (absolute X / Y). */
 export const anchorOf = (T) => rectangle(T) || (T.kind === 'ellipse' && T.pts.length === 2) ? T.pts[0] : T.kind === 'dimension' && T.pts.length === 2 ? undefined : T.pts.at(-1);
 export const firstPoint = (T) => !anchorOf(T);
+
+/** A modify prompt's preceding points, or null for object picks, options and fences. Align destinations start at their source. */
+export function modifyPoints(m, previous) {
+  const { kind, stage } = m, prior = (p) => p ? [p] : [];
+  if (['move', 'copy', 'stretch', 'mirror', 'rotate', 'scale'].includes(kind) && ['p1', 'p2'].includes(stage)) return m.ref && m.ref.step !== 'new' ? [...prior(m.ref.pts.length ? m.p1 : previous || m.p1), ...m.ref.pts] : prior(m.p1);
+  if (kind === 'align' && ['s1', 'd1', 's2', 'd2', 's3'].includes(stage)) return prior(stage === 'd1' ? m.s1 : stage === 'd2' ? m.s2 : m.last);
+  if (['break', 'breakatpoint'].includes(kind) && ['first', 'second', 'point'].includes(stage)) return prior(stage === 'second' ? m.p0 : null);
+  if (kind === 'offset' && stage === 'side' && m.through) return [];
+  if (kind === 'lengthen' && (stage === 'point' || stage === 'value' && ['Delta', 'Total'].includes(m.mode))) return prior(m.p1);
+  if (kind === 'measurepoints' && stage === 'value') return prior(m.p1);
+  if (kind === 'array' && stage === 'center') return [];
+  return null;
+}
 export function toolPointInput(s, T) {
   const last = anchorOf(T);
   if (isSingle(s.mode)) return valueInput(s, last, T.hover || last, s.mode === 'factor' ? T.f || 1 : 1, T.dia);

@@ -16139,7 +16139,7 @@ try {
       await page.evaluate(() => document.activeElement?.blur());
       await page.keyboard.type('10,5'); await page.keyboard.press('Enter');
       assert.equal(await prompt(), 'Specify second point or <use first point as displacement>:');
-      await t('cursor-length').waitFor({ state: 'hidden' });
+      await t('cursor-length').waitFor({ state: 'visible' });
       await typeCmd('');
       const doc = await savedDoc();
       assert.equal(doc.entities.length, kind === 'copy' ? 2 : 1);
@@ -23494,6 +23494,147 @@ try {
     await closeTabs(/./);
   });
 
+  await step('TODO 106a: dynamic input at Move, Copy, Mirror, Stretch, Align and Leader points', async () => {
+    const move = async (x, y) => { const p = await at(x, y); await page.mouse.move(p.x, p.y); await frames(); };
+    const click = async (x, y) => { const p = await at(x, y); await page.mouse.click(p.x, p.y); await frames(); };
+    const setup = async () => {
+      await open70([dxfLine(20, 30, 60, 50)]);
+      if (!(await chipOn('tog-dyn'))) await t('tog-dyn').click();
+      for (const id of ['tog-snap', 'tog-polar', 'tog-otrack', 'tog-ortho']) if (await chipOn(id)) await t(id).click();
+      await t('decimals').selectOption('2');
+    };
+    const labels = async (a, b) => {
+      assert.equal(await t('cursor-length').getAttribute('aria-label'), a);
+      assert.equal(await t('cursor-angle').getAttribute('aria-label'), b);
+      assert.ok(await t('cursor-length').isVisible()); assert.ok(await t('cursor-angle').isVisible());
+    };
+    const polar = async (length, angle) => {
+      await page.keyboard.type(String(length)); await page.keyboard.press('Tab'); await page.keyboard.type(String(angle)); await frames();
+      await labels('Length', 'Angle');
+      assert.equal(await t('cursor-length').inputValue(), String(length));
+      assert.equal(await t('cursor-angle').inputValue(), String(angle));
+      assert.equal(await t('cursor-length').evaluate((el) => el.nextElementSibling.hidden), false, 'Tab locks Length');
+    };
+    const start = async (kind, base = '20,30') => {
+      await page.keyboard.press('Control+a'); await typeCmd(kind); await move(80, 60); await labels('X', 'Y');
+      await typeCmd(base); await move(90, 70); await labels('Length', 'Angle');
+    };
+    const cancel = async () => { await page.keyboard.press('Escape'); await page.keyboard.press('Escape'); await frames(); };
+    for (const kind of ['move', 'mirror']) {
+      await setup();
+      await shotBoth('106a-' + kind, async () => { await start(kind, kind === 'mirror' ? '0,0' : '20,30'); await polar(50, 90); }, cancel);
+    }
+    await setup(); await start('move'); await polar(25, 90);
+    const guide = (await t('mod-line').getAttribute('d')).match(/-?[\d.]+/g).map(Number);
+    near70(guide, [20, 670, 20, 645]);
+    await click(80, 35);   // typing wins over the clicked second point
+    near70(line70((await savedDoc()).entities[0]), [20, 55, 60, 75]);
+    await page.keyboard.press('Control+z'); near70(line70((await savedDoc()).entities[0]), [20, 30, 60, 50]);
+    await page.keyboard.press('Control+a'); await typeCmd('move'); await typeCmd('0,0'); await typeCmd('5,0');
+    near70(line70((await savedDoc()).entities[0]), [25, 30, 65, 50], 'source remains editable');
+
+    await setup(); await start('copy'); await typeCmd('o'); await typeCmd('multiple');
+    await polar(25, 90); await page.keyboard.press('Enter'); await frames();
+    assert.notEqual(await t('cursor-length').inputValue(), '25', 'Multiple clears typing after placement');
+    await polar(10, 180); await page.keyboard.press('Enter'); await frames();
+    const copied = (await savedDoc()).entities.map(line70);
+    assert.equal(copied.length, 3); near70(copied[1], [20, 55, 60, 75]); near70(copied[2], [10, 30, 50, 50]);
+    await page.keyboard.press('Escape'); await page.keyboard.press('Control+z'); assert.equal((await savedDoc()).entities.length, 2);
+
+    await setup(); await start('mirror', '0,0'); await polar(50, 90); await page.keyboard.press('Enter'); await frames();
+    assert.match(await prompt(), /Erase source objects/);
+    for (const id of ['cursor-length', 'cursor-angle', 'cursor-dx', 'cursor-dy']) assert.equal(await t(id).isVisible(), false, 'Erase asks no point');
+    await typeCmd('no'); near70(line70((await savedDoc()).entities[1]), [-20, 30, -60, 50]);
+    await page.keyboard.press('Control+z'); assert.equal((await savedDoc()).entities.length, 1);
+
+    await setup(); await typeCmd('stretch');
+    const a = await at(65, 55), b = await at(55, 45);
+    await page.mouse.move(a.x, a.y); await page.mouse.down(); await page.mouse.move(b.x, b.y, { steps: 8 }); await page.mouse.up(); await page.keyboard.press('Enter');
+    await move(80, 60); await labels('X', 'Y'); await typeCmd('60,50'); await move(80, 70);
+    await polar(25, 90); await page.keyboard.press('Enter');
+    near70(line70((await savedDoc()).entities[0]), [20, 30, 60, 75]);
+    await page.keyboard.press('Control+z'); near70(line70((await savedDoc()).entities[0]), [20, 30, 60, 50]);
+
+    await setup(); await start('align'); await polar(25, 90); await page.keyboard.press('Enter'); await typeCmd('');
+    near70(line70((await savedDoc()).entities[0]), [20, 55, 60, 75]);
+    await page.keyboard.press('Control+z');
+    await page.keyboard.press('Control+a'); await typeCmd('align'); await typeCmd('20,30'); await typeCmd('100,100'); await typeCmd('60,50'); await move(90, 70);
+    await polar(Math.hypot(80, 50), Math.atan2(50, 80) * 180 / Math.PI); await page.keyboard.press('Enter'); await typeCmd(''); await typeCmd('no');
+    const aligned = line70((await savedDoc()).entities[0]); near70(aligned.slice(0, 2), [100, 100]);
+    near70(aligned.slice(2), [100 + Math.hypot(40, 20), 100]);
+
+    await setup(); await typeCmd('leader'); await move(80, 60); await labels('X', 'Y'); await typeCmd('20,30'); await move(90, 70);
+    await polar(25, 90); await click(80, 35); await page.keyboard.press('Enter');
+    await t('text-editor').fill('Leader 106a'); await page.keyboard.press('Enter');
+    const leader = Object.entries((await savedDoc()).blocks).map(([name, block]) => readLeader(name, block)).find(Boolean);
+    near70(leader.pts.flat(), [20, 30, 20, 55]);
+    await page.keyboard.press('Escape'); await page.keyboard.press('Control+z'); assert.equal((await savedDoc()).entities.length, 1);
+
+    await setup(); await start('move'); await polar(25, 90); await page.keyboard.press('Escape'); await frames();
+    assert.match(await prompt(), /Specify second point/); assert.notEqual(await t('cursor-length').inputValue(), '25');
+    await page.keyboard.press('Escape'); assert.match(await histLine(), /Command: SELECT/);
+    near70(line70((await savedDoc()).entities[0]), [20, 30, 60, 50]);
+
+    // Compare uses the linked drawing's points and unit conversion.
+    await setup(); await typeCmd('compare'); await start('move'); await polar(25, 90); await page.keyboard.press('Enter');
+    await page.locator('.dtab').filter({ has: page.locator('.tname', { hasText: /^typed-points70(?:-edited)*\.dxf$/ }) }).click();
+    near70(line70((await savedDoc()).entities[0]), [20, 55, 60, 75]);
+    await closeTabs(/./);
+    for (const kind of ['move', 'mirror']) for (const theme of ['light', 'dark']) assert.ok(readFileSync(`${shotDir}/s12-106a-${kind}-${theme}.png`).length > 1000, 'required screenshot exists');
+  });
+
+  await step('TODO 106a: Text, Balloon, Break, Offset Through, Lengthen, Array, Measure points and Reference points', async () => {
+    const move = async (x, y) => { const p = await at(x, y); await page.mouse.move(p.x - 1, p.y); await page.mouse.move(p.x, p.y); await frames(); };
+    const click = async (x, y) => { const p = await at(x, y); await page.mouse.click(p.x, p.y); await frames(); };
+    const setup = async (units = 4) => {
+      await open70([dxfLine(20 / (units === 1 ? 25.4 : 1), 30 / (units === 1 ? 25.4 : 1), 60 / (units === 1 ? 25.4 : 1), 50 / (units === 1 ? 25.4 : 1))], units);
+      if (!(await chipOn('tog-dyn'))) await t('tog-dyn').click();
+      for (const id of ['tog-snap', 'tog-polar', 'tog-otrack', 'tog-ortho']) if (await chipOn(id)) await t(id).click();
+    };
+    const fields = async (a, b) => { await t('cursor-length').waitFor({ state: 'visible' }); await frames(); assert.deepEqual(errors, []); assert.equal(await t('cursor-length').getAttribute('aria-label'), a); assert.equal(await t('cursor-angle').getAttribute('aria-label'), b); };
+    const enter = async (text) => { await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.type(text); await page.keyboard.press('Enter'); await frames(); };
+    await setup(); await typeCmd('text'); await move(80, 60); await fields('X', 'Y'); await enter('10,20'); await typeNote('Insertion');
+    const text = (await savedDoc()).entities.map(decodeText).find(Boolean); near70([text.x, text.y], [10, 20]);
+    await move(80, 60); await fields('X', 'Y'); assert.notEqual(await t('cursor-length').inputValue(), '10', 'Text clears its insertion typing before the next text');
+
+    await setup(1); await typeCmd('balloon'); await t('bal-dock').waitFor({ state: 'visible' }); await frames(); await move(80, 60);
+    await fields('X', 'Y'); await enter('10,20'); await move(90, 70); await fields('Length', 'Angle');
+    await page.keyboard.type('25<90'); await frames();
+    near70([Number(await t('balloon-ghost').locator('circle').getAttribute('cx')), Number(await t('balloon-ghost').locator('circle').getAttribute('cy'))], [10, 655]);
+    await page.keyboard.press('Enter'); await frames();
+    near70([Number(await t('balloon').locator('circle').getAttribute('cx')), Number(await t('balloon').locator('circle').getAttribute('cy'))], [10, 655]);
+
+    await setup(); await typeCmd('break'); await move(40, 40); assert.equal(await t('cursor-length').isVisible(), false, 'object picks have no fields');
+    await click(40, 40); await typeCmd('f'); await move(80, 60); await fields('X', 'Y'); await enter('30,35'); await move(90, 70); await fields('Length', 'Angle');
+    await enter(`${Math.hypot(20, 10)}<${Math.atan2(10, 20) * 180 / Math.PI}`);
+    const pieces = (await savedDoc()).entities.map(line70); assert.equal(pieces.length, 2); near70(pieces[0], [20, 30, 30, 35]); near70(pieces[1], [50, 45, 60, 50]);
+
+    await setup(); await typeCmd('offset'); await typeCmd('through'); await click(40, 40); await move(80, 60); await fields('X', 'Y'); await enter('20,50');
+    assert.equal((await savedDoc()).entities.length, 2);
+    await setup(); await typeCmd('lengthen'); await typeCmd('total'); await move(80, 60); await fields('X', 'Y'); await enter('0,0'); await move(90, 70); await fields('Length', 'Angle'); await enter('10<90');
+    await click(59, 49.5); const shortened = line70((await savedDoc()).entities[0]); assert.ok(Math.abs(Math.hypot(shortened[2] - shortened[0], shortened[3] - shortened[1]) - 10) < 1e-5);
+    await setup(); await typeCmd('lengthen'); await typeCmd('dynamic'); await click(59, 49.5); await move(80, 60); await fields('X', 'Y'); await enter('80,60');
+    assert.ok(Math.hypot(...line70((await savedDoc()).entities[0]).slice(2).map((v, i) => v - [60, 50][i])) > 1);
+
+    await setup(); await typeCmd('measurepoints'); await click(21, 30.5); await move(80, 60); await fields('X', 'Y'); await enter('0,0'); await move(90, 70); await fields('Length', 'Angle'); await enter('10<90');
+    assert.equal((await savedDoc()).entities.filter((e) => e.type === 'POINT').length, 4);
+    await setup(); await page.keyboard.press('Control+a'); await typeCmd('array'); await typeCmd('polar'); await move(80, 60); await fields('X', 'Y'); await enter('0,0');
+    assert.match(await prompt(), /Items.*Fill angle/); assert.equal(await t('cursor-length').isVisible(), false);
+
+    for (const kind of ['rotate', 'scale']) {
+      await setup(); await page.keyboard.press('Control+a'); await typeCmd(kind); await typeCmd('20,30'); await typeCmd('reference'); await move(80, 60); await fields('Length', 'Angle');
+      await enter('10<0'); await move(90, 70); await fields('Length', 'Angle'); await enter('10<0');
+      await typeCmd('points'); await move(80, 60); await fields('Length', 'Angle'); await enter('#0,0'); await move(90, 70); await fields('Length', 'Angle');
+      await enter(kind === 'rotate' ? '20<90' : '20<0');
+      near70(line70((await savedDoc()).entities[0]), kind === 'rotate' ? [20, 30, 0, 70] : [20, 30, 100, 70]);
+    }
+    for (const kind of ['trim', 'extend']) {
+      await setup(); await typeCmd(kind); await typeCmd('fence'); await click(30, 30); await move(80, 60);
+      assert.equal(await t('cursor-length').isVisible(), false, 'fences have no fields');
+    }
+    await closeTabs(/./);
+  });
+
   await step('TODO 69e: Move / Copy base point X / Y, Rotate Angle, Scale Factor, F12 off, Esc once keeps the command', async () => {
     const setup = async () => {
       await open70([dxfLine(20, 30, 60, 50)]);
@@ -23507,11 +23648,11 @@ try {
     const start = async (tool) => { await page.keyboard.press('Control+a'); await typeCmd(tool); await move(80, 60); await point(20, 30); await move(60, 30); };
     const noFields = async (why) => { for (const id of ['cursor-length', 'cursor-angle', 'cursor-dx', 'cursor-dy']) assert.equal(await t(id).isVisible(), false, `${why}: ${id} is hidden`); };
     await setup();
-    // Move: X / Y at the base point, then only the prompt; a typed @dx,dy still works in the command box
+    // Move: X / Y at the base point, then Length / Angle; a typed @dx,dy still works in the command box
     await page.keyboard.press('Control+a'); await typeCmd('move'); await move(80, 60);
     assert.equal(await label('cursor-length'), 'X'); assert.equal(await label('cursor-angle'), 'Y');
     await point(20, 30); await move(90, 70);
-    await noFields('Move target');
+    assert.equal(await label('cursor-length'), 'Length'); assert.equal(await label('cursor-angle'), 'Angle');
     assert.match(await prompt(), /Specify second point or <use first point as displacement>/);
     await typeCmd('@5,10');
     near70(line70((await savedDoc()).entities[0]), [25, 40, 65, 60]);
@@ -23520,7 +23661,7 @@ try {
     await setup();
     await page.keyboard.press('Control+a'); await typeCmd('copy'); await move(80, 60);
     assert.equal(await label('cursor-length'), 'X');
-    await point(20, 30); await move(90, 70); await noFields('Copy target');
+    await point(20, 30); await move(90, 70); assert.equal(await label('cursor-length'), 'Length'); assert.equal(await label('cursor-angle'), 'Angle');
     await typeCmd('@10,0'); await typeCmd('');
     assert.equal((await savedDoc()).entities.length, 2);
     // Rotate: an Angle field after the pivot; typed 90 rotates

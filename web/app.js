@@ -1397,6 +1397,7 @@ function setTool(id) {
   if (state.draw && DR.toolBusy(state.draw) && drawId) drawApply(DR.toolFinish(state.draw));      // a line or polyline in progress ends (and keeps what it has)
   if (id === 'step' && !curLay()) { note('Step and repeat is on a layout tab: New layout, or Add to layout'); return; }
   state.tool = id;
+  state.text.cursorInput = null; state.text.hover = null;
   state.pointLast = null;
   state.pointDoc = curDoc();
   for (const [k, b] of Object.entries(ui.toolBtns)) b.classList.toggle('on', k === id);
@@ -4779,6 +4780,7 @@ function attachCanvasEvents() {
     if (d && state.dim && dimTarget()) dimHover(d, toDrawing(d, e.clientX, e.clientY), e.shiftKey);
     if (d && state.ldr && editable()) ldrHover(d, toDrawing(d, e.clientX, e.clientY), e.shiftKey);
     if (d && state.bal && editable()) balHover(d, toDrawing(d, e.clientX, e.clientY), e.shiftKey);
+    if (d && state.tool === 'text' && !textEditing()) { state.text.hover = textPick(d, e.clientX, e.clientY); paintOverlay(); }
     const mx = view.ox + p.x / view.scale, my = view.oy + p.y / view.scale;
     const [cx, cy] = cursorMm(mx, my, state.sheetH);
     ui.coords.textContent = `X ${fmt(cx)}   Y ${fmt(cy)} mm`;
@@ -4806,7 +4808,7 @@ function attachCanvasEvents() {
       hideRubber();
       const p = toDrawing(d, e.clientX, e.clientY);
       if (was.path) trimPathUp(mdoc(d), e);
-      else if ((state.setlen || state.tool === 'measure' || modLive() ? !was.moved : state.tool === 'dimension') && cursorClick(d, p, e.shiftKey)) { /* the click finished what was typed in the cursor fields */ }
+      else if ((state.setlen || ['measure', 'leader', 'balloon'].includes(state.tool) || modLive() ? !was.moved : state.tool === 'dimension') && cursorClick(d, p, e.shiftKey)) { /* the click finished what was typed in the cursor fields */ }
       else if (state.setlen) { if (!was.moved) lengthPoint(d, p, e.shiftKey); }
       else if (state.tool === 'measure') { if (!was.moved) measurePoint(d, p, e.shiftKey); }
       else if (state.tool === 'dimension') dimensionPoint(d, p, e.shiftKey);
@@ -6372,7 +6374,7 @@ function balOvl(d, out, k) {
   for (const it of set.items) if (it.sheet === sheet) out.push(shape(it, it.id === state.balSel ? ' on' : '', false));
   const sel = set.items.find((it) => it.id === state.balSel && it.sheet === sheet);
   if (sel && on) for (const [which, p] of [['c', sel.c], ['tip', sel.tip]]) { const z = 10 * k; out.push(s('rect', { class: 'gr', x: p[0] - z / 2, y: H - p[1] - z / 2, width: z, height: z, 'data-bal-grip': which, 'data-testid': 'bal-grip' })); }
-  const B = state.bal;
+  const B = state.bal && { ...state.bal, hover: typedAt()?.map((v) => v * d.factor) || state.bal.hover };
   if (B && B.hover) {
     const cross = B.tip ? null : s('path', { class: 'bal-cross', d: `M${B.hover[0] - 8 * k} ${H - B.hover[1]}h${16 * k}M${B.hover[0]} ${H - B.hover[1] - 8 * k}v${16 * k}` });
     if (B.tip) out.push(shape({ n: set.next, tip: B.tip, c: B.hover }, ' ghost', true));
@@ -6684,7 +6686,7 @@ function ldrPrompt() {
 }
 /** The leader being drawn, with the pointer as its last point, as a preview drawing (lines and arrowhead; no note yet), or null. */
 function ldrPreview(d) {
-  const L = state.ldr, q = L && (L.hover || L.cursor);
+  const L = state.ldr, q = L && (typedAt() || L.hover || L.cursor);
   if (!d || !editable() || !L || !L.pts.length || !q || textEditing()) return null;       // (no preview while the note is typed)
   const look = dimNew(d), g = LR.geometry({ pts: [...L.pts, [q[0], q[1]]], lines: [''], textH: look.textH, arrow: look.arrow });
   return g && { lines: g.lines, arrows: g.arrows, text: null };
@@ -6963,7 +6965,7 @@ function drawOvl(paint = false) {
   if (d && !d.lay && editable() === d) {
     const bt = balOvl(d, out, 1 / view.scale), tt = state.drawingRotate ? null : textOvl(d, out, 1 / view.scale) || gripOvl(d, out, 1 / view.scale, grips);
     if (state.drawingRotate) drawingRotateOverlay(out);
-    if (bt && !tt) tip = bt;
+    if (bt && !tt && !CT) tip = bt;
     if (drawLive() || state.grip || state.meas || state.dim || state.ldr) trackOvl(d, out, 1 / view.scale);
     if (tt && state.grip && state.trk.res) tt.text = state.trk.res.text;
     if (tt) { const cr = ui.canvas.getBoundingClientRect(); tip = { text: tt.text, x: (tt.px[0] - cr.left) / view.scale + view.ox, y: H - ((tt.px[1] - cr.top) / view.scale + view.oy) }; }
@@ -7064,14 +7066,22 @@ function drawKey(e, k) {
   return false;
 }
 
-/** Cursor fields use one tool of mm points (y up), including Move / Copy's base point. */
+/** Cursor fields use one tool of mm points (y up); object picks and options return no tool. */
 function cursorTool() {
   if (!state.dynamicInput) return null;
   if (state.draw) return drawLive() ? state.draw : null;
   const m = state.mod;
-  if (modLive() && ['move', 'copy', 'stretch', 'rotate', 'scale'].includes(m.kind) && !(m.ref && (m.kind === 'scale' || m.ref.step !== 'new')) && !['pick', 'mode', 'displacement'].includes(m.stage)) {       // base point, then Rotate's angle / Scale's factor
+  const points = modLive() && DI.modifyPoints(m, state.pointLast);
+  if (points) {
     const d = editable(), f = d.lay ? 1 : d.factor, mm = (q) => q && [q[0] * f, q[1] * f];
-    return { kind: m.kind, A: m, mod: true, d, f, pts: m.p1 ? [mm(m.p1)] : [], hover: mm(m.cur) };
+    const valueMode = m.p1 && ['rotate', 'scale'].includes(m.kind) && (!m.ref || m.ref.step === 'new') ? m.kind === 'rotate' ? 'angle' : m.ref ? 'length' : 'factor' : null;
+    return { kind: m.kind, A: m, mod: true, point: true, valueMode, stage: m.stage + ':' + (m.ref?.step || ''), d, f, pts: points.map(mm), hover: mm(m.kind === 'offset' ? m.p : m.cur) };
+  }
+  const drawing = editable();
+  if (drawing && !textEditing() && (state.ldr || state.bal || state.tool === 'text')) {
+    const A = state.ldr || state.bal || state.text, kind = state.ldr ? 'leader' : state.bal ? 'balloon' : 'text', f = drawing.factor;
+    const mm = (q) => q && q.slice(0, 2).map((v) => v * f);
+    return { kind, A, point: true, d: drawing, f, pts: kind === 'balloon' ? A.tip ? [A.tip] : [] : (A.pts || []).map(mm), hover: kind === 'balloon' ? A.hover : mm(A.hover) };
   }
   const A = state.setlen || state.meas || state.dim, kind = state.setlen ? 'setlen' : state.meas ? 'measure' : state.dim && ['aligned', 'linear'].includes(state.dimType) ? 'dimension' : null;
   const d = kind && (kind === 'measure' ? measureTarget() : kind === 'dimension' ? dimTarget() : editable());
@@ -7084,14 +7094,15 @@ const cursorHolder = (T) => T.A || T;
 /** The typing state; a new one whenever the tool has moved on to its next point. */
 function cursorInput() {
   const T = cursorTool(), H = cursorHolder(T);
-  if (H.cursorInput?.n !== T.pts.length) H.cursorInput = Object.assign(DI.createInput(DI.firstPoint(T), DI.inputMode(T)), { n: T.pts.length });
+  const n = (T.stage || '') + ':' + T.pts.length + ':' + DI.inputMode(T);
+  if (H.cursorInput?.n !== n) H.cursorInput = Object.assign(DI.createInput(DI.firstPoint(T), DI.inputMode(T)), { n });
   return H.cursorInput;
 }
 const cursorPoint = () => DI.toolPointInput(cursorInput(), cursorTool());
 /** The point the typed cursor fields give, in drawing units, for the previews of Measure, Dimension and Set length; null when nothing is typed (or it is not valid yet). */
 function typedAt() {
   const T = cursorTool();
-  if (!T?.A || !DI.hasTyped(cursorInput())) return null;
+  if (!T?.A || !cursorDynamic() || !DI.hasTyped(cursorInput())) return null;
   const r = cursorPoint();
   return r.point ? r.point.map((v) => v / T.f) : null;
 }
@@ -7100,30 +7111,41 @@ function cursorCommit(shift = false) {
   if (result.why) { note(result.why); paintOverlay(); return; }
   trackStop();
   if (T.mod) modCursorCommit(T, result);
+  else if (T.kind === 'text') { T.A.cursorInput = null; textOpen(T.d, result.point.map((v) => v / T.f)); }
   else if (T.A) pointToolAction()(T.d, result.point.map((v) => v / T.f), shift, true);
   else drawTyped(result.text);
 }
-/** Enter on the cursor fields of Move / Copy / Rotate / Scale: the base point, or Rotate's angle / Scale's factor. */
+/** A typed point takes the same path as a picked point, without snapping it again. */
 function modCursorCommit(T, result) {
   const m = T.A, to = result.point?.map((v) => v / T.f);
-  if (!m.p1) (['move', 'copy', 'stretch'].includes(m.kind) ? moveTo : transformBase)(T.d, to);
-  else transformDo(T.d, result.value);
+  if (['move', 'copy', 'stretch'].includes(m.kind)) moveTo(T.d, to);
+  else if (m.kind === 'mirror') mirrorPoint(T.d, to, false, true);
+  else if (m.kind === 'align') alignPoint(T.d, to);
+  else if (['break', 'breakatpoint'].includes(m.kind)) breakPoint(T.d, to);
+  else if (m.kind === 'offset') offsetDo(T.d, to);
+  else if (m.kind === 'lengthen') lengthenPick(T.d, to, true);
+  else if (m.kind === 'measurepoints') pointsLength(T.d, to);
+  else if (m.kind === 'array') arrayCenter(T.d, to);
+  else if (!m.p1) transformBase(T.d, to);
+  else if (m.ref && !T.valueMode) refPoint(...refCtx(T.d), to, false, true);
+  else transformDo(T.d, m.ref && m.kind === 'scale' ? result.value / T.f : result.value);
 }
 /** The typed Rotate angle or Scale factor; null when nothing valid is typed (the mouse's value stays). */
 function modTypedValue() {
   const m = state.mod, T = m?.p1 && modLive() && ['rotate', 'scale'].includes(m.kind) && cursorTool();
-  return T && DI.hasTyped(cursorInput()) ? cursorPoint().value ?? null : null;
+  return T?.valueMode && DI.hasTyped(cursorInput()) ? cursorPoint().value ?? null : null;
 }
 /** The Rotate / Scale ghost for the typed angle or factor; null when nothing valid is typed (the mouse's ghost stays). */
 function modTypedSlots(d) {
   const m = state.mod, v = modTypedValue();
-  return v == null ? null : [mmul([d.factor, 0, 0, -d.factor, 0, state.sheetH], m.kind === 'scale' ? scaleMatrix(m.p1, v) : rotationMatrix(m.p1, m.ref ? referenceTurn(m.ref.value, v) : v))];
+  return v == null ? null : [mmul([d.factor, 0, 0, -d.factor, 0, state.sheetH], m.kind === 'scale' ? scaleMatrix(m.p1, m.ref ? referenceFactor(m.ref.value, v / d.factor) : v) : rotationMatrix(m.p1, m.ref ? referenceTurn(m.ref.value, v) : v))];
 }
 /** A click while cursor fields hold typing: the pointer fills the rest. → true when it committed (or said why not) */
 function cursorClick(d, p, shift) {
   const T = cursorTool();
   if (!T?.A || !DI.hasTyped(cursorInput())) return false;
-  if (T.mod) { if (!T.A.p1) T.A.cur = pickPoint(d, p, [], shift, true); }                  // a typed angle / factor stands; a base point's other coordinate comes from the click
+  if (T.mod) { T.A.cur = pickPoint(d, p, T.pts.map((q) => q.map((v) => v / T.f)), shift, true); if (T.kind === 'offset') T.A.p = T.A.cur; }
+  else if (T.kind === 'balloon') balHover(d, p, shift);
   else if (T.kind === 'dimension' && T.pts.length === 2) T.A.cursor = p; else T.A.hover = pickPoint(d, p, T.A.pts, shift, true);
   cursorCommit(shift);
   return true;
@@ -7148,7 +7170,7 @@ function cursorKey(e) {
     const next = DI.inputKey(input, e.key, DI.firstPoint(T));
     if (!next) return;
     cursorHolder(T).cursorInput = e.key === 'Escape' ? null : next;
-    if (!T.hover) { if (T.mod) T.A.cur ||= [0, 0]; else if (T.A) { T.A.hover ||= [0, 0]; T.A.cursor ||= [0, 0]; } else DR.toolHover(state.draw, [0, 0]); }
+    if (!T.hover) { if (T.mod) { T.A.cur ||= [0, 0]; if (T.kind === 'offset') T.A.p ||= [0, 0]; } else if (T.A) { T.A.hover ||= [0, 0]; T.A.cursor ||= [0, 0]; } else DR.toolHover(state.draw, [0, 0]); }
     if (e.key === 'Escape') state.msg = null;
     paintOverlay(); renderCommand();
   }
@@ -7961,7 +7983,7 @@ function moveTo(d, q) {
     state.pointLast = q.slice(0, 2);
     if (m.kind === 'stretch' && m.stage === 'displacement') stretchDisplacement = [dx * d.factor, dy * d.factor];
     const again = copy && copyMode === 'Multiple' && m.stage !== 'displacement';
-    if (again) { m.raw = d.raw.entities; m.placed = true; } else setTool('select');
+    if (again) { m.raw = d.raw.entities; m.placed = true; m.cursorInput = null; } else setTool('select');
     setSel(d, m.sel);
     note(m.kind === 'stretch' ? m.lockMessage || (changed ? 'Selection stretched. Ctrl+Z takes it back' : 'Nothing to stretch') : copy ? `Copy placed.${again ? ' Next target from the same base; Enter or Esc ends.' : ''} Ctrl+Z removes the last copy` : 'Selection moved. Ctrl+Z takes it back');
   } catch (err) { note(err.message); }
@@ -7976,8 +7998,8 @@ function alignPreview(m) {
   const t = m.stage === 'd2' && m.cur ? alignTransform(m.s1, m.d1, m.s2, m.cur) : m.stage === 's3' || m.stage === 'scale' ? alignTransform(m.s1, m.d1, m.s2, m.d2) : null;
   return t && !t.error ? t : null;
 }
-function alignSync(d) {
-  const m = state.mod, t = alignPreview(m);
+function alignSync(d, m = state.mod) {
+  const t = alignPreview(m);
   if (d.lay) { m.ghosts = layGhosts(m); drawTools(); }
   else m.move = t ? { preview: m.preview, items: m.preview.items, dx: 0, dy: 0, slots: [mmul([d.factor, 0, 0, -d.factor, 0, state.sheetH], alignMatrix(t))] } : null;
 }
@@ -8769,11 +8791,12 @@ function previewShape(ent, f, fillet) {
 }
 /** The overlay of a modify tool: what it holds (dashed), the cutting edges, and the result before the click. */
 function modOvl(d, out, paint) {
-  const m = state.mod, H = state.sheetH, f = d.factor;
   modSync(d);
+  const live = state.mod, point = typedAt(), m = point ? { ...live, cur: point, p: point } : live, H = state.sheetH, f = d.factor;
   const add = (shape, cls, tid) => out.push(s('path', { class: cls, transform: drawingTransform(d), d: DR.svgPath(shape, H), 'data-testid': tid || null }));
   const addEnt = (ent, cls, tid) => { const sh = previewShape(ent, f, m.kind === 'fillet'); if (sh) { if (cls === 'dr-trim-fade') add(sh, 'dr-trim-under'); add(sh, cls, tid); } };
   if (['move', 'copy', 'stretch', 'rotate', 'scale'].includes(m.kind)) {
+    if (['move', 'copy'].includes(m.kind) && m.p1 && m.cur && m.move) { m.move.dx = m.cur[0] - m.p1[0]; m.move.dy = m.cur[1] - m.p1[1]; }
     if (m.kind === 'stretch' && m.p1 && m.cur && m.raw === d.raw.entities) {
       const dx = m.cur[0] - m.p1[0], dy = m.cur[1] - m.p1[1], cached = m.stretchPreview;
       if (!cached || cached.dx !== dx || cached.dy !== dy) {
@@ -8785,7 +8808,7 @@ function modOvl(d, out, paint) {
       m.move = { preview, items: preview.items, dx: 0, dy: 0 };
     }
     if (m.p1 && m.cur) {
-      const R = m.ref, typed = m.kind === 'rotate' && !R ? modTypedValue() : null, len = Math.hypot(m.cur[0] - m.p1[0], m.cur[1] - m.p1[1]);      // a typed angle turns the guide too
+      const R = m.ref, typed = m.kind === 'rotate' ? modTypedValue() : null, len = Math.hypot(m.cur[0] - m.p1[0], m.cur[1] - m.p1[1]);      // a typed angle turns the guide too
       const end = typed == null ? m.cur.slice(0, 2) : [m.p1[0] + len * Math.cos(typed * Math.PI / 180), m.p1[1] + len * Math.sin(typed * Math.PI / 180)];
       const from = R && R.step !== 'new' ? R.pts[0] : m.p1;
       if (from) add({ t: 'line', a: from.map((v) => v * f), b: end.map((v) => v * f) }, 'dr-guide', 'mod-line');
@@ -8794,6 +8817,7 @@ function modOvl(d, out, paint) {
     if (m.stage === 'obj') { const e = m.p ? modEntAt(d, m.p) : null; if (e && MD.canOffset(e)) addEnt(e, 'dr-guide'); }
     else if (m.ent) { const pick = m.p ? offsetPick(d, m.p) : null; addEnt(pick?.target ?? m.ent, 'dr-guide'); if (pick?.r.ent) addEnt(pick.r.ent, 'dr-shape', 'mod-preview'); }
   } else if (m.kind === 'align') {
+    if (!d.lay) alignSync(d, m);
     for (const [a, b] of alignLines(m)) add({ t: 'line', a: a.map((v) => v * f), b: b.map((v) => v * f) }, 'dr-guide', 'align-line');
   } else if (m.kind === 'join' || m.kind === 'reverse') {
     for (const e of m.objs) addEnt(e, 'dr-guide');
@@ -8865,6 +8889,7 @@ function modOvl(d, out, paint) {
       m.move = { preview, items: preview.items, dx: 0, dy: 0 };
     }
   }
+  live.move = m.move;
 }
 
 // ---- the Text tool (text.js; mock-up R5a, Option A) ----
@@ -9072,6 +9097,7 @@ function textToolDown(e) {
   const d = drawTarget();
   if (!d) return;
   if (textEditing()) { textCommit(); return; }                      // clicking away only ends the one being typed
+  if (cursorDynamic() && DI.hasTyped(cursorInput())) { state.text.hover = textPick(d, e.clientX, e.clientY); cursorCommit(); return; }
   const p = textPick(d, e.clientX, e.clientY), hit = d.lay ? -1 : hitAt(d, toDrawing(d, e.clientX, e.clientY));      // (a text object on a layout is not edited here)
   if (hit >= 0 && TX.decode(d.raw.entities[hit]) && d.raw.entities[hit].layer !== Ed.DIM_LAYER) { textOpen(d, p, hit); return; }
   textOpen(d, p);
