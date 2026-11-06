@@ -400,6 +400,13 @@ test('TODO 76a: shown units: an inch dimension, and the drawing factor', () => {
   point(E.lineOf(b.entities[0]), [0, 0, 20, 0]); assert.equal(label(b), '508.000');
 });
 
+test('TODO 76a: an inch dimension typed with its shown value is no change (the app.js same-value test, line for line)', () => {
+  const inch = drawing(W.line(0, 0, 254, 0), { a: [0, 0], b: [254, 0], units: 'inch' }), m = model(inch), shown = label(inch);
+  assert.equal(E.dimLabel(typedLength('10.000"', 'inch') * 25.4, m.dp, m.params.units), shown, 'typed with the unit mark');
+  assert.equal(E.dimLabel(typedLength('10', 'inch') * 25.4, m.dp, m.params.units), shown, 'and without it');
+  assert.notEqual(E.dimLabel(typedLength('10.5', 'inch') * 25.4, m.dp, m.params.units), shown, 'another value differs');
+});
+
 test('TODO 76a: a line touching the moved end stays and the driven dimension is rebuilt; a second dimension on the line follows', () => {
   const touching = drawing(W.line(0, 0, 100, 0), { a: [0, 0], b: [100, 0] });
   W.addEntities(touching, W.line(100, 0, 100, 50));

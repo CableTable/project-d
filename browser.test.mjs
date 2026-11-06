@@ -21353,6 +21353,7 @@ try {
     };
     const lineIn = (text) => readDxf(text).entities.map(lineEnds).find((l) => l && Math.abs(l[1] - 150) < 1e-6 && Math.abs(l[3] - 150) < 1e-6 && Math.abs(l[0] - 150) < 1e-6);
     const same = (a, b, why) => a.forEach((v, i) => assert.ok(Math.abs(v - b[i]) < 1e-6, `${why}: ${a} != ${b}`));
+    const said = async (re) => (await page.waitForFunction((s) => { const x = document.querySelector('[data-testid=cmd-prompt]').textContent; return new RegExp(s).test(x) && x; }, re.source)).jsonValue();      // waits for the note, returns its text
     for (const tab of ['drawing', 'layout']) {
       if (tab === 'layout') {
         await freshLayoutWithPlate();
@@ -21387,7 +21388,7 @@ try {
       same(lineIn(back), [150, 150, 300, 150], tab + ': Undo puts the line back'); assert.deepEqual(dimIn(back), dimIn(start), tab + ': and the dimension');
       const undone = await histLabels();
       await apply('-5');
-      assert.match(await prompt(), /Length must be more than 0/, tab);
+      assert.match(await said(/Length must be more than 0/), /Length must be more than 0/, tab);
       same(lineIn(await save()), [150, 150, 300, 150], tab + ': -5 leaves the line'); assert.deepEqual(dimIn(await save()), dimIn(start));
       await apply('150.00');
       assert.deepEqual(await histLabels(), undone, tab + ': -5 and the shown number again are no step');
@@ -21399,6 +21400,22 @@ try {
       assert.equal(dimIn(typ).label, '250', tab + ': a number over an override is text again'); same(lineIn(typ), [150, 150, 300, 150], tab + ': the line stays');
       await undo(); await undo();
       assert.deepEqual(dimIn(await save()), dimIn(start));
+      let quiet = await histLabels();
+      const unchanged = async (why) => { const out = await save(); same(lineIn(out), [150, 150, 300, 150], tab + ': ' + why); assert.deepEqual(dimIn(out), dimIn(start), tab + ': ' + why); assert.deepEqual(await histLabels(), quiet, tab + ': ' + why + ' is no step'); };
+      await edit('150.00'); await t('text-editor').fill('-5'); await page.evaluate(() => document.activeElement.blur());       // clicking away commits like Enter
+      assert.match(await said(/Length must be more than 0/), /Length must be more than 0/, tab + ': blur'); await unchanged('-5 committed by blur');
+      await edit('150.00'); await t('text-editor').fill('200'); await page.keyboard.press('Escape');
+      await unchanged('Esc with a number typed');
+      if (tab === 'drawing') {
+        await t('ptab-objects').click(); await page.locator('.or.layer[data-layer="0"] [data-act=lock]').click(); await t('ptab-drawing').click();
+        await apply('200');
+        assert.match(await said(/Layer 0 is locked/), /Layer 0 is locked/, tab + ': locked layer'); await unchanged('a locked layer');
+        await t('ptab-objects').click(); await page.locator('.or.layer[data-layer="0"] [data-act=lock]').click(); await t('ptab-drawing').click();
+      } else {
+        const l = await at(225, 150); await page.mouse.click(l.x, l.y); await t('bar-lock').click(); quiet = await histLabels();       // (the lock is a step of its own)
+        await apply('200');
+        assert.match(await said(/A locked object: unlock it to change its length/), /A locked object/, tab + ': locked object'); await unchanged('a locked object');
+      }
     }
   });
 

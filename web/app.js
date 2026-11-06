@@ -9033,7 +9033,7 @@ function dimDrive(d, ed, typed) {
   if (!(n > 0)) { note('Length must be more than 0'); return done(); }
   if (Ed.dimLabel(n * (inch ? 25.4 : 1), dim.dp, dim.params.units) === dim.editor.measured) return done();       // the shown number again: no step
   const layer = raw.entities[link.i].layer, placed = view && d.lay.placed[view.at[link.i]];
-  if (view ? placed.lock || LD.layersOf(d.lay)[layer]?.flags & 4 : lockedEnt(d, link.i)) { note(placed?.lock ? 'A locked object: unlock it to change its length' : `Layer ${layer} is locked`); return done(); }
+  if (view ? placed.lock || LD.layersOf(d.lay)[layer]?.flags & 4 : lockedEnt(d, link.i)) { note((view ? placed.lock : d.lockedEnts?.has(raw.entities[link.i])) ? 'A locked object: unlock it to change its length' : `Layer ${layer} is locked`); return done(); }
   const factor = d.factor || 1;
   if (!view) {
     const next = driveDimension(raw, at, n, factor);
