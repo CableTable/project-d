@@ -30,3 +30,4 @@ Proof before done (WORKFLOW): each claim in the report quotes the line of a comm
    A failure reachable only at a hard limit (e.g. `MAX_VISITS`) that leaves the document unchanged and shows a wrong note at worst is Low; a throw or false success stays Medium only if it loses or misstates work.
    A browser step that waits for a value, then reads the same locator again in a separate call, is a finding: return the value from the wait.
    A step that asserts a label right after an action, with no wait for the new value, is a finding.
+   A finding about a test quotes the asserted line; no quote means write 'not asserted'.
