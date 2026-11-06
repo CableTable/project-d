@@ -7261,6 +7261,7 @@ function cursorKey(e) {
   }
   if (e.key === 'Enter' && DI.hasTyped(input)) cursorCommit();
   else {
+    if (T.mod && T.A.stage === 'value' && e.key === '-' && !DI.hasTyped(input)) { e.preventDefault(); e.stopPropagation(); ui.cmdUI.open('-'); return; }   // Lengthen / Measure points: a number or a point; a negative number is the command bar's (delta -5), not a polar length
     if (DI.isSingle(input.mode) && /^[,<]$/.test(e.key) && input.values[0]) {      // a point typed at a one-number prompt (Rotate, Scale, Radius, Length) moves whole to the command box
       const seed = input.values[0] + e.key;
       cursorHolder(T).cursorInput = null; e.preventDefault(); e.stopPropagation(); ui.cmdUI.open(seed); paintOverlay(); renderCommand(); return;
