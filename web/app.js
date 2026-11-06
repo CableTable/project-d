@@ -50,6 +50,7 @@ import { followDimensions, driveLine, driveDimension, dimensionEntry } from './l
 import * as MD from './modify.js';
 import * as AR from './array.js';
 import { movePoint, movePrompt } from './move.js';
+import { dragTarget } from './drag.js';
 import { rotateEntities, rotationAngle, rotationDragAngle, rotationMatrix, referenceTurn } from './rotate.js';
 import { scaleEntities, scaleFactor, scaleDistance, scaleMatrix, referenceFactor } from './scale.js';
 import { filletEntities, filletPolylineShape, filletAllPolyline, chamferEntities, chamferSegment, chamferAllPolyline } from './fillet.js';
@@ -64,7 +65,7 @@ import { openQuickSelect } from './qselectdlg.js';
 import * as FI from './fill.js';
 import { extendEntity, extendRegion, previewEdit, curveShape, isBoundary, extendable } from './extend.js';
 import { placedMat, placedBox, placement1 } from './apply.js';
-import { layoutSnap, layoutCandidates, layoutReference, partIndex, toPart } from './layoutsnap.js';
+import { layoutSnap, placedSnap, layoutCandidates, layoutReference, partIndex, toPart } from './layoutsnap.js';
 import * as LD from './layoutdoc.js';
 import { isDimPart } from './layoutdim.js';
 import { dropPart } from './dropin.js';
@@ -2838,7 +2839,8 @@ function placedDown(e, cycled = false) {
     s = selectedPlaced();
     if (!s) return true;
     const items = selItems();
-    pdrag = { kind: 'move', cx: e.clientX, cy: e.clientY, start: here, items: items.map((x) => ({ i: x.i, part: x.part, orig: placementOf(x.p) })), copy: e.ctrlKey || e.metaKey, skipSnap: e.altKey, wasSel: was && !add, add, toggle, hitI: i, moved: false, g: null, idx: null, idxs: null, pivot0: [state.pivot.x, state.pivot.y] };
+    const start = e.altKey ? here : dragGrabPoint(curDoc(), here, new Set(items.map((x) => x.i)));
+    pdrag = { kind: 'move', cx: e.clientX, cy: e.clientY, start, items: items.map((x) => ({ i: x.i, part: x.part, orig: placementOf(x.p) })), copy: e.ctrlKey || e.metaKey, skipSnap: e.altKey, wasSel: was && !add, add, toggle, hitI: i, moved: false, g: null, idx: null, idxs: null, pivot0: [state.pivot.x, state.pivot.y] };
     return true;
   }
   if (state.mode === 'rotate') { state.mode = 'select'; update(); }
@@ -2861,6 +2863,7 @@ function placedMove(e) {
       if (!p.copy && p.items.some((x) => x.orig.lock)) { pdrag = null; note(LOCKED); return; }
       const dragged = new Set(p.items.map((x) => x.i));
       // Cache before copying or loosening the grid: indexes still identify the dragged originals.
+      p.snapTargets = placedNow.filter((q, i) => !dragged.has(i) && !partHid(q));
       p.alignmentLines = [...sheetAlignmentLines(lay.s), ...partAlignmentLines(lay.parts, placedNow, (q, i) => !dragged.has(i) && partSelectable(q))];
       p.box = A.unionBox(p.items.map((x) => placedBox(x.part, x.orig)));
       const name = p.items.length > 1 ? `${p.items.length} parts` : s.part.name, gm = {};
@@ -2870,11 +2873,12 @@ function placedMove(e) {
       else { p.idxs = gLooseMany(p.g, p.items.map((x) => x.i)); p.ghosts = p.items.map((x) => ({ part: x.part, pl: x.orig })); }
       p.idx = p.idxs[0];
     }
-    const to = e.shiftKey || state.ortho ? Ed.orthoLock(p.start, here) : here;           // Shift: straight along X or Y from where it was picked up
-    let dx = r2(to[0] - p.start[0]), dy = r2(to[1] - p.start[1]);
     p.straight = !!(e.shiftKey || state.ortho);
-    const sn = snapPlacedDrag(p, dx, dy);
-    dx = sn.dx; dy = sn.dy; p.snapped = sn.hit;
+    const point = p.skipSnap ? here : snapPoint(s.d, here, -1, [], p.start);
+    Object.assign(p, dragTarget(p.start, point, 1, p.straight));
+    const sn = point[2] ? { dx: p.dx, dy: p.dy, hit: null } : snapPlacedDrag(p, p.dx, p.dy);
+    const { dx, dy } = sn;
+    p.snapped = sn.hit;
     p.items.forEach((x, k) => { lay.placed[p.idxs[k]] = PL.translate(p.base[k], dx, dy); });
     p.dx = dx; p.dy = dy;
     if (state.pivot.kind === 'custom') state.pivot = { kind: 'custom', x: PL.r6(p.pivot0[0] + dx), y: PL.r6(p.pivot0[1] + dy) };
@@ -4517,7 +4521,8 @@ function paintOverlay(gesture = false) {
     const L2 = state.setlen || state.meas || state.dim || state.ldr || ((modLive() || layModLive()) && ['move', 'copy', 'stretch', 'rotate', 'scale', 'lengthen', 'align'].includes(state.mod.kind) ? { pts: state.mod.ref && state.mod.ref.step !== 'new' ? state.mod.ref.pts : state.mod.p1 ? [state.mod.p1] : [], hover: state.mod.cur }
       : (modLive() || layModLive()) && state.mod.kind === 'array' && state.mod.type === 'polar' ? { pts: state.mod.center ? [state.mod.center] : [], hover: state.mod.stage === 'center' ? state.mod.cur : null } : null);
     const hv = L2 && (typedAt() || L2.hover);                       // typed cursor fields: the rubber line goes to the typed point
-    const marks = L2 && d ? [...L2.pts.map((q) => [q[0], q[1], q[2], false]), ...(L2.pts.length < 2 && hv ? [[hv[0], hv[1], hv[2], true]] : [])] : null;
+    const dragSnap = d?.lay && pdrag?.moved && state.snap && !pdrag.skipSnap && pdrag.to;
+    const marks = dragSnap?.[2] ? [[dragSnap[0], dragSnap[1], dragSnap[2], true]] : L2 && d ? [...L2.pts.map((q) => [q[0], q[1], q[2], false]), ...(L2.pts.length < 2 && hv ? [[hv[0], hv[1], hv[2], true]] : [])] : null;
     if (d?.cmp) {
       cmpPaint(c, d.cmp, base, marks);
       if (marks && state.tool === 'measure') {
@@ -4729,9 +4734,8 @@ function attachCanvasEvents() {
         lengthenDown(d, drag);
         if ((state.tool === 'select' || state.tool === 'contour') && !state.setlen) drag.dim = dimGrab(d, drag.p);
         if (state.tool === 'select' && !state.setlen && !state.match && !drag.dim && d.sel?.has(hitAt(d, drag.p))) {
-          const sel = new Set(d.sel), ed = edIndex(d);
-          const grab = Ed.snapPick(ed, ...drag.p, pickTol(d), state.snap, new Set(ed.shown.filter((i) => !sel.has(i))), state.snapTypes);
-          drag.move = state.entityDrag = { d, sel, raw: d.raw.entities, from: grab ? [grab.x, grab.y] : drag.p, copy: e.ctrlKey || e.metaKey };
+          const sel = new Set(d.sel);
+          drag.move = state.entityDrag = { d, sel, raw: d.raw.entities, from: dragGrabPoint(d, drag.p, sel), copy: e.ctrlKey || e.metaKey };
         }
         capture(c, e);
       }
@@ -5442,7 +5446,7 @@ function snapWatch(ref) {
   clearTimeout(snapRefTimer); snapRefTimer = 0; snapPending = ref;
   if (ref) snapRefTimer = setTimeout(() => { snapRef = ref; snapRefTimer = 0; paintOverlay(); }, 500);
 }
-const snapPlaced = () => state.hidden.parts ? [] : placedNow.filter((pl) => !partHid(pl));
+const snapPlaced = () => state.hidden.parts ? [] : (pdrag?.snapTargets || placedNow).filter((pl) => !partHid(pl));
 const snapPoint = (d, p, skip = -1, extra = [], from = null) => {
   if (state.trk.d !== d) { trackClear(); state.trk.d = d; }
   const item = cmpEditingItem(d);
@@ -5584,14 +5588,19 @@ function drawingRotateOverlay(out) {
   out.push(s('g', { class: 'ptools' }, rotationControls(cor, c, toSheetPt(r.d, r.pivot), k, g?.items ? fmt1(g.angle) + '°' : null)));
 }
 
+function dragGrabPoint(d, point, sel) {
+  if (!state.snap) return point;
+  const ed = !d.lay && edIndex(d);
+  const grab = d.lay ? placedSnap(d.lay.parts, [...sel].map((i) => placedNow[i]), ...point, pickTol(d), state.snapTypes)
+    : Ed.snapPick(ed, ...point, pickTol(d), state.snap, new Set(ed.shown.filter((i) => !sel.has(i))), state.snapTypes);
+  return grab ? [grab.x, grab.y] : point;
+}
+
 function moveSelectionTo(g, e) {
   if (g.d !== editable() || g.raw !== g.d.raw.entities) { state.entityDrag = null; return false; }
   if (moveLocked(g.d, g.sel)) { state.entityDrag = null; paintOverlay(); return false; }
   const p = snapPoint(g.d, toDrawing(g.d, e.clientX, e.clientY), g.sel, [], g.from);
-  const q = e.shiftKey || state.ortho ? Ed.orthoLock(g.from, p) : p;
-  g.to = q;
-  g.dx = p[2] ? q[0] - g.from[0] : Math.round((q[0] - g.from[0]) * g.d.factor * 100) / 100 / g.d.factor;
-  g.dy = p[2] ? q[1] - g.from[1] : Math.round((q[1] - g.from[1]) * g.d.factor * 100) / 100 / g.d.factor;
+  Object.assign(g, dragTarget(g.from, p, g.d.factor, e.shiftKey || state.ortho));
   const gs = guideTarget().s;
   const box = !p[2] && state.snap && ribbon.guideSnap && gs.guidesShow && gs.guides.length && OB.boxOf(g.d.fl, g.sel), f = g.d.factor, straight = e.shiftKey || state.ortho;
   if (box) {

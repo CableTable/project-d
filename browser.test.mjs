@@ -22,6 +22,7 @@ import { curveShape } from './web/extend.js';
 import { closest, pathOf } from './web/modify.js';
 import { svgPath } from './web/draw.js';
 import { COMMANDS, placeBar } from './web/cmdbar.js';
+import { SNAP_NAME } from './web/snap.js';
 import { Page, writePdf, winAnsi } from './web/pdf-write.js';
 import { bigDoc } from './tools/gen-big-dxf.mjs';
 
@@ -323,6 +324,8 @@ try {
   });
   await step('TODO 67a: sheet and gripper Alignment guides, SNAP, Alt, Shift, Esc and one-step undo', async () => {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    // TODO 201: isolate box alignment fallback from object snaps at these old fixture positions.
+    await context.addInitScript((types) => localStorage.setItem('pd-snap-types', JSON.stringify(types)), Object.fromEntries(Object.keys(SNAP_NAME).map((kind) => [kind, false])));
     try {
       const p = await context.newPage(), q = (id) => panelControl(p, p.getByTestId(id)), errs = [];
       p.on('pageerror', (e) => errs.push(String(e)));
@@ -415,6 +418,7 @@ try {
   });
   await step('TODO 67b: other-part edges and centres, finite guides, copy exclusions, hidden/locked skip and Esc', async () => {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    await context.addInitScript((types) => localStorage.setItem('pd-snap-types', JSON.stringify(types)), Object.fromEntries(Object.keys(SNAP_NAME).map((kind) => [kind, false])));
     try {
       const p = await context.newPage(), q = (id) => panelControl(p, p.getByTestId(id)), errs = [];
       p.on('pageerror', (e) => errs.push(String(e)));
@@ -491,6 +495,7 @@ try {
   });
   await step('TODO 67c: part gap labels, live decimals, nearest target, cleanup and mid-drag light / dark', async () => {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    await context.addInitScript((types) => localStorage.setItem('pd-snap-types', JSON.stringify(types)), Object.fromEntries(Object.keys(SNAP_NAME).map((kind) => [kind, false])));
     try {
       const p = await context.newPage(), q = (id) => panelControl(p, p.getByTestId(id)), errs = [];
       p.on('pageerror', (e) => errs.push(String(e)));
@@ -10287,6 +10292,124 @@ try {
     approx(await angleNow(), 30, .01, 'layout arrows still turn with Shift');
     await page.keyboard.press('Control+z'); approx(await angleNow(), 0, .01);
     await closeTabs(/./);
+  });
+
+  await step('TODO 201: dragging a part on a layout snaps with the marker', async () => {
+    await closeTabs(/./);
+    const lay = newLayout('Drag snap 201'), raw = addEntities(newDoc(4), dxfPoly([[0, 0], [100, 0], [100, 60], [0, 60]], { closed: true }));
+    lay.parts.plate = makePart('plate', 'Plate', raw);
+    const a = [200.1234, 200.4321], b = [520.9876, 400.8765];
+    lay.placed = [{ partId: 'plate', x: a[0], y: a[1], rot: 0 }, { partId: 'plate', x: b[0], y: b[1], rot: 0 }, { partId: 'plate', x: a[0], y: a[1] + 100, rot: 0 }];
+    lay.parts.loose = objectPart('loose', 'Loose line', dxfLine(750.6543, 300.9876, 780, 330), newDoc(4).layers);
+    lay.placed.push(objectPlacement(lay.parts.loose));
+    const snapOn = await t('tog-snap').getAttribute('aria-pressed'), orthoOn = await t('tog-ortho').getAttribute('aria-pressed');
+    const theme = await page.locator('html').getAttribute('data-theme') || 'light';
+    const setChip = async (id, on) => { if (await t(id).getAttribute('aria-pressed') !== String(on)) await t(id).click(); };
+    const key = async (key) => { await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press(key); await frames(); };
+    const saved = async () => layoutFromRaw(await savedDoc());
+    const begin = async () => {
+      const from = await at(...a); await page.mouse.move(from.x + 1, from.y - .5); await page.mouse.down();
+      await page.evaluate(() => { window.__drag201 = []; });
+    };
+    const land = async (target = b) => { const to = await at(...target); await page.mouse.move(to.x + 2, to.y - 1, { steps: 6 }); await frames(); return to; };
+    const marker = async (to, expected = true) => {
+      assert.equal(await page.evaluate(() => window.__drag201.includes('end')), expected, 'endpoint tag during drag');
+      if (expected) assert.ok(await t('drawing').evaluate((c, p) => {
+        const r = c.getBoundingClientRect(), k = c.width / r.width, x = Math.round((p.x - r.x) * k), y = Math.round((p.y - r.y) * k), z = Math.ceil(9 * k);
+        const pixels = c.getContext('2d').getImageData(x - z, y - z, z * 2, z * 2).data;
+        return pixels.some((v, i) => i % 4 === 0 && Math.abs(v - 2) < 6 && Math.abs(pixels[i + 1] - 157) < 6 && Math.abs(pixels[i + 2] - 3) < 6 && pixels[i + 3] > 200);
+      }, to), 'green endpoint square during drag');
+    };
+    await page.evaluate(() => {
+      window.__drag201 = []; window.__fill201 = CanvasRenderingContext2D.prototype.fillText;
+      CanvasRenderingContext2D.prototype.fillText = function (text, ...args) {
+        if (this.canvas.dataset.testid === 'drawing') window.__drag201.push(text);
+        return window.__fill201.call(this, text, ...args);
+      };
+    });
+    try {
+      await setChip('tog-snap', true); await setChip('tog-ortho', false);
+      await t('picker').setInputFiles({ name: 'drag-layout201.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
+      await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'drag-layout201.dxf');
+      await page.locator('[data-tool=select]').click(); await click(a[0] + 40, a[1] + 20);
+      const before = await saved();
+      await page.evaluate(() => { window.__drag201 = []; });
+      const hover = await at(...b); await page.mouse.move(hover.x + 2, hover.y - 1); await frames();
+      await marker(null, false);
+      for (const group of [false, true]) {
+        if (group) { await click(a[0] + 40, a[1] + 120, { shift: true }); await key('Control+g'); }
+        const baseline = await saved();
+        for (const colour of ['light', 'dark']) {
+          await menuItem('View', 'Theme: ' + colour);
+          await begin(); const to = await land(); await marker(to);
+          assert.equal(await page.locator('.alignment-guide').count(), 0, 'object snap wins over box alignment');
+          await page.screenshot({ path: `shots-201/layout-${group ? 'group' : 'part'}-${colour}.png` });
+          await page.mouse.up();
+          const moved = await saved();
+          assert.deepEqual([moved.placed[0].x, moved.placed[0].y], b, 'grabbed corner lands exactly, without 0.01 mm rounding');
+          assert.deepEqual(moved.placed[1], baseline.placed[1], 'target stays put');
+          if (group) { assert.equal(moved.placed[2].x, b[0]); assert.equal(moved.placed[2].y, b[1] + 100); assert.equal(moved.placed[0].g, moved.placed[2].g); }
+          await key('Control+z'); assert.deepEqual((await saved()).placed, baseline.placed, 'one Undo restores the entire drag');
+        }
+        await begin(); await land(); await key('Escape'); await page.mouse.up();
+        assert.deepEqual((await saved()).placed, baseline.placed, 'Esc restores the drag');
+        if (group) { await key('Control+Shift+g'); await click(a[0] + 40, a[1] + 20); }
+      }
+      await begin(); const loose = [750.6543, 300.9876]; await marker(await land(loose)); await page.mouse.up();
+      const onLoose = (await saved()).placed[0];
+      assert.deepEqual([onLoose.x, onLoose.y], loose, 'loose object is a snap target');
+      await key('Control+z');
+      await begin(); await land([a[0] + 100, a[1]]); await marker(null, false); await key('Escape'); await page.mouse.up();
+      await begin(); await land([452, 250]); await marker(null, false);
+      assert.ok(await page.locator('.alignment-guide').count() > 0, 'no object in aperture: box alignment still works with all object snaps enabled');
+      await page.mouse.up(); assert.ok(Math.abs((await saved()).placed[0].x - 450) < .005, 'box left aligns with sheet centre to the existing 0.01 mm precision'); await key('Control+z');
+      for (const mode of ['off', 'alt']) {
+        await setChip('tog-snap', mode !== 'off');
+        if (mode === 'alt') await page.keyboard.down('Alt');
+        await begin(); await land(); await marker(null, false); await page.mouse.up(); await page.keyboard.up('Alt');
+        assert.equal(await page.locator('.alignment-guide').count(), 0);
+        const moved = await saved(); assert.ok(Math.abs(moved.placed[0].x - b[0]) > .05, mode + ' disables object and alignment snaps');
+        await key('Control+z');
+      }
+      await setChip('tog-snap', true); await begin(); await land(); await page.mouse.up();
+      await t('px').fill('600'); await t('px').press('Enter');
+      assert.equal((await saved()).placed[0].x, 600, 'part remains editable after drag');
+      assert.deepEqual((await saved()).parts.plate.raw.entities, before.parts.plate.raw.entities, 'part geometry stays unchanged');
+      console.log('201: part/group exact corner landing, green marker/tag light/dark, priority, alignment fallback, no Select hover marker, loose target, self skip, Esc, Undo, SNAP/Alt off, later edit');
+    } finally {
+      await page.mouse.up(); await page.keyboard.up('Alt');
+      await page.evaluate(() => { CanvasRenderingContext2D.prototype.fillText = window.__fill201; delete window.__fill201; delete window.__drag201; });
+      await setChip('tog-snap', snapOn === 'true'); await setChip('tog-ortho', orthoOn === 'true');
+      await menuItem('View', 'Theme: ' + theme); await closeTabs(/drag-layout201/);
+    }
+  });
+
+  await step('TODO 201: Compare body drag shows the snap marker', async () => {
+    const raw = newDoc(4);
+    addBlock(raw, 'Drag201', [dxfLine(20, 20, 60, 20)]);
+    addEntities(raw, dxfInsert('Drag201', 0, 0), dxfLine(100, 60, 100, 100));
+    await openGrips(writeDxf(raw), 'compare-drag201.dxf');
+    if (await t('tog-snap').getAttribute('aria-pressed') !== 'true') await t('tog-snap').click();
+    await typeCmd('compare'); await t('cmp-item').first().waitFor();
+    await page.evaluate(() => {
+      window.__compare201 = []; window.__compareFill201 = CanvasRenderingContext2D.prototype.fillText;
+      CanvasRenderingContext2D.prototype.fillText = function (text, ...args) { window.__compare201.push(text); return window.__compareFill201.call(this, text, ...args); };
+    });
+    try {
+      const from = await at(20, 20), to = await at(100, 60);
+      await page.mouse.move(from.x + 1, from.y); await page.mouse.down(); await page.mouse.move(to.x + 2, to.y + 1, { steps: 6 }); await frames();
+      assert.ok(await page.evaluate(() => window.__compare201.includes('end')), 'Compare body drag draws the endpoint tag');
+      assert.ok(await t('drawing').evaluate((c) => {
+        const pixels = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+        return pixels.some((v, i) => i % 4 === 0 && Math.abs(v - 2) < 6 && Math.abs(pixels[i + 1] - 157) < 6 && Math.abs(pixels[i + 2] - 3) < 6 && pixels[i + 3] > 200);
+      }), 'Compare body drag has a green marker');
+      await page.screenshot({ path: 'shots-201/compare-drag.png' });
+      console.log('201: Compare body drag paints the green snap marker and endpoint tag; existing path needs no fix');
+    } finally {
+      await page.mouse.up();
+      await page.evaluate(() => { CanvasRenderingContext2D.prototype.fillText = window.__compareFill201; delete window.__compareFill201; delete window.__compare201; });
+      await closeTabs(/./);
+    }
   });
 
   await step('Grips: a selected line, circle, arc and polyline show blue squares (line 3, circle 5, arc 4, polyline per vertex); none with nothing selected, with a drawing tool, or past 200 selected', async () => {
