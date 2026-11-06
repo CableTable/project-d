@@ -9031,10 +9031,10 @@ function dimDrive(d, ed, typed) {
   if (!link) return false;
   const done = () => { renderCommand(); renderEdit(); paintOverlay(); return true; }, inch = dim.params.units === 'inch';
   const layer = raw.entities[link.i].layer, placed = view && d.lay.placed[view.at[link.i]];
+  if (Ed.dimLabel(n * (inch ? 25.4 : 1), dim.dp, dim.params.units) === dim.editor.measured) return done();       // the shown number again: no step, no note, even on a locked layer
   if (view ? placed.lock || LD.layersOf(d.lay)[layer]?.flags & 4 : lockedEnt(d, link.i)) { note((view ? placed.lock : d.lockedEnts?.has(raw.entities[link.i])) ? 'A locked object: unlock it to change its length' : `Layer ${layer} is locked`); return done(); }
   if (link.zeroExtent) { note(dim.params.axis === 'h' ? 'This line has no width to set' : 'This line has no height to set'); return done(); }
   if (!(n > 0)) { note('Length must be more than 0'); return done(); }
-  if (Ed.dimLabel(n * (inch ? 25.4 : 1), dim.dp, dim.params.units) === dim.editor.measured) return done();       // the shown number again: no step
   const factor = d.factor || 1;
   if (!view) {
     const next = driveDimension(raw, at, n, factor);

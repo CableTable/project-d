@@ -462,6 +462,15 @@ test('TODO 76b: zero and sub-tolerance measured extents are refused, not made in
   }
 });
 
+test('TODO 76b: a linear dimension with no LINE under it, or whose points are not one LINE, drives nothing', () => {
+  for (const axis of ['h', 'v']) {
+    const none = drawing(W.circle(50, 40, 10), { a: [0, 0], b: [60, 80], axis }, 'linear');
+    assert.equal(driveLine(none, 1, 150), null); assert.equal(driveDimension(none, 1, 150), null); assert.equal(linkedLine(none, 1), null);
+    const apart = drawing(W.line(0, 0, 60, 80), { a: [0, 0], b: [30, 40], axis }, 'linear');
+    assert.equal(driveLine(apart, 1, 150), null); assert.equal(driveDimension(apart, 1, 150), null); assert.equal(linkedLine(apart, 1), null);
+  }
+});
+
 test('TODO 76b: h / v shown inches and drawing factor are both undone', () => {
   for (const axis of ['h', 'v']) {
     const b = axis === 'h' ? [10, 8] : [8, 10], target = axis === 'h' ? [20, 8] : [8, 20];

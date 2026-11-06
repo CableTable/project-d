@@ -21429,6 +21429,7 @@ try {
     const lineIn = (raw) => raw.entities.map(lineEnds).find((l) => l && Math.abs(l[0] - 150) < 1e-6 && Math.abs(l[1] - 150) < 1e-6);
     const otherIn = (raw) => raw.entities.filter((e) => !lineEnds(e) || Math.abs(lineEnds(e)[0] - 150) >= 1e-6);
     const same = (a, b) => a.forEach((v, i) => assert.ok(Math.abs(v - b[i]) < 1e-6, `${a} != ${b}`));
+    const said = async (re) => (await page.waitForFunction((s) => { const x = document.querySelector('[data-testid=cmd-prompt]').textContent; return new RegExp(s).test(x) && x; }, re.source)).jsonValue();      // waits for the note, returns its text
     for (const tab of ['drawing', 'layout']) {
       if (tab === 'layout') {
         await freshLayoutWithPlate();
@@ -21469,15 +21470,17 @@ try {
       };
       await edit('200'); await page.keyboard.press('Escape'); await unchanged();
       await apply('150.00'); await unchanged();
-      await apply('0'); assert.match(await prompt(), /Length must be more than 0/); await unchanged();
+      await apply('0'); await said(/Length must be more than 0/); await unchanged();
       if (tab === 'drawing') {
         await t('ptab-objects').click(); await page.locator('.or.layer[data-layer="0"] [data-act=lock]').click(); await t('ptab-drawing').click();
         quiet = await histLabels();
-        await apply('-5'); assert.match(await prompt(), /Layer 0 is locked/); await unchanged();
+        await apply('150.00'); assert.doesNotMatch(await prompt(), /locked/, tab + ': the shown number on a locked layer says nothing'); await unchanged();
+        await apply('-5'); await said(/Layer 0 is locked/); await unchanged();
         await t('ptab-objects').click(); await page.locator('.or.layer[data-layer="0"] [data-act=lock]').click(); await t('ptab-drawing').click();
       } else {
         await click(225, 170); await t('bar-lock').click(); quiet = await histLabels();
-        await apply('-5'); assert.match(await prompt(), /A locked object: unlock it to change its length/); await unchanged();
+        await apply('150.00'); assert.doesNotMatch(await prompt(), /locked/, tab + ': the shown number on a locked object says nothing'); await unchanged();
+        await apply('-5'); await said(/A locked object: unlock it to change its length/); await unchanged();
       }
     }
     await closeTabs(/./);
@@ -21495,14 +21498,15 @@ try {
       const before = await savedDoc(), history = await histLabels();
       const [name, block] = Object.entries(before.blocks).find(([k]) => /^PD_DIM_/.test(k));
       const dim = readDim(name, block), tx = dimGeom(dim.kind, dim.params, 1, 2).text;
+      const said = async (re) => (await page.waitForFunction((s) => { const x = document.querySelector('[data-testid=cmd-prompt]').textContent; return new RegExp(s).test(x) && x; }, re.source)).jsonValue();      // waits for the note, returns its text
       const apply = async () => {
         const p = await at(tx.x, tx.y); await page.mouse.dblclick(p.x, p.y); await t('text-editor').waitFor();
         await t('text-editor').fill('-5'); await page.keyboard.press('Enter'); assert.equal(await t('text-edit-box').isVisible(), false);
       };
       await t('ptab-objects').click(); await page.locator('.or.layer[data-layer="0"] [data-act=lock]').click(); await t('ptab-drawing').click();
-      await apply(); assert.match(await prompt(), /Layer 0 is locked/);
+      await apply(); await said(/Layer 0 is locked/);
       await t('ptab-objects').click(); await page.locator('.or.layer[data-layer="0"] [data-act=lock]').click(); await t('ptab-drawing').click();
-      await apply(); assert.equal(await prompt(), axis === 'h' ? 'This line has no width to set' : 'This line has no height to set');
+      await apply(); assert.equal(await said(/This line has no (width|height) to set/), axis === 'h' ? 'This line has no width to set' : 'This line has no height to set');
       const after = await savedDoc(); assert.deepEqual(after.entities, before.entities); assert.deepEqual(after.blocks, before.blocks);
       assert.deepEqual(await histLabels(), history);
     }
