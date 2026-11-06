@@ -7,5 +7,7 @@ Do:
 
 Old steps (Rook fills in: grep -n "await step('" browser.test.mjs | grep -iE '<area words>' plus each changed UI string; every hit, or none; narrow words, `grip` alone hits 58 steps): . Run them too.
 
+New test proof: node tools/base-check.mjs <base-sha> <test-file> ['<step>'] prints FAIL; quote it in Tests.
+
 Commit "<commit title>".
 Report max <report size> lines: Result (commit id), Tests (quoted lines), Findings, Not checked.

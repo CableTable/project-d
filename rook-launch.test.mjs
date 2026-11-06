@@ -92,7 +92,7 @@ test('Retro 38: new builds and Knights require fresh reads for each named grill;
       const launch = () => run(['b.txt', out, 'br', 'abc1234', ...flags], r.x);
       if (passes) { launch(); assert.ok(launched(r.calls)); }
       else {
-        assert.throws(launch, { message: 'fresh read due (--no-fresh for an S item with no invariant)' });
+        assert.throws(launch, { message: /^fresh read due: node tools\/rook\.mjs fresh dwg(-2)? --as king \(--no-fresh for an S item with no invariant\)$/ });
         assert.equal(r.calls.some((c) => ['git', 'open', 'truncate', 'launch'].includes(c[0])), false);
       }
     }
@@ -387,7 +387,7 @@ test('TODO 172: lintBrief refuses oversized behaviours, one-word filters, builde
 test('TODO 185b: lint checks filters after apostrophes and accepts directly negated suite requests', () => {
   for (const [brief, problems] of [
     ["browser.test.mjs, don't skip: 'Layout'", ["line 1: one-word browser filter piece 'Layout'"]],
-    ["1. browser.test.mjs:2160 (step `TODO 110c: Draw, Modify, Annotate, Layout, Compare and the automatic Part tab`) expects the Dimension flyout ['Aligned','Linear','Radius','Diameter','Angle']; 155l1 added 'Automatic' first on purpose (grill-155l.md Q1). Fix: expect 'Automatic' first. Then grep browser.test.mjs for any other list of the five dimension names (flyout / ribbon / menu) a filtered run would miss, and fix those the same way.", []],
+    ["1. browser.test.mjs:2160 (step `TODO 110c: Draw, Modify, Annotate, Layout, Compare and the automatic Part tab`) expects the Dimension flyout ['Aligned','Linear','Radius','Diameter','Angle']; 155l1 added 'Automatic' first on purpose (grill-155l.md Q1). Fix: expect 'Automatic' first. Then grep browser.test.mjs for any other list of the five dimension names (flyout / ribbon / menu) a filtered run would miss, and fix those the same way.", ['line 1: Do line over 400 chars (436); split it into numbered items']], // the 400-char rule (retro 38ck); still no filter piece
     ["node browser.test.mjs <port> 'Layout'", ["line 1: one-word browser filter piece 'Layout'"]],
     ["node browser.test.mjs <port> 'TODO 175|New layout'", []],
     ["Don't ever run the full suite", []],
@@ -415,7 +415,7 @@ test('TODO 172: build and knight refuse every brief problem before changes; --bi
       });
       assert.equal(refused.calls.some((c) => isSwitch(c) || ['open', 'launch', 'gateRecord'].includes(c[0])), false);
       const big = recorder();
-      big.x.read = () => brief;
+      big.x.read = () => `${brief}\nNot split: one tool, one test`;
       assert.doesNotThrow(() => run([...args, ...flags, '--big'], big.x));
       assert.ok(launched(big.calls));
       assert.deepEqual(big.calls.find((c) => c[0] === 'gateCheck'), ['gateCheck', flags.includes('--fix'), flags.includes('--over'), false]);
@@ -611,7 +611,7 @@ test('TODO 167c: a brief whose line 1 starts King fix / Knight fix / Fix round c
   for (const [run, args] of [[build, ['b.txt', 'o.jsonl', 'br', 'abc1234']], [knight, ['b.txt', 'k.txt', 'br', 'abc1234']]]) {
     for (const [first, flags, kind] of [['King fix: TODO 1', [], 'fix'], ['Fix round 2: TODO 1', [], 'fix'], ['Build: TODO 1', [], 'item'], ['Build: TODO 1', ['--tool'], 'tool'], ['Build: TODO 1', ['--fix'], 'fix']]) {
       const { calls, x } = recorder();
-      x.read = () => `${first}\nrest\nOld steps: none\n`;
+      x.read = () => `${first}\nrest\nNew test proof: node tools/base-check.mjs abc1234 x.test.mjs\nOld steps: none\n`;
       run([...args, ...flags], x);
       const [, fix, , tool] = calls.find((c) => c[0] === 'gateCheck'), rec = calls.find((c) => c[0] === 'gateRecord')[1];
       assert.deepEqual([fix, tool, rec.fix, rec.tool], [kind === 'fix', kind === 'tool', kind === 'fix', kind === 'tool'], `${run.name} ${first} ${flags}`);
@@ -699,7 +699,7 @@ test('TODO 193a: lintBrief refuses ../Project D extras/runs paths, cmd /c and po
 });
 
 test('TODO 193a: knight refuses a sha named in the brief that the clone lacks, one line, before anything starts', () => {
-  const brief = 'Build: x\nRead it with git show 86d88ee before you start. Commit 2026110 and deadbeef are not shas.\nOld steps: none';
+  const brief = 'Build: x\nRead it with git show 86d88ee before you start. Commit 2026110 and deadbeef are not shas.\nbase-check proof\nOld steps: none';
   const r = recorder();
   r.x.read = () => brief;
   r.x.has = (dir, sha) => { r.calls.push(['has', dir, sha]); return sha !== '86d88ee'; };
@@ -1034,4 +1034,109 @@ test('TODO 167e lows: a missing queue.txt gives no queue line; launchRun with it
   launchFailed(dir, new Error('x'), () => {}, lock);
   assert.equal(existsSync(lock), false);
   rmSync(dir, { recursive: true });
+});
+
+test('Retro 38ck: suite refuses a (High) commit since the last push without runs<N>/rereview-<sha7>.txt; --over and a re-review file pass', (t) => {
+  t.mock.method(console, 'log', () => {});
+  const head = 'abc1234' + 'f'.repeat(33), high = `${'1234567'}${'a'.repeat(33)}`;
+  for (const [log, pushed, files, flags, refused] of [
+    [`${head} Fix the thing\n${high} 106a fix (High)`, true, [], [], true],
+    [`${head} Fix the thing\n${high} 106a fix (High)`, true, [`${X}/runs33/rereview-1234567.txt`], [], false],
+    [`${head} Fix the thing\n${high} 106a fix (High)`, true, [], ['--over'], false],
+    [`${head} Fix the thing (Low)\n${high} High level notes`, true, [], [], false],
+    [`${high} 106a fix (High)`, false, [], [], true],
+    ['', true, [], [], false],
+  ]) {
+    const r = recorder(), asked = [];
+    r.x.git = (...a) => {
+      asked.push(a.slice(1).join(' '));
+      if (a[1] === 'rev-parse' && a[2] === 'HEAD') return head;
+      if (a[1] === 'rev-parse' && a[2] === '--abbrev-ref') return 'king/x';
+      if (a[1] === 'rev-parse') { if (!pushed) throw new Error('unknown revision'); return ''; }
+      return log;
+    };
+    r.x.exists = (path) => files.includes(path);
+    const run = () => suite(['abc1234', ...flags], r.x);
+    if (refused) {
+      assert.throws(run, { message: 'refused: High fix 1234567 not re-reviewed (--over passes)' });
+      assert.equal(launched(r.calls), undefined);
+    } else { run(); assert.ok(launched(r.calls)); }
+    if (!flags.length) assert.ok(asked.includes(`log --format=%H %s ${pushed ? 'origin/king/x' : 'origin/main'}..HEAD`), asked.join(' | '));
+  }
+});
+
+test('Retro 38ck: a fresh read newer than its grill file is refused (--no-fresh passes); an older or equal one passes', (t) => {
+  t.mock.method(console, 'log', () => {});
+  for (const [run, out] of [[build, 'o.jsonl'], [knight, 'k.txt']]) {
+    for (const [freshAt, grillAt, flags, passes] of [[200, 100, [], false], [100, 200, [], true], [100, 100, [], true], [200, 100, ['--no-fresh'], true]]) {
+      const r = withUsage('King,5h,0,\n');
+      r.x.read = (path) => path.endsWith('limits.csv') ? 'agent,window,used_pct\nKing,5h,0\n' : 'Spec: ../runs33/grill-dwg.md';
+      r.x.mtime = (path) => (path === `${X}/runs33/fresh-dwg.out` ? freshAt : grillAt);
+      const go = () => run(['b.txt', out, 'br', 'abc1234', ...flags], r.x);
+      if (passes) { go(); assert.ok(launched(r.calls)); }
+      else {
+        assert.throws(go, { message: 'fresh read not folded into grill-dwg.md (--no-fresh passes)' });
+        assert.equal(r.calls.some((c) => ['git', 'open', 'truncate', 'launch'].includes(c[0])), false);
+      }
+    }
+  }
+});
+
+test('Retro 38ck: the Old steps line may quote a grep -iE with single words; other lines still may not', () => {
+  const template = readFileSync(resolve('tools/briefs/build.txt'), 'utf8');
+  const filled = template.replace('<area words>', 'export|cutter').replace('<Do list>', '1. Add the thing').replace('<report size>', '10');
+  assert.match(filled, /grep -iE 'export\|cutter'/);
+  assert.deepEqual(lintBrief(filled), []);
+  assert.equal(lintBrief("1. Run node browser.test.mjs <port> 'export|cutter'").length, 2);
+});
+
+test('Retro 38ck: --big still refuses more than 5 behaviours or a Do line over 400 chars unless the brief has "Not split: <why>"', (t) => {
+  t.mock.method(console, 'log', () => {});
+  const proof = 'New test proof: node tools/base-check.mjs abc1234 x.test.mjs\nOld steps: none';
+  const six = Array.from({ length: 6 }, (_, i) => `${i + 1}. Change behaviour ${i + 1}`).join('\n');
+  const long = (n) => `1. ${'x'.repeat(n - 3)}`;
+  assert.equal(long(400).length, 400);
+  for (const [run, args] of [[build, ['b.txt', 'o.jsonl', 'br', 'abc1234']], [knight, ['b.txt', 'k.txt', 'br', 'abc1234']]]) {
+    for (const [body, flags, passes] of [
+      [six, ['--big'], false],
+      [`${six}\nNot split: one tool, one test`, ['--big'], true],
+      [`${six}\nNot split:`, ['--big'], false],
+      [six, [], false],
+      [long(401), ['--big'], false],
+      [long(401), [], false],
+      [`${long(401)}\nNot split: one long list`, ['--big'], true],
+      [long(400), [], true],
+      [`${long(300)}\n${long(300)}`, [], true],
+    ]) {
+      const r = recorder();
+      r.x.read = () => `Build: TODO 1\n${body}\n${proof}\n`;
+      const go = () => run([...args, ...flags], r.x);
+      if (passes) { go(); assert.ok(launched(r.calls)); }
+      else {
+        assert.throws(go, /brief refused/);
+        assert.equal(r.calls.some((c) => isSwitch(c) || ['open', 'launch'].includes(c[0])), false);
+      }
+    }
+  }
+});
+
+test('Retro 38ck: a new-item Build brief without base-check is refused; --fix, --tool, --big and a fix or review brief pass', (t) => {
+  t.mock.method(console, 'log', () => {});
+  for (const [run, args] of [[build, ['b.txt', 'o.jsonl', 'br', 'abc1234']], [knight, ['b.txt', 'k.txt', 'br', 'abc1234']]]) {
+    for (const [text, flags, passes] of [
+      ['Build: TODO 1\n1. Do it\nOld steps: none', [], false],
+      ['Build: TODO 1\n1. Do it\nNew test proof: node tools/base-check.mjs abc1234 x.test.mjs\nOld steps: none', [], true],
+      ['Build: TODO 1\n1. Do it\nOld steps: none', ['--fix'], true],
+      ['Build: TODO 1\n1. Do it\nOld steps: none', ['--tool'], true],
+      ['Build: TODO 1\n1. Do it\nOld steps: none', ['--big'], true],
+      ['﻿Build: TODO 1\n1. Do it\nOld steps: none', [], false],
+      ['King fix: TODO 1\n1. Do it', [], true],
+    ]) {
+      const r = recorder();
+      r.x.read = () => text;
+      const go = () => run([...args, ...flags], r.x);
+      if (passes) { go(); assert.ok(launched(r.calls)); }
+      else assert.throws(go, /base-check/);
+    }
+  }
 });

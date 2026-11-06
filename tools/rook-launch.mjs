@@ -105,7 +105,8 @@ export function lintBrief(text) {
     if (numbered && !/^`?(Screenshots|npm\.cmd test|Tick|Append|Add a DECISIONS|Report)\b/i.test(numbered[1])) behaviours++;
     if (/^\s*(\d+\.\s+)?Also\b/i.test(line)) problems.push(`line ${i + 1}: line starts with Also (scope creep: make it a numbered item or drop it)`);
     if (new Set(tickIds(line)).size > 1) problems.push(`line ${i + 1}: Tick line names more than one TODO id`);
-    for (const [, , filter] of line.matchAll(/\bbrowser\.test\.mjs\b(?:[^'"]|(?<=\w)['’](?=\w))*\s(['"])(.*?)\1/g)) {
+    if (inItem && line.length > 400) problems.push(`line ${i + 1}: Do line over 400 chars (${line.length}); split it into numbered items`);
+    if (!/^Old steps\b/.test(line)) for (const [, , filter] of line.matchAll(/\bbrowser\.test\.mjs\b(?:[^'"]|(?<=\w)['’](?=\w))*\s(['"])(.*?)\1/g)) {
       for (const piece of filter.split('|')) {
         if (/^(?:[a-z]|\[[a-z]{2}\])+$/i.test(piece.trim())) problems.push(`line ${i + 1}: one-word browser filter piece '${piece}'`);
       }
@@ -121,9 +122,19 @@ export function lintBrief(text) {
   return problems;
 }
 
-function checkBrief(text, big) {
+// Retro 38c / 38k: --big overrides the problems but not ticket size (behaviour count, Do line length) unless the brief has `Not split: <why>`;
+// a new-item build brief (not --fix / --tool / --big) must name base-check, so its tests are proved red on the base.
+const SIZE_PROBLEM = /^\d+ behaviour lines|Do line over 400/;
+export function briefProblems(text, big, noProof = false) {
   const problems = lintBrief(text);
-  if (problems.length && !big) throw new Error(`brief refused:\n${problems.join('\n')}\n--big overrides these problems; fix with Read + Edit (sed -i is denied)`);
+  if (big) return /^Not split: *\S/m.test(text) ? [] : problems.filter((p) => SIZE_PROBLEM.test(p));
+  if (!noProof && /^﻿?Build:/.test(text) && !/\bbase-check\b/.test(text)) problems.push('build brief needs a New test proof line naming base-check (node tools/base-check.mjs <base-sha> <test-file>)');
+  return problems;
+}
+
+function checkBrief(text, big, noProof) {
+  const problems = briefProblems(text, big, noProof);
+  if (problems.length) throw new Error(`brief refused:\n${problems.join('\n')}\n--big overrides these problems, but not ticket size without a "Not split: <why>" line; fix with Read + Edit (sed -i is denied)`);
 }
 
 // WORKFLOW.md's reviewer flags, plus the extras folder (the brief lives there).
@@ -302,7 +313,7 @@ export function build(args, x = io) {
   const text = x.read(brief), fix = fixFlag || isFixBrief(text);
   x.gate.check(fix, over, tool);
   if (as === 'king' && !over) kingGate(x, 'build');
-  checkBrief(text, big);
+  checkBrief(text, big, fix || tool);
   if (!fix && !tool && !noFresh) checkFresh(x, text);
   if (fix || regrilled) checkFixRound(x, branch, regrilled);
   x.need(claude(as), ACCOUNTS[as].bin);
@@ -348,7 +359,7 @@ export function knight(args, x = io) {
   const text = x.read(brief), fix = fixFlag || isFixBrief(text);
   if (/\.\.\/runs\d+\/shots/.test(text)) throw new Error('shots go in shots-<id>/ in the clone root');
   x.gate.check(fix, over, tool);
-  checkBrief(text, big);
+  checkBrief(text, big, fix || tool);
   if (!fix && !tool && !noFresh) checkFresh(x, text);
   if (fix || regrilled) checkFixRound(x, branch, regrilled);
   x.need(CODEX, basename(CODEX));
@@ -384,7 +395,9 @@ const runsDir = (x) => dirname(x.gate.queueFile());
 
 function checkFresh(x, text) {
   for (const [, id] of text.matchAll(/\bgrill-([\w.-]+)\.md\b/g)) {
-    if (!x.exists(`${runsDir(x)}/fresh-${id}.out`)) throw new Error('fresh read due (--no-fresh for an S item with no invariant)');
+    const fresh = `${runsDir(x)}/fresh-${id}.out`, grill = `${runsDir(x)}/grill-${id}.md`;
+    if (!x.exists(fresh)) throw new Error(`fresh read due: node tools/rook.mjs fresh ${id} --as king (--no-fresh for an S item with no invariant)`);
+    if (x.exists(grill) && x.mtime(fresh) > x.mtime(grill)) throw new Error(`fresh read not folded into grill-${id}.md (--no-fresh passes)`);
   }
 }
 
@@ -417,10 +430,19 @@ function plainRun(x, { kind, id, bin, args, cwd, inPath, out, lock }) {
 // `suite <sha>`: npm test then the browser test in this repo's checked-out branch; the log ends `SUITE unit=<code> browser=<code>`.
 export function suite(args, x = io) {
   const [sha, ...rest] = args;
-  if (!sha || rest.length) throw new Error('usage: suite <sha>');
+  if (!sha || rest.length > 1 || (rest.length && rest[0] !== '--over')) throw new Error('usage: suite <sha> [--over]');
   if (!SHA.test(sha)) throw new Error(`not a commit id: ${sha}`);
   const head = x.git(REPO, 'rev-parse', 'HEAD');
   if (!head.startsWith(sha.toLowerCase())) throw new Error(`refused: ${sha} is not HEAD (${head.slice(0, 7)}); the suite runs the checked-out files`);
+  if (!rest.length) { // S38c retro: a High fix is re-reviewed before the suite; subject ends "(High)", Rook writes rereview-<sha7>.txt
+    const pushed = `origin/${x.git(REPO, 'rev-parse', '--abbrev-ref', 'HEAD')}`;
+    let range = `${pushed}..HEAD`;
+    try { x.git(REPO, 'rev-parse', '--verify', '-q', pushed); } catch { range = 'origin/main..HEAD'; } // branch not pushed yet
+    for (const line of x.git(REPO, 'log', '--format=%H %s', range).split(/\r?\n/)) {
+      const [full, ...subject] = line.split(' '), s7 = full.slice(0, 7);
+      if (/\(High\)/.test(subject.join(' ')) && !x.exists(`${runsDir(x)}/rereview-${s7}.txt`)) throw new Error(`refused: High fix ${s7} not re-reviewed (--over passes)`);
+    }
+  }
   plainRun(x, { kind: 'suite', id: sha, bin: process.execPath, args: [SUITE], cwd: REPO, out: `${runsDir(x)}/suite-${sha}.log` });
 }
 
