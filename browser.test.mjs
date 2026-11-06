@@ -4323,6 +4323,135 @@ try {
     } finally { await ctx.close(); }
   });
 
+  await step('TODO 203: PDF / Print full-screen preview', async () => {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const p = await ctx.newPage(), q = (id) => p.getByTestId(id);
+    p.on('pageerror', (e) => errors.push(String(e)));
+    const raw = newDoc(4); addLayer(raw, 'ADHESIVE', { aci: 1 });
+    addEntities(raw, dxfPoly([[0, 0], [180, 0], [180, 100], [0, 100]], { closed: true }), dxfLine(10, 10, 170, 90, { layer: 'ADHESIVE' }));
+    const lay = newLayout('Full screen');
+    lay.parts.p = makePart('p', 'Plate', raw);
+    lay.placed = [{ partId: 'p', x: 200, y: 200, rot: 0 }];
+    const openTab = async (name, text) => {
+      await q('picker').setInputFiles({ name, mimeType: 'application/dxf', buffer: Buffer.from(text) });
+      await p.waitForFunction((n) => document.querySelector('.dtab.on .tname').textContent === n, name);
+    };
+    const open = async () => { await q('pdf-open').click(); await q('pdf-dialog').waitFor(); await p.waitForFunction(() => { const c = document.querySelector('[data-testid=pdf-preview]'); return c && c.width > 100; }); };
+    const inked = (id) => p.waitForFunction((id) => { const c = document.querySelector(`[data-testid=${id}]`), d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let n = 0; for (let i = 0; i < d.length; i += 4) if (d[i] < 200 && d[i + 3] > 200) n++; return n > 200; }, id);      // thin lines are grey: anything darker than the paper
+    const pic = (id) => q(id).evaluate((c) => c.toDataURL());
+    const zoom = async () => Number((await q('pdf-full-zoom').textContent()).replace('%', ''));
+    const focused = () => p.evaluate(() => document.activeElement.dataset.testid);
+    const openFull = async () => { await q('pdf-fullscreen').click(); await q('pdf-full').waitFor(); await inked('pdf-full-canvas'); };
+    const centre = async () => { const b = await q('pdf-full-canvas').boundingBox(); await p.mouse.move(b.x + b.width / 2, b.y + b.height / 2); return b; };
+    try {
+      await p.goto(URL_);
+      await openTab('full-screen.dxf', writeDxf(layoutRaw(lay)));
+      await open();
+      // the button: top-right of the preview box, with its title
+      const box = await q('pdf-fullscreen').boundingBox(), pb = await p.locator('.pd-prev').boundingBox();
+      assert.equal(await q('pdf-fullscreen').getAttribute('title'), 'Full screen preview');
+      assert.ok(box.x + box.width <= pb.x + pb.width && box.x + box.width > pb.x + pb.width - 20 && box.y >= pb.y && box.y < pb.y + 20, 'button sits in the preview box top-right');
+      const pages = await q('pdf-pagebtn').count();      assert.ok(pages >= 2, 'separations: ' + pages);
+      const before = await pic('pdf-preview');
+      await openFull();
+      const ov = q('pdf-full');
+      assert.equal(await ov.getAttribute('role'), 'dialog');
+      assert.equal(await ov.getAttribute('aria-modal'), 'true');
+      assert.equal(await ov.getAttribute('aria-label'), 'Full screen preview');
+      assert.equal(await focused(), 'pdf-full-close', 'focus moves to Close');
+      assert.equal(await q('pdf-full-pagebtn').count(), pages, 'the dialog\'s page list');
+      assert.match(await q('pdf-full-label').textContent(), new RegExp(`^Page 1 of ${pages} · `));
+      assert.equal(await zoom(), 100);
+      // the overlay is much bigger than the dialog's preview
+      const cb = await q('pdf-full-canvas').boundingBox();
+      assert.ok(cb.width > 1300 && cb.height > 700, `overlay canvas ${cb.width} × ${cb.height}`);
+      // wheel zooms at the cursor; the canvas stays at the overlay size × devicePixelRatio
+      await centre();
+      const fitPic = await pic('pdf-full-canvas');
+      await p.mouse.wheel(0, -600);
+      await p.waitForFunction(() => document.querySelector('[data-testid=pdf-full-zoom]').textContent !== '100%');
+      const z1 = await zoom();
+      assert.ok(z1 > 200 && z1 <= 3200, 'zoom ' + z1);
+      await p.waitForFunction((was) => document.querySelector('[data-testid=pdf-full-canvas]').toDataURL() !== was, fitPic);
+      for (let i = 0; i < 12; i++) await p.mouse.wheel(0, -1000);
+      await p.waitForFunction(() => document.querySelector('[data-testid=pdf-full-zoom]').textContent === '3200%');
+      const size = await q('pdf-full-canvas').evaluate((c) => ({ w: c.width, h: c.height, dpr: devicePixelRatio, sw: c.parentElement.clientWidth, sh: c.parentElement.clientHeight }));
+      assert.deepEqual([size.w, size.h], [Math.round(size.sw * size.dpr), Math.round(size.sh * size.dpr)], 'canvas never oversized');
+      for (let i = 0; i < 12; i++) await p.mouse.wheel(0, 1000);
+      await p.waitForFunction(() => document.querySelector('[data-testid=pdf-full-zoom]').textContent === '100%');
+      // drag pans
+      await p.mouse.wheel(0, -500);
+      await p.waitForFunction(() => document.querySelector('[data-testid=pdf-full-zoom]').textContent !== '100%');
+      await p.waitForTimeout(100);
+      const zoomed = await pic('pdf-full-canvas');
+      await p.mouse.down(); await p.mouse.move(cb.x + cb.width / 2 + 80, cb.y + cb.height / 2 + 40, { steps: 4 }); await p.mouse.up();
+      await p.waitForFunction((was) => document.querySelector('[data-testid=pdf-full-canvas]').toDataURL() !== was, zoomed);
+      await q('pdf-full-fit').click();
+      assert.equal(await zoom(), 100);
+      // pages: a page button, Next, Previous, PageUp / PageDown
+      await q('pdf-full-pagebtn').nth(1).click();
+      assert.match(await q('pdf-full-label').textContent(), new RegExp(`^Page 2 of ${pages} · `));
+      await q('pdf-full-next').click();
+      assert.match(await q('pdf-full-label').textContent(), new RegExp(`^Page ${Math.min(3, pages)} of ${pages} · `));
+      await q('pdf-full-prev').click(); await q('pdf-full-prev').click();
+      assert.match(await q('pdf-full-label').textContent(), new RegExp(`^Page 1 of ${pages} · `));
+      await p.keyboard.press('PageDown');
+      assert.match(await q('pdf-full-label').textContent(), new RegExp(`^Page 2 of ${pages} · `));
+      assert.equal(await q('pdf-full-pagebtn').nth(1).evaluate((b) => b.classList.contains('on')), true);
+      // Tab stays inside the overlay
+      for (let i = 0; i < pages + 8; i++) { await p.keyboard.press('Tab'); assert.equal(await p.evaluate(() => !!document.activeElement.closest('[data-testid=pdf-full]')), true, 'focus left the overlay'); }
+      // Esc closes only the overlay; the dialog is still open on the picked page
+      await p.keyboard.press('Escape');
+      assert.equal(await q('pdf-full').count(), 0);
+      assert.equal(await q('pdf-dialog').count(), 1, 'the dialog stays open');
+      assert.match(await q('pdf-preview-label').textContent(), new RegExp(`^Preview · page 2 of ${pages} · `));
+      assert.equal(await q('pdf-pagebtn').nth(1).evaluate((b) => b.classList.contains('on')), true);
+      assert.equal(await focused(), 'pdf-fullscreen', 'focus returns to the button');
+      await q('pdf-pagebtn').first().click();
+      assert.equal(await pic('pdf-preview'), before, 'the dialog preview paints as before');
+      // double-click on the preview opens it, and the close button closes only the overlay
+      await q('pdf-preview').dblclick();
+      await q('pdf-full').waitFor();
+      await q('pdf-full-close').click();
+      assert.equal(await q('pdf-full').count(), 0);
+      assert.equal(await q('pdf-dialog').count(), 1);
+      // light and dark
+      for (const theme of ['light', 'dark']) {
+        await p.evaluate((theme) => { document.documentElement.dataset.theme = theme; }, theme);
+        await openFull();
+        await p.waitForTimeout(150);
+        await p.screenshot({ path: `${shotDir}/todo203-full-screen-${theme}.png` });
+        assert.ok(readFileSync(`${shotDir}/todo203-full-screen-${theme}.png`).length > 1000, 'screenshot exists');
+        await p.keyboard.press('Escape');
+      }
+      await p.setViewportSize({ width: 1024, height: 700 });
+      await openFull(); await p.waitForTimeout(150);
+      await p.screenshot({ path: `${shotDir}/todo203-full-screen-1024.png` });
+      assert.equal(await q('pdf-full-close').isVisible(), true, 'the bar fits at 1024 px');
+      assert.ok((await q('pdf-full-close').boundingBox()).x + 40 <= 1024, 'Close inside the window');
+      await p.keyboard.press('Escape');
+      await p.screenshot({ path: `${shotDir}/todo203-dialog-1024.png` });
+      await p.setViewportSize({ width: 1440, height: 900 });
+      await p.keyboard.press('Escape');
+      assert.equal(await q('pdf-dialog').count(), 0, 'Esc with no overlay still closes the dialog');
+      // a drawing tab
+      await openTab('full-drawing.dxf', writeDxf(raw));
+      await open();
+      await openFull(); await centre(); await p.mouse.wheel(0, -500);
+      await p.waitForFunction(() => document.querySelector('[data-testid=pdf-full-zoom]').textContent !== '100%');
+      await p.keyboard.press('Escape');
+      assert.equal(await q('pdf-full').count(), 0);
+      assert.equal(await q('pdf-dialog').count(), 1);
+      await q('pdf-close').click();
+      // Compare has nothing to export (no new print there)
+      await p.locator('[data-menu=File]').click(); await p.getByRole('menuitem', { name: 'Compare drawings…', exact: true }).click();
+      await p.locator('.tabs .dtab.on', { hasText: 'Compare' }).waitFor();
+      await q('pdf-open').click();
+      assert.match(await q('cmd-prompt').textContent(), /Nothing to export/);
+      assert.equal(await q('pdf-dialog').count(), 0);
+    } finally { await ctx.close(); }
+  });
+
   await step('closing a tab with unsaved changes asks first; Keep it open keeps it, closing discards', async () => {
     await t('new-layout').click();                                                    // a second layout tab, changed and not saved
     await panelControl(page, page.locator('[data-key=gapX]')).fill('6');

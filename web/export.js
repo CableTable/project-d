@@ -1,7 +1,8 @@
 // export.js — the "PDF / Print" dialog (mock-up "PDF export"): This layout (page, film, pages, marks, live preview) and
 // A folder at once. The pages themselves are planned and drawn by pdf-export.js (pure); this file is the UI, saving and
 // printing. Page/film settings last the session; title block settings belong to the document. File text goes in via h().
-import { h, fill } from './dom.js';
+import { h, fill, icon } from './dom.js';
+import { fitBase, zoomAt, panBy, paintView, FIT } from './pdf-view.js';
 import { baseName, saveDefault, withExt } from './savepath.js';
 import { planPdf, freePdfName, DEFAULT_OPTIONS, tileGrid, scaleText, titleBlockTexts, cleanTitleBlock, readTitleBlock, PAPERS, PART_BORDER } from './pdf-export.js';
 import { batchPdfSource } from './pdf-source.js';
@@ -29,16 +30,16 @@ function downloadBytes(name, bytes) {
 
 // ---------------------------------------------------------------- the preview: the page's own drawing commands on a canvas
 
-/** Replays a pdf-write Page on a canvas: mm, y up, black as the film colour, white paper. */
-export function paintPage(canvas, page, box, colours) {
+/** Replays a pdf-write Page on a canvas: mm, y up, black as the film colour, white paper. `view` { s, ox, oy } (px per mm, page top-left) replaces the fit. */
+export function paintPage(canvas, page, box, colours, view) {
   const dpr = window.devicePixelRatio || 1, W = Math.max(1, box.width), Hh = Math.max(1, box.height);
   canvas.width = Math.round(W * dpr); canvas.height = Math.round(Hh * dpr);
   canvas.style.width = W + 'px'; canvas.style.height = Hh + 'px';
   const c = canvas.getContext('2d');
   c.setTransform(1, 0, 0, 1, 0, 0); c.clearRect(0, 0, canvas.width, canvas.height);
-  const pad = 14, k = Math.min((W - 2 * pad) / page.w, (Hh - 2 * pad) / page.h);
+  const fit = fitBase(W, Hh, page.w, page.h), k = view ? view.s : fit.k;
   if (!(k > 0)) return;
-  const ox = (W - page.w * k) / 2, oy = (Hh - page.h * k) / 2;
+  const ox = view ? view.ox : fit.ox, oy = view ? view.oy : fit.oy;
   const V = [dpr * k, 0, 0, -dpr * k, dpr * ox, dpr * (oy + page.h * k)];
   const css = (rgb) => (rgb[0] + rgb[1] + rgb[2] === 0 ? colours.film : `rgb(${rgb.map((v) => Math.round(v * 255)).join(',')})`);
   c.setTransform(...V);
@@ -96,16 +97,17 @@ export function openExport(host) {
   const t = window.__TAURI__;
   const inApp = !!(t && t.dialog && t.dialog.save && t.fs && t.fs.writeFile);
   const ref = {};
-  let plan = null, busy = false, observer = null;
+  let plan = null, busy = false, observer = null, full = null;      // full: the full-screen preview's close function while it is open
 
   const close = () => {
+    if (full) full(false);
     if (observer) observer.disconnect();
     document.removeEventListener('keydown', onKey, true);
     back.remove();
     if (prevFocus && prevFocus.focus) prevFocus.focus();
   };
   const prevFocus = document.activeElement;
-  const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
+  const onKey = (e) => { if (!full && e.key === 'Escape') { e.stopPropagation(); close(); } };      // Esc closes the full-screen preview first
 
   // Mirror and Negative are for film: greyed on a check print, and then they do not apply (they come back as they were)
   const opts = () => ({
@@ -145,7 +147,9 @@ export function openExport(host) {
   ref.preLabel = h('div', { class: 'lbl', 'data-testid': 'pdf-preview-label' });
   ref.pageBtns = h('div', { class: 'pd-pagebtns', 'data-testid': 'pdf-page-buttons' });
   ref.canvas = h('canvas', { role: 'img', 'data-testid': 'pdf-preview' });
-  ref.prevBox = h('div', { class: 'pd-prev' }, ref.canvas);
+  ref.fullBtn = h('button', { class: 'btn pd-fs', type: 'button', title: 'Full screen preview', 'aria-label': 'Full screen preview', 'data-testid': 'pdf-fullscreen', onclick: () => openFull() }, icon('full', 16));
+  ref.canvas.addEventListener('dblclick', () => openFull());
+  ref.prevBox = h('div', { class: 'pd-prev' }, ref.canvas, ref.fullBtn);
 
   const rememberTitle = () => { host.setTitleBlock(titleBlock); refresh(); };
   ref.titleSwitch = h('input', { type: 'checkbox', role: 'switch', class: 'swin', checked: titleBlock.enabled, 'aria-label': 'Title block', 'data-testid': 'pdf-title-block' });
@@ -296,12 +300,88 @@ export function openExport(host) {
     paint();
   }
 
+  const colours = () => {
+    const cs = getComputedStyle(document.documentElement);
+    return { paper: cs.getPropertyValue('--pdpaper').trim() || '#ffffff', film: cs.getPropertyValue('--film').trim() || '#111111', line: cs.getPropertyValue('--line').trim() || '#999999' };
+  };
   function paint() {
     if (!plan || settings.tab !== 'one') return;
     const r = ref.prevBox.getBoundingClientRect();
     if (r.width < 10 || r.height < 10) return;
-    const cs = getComputedStyle(document.documentElement);
-    paintPage(ref.canvas, plan.build(settings.pageIdx), r, { paper: cs.getPropertyValue('--pdpaper').trim() || '#ffffff', film: cs.getPropertyValue('--film').trim() || '#111111', line: cs.getPropertyValue('--line').trim() || '#999999' });
+    paintPage(ref.canvas, plan.build(settings.pageIdx), r, colours());
+  }
+
+  // ---- the full-screen preview: an overlay above the dialog; the same paintPage at the overlay's size, wheel zoom (1×–32×), drag pan
+  function openFull() {
+    if (full || !plan || settings.tab !== 'one') return;
+    const startIdx = settings.pageIdx, pages = new Map();
+    const pageAt = (i) => { if (!pages.has(i)) pages.set(i, plan.build(i)); return pages.get(i); };         // built once per page while open
+    let view = FIT, raf = 0, drag = null;
+    const canvas = h('canvas', { role: 'img', 'data-testid': 'pdf-full-canvas' });
+    const stage = h('div', { class: 'pdfull-stage' }, canvas);
+    const zoomLbl = h('span', { class: 'lbl mono', 'data-testid': 'pdf-full-zoom' });
+    const pageLbl = h('span', { class: 'lbl', 'data-testid': 'pdf-full-label', 'aria-live': 'polite' });
+    const go = (i) => { settings.pageIdx = Math.max(0, Math.min(plan.count - 1, i)); show(); };
+    const btns = plan.pages.slice(0, 60).map((q, i) => h('button', { class: 'btn', type: 'button', 'data-testid': 'pdf-full-pagebtn', onclick: () => go(i) }, pageName(q)));
+    const prev = h('button', { class: 'btn', type: 'button', 'data-testid': 'pdf-full-prev', onclick: () => go(settings.pageIdx - 1) }, 'Previous');
+    const next = h('button', { class: 'btn', type: 'button', 'data-testid': 'pdf-full-next', onclick: () => go(settings.pageIdx + 1) }, 'Next');
+    const fit = h('button', { class: 'btn', type: 'button', 'data-testid': 'pdf-full-fit', onclick: () => { view = FIT; show(); } }, 'Fit');
+    const closeBtn = h('button', { class: 'btn', type: 'button', 'aria-label': 'Close', title: 'Close (Esc)', 'data-testid': 'pdf-full-close', onclick: () => closeFull() }, '×');
+    const overlay = h('div', { class: 'pdfull', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Full screen preview', 'data-testid': 'pdf-full' }, stage,
+      h('div', { class: 'pdfull-bar' }, prev, h('div', { class: 'pd-pagebtns' }, btns), next, h('span', { class: 'pdfull-gap' }), pageLbl, zoomLbl, fit, closeBtn));
+    const paintFull = () => {
+      raf = 0;
+      const r = stage.getBoundingClientRect();
+      if (r.width < 10 || r.height < 10) return;
+      const pg = pageAt(settings.pageIdx);
+      paintPage(canvas, pg, r, colours(), paintView(fitBase(r.width, r.height, pg.w, pg.h), view));
+    };
+    function show() {                                                // labels now, the repaint in one animation frame
+      const p = plan.pages[settings.pageIdx];
+      btns.forEach((b, i) => b.classList.toggle('on', i === settings.pageIdx));
+      pageLbl.textContent = `Page ${p.n} of ${plan.count} · ${p.layer || 'All layers'}${p.tile ? ` · tile ${p.tile.n}/${p.tile.of}` : ''}`;
+      canvas.setAttribute('aria-label', `Page ${p.n} preview`);
+      zoomLbl.textContent = Math.round(view.z * 100) + '%';
+      if (!raf) raf = requestAnimationFrame(paintFull);
+    }
+    stage.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      const r = stage.getBoundingClientRect();
+      view = zoomAt(view, e.clientX - r.left, e.clientY - r.top, Math.exp(-e.deltaY * 0.002));
+      show();
+    }, { passive: false });
+    stage.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0 && e.button !== 1) return;
+      e.preventDefault(); stage.setPointerCapture(e.pointerId); drag = { x: e.clientX, y: e.clientY }; stage.classList.add('drag');
+    });
+    stage.addEventListener('pointermove', (e) => {
+      if (!drag) return;
+      view = panBy(view, e.clientX - drag.x, e.clientY - drag.y); drag = { x: e.clientX, y: e.clientY }; show();
+    });
+    const endDrag = () => { drag = null; stage.classList.remove('drag'); };
+    stage.addEventListener('pointerup', endDrag); stage.addEventListener('pointercancel', endDrag);
+    const onFullKey = (e) => {
+      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeFull(); }
+      else if (e.key === 'PageDown' || e.key === 'PageUp') { e.preventDefault(); go(settings.pageIdx + (e.key === 'PageDown' ? 1 : -1)); }
+      else if (e.key === 'Tab') {                                    // Tab stays inside the overlay
+        const f = [...overlay.querySelectorAll('button')], i = f.indexOf(document.activeElement);
+        if (e.shiftKey ? i <= 0 : i < 0 || i === f.length - 1) { e.preventDefault(); f[e.shiftKey ? f.length - 1 : 0].focus(); }
+      }
+    };
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(() => show()) : null;
+    function closeFull(restore = true) {                              // restore false: the whole dialog is going away
+      document.removeEventListener('keydown', onFullKey, true);
+      if (ro) ro.disconnect();
+      cancelAnimationFrame(raf);
+      overlay.remove(); full = null;
+      if (restore) { if (settings.pageIdx !== startIdx) refresh(); ref.fullBtn.focus(); }
+    }
+    full = closeFull;
+    document.addEventListener('keydown', onFullKey, true);
+    back.append(overlay);
+    if (ro) ro.observe(stage);
+    show();
+    closeBtn.focus();
   }
 
   // ---- saving and printing: This layout
