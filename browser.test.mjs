@@ -2949,7 +2949,7 @@ try {
       for (const [path, expected] of [
         ['C:/jobs/missing.dxf', /Open failed: file not found/],
         ['C:/jobs/unsupported.xyz', /Opens DXF or PDF/],
-        ['C:/jobs/unbuilt.dwg', /DWG: not built yet/],
+        ['C:/jobs/unbuilt.dwg', /unbuilt\.dwg: could not convert this DWG \(unexpected grant\)/],      // this stub has no dwg_to_dxf
       ]) {
         await p.evaluate(async (path) => { window.__launchQueue.push([path, null]); await window.__launch(); }, path);
         const message = await prompt();
@@ -2982,6 +2982,87 @@ try {
       await p.getByRole('menuitemcheckbox', { name: /Theme: dark/ }).click();
       await p.screenshot({ path: shotDir + '/explorer-open-dark.png' });
     } finally { await context.close(); }
+  });
+  await step('TODO DWG2: a dropped .dwg in a plain browser says DWG needs the desktop app', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    try {
+      const p = await context.newPage();
+      p.on('pageerror', (e) => errors.push(String(e)));
+      await p.goto(URL_); await p.waitForSelector('[data-testid=count]', { state: 'attached' });
+      const prompt = () => p.locator('[data-testid=cmd-prompt]').textContent();
+      await p.evaluate(() => {
+        const dt = new DataTransfer(); dt.items.add(new File([new Uint8Array([65, 67, 49, 48])], 'plate.dwg'));
+        window.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true }));
+      });
+      await p.waitForFunction(() => document.querySelector('[data-testid=cmd-prompt]').textContent === 'DWG needs the desktop app');
+      assert.equal(await p.locator('.tabs .dtab').count(), 1, 'no tab for the refused drop');
+      await p.locator('[data-testid=picker]').setInputFiles({ name: 'second.dwg', mimeType: 'application/octet-stream', buffer: Buffer.from('AC1015') });
+      await p.waitForFunction(() => document.querySelector('[data-testid=cmd-prompt]').textContent === 'DWG needs the desktop app');
+      assert.doesNotMatch(await prompt(), /not built yet/);
+    } finally { await context.close(); }
+  });
+  await step('TODO DWG2: a .dwg opens through dwg_to_dxf as a tab with its .dwg name; Save suggests the .dxf name and the tab becomes it; a failure is one line; Compare and About', async () => {
+    const dxf = readFileSync('fixtures/outline.dxf', 'utf8'), dir = process.env.SHOTS_DIR || 'shots';
+    mkdirSync(dir, { recursive: true });
+    for (const [theme, width] of [['light', 1440], ['dark', 1440], ['light', 1024]]) {
+      const context = await browser.newContext({ viewport: { width, height: 900 }, colorScheme: theme });
+      try {
+        const p = await context.newPage();
+        p.on('pageerror', (e) => errors.push(String(e)));
+        await p.addInitScript(({ dxf }) => {
+          const log = window.__dwg = { calls: [], saves: [], writes: [] };
+          window.__pick = 'C:/jobs/plate.dwg';
+          window.__TAURI__ = {
+            core: { invoke: async (cmd, args) => {
+              if (cmd !== 'dwg_to_dxf') return;
+              log.calls.push(args.path);
+              if (/bad/.test(args.path)) throw new Error('Could not open\nSECTION is broken');
+              return dxf;
+            } },
+            fs: { readFile: async () => new Uint8Array(), exists: async () => false, readTextFile: async () => '', writeTextFile: async (path) => { log.writes.push(path); } },
+            dialog: { open: async () => window.__pick, save: async (o) => { log.saves.push(o.defaultPath); return 'C:/jobs/plate.dxf'; } },
+          };
+        }, { dxf });
+        await p.goto(URL_); await p.waitForSelector('[data-testid=count]', { state: 'attached' });
+        const prompt = () => p.locator('[data-testid=cmd-prompt]').textContent();
+        const openIt = async () => { await p.locator('[data-menu=File]').click(); await p.getByRole('menuitem', { name: 'Open…', exact: true }).click(); };
+        await openIt();
+        await p.waitForFunction(() => document.querySelector('.dtab.on .tname')?.textContent === 'plate.dwg');
+        assert.deepEqual(await p.evaluate(() => window.__dwg.calls), ['C:/jobs/plate.dwg']);
+        assert.match(await prompt(), /^Opened plate\.dwg: \d+ entities.*Converted from DWG by LibreDWG$/);
+        await p.screenshot({ path: `${dir}/dwg2-status-${theme}-${width}.png` });
+        if (theme !== 'light' || width !== 1440) continue;
+        assert.ok(await p.evaluate(() => localStorage.getItem('pd-recent').includes('C:/jobs/plate.dwg')), 'Recent remembers the .dwg');
+        await openIt();                                               // the same .dwg again: its tab, not a second copy
+        await p.waitForFunction(() => /already open/.test(document.querySelector('[data-testid=cmd-prompt]').textContent));
+        assert.equal(await p.locator('.tabs .dtab').count(), 1);
+        assert.deepEqual(await p.evaluate(() => window.__dwg.calls), ['C:/jobs/plate.dwg'], 'no second conversion');
+        await p.evaluate(() => { const dt = new DataTransfer(); dt.items.add(new File([new Uint8Array([65])], 'dropped.dwg')); window.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true })); });
+        await p.waitForFunction(() => /dropped\.dwg: could not convert this DWG \(a dropped file has no path/.test(document.querySelector('[data-testid=cmd-prompt]').textContent));
+        await p.evaluate(() => { window.__pick = 'C:/jobs/bad.dwg'; });
+        await openIt();
+        await p.waitForFunction(() => document.querySelector('[data-testid=cmd-prompt]').textContent === 'bad.dwg: could not convert this DWG (SECTION is broken)');
+        assert.equal(await p.locator('.tabs .dtab').count(), 1, 'a failed conversion opens no tab');
+        await p.locator('[data-menu=File]').click(); await p.getByRole('menuitem', { name: 'Save', exact: true }).click();
+        await p.waitForFunction(() => document.querySelector('.dtab.on .tname')?.textContent === 'plate.dxf');
+        assert.deepEqual(await p.evaluate(() => window.__dwg.saves), ['C:/jobs/plate.dxf'], 'Save asked, suggesting the .dxf beside the .dwg');
+        assert.deepEqual(await p.evaluate(() => window.__dwg.writes), ['C:/jobs/plate.dxf'], 'the .dwg is never written');
+        await p.evaluate(() => { window.__pick = 'C:/jobs/plate.dwg'; });
+        await openIt();                                               // the tab is a .dxf now: the .dwg opens again as its own tab
+        await p.waitForFunction(() => document.querySelectorAll('.tabs .dtab').length === 2);
+        await p.locator('[data-menu=File]').click(); await p.getByRole('menuitem', { name: 'Compare drawings…', exact: true }).click();
+        await p.waitForSelector('[data-testid=cmp-add-file]');
+        const before = await p.locator('[data-testid=cmp-items] > *').count();
+        await p.locator('[data-testid=cmp-add-file]').click();
+        await p.waitForFunction((n) => document.querySelectorAll('[data-testid=cmp-items] > *').length > n, before);
+        assert.equal((await p.evaluate(() => window.__dwg.calls)).length, 4, 'Compare Add file converted the .dwg');
+        await p.locator('[data-menu=Help]').click(); await p.getByRole('menuitem', { name: 'About Project D…', exact: true }).click();
+        assert.equal(await p.locator('[data-testid=about-dwg]').textContent(), 'DWG via LibreDWG (GPL-3.0-or-later), source: https://github.com/LibreDWG/libredwg');
+        assert.equal(await p.locator('[data-testid=about-dwg] a').getAttribute('href'), 'https://github.com/LibreDWG/libredwg');
+        await p.keyboard.press('Escape');
+        assert.equal(await p.locator('[data-testid=about-dialog]').count(), 0);
+      } finally { await context.close(); }
+    }
   });
   await step('TODO 93 fix: a launched picture PDF prompt leaves library, autosave and recovery running', async () => {
     const context = await browser.newContext();
@@ -6266,10 +6347,7 @@ try {
     assert.equal(await hint('Save'), 'Ctrl+S'); assert.equal(await hint('Save As…'), 'Ctrl+Shift+S');
     await page.keyboard.press('Escape');
     assert.equal(await page.locator('[data-menu=Modify]').getAttribute('aria-disabled'), null, 'Modify is built: Offset, Trim, Mirror');
-    for (const m of ['Help']) {
-      const b = page.locator('[data-menu=' + m + ']');
-      assert.equal(await b.getAttribute('aria-disabled'), 'true', m); assert.equal(await b.getAttribute('title'), 'Not built yet', m);
-    }
+    assert.equal(await page.locator('[data-menu=Help]').getAttribute('aria-disabled'), null, 'Help is built since DWG2: About Project D');
     await page.locator('[data-menu=Draw]').click();
     assert.equal(await hint('Line'), 'L'); assert.equal(await hint('Text'), 'T');
     await page.keyboard.press('Escape');
