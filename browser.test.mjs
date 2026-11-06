@@ -2335,8 +2335,15 @@ try {
       await q('set-length').click(); await command('0,0');
       assert.match(await q('cmd-prompt').textContent(), /second point/i);
       await q('panel-library').click();
+      const promptGone = () => p.waitForFunction(() => !/Set length|second point/i.test(document.querySelector('[data-testid=cmd-prompt]').textContent));
+      await promptGone();
       assert.doesNotMatch(await q('cmd-prompt').textContent(), /Set length|second point/i);
       await q('ptab-drawing').click();
+      await q('set-length').click(); await command('0,0');
+      assert.match(await q('cmd-prompt').textContent(), /second point/i);
+      await q('ptab-objects').click(); await promptGone();
+      await q('ptab-drawing').click();
+      assert.equal(await q('set-length').evaluate((el) => el.classList.contains('on')), false, 'Objects tab cancels Set length');
       assert.equal(await q('set-length').evaluate((el) => el.classList.contains('on')), false);
       assert.equal(await q('real-length').isVisible(), false);
       assert.equal(await q('undo').isDisabled(), true, 'cancelling Set length makes no edit');
@@ -2364,6 +2371,8 @@ try {
       await p.keyboard.press('Escape'); await p.keyboard.press('Escape');
       await audit('Layout');
       await p.locator('[data-tool=select]').click(); await p.keyboard.press('Control+a');
+      await q('ptab-drawing').click();
+      await p.locator('.docker-pane .sec:visible', { hasText: 'Selected part' }).first().waitFor();
       await audit('Layout selected');
       await q('panel-library').click();
       for (const theme of ['light', 'dark']) {

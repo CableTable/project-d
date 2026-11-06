@@ -3670,7 +3670,7 @@ function buildObjects() {
 }
 
 function setPtab(tab) {
-  if (tab === 'library' && state.setlen) cancelSetlen();
+  if (tab !== 'drawing' && state.setlen) cancelSetlen();
   state.ptab = tab;
   state.panel = tab === 'library' ? 'library' : 'main';
   state.propsOn = true;
