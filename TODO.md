@@ -203,6 +203,7 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
     106a. Second-point fields: Move / Copy / Stretch second point and Mirror's second point get Length + Angle (+ Δx / Δy); Leader and Balloon points get Line's fields; Align and Break-at-point points X / Y.
     106b. (after 106a) Dynamic prompt: every number / option prompt (Offset, Fillet, Chamfer, Lengthen, Rounded-rectangle radius, Text height, Divide / Measure, Array / Step and repeat) shows its prompt text and one entry field in the tag; Enter = the command bar's Enter.
     106c. (after 106b) Grips: hot-grip Stretch shows Length + Angle (Radius on circle quadrant / arc mid), typed value moves the grip; Move / Rotate / Scale grip modes reuse 106a and the Rotate / Scale fields.
+    106d. (after 106c) Layout fields: Move / Copy / Stretch / Rotate / Scale on a layout show the same fields (today gated off by `modLive` / `editable()`).
 107. ✅ (built, session 17) **Usage page TODO: show the sub-steps (66a, 66b...) of big items as a list** (S, ask, T24): “N of M done”, folded sub-step lists with done ticks, remembered on this browser. Knight role comes from the usage data; its forecast uses fresh window data immediately, or says “no data yet”.
 108. ✅ (built, session 16) **Knight shows 100% for the 5-hour window after it has already reset** (S, bug, T25): see T25 in support/tickets.md. Grill first.
 109. **In-depth export system like AutoCAD (formats, options, batch)** (L, ask, T26): see T26 in support/tickets.md. Grill first.
