@@ -88,6 +88,9 @@ export function inputKey(s, key, first) {
   return next;
 }
 
+/** A typed field that is not a plain finite number. */
+export const notFinite = (v) => !!v && (parseInput(v).kind !== 'len' || !Number.isFinite(+v));
+
 /** Untyped fields use full precision mouse values, never the rounded display text. */
 export function pointInput(s, last, mouse, lengthLabel = 'Length') {
   const origin = last || [0, 0], relative = s.prefix === '@' || (!!last && s.prefix !== '#');
@@ -95,7 +98,7 @@ export function pointInput(s, last, mouse, lengthLabel = 'Length') {
     : s.mode === 'polar' ? [dist(origin, mouse), angleOf(origin, mouse)]
     : mouse.map((v, i) => v - (relative ? origin[i] : 0));
   const labels = s.mode === 'size' ? ['Width', 'Height'] : s.mode === 'polar' ? [lengthLabel, 'Angle'] : relative ? ['Δx', 'Δy'] : ['X', 'Y'];
-  const errors = s.values.map((v, i) => v && (parseInput(v).kind !== 'len' || !Number.isFinite(+v)) ? `${labels[i]} must be a finite number`
+  const errors = s.values.map((v, i) => notFinite(v) ? `${labels[i]} must be a finite number`
     : s.mode === 'size' && +(v || live[i]) === 0 ? `${labels[i]} must not be zero` : '');
   // The typed-point grammar has no exponent notation (tiny mouse deltas can have it).
   const values = s.values.map((v, i) => {
@@ -112,7 +115,7 @@ const ONE = { angle: 'Angle', factor: 'Factor', radius: 'Radius', length: 'Lengt
 function valueInput(s, base, mouse, unit, dia) {
   const mode = s.mode, label = mode === 'radius' && dia ? 'Diameter' : ONE[mode], typed = s.values[0];
   const live = [mode === 'angle' ? angleOf(base, mouse) : dist(base, mouse) / unit];
-  const bad = typed && (parseInput(typed).kind !== 'len' || !Number.isFinite(+typed)) ? `${label} must be a finite number` : '';
+  const bad = notFinite(typed) ? `${label} must be a finite number` : '';
   const value = typed ? +typed : live[0];
   const error = bad || (!['angle', 'distance'].includes(mode) && !(value > 0) && (typed || mode === 'factor') ? `${label} must be more than 0` : '');
   const point = (mode === 'radius' || mode === 'length') && !error ? alongTo(base, mouse, value) : null;

@@ -23633,6 +23633,13 @@ try {
     await page.keyboard.press('Escape'); await enter('-10');
     near70(GR.lwVertices((await savedDoc()).entities[0].r).map((p) => p.x), [20, 50, 50, 20]);
 
+    await page.keyboard.press('Control+z'); await hot('e1'); await typeCmd('b'); await enter('62,30'); await enter('10');       // after B the side still moves exactly the typed distance
+    near70(GR.lwVertices((await savedDoc()).entities[0].r).flatMap((p) => [p.x, p.y]), [20, 20, 70, 20, 70, 40, 20, 40]);
+    await setup([dxfEllipse(60, 40, 20, 0, 0.5)]); await hot('m0'); await move(95, 40); await labels('Length', 'Angle', 'Δx', 'Δy');       // an axis end counts its Length from the centre, as typing does
+    await enter('10'); near70([fieldOf((await savedDoc()).entities[0], 11)], [10]);
+    await setup([line()]); await hot('b'); await typeCmd('c'); await move(80, 30); await enter('10');
+    assert.notEqual(await t('cursor-length').inputValue(), '10', 'Copy multiple clears the typing after each placement');
+    await page.keyboard.press('Escape'); await page.keyboard.press('Escape'); await frames();
     for (const [spaces, label, value, expected] of [
       [1, 'Length', '10<90', [20, 40, 60, 40]],
       [2, 'Angle', '90', [60, -10, 60, 30]],

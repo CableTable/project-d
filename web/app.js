@@ -7086,7 +7086,8 @@ function drawKey(e, k) {
 /** A hot grip reuses the point fields; its typed path decides what their values mean. */
 function gripCursorTool(g) {
   if (!g.hot || g.d.vlay || g.opt && g.opts[g.opt] !== 'Radius' || !g.mode && !g.opt && g.ent.type === 'ARC' && g.id === 'm') return null;
-  const f = g.d.factor, M = GM.MODES[g.mode], lineEnd = !g.mode && !g.opt && !g.hots && !g.baseSet && g.ent.type === 'LINE' && g.id !== 'm';
+  const f = g.d.factor, M = GM.MODES[g.mode], rp = !g.mode && !g.opt && !g.hots && !g.baseSet && g.id !== 'm' ? GR.refPoint(g.ent, g.id) : null;
+  const lineEnd = !!rp && (rp[0] !== g.pos[0] || rp[1] !== g.pos[1]);       // typing counts from another point than the grip (a line's other end, an ellipse's centre, a leader's neighbour)
   const points = g.baseAsk ? [] : g.ref && g.ref.step !== 'new' ? DI.modifyPoints({ kind: M.toLowerCase(), stage: 'p2', p1: g.base, ref: g.ref }, g.base) : null;
   if (g.ref && g.ref.step !== 'new' && !points) return null;
   const valueMode = g.mode ? M === 'ROTATE' ? 'angle' : M === 'SCALE' ? g.ref ? 'length' : 'factor' : null : g.opt || !g.hots && g.ent.type === 'CIRCLE' && g.id.startsWith('q') ? 'radius' : !g.hots && GR.isRectEdge(g.ent, g.id) ? 'distance' : null;
@@ -7145,8 +7146,8 @@ const cursorPoint = () => {
   if (T.grip) {
     // A line's plain length starts at the other end; relative points still start at the grip base.
     if (input.mode === 'polar' && T.lineEnd && input.prefix !== '@') result.text = '#' + result.point?.map((v) => v.toLocaleString('en-US', { useGrouping: false, maximumSignificantDigits: 21 })).join(',');
-    if (DI.isSingle(input.mode)) { result.text = input.values[0] || result.text; result.why = result.errors[0] = input.values[0] && (DR.parseInput(input.values[0]).kind !== 'len' || !Number.isFinite(+input.values[0])) ? `${result.labels[0]} must be a finite number` : ''; }
-    if (input.mode === 'distance') { const g = T.A, normal = GR.rectEdgePoint(g.ent, g.id, 1); result.live[0] = T.hover.reduce((sum, v, i) => sum + (v / T.f - g.pos[i]) * (normal[i] - g.pos[i]) * T.f, 0); }
+    if (DI.isSingle(input.mode)) { result.text = input.values[0] || result.text; result.why = result.errors[0] = input.values[0] && DI.notFinite(input.values[0]) ? `${result.labels[0]} must be a finite number` : ''; }
+    if (input.mode === 'distance') { const g = T.A, normal = GR.rectEdgePoint(g.ent, g.id, 1); result.live[0] = T.hover.reduce((sum, v, i) => sum + (v / T.f - g.base[i]) * (normal[i] - g.pos[i]) * T.f, 0); }
     if (input.mode === 'polar' && !input.values[1] && !input.prefix && input.values[0]) result.text = input.values[0];
     if (T.A.inputError) { result.why = T.A.inputError; result.errors[input.active] = result.why; }
   }
@@ -9847,7 +9848,7 @@ function gripEvaluate(g, inp, raw) {
     if (inp.kind !== 'len') return 'Type the distance to move the side, or drag the edge';
     const to = GR.rectEdgePoint(g.ent, g.id, inp.v / f);
     if (!to) return 'Point coordinates must be finite';
-    gripAim(g, to, g.shift);
+    gripAim(g, [to[0] - g.pos[0] + g.base[0], to[1] - g.pos[1] + g.base[1]], g.shift);       // gripAim shifts by pos - base: the side moves exactly the typed distance after B too
     return g.next ? null : 'That would not change the shape (or leaves nothing of it), so it stays as it was';
   }
   if (inp.kind === 'bad') return `I do not understand "${raw.trim()}". Type x,y, @dx,dy or a length`;
