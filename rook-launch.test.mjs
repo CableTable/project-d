@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { test } from 'node:test';
 import { EventEmitter } from 'node:events';
-import { dedupePath, acad, acadArgs, board, boardArgs, pawn, pawnArgs, queueLineOf, retro, retroArgs, suite, launchFailed, launchRun, runningNote, parseReview, parseBuild, parseKnight, reviewerArgs, buildArgs, knightArgs, commandLine, review, build, knight, lintBrief, isFixBrief, fixRoundRefusal } from './tools/rook-launch.mjs';
+import { dedupePath, acad, acadArgs, board, boardArgs, pawn, pawnArgs, queueLineOf, retro, retroArgs, suite, launchFailed, launchRun, runningNote, parseReview, parseBuild, parseKnight, reviewerArgs, buildArgs, knightArgs, commandLine, review, build, knight, lintBrief, briefProblems, isFixBrief, fixRoundRefusal } from './tools/rook-launch.mjs';
 
 const X = 'E:/Project B/Claude/Project D extras';
 const REVIEWER = 'claude2.cmd -p --agent reviewer --model claude-opus-5-5 --effort medium --permission-mode dontAsk --max-budget-usd 6 '
@@ -387,7 +387,7 @@ test('TODO 172: lintBrief refuses oversized behaviours, one-word filters, builde
 test('TODO 185b: lint checks filters after apostrophes and accepts directly negated suite requests', () => {
   for (const [brief, problems] of [
     ["browser.test.mjs, don't skip: 'Layout'", ["line 1: one-word browser filter piece 'Layout'"]],
-    ["1. browser.test.mjs:2160 (step `TODO 110c: Draw, Modify, Annotate, Layout, Compare and the automatic Part tab`) expects the Dimension flyout ['Aligned','Linear','Radius','Diameter','Angle']; 155l1 added 'Automatic' first on purpose (grill-155l.md Q1). Fix: expect 'Automatic' first. Then grep browser.test.mjs for any other list of the five dimension names (flyout / ribbon / menu) a filtered run would miss, and fix those the same way.", ['line 1: Do line over 400 chars (436); split it into numbered items']], // the 400-char rule (retro 38ck); still no filter piece
+    ["1. browser.test.mjs:2160 (step `TODO 110c: Draw, Modify, Annotate, Layout, Compare and the automatic Part tab`) expects the Dimension flyout ['Aligned','Linear','Radius','Diameter','Angle']; 155l1 added 'Automatic' first on purpose (grill-155l.md Q1). Fix: expect 'Automatic' first. Then grep browser.test.mjs for any other list of the five dimension names (flyout / ribbon / menu) a filtered run would miss, and fix those the same way.", []], // a real 436-char fix line: the 400-char rule skips fix briefs (retro 38ck A fix); still no filter piece
     ["node browser.test.mjs <port> 'Layout'", ["line 1: one-word browser filter piece 'Layout'"]],
     ["node browser.test.mjs <port> 'TODO 175|New layout'", []],
     ["Don't ever run the full suite", []],
@@ -398,7 +398,15 @@ test('TODO 185b: lint checks filters after apostrophes and accepts directly nega
     ['No full suite', []],
     ['Rook runs the full suite', []],
     ['Do not skip lint; run the full suite', ['line 1: builder asked for the full suite']],
-  ]) assert.deepEqual(lintBrief(brief), problems, brief);
+  ]) assert.deepEqual(lintBrief(brief, true), problems, brief); // fix: only the 400-char rule differs
+});
+
+test('Retro 38ck A fix: a long Do line passes in a fix brief, is still refused in a Build brief', () => {
+  const line = `1. ${'x'.repeat(433)}`;
+  assert.equal(line.length, 436);
+  assert.deepEqual(briefProblems(`King fix: x\n${line}`, false, true), []);
+  assert.deepEqual(briefProblems(`Build: TODO 1\n${line}\nOld steps: none\nbase-check`, false, false, false), ['line 2: Do line over 400 chars (436); split it into numbered items']);
+  assert.equal(briefProblems(`Build: TODO 1\n${line}\nOld steps: none`, false, true, false).length, 1); // --tool: still refused
 });
 
 test('TODO 172: build and knight refuse every brief problem before changes; --big overrides, including fixes', () => {

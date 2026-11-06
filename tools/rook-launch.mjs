@@ -93,7 +93,7 @@ function checkFixRound(x, branch, regrilled) {
   }
 }
 
-export function lintBrief(text) {
+export function lintBrief(text, fix = isFixBrief(text)) {
   const problems = [];
   let behaviours = 0;
   let inItem = false;
@@ -105,7 +105,7 @@ export function lintBrief(text) {
     if (numbered && !/^`?(Screenshots|npm\.cmd test|Tick|Append|Add a DECISIONS|Report)\b/i.test(numbered[1])) behaviours++;
     if (/^\s*(\d+\.\s+)?Also\b/i.test(line)) problems.push(`line ${i + 1}: line starts with Also (scope creep: make it a numbered item or drop it)`);
     if (new Set(tickIds(line)).size > 1) problems.push(`line ${i + 1}: Tick line names more than one TODO id`);
-    if (inItem && line.length > 400) problems.push(`line ${i + 1}: Do line over 400 chars (${line.length}); split it into numbered items`);
+    if (inItem && !fix && line.length > 400) problems.push(`line ${i + 1}: Do line over 400 chars (${line.length}); split it into numbered items`);
     if (!/^Old steps\b/.test(line)) for (const [, , filter] of line.matchAll(/\bbrowser\.test\.mjs\b(?:[^'"]|(?<=\w)['’](?=\w))*\s(['"])(.*?)\1/g)) {
       for (const piece of filter.split('|')) {
         if (/^(?:[a-z]|\[[a-z]{2}\])+$/i.test(piece.trim())) problems.push(`line ${i + 1}: one-word browser filter piece '${piece}'`);
@@ -125,15 +125,15 @@ export function lintBrief(text) {
 // Retro 38c / 38k: --big overrides the problems but not ticket size (behaviour count, Do line length) unless the brief has `Not split: <why>`;
 // a new-item build brief (not --fix / --tool / --big) must name base-check, so its tests are proved red on the base.
 const SIZE_PROBLEM = /^\d+ behaviour lines|Do line over 400/;
-export function briefProblems(text, big, noProof = false) {
-  const problems = lintBrief(text);
+export function briefProblems(text, big, noProof = false, fix = isFixBrief(text)) {
+  const problems = lintBrief(text, fix);
   if (big) return /^Not split: *\S/m.test(text) ? [] : problems.filter((p) => SIZE_PROBLEM.test(p));
   if (!noProof && /^﻿?Build:/.test(text) && !/\bbase-check\b/.test(text)) problems.push('build brief needs a New test proof line naming base-check (node tools/base-check.mjs <base-sha> <test-file>)');
   return problems;
 }
 
-function checkBrief(text, big, noProof) {
-  const problems = briefProblems(text, big, noProof);
+function checkBrief(text, big, noProof, fix) {
+  const problems = briefProblems(text, big, noProof, fix);
   if (problems.length) throw new Error(`brief refused:\n${problems.join('\n')}\n--big overrides these problems, but not ticket size without a "Not split: <why>" line; fix with Read + Edit (sed -i is denied)`);
 }
 
@@ -313,7 +313,7 @@ export function build(args, x = io) {
   const text = x.read(brief), fix = fixFlag || isFixBrief(text);
   x.gate.check(fix, over, tool);
   if (as === 'king' && !over) kingGate(x, 'build');
-  checkBrief(text, big, fix || tool);
+  checkBrief(text, big, fix || tool, fix);
   if (!fix && !tool && !noFresh) checkFresh(x, text);
   if (fix || regrilled) checkFixRound(x, branch, regrilled);
   x.need(claude(as), ACCOUNTS[as].bin);
@@ -359,7 +359,7 @@ export function knight(args, x = io) {
   const text = x.read(brief), fix = fixFlag || isFixBrief(text);
   if (/\.\.\/runs\d+\/shots/.test(text)) throw new Error('shots go in shots-<id>/ in the clone root');
   x.gate.check(fix, over, tool);
-  checkBrief(text, big, fix || tool);
+  checkBrief(text, big, fix || tool, fix);
   if (!fix && !tool && !noFresh) checkFresh(x, text);
   if (fix || regrilled) checkFixRound(x, branch, regrilled);
   x.need(CODEX, basename(CODEX));
