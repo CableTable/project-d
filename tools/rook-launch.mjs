@@ -424,6 +424,15 @@ export function suite(args, x = io) {
   plainRun(x, { kind: 'suite', id: sha, bin: process.execPath, args: [SUITE], cwd: REPO, out: `${runsDir(x)}/suite-${sha}.log` });
 }
 
+// cmd.exe drops a variable over 8191 chars, and each Rook started by `next` inherits and grows PATH: drop empty and case-insensitive repeats, first order kept.
+export function dedupePath(env) {
+  for (const key of Object.keys(env).filter((k) => /^path$/i.test(k))) {
+    const seen = new Set();
+    env[key] = String(env[key]).split(';').filter((p) => p && !seen.has(p.toLowerCase()) && seen.add(p.toLowerCase())).join(';');
+  }
+  return env;
+}
+
 // `retro`: fill missing briefs, then launch the three retros from their .txt into their .out.
 // TODO 206 `--handover`: one retro over the outgoing Rook's transcript (uuid + name default to rook-next.txt lines 1-2).
 export function retro(args, x = io) {

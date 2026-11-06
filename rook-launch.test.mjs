@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { test } from 'node:test';
 import { EventEmitter } from 'node:events';
-import { acad, acadArgs, board, boardArgs, pawn, pawnArgs, queueLineOf, retro, retroArgs, suite, launchFailed, launchRun, runningNote, parseReview, parseBuild, parseKnight, reviewerArgs, buildArgs, knightArgs, commandLine, review, build, knight, lintBrief, isFixBrief, fixRoundRefusal } from './tools/rook-launch.mjs';
+import { dedupePath, acad, acadArgs, board, boardArgs, pawn, pawnArgs, queueLineOf, retro, retroArgs, suite, launchFailed, launchRun, runningNote, parseReview, parseBuild, parseKnight, reviewerArgs, buildArgs, knightArgs, commandLine, review, build, knight, lintBrief, isFixBrief, fixRoundRefusal } from './tools/rook-launch.mjs';
 
 const X = 'E:/Project B/Claude/Project D extras';
 const REVIEWER = 'claude2.cmd -p --agent reviewer --model claude-opus-5-5 --effort medium --permission-mode dontAsk --max-budget-usd 6 '
@@ -241,6 +241,11 @@ function withUsage(rows) {
   r.x.read = (path) => { if (!path.endsWith('limits.csv')) return ''; reads.push(path); return `agent,window,used_pct,resets\n${rows}`; };
   return r;
 }
+
+test('TODO 206: dedupePath drops empty and case-insensitive repeats, keeps first order, handles a Path key', () => {
+  assert.deepEqual(dedupePath({ Path: 'C:\\A;c:\\a;;C:\\B;C:\\A\\;C:\\B', Other: 'x;x' }), { Path: 'C:\\A;C:\\B;C:\\A\\', Other: 'x;x' });
+  assert.equal(dedupePath({ PATH: `${'C:\\Git;'.repeat(2000)}C:\\Z` }).PATH, 'C:\\Git;C:\\Z');
+});
 
 test('TODO 206: retro --handover launches one run over the named Rook transcript; defaults from rook-next.txt; 70% gate; refusals', (t) => {
   t.mock.method(console, 'log', () => {});

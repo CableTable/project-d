@@ -35,7 +35,9 @@ import { cacheAge } from './rook-cache.mjs';
 import { firstDone, peakContext } from './rook-result.mjs';
 import { codexWindow, resetLabel } from '../usage-site/public/usage-window.js';
 import { randomUUID } from 'node:crypto';
-import { review, build, knight, suite, retro, pawn, acad, board, gate, runningNote, printRookContext, EXTRAS } from './rook-launch.mjs';
+import { review, build, knight, suite, retro, pawn, acad, board, gate, runningNote, printRookContext, dedupePath, EXTRAS } from './rook-launch.mjs';
+
+dedupePath(process.env); // TODO 206: every child below (and Rook.lnk's) inherits a PATH cmd.exe keeps
 
 const U = join(dirname(fileURLToPath(import.meta.url)), '..', 'mockups', '_design', 'usage');
 const [cmd, arg] = process.argv.slice(2);
