@@ -156,7 +156,7 @@ Two claude2 sessions may run at once only on separate files (e.g. a mock-up whil
 - Full suite: `node tools/rook.mjs suite <sha>` (`<sha>` = HEAD), then `wait` on `runs<N>/suite-<sha>.log`
 - Wait: `node tools/rook.mjs wait <run file>... [--ci <sha>]` as a Monitor, never in the foreground
 - CI of a push: Monitor `bash tools/ci-watch.sh <sha>` (head sha)
-- Cherry-pick: `git cherry-pick` the builder's commits, tick TODO.md (`grep -n <ticket> TODO.md`: tick every row of that ticket), commit; push once per handover
+- Cherry-pick: `git cherry-pick` the builder's commits, tick TODO.md (`grep -n <ticket> TODO.md`: tick every row of that ticket), commit; push once per handover; UI item: run the Board line now, or write "Board due: <id>" in the resume
 - Retro: `node tools/rook.mjs retro --as king` while Bishop is paused (briefs `tools/briefs/retro*.txt`); at a handover `node tools/rook.mjs retro --handover` first (`handover` refuses without it, or `--no-retro`); merge: `node tools/rook.mjs merge <n> <sha>`
 - Handover: write `runs<N+1>/resume-rook.txt` (with "Open bugs checked <time>: <ids or none>") + `rook-next.txt`, then `node tools/rook.mjs handover <resume> "Rook S<N>x"` and `node tools/rook.mjs next`
 - `gh ... --jq`: Bash only (PowerShell 5.1 strips the inner quotes)

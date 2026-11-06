@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { briefIds, contextOf, countTicked, gateOps, nextState, queueLine, setLine2, skipIds, tickIds } from './tools/handover-gate.mjs';
+import { briefIds, contextOf, countTicked, gateOps, itemsOf, nextState, queueLine, setLine2, skipIds, tickIds } from './tools/handover-gate.mjs';
 
 const BEFORE = [
   '- [ ] 162. **Quick Select**',
@@ -258,4 +258,9 @@ test('TODO 167d: queueFile is the queue.txt of the runs<N> that rook-next.txt li
   assert.throws(() => w.gate.queueFile(), /line 3 does not name runs<N>/);
   delete w.files['/x/rook-next.txt'];
   assert.throws(() => w.gate.queueFile(), /line 3 does not name runs<N>/);
+});
+
+test('retro38i: two item launches on the same branch count as 1 item', () => {
+  const launches = [{ kind: 'item', branch: 'knight/106c' }, { kind: 'item', branch: 'knight/106c' }, { kind: 'item', branch: 'knight/106d' }, { kind: 'tool', branch: 'knight/106c' }];
+  assert.equal(itemsOf({ launches }).length, 2);
 });

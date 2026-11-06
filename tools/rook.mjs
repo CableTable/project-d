@@ -55,7 +55,7 @@ export function claudeUsage(bin, execute = execSync, report = console.error) {
       if (![w.five_hour.utilization, w.five_hour.resetsAt, w.seven_day.utilization, w.seven_day.resetsAt].every(Number.isFinite)) throw new Error('Invalid usage reading');
       return { h5: [w.five_hour.utilization * 100, w.five_hour.resetsAt], wk: [w.seven_day.utilization * 100, w.seven_day.resetsAt] };
     } catch (e) {
-      report(`${e.stack || e.message}\n${out}\n${e.stdout || ''}\n${e.stderr || ''}`);
+      report(String(e.message).slice(0, 300)); // the stream stays out of Rook's context; `output` below keeps it for the limit check
       if (bin === 'claude' && attempt === 0) continue;
       const output = `${e.message}\n${out}\n${e.stdout || ''}\n${e.stderr || ''}`;
       const limited = /limit (?:has been |is )?reached|you[’']?ve hit your[^\n]*limit|rate_limit_error|usage_limit_reached/i.test(output);

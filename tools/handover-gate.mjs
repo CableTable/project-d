@@ -51,7 +51,7 @@ export function contextOf(text) {
   return last;
 }
 
-export const itemsOf =(state) => state.launches.filter((l) => l.kind === 'item');
+export const itemsOf = (state) => [...new Map(state.launches.filter((l) => l.kind === 'item').map((l) => [l.branch, l])).values()]; // a relaunch on the same branch counts once
 
 // The stored state, or a fresh one when a different Rook (uuid) is running now.
 export const nextState = (old, uuid, startSha) => (old && old.uuid === uuid ? old : { uuid, startSha, launches: [] });

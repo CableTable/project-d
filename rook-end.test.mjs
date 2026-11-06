@@ -81,7 +81,27 @@ test('TODO 198b Low: the queue line turns ended only after the review launch (an
   assert.deepEqual(order, ['review: build br -> o.jsonl: running', 'write q.txt']);
   order.length = 0;
   finish(job(), 3, w.x);
-  assert.deepEqual(order, ['write /r.jsonl', 'write q.txt']);
+  assert.deepEqual(order, ['write o.jsonl', 'write /r.jsonl', 'write q.txt']);
+});
+
+test('retro38i: a dead launch (non-zero exit, no result) gets a LAUNCH DIED result so wait ends; a finished one is left alone', () => {
+  const dead = world();
+  finish({ queue: 'q.txt', key: 'o.jsonl', text: 't' }, 1, dead.x);
+  assert.match(dead.files['o.jsonl'], /^\{"type":"result","is_error":true,"result":"LAUNCH DIED"\}\n$/);
+  const done = world();
+  done.files['o.jsonl'] = '{"type":"result"}\n';
+  finish({ queue: 'q.txt', key: 'o.jsonl', text: 't' }, 1, done.x);
+  assert.equal(done.files['o.jsonl'], '{"type":"result"}\n');
+  const ok = world();
+  finish({ queue: 'q.txt', key: 'o.jsonl', text: 't' }, 0, ok.x);
+  assert.equal(ok.files['o.jsonl'], undefined);
+  const knight = world(); // Knight's report .txt: empty = not done, any text = done
+  finish({ queue: 'q.txt', key: 'k.txt', text: 't' }, 1, knight.x);
+  assert.match(knight.files['k.txt'], /LAUNCH DIED/);
+  const wrote = world();
+  wrote.files['k.txt'] = 'report';
+  finish({ queue: 'q.txt', key: 'k.txt', text: 't' }, 1, wrote.x);
+  assert.equal(wrote.files['k.txt'], 'report');
 });
 
 test('TODO 167d: finish without a review job only updates the queue; a queue.txt that cannot be written does not stop the chain', () => {
