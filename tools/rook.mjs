@@ -3,18 +3,20 @@
 //   node tools/rook.mjs usage --cached  read the CSVs if both are at most five minutes old; otherwise refresh live
 //   node tools/rook.mjs result <file>   (a RUNNING line first if the run has not ended) a run's final reply + tokens: claude2 stream-json (.jsonl), or a Codex -o file (tokens from its .log)
 //   node tools/rook.mjs review <sha> <brief> <out.jsonl> [--as bishop|king] [--from <clone> <branch>] [--over]   launch the reviewer on a commit, detached; without --as: Bishop, or King when Bishop's reviewer folder is locked
-//   node tools/rook.mjs build <brief> <out.jsonl> <branch> <sha> [--as king|bishop] [--dir king2] [--fix] [--regrilled] [--tool] [--over] [--big] [--review <review brief> <review out.jsonl>]   launch a Claude build on a new branch in its worktree, detached
-//   node tools/rook.mjs knight <brief> <report.txt> <branch> <sha> [--fix] [--regrilled] [--tool] [--over] [--big] [--review <review brief> <review out.jsonl>]   launch a Knight build on a new branch in its clone, detached
+//   node tools/rook.mjs build <brief> <out.jsonl> <branch> <sha> [--as king|bishop] [--dir king2] [--fix] [--regrilled] [--tool] [--no-fresh] [--over] [--big] [--review <review brief> <review out.jsonl>]   launch a Claude build on a new branch in its worktree, detached
+//   node tools/rook.mjs knight <brief> <report.txt> <branch> <sha> [--fix] [--regrilled] [--tool] [--no-fresh] [--over] [--big] [--review <review brief> <review out.jsonl>]   launch a Knight build on a new branch in its clone, detached
+//     New items naming grill-<id>.md require runs<N>/fresh-<id>.out; --fix / --tool are exempt; --no-fresh passes for an S item with no invariant.
 //     --review: when the build ends, tools/rook-end.mjs launches `review <branch tip> <review brief> <review out>`; no chain (and `NO REVIEW: <why>` in the review out file) when the branch has no new commit or the build ended in error
 //     every launch writes `<kind> <branch|sha> -> <out file>: running` into runs<N>/queue.txt (lines 1-2 stay) and the run's end rewrites it to `ended`
 //     build / knight count against the handover gate (2 new items per Rook, tools/handover-gate.mjs): --fix = a fix round (allowed up to the 2nd fix round of an item, the 3rd needs --regrilled after a re-grill file runs<N>/grill-<id>-regrill.md; a brief whose line 1 starts `King fix`, `Knight fix` or `Fix round` counts as one without it),
 //     --tool = a tool ticket (passes the gate, not counted as an item; the gate line adds `, <k> tool`), --over = a 3rd item with his OK
 //   node tools/rook.mjs suite <sha>   full suite (`npm.cmd test`, then `npm.cmd run test:browser`) in this checkout, detached; <sha> must be HEAD; log runs<N>/suite-<sha>.log ends `SUITE unit=<code> browser=<code>`
-//   node tools/rook.mjs retro [--over] [--events "<text>"]   fill missing briefs from tools/briefs/retro*.txt, then the three retros of runs<N>/ on Bishop, detached; cached Bishop 5h above 40% is refused (--over passes)
+//   node tools/rook.mjs retro [--over] [--events "<text>"] [--as king|bishop]   fill missing briefs from tools/briefs/retro*.txt, then the three retros of runs<N>/, detached; chosen account's cached 5h above 40% is refused (--over passes)
 //     review / build --as king (and review falling back to King) are refused above 85% cached King 5h (--over passes); `usage` prints `<name>: 100%` for an account at its limit
 //   node tools/rook.mjs pawn <out.json> "<question>"   one Pawn (agy) lookup from ~/agy-research, detached; adds the https-only / no-commands / 3-pages / cite sentence
-//   node tools/rook.mjs acad <item>   Bishop-acad on runs<N>/acad<item>.txt -> acad<item>.out, detached
-//   node tools/rook.mjs board <brief> <out>   Bishop board / look (WORKFLOW.md line 194) on <brief> -> <out>, detached
+//   node tools/rook.mjs acad <item> [--as king|bishop]   acad on runs<N>/acad<item>.txt -> acad<item>.out, detached
+//   node tools/rook.mjs board <brief> <out> [--as king|bishop]   board / look (WORKFLOW.md line 194) on <brief> -> <out>, detached
+//     retro / acad / board default to King while ProjectD-s15fix/.run-lock exists, else Bishop.
 //   node tools/rook.mjs fails <log>   the failing steps of a browser-test or node:test log + the first 3 `+` / `-` lines after each, max 40 lines; `no failures in <log>`
 //   node tools/rook.mjs handover <resume file> <name>   write rook-next.txt (new uuid, name, resume file) and print it; refused when the resume file is missing, has no runs<N> in its path, lacks the merge-due.log line, lacks the `select:Monitor,TaskStop` or `one ci-watch per push` line (the same lines `next` requires), or its line 2 lacks the grilling + domain-modeling skills; exactly 2 arguments; does not start Rook.lnk
 //   node tools/rook.mjs wait <run file>... [--ci <sha>]   exits 0 on the first run that finished (`DONE <file>`; a .log: at its `SUITE ` line) or when the CI run for <sha> ends (`CI RUN <id> <conclusion>`; exit 1 `CI RUN none <reason>` when no run was found or the watcher failed); polls every 20 s
@@ -376,7 +378,7 @@ if (cmd === 'result') {
     projects: join(homedir(), '.claude', 'projects', 'E--Project-B-Claude-Project-D'), own: process.env.CLAUDE_CODE_SESSION_ID,
   }).then(({ line, code }) => { console.log(line); process.exitCode = code; }, (e) => { console.error(e.message); process.exitCode = 1; });
 } else {
-  console.log('usage: node tools/rook.mjs usage [--cached] | result <file> | wait <run file>... [--ci <sha>] | merge <n> <sha> [--no-retro] | gate | next | review <sha> <brief> <out.jsonl> [--as bishop|king] [--from <clone> <branch>] [--over] | build <brief> <out.jsonl> <branch> <sha> [--as king|bishop] [--dir king2] [--fix] [--regrilled] [--tool] [--over] [--big] [--review <review brief> <review out.jsonl>] | knight <brief> <report.txt> <branch> <sha> [--fix] [--regrilled] [--tool] [--over] [--big] [--review <review brief> <review out.jsonl>] | suite <sha> | retro [--over] [--events "<text>"] | pawn <out.json> "<question>" | acad <item> | board <brief> <out> | fails <log> | handover <resume file> <name>');
+  console.log('usage: node tools/rook.mjs usage [--cached] | result <file> | wait <run file>... [--ci <sha>] | merge <n> <sha> [--no-retro] | gate | next | review <sha> <brief> <out.jsonl> [--as bishop|king] [--from <clone> <branch>] [--over] | build <brief> <out.jsonl> <branch> <sha> [--as king|bishop] [--dir king2] [--fix] [--regrilled] [--tool] [--no-fresh] [--over] [--big] [--review <review brief> <review out.jsonl>] | knight <brief> <report.txt> <branch> <sha> [--fix] [--regrilled] [--tool] [--no-fresh] [--over] [--big] [--review <review brief> <review out.jsonl>] | suite <sha> | retro [--over] [--events "<text>"] [--as king|bishop] | pawn <out.json> "<question>" | acad <item> [--as king|bishop] | board <brief> <out> [--as king|bishop] | fails <log> | handover <resume file> <name>');
 }
 }
 

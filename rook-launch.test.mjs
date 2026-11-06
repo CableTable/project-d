@@ -28,6 +28,87 @@ function recorder(fail = '') {
 const launched = (calls) => calls.find((c) => c[0] === 'launch');
 const isSwitch = (c) => c[0] === 'git' && c[2] === 'switch';
 
+test('Retro 38: retro, board and acad choose King while Bishop is locked; --as overrides either default', (t) => {
+  t.mock.method(console, 'log', () => {});
+  const runs = [[retro, ['--over']], [board, ['b.txt', 'o.out']], [acad, ['38']]];
+  for (const [run, args] of runs) {
+    for (const [locked, flags, bin] of [[true, [], 'claude3.cmd'], [false, [], 'claude2.cmd'], [true, ['--as', 'bishop'], 'claude2.cmd'], [false, ['--as', 'king'], 'claude3.cmd']]) {
+      const r = recorder();
+      r.x.locked = (dir) => locked && dir === `${X}/ProjectD-s15fix`;
+      run([...args, ...flags], r.x);
+      const launches = r.calls.filter((c) => c[0] === 'launch');
+      assert.equal(launches.length, run === retro ? 3 : 1);
+      assert.ok(launches.every((c) => basename(c[1]) === bin));
+      assert.ok(r.calls.some((c) => c[0] === 'need' && c[2] === bin));
+    }
+    for (const flags of [['--as', 'rook'], ['--as'], ['--as', 'king', '--as', 'bishop']]) {
+      const r = recorder();
+      assert.throws(() => run([...args, ...flags], r.x), /usage:/);
+      assert.equal(launched(r.calls), undefined);
+    }
+  }
+});
+
+test('Retro 38: retro gates the chosen account at 40 percent, and --over skips its cache', (t) => {
+  t.mock.method(console, 'log', () => {});
+  const future = new Date(Date.now() + 36e5).toISOString();
+  for (const [locked, flags, who] of [[true, [], 'King'], [true, ['--as', 'bishop'], 'Bishop'], [false, ['--as', 'king'], 'King']]) {
+    for (const high of [false, true]) {
+      const r = withUsage(`King,5h,${who === 'King' ? (high ? 41 : 40) : 99},${future}\nBishop,5h,${who === 'Bishop' ? (high ? 41 : 40) : 99},${future}\n`);
+      r.x.locked = (dir) => locked && dir === `${X}/ProjectD-s15fix`;
+      const run = () => retro(flags, r.x);
+      if (high) {
+        assert.throws(run, new RegExp(`${who} 5h 41%`));
+        assert.equal(r.calls.some((c) => ['open', 'launch'].includes(c[0])), false);
+      } else { run(); assert.equal(r.calls.filter((c) => c[0] === 'launch').length, 3); }
+      assert.equal(r.reads.length, 1);
+    }
+    const over = withUsage(`King,5h,99,${future}\nBishop,5h,99,${future}\n`);
+    over.x.locked = (dir) => locked && dir === `${X}/ProjectD-s15fix`;
+    retro([...flags, '--over'], over.x);
+    assert.deepEqual(over.reads, []);
+    assert.equal(over.calls.filter((c) => c[0] === 'launch').length, 3);
+  }
+});
+
+test('Retro 38: new builds and Knights require fresh reads for each named grill; flag, fix and tool pass', (t) => {
+  t.mock.method(console, 'log', () => {});
+  for (const [run, out] of [[build, 'o.jsonl'], [knight, 'k.txt']]) {
+    for (const [flags, text, files, passes] of [
+      [[], 'Spec: ../runs33/grill-dwg.md', [], false],
+      [['--big', '--over'], 'Spec: ../runs33/grill-dwg.md', [], false],
+      [[], 'Spec: ../runs33/grill-dwg.md', ['dwg'], true],
+      [['--no-fresh'], 'Spec: ../runs33/grill-dwg.md', [], true],
+      [['--fix'], 'Spec: ../runs33/grill-dwg.md', [], true],
+      [['--tool'], 'Spec: ../runs33/grill-dwg.md', [], true],
+      [[], 'Knight fix: dwg\nSpec: ../runs33/grill-dwg.md', [], true],
+      [[], 'No grill needed', [], true],
+      [[], 'Spec: grill-dwg.md and grill-dwg-2.md', ['dwg'], false],
+      [[], 'Spec: grill-dwg.md and grill-dwg-2.md', ['dwg', 'dwg-2'], true],
+    ]) {
+      const r = withUsage('King,5h,0,\n');
+      r.x.read = (path) => path.endsWith('limits.csv') ? 'agent,window,used_pct\nKing,5h,0\n' : text;
+      r.x.exists = (path) => files.some((id) => path === `${X}/runs33/fresh-${id}.out`);
+      const launch = () => run(['b.txt', out, 'br', 'abc1234', ...flags], r.x);
+      if (passes) { launch(); assert.ok(launched(r.calls)); }
+      else {
+        assert.throws(launch, { message: 'fresh read due (--no-fresh for an S item with no invariant)' });
+        assert.equal(r.calls.some((c) => ['git', 'open', 'truncate', 'launch'].includes(c[0])), false);
+      }
+    }
+  }
+});
+
+test('Retro 38: cargo lint requires no cargo on the same line', () => {
+  for (const eol of ['\n', '\r\n']) {
+    for (const [brief, count] of [['Run cargo test', 1], ['No cargo here; CI compiles Rust', 0], ['NO CARGO; skip cargo test', 0], ['No cargo here\nRun cargo test', 1], ['Check cargo.toml', 1], ['Check the cargo_hold name', 0]]) {
+      const problems = lintBrief(brief.replaceAll('\n', eol));
+      assert.equal(problems.length, count, brief);
+      if (count) assert.match(problems[0], /line \d+: cargo is unavailable/);
+    }
+  }
+});
+
 test('TODO 190b: every-caller lint uses the six Q7 corpus lines verbatim, including numbered-item continuations', () => {
   const corpus = [
     ["1. Add `minus: '<path d=\"M5 12h14\"/>'` beside `plus` in web/dom.js and use `icon('plus' | 'minus', <size>)` for the glyph in all 7 buttons:", 1],
@@ -317,7 +398,7 @@ test('review arguments: three positionals, optional --as and --from clone branch
 });
 
 test('build arguments: four positionals, optional --as (default king), a real commit id, paths absolute', () => {
-  assert.deepEqual(parseBuild(['b.txt', 'o.jsonl', 'king/x', 'abc1234']), { brief: resolve('b.txt'), out: resolve('o.jsonl'), branch: 'king/x', sha: 'abc1234', as: 'king', dir: undefined, fix: false, regrilled: false, tool: false, over: false, big: false, review: undefined });
+  assert.deepEqual(parseBuild(['b.txt', 'o.jsonl', 'king/x', 'abc1234']), { brief: resolve('b.txt'), out: resolve('o.jsonl'), branch: 'king/x', sha: 'abc1234', as: 'king', dir: undefined, fix: false, regrilled: false, tool: false, noFresh: false, over: false, big: false, review: undefined });
   const flagged = parseBuild(['b.txt', 'o.jsonl', 'king/x', 'abc1234', '--fix', '--over', '--as', 'king']);
   assert.deepEqual([flagged.fix, flagged.over, flagged.as], [true, true, 'king']);
   assert.equal(parseBuild(['b.txt', 'o.jsonl', 'king/x', 'abc1234', '--as', 'bishop']).as, 'bishop');
@@ -327,7 +408,7 @@ test('build arguments: four positionals, optional --as (default king), a real co
 
 test('knight arguments: four positionals, report ends in .txt, log sits next to it, paths absolute', () => {
   assert.deepEqual(parseKnight(['b.txt', 'runs/k.txt', 'knight/x', 'abc1234']),
-    { brief: resolve('b.txt'), report: resolve('runs/k.txt'), branch: 'knight/x', sha: 'abc1234', log: resolve('runs/k.log'), fix: false, regrilled: false, tool: false, over: false, big: false, review: undefined });
+    { brief: resolve('b.txt'), report: resolve('runs/k.txt'), branch: 'knight/x', sha: 'abc1234', log: resolve('runs/k.log'), fix: false, regrilled: false, tool: false, noFresh: false, over: false, big: false, review: undefined });
   assert.deepEqual(['--fix', '--over'].map((f) => parseKnight(['b.txt', 'runs/k.txt', 'knight/x', 'abc1234', f])).map((p) => [p.fix, p.over]), [[true, false], [false, true]]);
   assert.throws(() => parseKnight(['b.txt', 'k.txt', 'knight/x']), /usage: knight/);
   assert.throws(() => parseKnight(['b.txt', 'k.md', 'knight/x', 'abc1234']), /must end in \.txt/);
@@ -822,10 +903,10 @@ test('TODO 167e: retro launches the three runs from runs<N> as WORKFLOW line 215
   assert.equal(launched(missing.calls), undefined);
   assert.throws(() => retro(['x'], r.x), /usage/);
   const busy = recorder();
-  busy.x.locked = (dir, lock) => lock.endsWith('retro33king');
+  busy.x.locked = (dir, lock = '') => lock.endsWith('retro33king');
   assert.throws(() => retro([], busy.x), /retro33king is in use/);
   const lastBusy = recorder();
-  lastBusy.x.locked = (dir, lock) => lock.endsWith('retro33rook');
+  lastBusy.x.locked = (dir, lock = '') => lock.endsWith('retro33rook');
   assert.throws(() => retro([], lastBusy.x), /retro33rook is in use/);
   assert.equal(launched(lastBusy.calls), undefined); // a later run locked: the earlier ones never start
 });
