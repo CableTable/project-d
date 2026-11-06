@@ -109,7 +109,7 @@
   "review: status bar: GRID is greyed and never on; the layer shown is the selection's; no fixed Scale 1:1": 2.62,
   "review: ORTHO is a sticky Shift in Measure, Dimension and Set length; Shift still works": 0.35,
   "review: keys S, M, D and Esc work as the tooltips say; unbuilt tools carry no letters; Pan says how": 0.28,
-  "review: Edit menu has Undo, Redo, Copy, Paste, Delete; shortcut hints; unbuilt menus are greyed": 1.31,
+  "review: Edit menu has Undo, Redo, Copy, Paste, Delete; shortcut hints; Modify and Help menus are enabled": 1.31,
   "review: opening a picture says what opens and where pictures go": 0.01,
   "review: a kept dimension never changes a part's size; Selection and Whole drawing are labelled; a dimension alone cannot be kept or extracted; one wording and one count": 0.31,
   "review: layout: the Dimensions row is the real count; the parts list says copies; Apply stays in view; each Add puts a new copy 10 mm further on": 1.45,

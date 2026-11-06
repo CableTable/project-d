@@ -1080,13 +1080,16 @@ function addTab(d, replaceEmpty = true) {
 }
 
 const pathKey = (p) => String(p).replace(/\//g, '\\').toLowerCase();       // one file, however its slashes and capitals are written
-/** A .dwg as DXF bytes, converted by the app's LibreDWG helper (dwg_to_dxf). Null, with the reason in the status line, when it cannot be. */
-async function dwgBytes(name, path) {
+/** A .dwg as DXF bytes, converted by the app's LibreDWG helper: from its path (dwg_to_dxf), or from its bytes when it has none (a drop: dwg_bytes_to_dxf). Null, with the reason in the status line, when it cannot be. */
+async function dwgBytes(name, path, buf) {
   const t = window.__TAURI__;
   if (!t?.core?.invoke) { note('DWG needs the desktop app'); return null; }
-  if (!path) { note(`${name}: could not convert this DWG (a dropped file has no path: open it with File → Open)`); return null; }
+  if (!path && !buf?.byteLength) { note(`${name}: could not convert this DWG (empty file)`); return null; }
   note('Converting ' + name + '…');
-  try { return new TextEncoder().encode(await t.core.invoke('dwg_to_dxf', { path })).buffer; } catch (err) {
+  try {
+    const dxf = path ? await t.core.invoke('dwg_to_dxf', { path }) : await t.core.invoke('dwg_bytes_to_dxf', { name, bytes: Array.from(new Uint8Array(buf)) });
+    return new TextEncoder().encode(dxf).buffer;
+  } catch (err) {
     note(`${name}: could not convert this DWG (${String(err && err.message || err).trim().split(/\r?\n/).pop()})`); return null;
   }
 }
@@ -1102,7 +1105,7 @@ async function openBytes(name, buf, path = null) {
   if (/\.pdf$/i.test(name) || (!/\.dxf$/i.test(name) && buf.byteLength && isPdf(buf instanceof ArrayBuffer ? buf : buf.buffer))) { await openPdf(name, buf, path); return; }
   const dwg = /\.dwg$/i.test(name);
   if (!dwg && !/\.dxf$/i.test(name)) { note(name + ': Opens DXF or PDF; pictures go in as a background (Background…)'); return; }
-  if (dwg && !(buf = await dwgBytes(name, path))) return;
+  if (dwg && !(buf = await dwgBytes(name, path, buf))) return;
   note('Reading ' + name + '…');
   const r = await readDrawing(buf instanceof ArrayBuffer ? buf : buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength));
   if (!r.ok) { note(name + ': ' + (r.sorry || 'could not read this drawing' + (r.error ? ' (' + r.error + ')' : ''))); return; }
@@ -1111,11 +1114,11 @@ async function openBytes(name, buf, path = null) {
   const subs = fontSubstitutions(r.doc.styles, fl.items);
   const fontNote = subs.length ? 'Fonts: ' + subs.map(({ asked, shown }) => `${asked} → ${shown}`).join(', ') : '';
   const lay = LD.layoutFromRaw(r.doc, name);
-  if (lay) { openLayoutFile(lay, name, path, fontNote, readTitleBlock(r.doc)); return; } // one of our saved layouts: it opens as a layout tab
+  if (lay) { openLayoutFile(lay, name, path, fontNote, readTitleBlock(r.doc), dwg); if (dwg && path) rememberRecent(path); return; } // one of our saved layouts: it opens as a layout tab
   // openPath: the file itself, which Save never writes over. A DWG tab has no path of its own until Save As writes its .dxf
   const doc = { name, path: dwg ? null : path, openPath: path, guideFile: G.fileKey(path, name), dirty: false, ...(dwg && { fromDwg: true }), ...tabFields(r.doc, fl) };
   addTab(doc);
-  if (dwg) rememberRecent(path);
+  if (dwg && path) rememberRecent(path);
   note(`Opened ${name}: ${doc.entities} entities` + (doc.conv ? ', ' + doc.conv : '') +
     (fitsSheet(doc.box, state.sheetW, state.sheetH) ? '' : ' (larger than the sheet)') + (fontNote ? '. ' + fontNote : '') + (fl.truncated ? '. Too big to show all of it' : '') + (dwg ? '. Converted from DWG by LibreDWG' : ''));
   ui.fontNote.textContent = fontNote;
@@ -1178,7 +1181,10 @@ async function openPath(path, recent = false) {
   const t = window.__TAURI__, name = path.split(/[\\/]/).pop();
   if (!t || !t.fs || !t.fs.readFile) return;
   try {
-    if (!/\.(dxf|pdf)$/i.test(name)) { await openBytes(name, new ArrayBuffer(0), path); return; }      // a .dwg is converted from its path; other names are refused
+    if (!/\.(dxf|pdf)$/i.test(name)) {                                       // a .dwg is converted from its path; other names are refused
+      if (recent && t.fs.exists && !(await t.fs.exists(path))) throw new Error('not found');   // a DXF's readFile fails by itself; the helper's error would not say "moved"
+      await openBytes(name, new ArrayBuffer(0), path); return;
+    }
     await openBytes(name, await t.fs.readFile(path), path);
   } catch (err) {
     if (recent) { forgetRecent(path); note(name + ': not found (moved or deleted), so it is off Recent files'); }
@@ -1834,13 +1840,13 @@ function newLayoutTab() {
   addTab(freshLayout('Layout ' + n), false);
   note('New layout: set the sheet, then add parts from the Parts library, or pick a part for step and repeat');
 }
-function openLayoutFile(lay, name, path, fontNote, titleBlock) {
+function openLayoutFile(lay, name, path, fontNote, titleBlock, dwg = false) {
   lay.name = name;
-  const doc = { name, path, openPath: path, dirty: false, lay, titleBlock, fromFile: true };
+  const doc = { name, path: dwg ? null : path, openPath: path, dirty: false, lay, titleBlock, fromFile: true, ...(dwg && { fromDwg: true }) };
   state.panel = 'main';
   addTab(doc);
   const used = LD.placedAll(lay, LD.gridOf(lay)).filter((p) => !lay.parts[p.partId]?.obj).length, np = Object.values(lay.parts).filter((p) => !p.obj).length;
-  note(`Opened ${name} as a layout: ${used} placed part${used === 1 ? '' : 's'}, ${np} part${np === 1 ? '' : 's'}, its sheet and settings as saved` + (fontNote ? '. ' + fontNote : ''));
+  note(`Opened ${name} as a layout: ${used} placed part${used === 1 ? '' : 's'}, ${np} part${np === 1 ? '' : 's'}, its sheet and settings as saved` + (fontNote ? '. ' + fontNote : '') + (dwg ? '. Converted from DWG by LibreDWG' : ''));
   ui.fontNote.textContent = fontNote;
   ui.fontNote.hidden = !fontNote;
   for (const p of LD.partsForPlacement(lay)) libKeep(p, baseName(p.src || name)); // a part the library does not have yet is added to it
@@ -11158,7 +11164,7 @@ async function cmpPick() {
 }
 async function cmpLoad(d, name, buf, path = null) {
   if (!d || !state.docs.includes(d)) return;
-  if (/\.dwg$/i.test(name)) { if (!(buf = await dwgBytes(name, path))) return; }
+  if (/\.dwg$/i.test(name)) { if (!(buf = await dwgBytes(name, path, buf))) return; }
   else if (!/\.dxf$/i.test(name)) { note(name + ': Compare opens DXF drawings'); return; }
   const r = await readDrawing(buf instanceof ArrayBuffer ? buf : buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength));
   if (!r.ok) { note(name + ': ' + (r.sorry || 'could not read this drawing' + (r.error ? ' (' + r.error + ')' : ''))); return; }

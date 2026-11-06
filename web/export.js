@@ -326,7 +326,7 @@ export function openExport(host) {
   const entryOf = (name, rel, extra) => {
     const type = (name.match(/\.(dxf|dwg|cdr)$/i) || [])[1].toLowerCase();
     const na = type !== 'dxf';
-    return { name, rel, type, include: !na, status: na ? { kind: 'na', text: (type === 'dwg' ? 'DWG' : 'CorelDRAW') + ': not built yet' } : { kind: 'waiting', text: 'Waiting' }, ...extra };
+    return { name, rel, type, include: !na, status: na ? { kind: 'na', text: (type === 'dwg' ? 'DWG: open it in a tab first' : 'CorelDRAW: not built yet') } : { kind: 'waiting', text: 'Waiting' }, ...extra };
   };
   async function scan(dir, rel, depth) {
     const out = [];
