@@ -384,8 +384,6 @@ test('TODO 76a: no single LINE, nothing is driven', () => {
   assert.equal(driveLine(stacked, 1, 150), null, 'two stacked lines: text only');
   const poly = drawing(W.lwpoly([[0, 0], [60, 80]]), { a: [0, 0], b: [60, 80] });
   assert.equal(driveLine(poly, 1, 150), null, 'a polyline is not a LINE');
-  const linear = drawing(W.line(0, 0, 100, 0), { a: [0, 0], b: [100, 0], axis: 'h' }, 'linear');
-  assert.equal(driveLine(linear, 1, 150), null, 'linear is 76b');
   for (const bad of [0, -5, NaN]) assert.equal(driveLine(drawing(W.line(0, 0, 60, 80), { a: [0, 0], b: [60, 80] }), 1, bad), null);
 });
 
@@ -423,4 +421,54 @@ test('TODO 76a: typedLength reads one number', () => {
   assert.equal(typedLength('150'), 150); assert.equal(typedLength(' 150,5 '), 150.5); assert.equal(typedLength('.5'), 0.5);
   assert.equal(typedLength('-5'), -5); assert.equal(typedLength('7.5"', 'inch'), 7.5);
   for (const t of ['7.5"', '120 TYP', '<> TYP', '1.2.3', '', 'abc', '1e3']) assert.equal(typedLength(t), null, t);
+});
+
+test('TODO 76b: h / v drive only the measured coordinate, keeping direction and the a end', () => {
+  for (const [axis, b, to] of [['h', [60, 80], [150, 80]], ['v', [60, 80], [60, 150]], ['h', [-60, 80], [-150, 80]], ['v', [60, -80], [60, -150]]]) {
+    for (const reversed of [false, true]) {
+      const a = [10, 20], end = [a[0] + b[0], a[1] + b[1]], target = [a[0] + to[0], a[1] + to[1]];
+      const raw = drawing(reversed ? W.line(...end, ...a) : W.line(...a, ...end), { a, b: end, axis }, 'linear');
+      delete raw.blocks[model(raw).name].dimAxis;
+      assert.equal(linkedLine(raw, 1).id, reversed ? 'a' : 'b');
+      const next = driveDimension(raw, 1, 150), m = model(next);
+      point(E.lineOf(next.entities[0]), reversed ? [...target, ...a] : [...a, ...target]);
+      point(m.params.a, a); point(m.params.b, target);
+      assert.equal(m.kind, 'linear'); assert.equal(m.params.axis, axis); close(m.params.offset, model(raw).params.offset);
+      assert.equal(next.blocks[m.name].dimAxis, axis, 'an old untagged dimension gains an axis tag');
+      assert.equal(label(next), '150.000');
+    }
+  }
+});
+
+test('TODO 76b: an h dimension rotated 90 degrees drives world y in its own frame', () => {
+  const raw = drawing(W.line(10, 20, 70, 100), { a: [10, 20], b: [70, 100], axis: 'h' }, 'linear');
+  Object.assign(raw, rotateEntities(raw, new Set([0, 1]), [0, 0], 90));
+  const next = driveDimension(raw, 1, 150);
+  point(E.lineOf(next.entities[0]), [-20, 10, -100, 160]);
+  point(model(next).params.a, [10, 20]); point(model(next).params.b, [160, 100]);
+  assert.equal(model(next).kind, 'linear'); assert.equal(model(next).params.axis, 'h'); assert.equal(label(next), '150.000');
+});
+
+test('TODO 76b: zero and sub-tolerance measured extents are refused, not made into text', () => {
+  for (const axis of ['h', 'v']) {
+    const b = axis === 'h' ? [1e-6, 80] : [60, 1e-6];
+    const raw = drawing(W.line(0, 0, ...b), { a: [0, 0], b, axis }, 'linear');
+    for (const extent of [1e-6, 0]) {
+      const end = axis === 'h' ? [extent, 80] : [60, extent];
+      raw.entities[0] = W.line(0, 0, ...end);
+      assert.equal(linkedLine(raw, 1).zeroExtent, true);
+      assert.equal(driveLine(raw, 1, 150), null); assert.equal(driveDimension(raw, 1, 150), null);
+    }
+  }
+});
+
+test('TODO 76b: h / v shown inches and drawing factor are both undone', () => {
+  for (const axis of ['h', 'v']) {
+    const b = axis === 'h' ? [10, 8] : [8, 10], target = axis === 'h' ? [20, 8] : [8, 20];
+    const raw = drawing(W.line(0, 0, ...b), { a: [0, 0], b, axis, units: 'inch' }, 'linear', 25.4);
+    assert.equal(label(raw), '10.000"');
+    const next = driveDimension(raw, 1, 20, 25.4);
+    point(E.lineOf(next.entities[0]), [0, 0, ...target]); assert.equal(label(next), '20.000"');
+    for (const bad of [0, -5, NaN]) assert.equal(driveLine(raw, 1, bad, 25.4), null);
+  }
 });

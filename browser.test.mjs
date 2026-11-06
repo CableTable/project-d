@@ -19741,8 +19741,8 @@ try {
       await page.keyboard.press('Enter');
       assert.equal(dimIn(await save()).override, 'Width <>', tab + ': typing Undo restores its live range');
       await undo(); assert.deepEqual(dimIn(await save()), dimIn(start));
-      await apply('7.125');
-      assert.equal(dimIn(await save()).label, '7.125');
+      await apply('7.125 TYP');
+      assert.equal(dimIn(await save()).label, '7.125 TYP');
       assert.equal((await histLabels()).at(-1), 'Dimension text');
       await undo(); assert.deepEqual(dimIn(await save()), dimIn(start), tab + ': one Undo restores measured text');
       await edit('150.00'); await page.keyboard.press('Home'); await page.keyboard.insertText('Width ');
@@ -21417,6 +21417,96 @@ try {
         assert.match(await said(/A locked object: unlock it to change its length/), /A locked object/, tab + ': locked object'); await unchanged('a locked object');
       }
     }
+  });
+
+  await step('TODO 76b: an h dimension drives a sloped LINE on a drawing and layout, unrelated geometry stays, locks refuse and one Undo restores both; light and dark', async () => {
+    const save = async () => readDxf((await downloaded(() => page.keyboard.press('Control+s'))).text);
+    const dimIn = (raw) => {
+      const [name, block] = Object.entries(raw.blocks).find(([k]) => /^PD_DIM_/.test(k));
+      const tx = block.entities.find((e) => e.type === 'TEXT');
+      return { ...readDim(name, block), override: readOverride(block.entities), label: tx.r.v[tx.r.c.indexOf(1)], block };
+    };
+    const lineIn = (raw) => raw.entities.map(lineEnds).find((l) => l && Math.abs(l[0] - 150) < 1e-6 && Math.abs(l[1] - 150) < 1e-6);
+    const otherIn = (raw) => raw.entities.filter((e) => !lineEnds(e) || Math.abs(lineEnds(e)[0] - 150) >= 1e-6);
+    const same = (a, b) => a.forEach((v, i) => assert.ok(Math.abs(v - b[i]) < 1e-6, `${a} != ${b}`));
+    for (const tab of ['drawing', 'layout']) {
+      if (tab === 'layout') {
+        await freshLayoutWithPlate();
+        await typeCmd('line'); await typeCmd('150,150'); await typeCmd('300,190'); await page.keyboard.press('Escape');
+        await typeCmd('line'); await typeCmd('350,100'); await typeCmd('400,120'); await page.keyboard.press('Escape');
+        await typeCmd('dli'); await typeCmd('150,150'); await typeCmd('300,190'); await typeCmd('h'); await typeCmd('220,250'); await page.keyboard.press('Escape');
+      } else {
+        await closeTabs(/./);
+        const raw = newDoc(4);
+        addEntities(raw, dxfLine(150, 150, 300, 190), dxfLine(350, 100, 400, 120));
+        Object.assign(raw, addDimension(raw, buildDim('linear', { a: [150, 150], b: [300, 190], axis: 'h', offset: 100, textH: 5 }, 1, 'PD_DIM_H1', 2)));
+        await t('picker').setInputFiles({ name: 'drive-76b.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(raw), 'latin1') });
+        await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'drive-76b.dxf');
+      }
+      await t('decimals').selectOption('2'); await page.locator('[data-tool=select]').click();
+      const edit = async (text) => {
+        const p = await at(190, 250); await page.mouse.dblclick(p.x, p.y); await t('text-editor').waitFor();
+        assert.equal(await t('text-editor').inputValue(), '150.00', tab);
+        await t('text-editor').fill(text);
+      };
+      const apply = async (text) => { await edit(text); await page.keyboard.press('Enter'); assert.equal(await t('text-edit-box').isVisible(), false); };
+      const start = await save(), history = await histLabels();
+      await apply('200');
+      const driven = await save(), dim = dimIn(driven);
+      same(lineIn(driven), [150, 150, 350, 190]); same(dim.params.a, [150, 150]); same(dim.params.b, [350, 190]);
+      assert.equal(dim.kind, 'linear'); assert.equal(dim.params.axis, 'h'); same([dim.params.offset], [100]); assert.equal(dim.override, ''); assert.equal(dim.label, '200.00');
+      assert.deepEqual(otherIn(driven), otherIn(start), tab + ': unrelated geometry stays');
+      assert.deepEqual((await histLabels()).slice(history.length), ['Dimension length'], tab + ': one step');
+      await shotBoth('todo76b-drive-' + tab);
+      await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z');
+      const back = await save();
+      assert.deepEqual(back.entities, start.entities, tab + ': one Undo restores all entities');
+      assert.deepEqual(dimIn(back), dimIn(start), tab + ': and the dimension');
+      let quiet = await histLabels();
+      const unchanged = async () => {
+        const out = await save(); assert.deepEqual(out.entities, start.entities); assert.deepEqual(dimIn(out), dimIn(start));
+        assert.deepEqual(await histLabels(), quiet, tab + ': no step');
+      };
+      await edit('200'); await page.keyboard.press('Escape'); await unchanged();
+      await apply('150.00'); await unchanged();
+      await apply('0'); assert.match(await prompt(), /Length must be more than 0/); await unchanged();
+      if (tab === 'drawing') {
+        await t('ptab-objects').click(); await page.locator('.or.layer[data-layer="0"] [data-act=lock]').click(); await t('ptab-drawing').click();
+        quiet = await histLabels();
+        await apply('-5'); assert.match(await prompt(), /Layer 0 is locked/); await unchanged();
+        await t('ptab-objects').click(); await page.locator('.or.layer[data-layer="0"] [data-act=lock]').click(); await t('ptab-drawing').click();
+      } else {
+        await click(225, 170); await t('bar-lock').click(); quiet = await histLabels();
+        await apply('-5'); assert.match(await prompt(), /A locked object: unlock it to change its length/); await unchanged();
+      }
+    }
+    await closeTabs(/./);
+  });
+
+  await step('TODO 76b: zero width or height refuses before the number, after locks, without a step', async () => {
+    for (const axis of ['h', 'v']) {
+      await closeTabs(/./);
+      const raw = newDoc(4), b = axis === 'h' ? [150.000001, 190] : [300, 150.000001];
+      addEntities(raw, dxfLine(150, 150, ...b));
+      Object.assign(raw, addDimension(raw, buildDim('linear', { a: [150, 150], b, axis, offset: 100, textH: 5 }, 1, axis === 'h' ? 'PD_DIM_H1' : 'PD_DIM_V1', 2)));
+      await t('picker').setInputFiles({ name: 'zero-76b.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(raw), 'latin1') });
+      await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'zero-76b.dxf');
+      await page.locator('[data-tool=select]').click();
+      const before = await savedDoc(), history = await histLabels();
+      const [name, block] = Object.entries(before.blocks).find(([k]) => /^PD_DIM_/.test(k));
+      const dim = readDim(name, block), tx = dimGeom(dim.kind, dim.params, 1, 2).text;
+      const apply = async () => {
+        const p = await at(tx.x, tx.y); await page.mouse.dblclick(p.x, p.y); await t('text-editor').waitFor();
+        await t('text-editor').fill('-5'); await page.keyboard.press('Enter'); assert.equal(await t('text-edit-box').isVisible(), false);
+      };
+      await t('ptab-objects').click(); await page.locator('.or.layer[data-layer="0"] [data-act=lock]').click(); await t('ptab-drawing').click();
+      await apply(); assert.match(await prompt(), /Layer 0 is locked/);
+      await t('ptab-objects').click(); await page.locator('.or.layer[data-layer="0"] [data-act=lock]').click(); await t('ptab-drawing').click();
+      await apply(); assert.equal(await prompt(), axis === 'h' ? 'This line has no width to set' : 'This line has no height to set');
+      const after = await savedDoc(); assert.deepEqual(after.entities, before.entities); assert.deepEqual(after.blocks, before.blocks);
+      assert.deepEqual(await histLabels(), history);
+    }
+    await closeTabs(/./);
   });
 
   await step('TODO 129b: a radius dimension follows its circle on Move (value and position), one Undo restores both, light and dark', async () => {

@@ -159,10 +159,10 @@ export function typedLength(text, units = 'mm') {
   return !m || (m[2] && units !== 'inch') ? null : parseFloat(m[1].replace(',', '.'));
 }
 
-/** TODO 76a: the one LINE whose two ends are the two points of the aligned dimension at entity `e` (our own PD_DIM only; none, or stacked duplicates → null).
- * → { i, A (the line end at the dimension's first point), B (at its second), id (the grip of B: 'a' | 'b'), dim, m (the dimension's matrix) } */
+/** The one LINE whose two ends are the two points of an aligned or h / v dimension at entity `e` (our own PD_DIM only; none, or stacked duplicates → null).
+ * → { i, A (the line end at the dimension's first point), B (at its second), id (the grip of B: 'a' | 'b'), dim, m (the dimension's matrix), zeroExtent (linear extent below LINK_TOL) } */
 export function linkedLine(raw, e) {
-  const dim = dimOfEntity(raw, e), m = dim && dim.kind === 'aligned' && dimMatrix(raw, e);
+  const dim = dimOfEntity(raw, e), m = dim && (dim.kind === 'aligned' || (dim.kind === 'linear' && ['h', 'v'].includes(dim.params.axis))) && dimMatrix(raw, e);
   if (!m) return null;
   const p = mapply(m, ...dim.params.a), q = mapply(m, ...dim.params.b), ps = !!raw.entities[e].ps, hits = [];
   raw.entities.forEach((ent, i) => {
@@ -172,18 +172,27 @@ export function linkedLine(raw, e) {
     if (fits(s, p) && fits(t, q)) hits.push({ i, A: s, B: t, id: 'b' });
     else if (fits(t, p) && fits(s, q)) hits.push({ i, A: t, B: s, id: 'a' });
   });
-  return hits.length === 1 ? { ...hits[0], dim, m } : null;
+  if (hits.length !== 1) return null;
+  const hit = hits[0], axis = dim.params.axis === 'h' ? 0 : 1;
+  const zeroExtent = dim.kind === 'linear' && Math.abs(local(m, hit.B)[axis] - local(m, hit.A)[axis]) < LINK_TOL;
+  return { ...hit, dim, m, zeroExtent };
 }
 
-/** TODO 76a: the LINE of the aligned dimension at `e` with the end at the dimension's second point moved along the line until the dimension reads `shown` (shown units: inches for an inch dimension, times the factor otherwise).
+/** The LINE at `e` with the end at the dimension's second point moved until the dimension reads `shown`: along the line for aligned, only the measured local coordinate for h / v (shown units: inches for an inch dimension, times the factor otherwise).
  * → { i, line (the new entity), built (the dimension rebuilt from it) } or null (no single LINE, shown not above 0, or no change). */
 export function driveLine(raw, e, shown, factor = 1) {
   const hit = linkedLine(raw, e);
-  if (!hit) return null;
+  if (!hit || hit.zeroExtent) return null;
   const len = shown * (hit.dim.params.units === 'inch' ? 25.4 : 1) / (factor || 1), { A, B } = hit, d = Math.hypot(B[0] - A[0], B[1] - A[1]);
   if (!(len > 0) || !Number.isFinite(len)) return null;
-  const to = [A[0] + (B[0] - A[0]) / d * len, A[1] + (B[1] - A[1]) / d * len], line = dragGrip(raw.entities[hit.i], hit.id, to)?.ent;
-  const built = line && buildDim('aligned', { ...hit.dim.params, b: local(hit.m, to) }, factor, hit.dim.name, hit.dim.dp);
+  let to;
+  if (hit.dim.kind === 'linear') {
+    const a = local(hit.m, A), b = local(hit.m, B), axis = hit.dim.params.axis === 'h' ? 0 : 1;
+    b[axis] = a[axis] + Math.sign(b[axis] - a[axis]) * len;
+    to = mapply(hit.m, ...b);
+  } else to = [A[0] + (B[0] - A[0]) / d * len, A[1] + (B[1] - A[1]) / d * len];
+  const line = dragGrip(raw.entities[hit.i], hit.id, to)?.ent;
+  const built = line && buildDim(hit.dim.kind, { ...hit.dim.params, b: local(hit.m, to) }, factor, hit.dim.name, hit.dim.dp);
   return built ? { i: hit.i, line, built } : null;
 }
 
