@@ -4782,7 +4782,7 @@ function attachCanvasEvents() {
     if (d && state.dim && dimTarget()) dimHover(d, toDrawing(d, e.clientX, e.clientY), e.shiftKey);
     if (d && state.ldr && editable()) ldrHover(d, toDrawing(d, e.clientX, e.clientY), e.shiftKey);
     if (d && state.bal && editable()) balHover(d, toDrawing(d, e.clientX, e.clientY), e.shiftKey);
-    if (d && state.tool === 'text' && !textEditing()) { state.text.hover = textPick(d, e.clientX, e.clientY); paintOverlay(); }
+    if ((d || curLay()) && state.tool === 'text' && !textEditing()) { state.text.hover = textPick(d || curDoc(), e.clientX, e.clientY); paintOverlay(); }
     const mx = view.ox + p.x / view.scale, my = view.oy + p.y / view.scale;
     const [cx, cy] = cursorMm(mx, my, state.sheetH);
     ui.coords.textContent = `X ${fmt(cx)}   Y ${fmt(cy)} mm`;
@@ -4901,7 +4901,7 @@ function renderCommand() {
     ui.prompt.textContent = gg.baseAsk ? 'Specify base point:' : gg.ref ? refPrompt({ ref: gg.ref, kind: M.toLowerCase() }) : gg.opt ? GR.optionPrompt(gg.ent, gg.opts[gg.opt]) : GR.isRectEdge(gg.ent, gg.id) && !gg.mode ? 'Drag or click the new edge position; Shift keeps proportions; Esc cancels:' : acad ? GM.prompt(M) :'Specify the new point (click, x,y, @dx,dy or a length; Esc cancels):';
     return;
   }
-  if (state.tool === 'text' && ed) { ui.hist.textContent = textStatus() + (state.msg ? '   ' + state.msg : ''); ui.prompt.textContent = textPrompt().prompt; return; }
+  if (state.tool === 'text' && (ed || lay)) { ui.hist.textContent = textStatus() + (state.msg ? '   ' + state.msg : ''); ui.prompt.textContent = textPrompt().prompt; return; }
   if (layModLive()) { const mp = modPrompt(curDoc()); ui.hist.textContent = mp.status + (state.msg ? '   ' + state.msg : ''); ui.prompt.textContent = mp.prompt; return; }
   if (modLive()) { modSync(ed); const mp = modPrompt(ed); ui.hist.textContent = mp.status + (state.msg ? '   ' + state.msg : ''); ui.prompt.textContent = mp.prompt; return; }
   if (drawLive()) { const dp = DR.toolPrompt(state.draw, curLayerName(state.drawDoc)); ui.hist.textContent = dp.status + (state.msg ? '   ' + state.msg : ''); ui.prompt.textContent = dp.prompt; return; }
@@ -7170,9 +7170,9 @@ function cursorClick(d, p, shift) {
 /** Non-point prompts share the command bar's words, submission and validation. */
 function dynamicPrompt() {
   if (!state.dynamicInput || state.grip || cursorDynamic()) return null;
-  const holder = drawLive() ? state.draw : modLive() ? state.mod : state.tool === 'text' && editable() && !textEditing() ? state.text : null;
+  const holder = drawLive() ? state.draw : modLive() || layModLive() ? state.mod : state.tool === 'text' && (editable() || curLay()) && !textEditing() ? state.text : null;
   if (!holder) return null;
-  const p = holder === state.draw ? DR.toolPrompt(holder) : holder === state.mod ? modPrompt(editable()) : textPrompt();
+  const p = holder === state.draw ? DR.toolPrompt(holder) : holder === state.mod ? modPrompt(editable() || curDoc()) : textPrompt();
   return p.input ? { ...p, holder } : null;
 }
 function dynamicPromptKey(e, p) {
@@ -10019,7 +10019,8 @@ function editKey(e) {
     else if (state.text.drag) { textDragEnd(true); note('Resize cancelled'); }
     else if (state.txoWait) { state.txoWait = false; note('Text to outlines cancelled'); }
     else if (modLive()) modEsc(d);
-    else if (state.tool === 'text' && d && !textEditing()) { if (state.text.askHeight) { state.text.askHeight = false; renderCommand(); paintOverlay(); } else if (d.sel.size) setSel(d, new Set()); else setTool('select'); }
+    else if (state.tool === 'text' && state.text.askHeight && !textEditing()) { state.text.askHeight = false; renderCommand(); paintOverlay(); }
+    else if (state.tool === 'text' && d && !textEditing()) { if (d.sel.size) setSel(d, new Set()); else setTool('select'); }
     else if (drawLive()) { if (DR.toolBusy(state.draw) || state.draw.stage === 'radius') { state.msg = null; drawFinish(); } else setTool('select'); }
     else if (state.dimDrag) { state.dimDrag.cancelled = true; state.dimDrag = null; note('Move cancelled'); paintOverlay(); }
     else if (state.dim && state.dim.askText) { state.dim.askText = false; note(dimPrompt()); }

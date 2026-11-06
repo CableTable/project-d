@@ -16,9 +16,7 @@ test('TODO 106b: stage flags distinguish every number, option and point / object
   for (const mode of ['Delta', 'Total', 'Percent', 'DeltaAngle', 'TotalAngle']) check('lengthen', [[{ stage: 'value', mode }, 'number']]);
   check('array', ['pick', 'center', 'type', 'opts'].map((stage) => [{ stage }, ['type', 'opts'].includes(stage) ? 'option' : null]));
   for (const key of ['cols', 'rows', 'dx', 'dy', 'items', 'fill', 'rotate']) check('array', [[{ stage: 'opts', ask: [key] }, key === 'rotate' ? 'option' : 'number']]);
-  check('rrect', [[{ stage: 'radius' }, 'number'], [{ stage: undefined }, null]]);
   const rounded = createTool('rrect'); toolType(rounded, 'r'); assert.equal(toolPrompt(rounded).input, 'number');
-  check('text', [[{ stage: 'height' }, 'number'], [{ stage: 'insert' }, null]]);
   check('mirror', ['pick', 'p1', 'p2', 'erase'].map((stage) => [{ stage }, stage === 'erase' ? 'option' : null]));
   check('align', [[{ stage: 'scale' }, 'option'], [{ stage: 'd2' }, null]]);
   check('copy', [[{ stage: 'mode' }, 'option'], [{ stage: 'p1' }, null]]);

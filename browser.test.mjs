@@ -23657,6 +23657,11 @@ try {
       assert.equal(await t('dynamic-prompt-input').inputValue(), text);
       await page.keyboard.press('Enter'); await frames();
     };
+    const typed = async (text) => {                                  // real key presses with the cursor on the drawing, no field focused
+      await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.type(text);
+      assert.equal(await t('dynamic-prompt-input').inputValue(), text);
+      await page.keyboard.press('Enter'); await frames();
+    };
     await setup(); await typeCmd('offset'); await move(); await tag();
     mkdirSync('shots-106b', { recursive: true });
     for (const theme of ['light', 'dark']) {
@@ -23668,21 +23673,21 @@ try {
     await page.keyboard.press('F12'); await frames(); assert.equal(await t('draw-tip').isVisible(), false);
     await page.keyboard.press('F12'); await frames(); await tag();
     await enter('0'); assert.match(await histLine(), /offset distance must be more than 0/); await tag();
-    await enter('7'); await click(40, 30); await click(40, 50);
+    await typed('7'); await click(40, 30); await click(40, 50);
     const offset = (await savedDoc()).entities; assert.equal(offset.length, 2); near70(line70(offset[1]), [20, 37, 60, 37]);
     await page.keyboard.press('Escape'); await page.keyboard.press('Control+z'); assert.equal((await savedDoc()).entities.length, 1);
     await page.keyboard.press('Control+a'); await typeCmd('move'); await typeCmd('0,0'); await typeCmd('0,5');
     near70(line70((await savedDoc()).entities[0]), [20, 35, 60, 35]);
     await typeCmd('offset'); await move(); await tag(); await t('dynamic-prompt-input').focus(); await page.keyboard.type('9');
-    await page.keyboard.press('Escape'); assert.equal(await t('dynamic-prompt-input').inputValue(), ''); assert.equal(await t('tool-chip').textContent(), 'Tool: Offset');
-    await page.keyboard.press('Escape'); assert.equal(await t('tool-chip').textContent(), 'Tool: Select');
+    await page.keyboard.press('Escape'); assert.equal(await t('dynamic-prompt-input').inputValue(), ''); await t('tool-chip').filter({ hasText: 'Tool: Offset' }).waitFor();
+    await page.keyboard.press('Escape'); await t('tool-chip').filter({ hasText: 'Tool: Select' }).waitFor();
 
     await setup(); await typeCmd('fillet'); await typeCmd('r'); await move(); await tag(); await enter('3');
     assert.match(await histLine(), /Fillet radius 3 mm/); assert.equal(await t('dynamic-prompt-input').isVisible(), false);
     await typeCmd('chamfer'); await typeCmd('d'); await move(); await tag();
     await enter('-1'); assert.match(await histLine(), /Chamfer distances must be 0 or more/);
-    await enter('0'); assert.match(await prompt(), /Specify second chamfer distance <0/); await tag();
-    await enter('0'); assert.match(await prompt(), /Select first line/); assert.match(await histLine(), /Dist1 = 0.0000, Dist2 = 0.0000/);
+    await typed('0'); assert.match(await prompt(), /Specify second chamfer distance <0/); await tag();
+    await typed('0'); assert.match(await prompt(), /Select first line/); assert.match(await histLine(), /Dist1 = 0.0000, Dist2 = 0.0000/);
     await page.keyboard.press('Escape'); await typeCmd('divide'); await click(40, 30); await move(); await tag(); await enter('4');
     assert.equal((await savedDoc()).entities.filter((e) => e.type === 'POINT').length, 3);
 
@@ -23707,6 +23712,20 @@ try {
     await typeCmd('height'); await move(); await tag(); await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.type('9');
     await page.keyboard.press('Escape'); assert.equal(await t('dynamic-prompt-input').inputValue(), '');
     await page.keyboard.press('Escape'); await frames(); assert.equal(await t('dynamic-prompt-input').isVisible(), false); assert.match(await prompt(), /Specify insertion point/);
+    // the same prompt and field on a layout (Offset, Text Height)
+    await closeTabs(/./); await t('new-layout').click();
+    await typeCmd('line'); await typeCmd('20,30'); await typeCmd('60,30'); await page.keyboard.press('Escape');
+    const lay = async () => (await savedDoc()).entities;
+    const before = (await lay()).length;
+    await typeCmd('offset'); await move(); await tag(); await typed('7'); await click(40, 30); await click(40, 50);
+    const offs = await lay(); assert.equal(offs.length, before + 1); near70(line70(offs.at(-1)), [20, 37, 60, 37]);
+    await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
+    await typeCmd('text'); await typeCmd('height'); await move(); await tag();
+    assert.match(await prompt(), /Text height/); await click(80, 60); assert.equal(await t('text-edit-box').isVisible(), false, 'Height waits for its number');
+    await typed('9'); await click(80, 60); await page.keyboard.type('A'); await page.keyboard.press('Enter'); await frames();
+    assert.equal(fieldOf((await lay()).find((e) => e.type === 'TEXT' || e.type === 'MTEXT'), 40), 9, 'text of height 9 on the layout');
+    await typeCmd('height'); await move(); await tag(); await page.keyboard.press('Escape'); await frames();
+    assert.equal(await t('dynamic-prompt-input').isVisible(), false); assert.match(await prompt(), /Specify insertion point/);
     await closeTabs(/./); assert.deepEqual(errors, []);
     console.log('TODO 106b screenshots: shots-106b/offset-prompt-light.png and shots-106b/offset-prompt-dark.png');
   });
