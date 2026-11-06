@@ -23520,6 +23520,7 @@ try {
       await typeCmd(base); await move(90, 70); await labels('Length', 'Angle');
     };
     const cancel = async () => { await page.keyboard.press('Escape'); await page.keyboard.press('Escape'); await frames(); };
+    const said = async (re) => (await page.waitForFunction((s) => { const x = document.querySelector('[data-testid=cmd-prompt]').textContent; return new RegExp(s).test(x) && x; }, re.source)).jsonValue();      // waits for the prompt, returns its text
     for (const kind of ['move', 'mirror']) {
       await setup();
       await shotBoth('106a-' + kind, async () => { await start(kind, kind === 'mirror' ? '0,0' : '20,30'); await polar(50, 90); }, cancel);
@@ -23542,7 +23543,7 @@ try {
     await page.keyboard.press('Escape'); await page.keyboard.press('Control+z'); assert.equal((await savedDoc()).entities.length, 2);
 
     await setup(); await start('mirror', '0,0'); await polar(50, 90); await page.keyboard.press('Enter'); await frames();
-    assert.match(await prompt(), /Erase source objects/);
+    assert.match(await said(/Erase source objects/), /Erase source objects/);
     for (const id of ['cursor-length', 'cursor-angle', 'cursor-dx', 'cursor-dy']) assert.equal(await t(id).isVisible(), false, 'Erase asks no point');
     await typeCmd('no'); near70(line70((await savedDoc()).entities[1]), [-20, 30, -60, 50]);
     await page.keyboard.press('Control+z'); assert.equal((await savedDoc()).entities.length, 1);
@@ -23571,7 +23572,7 @@ try {
     await page.keyboard.press('Escape'); await page.keyboard.press('Control+z'); assert.equal((await savedDoc()).entities.length, 1);
 
     await setup(); await start('move'); await polar(25, 90); await page.keyboard.press('Escape'); await frames();
-    assert.match(await prompt(), /Specify second point/); assert.notEqual(await t('cursor-length').inputValue(), '25');
+    assert.match(await said(/Specify second point/), /Specify second point/); assert.notEqual(await t('cursor-length').inputValue(), '25');
     await page.keyboard.press('Escape'); assert.match(await histLine(), /Command: SELECT/);
     near70(line70((await savedDoc()).entities[0]), [20, 30, 60, 50]);
 
@@ -23803,7 +23804,10 @@ try {
       if (!(await chipOn('tog-dyn'))) await t('tog-dyn').click();
       for (const id of ['tog-snap', 'tog-polar', 'tog-otrack', 'tog-ortho']) if (await chipOn(id)) await t(id).click();
     };
-    const fields = async (a, b) => { await t('cursor-length').waitFor({ state: 'visible' }); await frames(); assert.deepEqual(errors, []); assert.equal(await t('cursor-length').getAttribute('aria-label'), a); assert.equal(await t('cursor-angle').getAttribute('aria-label'), b); };
+    const fields = async (a, b) => {
+      const got = await (await page.waitForFunction(([x, y]) => { const l = document.querySelector('[data-testid=cursor-length]')?.getAttribute('aria-label'), g = document.querySelector('[data-testid=cursor-angle]')?.getAttribute('aria-label'); return l === x && g === y && [l, g]; }, [a, b])).jsonValue();      // the waited values are the ones asserted
+      assert.deepEqual(got, [a, b]); assert.deepEqual(errors, []);
+    };
     const enter = async (text) => { await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.type(text); await page.keyboard.press('Enter'); await frames(); };
     const said = async (re) => (await page.waitForFunction((s) => { const x = document.querySelector('[data-testid=cmd-prompt]').textContent; return new RegExp(s).test(x) && x; }, re.source)).jsonValue();      // waits for the prompt before a "no fields" check
     await setup(); await typeCmd('text'); await move(80, 60); await fields('X', 'Y'); await enter('10,20'); await typeNote('Insertion');
@@ -23832,7 +23836,7 @@ try {
     await setup(); await typeCmd('measurepoints'); await click(21, 30.5); await said(/Specify length of segment/); await move(80, 60); assert.equal(await t('cursor-length').isVisible(), false, 'length or point: no fields'); await typeCmd('0,0'); await move(90, 70); await fields('Length', 'Angle'); await enter('10<90');
     assert.equal((await savedDoc()).entities.filter((e) => e.type === 'POINT').length, 4);
     await setup(); await page.keyboard.press('Control+a'); await typeCmd('array'); await typeCmd('polar'); await move(80, 60); await fields('X', 'Y'); await enter('0,0');
-    assert.match(await prompt(), /Items.*Fill angle/); assert.equal(await t('cursor-length').isVisible(), false);
+    assert.match(await said(/Items.*Fill angle/), /Items.*Fill angle/); assert.equal(await t('cursor-length').isVisible(), false);
 
     for (const kind of ['rotate', 'scale']) {
       await setup(); await page.keyboard.press('Control+a'); await typeCmd(kind); await typeCmd('20,30'); await typeCmd('reference'); await said(/Specify reference (angle|length)|reference (angle|length)/); await move(80, 60); assert.equal(await t('cursor-length').isVisible(), false, 'angle or point: no fields');
@@ -23958,6 +23962,9 @@ try {
     await setup(); await typeCmd('lengthen'); await typeCmd('delta'); await typeCmd('0,0'); await said(/Specify second point/); const p90 = await at(90, 70); await page.mouse.move(p90.x, p90.y); await frames();
     await keys('-5'); await said(/Select an object to change/); await click(59, 49.5);
     assert.ok(Math.abs(len((await savedDoc()).entities[0]) - (Math.hypot(40, 20) - 5)) < 1e-5, 'a typed -5 is a delta of -5, not a length of 5');
+    await setup(); await typeCmd('lengthen'); await typeCmd('delta'); await typeCmd('20,30'); await said(/Specify second point/); await page.mouse.move(p90.x, p90.y); await frames();
+    await keys('-5,3'); await said(/Select an object to change/); await click(59, 49.5);
+    assert.ok(Math.abs(len((await savedDoc()).entities[0]) - (Math.hypot(40, 20) + Math.hypot(5, 3))) < 1e-5, 'a typed -5,3 at the second point is relative: a delta of 5.83, not an absolute point');
     await setup(); await typeCmd('measurepoints'); await click(21, 30.5); await said(/Specify length of segment/); await keys('10');
     assert.equal((await savedDoc()).entities.filter((e) => e.type === 'POINT').length, 4, 'Measure points length 10 entered as the number');
     await setup(); await page.keyboard.press('Control+a'); await typeCmd('rotate'); await typeCmd('20,30'); await typeCmd('reference'); await keys('50');

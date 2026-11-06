@@ -7189,6 +7189,7 @@ function cursorCommit(shift = false) {
   else if (T.A) pointToolAction()(T.d, result.point.map((v) => v / T.f), shift, true);
   else drawTyped(result.text);
 }
+const lone = (s) => s.mode === 'polar' && !s.prefix && Number.isFinite(Number(s.values[0])) && s.values[0] !== '' && !s.values[1];
 /** A typed point takes the same path as a picked point, without snapping it again. */
 function modCursorCommit(T, result) {
   if (T.d.lay) { modTyped(T.d, result.text); return; }
@@ -7198,6 +7199,7 @@ function modCursorCommit(T, result) {
   else if (m.kind === 'align') alignPoint(T.d, to);
   else if (['break', 'breakatpoint'].includes(m.kind)) breakPoint(T.d, to);
   else if (m.kind === 'offset') offsetDo(T.d, to);
+  else if (['lengthen', 'measurepoints'].includes(m.kind) && m.stage === 'value' && lone(cursorInput())) modTyped(T.d, cursorInput().values[0]);   // a lone number (negative too) is the command bar's value, not a polar length
   else if (m.kind === 'lengthen') lengthenPick(T.d, to, true);
   else if (m.kind === 'measurepoints') pointsLength(T.d, to);
   else if (m.kind === 'array') arrayCenter(T.d, to);
@@ -7261,7 +7263,6 @@ function cursorKey(e) {
   }
   if (e.key === 'Enter' && DI.hasTyped(input)) cursorCommit();
   else {
-    if (T.mod && T.A.stage === 'value' && e.key === '-' && !DI.hasTyped(input)) { e.preventDefault(); e.stopPropagation(); ui.cmdUI.open('-'); return; }   // Lengthen / Measure points: a number or a point; a negative number is the command bar's (delta -5), not a polar length
     if (DI.isSingle(input.mode) && /^[,<]$/.test(e.key) && input.values[0]) {      // a point typed at a one-number prompt (Rotate, Scale, Radius, Length) moves whole to the command box
       const seed = input.values[0] + e.key;
       cursorHolder(T).cursorInput = null; e.preventDefault(); e.stopPropagation(); ui.cmdUI.open(seed); paintOverlay(); renderCommand(); return;
