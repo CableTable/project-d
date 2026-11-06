@@ -309,3 +309,6 @@ all its text. New rules: small lookups Rook does itself; every report has Result
 
 
 **2026-11-06, session 38 (Rook S38): DWG opens.** LibreDWG's `dwg2dxf` is built in CI from a pinned commit (static, cached), embedded in `ProjectD.exe` (5.1 MB -> 22.4 MB) and written to `%LOCALAPPDATA%` on first use; a .dwg opens, drops, sits on Recent and adds to Compare, and Save never writes the .dwg. The CI round-trip through the real helper gave 13 -> 13 entities and kept non-ASCII text. `105c` turned out already built, which closed the last open bug (`T22`). No cargo on this PC, so CI was the first Rust compiler; one push, green first time.
+
+
+**2026-11-06, session 38 (Rook S38d-e): dimensions drive the drawing.** TODO 76 is done: double-click an aligned, horizontal or vertical dimension, type a number, and the LINE (76a-b) or a rectangle (76d, the world right / top side moves) follows; with no line the number becomes text and the status says why (76c). 76e turned out already built (Stretch has followed dims since 97g2). Two Contour bugs from his hexagon (199, 200) and his layout drag snap marker (201) were fixed the same day. Reviews and small fixes ran as subagents on the main account while Bishop was paused and King near its 5h limit.
