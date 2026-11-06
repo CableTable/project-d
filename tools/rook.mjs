@@ -1,6 +1,6 @@
 // Rook's helpers: short output so the lead's context stays small (2026-10-20).
 //   node tools/rook.mjs usage           one line per agent (+ week forecast); refreshes mockups/_design/usage/limits.csv, history.csv
-//   node tools/rook.mjs usage --cached  read the CSVs if both are at most five minutes old; otherwise refresh live
+//   node tools/rook.mjs usage --cached  read the CSVs if both are at most 75 minutes old (the PC agent refreshes hourly); otherwise refresh live
 //   node tools/rook.mjs result <file>   (a RUNNING line first if the run has not ended) a run's final reply + tokens: claude2 stream-json (.jsonl), or a Codex -o file (tokens from its .log)
 //   node tools/rook.mjs review <sha> <brief> <out.jsonl> [--as bishop|king] [--from <clone> <branch>] [--over]   launch the reviewer on a commit, detached; without --as: Bishop, or King when Bishop's reviewer folder is locked
 //   node tools/rook.mjs build <brief> <out.jsonl> <branch> <sha> [--as king|bishop] [--dir king2] [--fix] [--regrilled] [--tool] [--no-fresh] [--over] [--big] [--review <review brief> <review out.jsonl>]   launch a Claude build on a new branch in its worktree, detached
@@ -228,7 +228,7 @@ export function mergeDue(run = (cmd, a) => execFileSync(cmd, a, { encoding: 'utf
 export function failLines(text, log) {
   const out = [];
   let left = 0;
-  const lines = text.replace(/\x1b\[[0-9;]*m/g, '').split(/\r?\n/).map((l) => l.replace(/^\[shard \d+\/\d+\] /, '')); // the browser runner prefixes its error lines too
+  const lines = text.replace(/\x1b\[[0-9;]*m/g, '').split(/\r?\n/).map((l) => l.replace(/^\d{4}-\d\d-\d\dT[\d:.]+Z /, '').replace(/^\[shard \d+\/\d+\] /, '')); // the browser runner prefixes its error lines too
   const summary = lines.findIndex((l) => /^\s*✖ failing tests:/.test(l)); // the spec reporter repeats every failure under it, now with its error: read those, not the inline ✖ lines
   for (const [i, line] of lines.entries()) {
     if (i === summary) { left = 0; continue; }

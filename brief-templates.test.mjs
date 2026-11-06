@@ -9,7 +9,7 @@ const values = {
   'base sha': '9572997', 'spec path': '../runs32/grill-170.md', 'brief path': '../runs32/b-170.txt',
   N: '32', file: 'rev-170.jsonl','preserved behaviour': 'existing brief linting',
   'Do list': '1. Check the brief templates.\n2. `npm.cmd test` passes.\n3. Tick TODO 170 in TODO.md.',
-  'commit title': 'TODO 170: brief templates', 'report size': '5', 'area words': 'brief template|brief lint',
+  'commit title': 'TODO 170: brief templates', 'report size': '5', 'area words': 'brief template|brief lint', img: '<img>', // board.txt names the HTML tag
 };
 
 for (const file of readdirSync(dir).filter((name) => name.endsWith('.txt')).sort()) {

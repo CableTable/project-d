@@ -19,7 +19,7 @@ Bishop paused since 2026-11-06 ~00:00 IST (his call; lock `ProjectD-s15fix/.run-
 | Builder (**King**) | claude3 (3rd account, `claude3.cmd`) | Sonnet, high | His call 2026-10-28: builds only (fresh session per build, worktree `Project D extras/ProjectD-king`, same command as Bishop-build with `claude3.cmd`), and leads in Castle mode. A clone of Rook: same CLAUDE.md, WORKFLOW.md, plugins and the **same memory folder** (junctions from `~/.claude-account3/projects/*/memory` to Rook's), so a memory either writes the other reads. Builds go to Knight and King only: King 2 runs at once (folders `ProjectD-king`, `ProjectD-king2`), Knight 1 (his call 2026-10-28); Bishop builds no more. |
 | Builder (Bishop) | claude2 | Sonnet, high | Mock-ups and screenshots (light + dark) only. **No builds since 2026-10-28** (his call: King builds instead). |
 | Reviewer | claude2 | **Opus, medium** | Reviews every build's commits, read-only. Findings go back to the builder. |
-| Builder / Reviewer (Rook) | main account, Agent tool | | since 2026-11-04, not above 80% Rook 5h; reviewer points at the builder's clone (no `git checkout`); Rook sets its queue line to ended. |
+| Builder / Reviewer (Rook) | main account, Agent tool | | since 2026-11-04, not above 80% Rook 5h; both with isolation: worktree (reviewer.md step 1 does the checkout; builder: git checkout -b fix/<x> <sha> first); no queue line. |
 | PC tester | claude2 | Sonnet, high | Downloads the released exe and drives it (WebView2 debug port + Playwright), reports what broke. |
 | Fallback | claude2 | Opus, high | Only when Sonnet has failed at a build. |
 | Research (**Knight**) | Codex CLI (his ChatGPT Go plan) | gpt-6-luna | **Default for web research**, big or small. **Never reviews** (his call, 2026-10-20: in a blind test on TODO 39 it missed both bugs Bishop-review found); read-only sandbox, live web search. Runs in `~/codex-research`, never the repo. |
@@ -148,7 +148,7 @@ Two claude2 sessions may run at once only on separate files (e.g. a mock-up whil
 - Knight: `node tools/rook.mjs knight <brief file> <report txt> <branch> <sha> [--fix] [--regrilled] [--tool] [--over] [--big] [--review <review brief> <review out jsonl>]`
 - King: `node tools/rook.mjs build <brief file> <out jsonl> <branch> <sha> [--as king|bishop] [--fix] [--regrilled] [--tool] [--over] [--big] [--review <review brief> <review out jsonl>]` (`--fix` = fix round, `--tool` = tool ticket)
 - Knight branch into the repo first: `git fetch "<extras>/ProjectD-rowan" <branch>`
-- Review (Bishop paused): Agent `reviewer` with a brief from `tools/briefs/review.txt`, or `node tools/rook.mjs review <sha> <brief file> <out jsonl> --as king [--from <clone folder> <branch>]`
+- Review (Bishop paused): Agent `reviewer` with `isolation: worktree` and a brief from `tools/briefs/review.txt`, or `node tools/rook.mjs review <sha> <brief file> <out jsonl> --as king [--from <clone folder> <branch>]`
 - Probe: a change to `tools/`, `.github/` or `src-tauri/` (no cargo here) gets its `gh workflow run <file> --ref <branch>` probe before the full suite.
 - Run ended: `node tools/rook.mjs result <run file>` (report, denials, peak context). Gate: `node tools/rook.mjs usage --cached`.
 - Board: `node tools/rook.mjs board <brief> <out>`, brief from `tools/briefs/board.txt` (fill its `{placeholders}`).
@@ -156,6 +156,7 @@ Two claude2 sessions may run at once only on separate files (e.g. a mock-up whil
 - Full suite: `node tools/rook.mjs suite <sha>` (`<sha>` = HEAD), then `wait` on `runs<N>/suite-<sha>.log`
 - Wait: `node tools/rook.mjs wait <run file>... [--ci <sha>]` as a Monitor, never in the foreground
 - CI of a push: Monitor `bash tools/ci-watch.sh <sha>` (head sha)
+- CI red, run still going: `jid=$(gh run view <id> --json jobs --jq '.jobs[]|select(.conclusion=="failure")|.databaseId' | head -1); gh api --allow-escape-sequences repos/CableTable/project-d/actions/jobs/$jid/logs > f.log; node tools/rook.mjs fails f.log`
 - Cherry-pick: `git cherry-pick` the builder's commits, tick TODO.md (`grep -n <ticket> TODO.md`: tick every row of that ticket), commit; push once per handover; UI item: run the Board line now, or write "Board due: <id>" in the resume
 - Retro: `node tools/rook.mjs retro --as king` while Bishop is paused (briefs `tools/briefs/retro*.txt`); at a handover `node tools/rook.mjs retro --handover` first (`handover` refuses without it, or `--no-retro`); merge: `node tools/rook.mjs merge <n> <sha>`
 - Handover: write `runs<N+1>/resume-rook.txt` (with "Open bugs checked <time>: <ids or none>") + `rook-next.txt`, then `node tools/rook.mjs handover <resume> "Rook S<N>x"` and `node tools/rook.mjs next`
@@ -367,7 +368,7 @@ read + cache write + output from the final `result.usage`; new = input + cache w
 - **Context limit 250k** (his call, 2026-10-21; in practice auto-compact fires at ~218k, S29 3 times): `autoCompactWindow: 250000` in his ~/.claude/settings.json compacts Rook
   automatically there. If it ever doesn't fire, Rook finishes its step at ~250k and asks him to type `/compact`.
 - **Bishop-support** (his call, 2026-10-21): an interactive claude2 (Sonnet) in a Terminal tab answers his questions while he
-  uses the app and adds tickets (T1, T2, …) to `E:/Project B/Claude/support/tickets.md` (local, never on GitHub; `grep -a`, as grep calls the file binary; prompt:
+  uses the app and adds tickets (T1, T2, …) to `E:/Project B/Claude/support/tickets.md` (local, never on GitHub; the file is UTF-16: `tr -d '\000' < "E:/Project B/Claude/support/tickets.md" | grep ...`, not `grep -a`; prompt:
   `support/pip-support-prompt.md`). Rook moves `open` tickets into TODO.md at each session start and keeps each ticket's
   Status current (in TODO → building → built → merged → checked in exe); Bishop-support never edits the repo.
 - **One call per step, short output:** `node tools/rook.mjs usage` (3 lines; refreshes `mockups/_design/usage/`) and

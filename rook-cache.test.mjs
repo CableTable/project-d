@@ -6,12 +6,12 @@ import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { cacheAge } from './tools/rook-cache.mjs';
 
-test('usage cache expires only after five minutes, using the older of both files', () => {
-  const now = 1_000_000;
-  assert.equal(cacheAge([now, now - 299_999], now), 299_999);
-  assert.equal(cacheAge([now - 300_000, now], now), 300_000);
-  assert.equal(cacheAge([now, now - 300_001], now), null);
-  assert.equal(cacheAge([now - 300_001, now], now), null);
+test('usage cache expires only after 75 minutes, using the older of both files', () => {
+  const now = 10_000_000;
+  assert.equal(cacheAge([now, now - 4_499_999], now), 4_499_999);
+  assert.equal(cacheAge([now - 4_500_000, now], now), 4_500_000);
+  assert.equal(cacheAge([now, now - 4_500_001], now), null);
+  assert.equal(cacheAge([now - 4_500_001, now], now), null);
   assert.equal(cacheAge([now], now), null);
   assert.equal(cacheAge([], now), null);
   assert.equal(cacheAge([NaN, now], now), null);
@@ -91,7 +91,7 @@ test('cached usage shares live summaries, avoids processes and writes, and falls
         // The preceding live run restores both files; only this one file is invalidated.
         for (const name of ['limits.csv', 'history.csv']) utimesSync(join(usage, name), asOf / 1000, asOf / 1000);
         if (missing) rmSync(join(usage, file));
-        else utimesSync(join(usage, file), (now - 300_001) / 1000, (now - 300_001) / 1000);
+        else utimesSync(join(usage, file), (now - 4_500_001) / 1000, (now - 4_500_001) / 1000);
         const live = execFileSync(process.execPath, ['--import', './live.mjs', 'tools/rook.mjs', 'usage', '--cached'], { cwd: repo, encoding: 'utf8', timeout: 5000 });
         assert.deepEqual(live.trim().split('\n'), lines.map((line) => line.replace(/ \(as of .*\)$/, ' (live)')));
       }

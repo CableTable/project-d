@@ -406,6 +406,7 @@ test('TODO 196g fix: fails reads the real suite-log lines (browser [shard n/m] F
   const browser = ['[shard 1/4] FAIL part PDF: tiled on A4, and scaled to fit A0 / A3 / A4 with its scale stated; the layout dialog is unchanged ', '[shard 2/4] FAIL TODO 146: an up-left Line and its readout leave a clear, stationary command box ', 'SUITE unit=0 browser=1'].join('\r\n');
   assert.deepEqual(failLines(browser, 'b.log'), ['part PDF: tiled on A4, and scaled to fit A0 / A3 / A4 with its scale stated; the layout dialog is unchanged', 'TODO 146: an up-left Line and its readout leave a clear, stationary command box']);
   assert.deepEqual(failLines('[shard 2/4] FAIL a step\n[shard 2/4] - The input did not match the regular expression /\\(80\\.00\\) Tj/\n[shard 2/4] + 1', 's.log'), ['a step', '- The input did not match the regular expression /\\(80\\.00\\) Tj/', '+ 1']); // TODO 196g Low 1
+  assert.deepEqual(failLines('2026-11-06T10:15:30.1234567Z [shard 2/4] FAIL TODO 146: a step\n2026-11-06T10:15:30.2Z [shard 2/4] - 1\n2026-11-06T10:15:30.3Z FAIL bare', 't.log'), ['TODO 146: a step', '- 1', 'bare']); // CI job logs prefix every line with a timestamp
   assert.deepEqual(failLines(`FAIL bare step\n${E}[31m- 1${E}[39m\n${E}[32m+ 2${E}[39m`, 'a.log'), ['bare step', '- 1', '+ 2']);
   assert.deepEqual(failLines('ok 1\nok step\nSUITE unit=0 browser=0\n', 'x.log'), ['no failures in x.log']);
   assert.deepEqual(failLines('lots of output\nSUITE unit=1 browser=0\n', 'r.log'), ['red (unit=1 browser=0) but no failing step lines found in r.log']);
