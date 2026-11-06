@@ -23520,7 +23520,6 @@ try {
       await typeCmd(base); await move(90, 70); await labels('Length', 'Angle');
     };
     const cancel = async () => { await page.keyboard.press('Escape'); await page.keyboard.press('Escape'); await frames(); };
-    const said = async (re) => (await page.waitForFunction((s) => { const x = document.querySelector('[data-testid=cmd-prompt]').textContent; return new RegExp(s).test(x) && x; }, re.source)).jsonValue();      // waits for the prompt, returns its text
     for (const kind of ['move', 'mirror']) {
       await setup();
       await shotBoth('106a-' + kind, async () => { await start(kind, kind === 'mirror' ? '0,0' : '20,30'); await polar(50, 90); }, cancel);
@@ -23809,7 +23808,6 @@ try {
       assert.deepEqual(got, [a, b]); assert.deepEqual(errors, []);
     };
     const enter = async (text) => { await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.type(text); await page.keyboard.press('Enter'); await frames(); };
-    const said = async (re) => (await page.waitForFunction((s) => { const x = document.querySelector('[data-testid=cmd-prompt]').textContent; return new RegExp(s).test(x) && x; }, re.source)).jsonValue();      // waits for the prompt before a "no fields" check
     await setup(); await typeCmd('text'); await move(80, 60); await fields('X', 'Y'); await enter('10,20'); await typeNote('Insertion');
     const text = (await savedDoc()).entities.map(decodeText).find(Boolean); near70([text.x, text.y], [10, 20]);
     await move(80, 60); await fields('X', 'Y'); assert.notEqual(await t('cursor-length').inputValue(), '10', 'Text clears its insertion typing before the next text');
@@ -23954,7 +23952,6 @@ try {
     };
     const keys = async (text) => { await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.type(text); await page.keyboard.press('Enter'); await frames(); };
     const click = async (x, y) => { const p = await at(x, y); await page.mouse.click(p.x, p.y); await frames(); };
-    const said = async (re) => (await page.waitForFunction((s) => { const x = document.querySelector('[data-testid=cmd-prompt]').textContent; return new RegExp(s).test(x) && x; }, re.source)).jsonValue();      // waits for the note, returns its text
     const len = (e) => { const [x1, y1, x2, y2] = line70(e); return Math.hypot(x2 - x1, y2 - y1); };
     await setup(); await typeCmd('lengthen'); await typeCmd('delta'); await keys('50');
     await said(/Select an object to change/); await click(59, 49.5);
