@@ -192,7 +192,7 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Unit fix**: Multiplies or divides the whole drawing or background by 25.4 about 0,0 to correct an inch/mm size mistake without changing the unit header. Where: `DECISIONS.md`, Unit fix. Avoid: Changing display units.
 
-**Work area**: The background used to view and edit a drawing, independently set to Follow app, Light or Dark from the status bar or View menu. Its drawing colours and feedback adapt to the background; sheet paper and PDF / Print keep their appearance. Where: `web/workarea.js`, `DECISIONS.md`, Work area (TODO 96).
+**Work area**: The background used to view and edit a drawing, independently set to Follow app, Light or Dark from the status bar or View menu. Its drawing colours and feedback adapt to the background, on Drawings, Layouts (sheet paper included) and Compare alike; PDF / Print keeps its appearance. Where: `web/workarea.js`, `DECISIONS.md`, Work area (TODO 96).
 
 ## Drawing / CAD
 
