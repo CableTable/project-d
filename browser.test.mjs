@@ -19834,7 +19834,7 @@ try {
     await typeCmd('300,300'); await typeNote('BO');
     assert.equal(await nParts(), n0 + 1, 'the text is on the sheet');
     assert.equal((await histLabels()).at(-1), 'Text');
-    assert.match(await prompt(), /^TEXT placed on layer 0/);
+    assert.match(await histLine(), /TEXT placed on layer 0/, 'the note is in the history line, as on a drawing (106b gives a layout Text the same prompt line)');
     await undo(); assert.equal(await nParts(), n0, 'one Undo takes the text away');
     await page.keyboard.press('Control+y'); assert.equal(await nParts(), n0 + 1, 'Redo brings it back');
     await page.locator('[data-tool=select]').click();
@@ -23254,7 +23254,9 @@ try {
       await page.locator(`[data-tool=${kind}]`).click();
       if (kind === 'rrect') {
         assert.match(await prompt(), /Corner radius/);
-        await page.keyboard.type('3'); assert.equal(await cmdLine().inputValue(), '3'); await cmdLine().press('Enter');
+        const home = await at(80, 60); await page.mouse.move(home.x, home.y); await frames();
+        await page.keyboard.type('3'); assert.equal(await t('dynamic-prompt-input').inputValue(), '3');       // grill 106 Q3: a number prompt types into the Dynamic prompt field
+        await page.keyboard.press('Enter');
       }
     };
     await start();
@@ -23584,6 +23586,12 @@ try {
     for (const kind of ['move', 'mirror']) for (const theme of ['light', 'dark']) assert.ok(readFileSync(`${shotDir}/s12-106a-${kind}-${theme}.png`).length > 1000, 'required screenshot exists');
   });
 
+  // Lengthen remembers its mode and values across tabs (as AutoCAD does): the 106 steps put them back so the 97e steps still find <Total> and <0.0000>.
+  const resetLengthen106 = async () => {
+    await typeCmd('lengthen'); await typeCmd('delta'); await typeCmd('0'); await page.keyboard.press('Escape');
+    await typeCmd('lengthen'); await typeCmd('total'); await typeCmd('1'); await page.keyboard.press('Escape');
+  };
+
   await step('TODO 106a: Text, Balloon, Break, Offset Through, Lengthen, Array, Measure points and Reference points', async () => {
     const move = async (x, y) => { const p = await at(x, y); await page.mouse.move(p.x - 1, p.y); await page.mouse.move(p.x, p.y); await frames(); };
     const click = async (x, y) => { const p = await at(x, y); await page.mouse.click(p.x, p.y); await frames(); };
@@ -23633,7 +23641,7 @@ try {
       await setup(); await typeCmd(kind); await typeCmd('fence'); await click(30, 30); await move(80, 60);
       assert.equal(await t('cursor-length').isVisible(), false, 'fences have no fields');
     }
-    await closeTabs(/./);
+    await resetLengthen106(); await closeTabs(/./);
   });
 
   await step('TODO 106b: Dynamic prompt for Offset, Fillet, Chamfer, Divide', async () => {
@@ -23726,7 +23734,7 @@ try {
     assert.equal(fieldOf((await lay()).find((e) => e.type === 'TEXT' || e.type === 'MTEXT'), 40), 9, 'text of height 9 on the layout');
     await typeCmd('height'); await move(); await tag(); await page.keyboard.press('Escape'); await frames();
     assert.equal(await t('dynamic-prompt-input').isVisible(), false); assert.match(await prompt(), /Specify insertion point/);
-    await closeTabs(/./); assert.deepEqual(errors, []);
+    await closeTabs(/./); await setup(); await resetLengthen106(); await closeTabs(/./); assert.deepEqual(errors, []);
     console.log('TODO 106b screenshots: shots-106b/offset-prompt-light.png and shots-106b/offset-prompt-dark.png');
   });
 
@@ -23744,7 +23752,7 @@ try {
     assert.equal((await savedDoc()).entities.filter((e) => e.type === 'POINT').length, 4, 'Measure points length 10 entered as the number');
     await setup(); await page.keyboard.press('Control+a'); await typeCmd('rotate'); await typeCmd('20,30'); await typeCmd('reference'); await keys('50');
     assert.match(await prompt(), /Specify the new angle/, 'Reference angle 50 entered as the number');
-    await closeTabs(/./);
+    await setup(); await resetLengthen106(); await closeTabs(/./);
   });
 
   await step('TODO 69e: Move / Copy base point X / Y, Rotate Angle, Scale Factor, F12 off, Esc once keeps the command', async () => {
