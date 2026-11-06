@@ -7921,6 +7921,36 @@ try {
   const ctCfg = () => page.evaluate(() => JSON.parse(localStorage.getItem('pd-contour')));
   const ctPanel = (id) => page.locator(`[data-testid=contour-panel] [data-testid=${id}]`);
   const entCount = async () => Number((await t('entities').textContent()).replace(/\D+/g, ''));
+  await step('TODO 200: contour inside next to a short in-line piece', async () => {
+    await closeTabs(/./);
+    const doc = newDoc(4);
+    addEntities(doc, dxfPoly([[0, 0], [.011, 0], [100, 0], [100, 60], [0, 60]], { closed: true }));
+    await t('picker').setInputFiles({ name: 'inline200.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(doc), 'latin1') });
+    await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'inline200.dxf');
+    await page.keyboard.press('Escape'); await page.keyboard.press('Control+a');
+    await page.locator('[data-tool=contour]').click();
+    await ctPanel('contour-inside').click();
+    await ctPanel('contour-rounded').click();
+    await t('contour-dist').fill('2'); await t('contour-dist').press('Enter');
+    await t('contour-steps').fill('1'); await t('contour-steps').press('Enter');
+    await page.waitForFunction(() => document.querySelector('[data-testid=contour-warn]').hidden && document.querySelectorAll('[data-testid=contour-preview] .ct-out').length === 1);
+    await shotBoth('todo200-drawing');
+    await t('contour-apply').click();
+    await page.waitForFunction(() => /^Contour: 1 new outline \(4 lines and arcs\)/.test(document.querySelector('[data-testid=cmd-prompt]').textContent));
+    const drawing = await savedDoc(), contour = drawing.entities.filter((e) => e.layer === 'Contour');
+    assert.equal(contour.length, 4);
+    assert.deepEqual(contour.map(lineEnds), [[2, 2, 98, 2], [98, 2, 98, 58], [98, 58, 2, 58], [2, 58, 2, 2]], 'one smaller closed outline');
+    assert.deepEqual(drawing.entities[0].r.c.map((c, i) => [c, drawing.entities[0].r.v[i]]).filter(([c]) => c === 10 || c === 20),
+      doc.entities[0].r.c.map((c, i) => [c, doc.entities[0].r.v[i]]).filter(([c]) => c === 10 || c === 20), 'the source vertices stay unchanged');
+    await t('contour-close').click(); await t('contour-panel').waitFor({ state: 'hidden' });
+    await page.keyboard.press('Control+z');
+    await page.waitForFunction(() => /^Undo/.test(document.querySelector('[data-testid=cmd-prompt]').textContent));
+    assert.equal(await entCount(), 1, 'one Undo removes the contour');
+    for (const theme of ['light', 'dark']) assert.ok(readFileSync(`${shotDir}/s12-todo200-drawing-${theme}.png`).length > 1000);
+    await closeTabs(/./);
+    await page.evaluate(() => localStorage.removeItem('pd-contour'));
+  });
+
   await step('TODO 199: contour outside a hexagon with a near-repeated point', async () => {
     const said = async (re) => (await page.waitForFunction((s) => { const x = document.querySelector('[data-testid=cmd-prompt]').textContent; return new RegExp(s).test(x) && x; }, re.source)).jsonValue();
     const configured = (key, value) => page.waitForFunction(([k, v]) => JSON.parse(localStorage.getItem('pd-contour'))?.[k] === v, [key, value]);

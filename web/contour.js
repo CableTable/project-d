@@ -237,9 +237,23 @@ const extent = (s) => (s.b ? Math.abs(sweepOf(s)) : dist(s.p0, s.p1));
 export function offsetLoop(loop, t, opts = {}) {
   const rounded = opts.corners === 'rounded', limit = opts.miter || MITER_LIMIT, area0 = loopArea(loop), size = loop.reduce((m, s) => Math.max(m, dist(s.p0, s.p1)), Math.max(Math.abs(t), 1e-9));   // not Math.max(...): a dense loop overflows the stack
   const tolJ = 1e-9 * size + 1e-12;
+  const inLine = (a, b) => {
+    if (!a || a.b || b.b) return false;
+    const ua = endTan(a), ub = startTan(b);
+    return Math.abs(crs(ua, ub)) <= 2e-5 && dot(ua, ub) > 0 && dist(a.p1, b.p0) <= 1e-6 * size + 3e-5 * Math.abs(t);
+  };
+  const joined = [];
+  for (const s of loop) {
+    const prev = joined[joined.length - 1];
+    if (inLine(prev, s)) joined[joined.length - 1] = seg(prev.p0, s.p1);
+    else joined.push(s);
+  }
+  if (joined.length > 1 && inLine(joined[joined.length - 1], joined[0])) {
+    joined[0] = seg(joined.pop().p0, joined[0].p1);
+  }
   // 1. every segment moved; an arc that runs out of radius is gone (its place is kept as a corner about its centre)
   const pieces = [];
-  loop.forEach((s) => {
+  joined.forEach((s) => {
     const o = offsetSeg(s, t);
     if (o) pieces.push({ ...o, src: s });
     else pieces.push({ gone: true, c: arcOf(s).c, src: s });
@@ -255,37 +269,45 @@ export function offsetLoop(loop, t, opts = {}) {
     while (pieces[j].gone && j !== i) { V = pieces[j].c; j = (j + 1) % pieces.length; }
     ring.push({ ...p, V });
   }
-  const n = ring.length, joins = new Array(n);
+  const n = ring.length;
   // 2. the corner after each piece
-  for (let i = 0; i < n; i++) {
+  const corner = (i, round) => {
     const A = ring[i], B = ring[(i + 1) % n], ua = endTan(A), ub = startTan(B), cr = crs(ua, ub), dt = dot(ua, ub);
     const P = A.p1, Q = B.p0;
-    if (Math.abs(cr) <= 2e-5 && dt > 0 && dist(P, Q) <= 1e-6 * size + 3e-5 * Math.abs(t)) { joins[i] = { kind: 'cont', X: mul(add(P, Q), 0.5) }; continue; }     // smooth: a file keeps 6 decimals
+    if (Math.abs(cr) <= 2e-5 && dt > 0 && dist(P, Q) <= 1e-6 * size + 3e-5 * Math.abs(t)) return { kind: 'cont', X: mul(add(P, Q), 0.5) };     // smooth: a file keeps 6 decimals
     const gap = cr * t > 1e-12 || (Math.abs(cr) <= 1e-12 && dt < 0);
     const mid = mul(add(P, Q), 0.5);
     const cands = carriersCross(A, B).sort((p, q) => dist(p, mid) - dist(q, mid));
     if (!gap) {                                                                            // the offsets overlap: cut where they cross
-      if (!cands.length) { joins[i] = { kind: 'bevel', P, Q }; continue; }
-      joins[i] = { kind: 'cut', X: cands[0] };
-      continue;
+      return cands.length ? { kind: 'cut', X: cands[0] } : { kind: 'bevel', P, Q };
     }
-    if (rounded || !cands.length) {
+    if (round || !cands.length) {
       const phi = Math.atan2(cr, dt);
-      joins[i] = rounded && Math.abs(phi) > 1e-9 ? { kind: 'round', P, Q, b: Math.tan(phi / 4) } : { kind: 'bevel', P, Q };
-      continue;
+      return round && Math.abs(phi) > 1e-9 ? { kind: 'round', P, Q, b: Math.tan(phi / 4) } : { kind: 'bevel', P, Q };
     }
     const X = cands[0], eA = grow(A, X, true), eB = grow(B, X, false);
-    joins[i] = eA >= -tolJ && eB >= -tolJ && dist(X, A.V) <= limit * Math.abs(t) ? { kind: 'miter', X } : { kind: 'bevel', P, Q };
+    return eA >= -tolJ && eB >= -tolJ && dist(X, A.V) <= limit * Math.abs(t) ? { kind: 'miter', X } : { kind: 'bevel', P, Q };
+  };
+  const joins = ring.map((_, i) => corner(i, rounded));
+  const growth = (i) => {
+    const s = ring[i], jin = joins[(i + n - 1) % n], jout = joins[i];
+    return (jin.X ? grow(s, jin.X, false) : 0) + (jout.X ? grow(s, jout.X, true) : 0);
+  };
+  // Retry only the two corners beside a piece lost to rounding, before emitting any neighbours.
+  for (let i = 0; i < n; i++) {
+    if (extent(ring[i]) + growth(i) > tolJ * 10) continue;
+    const prev = (i + n - 1) % n;
+    if (joins[prev].kind === 'round' || joins[i].kind === 'round') {
+      joins[prev] = corner(prev, false); joins[i] = corner(i, false);
+    }
+    if (extent(ring[i]) + growth(i) <= tolJ * 10) return { ok: false, why: 'it would close up' };
   }
   // 3. each piece with its ends moved to its corners; the pieces for round and bevel corners between
   const out = [];
   for (let i = 0; i < n; i++) {
     let s = { p0: ring[i].p0, p1: ring[i].p1, b: ring[i].b };
     const jin = joins[(i + n - 1) % n], jout = joins[i], orig = s;
-    let ext = 0;
-    if (jin.X) ext += grow(orig, jin.X, false);
-    if (jout.X) ext += grow(orig, jout.X, true);
-    if (extent(orig) + ext <= tolJ * 10) return { ok: false, why: 'it would close up' };            // a piece gone or turned round
+    const ext = growth(i);
     if (jin.X) s = { ...s, p0: jin.X };
     if (jout.X) s = { ...s, p1: jout.X };
     if (orig.b) s.b = Math.sign(orig.b) * Math.tan((extent(orig) + ext) / 4);

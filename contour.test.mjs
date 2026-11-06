@@ -43,6 +43,38 @@ const lShape = poly([[0, 0], [100, 0], [100, 40], [40, 40], [40, 100], [0, 100]]
 const closed = (loop) => loop.every((s, i) => { const p = loop[(i + loop.length - 1) % loop.length]; return Math.hypot(s.p0[0] - p.p1[0], s.p0[1] - p.p1[1]) < 1e-6; });
 const off = (loop, t, corners = 'sharp') => { const r = C.offsetLoop(loop, t, { corners }); assert.ok(r.ok, 'offset ' + t + ' failed: ' + r.why); assert.ok(closed(r.loop), 'the result is closed'); return r.loop; };
 
+test('TODO 200: short in-line edges and a tiny step survive; a narrow slot still closes up', () => {
+  const failures = [];
+  const check = (loop, outward, corners, label) => {
+    const r = C.contour([loop], { dist: 2, steps: 1, outward, corners });
+    if (r.stopped) { failures.push(`${label}: ${r.stopped.why}`); return; }
+    assert.equal(r.made, 1, label);
+    assert.equal(r.steps.length, 1, label);
+    assert.equal(r.steps[0].length, 1, label);
+    const result = r.steps[0][0], area = C.loopArea(result);
+    assert.ok(closed(result), label);
+    assert.ok(outward ? area > C.loopArea(loop) : area > 0 && area < C.loopArea(loop), label);
+    return result;
+  };
+  for (const short of [.011, .1, 1]) {
+    const loop = poly([[0, 0], [short, 0], [100, 0], [100, 60], [0, 60]]);
+    for (let start = 0; start < loop.length; start++) for (const corners of ['sharp', 'rounded']) for (const outward of [false, true]) {
+      check([...loop.slice(start), ...loop.slice(0, start)], outward, corners, `${short} mm, start ${start}, ${corners}, outward ${outward}`);
+    }
+  }
+  const step = poly([[0, 0], [100, 0], [100, 40], [70, 40], [70, 40.011], [40, 40.011], [40, 100], [0, 100]]);
+  for (const corners of ['sharp', 'rounded']) {
+    const result = check(step, false, corners, `.011 mm step, ${corners}`);
+    if (result && corners === 'rounded') assert.equal(result.filter((s) => s.b).length, 1, 'the other concave corner stays rounded');
+  }
+  for (const corners of ['sharp', 'rounded']) {
+    const r = C.contour([rect(0, 0, 100, 2)], { dist: 2, steps: 1, outward: false, corners });
+    assert.equal(r.made, 0);
+    assert.deepEqual(r.stopped, { step: 1, why: 'it would close up' });
+  }
+  assert.deepEqual(failures, []);
+});
+
 test('TODO 199: caller tolerance drops near vertices at all seven hexagon positions, including tiny bulged arcs', () => {
   const hex = [[-100, 0], [-50, 40], [50, 40], [100, 0], [50, -40], [-50, -40]];
   for (const delta of [.00001, .001, .005, .009]) for (let pos = 0; pos < 7; pos++) for (const bulge of [null, 0, -.3]) {
