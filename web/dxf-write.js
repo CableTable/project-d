@@ -18,7 +18,7 @@ import { flatten } from './drawing.js';
 import { nearestAci, unpack420 } from './colour.js';
 import { fillHatch, fillHoles } from './fill.js';
 import { remap } from './groups.js';
-import { scaleRecord, SPEC, relabel, DIM_BLOCK } from './edit.js';
+import { scaleRecord, SPEC, relabel, DIM_BLOCK, readDim, dimGeom } from './edit.js';
 
 const SUPPORTED = new Set(['LINE', 'CIRCLE', 'ARC', 'LWPOLYLINE', 'POLYLINE', 'ELLIPSE', 'SPLINE', 'POINT', 'TEXT', 'MTEXT',
   'INSERT', 'ATTDEF', 'HATCH', 'SOLID', 'TRACE', '3DFACE', 'DIMENSION', 'LEADER']);
@@ -300,17 +300,17 @@ export function writeDxfWithReport(doc, opts = {}) {
   if (!Number.isFinite(scale) || scale <= 0) throw new Error('Scale must be a number above 0');
   if (!Number.isInteger(precision) || precision < 0 || precision > 8) throw new Error('Precision must be a whole number from 0 to 8');
   const source = +doc.header?.$INSUNITS || 0, mm = { 1: 25.4, 2: 304.8, 4: 1, 5: 10, 6: 1000 };
+  const unitChange = !!units && units !== 'unitless' && !!source && source !== (units === 'in' ? 1 : 4);
   if (units === 'unitless' && source !== 0) throw new Error('This drawing has units');
-  const factor = (units && units !== 'unitless' && source ? mm[source] / (units === 'in' ? 25.4 : 1) : 1) * scale;
+  const factor = (unitChange ? mm[source] / (units === 'in' ? 25.4 : 1) : 1) * scale;
   if (!Number.isFinite(factor) || factor <= 0) throw new Error('Cannot convert these drawing units or scale');
   // Only export options need a deep copy; ordinary Save keeps its existing fast path.
   if (units !== undefined || opts.scale !== undefined || opts.precision !== undefined) doc = structuredClone(doc);
   const prepared = prepareSave(doc);
   doc = prepared.doc;
-  if (factor !== 1) {
-    const dimensions = new Set();
+  if (factor !== 1 || unitChange) {
+    const dimensions = new Map();
     const one = (e) => {
-      if (e.type === 'DIMENSION') dimensions.add(e.r.v[e.r.c.indexOf(2)]?.trim());
       const transform = (r) => {
         const scaled = scaleRecord(r.type, r, factor, [0, 0], true) || r;
         if (r.type === 'DIMENSION' && [2, 5].includes((+r.v[r.c.indexOf(70)] || 0) & 7)) {
@@ -321,23 +321,44 @@ export function writeDxfWithReport(doc, opts = {}) {
       };
       return { ...e, r: transform(e.r), kids: e.kids?.map(transform) };
     };
-    doc.entities = doc.entities.map(one);
-    delete doc.blocks.PD_LAYOUT;
-    for (const b of Object.values(doc.blocks)) {
-      b.base = b.base?.map((n) => n * factor);
-      b.entities = b.entities.map(one);
+    if (factor !== 1) {
+      doc.entities = doc.entities.map(one);
+      delete doc.blocks.PD_LAYOUT;
+      for (const b of Object.values(doc.blocks)) {
+        b.base = b.base?.map((n) => n * factor);
+        b.entities = b.entities.map(one);
+      }
     }
-    for (const [name, b] of Object.entries(doc.blocks)) if (DIM_BLOCK.test(name) || dimensions.has(name)) b.entities = relabel(b.entities, factor);
-    for (const key of ['$DIMTXT', '$DIMASZ', '$DIMEXE', '$DIMEXO', '$DIMGAP', '$LTSCALE', '$PDSIZE']) {
+    for (const e of [...doc.entities, ...Object.values(doc.blocks).flatMap((b) => b.entities)]) {
+      if (e.type === 'DIMENSION') dimensions.set(e.r.v[e.r.c.indexOf(2)]?.trim(), e);
+    }
+    for (const [name, b] of Object.entries(doc.blocks)) if (DIM_BLOCK.test(name) || dimensions.has(name)) {
+      let target = null;
+      if (unitChange) {
+        const dim = readDim(name, b), native = dimensions.get(name);
+        const value = dim ? dimGeom(dim.kind, dim.params, 1)?.mm : +native?.r.v[native.r.c.indexOf(42)];
+        if (Number.isFinite(value)) target = { value, units };
+      }
+      b.entities = relabel(b.entities, factor, target);
+    }
+    for (const key of ['$DIMTXT', '$DIMASZ', '$DIMEXE', '$DIMEXO', '$DIMGAP', '$LTSCALE', '$PDSIZE', '$TEXTSIZE']) {
       const n = +doc.header?.[key];
       if (Number.isFinite(n) && (key !== '$PDSIZE' || n > 0) && doc.header[key] != null) doc.header[key] = String(n * factor);
     }
+    for (const key of ['$LIMMIN', '$LIMMAX', '$INSBASE']) if (Array.isArray(doc.header?.[key])) doc.header[key] = doc.header[key].map((n) => n * factor);
+    for (const style of Object.values(doc.dimstyles || {})) {
+      style.v = style.v.map((v, i) => {
+        const c = style.c[i];
+        if ([41, 42, 43, 44, 45, 46, 48, 49, 140, 141, 142, 143, 147, 148].includes(c)) return String(+v * factor);
+        if (unitChange && c === 144) return '1';
+        if (unitChange && c === 3) return v.replace(/<>\s*(?:"|mm|in)?$/, units === 'in' ? '<>"' : '<>');
+        return v;
+      });
+    }
   }
-  if (units && units !== 'unitless' && source) {
+  if (unitChange) {
     doc.header.$INSUNITS = units === 'in' ? '1' : '4';
     doc.header.$MEASUREMENT = units === 'in' ? '0' : '1';
-  } else if (units !== undefined && !source) {
-    doc.header = { ...doc.header, $INSUNITS: '0' };
   }
   const ext = factor !== 1 && opts.extents ? opts.extents.map((n) => n * factor) : opts.extents;
   return { text: writePreparedDxf(doc, { ...opts, extents: ext }), tables: prepared.tables, skipped: prepared.skipped };

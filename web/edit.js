@@ -976,16 +976,18 @@ export const dimText = (v, dp = 2) => { const s = Number(v).toFixed(dp); return 
 /** The text of a dimension: its prefix (R, Ø), the number with dp decimals, in inches (then ended by ") when units is 'inch'. */
 export const dimLabel = (mm, dp = 2, units = 'mm', prefix = '') => prefix + (units === 'inch' ? dimText(mm / 25.4, dp) + '"' : dimText(mm, dp));
 const unesc = (s) => String(s).replace(/\\U\+([0-9A-Fa-f]{4})/g, (_, h) => String.fromCharCode(parseInt(h, 16)));     // a saved file writes Ø and ° as \U+00D8
-/** A scaled dimension's text says its new length: the old number times s, with as many decimals as it had (an angle keeps its value). */
-export function relabel(ents, s) {
+/** Scale cached dimension labels, or replace their measurement from geometry on unit conversion; keep formatting and overrides. */
+export function relabel(ents, s, target = null) {
   const record = textRecord(ents), override = readOverride(ents), measured = measuredText(ents);
   const scaled = (t) => {
-    const m = /^([RØ]?)(-?\d+(?:\.\d+)?)(["°]?)$/.exec(t);
-    return !m || m[3] === '°' ? t : m[1] + dimText(+m[2] * s, placesOf(t)) + m[3];
+    const m = /^((?:[{}]|\\[A-Za-z][^;]*;)*[RØ]?)(-?\d+(?:\.\d+)?)(\s*(?:"|mm|in|°)?)((?:[{}]|\\[A-Za-z][^;]*;)*)$/.exec(t);
+    if (!m || m[3].trim() === '°') return t;
+    const dp = (m[2].split('.')[1] || '').length;
+    return m[1] + dimText(target?.value ?? +m[2] * s, dp) + (target ? target.units === 'in' ? '"' : '' : m[3]) + m[4];
   };
   return ents.map((e) => {
     if (e === record) return overrideRecord(override, scaled(measured));
-    if (e.type !== 'TEXT') return e;
+    if (e.type !== 'TEXT' && e.type !== 'MTEXT') return e;
     const k = e.r.c.indexOf(1);
     if (k < 0) return e;
     const vv = e.r.v.slice(); vv[k] = record ? dimensionText(scaled(measured), override) : scaled(unesc(vv[k]));

@@ -18798,7 +18798,7 @@ try {
       const exported = readDxf((await written())[0].text);
       assert.equal(exported.header.$INSUNITS, '1'); assert.equal(+exported.entities[0].r.v[exported.entities[0].r.c.indexOf(11)], 7.87);
       assert.deepEqual(await page.evaluate(() => window.__exp109.asked), ['C:\\source\\plate-export.dxf']);
-      assert.match(await prompt(), /Exported plate-export.dxf/); await clean(); assert.deepEqual(await tabNames(), ['plate.dxf']);
+      await said(/Exported plate-export.dxf/); await clean(); assert.deepEqual(await tabNames(), ['plate.dxf']);
       await open(); assert.equal(await t('export-dxf-scale').inputValue(), '1');
       assert.equal(await t('export-dxf-precision').inputValue(), '2'); assert.equal(await t('export-dxf-units').inputValue(), 'mm');
       await page.evaluate(() => { window.__exp109.next = null; }); await t('export-dxf-go').click();
@@ -18809,7 +18809,12 @@ try {
       assert.equal(original.header.$INSUNITS, '4'); assert.equal(+original.entities[0].r.v[original.entities[0].r.c.indexOf(11)], 100);
       assert.equal(await page.evaluate(() => window.__exp109.asked.at(-1)), 'C:\\source\\plate-edited.dxf', 'Export did not change the Save path');
       await open(); await t('export-dxf-go').click(); await dialog.waitFor({ state: 'detached' });
-      assert.match(await prompt(), /Export never writes over it/); assert.equal((await written()).length, 2, 'saved drawing cannot be overwritten by Export');
+      await said(/Export never writes over it/); assert.equal((await written()).length, 2, 'saved drawing cannot be overwritten by Export');
+      await page.evaluate(() => { window.__exp109.next = 'C:\\source\\plate.dxf'; });
+      await open(); await t('export-dxf-go').click(); await dialog.waitFor({ state: 'detached' });
+      await said(/Export never writes over it/);
+      assert.equal(await page.evaluate(() => window.__exp109.asked.length), 5, 'the picker ran for the opened-file guard');
+      assert.equal((await written()).length, 2, 'd.openPath cannot be overwritten after Save As sets d.path');
       await page.evaluate(() => { window.__exp109.next = 'C:\\out\\layout-export.dxf'; });
       const lay = newLayout('Export layout');
       await t('picker').setInputFiles({ name: 'export-layout.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
@@ -18836,8 +18841,22 @@ try {
       await page.waitForFunction(() => window.__exp109.wrote.length === 6);
       assert.equal(+readDxf((await written())[5].text).entities[0].r.v[readDxf((await written())[5].text).entities[0].r.c.indexOf(11)], 200);
       assert.equal(await page.locator('.tabs .dtab.on .tname').textContent(), 'Compare'); await clean();
+      await closeTabs(/plate-edited/);
+      await menuItem('File', 'Export DXF…'); await said(/Open plate-edited.dxf to export DXF/);
+      assert.equal(await dialog.count(), 0, 'a closed Compare source cannot open Export');
+      assert.equal((await written()).length, 6, 'a closed Compare source writes nothing');
+      await clean();
+      const kilometres = newDoc(7); addEntities(kilometres, dxfLine(0, 0, 100, 0));
+      await t('picker').setInputFiles({ name: 'kilometres.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(kilometres)) });
+      await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'kilometres.dxf');
+      await page.evaluate(() => { window.__exp109.next = 'C:\\out\\kilometres-export.dxf'; });
+      await open(); assert.deepEqual(await t('export-dxf-units').locator('option').allTextContents(), ['km (no conversion)']);
+      await t('export-dxf-go').click(); await said(/Exported kilometres-export.dxf/);
+      const unchangedUnits = readDxf((await written())[6].text);
+      assert.equal(unchangedUnits.header.$INSUNITS, '7');
+      assert.equal(+unchangedUnits.entities[0].r.v[unchangedUnits.entities[0].r.c.indexOf(11)], 100); await clean();
       for (const theme of ['light', 'dark']) assert.ok(readFileSync(`${shotDir}/export-dxf-${theme}.png`).length > 1000);
-      console.log(`109a: copy 7.87 in; clean source 100 mm; Cancel/Esc, Save path, layout, Compare, unitless, remembered precision; screenshots ${shotDir}/export-dxf-{light,dark}.png`);
+      console.log(`109a: copy 7.87 in; clean source 100 mm; Cancel/Esc, d.path/d.openPath guards, layout, Compare closed source, unitless, remembered precision; screenshots ${shotDir}/export-dxf-{light,dark}.png`);
     } finally {
       await page.evaluate(() => { delete window.__TAURI__; delete window.__exp109; localStorage.removeItem('pd-export-dxf-precision'); });
       await page.keyboard.press('Escape');

@@ -6,6 +6,7 @@ import * as W from './web/dxf-write.js';
 import { readDxf, decodeDxf, flatten } from './web/drawing.js';
 import { newLayout, layoutRaw, readMeta } from './web/layoutdoc.js';
 import { addDimension, buildDim } from './web/edit.js';
+import { nativeDimensionOverrides } from './web/dimension-dxf.js';
 
 const get = (e, c) => +e.r.v[e.r.c.indexOf(c)];
 const back = (doc, opts) => readDxf(W.writeDxf(doc, opts));
@@ -39,7 +40,7 @@ test('TODO 109a: mm to inches scales each entity and block once, keeps ratios an
   const native = saved.entities.find((e) => e.type === 'DIMENSION'); near(get(native, 42), 2);
   assert.equal(native.r.v[native.r.c.indexOf(1)], 'override'); near(get(saved.blocks.native.entities[0], 11), 2);
   const dimText = Object.entries(saved.blocks).find(([n]) => /^PD_DIM_/.test(n))[1].entities.filter((e) => e.type === 'TEXT');
-  assert.ok(dimText.some((e) => e.r.v.includes('custom 2.00')));
+  assert.ok(dimText.some((e) => e.r.v.includes('custom 2.00"')));
   assert.deepEqual(flatten(saved).boxes.model?.map(Number.isFinite), [true, true, true, true]);
 });
 
@@ -94,9 +95,80 @@ test('TODO 109a: default writer options are byte-identical to dc04385', () => {
     ['many-layers.dxf', 'cd55c9db46f71712f0ae936d2b3cc74bd29faf929441526e5504753b6ad59f27']]) {
     const doc = readDxf(decodeDxf(readFileSync('fixtures/' + file))), original = W.writeDxf(doc);
     assert.equal(createHash('sha256').update(original).digest('hex'), hash);
-    assert.equal(W.writeDxf(doc, { scale: 1, precision: 6 }), original);
+    const units = +doc.header.$INSUNITS === 1 ? 'in' : 'mm';
+    assert.equal(W.writeDxf(doc, { units, scale: 1, precision: 6 }), original);
   }
+  const doc = W.newDoc(); doc.header.$MEASUREMENT = '0';
+  assert.equal(W.writeDxf(doc, { units: 'mm', scale: 1, precision: 6 }), W.writeDxf(doc));
+  delete doc.header.$INSUNITS;
+  assert.equal(W.writeDxf(doc, { units: 'unitless', scale: 1, precision: 6 }), W.writeDxf(doc), 'an absent unit header stays absent');
   assert.equal(W.fmt(1.23456789), '1.234568');
+});
+
+for (const [source, target, length, factor, expected] of [[1, 'mm', 1, 25.4, '25.40'], [4, 'in', 25.4, 1, '1.00"']]) {
+  test(`TODO 109a fix: kept dimension labels from geometry, ${source === 1 ? 'in to mm' : 'mm to in'}`, () => {
+    for (const units of ['mm', 'inch']) for (const native of [false, true]) {
+      let doc = W.newDoc(source);
+      Object.assign(doc, addDimension(doc, buildDim('aligned', { a: [0, 0], b: [length, 0], offset: 0, units, override: 'Width <>' }, factor, 'PD_DIM_1')));
+      if (native) doc = nativeDimensionOverrides(doc);
+      const before = structuredClone(doc), saved = back(doc, { units: target });
+      assert.deepEqual(doc, before);
+      assert.ok(saved.blocks.PD_DIM_1.entities.some((e) => e.type === 'TEXT' && e.r.v.includes('Width ' + expected)), `${source} to ${target}, ${units}, native ${native}`);
+    }
+  });
+}
+test('TODO 109a fix: unit conversion relabels even when scale cancels its geometry factor', () => {
+  const doc = W.newDoc(1);
+  Object.assign(doc, addDimension(doc, buildDim('aligned', { a: [0, 0], b: [1, 0], offset: 0, units: 'inch' }, 25.4, 'PD_DIM_1')));
+  assert.ok(back(doc, { units: 'mm', scale: 1 / 25.4 }).blocks.PD_DIM_1.entities.some((e) => e.r.v.includes('1.00')), 'labels change even when the combined geometry factor is one');
+});
+
+test('TODO 109a fix: native MTEXT scales at 2, preserving formatting, suffix and the dimension override', () => {
+  const doc = W.newDoc();
+  W.addBlock(doc, '*D1', [W.line(0, 0, 25.4, 0), W.mtext(0, 0, 2.5, '{\\A1;\\H0.7x;25.40 mm}')]);
+  W.addEntities(doc, W.entity('DIMENSION', [[2, '*D1'], [70, 1], [13, 0], [23, 0], [14, 25.4], [24, 0], [42, 25.4], [1, '{\\A1;<> mm}']]));
+  const before = structuredClone(doc), saved = back(doc, { scale: 2 });
+  assert.deepEqual(doc, before);
+  assert.ok(saved.blocks['*D1'].entities[1].r.v.includes('{\\A1;\\H0.7x;50.80 mm}'));
+  assert.ok(saved.entities[0].r.v.includes('{\\A1;<> mm}'));
+  const inches = back(doc, { units: 'in' });
+  assert.ok(inches.blocks['*D1'].entities[1].r.v.includes('{\\A1;\\H0.7x;1.00"}'));
+});
+
+test('TODO 109a fix: DIMSTYLE lengths and DIMLFAC follow scale and target units, including PD_DIM styles', () => {
+  let doc = W.newDoc();
+  Object.assign(doc, addDimension(doc, buildDim('aligned', { a: [0, 0], b: [25.4, 0], offset: 10, textH: 2.5, override: 'Width <>' }, 1, 'PD_DIM_1')));
+  doc = nativeDimensionOverrides(doc);
+  const lengths = [41, 42, 43, 44, 45, 46, 48, 49, 140, 141, 142, 143, 147, 148];
+  doc.dimstyles.Standard = { c: [...lengths, 40, 144, 146, 271], v: [...lengths.map(() => '2.5'), '3', '2', '.5', '2'] };
+  W.addEntities(doc, W.entity('LEADER', [[3, 'Standard'], [10, 0], [20, 0]]));
+  const val = (r, c) => +r.v[r.c.indexOf(c)], before = structuredClone(doc);
+  const scaled = back(doc, { scale: 2 });
+  for (const c of lengths) near(val(scaled.dimstyles.Standard, c), 5);
+  near(val(scaled.dimstyles.Standard, 40), 3); near(val(scaled.dimstyles.Standard, 144), 2); near(val(scaled.dimstyles.Standard, 146), .5);
+  for (const [units, target] of [['mm', 4], ['in', 1]]) {
+    const saved = back(doc, { units, scale: 2 }), factor = units === 'in' ? 2 / 25.4 : 2;
+    near(val(saved.dimstyles.PD_DIM_1, 140), 2.5 * factor);
+    near(val(saved.dimstyles.PD_DIM_1, 144), 1);
+    near(val(saved.dimstyles.Standard, 144), units === 'in' ? 1 : 2);
+    assert.equal(saved.header.$INSUNITS, String(target));
+  }
+  assert.deepEqual(doc, before);
+});
+
+test('TODO 109a fix: other source units export unchanged; unsupported conversions refuse; header sizes scale', () => {
+  for (const units of [3, 7, 8, 10, 14]) {
+    const doc = W.addEntities(W.newDoc(units), W.line(1, 2, 3, 4));
+    assert.equal(W.writeDxf(doc, { scale: 1, precision: 6 }), W.writeDxf(doc));
+    assert.equal(back(doc, { scale: 2 }).header.$INSUNITS, String(units));
+    assert.throws(() => W.writeDxf(doc, { units: 'mm' }), /Cannot convert/);
+  }
+  const doc = W.newDoc();
+  Object.assign(doc.header, { $TEXTSIZE: '2.5', $LIMMIN: [1, 2], $LIMMAX: [3, 4], $INSBASE: [5, 6] });
+  const before = structuredClone(doc), saved = back(doc, { scale: 2 });
+  assert.equal(saved.header.$TEXTSIZE, '5');
+  for (const key of ['$LIMMIN', '$LIMMAX', '$INSBASE']) assert.deepEqual(saved.header[key], doc.header[key].map((n) => n * 2));
+  assert.deepEqual(doc, before);
 });
 
 test('TODO 109a: layouts keep metadata at factor 1 and drop it otherwise; invalid options refuse', () => {

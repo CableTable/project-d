@@ -30,7 +30,7 @@ import * as PS from './pdf-sheets.js';
 import { paintDrawing, drawMarks, drawContour, drawDimPreview, ink, FONT_FAMILY } from './render.js';
 import { overlayBox } from './preview.js';
 import { snapPlace, snapUsable, heavy } from './perf.js';
-import { flatten, unionBox, CAP, ACI, mapply, mmul, pickIndex, arcSweep, DrawingError } from './drawing.js';
+import { flatten, unionBox, CAP, ACI, UNITS, mapply, mmul, pickIndex, arcSweep, DrawingError } from './drawing.js';
 import { writeDxf, writeDxfWithReport, saveReportNote, unwritable, addLayer, newDoc, lwpoly, point } from './dxf-write.js';
 import * as SH from './shaping.js';
 import { explodeSelection } from './explode.js';
@@ -3433,19 +3433,20 @@ async function save(forceAs) {
 
 /** Export the same content as Save, through the writer's copy-only settings. */
 function exportDxf() {
-  const active = curDoc(), d = active?.cmp ? cmpEdit() : active;
+  const active = curDoc(), d = active?.cmp ? cmpEdit('export DXF') : active;
   if (active?.cmp && !d) return;
   if (!d || (!d.raw && !d.lay)) { note('Export DXF: open a drawing first'); return; }
   if (document.querySelector('[data-testid=export-dxf-dialog]')) return;
   const sourceUnits = +(d.lay ? 4 : d.raw.header?.$INSUNITS) || 0;
+  const convertible = [1, 2, 4, 5, 6].includes(sourceUnits);
   let remembered = 6;
   try { const v = localStorage.getItem('pd-export-dxf-precision'); if (v !== null && Number.isInteger(+v) && +v >= 0 && +v <= 8) remembered = +v; } catch { /* local settings may be unavailable */ }
   const field = (id, attrs) => h('input', { class: 'fld', 'data-testid': 'export-dxf-' + id, ...attrs });
   const name = field('name', { type: 'text', value: baseName(dxfName(d.name)) + '-export.dxf' });
-  const units = h('select', { class: 'fld', 'data-testid': 'export-dxf-units' }, sourceUnits
+  const units = h('select', { class: 'fld', 'data-testid': 'export-dxf-units' }, convertible
     ? [h('option', { value: 'mm' }, 'mm'), h('option', { value: 'in' }, 'in')]
-    : h('option', { value: 'unitless' }, 'Unitless (no conversion)'));
-  units.value = sourceUnits === 1 ? 'in' : sourceUnits ? 'mm' : 'unitless';
+    : h('option', { value: sourceUnits ? '' : 'unitless' }, `${sourceUnits ? UNITS[sourceUnits] || 'Drawing units' : 'Unitless'} (no conversion)`));
+  units.value = convertible ? sourceUnits === 1 ? 'in' : 'mm' : sourceUnits ? '' : 'unitless';
   const scale = field('scale', { type: 'text', inputmode: 'decimal', value: '1' });
   const precision = field('precision', { type: 'text', inputmode: 'numeric', value: remembered });
   const err = h('div', { class: 'pd-bad', role: 'alert', hidden: true, 'data-testid': 'export-dxf-err' });
@@ -3464,7 +3465,7 @@ function exportDxf() {
   const finish = () => { back.remove(); document.removeEventListener('keydown', onKey, true); };
   const go = async () => {
     const bad = validate(); if (bad) { bad.focus(); validate(); return; }
-    const want = dxfName(name.value.trim()), settings = { units: units.value, scale: +scale.value, precision: +precision.value, escapeUnicode: true };
+    const want = dxfName(name.value.trim()), settings = { units: units.value || undefined, scale: +scale.value, precision: +precision.value, escapeUnicode: true };
     finish();
     try {
       const report = writeDxfWithReport(rawForSave(d), settings), t = window.__TAURI__;
@@ -11335,11 +11336,11 @@ const cmpSourceTab = (item) => item?.tabId ? state.docs.find((d) => d.tabId === 
 const cmpSourceState = (d) => [d.fl, d.raw.entities, d.factor, d.pdf?.page, d.name, ...d.off];
 const cmpEditingItem = (d) => { const c = cmpDoc()?.cmp, item = c && cmpSelected(c); return d && cmpSourceTab(item) === d ? item : null; };
 const drawingTransform = (d) => { const item = cmpEditingItem(d); return item ? `translate(${item.offset[0]} ${-item.offset[1]})` : null; };
-function cmpEdit() {
+function cmpEdit(action = 'edit') {
   const item = cmpDoc() && cmpSelected(cmpDoc().cmp), d = cmpSourceTab(item);
-  if (item && !item.visible) { note(`Show ${item.name} to edit`); return null; }
+  if (item && !item.visible) { note(`Show ${item.name} to ${action}`); return null; }
   if (d) return d;
-  note(item?.part ? 'Open the part as a drawing to edit' : item ? `Open ${item.name} to edit` : 'Pick a snapshot to edit');
+  note(item?.part ? `Open the part as a drawing to ${action}` : item ? `Open ${item.name} to ${action}` : `Pick a snapshot to ${action}`);
   return null;
 }
 /** Refresh changed linked artwork and measurements on return to Compare; closeTab also captures the final copy. */
