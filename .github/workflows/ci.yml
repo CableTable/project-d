@@ -103,6 +103,9 @@ jobs:
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: windows-latest
+    env:
+      # LibreDWG newest nightly tag 0.14.8838 (2026-11-05).
+      LIBREDWG_COMMIT: 4f2aef33865e0d5bf3774acc439953fba15dea3e
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -114,8 +117,107 @@ jobs:
         with:
           workspaces: src-tauri
       - run: npm ci
+      - name: Measure the exe before embedding the DWG helper
+        shell: pwsh
+        run: |
+          cargo test --manifest-path src-tauri/Cargo.toml
+          if ($LASTEXITCODE -ne 0) { throw "Rust tests without the DWG payload failed" }
+          npx tauri build --no-bundle
+          if ($LASTEXITCODE -ne 0) { throw "Baseline exe build failed" }
+          "DWG_EXE_BEFORE=$((Get-Item src-tauri/target/release/ProjectD.exe).Length)" >> $env:GITHUB_ENV
+      - name: Cached DWG helpers and licence
+        id: dwgcache
+        uses: actions/cache@v4
+        with:
+          path: src-tauri/dwg2dxf
+          key: dwg2dxf-${{ runner.os }}-mingw64-v1-${{ env.LIBREDWG_COMMIT }}
+      - name: LibreDWG source at the pinned commit
+        if: steps.dwgcache.outputs.cache-hit != 'true'
+        uses: actions/checkout@v5
+        with:
+          repository: LibreDWG/libredwg
+          ref: ${{ env.LIBREDWG_COMMIT }}
+          submodules: recursive
+          path: tmp-libredwg
+      - name: MinGW64 compiler for the DWG helpers
+        if: steps.dwgcache.outputs.cache-hit != 'true'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          path-type: minimal
+          update: true
+          install: >-
+            base-devel
+            autoconf-wrapper
+            automake-wrapper
+            libtool
+            git
+            gperf
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-libtool
+            mingw-w64-x86_64-libiconv
+            mingw-w64-x86_64-pcre2
+      - name: Build dwg2dxf and dxf2dwg, static first
+        if: steps.dwgcache.outputs.cache-hit != 'true'
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          out="$PWD/src-tauri/dwg2dxf"
+          cd tmp-libredwg
+          sh ./autogen.sh
+          options=(--disable-bindings --disable-python --disable-docs)
+          if ! (./configure "${options[@]}" --disable-shared --enable-static LDFLAGS=-static &&
+                make -j2 -C src && make -j2 -C programs dwg2dxf.exe dxf2dwg.exe); then
+            echo "Static link failed; retaining runtime DLLs instead."
+            if [ -f Makefile ]; then make distclean; fi
+            ./configure "${options[@]}" --enable-shared --disable-static
+            make -j2 -C src
+            make -j2 -C programs dwg2dxf.exe dxf2dwg.exe
+          fi
+          mkdir -p "$out"
+          export PATH="$PWD/src/.libs:$PATH"
+          for name in dwg2dxf dxf2dwg; do
+            exe="programs/$name.exe"
+            if [ -f "programs/.libs/$name.exe" ]; then exe="programs/.libs/$name.exe"; fi
+            cp "$exe" "$out/$name.exe"
+            ldd "$exe" > "$name.ldd"
+            cat "$name.ldd"
+            if grep -q 'not found' "$name.ldd"; then exit 1; fi
+            while IFS= read -r dll; do
+              case "${dll,,}" in /c/windows/*) continue ;; esac
+              cp "$dll" "$out/"
+            done < <(awk '/=> \// {print $3}' "$name.ldd")
+          done
+          find "$out" -type f \( -name '*.exe' -o -name '*.dll' \) -exec strip {} +
+          cp COPYING "$out/"
+          printf 'https://github.com/LibreDWG/libredwg/releases/tag/0.14.8838\nCommit: %s\n' "$LIBREDWG_COMMIT" > "$out/SOURCE.txt"
       - name: Build the portable exe (no installer)
         run: npx tauri build --no-bundle
+      - name: DWG payload size in the portable exe
+        shell: pwsh
+        run: Write-Host "ProjectD.exe bytes before DWG helper=$env:DWG_EXE_BEFORE after=$((Get-Item src-tauri/target/release/ProjectD.exe).Length)"
+      - name: DWG round-trip through the embedded helper
+        shell: pwsh
+        run: |
+          $env:PROJECTD_DWG_ROUNDTRIP_INPUT = Join-Path $env:RUNNER_TEMP "projectd-roundtrip.dwg"
+          $env:PROJECTD_DWG_ROUNDTRIP_OUTPUT = Join-Path $env:RUNNER_TEMP "projectd-roundtrip.dxf"
+          & ./src-tauri/dwg2dxf/dxf2dwg.exe --as r2000 -y -o $env:PROJECTD_DWG_ROUNDTRIP_INPUT fixtures/micro-gaps.dxf
+          if ($LASTEXITCODE -ne 0) { throw "dxf2dwg failed" }
+          cargo test --manifest-path src-tauri/Cargo.toml
+          if ($LASTEXITCODE -ne 0) { throw "Rust DWG helper tests failed" }
+          node --input-type=module -e "
+            import assert from 'node:assert/strict';
+            import { readFileSync } from 'node:fs';
+            import { readDxf } from './web/drawing.js';
+            const before = readDxf(readFileSync('fixtures/micro-gaps.dxf', 'utf8')).entities.length;
+            const text = readFileSync(process.env.PROJECTD_DWG_ROUNDTRIP_OUTPUT, 'utf8');
+            assert.match(text, /0\s*\r?\nSECTION\s*\r?\n\s*2\s*\r?\nENTITIES\s*\r?\n/);
+            const after = readDxf(text).entities.length;
+            assert.ok(before > 0);
+            assert.equal(after, before);
+            console.log('DWG round-trip ENTITIES: ' + before + ' -> ' + after);
+          "
+          if ($LASTEXITCODE -ne 0) { throw "DXF round-trip check failed" }
       - name: Smoke start, the exe must stay up for 10 s
         shell: pwsh
         run: |
