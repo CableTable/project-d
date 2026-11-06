@@ -6165,6 +6165,7 @@ try {
     // select it (one thing) and drag its line down 10 mm
     await page.locator('[data-tool=select]').click();
     await click(50, -15); await waitSel('1 selected');
+    await t('dim-row').waitFor({ state: 'visible' });          // panelControl opens the folded Drawing scale section first
     assert.equal(await t('dim-row').isVisible(), true);
     const from = await at(50, -15), to = await at(50, -25);
     await page.mouse.move(from.x, from.y); await page.mouse.down();
