@@ -4,7 +4,7 @@
 // An outline is a loop of segments { p0: [x, y], p1: [x, y], b }: from p0 to p1, b = the bulge (tan of a quarter of the sweep; 0 for a
 // line, > 0 turning anticlockwise, < 0 clockwise), as in an LWPOLYLINE. Everything is in one unit (drawing units); y is up.
 //
-//   segmentsFromItems(ed, ents)   the lines and arcs the entities draw, as segments
+//   segmentsFromItems(ed, ents, skip, tol)   the lines and arcs the entities draw, omitting pieces shorter than the joining tolerance
 //   buildLoops(segs, tol)         joins them end to end into closed loops (and counts what stays open)
 //   offsetLoop(loop, t, opts)     one loop moved by t (+ outward, − inward), or why not
 //   contour(loops, opts)          all the loops, `steps` times: { steps: [[loop, …], …], made, stopped, dropped }
@@ -20,7 +20,6 @@ import { line, arc, circle } from './dxf-write.js';
 import { chainAt, DIM_LAYER } from './edit.js';
 
 const TAU = Math.PI * 2;
-const VERTEX_TOL = 1e-4;
 const sub = (a, b) => [a[0] - b[0], a[1] - b[1]];
 const add = (a, b) => [a[0] + b[0], a[1] + b[1]];
 const mul = (a, k) => [a[0] * k, a[1] * k];
@@ -42,7 +41,7 @@ export function partialOutline(ed, sel, tol) {
     const chain = chainAt(ed, e, tol);
     for (const c of chain) seen.add(c);
     if (chain.every((c) => sel.has(c))) continue;
-    const an = buildLoops(segmentsFromItems(ed, chain, (e) => e.layer === DIM_LAYER || e.type === 'DIMENSION'), tol);
+    const an = buildLoops(segmentsFromItems(ed, chain, (e) => e.layer === DIM_LAYER || e.type === 'DIMENSION', tol), tol);
     if (an.loops.length && !an.open) return true;
   }
   return false;
@@ -101,7 +100,7 @@ function arcSweepOp(a0, a1, acw) {
  * The lines and arcs the entities `ents` draw (ed: edit.js makeIndex's result; drawing units, y up), as segments. A closed path gets its closing
  * segment; an arc is cut into pieces of at most 120° so three points always describe it. Kept dimensions and text are left out.
  */
-export function segmentsFromItems(ed, ents, skip = () => false) {
+export function segmentsFromItems(ed, ents, skip = () => false, tol = 1e-4) {
   const { fl, items, raw } = ed, out = [];
   for (const e of ents) {
     if (!ed.byEnt[e] || skip(raw.entities[e])) continue;
@@ -115,24 +114,23 @@ export function segmentsFromItems(ed, ents, skip = () => false) {
         if (op === 0) { cur = P(ops[k + 1], ops[k + 2]); start = cur; k += 3; }
         else if (op === 1) {
           const q = P(ops[k + 1], ops[k + 2]);
-          if (!cur || dist(cur, q) >= VERTEX_TOL) { if (cur) out.push(seg(cur, q)); cur = q; }
+          if (!cur || dist(cur, q) >= tol) { if (cur) out.push(seg(cur, q)); cur = q; }
           if (!start) start = q;
           k += 3;
         }
         else if (op === 2) {
           const [cx, cy, r, a0, a1] = [ops[k + 1], ops[k + 2], ops[k + 3], ops[k + 4], ops[k + 5]], sw = arcSweepOp(a0, a1, ops[k + 6] === 1);
           const n = Math.max(1, Math.ceil(Math.abs(sw) / (TAU / 3) - 1e-9)), at = (a) => P(cx + r * Math.cos(a), cy + r * Math.sin(a));
-          let S = at(a0);
-          if (cur && dist(cur, S) > 1e-9) out.push(seg(cur, S));
-          if (!start) start = S;
+          const S = at(a0);
+          if (!cur || dist(cur, S) >= tol) { if (cur) out.push(seg(cur, S)); cur = S; }
+          if (!start) start = cur;
           for (let j = 0; j < n; j++) {
             const E = at(a0 + sw * (j + 1) / n), M = at(a0 + sw * (j + 0.5) / n);
-            if (dist(S, E) > 1e-12) out.push(seg(S, E, bulgeOf3(S, M, E)));   // an arc with no radius or no sweep adds nothing
-            S = E;
+            if (dist(cur, E) >= tol) { out.push(seg(cur, E, bulgeOf3(cur, M, E))); cur = E; }
           }
-          cur = S; k += 7;
+          k += 7;
         } else {
-          if (cur && start && dist(cur, start) >= VERTEX_TOL) out.push(seg(cur, start));
+          if (cur && start && dist(cur, start) >= tol) out.push(seg(cur, start));
           else if (out.length && out[out.length - 1].p1 === cur) out[out.length - 1].p1 = start;
           cur = start; k++;
         }

@@ -43,6 +43,36 @@ const lShape = poly([[0, 0], [100, 0], [100, 40], [40, 40], [40, 100], [0, 100]]
 const closed = (loop) => loop.every((s, i) => { const p = loop[(i + loop.length - 1) % loop.length]; return Math.hypot(s.p0[0] - p.p1[0], s.p0[1] - p.p1[1]) < 1e-6; });
 const off = (loop, t, corners = 'sharp') => { const r = C.offsetLoop(loop, t, { corners }); assert.ok(r.ok, 'offset ' + t + ' failed: ' + r.why); assert.ok(closed(r.loop), 'the result is closed'); return r.loop; };
 
+test('TODO 199: caller tolerance drops near vertices at all seven hexagon positions, including tiny bulged arcs', () => {
+  const hex = [[-100, 0], [-50, 40], [50, 40], [100, 0], [50, -40], [-50, -40]];
+  for (const delta of [.00001, .001, .005, .009]) for (let pos = 0; pos < 7; pos++) for (const bulge of [null, 0, -.3]) {
+    const pts = hex.map((p) => [...p]), at = pos ? pos - 1 : 0;
+    pts.splice(pos, 0, [hex[at][0] + delta, hex[at][1]]);
+    const bs = new Array(7).fill(0), tiny = pos ? pos - 1 : 0;
+    bs[tiny] = bulge || 0;
+    bs[(tiny + 1) % 7] = bulge === null ? 0 : -.3; // test a tiny line or arc next to a full-sized bulge
+    const doc = W.newDoc(4);
+    W.addEntities(doc, W.lwpoly(pts.map((p, i) => [...p, bs[i]]), { closed: true }));
+    const raw = D.readDxf(W.writeDxf(doc)), ed = E.makeIndex(raw, D.flatten(raw));
+    const segs = C.segmentsFromItems(ed, [0], undefined, .01), b = C.buildLoops(segs, .01);
+    const label = `delta ${delta}, position ${pos}, bulge ${bulge}`;
+    assert.equal(segs.some((s) => s.b), bulge !== null, label + ': the adjacent bulge is preserved');
+    assert.equal(segs.length, 6, label + ': no tiny piece');
+    assert.equal(b.open, 0, label);
+    assert.equal(b.loops.length, 1, label);
+    assert.ok(segs.every((s) => Math.hypot(s.p1[0] - s.p0[0], s.p1[1] - s.p0[1]) >= .01), label);
+    for (const corners of ['rounded', 'sharp']) for (const outward of [true, false]) {
+      const r = C.contour(b.loops, { dist: 5, steps: 1, outward, corners });
+      assert.equal(r.stopped, null, `${label}, ${corners}, outward ${outward}`);
+      assert.equal(r.made, 1, label);
+      assert.equal(r.steps[0].length, 1, label);
+      const loop = r.steps[0][0], area = C.loopArea(loop), original = C.loopArea(b.loops[0]);
+      assert.ok(closed(loop), label);
+      assert.ok(outward ? area > original : area > 0 && area < original, label);
+    }
+  }
+});
+
 test('TODO 199: near-repeated closing and middle vertices, Inside and Outside, both corners and clockwise', () => {
   const cw = [[-100, 0], [-50, 40], [50, 40], [100, 0], [50, -40], [-50, -40]];
   assert.ok(C.loopArea(poly(cw)) < 0, 'the repro is clockwise');
@@ -50,7 +80,7 @@ test('TODO 199: near-repeated closing and middle vertices, Inside and Outside, b
     const doc = W.newDoc(4);
     W.addEntities(doc, W.lwpoly(pts, { closed: true }));
     const raw = D.readDxf(W.writeDxf(doc)), ed = E.makeIndex(raw, D.flatten(raw));
-    const segs = C.segmentsFromItems(ed, [0]), b = C.buildLoops(segs, 1e-6);
+    const segs = C.segmentsFromItems(ed, [0], undefined, .01), b = C.buildLoops(segs, .01);
     assert.equal(segs.length, 6, 'near-repeated vertices add no tiny segment');
     assert.equal(b.open, 0);
     assert.equal(b.loops.length, 1);

@@ -20,8 +20,9 @@ export function outerLoop(part) {
   try {
     const ed = Ed.makeIndex(part.raw, part.fl, part.off || new Set()), ents = [];
     for (let e = 0; e < ed.byEnt.length; e++) if (ed.byEnt[e]) ents.push(e);
-    const segs = CT.segmentsFromItems(ed, ents, (e) => e.layer === Ed.DIM_LAYER || e.type === 'DIMENSION');
-    const r = CT.buildLoops(segs, Ed.chainTol(part.box, part.factor || 1));
+    const tol = Ed.chainTol(part.box, part.factor || 1);
+    const segs = CT.segmentsFromItems(ed, ents, (e) => e.layer === Ed.DIM_LAYER || e.type === 'DIMENSION', tol);
+    const r = CT.buildLoops(segs, tol);
     out.open = r.open;
     for (const l of r.loops) if (!out.loop || Math.abs(CT.loopArea(l)) > Math.abs(CT.loopArea(out.loop))) out.loop = l;
   } catch { /* an unreadable part has no outline */ }
@@ -46,6 +47,13 @@ export function partContour(part, cfg, sc = 1) {
   }
   byKey.set(key, out);
   return out;
+}
+
+/** Count stopped layout parts by their actual reason. */
+export function stoppedWarning(results) {
+  const counts = new Map();
+  for (const { stopped } of results) if (stopped) counts.set(stopped.why, (counts.get(stopped.why) || 0) + 1);
+  return [...counts].map(([why, n]) => `${n} part${n === 1 ? '' : 's'} ${why.slice(3)} before the last step`).join('. ');
 }
 
 /**

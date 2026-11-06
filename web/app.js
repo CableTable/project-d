@@ -10724,7 +10724,7 @@ function contourLoops(d) {
   const sig = [...d.sel].sort((a, b) => a - b).join(',');
   if (d.cAn && d.cAn.ed === d.ed && d.cAn.sig === sig) return d.cAn;
   const ed = edIndex(d), tol = Ed.chainTol(drawBox(d.fl), d.factor);
-  const segs = d.sel.size > 4000 ? null : CT.segmentsFromItems(ed, d.sel, (e) => e.layer === Ed.DIM_LAYER || e.type === 'DIMENSION');
+  const segs = d.sel.size > 4000 ? null : CT.segmentsFromItems(ed, d.sel, (e) => e.layer === Ed.DIM_LAYER || e.type === 'DIMENSION', tol);
   const r = segs ? CT.buildLoops(segs, tol) : { loops: [], open: 0 };
   const partial = !!segs && CT.partialOutline(ed, d.sel, tol);
   return (d.cAn = { ed: d.ed, sig, loops: r.loops, open: r.open, partial, big: !segs, n: segs ? segs.length : 0 });
@@ -10746,10 +10746,10 @@ function layContourCompute(lay) {
   if (!all.length) return { kind: 'none', rows: [] };
   const rows = all.filter((r) => r.c.kind === 'ok');
   if (!rows.length) return { kind: 'open', rows, an: { loops: [], open: 0 } };
-  const stopped = rows.filter((r) => r.c.res.stopped).length, skipped = all.length - rows.length;
+  const stopped = LC.stoppedWarning(rows.map((r) => r.c.res)), skipped = all.length - rows.length;
   return { kind: 'ok', rows, made: rows.reduce((n, r) => n + r.c.res.made, 0), an: { loops: [rows[0].c.loop], open: 0 }, res: rows[0].c.res,
     polys: rows.flatMap((r) => LC.sheetLoops(r.x.part, r.x.p, r.c.res, lay.s.sheetH)),
-    warn: [stopped && `${stopped} part${stopped === 1 ? '' : 's'} would close up before the last step`, skipped && `${skipped} part${skipped === 1 ? ' has' : 's have'} no closed outline and ${skipped === 1 ? 'is' : 'are'} left out`].filter(Boolean).join('. ') };
+    warn: [stopped, skipped && `${skipped} part${skipped === 1 ? ' has' : 's have'} no closed outline and ${skipped === 1 ? 'is' : 'are'} left out`].filter(Boolean).join('. ') };
 }
 const layContourHint = (cc, made) => cc.kind === 'none' ? 'Select placed parts on the layout: click one, or drag a box round several.'
   : cc.kind === 'open' ? 'That selection has no closed outline to follow.'
