@@ -32,7 +32,10 @@ test('TODO 106a: modify prompts exclude picks and options; Align destinations an
   }
   assert.equal(modifyPoints({ ...m, stage: 'scale' }), null);
   for (const m of [{ kind: 'break', stage: 'first' }, { kind: 'breakatpoint', stage: 'point' }, { kind: 'offset', stage: 'side', through: true },
-    { kind: 'lengthen', stage: 'value', mode: 'Total' }, { kind: 'lengthen', stage: 'point' }, { kind: 'measurepoints', stage: 'value' }, { kind: 'array', stage: 'center' }]) assert.deepEqual(modifyPoints(m), []);
+    { kind: 'lengthen', stage: 'point' }, { kind: 'array', stage: 'center' }]) assert.deepEqual(modifyPoints(m), []);
+  assert.deepEqual(modifyPoints({ kind: 'lengthen', stage: 'point', p0: [2, 3] }), [[2, 3]], 'Dynamic anchors at the pick');
+  for (const m of [{ kind: 'lengthen', stage: 'value', mode: 'Total' }, { kind: 'lengthen', stage: 'value', mode: 'Delta' }, { kind: 'measurepoints', stage: 'value' },
+    { kind: 'rotate', stage: 'p1', p1: [1, 2], ref: { step: 'ref', pts: [] } }, { kind: 'scale', stage: 'p1', p1: [1, 2], ref: { step: 'ref', pts: [] } }]) assert.equal(modifyPoints(m), null, 'number or point: no fields yet');
   assert.deepEqual(modifyPoints({ kind: 'break', stage: 'second', p0: [4, 5] }), [[4, 5]]);
   for (const kind of ['lengthen', 'measurepoints']) assert.deepEqual(modifyPoints({ kind, stage: 'value', mode: 'Delta', p1: [4, 5] }), [[4, 5]]);
   for (const kind of ['rotate', 'scale']) assert.deepEqual(modifyPoints({ kind, stage: 'p2', p1: [1, 2], ref: { pts: [[4, 5]] } }).at(-1), [4, 5]);

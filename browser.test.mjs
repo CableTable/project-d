@@ -23504,6 +23504,7 @@ try {
       await t('decimals').selectOption('2');
     };
     const labels = async (a, b) => {
+      await page.waitForFunction(([x, y]) => document.querySelector('[data-testid=cursor-length]')?.getAttribute('aria-label') === x && document.querySelector('[data-testid=cursor-angle]')?.getAttribute('aria-label') === y, [a, b]);
       assert.equal(await t('cursor-length').getAttribute('aria-label'), a);
       assert.equal(await t('cursor-angle').getAttribute('aria-label'), b);
       assert.ok(await t('cursor-length').isVisible()); assert.ok(await t('cursor-angle').isVisible());
@@ -23611,19 +23612,19 @@ try {
 
     await setup(); await typeCmd('offset'); await typeCmd('through'); await click(40, 40); await move(80, 60); await fields('X', 'Y'); await enter('20,50');
     assert.equal((await savedDoc()).entities.length, 2);
-    await setup(); await typeCmd('lengthen'); await typeCmd('total'); await move(80, 60); await fields('X', 'Y'); await enter('0,0'); await move(90, 70); await fields('Length', 'Angle'); await enter('10<90');
+    await setup(); await typeCmd('lengthen'); await typeCmd('total'); await move(80, 60); assert.equal(await t('cursor-length').isVisible(), false, 'length or point: no fields'); await typeCmd('0,0'); await move(90, 70); await fields('Length', 'Angle'); await enter('10<90');
     await click(59, 49.5); const shortened = line70((await savedDoc()).entities[0]); assert.ok(Math.abs(Math.hypot(shortened[2] - shortened[0], shortened[3] - shortened[1]) - 10) < 1e-5);
-    await setup(); await typeCmd('lengthen'); await typeCmd('dynamic'); await click(59, 49.5); await move(80, 60); await fields('X', 'Y'); await enter('80,60');
+    await setup(); await typeCmd('lengthen'); await typeCmd('dynamic'); await click(59, 49.5); await move(80, 60); await fields('Length', 'Angle'); await enter('10<0');
     assert.ok(Math.hypot(...line70((await savedDoc()).entities[0]).slice(2).map((v, i) => v - [60, 50][i])) > 1);
 
-    await setup(); await typeCmd('measurepoints'); await click(21, 30.5); await move(80, 60); await fields('X', 'Y'); await enter('0,0'); await move(90, 70); await fields('Length', 'Angle'); await enter('10<90');
+    await setup(); await typeCmd('measurepoints'); await click(21, 30.5); await move(80, 60); assert.equal(await t('cursor-length').isVisible(), false, 'length or point: no fields'); await typeCmd('0,0'); await move(90, 70); await fields('Length', 'Angle'); await enter('10<90');
     assert.equal((await savedDoc()).entities.filter((e) => e.type === 'POINT').length, 4);
     await setup(); await page.keyboard.press('Control+a'); await typeCmd('array'); await typeCmd('polar'); await move(80, 60); await fields('X', 'Y'); await enter('0,0');
     assert.match(await prompt(), /Items.*Fill angle/); assert.equal(await t('cursor-length').isVisible(), false);
 
     for (const kind of ['rotate', 'scale']) {
-      await setup(); await page.keyboard.press('Control+a'); await typeCmd(kind); await typeCmd('20,30'); await typeCmd('reference'); await move(80, 60); await fields('Length', 'Angle');
-      await enter('10<0'); await move(90, 70); await fields('Length', 'Angle'); await enter('10<0');
+      await setup(); await page.keyboard.press('Control+a'); await typeCmd(kind); await typeCmd('20,30'); await typeCmd('reference'); await move(80, 60); assert.equal(await t('cursor-length').isVisible(), false, 'angle or point: no fields');
+      await typeCmd('30,30'); await move(90, 70); await fields('Length', 'Angle'); await enter('10<0');
       await typeCmd('points'); await move(80, 60); await fields('Length', 'Angle'); await enter('#0,0'); await move(90, 70); await fields('Length', 'Angle');
       await enter(kind === 'rotate' ? '20<90' : '20<0');
       near70(line70((await savedDoc()).entities[0]), kind === 'rotate' ? [20, 30, 0, 70] : [20, 30, 100, 70]);
@@ -23632,6 +23633,23 @@ try {
       await setup(); await typeCmd(kind); await typeCmd('fence'); await click(30, 30); await move(80, 60);
       assert.equal(await t('cursor-length').isVisible(), false, 'fences have no fields');
     }
+    await closeTabs(/./);
+  });
+
+  await step('TODO 106a fix: number-or-point prompts keep typed numbers (real key presses)', async () => {
+    const setup = async () => {
+      await open70([dxfLine(20, 30, 60, 50)]);
+      if (!(await chipOn('tog-dyn'))) await t('tog-dyn').click();
+      for (const id of ['tog-snap', 'tog-polar', 'tog-otrack', 'tog-ortho']) if (await chipOn(id)) await t(id).click();
+    };
+    const keys = async (text) => { await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.type(text); await page.keyboard.press('Enter'); await frames(); };
+    const click = async (x, y) => { const p = await at(x, y); await page.mouse.click(p.x, p.y); await frames(); };
+    await setup(); await typeCmd('lengthen'); await typeCmd('delta'); await keys('50');
+    assert.match(await prompt(), /Select an object to change/, 'Delta 50 entered as the number');
+    await setup(); await typeCmd('measurepoints'); await click(21, 30.5); await keys('10');
+    assert.equal((await savedDoc()).entities.filter((e) => e.type === 'POINT').length, 4, 'Measure points length 10 entered as the number');
+    await setup(); await page.keyboard.press('Control+a'); await typeCmd('rotate'); await typeCmd('20,30'); await typeCmd('reference'); await keys('50');
+    assert.match(await prompt(), /Specify the new angle/, 'Reference angle 50 entered as the number');
     await closeTabs(/./);
   });
 

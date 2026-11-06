@@ -22,12 +22,14 @@ export const firstPoint = (T) => !anchorOf(T);
 /** A modify prompt's preceding points, or null for object picks, options and fences. Align destinations start at their source. */
 export function modifyPoints(m, previous) {
   const { kind, stage } = m, prior = (p) => p ? [p] : [];
+  if (m.ref?.step === 'ref' && !m.ref.pts.length) return null;                 // number or point: typed digits stay in the command box until a point is given
   if (['move', 'copy', 'stretch', 'mirror', 'rotate', 'scale'].includes(kind) && ['p1', 'p2'].includes(stage)) return m.ref && m.ref.step !== 'new' ? [...prior(m.ref.pts.length ? m.p1 : previous || m.p1), ...m.ref.pts] : prior(m.p1);
   if (kind === 'align' && ['s1', 'd1', 's2', 'd2', 's3'].includes(stage)) return prior(stage === 'd1' ? m.s1 : stage === 'd2' ? m.s2 : m.last);
   if (['break', 'breakatpoint'].includes(kind) && ['first', 'second', 'point'].includes(stage)) return prior(stage === 'second' ? m.p0 : null);
   if (kind === 'offset' && stage === 'side' && m.through) return [];
-  if (kind === 'lengthen' && (stage === 'point' || stage === 'value' && ['Delta', 'Total'].includes(m.mode))) return prior(m.p1);
-  if (kind === 'measurepoints' && stage === 'value') return prior(m.p1);
+  if (kind === 'lengthen' && stage === 'point') return prior(m.p1 || m.p0);
+  if (kind === 'lengthen' && stage === 'value' && ['Delta', 'Total'].includes(m.mode)) return m.p1 ? [m.p1] : null;   // length or point until the first point
+  if (kind === 'measurepoints' && stage === 'value') return m.p1 ? [m.p1] : null;
   if (kind === 'array' && stage === 'center') return [];
   return null;
 }
