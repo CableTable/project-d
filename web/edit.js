@@ -980,10 +980,12 @@ const unesc = (s) => String(s).replace(/\\U\+([0-9A-Fa-f]{4})/g, (_, h) => Strin
 export function relabel(ents, s, target = null) {
   const record = textRecord(ents), override = readOverride(ents), measured = measuredText(ents);
   const scaled = (t) => {
-    const m = /^((?:[{}]|\\[A-Za-z][^;]*;)*[RØ]?)(-?\d+(?:\.\d+)?)(\s*(?:"|mm|in|°)?)((?:[{}]|\\[A-Za-z][^;]*;)*)$/.exec(t);
+    const m = /^((?:[{}]|\\[A-Za-z][^;]*;)*(?:[RØ]|%%[cC])?)(-?\d+(?:\.\d+)?)(\s*(?:"|mm|in|°)?)((?:[{}]|\\[A-Za-z][^;]*;|\s*\[[^\]]*\])*)$/.exec(t);
     if (!m || m[3].trim() === '°') return t;
-    const dp = (m[2].split('.')[1] || '').length;
-    return m[1] + dimText(target?.value ?? +m[2] * s, dp) + (target ? target.units === 'in' ? '"' : '' : m[3]) + m[4];
+    const dp = (m[2].split('.')[1] || '').length, more = Math.max(0, Math.ceil(-Math.log10(s)));
+    // \S+0.1^-0.1; stacked tolerances scale with the label (more decimals when they shrink); an alternate-unit [1.00] stays: it is already in the other unit
+    const tail = m[4].replace(/\\S([^;]*);/g, (a, b) => !b.includes('^') ? a : '\\S' + b.replace(/(\d+)(\.\d+)?/g, (n, i, f) => dimText(+n * s, (f ? f.length - 1 : 0) + more)) + ';');
+    return m[1] + dimText(target?.value ?? +m[2] * s, dp) + (target ? (target.units === 'in' ? '"' : '') + (tail[0] === '[' && !m[3].trim() ? ' ' : '') : m[3]) + tail;
   };
   return ents.map((e) => {
     if (e === record) return overrideRecord(override, scaled(measured));

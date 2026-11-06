@@ -135,16 +135,28 @@ test('TODO 109a fix: native MTEXT scales at 2, preserving formatting, suffix and
   assert.ok(inches.blocks['*D1'].entities[1].r.v.includes('{\\A1;\\H0.7x;1.00"}'));
 });
 
+test('TODO 109a fix 2: %%c diameter labels and stacked tolerances convert, alternate units stay', () => {
+  const texts = ['%%c25.40', '{\\A1;%%C25.40}', '25.40\\S+0.1^-0.1;', '25.40 [1.00]', '25.40 mm [1.00]'];
+  const doc = W.newDoc();
+  W.addBlock(doc, '*D1', texts.map((t, i) => W.mtext(0, i, 2.5, t)));
+  W.addEntities(doc, W.entity('DIMENSION', [[2, '*D1'], [70, 1], [13, 0], [23, 0], [14, 25.4], [24, 0], [42, 25.4]]));
+  const before = structuredClone(doc), got = (opts) => back(doc, opts).blocks['*D1'].entities.map((e) => e.r.v[e.r.c.indexOf(1)]);
+  assert.deepEqual(got({ units: 'in' }), ['%%c1.00"', '{\\A1;%%C1.00"}', '1.00"\\S+0.004^-0.004;', '1.00" [1.00]', '1.00" [1.00]']);
+  assert.deepEqual(got({ scale: 2 }), ['%%c50.80', '{\\A1;%%C50.80}', '50.80\\S+0.2^-0.2;', '50.80 [1.00]', '50.80 mm [1.00]']);
+  assert.deepEqual(doc, before);
+});
+
 test('TODO 109a fix: DIMSTYLE lengths and DIMLFAC follow scale and target units, including PD_DIM styles', () => {
   let doc = W.newDoc();
   Object.assign(doc, addDimension(doc, buildDim('aligned', { a: [0, 0], b: [25.4, 0], offset: 10, textH: 2.5, override: 'Width <>' }, 1, 'PD_DIM_1')));
   doc = nativeDimensionOverrides(doc);
-  const lengths = [41, 42, 43, 44, 45, 46, 48, 49, 140, 141, 142, 143, 147, 148];
-  doc.dimstyles.Standard = { c: [...lengths, 40, 144, 146, 271], v: [...lengths.map(() => '2.5'), '3', '2', '.5', '2'] };
+  const lengths = [41, 42, 43, 44, 45, 46, 47, 48, 49, 140, 141, 142, 147, 148];
+  doc.dimstyles.Standard = { c: [...lengths, 40, 143, 144, 146, 271], v: [...lengths.map(() => '2.5'), '3', '0.5', '2', '.5', '2'] };
   W.addEntities(doc, W.entity('LEADER', [[3, 'Standard'], [10, 0], [20, 0]]));
   const val = (r, c) => +r.v[r.c.indexOf(c)], before = structuredClone(doc);
   const scaled = back(doc, { scale: 2 });
   for (const c of lengths) near(val(scaled.dimstyles.Standard, c), 5);
+  near(val(scaled.dimstyles.Standard, 143), .5);       // DIMALTF is a multiplier, not a length
   near(val(scaled.dimstyles.Standard, 40), 3); near(val(scaled.dimstyles.Standard, 144), 2); near(val(scaled.dimstyles.Standard, 146), .5);
   for (const [units, target] of [['mm', 4], ['in', 1]]) {
     const saved = back(doc, { units, scale: 2 }), factor = units === 'in' ? 2 / 25.4 : 2;

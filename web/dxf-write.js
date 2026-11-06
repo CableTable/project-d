@@ -349,7 +349,7 @@ export function writeDxfWithReport(doc, opts = {}) {
     for (const style of Object.values(doc.dimstyles || {})) {
       style.v = style.v.map((v, i) => {
         const c = style.c[i];
-        if ([41, 42, 43, 44, 45, 46, 48, 49, 140, 141, 142, 143, 147, 148].includes(c)) return String(+v * factor);
+        if ([41, 42, 43, 44, 45, 46, 47, 48, 49, 140, 141, 142, 147, 148].includes(c)) return String(+v * factor);
         if (unitChange && c === 144) return '1';
         if (unitChange && c === 3) return v.replace(/<>\s*(?:"|mm|in)?$/, units === 'in' ? '<>"' : '<>');
         return v;
