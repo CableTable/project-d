@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as W from './web/dxf-write.js';
 import * as E from './web/edit.js';
-import { dragGrip } from './web/grips.js';
+import { dragGrip, gripsOf } from './web/grips.js';
 import { flatten, readDxf } from './web/drawing.js';
 import { followDimensions, driveLine, driveDimension, linkedLine, typedLength, dimensionEntry } from './web/linked-dimensions.js';
 import { readOverride } from './web/dimension-text.js';
@@ -587,4 +587,48 @@ test('TODO 76b: h / v shown inches and drawing factor are both undone', () => {
     point(E.lineOf(next.entities[0]), [0, 0, ...target]); assert.equal(label(next), '20.000"');
     for (const bad of [0, -5, NaN]) assert.equal(driveLine(raw, 1, bad, 25.4), null);
   }
+});
+
+const rectOf = (ent) => gripsOf(ent).filter((g) => g.id[0] === 'v').map((g) => [g.x, g.y]);
+
+test('TODO 76d: an h / v dimension across a rectangle moves its right / top side, points mid-side or reversed', () => {
+  for (const reversed of [false, true]) {
+    const raw = drawing(W.rect(10, 20, 100, 50), reversed ? { a: [110, 40], b: [10, 30], axis: 'h' } : { a: [10, 30], b: [110, 40], axis: 'h' }, 'linear');
+    assert.equal(linkedLine(raw, 1).rect, true);
+    const next = driveDimension(raw, 1, 120), m = model(next);
+    assert.deepEqual(rectOf(next.entities[0]), [[10, 20], [130, 20], [130, 70], [10, 70]]);
+    assert.equal(label(next), '120.000'); point(m.params[reversed ? 'a' : 'b'], [130, 40]); point(m.params[reversed ? 'b' : 'a'], [10, 30]);
+    assert.deepEqual(rectOf(raw.entities[0]), [[10, 20], [110, 20], [110, 70], [10, 70]], 'the input stays');
+  }
+  const v = driveDimension(drawing(W.rect(10, 20, 100, 50), { a: [50, 20], b: [60, 70], axis: 'v' }, 'linear'), 1, 80);
+  assert.deepEqual(rectOf(v.entities[0]), [[10, 20], [110, 20], [110, 100], [10, 100]]); assert.equal(label(v), '80.000');
+  const shrink = driveDimension(drawing(W.rect(10, 20, 100, 50), { a: [10, 30], b: [110, 40], axis: 'h' }, 'linear'), 1, 40);
+  assert.deepEqual(rectOf(shrink.entities[0]), [[10, 20], [50, 20], [50, 70], [10, 70]]);
+});
+
+test('TODO 76d: an aligned dimension across a 30-degree rectangle; another dimension on the moved corners follows', () => {
+  const c = Math.cos(Math.PI / 6), s = 0.5, at = (x, y) => [10 + x * c - y * s, 20 + x * s + y * c];
+  const pts = [at(0, 0), at(100, 0), at(100, 50), at(0, 50)];
+  const raw = drawing(W.lwpoly(pts, { closed: true }), { a: at(30, 0), b: at(30, 50) });
+  Object.assign(raw, E.addDimension(raw, E.buildDim('aligned', { textH: 2, offset: 10, a: pts[1], b: pts[2] }, 1, 'PD_DIM_2', 3)));
+  const next = driveDimension(raw, 1, 80), g = rectOf(next.entities[0]);
+  point(g[0], pts[0]); point(g[1], pts[1]); point(g[2], [pts[2][0] - 30 * s, pts[2][1] + 30 * c]); point(g[3], [pts[3][0] - 30 * s, pts[3][1] + 30 * c]);
+  assert.equal(label(next), '80.000'); assert.equal(label(next, 2), '80.000', 'a dimension on the moved side follows');
+  const wide = driveDimension(drawing(W.lwpoly(pts, { closed: true }), { a: at(0, 20), b: at(100, 20) }), 1, 130);
+  point(rectOf(wide.entities[0])[1], at(130, 0)); point(rectOf(wide.entities[0])[2], at(130, 50));
+});
+
+test('TODO 76d: not driven: a rounded rectangle, a slanted dimension, 0 / negative; a LINE and a rectangle at the ends is "multiple"', () => {
+  const rounded = drawing(W.roundRect(10, 20, 100, 50, 5), { a: [10, 40], b: [110, 40], axis: 'h' }, 'linear');
+  assert.equal(driveLine(rounded, 1, 120), null); assert.equal(dimensionEntry(rounded, 1, '120').reason, 'none');
+  const slant = drawing(W.rect(10, 20, 100, 50), { a: [10, 20], b: [110, 70] });
+  assert.equal(driveLine(slant, 1, 120), null);
+  const plain = drawing(W.rect(10, 20, 100, 50), { a: [10, 30], b: [110, 40], axis: 'h' }, 'linear');
+  for (const bad of [0, -5, NaN]) assert.equal(driveLine(plain, 1, bad), null);
+  const both = drawing(W.rect(10, 20, 100, 50), { a: [10, 20], b: [110, 20], axis: 'h' }, 'linear');
+  W.addEntities(both, W.line(10, 20, 110, 20));
+  assert.equal(dimensionEntry(both, 1, '120').reason, 'multiple'); assert.equal(driveLine(both, 1, 120), null);
+  const two = drawing(W.rect(10, 20, 100, 50), { a: [10, 30], b: [110, 40], axis: 'h' }, 'linear');
+  W.addEntities(two, W.rect(10, 20, 100, 50));
+  assert.equal(dimensionEntry(two, 1, '120').reason, 'multiple', 'two stacked rectangles');
 });

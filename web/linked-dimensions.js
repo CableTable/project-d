@@ -2,7 +2,7 @@
 import { flatten, pickIndex, mapply, mscale } from './drawing.js';
 import { dimOfEntity, buildDim, replaceDimension, lineOf, dimLabel, DIM_LAYER } from './edit.js';
 import { overrideText, measuredText } from './dimension-text.js';
-import { dragGrip } from './grips.js';
+import { dragGrip, gripsOf } from './grips.js';
 
 const DEG = Math.PI / 180;
 /** Per entity (its index in `entities`): its vertices, arcs ({ c, r }) and straight pieces ([x1, y1, x2, y2]), in drawing order. */
@@ -167,6 +167,28 @@ export function linkedLine(raw, e) {
   return hit.reason ? null : hit;
 }
 
+/** TODO 76d: the rectangle `ent` when the dimension's points `p`, `q` lie on two opposite sides and it measures square across them. → { i, rect, B (the dimension point on the moving side), key ('a' | 'b': the dimension point that moves), id (the moving side's edge grip: its right / top side in the rectangle's own axes), n (that side's outward unit normal), span } or null (rounded, no match). */
+function rectangleHit(ent, i, dim, m, p, q) {
+  const gs = gripsOf(ent), vs = gs.filter((g) => g.id[0] === 'v');
+  if (vs.length !== 4 || !gs.some((g) => g.rect)) return null;
+  const dir = dim.kind === 'aligned' ? [q[0] - p[0], q[1] - p[1]] : dim.params.axis === 'h' ? [m[0], m[1]] : [m[2], m[3]];
+  const on = (k, t) => {
+    const a = vs[k], b = vs[(k + 1) % 4], dx = b.x - a.x, dy = b.y - a.y, f = Math.max(0, Math.min(1, ((t[0] - a.x) * dx + (t[1] - a.y) * dy) / (dx * dx + dy * dy)));
+    return Math.hypot(a.x + f * dx - t[0], a.y + f * dy - t[1]) <= LINK_TOL;
+  };
+  for (const s of [0, 1]) {
+    const o = s + 2, u = [vs[s + 1].x - vs[s].x, vs[s + 1].y - vs[s].y];
+    const sp = on(s, p) && on(o, q) ? p : on(o, p) && on(s, q) ? q : null;       // sp: the point on side s
+    if (!sp || Math.abs(dir[0] * u[0] + dir[1] * u[1]) > 1e-6 * Math.hypot(...dir) * Math.hypot(...u)) continue;
+    const mid = (k) => [(vs[k].x + vs[(k + 1) % 4].x) / 2, (vs[k].y + vs[(k + 1) % 4].y) / 2], ms = mid(s), mo = mid(o), span = Math.hypot(ms[0] - mo[0], ms[1] - mo[1]);
+    let n = [(ms[0] - mo[0]) / span, (ms[1] - mo[1]) / span], k = s;
+    if (Math.abs(n[0]) >= Math.abs(n[1]) ? n[0] < 0 : n[1] < 0) { n = [-n[0], -n[1]]; k = o; }       // right / top: the side whose normal points to +x (or +y when the pair is more vertical)
+    const moving = k === s ? sp : sp === p ? q : p;
+    return { i, rect: true, B: moving, key: moving === q ? 'b' : 'a', id: 'e' + k, n, span };
+  }
+  return null;
+}
+
 function dimensionLine(raw, e) {
   const dim = dimOfEntity(raw, e), m = dim && (dim.kind === 'aligned' || (dim.kind === 'linear' && ['h', 'v'].includes(dim.params.axis))) && dimMatrix(raw, e);
   if (!m) return { reason: 'kind' };
@@ -178,9 +200,13 @@ function dimensionLine(raw, e) {
     if (fits(s, p) && fits(t, q)) hits.push({ i, A: s, B: t, id: 'b' });
     else if (fits(t, p) && fits(s, q)) hits.push({ i, A: t, B: s, id: 'a' });
   });
+  raw.entities.forEach((ent, i) => {
+    const h = !!ent.ps === ps && ent.type === 'LWPOLYLINE' && rectangleHit(ent, i, dim, m, p, q);
+    if (h) hits.push(h);
+  });
   if (hits.length !== 1) return { reason: hits.length ? 'multiple' : 'none' };
   const hit = hits[0], axis = dim.params.axis === 'h' ? 0 : 1;
-  const zeroExtent = dim.kind === 'linear' && Math.abs(local(m, hit.B)[axis] - local(m, hit.A)[axis]) < LINK_TOL;
+  const zeroExtent = !hit.rect && dim.kind === 'linear' && Math.abs(local(m, hit.B)[axis] - local(m, hit.A)[axis]) < LINK_TOL;
   return { ...hit, dim, m, zeroExtent };
 }
 
@@ -200,16 +226,20 @@ export function dimensionEntry(raw, e, typed) {
 export function driveLine(raw, e, shown, factor = 1) {
   const hit = linkedLine(raw, e);
   if (!hit || hit.zeroExtent) return null;
-  const len = shown * (hit.dim.params.units === 'inch' ? 25.4 : 1) / (factor || 1), { A, B } = hit, d = Math.hypot(B[0] - A[0], B[1] - A[1]);
+  const len = shown * (hit.dim.params.units === 'inch' ? 25.4 : 1) / (factor || 1), { A, B } = hit, d = hit.rect ? 0 : Math.hypot(B[0] - A[0], B[1] - A[1]);
   if (!(len > 0) || !Number.isFinite(len)) return null;
-  let to;
-  if (hit.dim.kind === 'linear') {
+  let to, grip;
+  if (hit.rect) {       // the moving side goes by the existing edge drag; the dimension's point on it goes the same way
+    const g = gripsOf(raw.entities[hit.i]).find((x) => x.id === hit.id), by = [hit.n[0] * (len - hit.span), hit.n[1] * (len - hit.span)];
+    grip = [g.x + by[0], g.y + by[1]];
+    to = [hit.B[0] + by[0], hit.B[1] + by[1]];
+  } else if (hit.dim.kind === 'linear') {
     const a = local(hit.m, A), b = local(hit.m, B), axis = hit.dim.params.axis === 'h' ? 0 : 1;
     b[axis] = a[axis] + Math.sign(b[axis] - a[axis]) * len;
     to = mapply(hit.m, ...b);
   } else to = [A[0] + (B[0] - A[0]) / d * len, A[1] + (B[1] - A[1]) / d * len];
-  const line = dragGrip(raw.entities[hit.i], hit.id, to)?.ent;
-  const built = line && buildDim(hit.dim.kind, { ...hit.dim.params, b: local(hit.m, to) }, factor, hit.dim.name, hit.dim.dp);
+  const line = dragGrip(raw.entities[hit.i], hit.id, grip || to)?.ent;
+  const built = line && buildDim(hit.dim.kind, { ...hit.dim.params, [hit.key || 'b']: local(hit.m, to) }, factor, hit.dim.name, hit.dim.dp);
   return built ? { i: hit.i, line, built } : null;
 }
 

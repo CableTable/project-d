@@ -9006,7 +9006,7 @@ function textCommit() {
       if (readOverride(next.blocks[dim.name].entities) === (dim.params.override || '')) { renderCommand(); renderEdit(); paintOverlay(); note('Dimension text unchanged: a kept Measure callout follows its points'); return; }       // typed text that still matches is rewritten back: no step, no "changed"
       if (!commit(d, next, 'Dimension text')) return; setSel(d, new Set([ed.e]));
     }
-    note(drive ? `${drive === 'none' ? 'No line' : 'More than one line'} at this dimension's ends: the number is shown as text. Ctrl+Z takes it back.` : 'Dimension text changed. Ctrl+Z takes it back');
+    note(drive ? `${drive === 'none' ? 'No line or rectangle' : 'More than one line or rectangle'} at this dimension's ends: the number is shown as text. Ctrl+Z takes it back.` : 'Dimension text changed. Ctrl+Z takes it back');
     return;
   }
   if (ed.ldr) {                                                       // a leader's note

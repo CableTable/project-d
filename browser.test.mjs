@@ -21517,7 +21517,7 @@ try {
       return { ...readDim(name, block), override: readOverride(block.entities), label: tx.r.v[tx.r.c.indexOf(1)] };
     };
     const lines = (raw) => raw.entities.map(lineEnds).filter(Boolean);
-    const noLine = "No line at this dimension's ends: the number is shown as text. Ctrl+Z takes it back.";
+    const noLine = "No line or rectangle at this dimension's ends: the number is shown as text. Ctrl+Z takes it back.";
     for (const tab of ['drawing', 'layout']) {
       if (tab === 'layout') {
         await freshLayoutWithPlate();
@@ -21551,7 +21551,7 @@ try {
       assert.deepEqual(dimIn(await savedDoc()), dimIn(deleted)); assert.deepEqual(await histLabels(), history, tab + ': shown number is no step without a LINE');
       await apply('200', '150.00', true);
       assert.deepEqual(dimIn(await savedDoc()), dimIn(deleted)); assert.deepEqual(await histLabels(), history, tab + ': Esc cancels');
-      await apply('200'); assert.equal(await said(/No line at this dimension's ends/), noLine, tab);
+      await apply('200'); assert.equal(await said(/No line or rectangle at this dimension's ends/), noLine, tab);
       await shotBoth('todo76c-gone-' + tab);
       for (const theme of ['light', 'dark']) assert.ok(readFileSync(`${shotDir}/s12-todo76c-gone-${tab}-${theme}.png`).length > 1000);
       const changed = await savedDoc();
@@ -21563,7 +21563,7 @@ try {
       assert.deepEqual(dimIn(await savedDoc()), dimIn(deleted), tab + ': one Ctrl+Z restores the old text');
       assert.deepEqual(lines(await savedDoc()), lines(deleted), tab + ': the LINE stays deleted');
       for (const text of ['0', '-5', '200 TYP']) {
-        await apply(text); assert.equal(await said(text === '200 TYP' ? /Dimension text changed/ : /No line at this dimension's ends/), text === '200 TYP' ? 'Dimension text changed. Ctrl+Z takes it back' : noLine);
+        await apply(text); assert.equal(await said(text === '200 TYP' ? /Dimension text changed/ : /No line or rectangle at this dimension's ends/), text === '200 TYP' ? 'Dimension text changed. Ctrl+Z takes it back' : noLine);
         const out = await savedDoc(); assert.equal(dimIn(out).override, text); assert.deepEqual(lines(out), lines(deleted)); await undo();
       }
       await undo(); assert.deepEqual(lines(await savedDoc()), lines(start), tab + ': restore the source for the override rule');
@@ -21595,7 +21595,7 @@ try {
       const before = await savedDoc(), dim = dimOfEntity(before, before.entities.length - 1), tx = dimGeom(dim.kind, dim.params, 1, 2).text;
       const p = await at(tx.x, tx.y + tx.h / 2); await page.mouse.dblclick(p.x, p.y); await t('text-editor').waitFor();
       await t('text-editor').fill('200'); await page.keyboard.press('Enter');
-      assert.equal(await prompt(), radial ? 'Dimension text changed. Ctrl+Z takes it back' : `${stacked ? 'More than one line' : 'No line'} at this dimension's ends: the number is shown as text. Ctrl+Z takes it back.`);
+      assert.equal(await prompt(), radial ? 'Dimension text changed. Ctrl+Z takes it back' : `${stacked ? 'More than one line or rectangle' : 'No line or rectangle'} at this dimension's ends: the number is shown as text. Ctrl+Z takes it back.`);
       const after = await savedDoc(); assert.deepEqual(geometry(after), geometry(before));
       const edited = dimOfEntity(after, after.entities.length - 1); assert.equal(readOverride(after.blocks[edited.name].entities), '200');
       assert.equal(edited.kind, dim.kind);
@@ -21673,6 +21673,49 @@ try {
         await apply('150.00'); assert.doesNotMatch(await prompt(), /locked/, tab + ': the shown number on a locked object says nothing'); await unchanged();
         await apply('-5'); await said(/A locked object: unlock it to change its length/); await unchanged();
       }
+    }
+    await closeTabs(/./);
+  });
+
+  await step('TODO 76d: a dimension drives a rectangle (drawing and layout): the right side moves, other geometry stays, one Undo, 0 refused; light and dark', async () => {
+    const save = async () => readDxf((await downloaded(() => page.keyboard.press('Control+s'))).text);
+    const rectIn = (raw) => raw.entities.filter((e) => e.type === 'LWPOLYLINE').map((e) => GR.lwVertices(e.r).map((v) => [v.x, v.y])).filter((r) => !r.some((p) => p[0] === 1000));       // (not the layout's 1000 x 700 plate)
+    const labelIn = (raw) => { const [, block] = Object.entries(raw.blocks).find(([k]) => /^PD_DIM_/.test(k)); const tx = block.entities.find((e) => e.type === 'TEXT'); return tx.r.v[tx.r.c.indexOf(1)]; };
+    const said = async (re) => (await page.waitForFunction((s) => { const x = document.querySelector('[data-testid=cmd-prompt]').textContent; return new RegExp(s).test(x) && x; }, re.source)).jsonValue();
+    const same = (a, b, why) => a.forEach((p, i) => p.forEach((v, k) => assert.ok(Math.abs(v - b[i][k]) < 1e-6, `${why}: ${a} != ${b}`)));
+    for (const tab of ['drawing', 'layout']) {
+      if (tab === 'layout') {
+        await freshLayoutWithPlate();
+        await typeCmd('rectangle'); await typeCmd('150,150'); await typeCmd('150,80'); await page.keyboard.press('Escape');       // (the second point is the size)
+        await typeCmd('dli'); await typeCmd('150,150'); await typeCmd('300,150'); await typeCmd('h'); await typeCmd('220,250'); await page.keyboard.press('Escape');
+      } else {
+        await closeTabs(/./);
+        const raw = newDoc(4);
+        addEntities(raw, dxfPoly([[150, 150], [300, 150], [300, 230], [150, 230]], { closed: true }));
+        Object.assign(raw, addDimension(raw, buildDim('linear', { a: [150, 190], b: [300, 190], axis: 'h', offset: 100, textH: 5 }, 1, 'PD_DIM_H1', 2)));
+        await t('picker').setInputFiles({ name: 'drive-76d.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(raw), 'latin1') });
+        await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'drive-76d.dxf');
+      }
+      await t('decimals').selectOption('2'); await page.locator('[data-tool=select]').click();
+      const apply = async (text, expected = '150.00') => {
+        const p = await at(190, tab === 'drawing' ? 290 : 250); await page.mouse.dblclick(p.x, p.y); await t('text-editor').waitFor();       // (the drawing's dimension points sit mid-side, y 190)
+        assert.equal(await t('text-editor').inputValue(), expected, tab);
+        await t('text-editor').fill(text); await page.keyboard.press('Enter'); assert.equal(await t('text-edit-box').isVisible(), false);
+      };
+      const start = await save(), history = await histLabels();
+      same(rectIn(start)[0], [[150, 150], [300, 150], [300, 230], [150, 230]], tab + ' start');
+      await apply('200');
+      const driven = await save();
+      assert.equal(rectIn(driven).length, 1, tab); same(rectIn(driven)[0], [[150, 150], [350, 150], [350, 230], [150, 230]], tab + ': the right side moved');
+      assert.equal(labelIn(driven), '200.00', tab + ': the dimension reads it');
+      assert.deepEqual((await histLabels()).slice(history.length), ['Dimension length'], tab + ': one step');
+      await shotBoth('todo76d-drive-' + tab);
+      await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z');
+      const back = await save();
+      assert.deepEqual(back.entities, start.entities, tab + ': one Undo restores the rectangle'); assert.equal(labelIn(back), '150.00');
+      const quiet = await histLabels();
+      await apply('0'); await said(/Length must be more than 0/);
+      assert.deepEqual((await save()).entities, start.entities, tab + ': 0 changes nothing'); assert.deepEqual(await histLabels(), quiet, tab + ': 0 is no step');
     }
     await closeTabs(/./);
   });
