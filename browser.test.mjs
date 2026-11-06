@@ -44,7 +44,8 @@ const selectStep = shard
   : () => true;
 const URL_ = `http://localhost:${PORT}/`;
 const server = spawn(process.execPath, ['serve.mjs', String(PORT)], { stdio: ['ignore', 'pipe', 'inherit'], env: { ...process.env, PORT: String(PORT) } });
-let browser;
+let browser, page;
+const said = async (re) => (await page.waitForFunction((s) => { const x = document.querySelector('[data-testid=cmd-prompt]').textContent; return new RegExp(s).test(x) && x; }, re.source)).jsonValue();
 const stop = () => { try { server.kill(); } catch { /* already gone */ } };
 process.on('exit', stop);
 
@@ -125,7 +126,7 @@ try {
   const exe = chromePath();
   browser = await chromium.launch(exe ? { executablePath: exe } : {});
   const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
-  const page = await ctx.newPage();
+  page = await ctx.newPage();
   if (process.env.SLOWRAF) await page.addInitScript(() => { const r = window.requestAnimationFrame.bind(window); window.requestAnimationFrame = (f) => r(() => setTimeout(() => f(performance.now()), 150)); });
   // THROTTLE=6 slows the CPU 6x (CDP) to mimic a slow CI runner and expose timing-dependent steps
   if (process.env.THROTTLE) await (await ctx.newCDPSession(page)).send('Emulation.setCPUThrottlingRate', { rate: Number(process.env.THROTTLE) });
@@ -8246,7 +8247,6 @@ try {
   });
 
   await step('TODO 199: contour outside a hexagon with a near-repeated point', async () => {
-    const said = async (re) => (await page.waitForFunction((s) => { const x = document.querySelector('[data-testid=cmd-prompt]').textContent; return new RegExp(s).test(x) && x; }, re.source)).jsonValue();
     const configured = (key, value) => page.waitForFunction(([k, v]) => JSON.parse(localStorage.getItem('pd-contour'))?.[k] === v, [key, value]);
     await closeTabs(/./);
     const doc = newDoc(4);
@@ -21941,7 +21941,6 @@ try {
     };
     const lineIn = (text) => readDxf(text).entities.map(lineEnds).find((l) => l && Math.abs(l[1] - 150) < 1e-6 && Math.abs(l[3] - 150) < 1e-6 && Math.abs(l[0] - 150) < 1e-6);
     const same = (a, b, why) => a.forEach((v, i) => assert.ok(Math.abs(v - b[i]) < 1e-6, `${why}: ${a} != ${b}`));
-    const said = async (re) => (await page.waitForFunction((s) => { const x = document.querySelector('[data-testid=cmd-prompt]').textContent; return new RegExp(s).test(x) && x; }, re.source)).jsonValue();      // waits for the note, returns its text
     for (const tab of ['drawing', 'layout']) {
       if (tab === 'layout') {
         await freshLayoutWithPlate();
@@ -22008,7 +22007,6 @@ try {
   });
 
   await step('TODO 76c: a dimension whose line is gone shows the number as text', async () => {
-    const said = async (re) => (await page.waitForFunction((s) => { const x = document.querySelector('[data-testid=cmd-prompt]').textContent; return new RegExp(s).test(x) && x; }, re.source)).jsonValue();      // waits for the note, returns its text
     const undo = async () => { await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z'); };
     const dimIn = (raw) => {
       const [name, block] = Object.entries(raw.blocks).find(([k]) => /^PD_DIM_/.test(k));
@@ -22119,7 +22117,6 @@ try {
     const lineIn = (raw) => raw.entities.map(lineEnds).find((l) => l && Math.abs(l[0] - 150) < 1e-6 && Math.abs(l[1] - 150) < 1e-6);
     const otherIn = (raw) => raw.entities.filter((e) => !lineEnds(e) || Math.abs(lineEnds(e)[0] - 150) >= 1e-6);
     const same = (a, b) => a.forEach((v, i) => assert.ok(Math.abs(v - b[i]) < 1e-6, `${a} != ${b}`));
-    const said = async (re) => (await page.waitForFunction((s) => { const x = document.querySelector('[data-testid=cmd-prompt]').textContent; return new RegExp(s).test(x) && x; }, re.source)).jsonValue();      // waits for the note, returns its text
     for (const tab of ['drawing', 'layout']) {
       if (tab === 'layout') {
         await freshLayoutWithPlate();
@@ -22180,7 +22177,6 @@ try {
     const save = async () => readDxf((await downloaded(() => page.keyboard.press('Control+s'))).text);
     const rectIn = (raw) => raw.entities.filter((e) => e.type === 'LWPOLYLINE').map((e) => GR.lwVertices(e.r).map((v) => [v.x, v.y])).filter((r) => !r.some((p) => p[0] === 1000));       // (not the layout's 1000 x 700 plate)
     const labelIn = (raw) => { const [, block] = Object.entries(raw.blocks).find(([k]) => /^PD_DIM_/.test(k)); const tx = block.entities.find((e) => e.type === 'TEXT'); return tx.r.v[tx.r.c.indexOf(1)]; };
-    const said = async (re) => (await page.waitForFunction((s) => { const x = document.querySelector('[data-testid=cmd-prompt]').textContent; return new RegExp(s).test(x) && x; }, re.source)).jsonValue();
     const same = (a, b, why) => a.forEach((p, i) => p.forEach((v, k) => assert.ok(Math.abs(v - b[i][k]) < 1e-6, `${why}: ${a} != ${b}`)));
     for (const tab of ['drawing', 'layout']) {
       if (tab === 'layout') {
@@ -22231,7 +22227,6 @@ try {
       const before = await savedDoc(), history = await histLabels();
       const [name, block] = Object.entries(before.blocks).find(([k]) => /^PD_DIM_/.test(k));
       const dim = readDim(name, block), tx = dimGeom(dim.kind, dim.params, 1, 2).text;
-      const said = async (re) => (await page.waitForFunction((s) => { const x = document.querySelector('[data-testid=cmd-prompt]').textContent; return new RegExp(s).test(x) && x; }, re.source)).jsonValue();      // waits for the note, returns its text
       const apply = async () => {
         const p = await at(tx.x, tx.y); await page.mouse.dblclick(p.x, p.y); await t('text-editor').waitFor();
         await t('text-editor').fill('-5'); await page.keyboard.press('Enter'); assert.equal(await t('text-edit-box').isVisible(), false);
@@ -22460,7 +22455,7 @@ try {
     await page.locator('[data-tool=select]').click();
   });
 
-  const said = async () => (await histLine()) + ' ' + (await prompt());
+  const zoomSaid = async () => (await histLine()) + ' ' + (await prompt());
   const viewBox = async () => (await page.locator('[data-testid=canvas] > svg').first().getAttribute('viewBox')).split(' ').map(Number);
   const viewItemOff = async (name) => { await page.locator('[data-menu=View]').click(); const off = await page.getByRole('menuitem', { name, exact: true }).isDisabled(); await page.locator('[data-menu=View]').click(); return off; };
 
@@ -22582,7 +22577,7 @@ try {
     await page.mouse.move(a.x, a.y); await page.mouse.down(); await page.mouse.move(b.x, b.y, { steps: 5 });
     assert.equal(await t('rubber').isVisible(), true);
     await page.keyboard.press('Escape');
-    assert.match(await said(), /Zoom Window cancelled/);
+    assert.match(await zoomSaid(), /Zoom Window cancelled/);
     assert.equal(await t('rubber').isVisible(), false);
     await page.mouse.up();
     assert.deepEqual(await viewBox(), before, 'releasing the cancelled drag does not zoom');
@@ -22600,7 +22595,7 @@ try {
     const v0 = await viewBox();
     await typeCmd('zw');
     await page.keyboard.press('Escape');
-    assert.match(await said(), /Zoom Window cancelled/);
+    assert.match(await zoomSaid(), /Zoom Window cancelled/);
     const a = await at(30, 40), b = await at(130, 90);
     await typeCmd('zw');
     await page.mouse.move(a.x, a.y); await page.mouse.down(); await page.mouse.move(b.x, b.y, { steps: 5 });
@@ -22611,7 +22606,7 @@ try {
     assert.ok(v1[0] <= 31 && v1[0] + v1[2] >= 129 && v1[2] < 110, `the box (x 30 to 130) fills the view, to a pixel or so: ${v1}`);
     assert.equal(await t('rubber').isVisible(), false);
     assert.equal(await viewItemOff('Zoom Selection'), true, 'greyed with nothing selected');
-    await typeCmd('zs'); assert.match(await said(), /select something first/); assert.deepEqual(await viewBox(), v1);
+    await typeCmd('zs'); assert.match(await zoomSaid(), /select something first/); assert.deepEqual(await viewBox(), v1);
     await typeCmd('all');
     assert.equal(await viewItemOff('Zoom Selection'), false, 'on with a selection');
     await typeCmd('zs');
@@ -22619,7 +22614,7 @@ try {
     assert.ok(v2[2] > v1[2] * 1.4 && v2[0] < 20, `zoomed out to everything selected (x 20 to 200): ${v1} → ${v2}`);
     await typeCmd('zp'); assert.deepEqual(await viewBox(), v1, 'back to the window view');
     await typeCmd('zp'); assert.deepEqual(await viewBox(), v0, 'back to the first view');
-    await typeCmd('zp'); assert.match(await said(), /no earlier view/);
+    await typeCmd('zp'); assert.match(await zoomSaid(), /no earlier view/);
     assert.equal(await viewItemOff('Zoom Previous'), true, 'greyed with no earlier view');
   });
 
@@ -22637,7 +22632,7 @@ try {
     await typeCmd('zp'); assert.deepEqual(await viewBox(), v0);
     for (let i = 0; i < 6; i++) { await typeCmd('zs'); await typeCmd('fit'); }       // twelve different views
     for (let i = 0; i < 10; i++) await typeCmd('zp');
-    await typeCmd('zp'); assert.match(await said(), /no earlier view/, 'ten steps back and no more');
+    await typeCmd('zp'); assert.match(await zoomSaid(), /no earlier view/, 'ten steps back and no more');
     await closeTabs(/./);
   });
 

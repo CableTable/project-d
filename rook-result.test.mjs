@@ -395,6 +395,22 @@ test('result prints peak context and warns strictly above 150k; Codex logs skip 
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('retro38ck: fails sees timestamped errors and SUITE results without inventing failing steps', () => {
+  for (const [body, expected] of [
+    ['##[error]Process completed with exit code 1.', 'no failing step lines found in ci.log'],
+    ['SUITE unit=1 browser=0', 'red (unit=1 browser=0) but no failing step lines found in ci.log'],
+    ['SUITE unit=0 browser=2', 'red (unit=0 browser=2) but no failing step lines found in ci.log'],
+    ['SUITE unit=0 browser=0', 'no failures in ci.log'],
+    ['FAIL real step\n##[error]Process completed with exit code 1.', 'real step'],
+    ['ok 1', 'no failures in ci.log'],
+  ]) {
+    for (const timestamp of ['', '2026-11-06T10:15:30.1234567Z ']) {
+      const text = body.split('\n').map((line) => timestamp + line).join('\r\n');
+      assert.deepEqual(failLines(text, 'ci.log'), [expected], text);
+    }
+  }
+});
+
 test('TODO 196g fix: fails reads the real suite-log lines (browser [shard n/m] FAIL, node:test spec ✖ + summary), with the first 3 +/- lines, max 40', () => {
   const E = '\x1b';
   // Copied from runs35/suite-da8a469.log (lines 1173, 1622-1628) and runs36/suite-b6de1a7.log (1821, 2295, 2444).

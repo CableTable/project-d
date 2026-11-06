@@ -5,6 +5,7 @@ import { basename, join, resolve } from 'node:path';
 import { test } from 'node:test';
 import { EventEmitter } from 'node:events';
 import { dedupePath, acad, acadArgs, board, boardArgs, pawn, pawnArgs, queueLineOf, retro, retroArgs, suite, launchFailed, launchRun, runningNote, parseReview, parseBuild, parseKnight, reviewerArgs, buildArgs, knightArgs, commandLine, review, build, knight, lintBrief, briefProblems, isFixBrief, fixRoundRefusal } from './tools/rook-launch.mjs';
+import * as launches from './tools/rook-launch.mjs';
 
 const X = 'E:/Project B/Claude/Project D extras';
 const REVIEWER = 'claude2.cmd -p --agent reviewer --model claude-opus-5-5 --effort medium --permission-mode dontAsk --max-budget-usd 6 '
@@ -27,6 +28,42 @@ function recorder(fail = '') {
 }
 const launched = (calls) => calls.find((c) => c[0] === 'launch');
 const isSwitch = (c) => c[0] === 'git' && c[2] === 'switch';
+
+test('retro38ck: fresh runs step 2b with support access, its own lock and a queue line; invalid or missing input launches nothing', (t) => {
+  t.mock.method(console, 'log', () => {});
+  assert.equal(typeof launches.fresh, 'function', 'fresh command is available');
+  for (const [locked, flags, bin] of [[false, [], 'claude2.cmd'], [true, [], 'claude3.cmd'], [false, ['--as', 'king'], 'claude3.cmd']]) {
+    const r = recorder();
+    r.x.locked = (dir, lock) => locked && !lock && dir === `${X}/ProjectD-s15fix`;
+    launches.fresh(['109', ...flags], r.x);
+    const l = launched(r.calls), out = `${X}/runs33/fresh-109.out`;
+    assert.equal(basename(l[1]), bin);
+    assert.deepEqual(l[2], ['-p', "Fresh read of TODO 109: read grill-109.md, TODO.md row 109 and the code files it names. Max 8 lines: gaps, contradictions, missing cases; for each 'X never Y' answer, quote the code line that keeps it or say not found. Change nothing.",
+      '--model', 'claude-opus-5-5', '--effort', 'medium', '--permission-mode', 'dontAsk', '--max-budget-usd', '2', '--output-format', 'text', '--add-dir', 'E:/Project B/Claude/Project D', '--add-dir', 'E:/Project B/Claude/support', '--allowedTools', 'Read', 'Grep', 'Glob', '--disallowedTools', 'Agent']);
+    assert.doesNotThrow(() => commandLine(l[1], l[2]));
+    assert.equal(l[3], `${X}/runs33`);
+    assert.equal(l[4], 'ignore');
+    assert.equal(l[5], `fd:${out}`);
+    assert.equal(l[7], out);
+    assert.ok(l[8].queue, 'end hook gets the queue job');
+    assert.equal(l[9], `${X}/runs33/.run-lock-fresh-109`);
+    assert.ok(r.calls.some((c) => c[0] === 'need' && c[1] === `${X}/runs33/grill-109.md`));
+    assert.deepEqual(r.calls.find((c) => c[0] === 'queueOpen').slice(1), ['fresh', '109', out]);
+    assert.equal(r.calls.find((c) => c[0] === 'queueSet')[2], 'running');
+  }
+  for (const bad of [[], ['109', 'extra'], ['../109'], ['..'], ['109&echo'], ['109', '--as'], ['109', '--as', 'rook'], ['109', '--as', 'king', '--as', 'king'], ['109', '--unknown']]) {
+    const r = recorder();
+    assert.throws(() => launches.fresh(bad, r.x), /usage/);
+    assert.equal(r.calls.some((c) => ['open', 'launch'].includes(c[0])), false);
+  }
+  for (const fail of ['grill', 'bin', 'lock']) {
+    const r = recorder();
+    r.x.need = (path) => { if ((fail === 'grill' && path.endsWith('.md')) || (fail === 'bin' && path.endsWith('.cmd'))) throw new Error('missing input'); };
+    r.x.locked = (dir, lock = '') => fail === 'lock' && lock.endsWith('fresh-109');
+    assert.throws(() => launches.fresh(['109'], r.x), /missing input|in use/);
+    assert.equal(r.calls.some((c) => ['open', 'launch', 'queueSet'].includes(c[0])), false);
+  }
+});
 
 test('Retro 38: retro, board and acad choose King while Bishop is locked; --as overrides either default', (t) => {
   t.mock.method(console, 'log', () => {});

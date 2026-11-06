@@ -5,5 +5,7 @@ Spec: "<spec path>" (read it first). Keep <preserved behaviour> working.
 Do:
 <Do list>
 
+Tests: tool runs use `node tools/unit.mjs`.
+
 Commit "<commit title>".
 Report max <report size> lines: Result (commit id), Tests (quoted lines), Findings, Not checked.

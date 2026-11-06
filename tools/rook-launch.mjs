@@ -407,6 +407,21 @@ export const retroArgs = (extras = EXTRAS, home = homedir().replaceAll('\\', '/'
   '--allowedTools', 'Read', 'Grep', 'Glob', 'Write', 'Bash(git log:*)', 'Bash(git show:*)', 'Bash(wc:*)', '--disallowedTools', 'Agent'];
 export const acadArgs = (extras = EXTRAS) => ['-p', '--model', 'claude-sonnet-5-5', '--effort', 'high', '--permission-mode', 'dontAsk', '--max-budget-usd', '4', '--output-format', 'text',
   '--add-dir', extras, '--allowedTools', 'PowerShell', 'Read', 'Write', 'Edit', 'Glob', 'Grep', 'WebFetch(domain:help.autodesk.com)', '--disallowedTools', 'Agent'];
+
+// WORKFLOW step 2b: read the grill before its DECISIONS row and build brief are written.
+export function fresh(args, x = io) {
+  const usage = 'usage: fresh <id> [--as king]';
+  const { pos, flags } = parseFlags(args, { '--as': 1 }, usage);
+  const [id] = pos;
+  if (pos.length !== 1 || !/^[\w][\w.-]*$/.test(id)) throw new Error(usage);
+  const as = account(flags, defaultAccount(x), usage), dir = runsDir(x), name = `fresh-${id}`;
+  x.need(`${dir}/grill-${id}.md`, 'grill');
+  x.need(claude(as), ACCOUNTS[as].bin);
+  const prompt = `Fresh read of TODO ${id}: read grill-${id}.md, TODO.md row ${id} and the code files it names. Max 8 lines: gaps, contradictions, missing cases; for each 'X never Y' answer, quote the code line that keeps it or say not found. Change nothing.`;
+  plainRun(x, { kind: 'fresh', id, bin: claude(as), args: ['-p', prompt, '--model', 'claude-opus-5-5', '--effort', 'medium', '--permission-mode', 'dontAsk', '--max-budget-usd', '2', '--output-format', 'text',
+    '--add-dir', MAIN_GIT.replace(/\/\.git$/, ''), '--add-dir', 'E:/Project B/Claude/support', '--allowedTools', 'Read', 'Grep', 'Glob', '--disallowedTools', 'Agent'],
+  cwd: dir, out: `${dir}/${name}.out`, lock: `${dir}/.run-lock-${name}` });
+}
 // WORKFLOW.md lines 248-250: one question, the house sentence added here; a newline would end the cmd.exe line.
 export const pawnArgs = (question) => {
   if (/[\r\n]/.test(question)) throw new Error('pawn: the question must be one line');

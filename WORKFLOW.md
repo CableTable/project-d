@@ -36,12 +36,16 @@ Bishop paused since 2026-11-06 ~00:00 IST (his call; lock `ProjectD-s15fix/.run-
 2b. **Fresh read** (TODO 179): before an M / L item's brief, and before any item whose grill answer rests on an invariant
    ("X never Y"), a Bishop run with no memory of the grill reads only `runs<N>/grill-<item>.md`, the TODO row and the code
    files the grill names, and writes `runs<N>/fresh-<item>.out` (max 8 lines: gaps, contradictions, missing cases; per
-   invariant the code line that keeps it, or "not found"). Rook folds each line into the brief or reopens that grill Q. While Bishop is paused, run the same command with `claude3.cmd`. A command shared by two tickets: the grill lists each caller's input (path or bytes) and the return encoding. From runs<N>:
-   `echo "Fresh read of TODO <item>: read grill-<item>.md, TODO.md row <item> and the code files it names. Max 8 lines: gaps, contradictions, missing cases; for each 'X never Y' answer, quote the code line that keeps it or say not found. Change nothing." | /c/Users/raksh/.local/bin/claude2.cmd -p --model claude-opus-5-5 --effort medium --permission-mode dontAsk --max-budget-usd 2 --output-format text --add-dir "E:/Project B/Claude/Project D" --allowedTools Read Grep Glob --disallowedTools Agent > fresh-<item>.out 2>&1`
+   invariant the code line that keeps it, or "not found"). Rook folds each line into the brief or reopens that grill Q.
+   The round after a fresh read has one line per fresh line: `fresh <n> -> Q<x> | brief line <y> | not needed: <why>`.
+   A command shared by two tickets: the grill lists each caller's input (path or bytes) and the return encoding.
+   `node tools/rook.mjs fresh <item> --as king` from the repo: detached, with a queue line and access to `E:/Project B/Claude/support`.
+   Raw command from runs<N> (Bishop paused: replace `claude2.cmd` with `claude3.cmd`):
+   `echo "Fresh read of TODO <item>: read grill-<item>.md, TODO.md row <item> and the code files it names. Max 8 lines: gaps, contradictions, missing cases; for each 'X never Y' answer, quote the code line that keeps it or say not found. Change nothing." | /c/Users/raksh/.local/bin/claude2.cmd -p --model claude-opus-5-5 --effort medium --permission-mode dontAsk --max-budget-usd 2 --output-format text --add-dir "E:/Project B/Claude/Project D" --add-dir "E:/Project B/Claude/support" --allowedTools Read Grep Glob --disallowedTools Agent > fresh-<item>.out 2>&1`
 3. **Build:** a fresh builder session with a brief (spec = the chosen artboard, decisions for DECISIONS.md,
    tests, screenshots light + dark, commit (never push; TODO.md left alone, Rook ticks after the cherry-pick: S35 retro), don't stage `mockups/`). Keep its `session_id`.
 4. **Review:** a Bishop-review session on the build's commits (ranked findings, "ship as is" / "fix first").
-5. **Fix:** findings go to a fresh builder session (short brief: findings + commit range), full tests re-run. A fix round that fixes a High, resolves conflicts, or reports anything partly done gets a re-review before the suite (S33 retro).
+5. **Fix:** findings go to a fresh builder session (short brief: findings + commit range), full tests re-run. A fix round that fixes a High, resolves conflicts, or reports anything partly done gets a re-review before the suite (S33 retro). A High fix's commit subject ends "(High)"; after its re-review Rook writes `runs<N>/rereview-<sha7>.txt` with the verdict. Agent runs too.
 6. **As built:** every UI build gets an AB board (mockups/R<n>_AB_*.html, local), drawn from the screenshots (his call, 2026-10-20). At the cherry-pick Rook copies the builder's new `mockups/*_AB_*.html` into the repo `mockups/`.
 7. **Ship:** one PR per session number (it may span several Rook sessions); merge on a green run for the head commit (his OK per PR, or Rook's call under full control, CLAUDE.md). CI publishes the exe. A doc-only push (only .md files) skips test and build, but only when the previous push's test and build were green (else they run); the merge rule's green run is then the latest run that tested code on the same PR, with nothing but .md after it.
 8. **PC test** (when he asks, after a merge): PC tester on the released exe; findings become TODO items.
@@ -60,6 +64,7 @@ Bishop paused since 2026-11-06 ~00:00 IST (his call; lock `ProjectD-s15fix/.run-
 or a tool fails silently, the fix round also adds ONE small check for exactly that case (a hook, a script line or a
 test), and HISTORY.md names it. No big hook collections. First one: the PS 5.1 quote-stripping bug in
 usage-agent-install.ps1.
+A tool or PATH failure seen twice is a --tool ticket now, never a resume note.
 **From Matt Pocock's workflow** (his picks 2026-10-20; plugin `mattpocock-skills@mattpocock` v1.3.1 on both accounts):
 1. **Grill before building, always on** (his call 2026-10-20; every size since 2026-10-22): before every TODO item and
    ticket (S, M or L), and any plan or design he brings,
@@ -145,6 +150,8 @@ Two claude2 sessions may run at once only on separate files (e.g. a mock-up whil
 ## Commands (Git Bash, from the repo folder)
 
 ### Rook card
+- Lookup: `sed -n '/^### Rook card/,/^Briefs start/p' WORKFLOW.md`
+- Fresh read: `node tools/rook.mjs fresh <id> --as king`, right after grill-<id>.md, before the DECISIONS row and the brief.
 - Knight: `node tools/rook.mjs knight <brief file> <report txt> <branch> <sha> [--fix] [--regrilled] [--tool] [--over] [--big] [--review <review brief> <review out jsonl>]`
 - King: `node tools/rook.mjs build <brief file> <out jsonl> <branch> <sha> [--as king|bishop] [--fix] [--regrilled] [--tool] [--over] [--big] [--review <review brief> <review out jsonl>]` (`--fix` = fix round, `--tool` = tool ticket)
 - Knight branch into the repo first: `git fetch "<extras>/ProjectD-rowan" <branch>`
@@ -330,8 +337,8 @@ read + cache write + output from the final `result.usage`; new = input + cache w
 
 - A resume line naming a command, account or file number was run or grepped this session, or says "unchecked". `--events` lists only what has already happened (S38 retro).
 - **An older Rook** (its uuid is no longer `rook-next.txt` line 1) that gets an order: tell / stop the current Rook first, act (merge), then in the same turn rewrite the current Rook's resume file State line (PR state, branch, unpushed commits) (S32 retro: `5e06289` was stranded on a closed branch).
-- **Handover** (his call, 2026-10-29; replaces "fresh Rook after every merge"): Rook hands over at a clean break (no runs
-  going, the handover push made; its CI may still run: the resume file names the sha and the next Rook starts ci-watch on it first (his OK 2026-10-31, S29 retro), queue.txt current) once ANY of: 2 TODO items built and reviewed since this Rook
+- **Handover** (his call, 2026-10-29; replaces "fresh Rook after every merge"): Rook hands over at a clean break (each run still going is named in the resume with its next step;
+  the handover push made; its CI may still run: the resume file names the sha and the next Rook starts ci-watch on it first (his OK 2026-10-31, S29 retro), queue.txt current) once ANY of: 2 TODO items built and reviewed since this Rook
   started (his call 2026-10-31, was 3 from 2026-10-30; review fix bundles and tool tickets don't count), its context
   passes ~150k (auto-compact fires at ~218k: S29, 3 times), he is shutting down / going to sleep, or a usage reset is near. A merge alone is no reason; a big session hands over mid-PR
   (the resume file names the open PR and branch). The next Rook is `Rook S<N>b`, `c`, … on the same branch and runs<N>;
@@ -344,6 +351,15 @@ read + cache write + output from the final `result.usage`; new = input + cache w
 - Call a run "building" only after this turn's `node tools/rook.mjs result <file>` says it is still running; end a turn with a run going only once its waiter has started (S29: builds sat done 4.7 h while Rook said "still building").
 - Read `rook-next.txt`, then Write it (a Write without a Read first fails).
 - Read WORKFLOW.md by section (`grep -n "^## "` first); answer "what's left" from TODO.md's top-level open items only (`| head -30`).
+
+Resume template (keep the required startup and watcher lines too):
+```text
+State: <branch, PR, commits, CI sha; each run still going and its next step>
+Skills first: mattpocock-skills:grilling and mattpocock-skills:domain-modeling
+Commands: `sed -n '/^### Rook card/,/^Briefs start/p' WORKFLOW.md`.
+Launched --big: <ids or none>
+Held Lows: runs<N>/lows.txt
+```
 
 - **Session end (his call, 2026-10-20).** Rook decides when a session is big enough to end, launches the **retro** on Bishop first (never inline) (rule 4: Bishop, the `retro` skill; Rook lists the ones it recommends and a King `--tool` run applies the doc edits; he can overrule), and once CI is green for the
   head commit asks his OK to merge. On his yes, and only once `runs<N>/retro<N>.out` exists and is not empty (session 25 retro) and Rook has written `runs<N>/retro<N>.applied` (one line: the date and which suggestions were applied or skipped, once the retro doc edits are in; S35 retro): `node tools/rook.mjs merge <n> <sha>` (full sha, refuses on a missing / empty retro file or a missing `.applied` file unless `--no-retro`, a sha that is not the PR head, or CI not green; checks it merged and prints `MERGED #<n> <sha>`; `--no-retro` appends "retro<N> due first" to the next resume file; the task `Project D merge 0500` runs `merge --due` daily at 05:00 IST, same checks, only while today IST <= the date in `merge-ok-until.txt`, logging to `merge-due.log`), press "Update now" on the usage page if he wants it fresh, then hand over to the next Rook session
@@ -368,7 +384,7 @@ read + cache write + output from the final `result.usage`; new = input + cache w
 - **Context limit 250k** (his call, 2026-10-21; in practice auto-compact fires at ~218k, S29 3 times): `autoCompactWindow: 250000` in his ~/.claude/settings.json compacts Rook
   automatically there. If it ever doesn't fire, Rook finishes its step at ~250k and asks him to type `/compact`.
 - **Bishop-support** (his call, 2026-10-21): an interactive claude2 (Sonnet) in a Terminal tab answers his questions while he
-  uses the app and adds tickets (T1, T2, …) to `E:/Project B/Claude/support/tickets.md` (local, never on GitHub; the file is UTF-16: `tr -d '\000' < "E:/Project B/Claude/support/tickets.md" | grep ...`, not `grep -a`; prompt:
+  uses the app and adds tickets (T1, T2, …) to `E:/Project B/Claude/support/tickets.md` (local, never on GitHub; the file has a stray NUL byte: `tr -d '\000' < "E:/Project B/Claude/support/tickets.md" | grep ...`, not `grep -a`; prompt:
   `support/pip-support-prompt.md`). Rook moves `open` tickets into TODO.md at each session start and keeps each ticket's
   Status current (in TODO → building → built → merged → checked in exe); Bishop-support never edits the repo.
 - **One call per step, short output:** `node tools/rook.mjs usage` (3 lines; refreshes `mockups/_design/usage/`) and
@@ -440,8 +456,8 @@ For when Rook (main account) runs short of usage: Bishop leads and reviews, Knig
   without a source is marked *Rook's idea*, and the brief says which behaviour must still work (e.g. Extension far past the end).
   Each finding names its **case grid** (S29 retro: 155h2 and 155e3 each needed an extra round because only the repro was fixed): every input sharing the cause; the fix covers the grid and adds ONE table-driven unit test over it.
   A reason naming other code gives its file, or says it is not built yet. The review brief copies the fix brief's rule line word for word, and takes its base sha from the fix brief (S32 retro).
-  A review saying "ship as is" with only low notes gets no fix round: the lows go into the resume file (S32 retro).
-  "Fix first" needs a Medium or High (`reviewer.md`). Rook overruling one says "overruled fix first: <why>" in its reply and the lows file; an unproven check goes in the next resume file (S35 retro).
+  Ship as is with only Lows: one fix round, no re-review, for Lows he could see or a test that proves nothing; the rest go to `runs<N>/lows.txt`; at session end each becomes a TODO row or 'dropped: <why>'. Rook appends held Lows there on reading the review; the resume says "Held Lows: runs<N>/lows.txt".
+  "Fix first" needs a Medium or High (`reviewer.md`). Rook overruling one says "overruled fix first: <why>" in its reply and the lows file; an unproven check goes in the lows file (S35 retro).
 - **A new check has a corpus** (S32 retro: 172 and 180 took 3 rounds each): a lint, guard or regex over existing text is run by Rook over the real files before the brief; the grill lists the hits, the brief names must-refuse and must-pass lines from them, and the report quotes both lists from a run over the corpus.
 - **A tool that starts a process, task or window** (S35: `next` passed its injected-spawn tests and started nothing): the brief names one real start on a harmless target (a notepad .lnk from a `tmp-*.mjs`) and the report quotes it; fakes don't count. No quoted start = a Medium in review.
 - Rook writes briefs to `runs<N>/b*.txt` with the Write tool, never a heredoc (one hung Rook in session 25).
