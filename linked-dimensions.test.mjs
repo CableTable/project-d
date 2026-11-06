@@ -15,7 +15,7 @@ import { mirrorEntity } from './web/modify.js';
 function drawing(shape, params, kind = 'aligned', factor = 1) {
   const raw = W.newDoc(4);
   W.addEntities(raw, shape);
-  Object.assign(raw, E.addDimension(raw, E.buildDim(kind, { textH: 2, offset: 10, ...params }, factor, E.freeName({}, kind === 'linear' ? 'aligned' : kind), 3)));
+  Object.assign(raw, E.addDimension(raw, E.buildDim(kind, { textH: 2, offset: 10, ...params }, factor, E.freeName(raw.blocks, kind, params.axis), 3)));
   return raw;
 }
 const model = (raw) => E.dimOfEntity(raw, 1);
@@ -105,7 +105,7 @@ test('Linear axis tags survive DXF reopen and Copy: dragging off-axis keeps 100.
 test('old untagged Linear files keep geometry inference, including on-axis ambiguity', () => {
   for (const axis of ['h', 'v']) for (const offAxis of [false, true]) {
     const b = offAxis ? [100, 100] : axis === 'h' ? [100, 0] : [0, 100];
-    const back = readDxf(W.writeDxf(drawing(W.line(0, 0, ...b), { a: [0, 0], b, axis }, 'linear')));
+    const back = readDxf(W.writeDxf(drawing(W.line(0, 0, ...b), { a: [0, 0], b, axis }, 'linear')).replaceAll(`PD_DIM_${axis.toUpperCase()}1`, 'PD_DIM_1'));
     assert.equal(model(back).name, 'PD_DIM_1');
     assert.equal(model(back).kind, offAxis ? 'linear' : 'aligned');
     assert.equal(model(back).params.axis, offAxis ? axis : undefined);
@@ -373,6 +373,7 @@ test('TODO 76c: aligned, h, v and a rotated INSERT drive after writeDxf -> read'
     W.addEntities(raw, W.line(300, 300, 400, 300));
     if (turn) Object.assign(raw, rotateEntities(raw, new Set([0, 1]), [0, 0], turn));
     const back = reopen(raw), before = structuredClone(back), entry = dimensionEntry(back, 1, '150');
+    assert.equal(model(back).name, axis ? `PD_DIM_${axis.toUpperCase()}1` : 'PD_DIM_1');
     assert.equal(entry.n, 150); assert.equal(entry.link.i, 0);
     const next = driveDimension(back, 1, entry.n);
     point(E.lineOf(next.entities[0]), [0, 0, ...end]);
@@ -424,10 +425,32 @@ test('TODO 76c: retyping the shown number on an unlinked dim in shown units make
   for (const [units, factor, shown] of [['mm', 1, '100'], ['inch', 1, '3.937"'], ['mm', 25.4, '2540']]) {
     const raw = reopen(drawing(W.line(0, 0, 60, 80), { a: [0, 0], b: [60, 80], units }, 'aligned', factor));
     raw.entities.splice(0, 1);
-    const before = structuredClone(raw), history = E.createHistory();
+    const before = structuredClone(raw);
     assert.deepEqual(dimensionEntry(raw, 0, shown), { unchanged: true });
     assert.equal(readOverride(raw.blocks[E.dimOfEntity(raw, 0).name].entities), '');
-    assert.deepEqual(raw, before); assert.equal(history.canUndo, false);
+    assert.deepEqual(raw, before);
+  }
+});
+
+test('TODO 76c: unlinked same-value entry is exact; linked entry keeps rounding to shown decimals', () => {
+  for (const axis of [undefined, 'h', 'v']) for (const links of ['single', 'none', 'multiple']) {
+    const b = axis === 'v' ? [0, 100] : [100, 0];
+    const raw = drawing(W.line(0, 0, ...b), { a: [0, 0], b, axis }, axis ? 'linear' : 'aligned'), dim = model(raw);
+    Object.assign(raw, E.replaceDimension(raw, E.buildDim(dim.kind, dim.params, 1, dim.name, 2)));
+    if (links === 'none') raw.entities[0] = W.line(300, 300, 400, 300);
+    if (links === 'multiple') W.addEntities(raw, W.line(0, 0, ...b));
+    assert.equal(label(raw), '100.00');
+    const before = structuredClone(raw);
+    for (const typed of ['99.996', '100', '100.00', '100.004', '100.0049']) {
+      const unchanged = links === 'single' || Number(typed) === 100;
+      assert.deepEqual(dimensionEntry(raw, 1, typed), unchanged ? { unchanged: true } : { reason: links === 'none' ? 'none' : 'multiple' });
+      if (!unchanged) {
+        const next = E.replaceDimension(raw, E.buildDim(dim.kind, { ...dim.params, override: typed }, 1, dim.name, 2));
+        assert.equal(readOverride(next.blocks[dim.name].entities), typed); assert.equal(label(next), typed);
+        assert.deepEqual(next.entities, before.entities);
+      }
+      assert.deepEqual(raw, before);
+    }
   }
 });
 

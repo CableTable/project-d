@@ -21420,6 +21420,7 @@ try {
   });
 
   await step('TODO 76c: a dimension whose line is gone shows the number as text', async () => {
+    const said = async (re) => (await page.waitForFunction((s) => { const x = document.querySelector('[data-testid=cmd-prompt]').textContent; return new RegExp(s).test(x) && x; }, re.source)).jsonValue();      // waits for the note, returns its text
     const undo = async () => { await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z'); };
     const dimIn = (raw) => {
       const [name, block] = Object.entries(raw.blocks).find(([k]) => /^PD_DIM_/.test(k));
@@ -21461,7 +21462,7 @@ try {
       assert.deepEqual(dimIn(await savedDoc()), dimIn(deleted)); assert.deepEqual(await histLabels(), history, tab + ': shown number is no step without a LINE');
       await apply('200', '150.00', true);
       assert.deepEqual(dimIn(await savedDoc()), dimIn(deleted)); assert.deepEqual(await histLabels(), history, tab + ': Esc cancels');
-      await apply('200'); assert.equal(await prompt(), noLine, tab);
+      await apply('200'); assert.equal(await said(/No line at this dimension's ends/), noLine, tab);
       await shotBoth('todo76c-gone-' + tab);
       for (const theme of ['light', 'dark']) assert.ok(readFileSync(`${shotDir}/s12-todo76c-gone-${tab}-${theme}.png`).length > 1000);
       const changed = await savedDoc();
@@ -21473,7 +21474,7 @@ try {
       assert.deepEqual(dimIn(await savedDoc()), dimIn(deleted), tab + ': one Ctrl+Z restores the old text');
       assert.deepEqual(lines(await savedDoc()), lines(deleted), tab + ': the LINE stays deleted');
       for (const text of ['0', '-5', '200 TYP']) {
-        await apply(text); assert.equal(await prompt(), text === '200 TYP' ? 'Dimension text changed. Ctrl+Z takes it back' : noLine);
+        await apply(text); assert.equal(await said(text === '200 TYP' ? /Dimension text changed/ : /No line at this dimension's ends/), text === '200 TYP' ? 'Dimension text changed. Ctrl+Z takes it back' : noLine);
         const out = await savedDoc(); assert.equal(dimIn(out).override, text); assert.deepEqual(lines(out), lines(deleted)); await undo();
       }
       await undo(); assert.deepEqual(lines(await savedDoc()), lines(start), tab + ': restore the source for the override rule');

@@ -190,7 +190,8 @@ export function dimensionEntry(raw, e, typed) {
   if (n == null) return null;
   const link = dimensionLine(raw, e);
   if (link.reason === 'kind') return link;
-  if (dimLabel(n * (dim.params.units === 'inch' ? 25.4 : 1), dim.dp, dim.params.units) === measuredText(raw.blocks[dim.name].entities)) return { unchanged: true };
+  const shown = measuredText(raw.blocks[dim.name].entities);
+  if (link.reason ? n === typedLength(shown, dim.params.units) : dimLabel(n * (dim.params.units === 'inch' ? 25.4 : 1), dim.dp, dim.params.units) === shown) return { unchanged: true };
   return link.reason ? link : { n, link };
 }
 
