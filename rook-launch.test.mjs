@@ -242,6 +242,40 @@ function withUsage(rows) {
   return r;
 }
 
+test('TODO 206: retro --handover launches one run over the named Rook transcript; defaults from rook-next.txt; 70% gate; refusals', (t) => {
+  t.mock.method(console, 'log', () => {});
+  const T = 'C:/Users/raksh/.claude/projects/E--Project-B-Claude-Project-D';
+  const future = new Date(Date.now() + 36e5).toISOString();
+  const mk = (rows = 'Pip,5h,70,' + future + '\n', next = 'aaaa-1111\nRook S33j\nr\n') => {
+    const r = withUsage(rows), written = new Map(), read = r.x.read;
+    r.x.exists = (p) => !p.endsWith('.txt');
+    r.x.read = (p) => (p.endsWith('rook-next.txt') ? next : p.endsWith('.txt') ? 'N={N} S={SESSIONS} T={TRANSCRIPTS}' : read(p));
+    r.x.write = (p, text) => written.set(p, text);
+    return { r, written };
+  };
+  const a = mk();
+  retro(['--handover'], a.r.x);
+  const ls = a.r.calls.filter((c) => c[0] === 'launch');
+  assert.equal(ls.length, 1);
+  assert.equal(ls[0][7], `${X}/runs33/retro33j.out`);
+  assert.equal(ls[0][9], `${X}/runs33/.run-lock-retro33j`);
+  const brief = a.written.get(`${X}/runs33/retro33j.txt`);
+  assert.ok(brief.startsWith(`N=33 S=Rook S33j T=${T}/aaaa-1111.jsonl`) && brief.includes('Handover retro: only this Rook; short (top 5 fixes)'));
+  const b = mk();
+  retro(['--handover', '--uuid', 'bbbb-2', '--name', 'Rook S33'], b.r.x); // no letter: retro33h
+  assert.equal(b.r.calls.find((c) => c[0] === 'launch')[7], `${X}/runs33/retro33h.out`);
+  assert.ok(b.written.get(`${X}/runs33/retro33h.txt`).includes(`${T}/bbbb-2.jsonl`));
+  const bad = [[['--handover', '--uuid', 'u'], /usage/], [['--handover', '--name', 'Rook S33j'], /usage/], [['--uuid', 'u', '--name', 'Rook S33j'], /usage/],
+    [['--handover', '--uuid', 'u', '--name', 'Rook'], /need a uuid and a name/], [['--handover', '--uuid', 'u', '--name', 'Rook S32j'], /session 32 but this is runs33/]];
+  for (const [args, re] of bad) { const c = mk(); assert.throws(() => retro(args, c.r.x), re); assert.equal(launched(c.r.calls), undefined); }
+  const none = mk(); none.r.x.exists = () => false;
+  assert.throws(() => retro(['--handover'], none.r.x), /no transcript .*aaaa-1111\.jsonl/);
+  const high = mk('Pip,5h,71,' + future + '\n'); // 71% refused (the 3-run path refuses at 41%); --over passes
+  assert.throws(() => retro(['--handover'], high.r.x), /Bishop 5h 71%/);
+  retro(['--handover', '--over'], high.r.x);
+  assert.equal(high.r.calls.filter((c) => c[0] === 'launch').length, 1);
+});
+
 test('TODO 196a: King builds and reviews are refused above 85% King 5h; --over, Knight/Bishop and an unavailable cache pass', (t) => {
   const warnings = t.mock.method(console, 'error', () => {});
   t.mock.method(console, 'log', () => {});

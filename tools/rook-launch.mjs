@@ -425,16 +425,28 @@ export function suite(args, x = io) {
 }
 
 // `retro`: fill missing briefs, then launch the three retros from their .txt into their .out.
+// TODO 206 `--handover`: one retro over the outgoing Rook's transcript (uuid + name default to rook-next.txt lines 1-2).
 export function retro(args, x = io) {
-  const usage = 'usage: retro [--over] [--events "<text>"] [--as king|bishop]';
-  const { pos, flags } = parseFlags(args, { '--over': 0, '--events': 1, '--as': 1 }, usage);
-  if (pos.length) throw new Error(usage);
+  const usage = 'usage: retro [--over] [--events "<text>"] [--as king|bishop] | retro --handover [--uuid <id> --name "Rook S<N><x>"] [--as king|bishop] [--over]';
+  const { pos, flags } = parseFlags(args, { '--over': 0, '--events': 1, '--as': 1, '--handover': 0, '--uuid': 1, '--name': 1 }, usage);
+  const ho = !!flags['--handover'];
+  if (pos.length || (!ho && (flags['--uuid'] || flags['--name'])) || !flags['--uuid'] !== !flags['--name']) throw new Error(usage);
   const as = account(flags, defaultAccount(x), usage), who = as === 'king' ? 'King' : 'Bishop';
   const over = !!flags['--over'];
-  const dir = runsDir(x), n = /runs(\d+)$/.exec(dir)[1], names = [`retro${n}`, `retro${n}king`, `retro${n}rook`];
+  const dir = runsDir(x), n = /runs(\d+)$/.exec(dir)[1];
+  let names = [`retro${n}`, `retro${n}king`, `retro${n}rook`], hUuid, hName;
+  if (ho) {
+    [hUuid, hName] = flags['--uuid'] ? [flags['--uuid'][0], flags['--name'][0]] : x.read(`${dirname(dir)}/rook-next.txt`).split(/\r?\n/);
+    const m = /S(\d+)([a-z]*)$/.exec(hName || '');
+    if (!/^[\w-]+$/.test(hUuid || '') || !m) throw new Error(`${usage}\nneed a uuid and a name like "Rook S${n}j" (rook-next.txt lines 1-2, or --uuid and --name)`);
+    if (m[1] !== n) throw new Error(`refused: ${hName} is session ${m[1]} but this is runs${n}`);
+    names = [`retro${n}${m[2] || 'h'}`];
+  }
+  const transcript = `C:/Users/raksh/.claude/projects/E--Project-B-Claude-Project-D/${hUuid}.jsonl`;
+  if (ho && !x.exists(transcript)) throw new Error(`refused: no transcript ${transcript}`);
   if (!over) { // TODO 196a: three Opus retros took Bishop from 61% to 100% (S36)
     const h5 = cachedH5(x, as === 'king' ? ['King'] : ['Pip', 'Bishop'], who, 'retro');
-    if (h5 > 40) throw new Error(`${who} 5h ${h5}%: the three retros need room; wait for the reset, or --over`);
+    if (h5 > (ho ? 70 : 40)) throw new Error(`${who} 5h ${h5}%: ${ho ? 'the handover retro needs' : 'the three retros need'} room; wait for the reset, or --over`);
   }
   x.need(claude(as), ACCOUNTS[as].bin);
   for (const name of names) if (x.locked(dir, `${dir}/.run-lock-${name}`)) throw new Error(`${name} is in use by a running launch (${dir}/.run-lock-${name}); if that run is dead, delete the lock file`);
@@ -442,7 +454,8 @@ export function retro(args, x = io) {
   if (missing.length) {
     const transcripts = [], sessions = new Set();
     const project = 'C:/Users/raksh/.claude/projects/E--Project-B-Claude-Project-D';
-    const files = x.list(project).filter((f) => f.endsWith('.jsonl')).sort().map((f) => [f, x.mtime(`${project}/${f}`)]).sort((a, b) => a[1] - b[1]); // oldest first: S37, S37b, S37c
+    const files = ho ? [] : x.list(project).filter((f) => f.endsWith('.jsonl')).sort().map((f) => [f, x.mtime(`${project}/${f}`)]).sort((a, b) => a[1] - b[1]); // oldest first: S37, S37b, S37c
+    if (ho) { transcripts.push(transcript); sessions.add(hName); }
     for (const [file] of files) {
       const found = retroSessions(x.read(`${project}/${file}`), n);
       if (found === null) continue;
@@ -452,9 +465,10 @@ export function retro(args, x = io) {
     if (!transcripts.length) throw new Error(`no Rook transcripts for session ${n}`);
     const values = { N: n, SESSIONS: [...sessions].join(', '), TRANSCRIPTS: transcripts.join(', '), EVENTS: flags['--events']?.[0] ?? 'none given.' };
     for (const name of missing) {
-      const suffix = name.slice(`retro${n}`.length);
+      const suffix = ho ? 'rook' : name.slice(`retro${n}`.length);
       const template = x.read(join(REPO, 'tools', 'briefs', `retro${suffix ? `-${suffix}` : ''}.txt`));
-      x.write(`${dir}/${name}.txt`, template.replace(/\{(N|SESSIONS|TRANSCRIPTS|EVENTS)\}/g, (_, key) => values[key]));
+      const note = ho ? `\nHandover retro: only this Rook; short (top 5 fixes); skip points already in runs${n}/retro${n}*.out\n` : '';
+      x.write(`${dir}/${name}.txt`, template.replace(/\{(N|SESSIONS|TRANSCRIPTS|EVENTS)\}/g, (_, key) => values[key]) + note);
     }
   }
   for (const name of names) x.need(`${dir}/${name}.txt`, 'retro brief');

@@ -12,13 +12,14 @@
 //     --tool = a tool ticket (passes the gate, not counted as an item; the gate line adds `, <k> tool`), --over = a 3rd item with his OK
 //   node tools/rook.mjs suite <sha>   full suite (`npm.cmd test`, then `npm.cmd run test:browser`) in this checkout, detached; <sha> must be HEAD; log runs<N>/suite-<sha>.log ends `SUITE unit=<code> browser=<code>`
 //   node tools/rook.mjs retro [--over] [--events "<text>"] [--as king|bishop]   fill missing briefs from tools/briefs/retro*.txt, then the three retros of runs<N>/, detached; chosen account's cached 5h above 40% is refused (--over passes)
+//   node tools/rook.mjs retro --handover [--uuid <id> --name "Rook S<N><x>"] [--as king|bishop] [--over]   ONE retro over the outgoing Rook's transcript (uuid + name default to rook-next.txt lines 1-2) -> runs<N>/retro<N><x>.out (x empty: retro<N>h); refused above 70% cached 5h
 //     review / build --as king (and review falling back to King) are refused above 85% cached King 5h (--over passes); `usage` prints `<name>: 100%` for an account at its limit
 //   node tools/rook.mjs pawn <out.json> "<question>"   one Pawn (agy) lookup from ~/agy-research, detached; adds the https-only / no-commands / 3-pages / cite sentence
 //   node tools/rook.mjs acad <item> [--as king|bishop]   acad on runs<N>/acad<item>.txt -> acad<item>.out, detached
 //   node tools/rook.mjs board <brief> <out> [--as king|bishop]   board / look (WORKFLOW.md line 194) on <brief> -> <out>, detached
 //     retro / acad / board default to King while ProjectD-s15fix/.run-lock exists, else Bishop.
 //   node tools/rook.mjs fails <log>   the failing steps of a browser-test or node:test log + the first 3 `+` / `-` lines after each, max 40 lines; `no failures in <log>`
-//   node tools/rook.mjs handover <resume file> <name>   write rook-next.txt (new uuid, name, resume file) and print it; refused when the resume file is missing, has no runs<N> in its path, lacks the merge-due.log line, lacks the `select:Monitor,TaskStop` or `one ci-watch per push` line (the same lines `next` requires), or its line 2 lacks the grilling + domain-modeling skills; exactly 2 arguments; does not start Rook.lnk
+//   node tools/rook.mjs handover <resume file> <name> [--no-retro]   refused unless the outgoing Rook's handover retro was launched (runs<N>/retro<N><x>.out named by rook-next.txt line 2; --no-retro passes), else appends a "Handover retro: read ..." line to the resume file; write rook-next.txt (new uuid, name, resume file) and print it; refused when the resume file is missing, has no runs<N> in its path, lacks the merge-due.log line, lacks the `select:Monitor,TaskStop` or `one ci-watch per push` line (the same lines `next` requires), or its line 2 lacks the grilling + domain-modeling skills; exactly 2 arguments; does not start Rook.lnk
 //   node tools/rook.mjs wait <run file>... [--ci <sha>]   exits 0 on the first run that finished (`DONE <file>`; a .log: at its `SUITE ` line) or when the CI run for <sha> ends (`CI RUN <id> <conclusion>`; exit 1 `CI RUN none <reason>` when no run was found or the watcher failed); polls every 20 s
 //   node tools/rook.mjs merge <n> <sha> [--no-retro]   merge PR <n> at the full <sha> if runs<N>/retro<N>.out is non-empty and runs<N>/retro<N>.applied exists (or --no-retro), <sha> is the PR head and its CI run succeeded; prints `MERGED #<n> <full sha>`
 //   node tools/rook.mjs merge --due   the 05:00 IST task: merges the one open claude/session<N> PR (same checks, retro required) while today IST <= the date in merge-ok-until.txt; `NOTHING DUE` when none; logs to merge-due.log
@@ -238,8 +239,8 @@ export function failLines(text, log) {
 }
 
 // `handover <resume file> <name>` (TODO 196g): writes rook-next.txt (uuid, name, resume file) for `next`; refused when the resume file is missing or its line 2 lacks the grilling + domain-modeling rule. Returns the 3 lines.
-export function handover(resume, name, extras = EXTRAS, uuid = randomUUID()) {
-  if (!resume || !name || /[\r\n]/.test(name)) throw new Error('usage: node tools/rook.mjs handover <resume file> <name>');
+export function handover(resume, name, extras = EXTRAS, uuid = randomUUID(), noRetro = false) {
+  if (!resume || !name || /[\r\n]/.test(name)) throw new Error('usage: node tools/rook.mjs handover <resume file> <name> [--no-retro]');
   let text = '';
   try { text = readFileSync(resume, 'utf8'); } catch { throw new Error(`refused: ${resume} is missing`); }
   const line2 = text.split(/\r?\n/)[1] || '';
@@ -247,13 +248,20 @@ export function handover(resume, name, extras = EXTRAS, uuid = randomUUID()) {
   if (!/runs\d+/.test(resolve(resume))) throw new Error(`refused: ${resume} has no runs<N> folder (the handover gate needs runs<N>/resume-rook.txt)`);
   if (!text.includes('merge-due.log')) throw new Error(`refused: ${resume} has no merge-due.log line (next needs it)`);
   checkResumeNeeds(text, resume);
+  // TODO 206: rook-next.txt line 2 names the outgoing Rook; its handover retro must have been launched (its .out exists), or --no-retro.
+  let prev = '';
+  try { prev = readFileSync(`${extras}/rook-next.txt`, 'utf8').split(/\r?\n/)[1] || ''; } catch { /* first ever handover: no check */ }
+  const m = /S(\d+)([a-z]*)$/.exec(prev);
+  const retroOut = m && `runs${m[1]}/retro${m[1]}${m[2] || 'h'}.out`;
+  if (retroOut && !noRetro && !existsSync(`${extras}/${retroOut}`)) throw new Error(`refused: ${retroOut} is missing (run \`node tools/rook.mjs retro --handover\` for ${prev}, or pass --no-retro)`);
+  if (retroOut && existsSync(`${extras}/${retroOut}`)) appendFileSync(resume, `${text.endsWith('\n') ? '' : '\n'}Handover retro: read ${retroOut} first and apply what it recommends.\n`);
   const lines = [uuid, name, resolve(resume).replaceAll('\\', '/')];
   writeFileSync(`${extras}/rook-next.txt`, lines.join('\n') + '\n');
   return lines.join('\n');
 }
 
 // The CLI guard of `handover`: '' for `node rook.mjs handover <resume> <name>`, else the usage line (an unquoted name makes 3 arguments).
-export const handoverArgsError = (argv) => argv.length > 5 ? 'usage: node tools/rook.mjs handover <resume file> <name> (2 arguments; quote a name with spaces)' : '';
+export const handoverArgsError = (argv) => argv.filter((a) => a !== '--no-retro').length > 5 ? 'usage: node tools/rook.mjs handover <resume file> <name> [--no-retro] (2 arguments; quote a name with spaces)' : '';
 
 function main() {
 if (cmd === 'result') {
@@ -357,7 +365,8 @@ if (cmd === 'result') {
   try {
     const bad = handoverArgsError(process.argv);
     if (bad) throw new Error(bad);
-    console.log(handover(process.argv[3], process.argv[4]));
+    const [resume, hname] = process.argv.slice(3).filter((a) => a !== '--no-retro');
+    console.log(handover(resume, hname, EXTRAS, undefined, process.argv.includes('--no-retro')));
   }
   catch (e) { console.error(e.message); process.exit(1); }
 } else if (cmd === 'wait') {
