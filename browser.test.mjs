@@ -23586,6 +23586,108 @@ try {
     for (const kind of ['move', 'mirror']) for (const theme of ['light', 'dark']) assert.ok(readFileSync(`${shotDir}/s12-106a-${kind}-${theme}.png`).length > 1000, 'required screenshot exists');
   });
 
+  await step('TODO 106c: Dynamic input on grips', async () => {
+    const setup = async (entities, units = 4) => {
+      await open70(entities, units);
+      if (!(await chipOn('tog-dyn'))) await t('tog-dyn').click();
+      for (const id of ['tog-snap', 'tog-polar', 'tog-otrack', 'tog-ortho']) if (await chipOn(id)) await t(id).click();
+      await t('tog-ortho').click();
+      await page.keyboard.press('Control+a'); await frames();
+    };
+    const hot = async (id) => { const p = await gripBox('0:' + id); await page.mouse.click(p.x, p.y); await frames(); };
+    const move = async (x, y) => { const p = await at(x, y); await page.mouse.move(p.x, p.y); await frames(); };
+    const enter = async (text) => { await page.keyboard.type(text); await page.keyboard.press('Enter'); await frames(); };
+    const labels = async (...names) => {
+      assert.deepEqual(await page.locator('.cursor-field:visible').evaluateAll((els) => els.map((el) => el.getAttribute('aria-label'))), names);
+    };
+    const line = () => dxfLine(20, 30, 60, 30);
+    const shotPath = 'shots-106c'; mkdirSync(shotPath, { recursive: true });
+    await setup([line()]); await hot('b'); await move(80, 30); await labels('Length', 'Angle', 'Δx', 'Δy');
+    for (const theme of ['light', 'dark']) {
+      await menuItem('View', 'Theme: ' + theme); await frames();
+      await page.screenshot({ path: `${shotPath}/line-end-${theme}.png` });
+      assert.ok(readFileSync(`${shotPath}/line-end-${theme}.png`).length > 1000);
+    }
+    await menuItem('View', 'Theme: light'); await page.evaluate(() => document.activeElement?.blur());
+    await t('cursor-length').focus(); await page.keyboard.press('Tab'); await frames();
+    assert.match(await t('cursor-angle').getAttribute('class'), /active/, 'Tab from an empty focused field selects Angle');
+    await page.keyboard.press('Tab'); await page.keyboard.type('50'); await frames();
+    assert.equal(await page.locator('.gr-new[data-testid=grip-preview]').getAttribute('d'), svgPath({ t: 'line', a: [20, 30], b: [70, 30] }, 700), 'preview follows typed length from the other end');
+    await page.keyboard.press('Enter'); near70(line70((await savedDoc()).entities[0]), [20, 30, 70, 30]);
+    await page.keyboard.press('Control+z'); near70(line70((await savedDoc()).entities[0]), [20, 30, 60, 30]);
+    await hot('b'); await enter('25'); near70(line70((await savedDoc()).entities[0]), [20, 30, 45, 30]);
+    await hot('b'); await move(80, 30); await t('cursor-length').focus(); await page.keyboard.type('12'); await page.keyboard.press('Escape'); await frames();
+    assert.ok(await t('cursor-length').isVisible()); assert.notEqual(await t('cursor-length').inputValue(), '12');
+    await page.keyboard.press('Escape'); await frames(); assert.equal(await t('cursor-length').isVisible(), false);
+
+    await setup([dxfCircle(40, 40, 10)]); await hot('q0'); await move(70, 40); await labels('Radius');
+    await enter('20'); assert.equal(fieldOf((await savedDoc()).entities[0], 40), 20);
+    await page.keyboard.press('Control+z'); assert.equal(fieldOf((await savedDoc()).entities[0], 40), 10);
+    await hot('q0'); await move(70, 40); await enter('15'); assert.equal(fieldOf((await savedDoc()).entities[0], 40), 15);
+
+    const rect = dxfPoly([[20, 20], [60, 20], [60, 40], [20, 40]], { closed: true });
+    await setup([rect]); await hot('e1'); await move(80, 30); await labels('Distance'); await enter('10');
+    near70(GR.lwVertices((await savedDoc()).entities[0].r).flatMap((p) => [p.x, p.y]), [20, 20, 70, 20, 70, 40, 20, 40]);
+    await page.keyboard.press('Control+z'); await hot('e1'); await move(80, 30); await enter('-40');
+    assert.match(await histLine(), /That would not change the shape/); assert.ok(await t('cursor-length').isVisible());
+    await page.keyboard.press('Escape'); await enter('-10');
+    near70(GR.lwVertices((await savedDoc()).entities[0].r).map((p) => p.x), [20, 50, 50, 20]);
+
+    for (const [spaces, label, value, expected] of [
+      [1, 'Length', '10<90', [20, 40, 60, 40]],
+      [2, 'Angle', '90', [60, -10, 60, 30]],
+      [3, 'Factor', '2', [-20, 30, 60, 30]],
+      [4, 'Length', '10<90', [100, 30, 60, 30]],
+    ]) {
+      await setup([line()]); await hot('b'); await move(80, 40);
+      for (let i = 0; i < spaces; i++) await page.keyboard.press('Space');
+      await frames(); assert.equal(await t('cursor-length').getAttribute('aria-label'), label);
+      await page.keyboard.type(value); await frames();
+      assert.equal(await page.locator('.gr-mode[data-testid=grip-preview]').getAttribute('d'), svgPath({ t: 'line', a: expected.slice(0, 2), b: expected.slice(2) }, 700), 'mode preview follows typed values');
+      await page.keyboard.press('Enter'); await frames(); near70(line70((await savedDoc()).entities[0]), expected);
+      await page.keyboard.press('Control+z'); near70(line70((await savedDoc()).entities[0]), [20, 30, 60, 30]);
+      await hot('b'); await move(80, 30); await enter('30'); near70(line70((await savedDoc()).entities[0]), [20, 30, 50, 30]);
+    }
+    await setup([line()]); await hot('b'); await move(80, 30);
+    await page.keyboard.type('20'); await page.keyboard.press('Tab'); await page.keyboard.type('90'); await page.keyboard.press('Enter');
+    near70(line70((await savedDoc()).entities[0]), [20, 30, 20, 50]);
+    await setup([line()]); await hot('m'); await move(80, 30); await labels('Length', 'Angle', 'Δx', 'Δy'); await enter('10<90');
+    near70(line70((await savedDoc()).entities[0]), [20, 40, 60, 40]);
+    await setup([line()]); await hot('b'); await move(80, 30); await enter('@10<90');
+    near70(line70((await savedDoc()).entities[0]), [20, 30, 60, 40]);
+    await setup([line()]); await hot('b'); await move(80, 30); await enter('@5,10');
+    near70(line70((await savedDoc()).entities[0]), [20, 30, 65, 40]);
+    await setup([line()]); await hot('b'); await move(80, 30); await page.keyboard.type('-10'); await frames();
+    assert.equal(await page.locator('.gr-new[data-testid=grip-preview]').getAttribute('d'), svgPath({ t: 'line', a: [20, 30], b: [10, 30] }, 700));
+    await page.keyboard.press('Enter'); await frames(); near70(line70((await savedDoc()).entities[0]), [20, 30, 10, 30]);
+    await setup([rect, dxfLine(20, 70, 60, 70)]);
+    await page.keyboard.down('Shift');
+    for (const id of ['0:e1', '1:b']) { const p = await gripBox(id); await page.mouse.click(p.x, p.y); await frames(); }
+    await page.keyboard.up('Shift'); await hot('e1'); await move(80, 30); await labels('Length', 'Angle', 'Δx', 'Δy'); await enter('10<0');
+    const hotDoc = await savedDoc(); near70(GR.lwVertices(hotDoc.entities[0].r).map((p) => p.x), [20, 70, 70, 20]);
+    near70(line70(hotDoc.entities[1]), [20, 70, 70, 70]);
+    await setup([line()]); await hot('b'); await move(80, 30); await page.keyboard.press('Space'); await page.keyboard.press('Space');
+    await typeCmd('b'); await frames(); await labels('X', 'Y', 'Δx', 'Δy'); await enter('20,30'); await enter('90');
+    near70(line70((await savedDoc()).entities[0]), [20, 30, 20, 70]);
+    await setup([line()]); await hot('b'); await move(80, 30);
+    for (let i = 0; i < 3; i++) await page.keyboard.press('Space');
+    await enter('0'); assert.match(await histLine(), /The scale factor must be between 0.0001 and 10000/);
+    await page.keyboard.press('Escape'); await enter('2'); near70(line70((await savedDoc()).entities[0]), [-20, 30, 60, 30]);
+    await setup([dxfArc(40, 40, 20, 0, 90)]); await hot('m'); await move(70, 70);
+    assert.equal(await t('cursor-length').isVisible(), false, 'arc-mid Stretch still uses the hover menu for Radius');
+    await page.keyboard.press('Escape');
+    await setup([line()]); await typeCmd('compare'); await page.keyboard.press('Control+a'); await hot('b'); await move(80, 30); await enter('50');
+    await page.locator('.dtab').filter({ has: page.locator('.tname', { hasText: /^typed-points70(?:-edited)*\.dxf$/ }) }).click();
+    near70(line70((await savedDoc()).entities[0]), [20, 30, 70, 30]);
+    await setup([dxfLine(1, 1, 3, 1)], 1); await hot('b'); await move(100, 25.4); await enter('76.2');
+    near70(line70((await savedDoc()).entities[0]), [1, 1, 4, 1]);
+    await setup([line()]); await hot('b'); await move(80, 30); await page.keyboard.press('F12'); await frames();
+    assert.equal(await page.locator('.cursor-field:visible').count(), 0);
+    await page.keyboard.press('Escape'); await page.keyboard.press('F12');
+    await closeTabs(/./); assert.deepEqual(errors, []);
+    console.log('TODO 106c screenshots: shots-106c/line-end-light.png and shots-106c/line-end-dark.png');
+  });
+
   // Lengthen remembers its mode and values across tabs (as AutoCAD does): the 106 steps put them back so the 97e steps still find <Total> and <0.0000>.
   const resetLengthen106 = async () => {
     await typeCmd('lengthen'); await typeCmd('delta'); await typeCmd('0'); await page.keyboard.press('Escape');

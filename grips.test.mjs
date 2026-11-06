@@ -70,6 +70,28 @@ test('rectangle edge grips resize each side along its normal, any rotation or wi
   }
 });
 
+test('TODO 106c: signed rectangle edge distances keep the opposite side, refuse collapse and crossing', () => {
+  for (const angle of [0, Math.PI / 5]) for (const reverse of [false, true]) {
+    const corners = [[0, 0], [20, 0], [20, 10], [0, 10]];
+    if (reverse) corners.reverse();
+    const ent = lwpoly(corners.map(([x, y]) => [30 + x * Math.cos(angle) - y * Math.sin(angle), 40 + x * Math.sin(angle) + y * Math.cos(angle)]), { closed: true });
+    for (let i = 0; i < 4; i++) {
+      const id = 'e' + i, g = GR.gripsOf(ent).find((p) => p.id === id), vs = GR.lwVertices(ent.r);
+      const span = Math.hypot(g.x - (vs[(i + 2) % 4].x + vs[(i + 3) % 4].x) / 2, g.y - (vs[(i + 2) % 4].y + vs[(i + 3) % 4].y) / 2);
+      for (const delta of [10, -span / 2]) {
+        const to = GR.rectEdgePoint(ent, id, delta), next = GR.dragGrip(ent, id, to);
+        near(Math.hypot(to[0] - g.x, to[1] - g.y), Math.abs(delta));
+        assert.equal(next.label, 'Resize rectangle');
+        const moved = GR.lwVertices(next.ent.r);
+        for (const k of [(i + 2) % 4, (i + 3) % 4]) nearPt([moved[k].x, moved[k].y], [vs[k].x, vs[k].y]);
+      }
+      for (const delta of [-span, -span - 10, 0]) assert.equal(GR.dragGrip(ent, id, GR.rectEdgePoint(ent, id, delta)), null);
+    }
+  }
+  assert.equal(GR.rectEdgePoint(circle(0, 0, 10), 'q0', 10), null);
+  assert.equal(GR.rectEdgePoint(rect(0, 0, 20, 10), 'e0', Infinity), null);
+});
+
 test('only closed straight four-corner rectangles get edge grips', () => {
   const entities = [
     lwpoly([[0, 0], [20, 0], [20, 10], [0, 10]]),

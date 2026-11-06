@@ -313,6 +313,15 @@ test('TODO 69f: Arc types its first point, then Length + Angle from the previous
   assert.equal(inputMode(T), 'xy', 'the next arc starts with X / Y again');
 });
 
+test('TODO 106c: Distance is one signed field, with Tab and clear-before-cancel Esc', () => {
+  const T = { kind: 'grip', point: true, valueMode: 'distance', pts: [[20, 30]], hover: [30, 30] };
+  const s = keys('-10', false, createInput(false, inputMode(T))), r = toolPointInput(s, T);
+  assert.deepEqual(r.labels, ['Distance']); assert.equal(r.value, -10); assert.equal(r.why, '');
+  assert.equal(inputKey(s, 'Tab', false).active, 0);
+  assert.equal(escapeInput(s, false).mode, 'distance'); assert.equal(escapeInput(createInput(false, 'distance'), false), null);
+  assert.match(toolPointInput(keys('--1', false, createInput(false, 'distance')), T).why, /finite number/);
+});
+
 test('TODO 69f: the one-number Circle / Ellipse fields ignore point text; Esc clears before cancelling', () => {
   for (const mode of ['radius', 'length']) {
     const s = createInput(false, mode);

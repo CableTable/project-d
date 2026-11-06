@@ -6931,6 +6931,7 @@ function measTagPlace() {
 /** The overlay over the drawing: the shape being drawn, its helper lines and the readout. */
 function drawOvl(paint = false) {
   if (!ui.ovl) return;
+  gripCursorPreview();
   const tab = curDoc(), d = state.tool === 'measure' && tab?.cmp ? tab : editable() || tab, H = state.sheetH, out = [], grips = [];
   let tip = null, circleGuide = null;
 
@@ -6970,7 +6971,7 @@ function drawOvl(paint = false) {
     if (bt && !tt && !CT) tip = bt;
     if (drawLive() || state.grip || state.meas || state.dim || state.ldr) trackOvl(d, out, 1 / view.scale);
     if (tt && state.grip && state.trk.res) tt.text = state.trk.res.text;
-    if (tt) { const cr = ui.canvas.getBoundingClientRect(); tip = { text: tt.text, x: (tt.px[0] - cr.left) / view.scale + view.ox, y: H - ((tt.px[1] - cr.top) / view.scale + view.oy) }; }
+    if (tt && !CT?.grip) { const cr = ui.canvas.getBoundingClientRect(); tip = { text: tt.text, x: (tt.px[0] - cr.left) / view.scale + view.ox, y: H - ((tt.px[1] - cr.top) / view.scale + view.oy) }; }
   }
   const gd = d && d.lay ? gripDoc() : null;                         // a layout's selected objects: their grips
   if (gd) {
@@ -7082,9 +7083,33 @@ function drawKey(e, k) {
   return false;
 }
 
+/** A hot grip reuses the point fields; its typed path decides what their values mean. */
+function gripCursorTool(g) {
+  if (!g.hot || g.d.vlay || g.opt && g.opts[g.opt] !== 'Radius' || !g.mode && !g.opt && g.ent.type === 'ARC' && g.id === 'm') return null;
+  const f = g.d.factor, M = GM.MODES[g.mode], lineEnd = !g.mode && !g.opt && !g.hots && !g.baseSet && g.ent.type === 'LINE' && g.id !== 'm';
+  const points = g.baseAsk ? [] : g.ref && g.ref.step !== 'new' ? DI.modifyPoints({ kind: M.toLowerCase(), stage: 'p2', p1: g.base, ref: g.ref }, g.base) : null;
+  if (g.ref && g.ref.step !== 'new' && !points) return null;
+  const valueMode = g.mode ? M === 'ROTATE' ? 'angle' : M === 'SCALE' ? g.ref ? 'length' : 'factor' : null : g.opt || !g.hots && g.ent.type === 'CIRCLE' && g.id.startsWith('q') ? 'radius' : !g.hots && GR.isRectEdge(g.ent, g.id) ? 'distance' : null;
+  const ref = g.opt && valueMode === 'radius' ? [GR.get(g.ent.r, 10), GR.get(g.ent.r, 20)] : lineEnd && g.cursorInput?.prefix !== '@' && g.cursorInput?.mode !== 'xy' || valueMode === 'radius' ? GR.refPoint(g.ent, g.id) : g.base;
+  const mm = (p) => p.slice(0, 2).map((v) => v * f);
+  return { kind: 'grip', A: g, grip: true, point: true, lineEnd: !points && lineEnd, valueMode: points ? null : valueMode, stage: `${g.mode}:${g.opt}:${g.baseAsk}:${g.ref?.step || ''}`, f, pts: (points || [ref]).map(mm), hover: mm(g.hover || g.pos) };
+}
+function gripCursorPreview() {
+  const g = state.grip;
+  if (!g) return;
+  const typed = cursorTool()?.grip && DI.hasTyped(cursorInput());
+  if (g.cursorPreview || typed) gripAim(g, g.hover || g.pos, g.shift);
+  g.cursorPreview = false;
+  g.inputError = null;
+  if (!typed) return;
+  const result = cursorPoint();
+  if (!result.why && !g.baseAsk && (!g.ref || g.ref.step === 'new')) { g.cursorPreview = true; g.inputError = gripEvaluate(g, DR.parseInput(result.text), result.text); }
+}
+
 /** Cursor fields use one tool of mm points (y up); object picks and options return no tool. */
 function cursorTool() {
   if (!state.dynamicInput) return null;
+  if (state.grip) return gripCursorTool(state.grip);
   if (state.tool === 'text' && state.text.askHeight) return null;
   if (state.draw) return drawLive() ? state.draw : null;
   const m = state.mod;
@@ -7115,7 +7140,18 @@ function cursorInput() {
   if (H.cursorInput?.n !== n) H.cursorInput = Object.assign(DI.createInput(DI.firstPoint(T), DI.inputMode(T)), { n });
   return H.cursorInput;
 }
-const cursorPoint = () => DI.toolPointInput(cursorInput(), cursorTool());
+const cursorPoint = () => {
+  const T = cursorTool(), input = cursorInput(), result = DI.toolPointInput(input, T);
+  if (T.grip) {
+    // A line's plain length starts at the other end; relative points still start at the grip base.
+    if (input.mode === 'polar' && T.lineEnd && input.prefix !== '@') result.text = '#' + result.point?.map((v) => v.toLocaleString('en-US', { useGrouping: false, maximumSignificantDigits: 21 })).join(',');
+    if (DI.isSingle(input.mode)) { result.text = input.values[0] || result.text; result.why = result.errors[0] = input.values[0] && (DR.parseInput(input.values[0]).kind !== 'len' || !Number.isFinite(+input.values[0])) ? `${result.labels[0]} must be a finite number` : ''; }
+    if (input.mode === 'distance') { const g = T.A, normal = GR.rectEdgePoint(g.ent, g.id, 1); result.live[0] = T.hover.reduce((sum, v, i) => sum + (v / T.f - g.pos[i]) * (normal[i] - g.pos[i]) * T.f, 0); }
+    if (input.mode === 'polar' && !input.values[1] && !input.prefix && input.values[0]) result.text = input.values[0];
+    if (T.A.inputError) { result.why = T.A.inputError; result.errors[input.active] = result.why; }
+  }
+  return result;
+};
 /** The point the typed cursor fields give, in drawing units, for the previews of Measure, Dimension and Set length; null when nothing is typed (or it is not valid yet). */
 function typedAt() {
   const T = cursorTool();
@@ -7124,7 +7160,10 @@ function typedAt() {
   return r.point ? r.point.map((v) => v / T.f) : null;
 }
 function cursorCommit(shift = false) {
-  const T = cursorTool(), result = cursorPoint();
+  const T = cursorTool();
+  if (T.grip) gripCursorPreview();
+  const result = cursorPoint();
+  if (T.grip) { if (result.why) { note(result.why); paintOverlay(); } else gripTyped(result.text); return; }
   if (result.why) { note(result.why); paintOverlay(); return; }
   trackStop();
   if (T.mod) modCursorCommit(T, result);
@@ -7192,13 +7231,13 @@ function cursorKey(e) {
   if (e.ctrlKey || e.metaKey || e.altKey || e.isComposing) return;
   if (document.querySelector('.pop-back, .pdlg-back, dialog[open], [data-testid=ctx-menu]')) return;
   const field = e.target.closest?.('input, textarea, select, [contenteditable=true]');
-  if (field && field !== ui.dynamicPromptInput && (field !== ui.cmd || ui.cmd.value)) return;
+  if (field && !Object.values(ui.cursorFields).includes(field) && field !== ui.dynamicPromptInput && (field !== ui.cmd || ui.cmd.value)) return;
   const prompt = dynamicPrompt();
   if (prompt?.input === 'number' && dynamicPromptKey(e, prompt)) { e.preventDefault(); e.stopPropagation(); return; }
   if (!cursorDynamic()) return;
   const input = cursorInput(), T = cursorTool();
   if (['Tab', 'Backspace'].includes(e.key) && !DI.hasTyped(input)) {
-    const onCanvas = e.target === document.body || (ui.canvas.contains(e.target) && !field && !e.target.closest?.('button, [role=button], dialog, [role=dialog]'));
+    const onCanvas = Object.values(ui.cursorFields).includes(field) || e.target === document.body || (ui.canvas.contains(e.target) && !field && !e.target.closest?.('button, [role=button], dialog, [role=dialog]'));
     if (!onCanvas) return;
   }
   if (e.key === 'Enter' && DI.hasTyped(input)) cursorCommit();
@@ -9389,7 +9428,7 @@ const saveTrack = () => { try { localStorage.setItem(TRK_SAVED, JSON.stringify({
 function chip(name, on) { const b = ui.tog[name]; b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on)); }
 function dynamicInputSet(on) {
   ui.dynamicPrompt = null; ui.dynamicPromptInput.value = '';
-  for (const a of [state.draw, state.setlen, state.meas, state.dim, state.mod]) if (a) a.cursorInput = null;
+  for (const a of [state.draw, state.setlen, state.meas, state.dim, state.mod, state.grip]) if (a) a.cursorInput = null;
   state.dynamicInput = on; chip('DYN', on); paintOverlay();
   note(on ? 'Dynamic input on' : 'Dynamic input off');
   viewStore.put({ id: 'dynamicInput', on }).catch(() => note('Could not remember Dynamic input; it still applies until the app closes'));
@@ -9562,12 +9601,13 @@ function gripCycle() {
 /** Mode i (Space / Enter cycle it, the right-click menu picks it). */
 function gripModeTo(g, i) {
   if (curLay() && selItems().some((x) => x.p.src !== 'loose' || !x.part.obj || isDimPart(x.part))) { note('Grip Move / Rotate / Scale / Mirror take loose objects only here: use the ribbon command for Parts and dimensions'); return; }       // they act on the loose objects of the selection, not on a Part
-  g.mode = i; g.opt = 0; g.move = null; g.res = null; g.err = null; g.next = null; g.val = null; g.to = null; g.ref = null; g.baseAsk = false;
+  g.mode = i; g.opt = 0; g.move = null; g.res = null; g.err = null; g.next = null; g.val = null; g.to = null; g.ref = null; g.baseAsk = false; g.cursorPreview = false; g.cursorInput = null;
   if (g.cursor) gripAim(g, gripPick(g, g.cursor[0], g.cursor[1], false));
   state.msg = null; ui.cmdUI.message(GM.header(GM.MODES[g.mode])); renderCommand(); paintOverlay();
 }
 /** The preview and the prompt follow the pointer again after an option (Base point, Copy, Undo, Reference) changed what a pick means. */
 function gripRefresh(g) {
+  g.cursorInput = null; g.cursorPreview = false;
   g.res = null; g.err = null; g.next = null; g.val = null;
   if (g.cursor) gripAim(g, gripPick(g, g.cursor[0], g.cursor[1], false));
   renderCommand(); paintOverlay();
@@ -9615,6 +9655,8 @@ function gripDone(g, ctrl) { g.hot = true; if ((ctrl || g.copy) && !g.opt) gripC
 function gripPut(g, e) {
   const q = gripPick(g, e.clientX, e.clientY, e.shiftKey);
   g.hot = true; g.cursor = [e.clientX, e.clientY];
+  g.hover = q; g.shift = e.shiftKey;
+  if (cursorTool()?.grip && DI.hasTyped(cursorInput())) { cursorCommit(); return; }
   if (g.baseAsk) { gripBase(g, q); return; }
   if (g.ref && g.ref.step !== 'new') { refPoint(...gripRefCtx(g), q, false, true); return; }       // q is picked already: typed = no second snap
   gripAim(g, q, e.shiftKey);
@@ -9725,7 +9767,8 @@ function gripMove(e) {
   if (!g.moved && !g.hot && Math.hypot(e.clientX - g.px[0], e.clientY - g.px[1]) < 4) return;
   if (g.tog) { g.tog = null; state.hots = null; }                    // a Shift drag past the threshold is a plain drag with Shift held
   g.moved = true; g.cursor = [e.clientX, e.clientY];
-  gripAim(g, gripPick(g, e.clientX, e.clientY, e.shiftKey, true), e.shiftKey);
+  g.hover = gripPick(g, e.clientX, e.clientY, e.shiftKey, true); g.shift = e.shiftKey;
+  gripAim(g, g.hover, e.shiftKey);
   paintOverlay();
 }
 function gripUp(e) {
@@ -9790,10 +9833,24 @@ function gripTyped(raw) {
     return;
   }
   if (g.ref && g.ref.step !== 'new') { refTyped(...gripRefCtx(g), raw); return; }
-  if (g.mode) { gripModeTyped(g, inp, raw); return; }
-  if (g.opt) { gripOptionTyped(g, inp); return; }
-  if (GR.isRectEdge(g.ent, g.id)) { note('Drag the edge to resize; typing a size is not available yet'); return; }
-  if (inp.kind === 'bad') { note(`I do not understand "${raw.trim()}". Type x,y, @dx,dy or a length`); return; }
+  if (g.cursorPreview) { gripAim(g, g.hover || g.pos, g.shift); g.cursorPreview = false; }
+  const why = gripEvaluate(g, inp, raw);
+  if (why) { note(why); return; }
+  gripDone(g, false);
+}
+/** The same typed checks and geometry serve Enter and the cursor preview; no commit here. */
+function gripEvaluate(g, inp, raw) {
+  const f = g.d.factor;
+  if (g.mode) return gripModeTyped(g, inp, raw);
+  if (g.opt) return gripOptionTyped(g, inp);
+  if (!g.hots && GR.isRectEdge(g.ent, g.id)) {
+    if (inp.kind !== 'len') return 'Type the distance to move the side, or drag the edge';
+    const to = GR.rectEdgePoint(g.ent, g.id, inp.v / f);
+    if (!to) return 'Point coordinates must be finite';
+    gripAim(g, to, g.shift);
+    return g.next ? null : 'That would not change the shape (or leaves nothing of it), so it stays as it was';
+  }
+  if (inp.kind === 'bad') return `I do not understand "${raw.trim()}". Type x,y, @dx,dy or a length`;
   const refMm = (() => { const r = GR.refPoint(g.ent, g.id); return [r[0] * f, r[1] * f]; })();
   let mm = null;
   if (inp.kind === 'len') {
@@ -9801,43 +9858,41 @@ function gripTyped(raw) {
     const org = g.baseSet || g.hots ? g.base.map((v) => v * f) : refMm;       // after B the length counts from the base, as @dx,dy
     const ax = GR.axisOf(g.ent, g.id), side = ax && g.to ? Math.sign((g.to[0] - g.pos[0]) * ax[0] + (g.to[1] - g.pos[1]) * ax[1]) || 1 : 1;       // 164a: an MTEXT's width / height grip: the typed distance is added along its axis (taken back when the pointer is on the inner side)
     mm = ax ? [org[0] + side * inp.v * ax[0], org[1] + side * inp.v * ax[1]] : DR.directDistance(org, hover, inp.v) || (g.ent.type === 'CIRCLE' && g.id.startsWith('q') ? [org[0] + inp.v, org[1]] : null);
-    if (!mm) { note('Move the pointer the way you want it to go, then type the length'); return; }
+    if (!mm) return 'Move the pointer the way you want it to go, then type the length';
   } else mm = DR.typedPoint(inp, g.base.map((v) => v * f));       // @dx,dy counts from the base (the grip itself until B)
-  if (!mm || !mm.every(Number.isFinite)) { note('Point coordinates must be finite'); return; }
+  if (!mm || !mm.every(Number.isFinite)) return 'Point coordinates must be finite';
   gripAim(g, [mm[0] / f, mm[1] / f]);
-  gripDone(g, false);
+  return null;
 }
 /** Typed in an option (163a): Radius the radius, Lengthen on a line the distance ADDED, on an arc the end's new angle in degrees (AutoCAD); mm for the first two. */
 function gripOptionTyped(g, inp) {
   const name = g.opts[g.opt], deg = name === 'Lengthen' && g.ent.type === 'ARC';
   if (name === 'Insert vertex' || name === 'Convert to Arc' || name === 'Origin Point') {             // 163b: a point, as the click
     const mm = DR.typedPoint(inp, g.base.map((v) => v * g.d.factor));
-    if (!mm) { note(`Type the point as x,y or @dx,dy, or click it. ${GR.optionPrompt(g.ent, name)}`); return; }
+    if (!mm) return `Type the point as x,y or @dx,dy, or click it. ${GR.optionPrompt(g.ent, name)}`;
     gripAim(g, mm.map((v) => v / g.d.factor));
-    if (!g.next) { note(`${name === 'Insert vertex' ? 'That is on a neighbouring vertex' : name === 'Origin Point' ? 'This hatch has no pattern lines to move, or the origin is there already' : 'That point is on the segment\'s line, so no arc passes through it'}. ${GR.optionPrompt(g.ent, name)}`); return; }
-    gripDone(g, false); return;
+    return g.next ? null : `${name === 'Insert vertex' ? 'That is on a neighbouring vertex' : name === 'Origin Point' ? 'This hatch has no pattern lines to move, or the origin is there already' : 'That point is on the segment\'s line, so no arc passes through it'}. ${GR.optionPrompt(g.ent, name)}`;
   }
   const total = name === 'Hatch Angle' || name === 'Hatch Scale';       // 164b1: a typed hatch angle (degrees) or scale is the new total, not a length
-  if (inp.kind !== 'len') { note(`Type ${deg || name === 'Hatch Angle' ? 'an angle in degrees' : name === 'Hatch Scale' ? 'the new scale' : name === 'Radius' ? 'the radius' : 'the length to add'}, or click a point`); return; }
+  if (inp.kind !== 'len') return `Type ${deg || name === 'Hatch Angle' ? 'an angle in degrees' : name === 'Hatch Scale' ? 'the new scale' : name === 'Radius' ? 'the radius' : 'the length to add'}, or click a point`;
   const r = GR.typedOption(g.ent, g.id, name, deg || total ? inp.v : inp.v / g.d.factor);
-  if (!r) { note(`That would leave nothing of the shape, or change nothing. ${GR.optionPrompt(g.ent, name)}`); return; }
+  if (!r) return `That would leave nothing of the shape, or change nothing. ${GR.optionPrompt(g.ent, name)}`;
   g.next = r.ent; g.label = r.label; g.to = g.to || g.base;
-  gripDone(g, false);
+  return null;
 }
 /** Typed in a grip mode: an angle (Rotate) or factor (Scale) or a point (x,y, @dx,dy, @len<ang), or a length the way the rubber band points (Move, Mirror). */
 function gripModeTyped(g, inp, raw) {
   const f = g.d.factor, M = GM.MODES[g.mode], baseMm = g.base.map((v) => v * f);
   let v;
-  if (inp.kind === 'bad') { note(`I do not understand "${raw.trim()}". Type ${M === 'ROTATE' ? 'an angle' : M === 'SCALE' ? 'a factor' : 'x,y or @dx,dy'}`); return; }
+  if (inp.kind === 'bad') return `I do not understand "${raw.trim()}". Type ${M === 'ROTATE' ? 'an angle' : M === 'SCALE' ? 'a factor' : 'x,y or @dx,dy'}`;
   if (inp.kind === 'len' && (M === 'ROTATE' || M === 'SCALE')) v = gripRefVal(g, g.ref && M === 'SCALE' ? inp.v / f : inp.v);       // with Reference a typed scale is the new length (mm)
   else {
     const mm = inp.kind === 'len' ? DR.directDistance(baseMm, g.to && g.to.map((x) => x * f), inp.v) : DR.typedPoint(inp, baseMm);
-    if (!mm) { note(inp.kind === 'len' ? 'Move the pointer the way you want it to go, then type the length' : 'Point coordinates must be finite'); return; }
+    if (!mm) return inp.kind === 'len' ? 'Move the pointer the way you want it to go, then type the length' : 'Point coordinates must be finite';
     v = gripRefVal(g, GM.valueAt(M, g.base, mm.map((x) => x / f)));
   }
   g.val = v; g.to = g.to || g.base; gripModeRun(g);
-  if (g.err || (g.ref && !g.res)) { note(g.err || 'The new length must be above 0'); return; }       // a Scale of 0 or outside 0.0001 .. 10000: asks again, the grip stays hot (AutoCAD)
-  gripDone(g, false);
+  return g.err || (g.ref && !g.res ? 'The new length must be above 0' : null);       // asks again, the grip stays hot
 }
 /** A grip mode (Move, Rotate, Scale, Mirror) puts its result down: every selected object, one undo step named for the mode; the grip edit ends. */
 function gripModeCommit(g) {
@@ -9996,7 +10051,7 @@ function editKey(e) {
     if (state.eatteditAsk) { e.preventDefault(); state.eatteditAsk = null; ui.cmdUI.escape(); renderCommand(); return; }
     if (state.attdispAsk) { e.preventDefault(); state.attdispAsk = null; ui.cmdUI.escape(); renderCommand(); return; }
     if (state.orthoAsk) { e.preventDefault(); state.orthoAsk = false; ui.cmdUI.escape(); renderCommand(); return; }
-    if (e.target !== ui.cmd && e.target !== ui.dynamicPromptInput && e.target && e.target.closest && e.target.closest('input, textarea, select')) return;       // Esc in a field only cancels the typing (the command bar's own input handles its Esc)
+    if (e.target !== ui.cmd && e.target !== ui.dynamicPromptInput && !Object.values(ui.cursorFields).includes(e.target) && e.target && e.target.closest && e.target.closest('input, textarea, select')) return;       // Esc in a field only cancels the typing (the command bar's own input handles its Esc)
     if (ui.preflight && !ui.preflight.hidden && !activeCmd() && !ui.cmdUI.isOpen()) { closePreflight(); e.preventDefault(); return; }
     const wasOn = !!activeCmd(), shut = ui.cmdUI.escape();                 // Esc shuts the bar (and the history); a command that is on is cancelled too
     if (shut === 'drawer' || (shut === 'bar' && !wasOn)) return;

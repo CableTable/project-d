@@ -404,6 +404,14 @@ const minVertices = (r) => ((get(r, 70) ?? 0) & 1 ? 3 : 2);       // fewer would
 export const IMMEDIATE = new Set(['Remove vertex', 'Convert to Line']);
 /** Is grip `id` a rectangle's side (it resizes the rectangle) rather than a polyline segment's middle? */
 export const isRectEdge = (ent, id) => !!find(ent, id)?.rect;
+/** Signed side movement: positive is outwards, negative towards the opposite side. */
+export function rectEdgePoint(ent, id, distance) {
+  const g = find(ent, id), vs = g?.rect && rectangleVertices(ent.r);
+  if (!vs || !Number.isFinite(distance)) return null;
+  const i = +id.slice(1), a = vs[(i + 2) % 4], b = vs[(i + 3) % 4];
+  const normal = [g.x - (a.x + b.x) / 2, g.y - (a.y + b.y) / 2], span = Math.hypot(...normal);
+  return [g.x + normal[0] / span * distance, g.y + normal[1] / span * distance];
+}
 /** AutoCAD's prompt of an option (as tested 2027): the arc asks for "end point of arc". */
 export const optionPrompt = (ent, name) => ({
   Radius: 'Specify radius:', 'Insert vertex': 'Specify new vertex point:', 'Convert to Arc': 'Specify midpoint of arc segment:',

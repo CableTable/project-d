@@ -24,7 +24,7 @@ const rectangle = (T) => T.kind === 'rect' || T.kind === 'rrect';
 // Circle types its centre then one Radius; Ellipse its centre, Length + Angle of axis 1, then one Length (the other half-axis); Arc its first point, then Length + Angle from the previous point twice.
 const STAGES = { measure: ['xy'], setlen: ['xy', 'polar'], dimension: ['xy', 'polar', 'xy'],
   circle: ['xy', 'radius'], ellipse: ['xy', 'polar', 'length'], arc: ['xy', 'polar', 'polar'] };
-export const isSingle = (mode) => ['angle', 'factor', 'radius', 'length'].includes(mode);
+export const isSingle = (mode) => ['angle', 'factor', 'radius', 'length', 'distance'].includes(mode);
 export const inputMode = (T) => T.point ? T.valueMode || (firstPoint(T) ? 'xy' : 'polar') : STAGES[T.kind] ? STAGES[T.kind][T.pts.length] ?? null : T.stage !== 'radius' && ['line', 'polyline', 'rect', 'rrect'].includes(T.kind)
   ? !T.pts.length ? 'xy' : rectangle(T) ? 'size' : 'polar' : null;
 export const readOnlyLength = (T) => T.kind === 'measure' && T.pts.length === 1;
@@ -107,14 +107,14 @@ export function pointInput(s, last, mouse, lengthLabel = 'Length') {
   return { text, point, live, labels, errors, why: errors.find(Boolean) || (point ? '' : 'Point coordinates must be finite') };
 }
 
-const ONE = { angle: 'Angle', factor: 'Factor', radius: 'Radius', length: 'Length' };
+const ONE = { angle: 'Angle', factor: 'Factor', radius: 'Radius', length: 'Length', distance: 'Distance' };
 /** The one number of Rotate (degrees from the pivot), Scale (a factor), Circle (radius, or diameter after D) or an ellipse's last half-axis (mm); untyped, it is the mouse's value. `unit` is mm per drawing unit: a factor is a ratio of drawing-unit distances. A length also gives `point`, along the mouse's way, so the tool's own preview follows it. */
 function valueInput(s, base, mouse, unit, dia) {
   const mode = s.mode, label = mode === 'radius' && dia ? 'Diameter' : ONE[mode], typed = s.values[0];
   const live = [mode === 'angle' ? angleOf(base, mouse) : dist(base, mouse) / unit];
   const bad = typed && (parseInput(typed).kind !== 'len' || !Number.isFinite(+typed)) ? `${label} must be a finite number` : '';
   const value = typed ? +typed : live[0];
-  const error = bad || (mode !== 'angle' && !(value > 0) && (typed || mode === 'factor') ? `${label} must be more than 0` : '');
+  const error = bad || (!['angle', 'distance'].includes(mode) && !(value > 0) && (typed || mode === 'factor') ? `${label} must be more than 0` : '');
   const point = (mode === 'radius' || mode === 'length') && !error ? alongTo(base, mouse, value) : null;
   return { value: error ? null : value, point, live, labels: [label], errors: [error, ''], text: String(value), why: error };
 }
