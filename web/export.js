@@ -4,7 +4,7 @@
 import { h, fill } from './dom.js';
 import { baseName, saveDefault, withExt } from './savepath.js';
 import { planPdf, freePdfName, DEFAULT_OPTIONS, tileGrid, scaleText, titleBlockTexts, cleanTitleBlock, readTitleBlock, PAPERS, PART_BORDER } from './pdf-export.js';
-import { drawingBoxMm, startHidden, unitFactor } from './doc.js';
+import { batchPdfSource } from './pdf-source.js';
 
 const layoutSettings = {
   ...DEFAULT_OPTIONS, tab: 'one', pageIdx: 0,
@@ -110,7 +110,7 @@ export function openExport(host) {
   // Mirror and Negative are for film: greyed on a check print, and then they do not apply (they come back as they were)
   const opts = () => ({
     page: settings.page, tilePaper: settings.tilePaper, checkPaper: settings.checkPaper, mirror: settings.mirror && settings.page !== 'check', negative: settings.negative && settings.page !== 'check',
-    black: settings.black, separate: settings.separate, crop: settings.crop, reg: settings.reg, strip: settings.strip, titleBlock,
+    black: settings.black, separate: settings.separate, crop: settings.crop, reg: settings.reg, strip: settings.strip, sheetSizeGripper: settings.sheetSizeGripper, titleBlock,
   });
 
   // ---- little builders
@@ -179,7 +179,8 @@ export function openExport(host) {
       ref.pagesNote, ref.pagesNote2)]),
     fieldset(part ? 'Label' : 'Marks',
       ...(part ? [] : [check('crop', 'Crop marks', 'pdf-crop'), check('reg', 'Registration marks', 'pdf-reg')]),
-      check('strip', 'Job strip: file, date, colour', 'pdf-strip')));
+      check('strip', 'Job strip: file, date, colour', 'pdf-strip'),
+      ...(part ? [] : [check('sheetSizeGripper', 'Sheet size and gripper', 'pdf-sheet-size-gripper')])));
   const right = h('div', { class: 'pd-right' }, ref.preLabel, ref.prevBox, ref.pageBtns);
   const oneBody = h('div', { class: 'pd-body' }, left, right);
 
@@ -256,6 +257,7 @@ export function openExport(host) {
     }
     ref.go.textContent = 'Save PDF';
     const o = opts(), check = o.page === 'check';
+    if (!part) { ref.sheetSizeGripper.disabled = !check; ref.sheetSizeGripper.title = check ? '' : 'Check print only'; }
     srcFull.date = today();
     plan = planPdf(srcFull, o);
     if (settings.pageIdx >= plan.count) settings.pageIdx = plan.count - 1;
@@ -407,9 +409,7 @@ export function openExport(host) {
         const fl = r.result;
         if (!fl.items.length) { set(0, 'Skipped: empty drawing', 'skipped'); continue; }
         set(55);
-        const factor = unitFactor(fl.units), box = drawingBoxMm(fl, factor);
-        const sheetW = Math.max(sheet.w, box ? Math.ceil(box[2]) : 0), sheetH = Math.max(sheet.h, box ? Math.ceil(box[3]) : 0);
-        const p = planPdf({ fl, factor, off: startHidden(fl), sheetW, sheetH, name: baseName(e.name), date: today(), hide: [] }, { ...o, titleBlock: readTitleBlock(r.doc) });
+        const p = planPdf({ ...batchPdfSource(r, sheet), name: baseName(e.name), date: today() }, { ...o, titleBlock: readTitleBlock(r.doc) });
         const bytes = p.bytes();
         set(80);
         let out = baseName(e.name) + '.pdf';

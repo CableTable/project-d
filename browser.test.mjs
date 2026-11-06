@@ -4165,6 +4165,76 @@ try {
     await closePdf();
   });
 
+  await step('TODO 202: PDF / Print draws sheet size and gripper on a check print', async () => {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const p = await ctx.newPage(), q = (id) => p.getByTestId(id);
+    p.on('pageerror', (e) => errors.push(String(e)));
+    const raw = newDoc(4); addLayer(raw, 'ADHESIVE', { aci: 1 });
+    addEntities(raw, dxfPoly([[0, 0], [180, 0], [180, 100], [0, 100]], { closed: true }), dxfLine(10, 10, 170, 90, { layer: 'ADHESIVE' }));
+    const lay = newLayout('Check print');
+    Object.assign(lay.s, { gripTop: 20, gripRight: 40, gripBottom: 30, gripLeft: 2 });
+    lay.parts.p = makePart('p', 'Plate', raw);
+    lay.placed = [{ partId: 'p', x: 200, y: 200, rot: 0 }, { partId: 'p', x: 500, y: 400, rot: 0 }];
+    const open = async () => { await q('pdf-open').click(); await q('pdf-dialog').waitFor(); };
+    const previewTexts = () => p.evaluate(() => window.__pdfTexts);
+    const clearTexts = () => p.evaluate(() => { window.__pdfTexts = []; });
+    try {
+      await p.goto(URL_);
+      await q('picker').setInputFiles({ name: 'check-print.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
+      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'check-print.dxf');
+      await p.evaluate(() => {
+        window.__pdfTexts = [];
+        const fillText = CanvasRenderingContext2D.prototype.fillText;
+        CanvasRenderingContext2D.prototype.fillText = function (...args) {
+          if (this.canvas.dataset.testid === 'pdf-preview') window.__pdfTexts.push(args[0]);
+          return fillText.apply(this, args);
+        };
+      });
+      await open();
+      assert.equal(await q('pdf-sheet-size-gripper').isVisible(), true);
+      assert.equal(await q('pdf-sheet-size-gripper').isChecked(), false);
+      assert.equal(await q('pdf-sheet-size-gripper').isDisabled(), true);
+      assert.equal(await q('pdf-sheet-size-gripper').getAttribute('title'), 'Check print only');
+      await q('pdf-page-check').check(); await q('pdf-reg').check();
+      const before = await q('pdf-preview').evaluate((c) => c.toDataURL());
+      await clearTexts(); await q('pdf-sheet-size-gripper').check();
+      const wanted = ['Gripper 20 mm', 'Gripper 40 mm', 'Gripper 30 mm', 'Gripper 2 mm', '1000 mm', '700 mm'];
+      for (const text of wanted) assert.ok((await previewTexts()).includes(text), 'preview draws ' + text);
+      assert.notEqual(await q('pdf-preview').evaluate((c) => c.toDataURL()), before, 'annotations change preview pixels');
+      assert.ok(await q('pdf-pagebtn').count() > 1, 'separations available');
+      await clearTexts(); await q('pdf-pagebtn').nth(1).click();
+      for (const text of wanted) assert.ok((await previewTexts()).includes(text), 'second separation draws ' + text);
+      await q('pdf-pagebtn').first().click();
+      for (const theme of ['light', 'dark']) {
+        await p.evaluate((theme) => { document.documentElement.dataset.theme = theme; }, theme);
+        await p.screenshot({ path: `${shotDir}/todo202-check-print-${theme}.png` });
+        assert.ok(readFileSync(`${shotDir}/todo202-check-print-${theme}.png`).length > 1000, 'required preview screenshot exists');
+      }
+      for (const mode of ['sheet', 'tile']) {
+        await clearTexts(); await q('pdf-page-' + mode).check();
+        assert.equal(await q('pdf-sheet-size-gripper').isVisible(), true);
+        assert.equal(await q('pdf-sheet-size-gripper').isDisabled(), true);
+        assert.equal(await q('pdf-sheet-size-gripper').getAttribute('title'), 'Check print only');
+        assert.equal((await previewTexts()).some((s) => wanted.includes(s)), false, mode + ' ignores tick');
+      }
+      await q('pdf-page-check').check(); await q('pdf-close').click(); await open();
+      assert.equal(await q('pdf-sheet-size-gripper').isChecked(), true, 'tick remembered for the session');
+      const pending = p.waitForEvent('download'); await q('pdf-go').click();
+      const pdf = readFileSync(await (await pending).path(), 'latin1');
+      for (const text of wanted) assert.ok(pdf.includes('(' + text + ')'), 'saved PDF includes ' + text);
+      await p.locator('[data-ribbon-tab=Layout]').click();
+      await p.locator('[data-key=gripTop]').fill('25');
+      await p.locator('[data-key=gripTop]').press('Enter');
+      await clearTexts(); await open();
+      assert.ok((await previewTexts()).includes('Gripper 25 mm'), 'source edit reaches a later export');
+      await q('pdf-close').click();
+      await q('picker').setInputFiles({ name: 'part-check.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(raw)) });
+      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'part-check.dxf');
+      await open(); await q('pdf-page-check').check();
+      assert.equal(await q('pdf-sheet-size-gripper').count(), 0, 'hidden for Part PDFs');
+    } finally { await ctx.close(); }
+  });
+
   await step('closing a tab with unsaved changes asks first; Keep it open keeps it, closing discards', async () => {
     await t('new-layout').click();                                                    // a second layout tab, changed and not saved
     await panelControl(page, page.locator('[data-key=gapX]')).fill('6');

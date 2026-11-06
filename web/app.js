@@ -3232,7 +3232,8 @@ function exportSource() {
   if (d.lay) {                                                     // a layout: the sheet as the page, the placed parts as artwork (its Sheet and Marks layers are not artwork)
     const lay = shownLayout(d);
     if (!LD.placedAll(lay).length) return null;
-    return { name: d.name, path, fl: flatten(LD.layoutRaw(lay)), factor: 1, off: new Set(), sheetW: d.lay.s.sheetW, sheetH: d.lay.s.sheetH, hide: ['Sheet', 'Marks'] };
+    const { gripTop, gripRight, gripBottom, gripLeft } = lay.s;
+    return { name: d.name, path, fl: flatten(LD.layoutRaw(lay)), factor: 1, off: new Set(), sheetW: d.lay.s.sheetW, sheetH: d.lay.s.sheetH, grippers: { gripTop, gripRight, gripBottom, gripLeft }, hide: ['Sheet', 'Marks'] };
   }
   const hid = hidIdx(d), fl = hid && hid.size ? { ...d.fl, items: d.fl.items.filter((it) => !hid.has(it.e)) } : d.fl;       // objects hidden one by one are left out too: what you see is what prints
   if (d.fl && partView(d) && !d.bgOnly) {                            // a drawing tab: the drawing and its dimensions alone (never the background or a sheet)

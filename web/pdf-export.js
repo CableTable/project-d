@@ -9,7 +9,7 @@
 import { Page, writePdf, winAnsi, textWidthEm } from './pdf-write.js';
 import { mmul, mapply, mscale, arcSweep, opsBox, strokeWidth } from './drawing.js';
 import { shownItems, itemVisible } from './doc.js';
-import { markGeometry } from './layout.js';
+import { markGeometry, EDGES, gripOf } from './layout.js';
 import { addBlock, text as dxfText } from './dxf-write.js';
 
 export const PAPERS = { A4: [297, 210], A3: [420, 297], A0: [1189, 841] };   // landscape, mm
@@ -19,6 +19,7 @@ export const CHECK = { margin: 10, block: 22 };                      // page edg
 export const DEFAULT_OPTIONS = {
   page: 'sheet', tilePaper: 'A3', checkPaper: 'A4',
   mirror: true, negative: false, black: true, separate: true, crop: false, reg: false, strip: true,
+  sheetSizeGripper: false,
   titleBlock: { enabled: true },
 };
 
@@ -295,6 +296,61 @@ function drawHatch(page, it, M, ink, bg) {
   page.restore();
 }
 
+/** Bands and labels use page mm so even a reduced check print keeps its 2.5 mm lettering. */
+function drawGrippers(page, src, M, marks) {
+  const { sheetW: W, sheetH: H } = src, [scale, , , , x0, y0] = M;
+  const w = W * scale, h = H * scale, size = 2.5;
+  page.save(); page.lineWidth(0.1); page.dash([]);
+  for (const edge of EDGES) {
+    const value = gripOf(src.grippers || {}, edge);
+    if (!(value > 0)) continue;
+    const vertical = edge === 'left' || edge === 'right', len = vertical ? h : w;
+    const band = Math.min(value * scale, vertical ? w : h);
+    const r = { top: [x0, y0 + h - band, w, band], bottom: [x0, y0, w, band], left: [x0, y0, band, h], right: [x0 + w - band, y0, band, h] }[edge];
+    page.fillColor([0.85, 0.85, 0.85]); page.strokeColor([0.65, 0.65, 0.65]);
+    page.rect(...r); page.fill(); page.rect(...r); page.stroke();
+    let label = `Gripper ${trimNum(value)} mm`;
+    if (textWidthEm(label) * size > len) label = `${trimNum(value)} mm`;
+    const half = textWidthEm(label) * size / 2, narrow = band < 3.5;
+    let cx = r[0] + r[2] / 2, cy = r[1] + r[3] / 2;
+    if (narrow) {
+      if (edge === 'top') cy = y0 + h + 2;
+      if (edge === 'bottom') cy = y0 - 2;
+      if (edge === 'left') cx = x0 - 2;
+      if (edge === 'right') cx = x0 + w + 2;
+    }
+    const candidates = (narrow ? [0.15, 0.85, 0.25, 0.75] : [0.5, 0.25, 0.75, 0.15, 0.85])
+      .map((f) => Math.max(half + 1, Math.min(len - half - 1, len * f)));
+    const free = candidates.find((along) => marks.reg.every((m) => {
+      const [mx, my] = mapply(M, m.cx, H - m.cy), radius = 12 * scale + 0.5; // cross arms extend beyond the circle
+      const x = vertical ? cx : x0 + along, y = vertical ? y0 + along : cy;
+      return Math.abs(mx - x) >= radius + (vertical ? size / 2 : half) || Math.abs(my - y) >= radius + (vertical ? half : size / 2);
+    })) ?? candidates[0];
+    if (vertical) cy = y0 + free; else cx = x0 + free;
+    page.fillColor([0.25, 0.25, 0.25]);
+    if (vertical) {
+      const sign = edge === 'left' ? 1 : -1;
+      page.text([0, sign * size, -sign * size, 0, cx + sign * size * CAPH / 2, cy - sign * half], label);
+    } else page.text([size, 0, 0, size, cx - half, cy - size * CAPH / 2], label);
+  }
+  page.restore();
+}
+
+/** Overall sheet dimensions live outside the artwork clip, within the reserved check margin. */
+function drawSheetSize(page, src, M) {
+  const [x, y] = mapply(M, 0, 0), [right, top] = mapply(M, src.sheetW, src.sheetH), size = 2.5;
+  const line = (a, b, c, d) => { page.moveTo(a, b); page.lineTo(c, d); };
+  page.save(); page.strokeColor(BLACK); page.fillColor(BLACK); page.lineWidth(0.15); page.dash([]);
+  for (const xx of [x, right]) { line(xx, top + 0.5, xx, top + 6); line(xx - 0.7, top + 3.3, xx + 0.7, top + 4.7); }
+  line(x, top + 4, right, top + 4);
+  for (const yy of [y, top]) { line(x - 0.5, yy, x - 6, yy); line(x - 4.7, yy - 0.7, x - 3.3, yy + 0.7); }
+  line(x - 4, y, x - 4, top); page.stroke();
+  textAt(page, [1, 0, 0, 1, 0, 0], `${trimNum(src.sheetW)} mm`, (x + right) / 2, top + 5.2, size, 1);
+  const label = `${trimNum(src.sheetH)} mm`;
+  page.text([0, size, -size, 0, x - 5.2, (y + top - textWidthEm(label) * size) / 2], label);
+  page.restore();
+}
+
 function drawPage(src, o, plan, p, artBox) {
   const { fl, factor: F, sheetW: W, sheetH: H } = src, org = src.origin || [0, 0];
   const g = p._g, geo = p._geo, check = o.page === 'check', tile = geo.tile;
@@ -311,14 +367,17 @@ function drawPage(src, o, plan, p, artBox) {
   if (!tile && !check && mirror) B = flip;                                           // a sheet-size page is mirrored whole
   const ws = mscale(M0);
   const minW = check ? 0.1 : 0.08;
+  const marks = artBox ? markGeometry({ count: 1, x0: artBox[0], y0: H - artBox[3], gridW: artBox[2] - artBox[0], gridH: artBox[3] - artBox[1] }, { crop: o.crop, reg: o.reg }) : { crop: [], reg: [] };
+  const sheetNotes = check && !src.part && o.sheetSizeGripper;
 
   if (neg) { page.fillColor(BLACK); page.rect(0, 0, p.w, p.h); page.fill(); }
   if (tile) { page.save(); page.rect(TILE.margin, TILE.margin, tile.tw, tile.th); page.clip(); }
 
-  if (check) {                                                                       // the sheet's own outline; nothing is drawn outside it
+  if (check) {                                                                       // sheet outline and optional bands; only artwork is clipped to the sheet
     page.strokeColor([0.35, 0.35, 0.35]); page.lineWidth(0.2); page.dash([]);
     const a = mapply(M0, 0, 0), b = mapply(M0, W, H);
     if (!src.part) { page.rect(a[0], a[1], b[0] - a[0], b[1] - a[1]); page.stroke(); }     // a part's page has no sheet outline
+    if (sheetNotes) drawGrippers(page, src, M0, marks);
     page.save(); page.rect(a[0], a[1], b[0] - a[0], b[1] - a[1]); page.clip();
   }
 
@@ -346,15 +405,14 @@ function drawPage(src, o, plan, p, artBox) {
 
   // crop and registration marks round the art, the same on every page so the colours register
   if ((o.crop || o.reg) && artBox) {
-    const L = { count: 1, x0: artBox[0], y0: H - artBox[3], gridW: artBox[2] - artBox[0], gridH: artBox[3] - artBox[1] };
-    const mk = markGeometry(L, { crop: o.crop, reg: o.reg });
     page.strokeColor(markInk); page.lineWidth(Math.max(0.25 * (check ? ws : 1), minW)); page.dash([]);
     const seg = ([x1, y1, x2, y2]) => { const a = mapply(M0, x1, H - y1), b = mapply(M0, x2, H - y2); page.moveTo(a[0], a[1]); page.lineTo(b[0], b[1]); };
-    mk.crop.forEach(seg);
-    for (const m of mk.reg) { circle(page, M0, m.cx, H - m.cy, m.r); m.cross.forEach(seg); }
+    marks.crop.forEach(seg);
+    for (const m of marks.reg) { circle(page, M0, m.cx, H - m.cy, m.r); m.cross.forEach(seg); }
     page.stroke();
   }
   if (tile || check) page.restore();
+  if (sheetNotes) drawSheetSize(page, src, M0);
 
   // labels
   const colour = colourName(g), job = `${src.name || 'drawing'} · ${src.date || ''} · ${colour} · ${p.n}/${p.of}`;
