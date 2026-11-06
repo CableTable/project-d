@@ -135,15 +135,38 @@ test('TODO 109a fix: native MTEXT scales at 2, preserving formatting, suffix and
   assert.ok(inches.blocks['*D1'].entities[1].r.v.includes('{\\A1;\\H0.7x;1.00"}'));
 });
 
-test('TODO 109a fix 2: %%c diameter labels and stacked tolerances convert, alternate units stay', () => {
+test('TODO 109a fix 2: %%c diameter labels and stacked tolerances convert, alternate units follow the scale', () => {
   const texts = ['%%c25.40', '{\\A1;%%C25.40}', '25.40\\S+0.1^-0.1;', '25.40 [1.00]', '25.40 mm [1.00]'];
   const doc = W.newDoc();
   W.addBlock(doc, '*D1', texts.map((t, i) => W.mtext(0, i, 2.5, t)));
   W.addEntities(doc, W.entity('DIMENSION', [[2, '*D1'], [70, 1], [13, 0], [23, 0], [14, 25.4], [24, 0], [42, 25.4]]));
   const before = structuredClone(doc), got = (opts) => back(doc, opts).blocks['*D1'].entities.map((e) => e.r.v[e.r.c.indexOf(1)]);
   assert.deepEqual(got({ units: 'in' }), ['%%c1.00"', '{\\A1;%%C1.00"}', '1.00"\\S+0.004^-0.004;', '1.00" [1.00]', '1.00" [1.00]']);
-  assert.deepEqual(got({ scale: 2 }), ['%%c50.80', '{\\A1;%%C50.80}', '50.80\\S+0.2^-0.2;', '50.80 [1.00]', '50.80 mm [1.00]']);
+  assert.deepEqual(got({ scale: 2 }), ['%%c50.80', '{\\A1;%%C50.80}', '50.80\\S+0.2^-0.2;', '50.80 [2.00]', '50.80 mm [2.00]']);
   assert.deepEqual(doc, before);
+});
+
+test('TODO 109a fix 3: one row per dimension label form, through Export', () => {
+  const rows = [      // [label, export options, label saved]
+    ['25.40\\S+.1^-.1;', { units: 'in' }, '1.00"\\S+.004^-.004;'],
+    ['25.40\\S+.1^-.1;', { scale: 2 }, '50.80\\S+.2^-.2;'],
+    ['∅25.40', { units: 'in' }, '∅1.00"'],
+    ['\\U+220525.40', { units: 'in' }, '∅1.00"'],
+    ['25.40%%p0.1', { units: 'in' }, '1.00"%%p0.004'],
+    ['25.40±0.1', { units: 'in' }, '1.00"±0.004'],
+    ['%%c25.40%%p0.1', { scale: 2 }, '%%c50.80%%p0.2'],
+    ['25.40 [1.00]', { scale: 2 }, '50.80 [2.00]'],
+    ['25.40 [1.00]', { units: 'in', scale: 2 }, '2.00" [2.00]'],
+    ['25.40 [1.00]', { units: 'in' }, '1.00" [1.00]'],
+    ['25.40\\S+0.1^-0.1;', { scale: 1e-101 }, '0.00\\S+0.' + '0'.repeat(100) + '^-0.' + '0'.repeat(100) + ';'],      // 100 decimals: the toFixed limit
+  ];
+  for (const [label, opts, expected] of rows) {
+    const doc = W.newDoc();
+    W.addBlock(doc, '*D1', [W.line(0, 0, 25.4, 0), W.mtext(0, 0, 2.5, label)]);
+    W.addEntities(doc, W.entity('DIMENSION', [[2, '*D1'], [70, 1], [13, 0], [23, 0], [14, 25.4], [24, 0], [42, 25.4]]));
+    const e = back(doc, opts).blocks['*D1'].entities[1];
+    assert.equal(e.r.v[e.r.c.indexOf(1)], expected, `${label} ${JSON.stringify(opts)}`);
+  }
 });
 
 test('TODO 109a fix: DIMSTYLE lengths and DIMLFAC follow scale and target units, including PD_DIM styles', () => {

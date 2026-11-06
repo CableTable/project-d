@@ -337,7 +337,7 @@ export function writeDxfWithReport(doc, opts = {}) {
       if (unitChange) {
         const dim = readDim(name, b), native = dimensions.get(name);
         const value = dim ? dimGeom(dim.kind, dim.params, 1)?.mm : +native?.r.v[native.r.c.indexOf(42)];
-        if (Number.isFinite(value)) target = { value, units };
+        if (Number.isFinite(value)) target = { value, units, scale };
       }
       b.entities = relabel(b.entities, factor, target);
     }
