@@ -17008,11 +17008,14 @@ try {
     const hide = async () => { await page.locator('[data-testid=canvas]').click({ position: { x: 10, y: 10 } }); await frames(); };
     await shotBoth('146-command-preview', show, hide);
     const cursor = await at(39.8, 80.2); await page.mouse.move(cursor.x, cursor.y); await frames();
+    await t('mod-preview').waitFor();       // CI (Linux) painted the preview later than the move + 2 frames
     await typeCmd('nu');
+    await t('mod-preview').waitFor();
     assert.equal(overlap(await t('nudge-box').boundingBox(), await t('mod-preview').boundingBox()), 0, 'nudge uses the same preview avoidance');
     const nudge = await t('nudge-box').boundingBox(); await t('nudge-input').hover(); await frames();
     assert.deepEqual(await t('nudge-box').boundingBox(), nudge, 'nudge stays still while using its input');
     await t('nudge-input').fill('0'); await t('nudge-input').press('Enter');
+    await t('mod-preview').waitFor();
     assert.equal(overlap(await t('nudge-box').boundingBox(), await t('mod-preview').boundingBox()), 0, 'nudge error text is reclamped without covering the preview');
     await t('nudge-input').press('Escape');
     await page.keyboard.press('Escape'); await closeTabs(/preview-clear/);
