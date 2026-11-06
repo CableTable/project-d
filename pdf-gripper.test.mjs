@@ -20,6 +20,12 @@ test('TODO 202: each check separation has non-zero bands and size dimensions eve
     const page = plan.build(i), labels = texts(page);
     assert.deepEqual(labels.map((c) => c[2]), ['Gripper 20 mm', 'Gripper 30 mm', 'Gripper 12.5 mm', '1000 mm', '700 mm']);
     assert.equal(bands(page).length, 3);
+    const { s: sc, ox: sx, oy: sy } = plan.pages[i]._geo.scale, eps = 1e-6;
+    for (const b of bands(page)) {
+      const at = page.cmds.indexOf(b) + 1, corners = page.cmds.slice(at).filter((c) => c[0] === 'm' || c[0] === 'l').slice(0, 4);
+      assert.equal(corners.length, 4);
+      for (const [, x, y] of corners) assert.ok(x >= sx - eps && y >= sy - eps && x <= sx + src.sheetW * sc + eps && y <= sy + src.sheetH * sc + eps, 'band corner lies inside the sheet edge');
+    }
     assert.equal(labels[1][1][0], 0, 'right label is rotated');
     assert.equal(Math.abs(labels[1][1][1]), 2.5);
     assert.equal(page.cmds.indexOf(labels[0]) < page.cmds.findIndex((c) => c[0] === 'W'), true, 'bands and labels precede clipped artwork');
