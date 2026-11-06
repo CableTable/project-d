@@ -5,7 +5,7 @@ fn main() {
     println!("cargo:rerun-if-changed=dwg2dxf");
     let helper = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap()).join("dwg2dxf");
     if helper.join("dwg2dxf.exe").is_file() {
-        for name in ["dxf2dwg.exe", "COPYING", "SOURCE.txt"] {
+        for name in ["COPYING", "SOURCE.txt"] {
             assert!(helper.join(name).is_file(), "DWG payload missing {name}");
         }
         let source = fs::read_to_string(helper.join("SOURCE.txt")).expect("DWG source note");
@@ -13,7 +13,7 @@ fn main() {
             .expect("DWG source commit");
         assert!(commit.len() == 40 && commit.bytes().all(|b| b.is_ascii_hexdigit()), "DWG commit SHA");
         let mut files = fs::read_dir(&helper).unwrap()
-            .map(|entry| entry.unwrap().path()).filter(|path| path.is_file()).collect::<Vec<_>>();
+            .map(|entry| entry.unwrap().path()).filter(|path| path.is_file() && path.file_name().and_then(|name| name.to_str()) != Some("dxf2dwg.exe")).collect::<Vec<_>>(); // dxf2dwg.exe is CI's round-trip tool only
         files.sort();
         let mut generated = format!("pub(super) const COMMIT: &str = {commit:?};\npub(super) const FILES: &[(&str, &[u8])] = &[\n");
         for path in files {

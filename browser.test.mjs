@@ -3015,7 +3015,7 @@ try {
               if (cmd !== 'dwg_to_dxf') return;
               log.calls.push(args.path);
               if (/bad/.test(args.path)) throw new Error('Could not open\nSECTION is broken');
-              return dxf;
+              return new TextEncoder().encode(dxf).buffer;      // the real command answers with raw bytes
             } },
             fs: { readFile: async () => new Uint8Array(), exists: async () => false, readTextFile: async () => '', writeTextFile: async (path) => { log.writes.push(path); } },
             dialog: { open: async () => window.__pick, save: async (o) => { log.saves.push(o.defaultPath); return 'C:/jobs/plate.dxf'; } },
@@ -3063,12 +3063,13 @@ try {
   const dwgStub = ({ dxf, layDxf, there }) => {
     const log = window.__dwg = { calls: [], saves: [], writes: [] };
     window.__pick = 'C:/jobs/plate.dwg';
+    const raw = (text) => new TextEncoder().encode(text).buffer;      // the real commands answer with raw bytes (an ArrayBuffer)
     window.__TAURI__ = {
       core: { invoke: async (cmd, args) => {
-        if (cmd === 'dwg_bytes_to_dxf') { log.calls.push(`${cmd} ${args.name} ${Array.isArray(args.bytes) ? args.bytes.length : 'not an array'}`); return dxf; }
+        if (cmd === 'dwg_bytes_to_dxf') { log.calls.push(`${cmd} ${args.name} ${Array.isArray(args.bytes) ? args.bytes.length : 'not an array'}`); return raw(dxf); }
         if (cmd !== 'dwg_to_dxf') return;
         log.calls.push(`${cmd} ${args.path}`);
-        return /lay/.test(args.path) ? layDxf : dxf;
+        return raw(/lay/.test(args.path) ? layDxf : dxf);
       } },
       fs: { readFile: async () => new Uint8Array(), exists: async (path) => there.includes(path), readTextFile: async () => '', writeTextFile: async (path) => { log.writes.push(path); } },
       dialog: { open: async () => window.__pick, save: async (o) => { log.saves.push(o.defaultPath); return o.defaultPath.includes('/') ? o.defaultPath : 'C:/jobs/' + o.defaultPath; } },

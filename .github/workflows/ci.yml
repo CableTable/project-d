@@ -164,7 +164,7 @@ jobs:
           set -euo pipefail
           out="$PWD/src-tauri/dwg2dxf"
           cd tmp-libredwg
-          sh ./autogen.sh
+          sh ./autogen.sh || true   # LibreDWG's own mingw job tolerates a failure here; ./configure fails if nothing was generated
           options=(--disable-bindings --disable-python --disable-docs)
           if ! (./configure "${options[@]}" --disable-shared --enable-static LDFLAGS=-static &&
                 make -j2 -C src && make -j2 -C programs dwg2dxf.exe dxf2dwg.exe); then
@@ -191,31 +191,58 @@ jobs:
           find "$out" -type f \( -name '*.exe' -o -name '*.dll' \) -exec strip {} +
           cp COPYING "$out/"
           printf 'https://github.com/LibreDWG/libredwg/releases/tag/0.14.8838\nCommit: %s\n' "$LIBREDWG_COMMIT" > "$out/SOURCE.txt"
+      - name: Touch the DWG payload so cargo reruns build.rs after a cache restore
+        shell: pwsh
+        run: Get-ChildItem src-tauri/dwg2dxf -Recurse | ForEach-Object { $_.LastWriteTime = Get-Date }
       - name: Build the portable exe (no installer)
         run: npx tauri build --no-bundle
       - name: DWG payload size in the portable exe
         shell: pwsh
-        run: Write-Host "ProjectD.exe bytes before DWG helper=$env:DWG_EXE_BEFORE after=$((Get-Item src-tauri/target/release/ProjectD.exe).Length)"
+        run: |
+          $after = (Get-Item src-tauri/target/release/ProjectD.exe).Length
+          Write-Host "ProjectD.exe bytes before DWG helper=$env:DWG_EXE_BEFORE after=$after"
+          if ($after -le [long]$env:DWG_EXE_BEFORE) { throw "The exe did not grow: the DWG helper is not embedded" }
       - name: DWG round-trip through the embedded helper
         shell: pwsh
         run: |
-          $env:PROJECTD_DWG_ROUNDTRIP_INPUT = Join-Path $env:RUNNER_TEMP "projectd-roundtrip.dwg"
-          $env:PROJECTD_DWG_ROUNDTRIP_OUTPUT = Join-Path $env:RUNNER_TEMP "projectd-roundtrip.dxf"
-          & ./src-tauri/dwg2dxf/dxf2dwg.exe --as r2000 -y -o $env:PROJECTD_DWG_ROUNDTRIP_INPUT fixtures/micro-gaps.dxf
+          $t = $env:RUNNER_TEMP
+          # micro-gaps.dxf plus a TEXT holding Ø and ° as single cp1252 bytes: R2000 DWGs come back from LibreDWG in that code page, not UTF-8
+          node --input-type=module -e "
+            import { readFileSync, writeFileSync } from 'node:fs';
+            const text = readFileSync('fixtures/micro-gaps.dxf', 'latin1').replace(/ENTITIES\r?\n/, (m) => m + '  0\nTEXT\n  8\n0\n 10\n0\n 20\n0\n 30\n0\n 40\n2.5\n  1\nØ12 90°\n');
+            writeFileSync(process.env.RUNNER_TEMP + '/projectd-nonascii.dxf', text, 'latin1');
+          "
+          if ($LASTEXITCODE -ne 0) { throw "could not write the non-ASCII DXF" }
+          & ./src-tauri/dwg2dxf/dxf2dwg.exe --as r2000 -y -o "$t/projectd-roundtrip.dwg" fixtures/micro-gaps.dxf
           if ($LASTEXITCODE -ne 0) { throw "dxf2dwg failed" }
+          & ./src-tauri/dwg2dxf/dxf2dwg.exe --as r2000 -y -o "$t/projectd-nonascii.dwg" "$t/projectd-nonascii.dxf"
+          if ($LASTEXITCODE -ne 0) { throw "dxf2dwg failed on the non-ASCII DXF" }
+          $env:PROJECTD_DWG_ROUNDTRIP_INPUT = "$t/projectd-roundtrip.dwg"
+          $env:PROJECTD_DWG_ROUNDTRIP_OUTPUT = "$t/projectd-roundtrip.dxf"
           cargo test --manifest-path src-tauri/Cargo.toml
           if ($LASTEXITCODE -ne 0) { throw "Rust DWG helper tests failed" }
+          $env:PROJECTD_DWG_ROUNDTRIP_INPUT = "$t/projectd-nonascii.dwg"
+          $env:PROJECTD_DWG_ROUNDTRIP_OUTPUT = "$t/projectd-nonascii-out.dxf"
+          cargo test --manifest-path src-tauri/Cargo.toml round_trip_embedded_helper
+          if ($LASTEXITCODE -ne 0) { throw "Rust DWG helper failed on non-ASCII text (UTF-8 error?)" }
           node --input-type=module -e "
             import assert from 'node:assert/strict';
             import { readFileSync } from 'node:fs';
-            import { readDxf } from './web/drawing.js';
-            const before = readDxf(readFileSync('fixtures/micro-gaps.dxf', 'utf8')).entities.length;
-            const text = readFileSync(process.env.PROJECTD_DWG_ROUNDTRIP_OUTPUT, 'utf8');
+            import { decodeDxf, readDxf } from './web/drawing.js';
+            const entities = (file) => readDxf(decodeDxf(readFileSync(file))).entities;
+            const t = process.env.RUNNER_TEMP;
+            const before = entities('fixtures/micro-gaps.dxf').length;
+            const text = decodeDxf(readFileSync(t + '/projectd-roundtrip.dxf'));
             assert.match(text, /0\s*\r?\nSECTION\s*\r?\n\s*2\s*\r?\nENTITIES\s*\r?\n/);
             const after = readDxf(text).entities.length;
             assert.ok(before > 0);
             assert.equal(after, before);
             console.log('DWG round-trip ENTITIES: ' + before + ' -> ' + after);
+            const wide = entities(t + '/projectd-nonascii.dxf').length;
+            const back = entities(t + '/projectd-nonascii-out.dxf');
+            assert.equal(back.length, wide);
+            assert.ok(back.some((e) => JSON.stringify(e).includes('Ø12 90°')), 'the Ø and ° text did not come back');
+            console.log('DWG round-trip non-ASCII text: ' + wide + ' -> ' + back.length);
           "
           if ($LASTEXITCODE -ne 0) { throw "DXF round-trip check failed" }
       - name: Smoke start, the exe must stay up for 10 s
