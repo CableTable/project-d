@@ -414,7 +414,8 @@ export function fresh(args, x = io) {
   const { pos, flags } = parseFlags(args, { '--as': 1 }, usage);
   const [id] = pos;
   if (pos.length !== 1 || !/^[\w][\w.-]*$/.test(id)) throw new Error(usage);
-  const as = account(flags, defaultAccount(x), usage), dir = runsDir(x), name = `fresh-${id}`;
+  const as = account(flags, 'king', usage), dir = runsDir(x), name = `fresh-${id}`;
+  if (as !== 'king') throw new Error(`${usage}\nBishop is paused: --as king only`);
   x.need(`${dir}/grill-${id}.md`, 'grill');
   x.need(claude(as), ACCOUNTS[as].bin);
   const prompt = `Fresh read of TODO ${id}: read grill-${id}.md, TODO.md row ${id} and the code files it names. Max 8 lines: gaps, contradictions, missing cases; for each 'X never Y' answer, quote the code line that keeps it or say not found. Change nothing.`;
