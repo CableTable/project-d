@@ -12,6 +12,7 @@ export function fitBase(W, H, pageW, pageH, pad = 14) {
 /** Zoom by `factor` keeping the point under (cx, cy) (box px) where it is; clamped to 1×..32×. */
 export function zoomAt(view, cx, cy, factor) {
   const z = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, view.z * factor)), r = z / view.z;
+  if (z === MIN_ZOOM) return FIT; // 100% always means fitted and centred
   return { z, tx: cx - r * (cx - view.tx), ty: cy - r * (cy - view.ty) };
 }
 

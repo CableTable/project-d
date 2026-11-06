@@ -26,6 +26,7 @@ test('zoom at the cursor keeps the page point under the cursor', () => {
 test('zoom is clamped to 1x..32x of fit', () => {
   assert.equal(zoomAt(FIT, 100, 100, 0.5).z, 1);
   assert.deepEqual(zoomAt(FIT, 100, 100, 0.5), FIT, 'zooming out at fit changes nothing');
+  assert.deepEqual(zoomAt(zoomAt(FIT, 300, 250, 2), 100, 100, 0.25), FIT, 'back at 1x the page is fitted and centred');
   let v = FIT;
   for (let i = 0; i < 20; i++) v = zoomAt(v, 400, 300, 2);
   assert.equal(v.z, MAX_ZOOM);

@@ -4369,8 +4369,7 @@ try {
       await centre();
       const fitPic = await pic('pdf-full-canvas');
       await p.mouse.wheel(0, -600);
-      await p.waitForFunction(() => document.querySelector('[data-testid=pdf-full-zoom]').textContent !== '100%');
-      const z1 = await zoom();
+      const z1 = Number((await (await p.waitForFunction(() => { const t = document.querySelector('[data-testid=pdf-full-zoom]').textContent; return t !== '100%' && t; })).jsonValue()).replace('%', ''));
       assert.ok(z1 > 200 && z1 <= 3200, 'zoom ' + z1);
       await p.waitForFunction((was) => document.querySelector('[data-testid=pdf-full-canvas]').toDataURL() !== was, fitPic);
       for (let i = 0; i < 12; i++) await p.mouse.wheel(0, -1000);
@@ -4387,16 +4386,18 @@ try {
       await p.mouse.down(); await p.mouse.move(cb.x + cb.width / 2 + 80, cb.y + cb.height / 2 + 40, { steps: 4 }); await p.mouse.up();
       await p.waitForFunction((was) => document.querySelector('[data-testid=pdf-full-canvas]').toDataURL() !== was, zoomed);
       await q('pdf-full-fit').click();
+      await p.waitForFunction(() => document.querySelector('[data-testid=pdf-full-zoom]').textContent === '100%');
       assert.equal(await zoom(), 100);
-      // pages: a page button, Next, Previous, PageUp / PageDown
+      // pages: a page button, Next, Previous, PageUp / PageDown (each waits for the label)
+      const onPage = (n) => p.waitForFunction(([n, pages]) => document.querySelector('[data-testid=pdf-full-label]').textContent.startsWith(`Page ${n} of ${pages} · `), [n, pages]);
       await q('pdf-full-pagebtn').nth(1).click();
-      assert.match(await q('pdf-full-label').textContent(), new RegExp(`^Page 2 of ${pages} · `));
+      await onPage(2);
       await q('pdf-full-next').click();
-      assert.match(await q('pdf-full-label').textContent(), new RegExp(`^Page ${Math.min(3, pages)} of ${pages} · `));
+      await onPage(Math.min(3, pages));
       await q('pdf-full-prev').click(); await q('pdf-full-prev').click();
-      assert.match(await q('pdf-full-label').textContent(), new RegExp(`^Page 1 of ${pages} · `));
+      await onPage(1);
       await p.keyboard.press('PageDown');
-      assert.match(await q('pdf-full-label').textContent(), new RegExp(`^Page 2 of ${pages} · `));
+      await onPage(2);
       assert.equal(await q('pdf-full-pagebtn').nth(1).evaluate((b) => b.classList.contains('on')), true);
       // Tab stays inside the overlay
       for (let i = 0; i < pages + 8; i++) { await p.keyboard.press('Tab'); assert.equal(await p.evaluate(() => !!document.activeElement.closest('[data-testid=pdf-full]')), true, 'focus left the overlay'); }
