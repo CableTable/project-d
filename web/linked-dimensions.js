@@ -167,7 +167,7 @@ export function linkedLine(raw, e) {
   return hit.reason ? null : hit;
 }
 
-/** TODO 76d: the rectangle `ent` when the dimension's points `p`, `q` lie on two opposite sides and it measures square across them. → { i, rect, B (the dimension point on the moving side), key ('a' | 'b': the dimension point that moves), id (the moving side's edge grip: its right / top side in the rectangle's own axes), n (that side's outward unit normal), span } or null (rounded, no match). */
+/** TODO 76d: the rectangle `ent` when the dimension's points `p`, `q` lie on two opposite sides and it measures square across them. → { i, rect, B (the dimension point on the moving side), key ('a' | 'b': the dimension point that moves), id (the moving side's edge grip: its world right / top side), n (that side's outward unit normal), span } or null (rounded, no match). */
 function rectangleHit(ent, i, dim, m, p, q) {
   const gs = gripsOf(ent), vs = gs.filter((g) => g.id[0] === 'v');
   if (vs.length !== 4 || !gs.some((g) => g.rect)) return null;

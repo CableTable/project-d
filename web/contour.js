@@ -240,7 +240,8 @@ export function offsetLoop(loop, t, opts = {}) {
   const inLine = (a, b) => {
     if (!a || a.b || b.b) return false;
     const ua = endTan(a), ub = startTan(b);
-    return Math.abs(crs(ua, ub)) <= 2e-5 && dot(ua, ub) > 0 && dist(a.p1, b.p0) <= 1e-6 * size + 3e-5 * Math.abs(t);
+    const tol = 1e-6 * size + 3e-5 * Math.abs(t), w = sub(b.p1, a.p0), off = Math.abs(crs(w, sub(a.p1, a.p0))) / (Math.hypot(w[0], w[1]) || 1);   // the dropped point must lie on the merged line
+    return Math.abs(crs(ua, ub)) <= 2e-5 && dot(ua, ub) > 0 && dist(a.p1, b.p0) <= tol && off <= tol;
   };
   const joined = [];
   for (const s of loop) {

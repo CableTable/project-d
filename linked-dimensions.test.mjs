@@ -10,6 +10,7 @@ import * as LD from './web/layoutdoc.js';
 import { labelOf } from './web/objects.js';
 import { explodeSelection } from './web/explode.js';
 import { rotateEntities } from './web/rotate.js';
+import { stretchEntities } from './web/stretch.js';
 import { mirrorEntity } from './web/modify.js';
 
 function drawing(shape, params, kind = 'aligned', factor = 1) {
@@ -616,6 +617,31 @@ test('TODO 76d: an aligned dimension across a 30-degree rectangle; another dimen
   assert.equal(label(next), '80.000'); assert.equal(label(next, 2), '80.000', 'a dimension on the moved side follows');
   const wide = driveDimension(drawing(W.lwpoly(pts, { closed: true }), { a: at(0, 20), b: at(100, 20) }), 1, 130);
   point(rectOf(wide.entities[0])[1], at(130, 0)); point(rectOf(wide.entities[0])[2], at(130, 50));
+});
+
+test('TODO 76d: 90 / 135 / 180 degree and clockwise rectangles move the world right / top side; one side or adjacent sides are no hit', () => {
+  for (const [deg, lo, hi] of [[90, 0, 130], [135, 0, 130], [180, -30, 100]]) {
+    const c = Math.cos(deg * Math.PI / 180), s = Math.sin(deg * Math.PI / 180), at = (x, y) => [10 + x * c - y * s, 20 + x * s + y * c];
+    const pts = [at(0, 0), at(100, 0), at(100, 50), at(0, 50)];
+    const next = driveDimension(drawing(W.lwpoly(pts, { closed: true }), { a: at(0, 20), b: at(100, 20) }), 1, 130), g = rectOf(next.entities[0]);
+    [at(lo, 0), at(hi, 0), at(hi, 50), at(lo, 50)].forEach((p, k) => point(g[k], p));
+  }
+  const cw = driveDimension(drawing(W.lwpoly([[10, 20], [10, 70], [110, 70], [110, 20]], { closed: true }), { a: [10, 30], b: [110, 40], axis: 'h' }, 'linear'), 1, 120);
+  assert.deepEqual(rectOf(cw.entities[0]), [[10, 20], [10, 70], [130, 70], [130, 20]]);
+  for (const [a, b] of [[[10, 30], [10, 60]], [[10, 30], [60, 20]]]) {
+    const raw = drawing(W.rect(10, 20, 100, 50), { a, b });
+    assert.equal(linkedLine(raw, 1), null); assert.equal(driveLine(raw, 1, 120), null);
+  }
+});
+
+test('TODO 76e: a LINE end stretched by 20 moves its aligned dimension once; typing 150 still drives the LINE', () => {
+  const raw = drawing(W.line(0, 0, 100, 0), { a: [0, 0], b: [100, 0] });
+  const r = stretchEntities(raw, [{ x0: 90, y0: -5, x1: 130, y1: 5 }], 20, 0, new Set(), null, new Set([0]));
+  const entities = raw.entities.map((e, i) => i === 0 ? r.next.get(i) || e : e);
+  const out = followDimensions(raw, { entities, blocks: r.blocks }, 1);
+  assert.equal(label(out), '120.000'); point(model(out).params.b, [120, 0]);
+  const next = driveLine({ ...raw, ...out }, 1, 150);
+  assert.ok(next); point(E.lineOf(next.line), [0, 0, 150, 0]);
 });
 
 test('TODO 76d: not driven: a rounded rectangle, a slanted dimension, 0 / negative; a LINE and a rectangle at the ends is "multiple"', () => {

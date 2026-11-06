@@ -39,6 +39,13 @@ function circ(cx, cy, r) {
   const at = (a) => [cx + r * Math.cos(a), cy + r * Math.sin(a)], b = Math.tan(PI / 6);
   return [C.seg(at(0), at(2 * PI / 3), b), C.seg(at(2 * PI / 3), at(4 * PI / 3), b), C.seg(at(4 * PI / 3), at(2 * PI), b)];
 }
+test('TODO 200: a 10 m rectangle whose bottom edge dips 0.04 mm keeps the dip point', () => {
+  const loop = poly([[0, 0], [5000, -0.04], [10000, 0], [10000, 6000], [0, 6000]]);
+  const r = C.offsetLoop(loop, 1, { corners: 'sharp' });
+  assert.ok(r.ok);
+  assert.equal(r.loop.filter((s) => !s.b && s.p0[1] < -0.5 && s.p1[1] < -0.5).length, 2, 'two pieces on the bottom side');
+});
+
 const lShape = poly([[0, 0], [100, 0], [100, 40], [40, 40], [40, 100], [0, 100]]);
 const closed = (loop) => loop.every((s, i) => { const p = loop[(i + loop.length - 1) % loop.length]; return Math.hypot(s.p0[0] - p.p1[0], s.p0[1] - p.p1[1]) < 1e-6; });
 const off = (loop, t, corners = 'sharp') => { const r = C.offsetLoop(loop, t, { corners }); assert.ok(r.ok, 'offset ' + t + ' failed: ' + r.why); assert.ok(closed(r.loop), 'the result is closed'); return r.loop; };
