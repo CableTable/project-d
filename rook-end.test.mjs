@@ -104,6 +104,17 @@ test('retro38i: a dead launch (non-zero exit, no result) gets a LAUNCH DIED resu
   assert.equal(wrote.files['k.txt'], 'report');
 });
 
+test('retro38i fix: LAUNCH DIED starts on its own line; the job\'s full out path is used', () => {
+  const w = world();
+  w.files['o.jsonl'] = '{"type":"system"}';
+  finish({ queue: 'q.txt', key: 'o.jsonl', text: 't' }, 1, w.x);
+  assert.equal(w.files['o.jsonl'], '{"type":"system"}\n{"type":"result","is_error":true,"result":"LAUNCH DIED"}\n');
+  const o = world();
+  finish({ queue: 'q.txt', key: 'o.jsonl', out: '/elsewhere/o.jsonl', text: 't' }, 1, o.x);
+  assert.match(o.files['/elsewhere/o.jsonl'], /LAUNCH DIED/);
+  assert.equal(o.files['o.jsonl'], undefined);
+});
+
 test('TODO 167d: finish without a review job only updates the queue; a queue.txt that cannot be written does not stop the chain', () => {
   const w = world();
   finish({ queue: 'q.txt', key: 'o.jsonl', text: 'build br -> o.jsonl:' }, 0, w.x);

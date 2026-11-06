@@ -347,6 +347,15 @@ test('result skips a half-written last line: no result yet for an unfinished run
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('retro38i fix: result of a LAUNCH DIED line (no usage) prints it and exits 1', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'projectd-result-'));
+  try {
+    const run = join(dir, 'run.jsonl');
+    writeFileSync(run, '{"type":"result","is_error":true,"result":"LAUNCH DIED"}\n');
+    assert.throws(() => execFileSync(process.execPath, ['tools/rook.mjs', 'result', run], { encoding: 'utf8', stdio: 'pipe' }), (e) => e.status === 1 && e.stdout.trim() === 'LAUNCH DIED' && !/TypeError/.test(e.stderr));
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('TODO 193a: result ends its token line with the report line count (blank lines not counted)', () => {
   const dir = mkdtempSync(join(tmpdir(), 'projectd-result-'));
   try {

@@ -183,7 +183,7 @@ export function launchRun(bin, args, cwd, inFd, outFd, env, outPath = '', spawnF
 }
 
 // A launch's line in queue.txt as a job for rook-end.mjs; null when there is no queue.txt (lines 1-2 are Rook's, so the launcher never creates one).
-export const queueLineOf = (queue, kind, id, out, exists = existsSync) => (exists(queue) ? { queue, key: basename(out), text: `${kind} ${id} -> ${basename(out)}:` } : null);
+export const queueLineOf = (queue, kind, id, out, exists = existsSync) => (exists(queue) ? { queue, key: basename(out), out, text: `${kind} ${id} -> ${basename(out)}:` } : null);
 
 // Everything that touches git, npm, files or processes; the tests swap it for a recorder.
 const io = {

@@ -1026,7 +1026,7 @@ test('TODO 196b: Pawn refuses a second numbered question before opening files or
 
 test('TODO 167e lows: a missing queue.txt gives no queue line; launchRun with its own lock writes and removes that one', () => {
   assert.equal(queueLineOf('q.txt', 'build', 'br', '/a/o.jsonl', () => false), null);
-  assert.deepEqual(queueLineOf('q.txt', 'build', 'br', '/a/o.jsonl', () => true), { queue: 'q.txt', key: 'o.jsonl', text: 'build br -> o.jsonl:' });
+  assert.deepEqual(queueLineOf('q.txt', 'build', 'br', '/a/o.jsonl', () => true), { queue: 'q.txt', key: 'o.jsonl', out: '/a/o.jsonl', text: 'build br -> o.jsonl:' });
   const dir = mkdtempSync(join(tmpdir(), 'rook-lock-')), lock = join(dir, '.run-lock-x'), seen = [];
   launchRun('x.cmd', ['ok'], dir, 0, 1, {}, 'o', (bin, argv) => { seen.push(argv); return fakeSpawn().child; }, undefined, null, lock);
   assert.equal(seen[0][3], lock);

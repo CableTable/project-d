@@ -278,6 +278,7 @@ if (cmd === 'result') {
     if (!r) { console.log('no result yet'); process.exit(1); }
     const u = r.usage;
     console.log(r.result);
+    if (!u) process.exit(1); // LAUNCH DIED: the result has no usage
     const fresh = u.input_tokens + u.cache_creation_input_tokens + u.output_tokens;
     console.log(`tokens ${k(fresh + u.cache_read_input_tokens)} (${k(fresh)} new) · denials ${r.permission_denials.length}` + (r.permission_denials.length ? ': ' + r.permission_denials.map((d) => String(d.tool_input.command || d.tool_name).slice(0, 60)).join(' | ') : '') + ` · report ${String(r.result ?? '').split(/\r?\n/).filter((l) => l.trim()).length} lines`); // TODO 193a: the cap counts physical lines, blanks not
     const peak = peakContext(events);
