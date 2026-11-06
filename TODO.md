@@ -159,9 +159,9 @@ From the UI research (Pip, 2026-10-20, ranked; page https://claude.ai/artifact/V
     75a. Add a rectangular array of selected drawing objects with validated rows, columns and spacing, preview, Apply / Cancel and one-step undo, with geometry and browser Save / reopen tests.
     75b. (after 75a) Add a polar array using a picked centre, count and angular spacing in the same flow, with rotated-copy geometry tests and browser Apply / Cancel / undo checks.
 76. **Dimensions drive the drawing** (L, later): double-click a dimension, type a value, the line stretches; no full constraints.
-    76a. Associate a newly placed linear dimension with one picked LINE and let double-clicking its value stretch that line's second end, with positive-value validation, undo and unit / browser tests.
+    76a. An aligned dimension on both ends of one LINE (new or opened, our own dims) drives it: double-click, type a plain number in the shown units, the LINE's second end moves; drawings and layouts; grill `runs38/grill-76a.md` (revised R1-R7 win), fresh read `runs38/fresh-76a.out`.
     76b. (after 76a) Support horizontal and vertical driving dimensions on a LINE while preserving its other coordinate, with unit and browser checks for unchanged unrelated geometry and layer locks.
-    76c. (after 76b) Keep driving-dimension associations through Save / reopen and recovery using stable references, disabling the edit with a clear message if the source was deleted or detached, with round-trip unit and browser tests.
+    76c. (after 76b) Save / reopen already keeps driving (the link is re-found from points, nothing stored); 76c decides what a dim whose LINE was deleted or moved away shows when a number is typed (today: becomes text), with round-trip tests.
     76d. (after 76c, T22) A dimension across a rectangle's two sides drives its size: the right or top side moves, the left and bottom stay fixed. Moved after the session 17 features: needs 76a–c, and T22 is covered by 105a / 105b meanwhile.
 
 From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/Sp3eoq15FKgsVFQpxmpPd7; his picks):
