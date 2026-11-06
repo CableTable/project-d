@@ -66,6 +66,8 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Dimension**: A saved measurement callout with lines, arrows and a value that does not count toward a part's size. Where: `DECISIONS.md`, Kept dimensions and sizes and More dimension types. Avoid: Driving constraint.
 
+**Dimension length entry**: Typing a plain number into a dimension's text to set the length of the one LINE it measures end to end; the line's second end moves and nothing else changes. Aligned dimensions set the true length; horizontal and vertical ones set only the width or height. Where: `TODO.md`, items 76a-76c. Avoid: Driving dimension, Parametric constraint.
+
 **Dimension style**: A named preset for dimension appearance, including text height, arrow size, decimals and units. Where: `TODO.md`, item 27; `web/dims.js`.
 
 **Dimension text override**: Text replacing a dimension's measured label; `<>` inside it shows the live measured value. Empty text or `<>` alone restores the measured label. Where: `DECISIONS.md`, Dimension text edit, both tabs.
