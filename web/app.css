@@ -180,8 +180,8 @@ select.fld { font-family: var(--sans); }
   --selection: #60a5fa; --alignment-guide: #60a5fa; --crossing: #00f434; --edge-opacity: .8; --hot: #ff6b5e; --mark: #fb923c; --dim: #59d2a0; --guide: #59d2a0;
   background: #212830;
 }
-.canvas[data-work-area='Light'] > .ovl, .canvas[data-work-area='Light'] > .rubber { --muted: #6b6b6b; --partline: #1d1d1d; --sheet: #ffffff; }
-.canvas[data-work-area='Dark'] > .ovl, .canvas[data-work-area='Dark'] > .rubber { --muted: #9ba2ac; --partline: #eef1f4; --sheet: #212830; }
+.canvas[data-work-area='Light'] > svg, .canvas[data-work-area='Light'] > .ovl, .canvas[data-work-area='Light'] > .rubber { --muted: #6b6b6b; --partline: #1d1d1d; --sheet: #ffffff; --sheetline: #9a9a9a; --shadow: rgba(0, 0, 0, .16); --part: #ffffff; }
+.canvas[data-work-area='Dark'] > svg, .canvas[data-work-area='Dark'] > .ovl, .canvas[data-work-area='Dark'] > .rubber { --muted: #9ba2ac; --partline: #eef1f4; --sheet: #212830; --sheetline: #4b515b; --shadow: rgba(0, 0, 0, .16); --part: #212830; }
 .status .work-area { display: inline-flex; align-items: center; justify-content: center; }
 /* Drawing feedback has its own accent; panels and menus keep the UI accent. */
 .canvas > svg, .canvas > .ovl, .canvas > .rubber { --accent: var(--selection); }

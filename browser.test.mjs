@@ -20972,8 +20972,8 @@ try {
         assert.ok(await pixels('029d03') > 10,'green snap marker is visible on both work areas');
         await p.keyboard.press('Escape'); await p.keyboard.press('Escape');
         await q('new-layout').click(); await frame();
-        assert.equal(await q('canvas').evaluate((el) => el.dataset.workArea), undefined, 'layout tabs follow the app theme entirely');
-        assert.equal(await p.locator('rect.sheet').evaluate((el) => getComputedStyle(el).fill), app === 'dark' ? 'rgb(33, 40, 48)' : 'rgb(255, 255, 255)', 'sheet paper keeps its app appearance');
+        assert.equal(await q('canvas').evaluate((el) => el.dataset.workArea), area, 'layout tabs follow the Work area');
+        assert.equal(await p.locator('rect.sheet').evaluate((el) => getComputedStyle(el).fill), area === 'Dark' ? 'rgb(33, 40, 48)' : 'rgb(255, 255, 255)', 'sheet paper follows the Work area');
         await p.reload(); await q('work-area').waitFor(); await frame();
         assert.equal(await q('work-area').getAttribute('aria-label'), 'Work area: ' + area, 'remembered after reload');
         await open();
@@ -20985,6 +20985,86 @@ try {
       assert.equal(await q('canvas').evaluate((el) => getComputedStyle(el).backgroundColor), 'rgb(33, 40, 48)');
       await p.emulateMedia({ colorScheme: 'light' }); await frame();
       assert.equal(await q('canvas').evaluate((el) => getComputedStyle(el).backgroundColor), 'rgb(255, 255, 255)');
+    } finally { await context.close(); }
+  });
+
+  await step('TODO 204: the Work area toggle changes a layout and Compare', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    const p = await context.newPage(), q = (id) => panelControl(p, p.getByTestId(id));
+    p.on('pageerror', (e) => errors.push(String(e)));
+    const frame = () => p.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    const menu = async (name) => { await p.locator('[data-menu=View]').click(); await p.getByRole('menuitemcheckbox', { name: new RegExp(name + '\\b') }).click(); await frame(); };
+    const open = async (name, raw) => {
+      await q('picker').setInputFiles({ name, mimeType: 'text/plain', buffer: Buffer.from(writeDxf(raw)) });
+      await p.waitForFunction((name) => document.querySelector('.tabs .dtab.on .tname').textContent === name, name); await frame();
+    };
+    const pixels = (hex) => q('drawing').evaluate((el, hex) => {
+      const rgb = hex.match(/\w\w/g).map((v) => parseInt(v, 16)), data = el.getContext('2d').getImageData(0, 0, el.width, el.height).data;
+      let n = 0;
+      for (let i = 0; i < data.length; i += 4) if (data[i + 3] > 150 && rgb.every((v, j) => Math.abs(data[i + j] - v) < 12)) n++;
+      return n;
+    }, hex);
+    const colours = () => p.evaluate(() => {
+      const style = (sel) => getComputedStyle(document.querySelector(sel));
+      const svg = style('.canvas > svg');
+      return { background: style('.canvas').backgroundColor, paper: style('rect.sheet').fill,
+        selection: style('.sel-box').stroke, dimension: style('.dim-text').fill, mark: style('.marks').stroke,
+        sheetline: svg.getPropertyValue('--sheetline').trim(), shadow: svg.getPropertyValue('--shadow').trim(),
+        part: svg.getPropertyValue('--part').trim(), partline: svg.getPropertyValue('--partline').trim() };
+    });
+    const panels = () => p.locator('.panel .swatch').evaluateAll((els) => els.map((el) => getComputedStyle(el).backgroundColor));
+    const pdf = async () => {
+      await q('pdf-open').click(); await q('pdf-dialog').waitFor(); await frame();
+      await q('pdf-negative').uncheck(); await q('pdf-strip').uncheck();
+      const preview = await q('pdf-preview').evaluate((el) => el.toDataURL());
+      const [dl] = await Promise.all([p.waitForEvent('download'), q('pdf-go').click()]);
+      await q('pdf-dialog').waitFor({ state: 'detached' });
+      return { preview, bytes: readFileSync(await dl.path()) };
+    };
+    const plate = newDoc(4); addEntities(plate, roundRect(0, 0, 220, 140, 12), dxfCircle(55, 70, 24), dxfCircle(165, 70, 24));
+    const lay = newLayout('Work area 204'); lay.parts.plate = makePart('plate', 'Plate 204', plate);
+    Object.assign(lay.s, { sheetW: 760, sheetH: 430, gripTop: 22, crop: true });
+    lay.placed.push({ partId: 'plate', x: 260, y: 140, rot: 0 });
+    try {
+      await p.goto(URL_); await q('work-area').waitFor(); await open('work-area-layout.dxf', layoutRaw(lay));
+      for (const [app, area, paper, ink, selection, dimension, mark, sheetline, partline] of [
+        ['light', 'Dark', 'rgb(33, 40, 48)', 'ffffff', 'rgb(96, 165, 250)', 'rgb(89, 210, 160)', 'rgb(251, 146, 60)', '#4b515b', '#eef1f4'],
+        ['dark', 'Light', 'rgb(255, 255, 255)', '1b1d22', 'rgb(47, 123, 208)', 'rgb(15, 118, 110)', 'rgb(194, 65, 12)', '#9a9a9a', '#1d1d1d'],
+      ]) {
+        await menu('Theme: ' + app); await menu('Work area: Follow app');
+        await p.locator('[data-group=parts] .part-hit').click(); await frame();
+        const follow = await colours(), appPanels = await panels(), originalPdf = await pdf();
+        const thumbs = await p.locator('.card .thumb').evaluateAll((els) => els.map((el) => el.src));
+        assert.ok(appPanels.length > 0 && thumbs.length > 0, 'panel swatches and Parts thumbnails are present');
+        await menu('Work area: ' + area);
+        assert.equal(await q('canvas').getAttribute('data-work-area'), area);
+        assert.deepEqual(await colours(), { background: area === 'Dark' ? paper : 'rgb(233, 233, 233)', paper,
+          selection, dimension, mark, sheetline, shadow: 'rgba(0, 0, 0, .16)', part: area === 'Dark' ? '#212830' : '#ffffff', partline });
+        assert.deepEqual(await panels(), appPanels, 'Layers / Objects / Parts swatches keep the app theme');
+        assert.deepEqual(await p.locator('.card .thumb').evaluateAll((els) => els.map((el) => el.src)), thumbs, 'Parts thumbnails stay fixed light');
+        assert.deepEqual(await pdf(), originalPdf, 'layout PDF preview and bytes are unchanged');
+        assert.ok(await p.locator('.dim-text').count() >= 2, 'layout dimensions are present');
+        const name = `s38-204-layout-app-${app}-work-${area.toLowerCase()}.png`;
+        await p.screenshot({ path: join(shotDir, name) });
+        console.log('  screenshot:', name);
+        await p.keyboard.press('Escape'); await frame();
+        assert.ok(await pixels(ink) > 400, 'layout artwork contrasts with the Work area paper');
+        await menu('Work area: Follow app');
+        await p.locator('[data-group=parts] .part-hit').click(); await frame();
+        assert.deepEqual(await colours(), follow, 'Follow app preserves the layout appearance');
+        await p.keyboard.press('Escape');
+      }
+      await open('work-area-compare.dxf', plate);
+      await p.locator('[data-menu=File]').click(); await p.getByRole('menuitem', { name: 'Compare drawings…', exact: true }).click();
+      await q('cmp-item').first().waitFor(); await menu('Theme: light'); await menu('Work area: Light');
+      assert.equal(await q('canvas').getAttribute('data-work-area'), 'Light');
+      const tint = await q('cmp-item').first().getAttribute('data-colour');
+      const { COLOURS } = await import('./web/compare.js'), colour = COLOURS.find((c) => c.id === tint);
+      assert.ok(await pixels(colour.css.slice(1)) > 400, 'Compare paints its light Work area colour');
+      await q('work-area').click(); await frame();
+      assert.equal(await q('canvas').getAttribute('data-work-area'), 'Dark');
+      assert.notEqual(colour.css, colour.dark);
+      assert.ok(await pixels(colour.dark.slice(1)) > 400, 'Compare paint changes with the Work area toggle');
     } finally { await context.close(); }
   });
 

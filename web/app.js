@@ -336,8 +336,7 @@ const isDark = () => {
 const workDark = () => workAreaDark(state.workArea, isDark());
 
 function renderWorkArea() {
-  const d = curDoc();
-  if (d && d.lay) delete ui.canvas.dataset.workArea; else ui.canvas.dataset.workArea = state.workArea; // layout tabs follow the app theme
+  ui.canvas.dataset.workArea = state.workArea;
   const label = 'Work area: ' + state.workArea;
   ui.workArea.title = label;
   ui.workArea.setAttribute('aria-label', label);
@@ -4516,8 +4515,8 @@ function paintOverlay(gesture = false) {
     snap = null; c.dataset.snap = '';
     const t0 = performance.now();
     const d = curDoc();
-    // Layout artwork still contrasts with its sheet paper; drawing tabs use the work area.
-    const base = { sheetH: state.sheetH, ox: view.ox, oy: view.oy, scale: view.scale, w, h: ch, dpr, dark: d && d.lay ? isDark() : workDark(), wireframe: state.wireframe };
+    // Artwork and layout sheet paper follow the same Work area.
+    const base = { sheetH: state.sheetH, ox: view.ox, oy: view.oy, scale: view.scale, w, h: ch, dpr, dark: workDark(), wireframe: state.wireframe };
     const L2 = state.setlen || state.meas || state.dim || state.ldr || ((modLive() || layModLive()) && ['move', 'copy', 'stretch', 'rotate', 'scale', 'lengthen', 'align'].includes(state.mod.kind) ? { pts: state.mod.ref && state.mod.ref.step !== 'new' ? state.mod.ref.pts : state.mod.p1 ? [state.mod.p1] : [], hover: state.mod.cur }
       : (modLive() || layModLive()) && state.mod.kind === 'array' && state.mod.type === 'polar' ? { pts: state.mod.center ? [state.mod.center] : [], hover: state.mod.stage === 'center' ? state.mod.cur : null } : null);
     const hv = L2 && (typedAt() || L2.hover);                       // typed cursor fields: the rubber line goes to the typed point
