@@ -983,19 +983,24 @@ const STACK = String.raw`\\S(?:[+-]?${NUM}[\^/][+-]?${NUM}|[+-]${NUM}#[+-]${NUM}
 const PLAIN = new RegExp(String.raw`^\s*(?:R|[∅Ø⌀]|\\U\+(?:2205|00[Dd]8|2300)|%%[cC])?\s*(?:${LEN}|${STACK})(?:\s*(?:(?:±|%%[pP])\s*${LEN}|${STACK}))?(?:\s*\[${LEN}\])?\s*$`);
 const ANGLE = /^\s*[+-]?\d*\.?\d+\s*(?:°|%%[dD]|%%176|\\U\+00[Bb]0)\s*$/;
 /** Scale cached dimension labels, or replace their measurement from geometry on unit conversion; keep formatting and overrides. */
-export function relabel(ents, s, target = null, unread = null, words = false) {      // words: a label with words round one number (a native group 1 with <>) converts that number
+// native (a native DIMENSION's): words: a label with words round one number (group 1 with <>) converts that number, in the text
+// that holds the measurement; measure: what group 1 typed must show to convert (drawing units); angle: angular, only plain angles pass
+export function relabel(ents, s, target = null, unread = null, native = {}) {
   const record = textRecord(ents), override = readOverride(ents), measured = measuredText(ents);
   const texts = ents.filter((e) => (e.type === 'TEXT' || e.type === 'MTEXT') && e !== record && String(e.r.v[e.r.c.indexOf(1)] ?? '').trim());
+  const lead = texts.some((e) => !/^\s*[+-]/.test(String(e.r.v[e.r.c.indexOf(1)]).replace(MCODE, ' ')));      // tolerances with no main text are unread
   let main = false;      // one primary value per block, not per text
   const scaled = (t, follows = false) => {
     if (!t.trim() || t.includes('<>') || s === 1 && !target) return t;
     const bare = t.replace(MCODE, ' '), signed = follows && /^\s*[+-]/.test(bare);      // a code is a gap, never a join; a signed text before another text is a tolerance
     if (ANGLE.test(bare)) return t;
-    if (!PLAIN.test(bare) && !(words && (bare.replace(/\\U\+[0-9A-Fa-f]{4}/g, '').match(/\d*\.?\d+/g) || []).length === 1)) { unread?.(t); return t; }
+    const plain = PLAIN.test(bare), words = !plain && native.words && !/\d\s*(?:'|(?:ft|feet|foot|in|inch|inches|yd|[ckµu]?m)\b)/i.test(bare)
+      && (bare.replace(/\\U\+[0-9A-Fa-f]{4}/g, '').match(/\d*\.?\d+/g) || []).length === 1;
+    if (native.angle || !plain && !words || unread && !lead && /^\s*[+-]/.test(bare)) { unread?.(t); return t; }      // Scale (no unread list) still scales lone tolerances
     let alternate = false, stack = false, tolerance = false, converted = false, bad = false;
     const more = Math.max(0, Math.ceil(-Math.log10(s) - 1e-12));
     // One scan: formatting parameters are opaque; stacked/tolerance lengths use s, alternate units use only scale.
-    const out = t.replace(/\\U\+[0-9A-Fa-f]{4}|\\[ACFHQTWacfhqtwp][^;]*;|\\[LlOoKkP~{}\\]|\\S|\\.|%%[a-zA-Z]|±|\[|\]|;|\d*\.?\d+(?:\s*(?:"|mm\b))?|"|mm\b/g, (token, at) => {
+    const out = t.replace(/\\U\+[0-9A-Fa-f]{4}|\\[ACFHQTWacfhqtwp][^;]*;|\\[LlOoKkP~{}\\]|\\S|\\.|%%[a-zA-Z]|±|\[|\]|;|\d*\.?\d+(?:\s*(?:"|mm\b))?|"|[A-Za-z]*mm\b/g, (token, at) => {
       if (token === '[') { if (alternate) bad = true; alternate = true; return token; }
       if (token === ']') { if (!alternate) bad = true; alternate = false; return token; }
       if (token === '\\S') { stack = true; return token; }
@@ -1007,6 +1012,7 @@ export function relabel(ents, s, target = null, unread = null, words = false) { 
       const n = /^\d*\.?\d+/.exec(token)[0], suffix = token.slice(n.length), length = !alternate && !stack && !tolerance, primary = !main && length && !signed;
       if (/^[,/\.]\d/.test(t.slice(at + n.length))) bad = true;
       const dp = (n.split('.')[1] || '').length, extra = alternate || length && !target ? 0 : more;
+      if (words && !primary || primary && Math.abs(+n - native.measure) > .5 * 10 ** -dp + 1e-9) { bad = true; return token; }      // a typed label off the measurement stays
       const value = primary ? target?.value ?? +n * s : +n * (alternate ? target?.scale ?? s : s);
       if (!Number.isFinite(value)) { bad = true; return token; }
       let fixed = dimText(value, Math.min(100, dp + extra));

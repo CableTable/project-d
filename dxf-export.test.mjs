@@ -290,6 +290,39 @@ test('TODO 109a fix 6: a native group 1 with <> converts the block text number; 
   });
 });
 
+test('TODO 109a fix 7: angular and typed labels stay as is and are listed; words convert only the measured text', async (t) => {
+  for (const opts of [{ units: 'in' }, { scale: 2 }]) for (const [name, g1, texts, flags, m42, shown, unread] of [      // [name, group 1, block texts, 70, 42, block texts saved, listed]
+    ['angular <> TYP (5)', '<> TYP', ['60.00° TYP'], 5, 1.0472, null, ['60.00° TYP']],
+    ['angular <> TYP (2)', '<> TYP', ['60.00° TYP'], 2, 1.0472, null, ['60.00° TYP']],
+    ['angular literal 60', '60', ['60'], 5, 1.0472, null, ['60']],
+    ['angular 60, no group 1', null, ['60'], 5, 1.0472, null, ['60']],
+    ['typed 30 on 25.4', '30', ['30'], 1, 25.4, null, ['30']],
+    ['words only in the measured text', 'Width <>', ['Width 25.40', 'NOTE 3'], 1, 25.4, [opts.units ? 'Width 1.0000"' : 'Width 50.80', 'NOTE 3'], ['NOTE 3']],
+    ['words, note first', 'Width <>', ['NOTE 3', 'Width 25.40'], 1, 25.4, ['NOTE 3', opts.units ? 'Width 1.0000"' : 'Width 50.80'], ['NOTE 3']],
+    ['<> ft', '<> ft', ['25.40 ft'], 1, 25.4, null, ['25.40 ft']],
+    ['tolerances, no main text', null, ['+0.1', '-0.1'], 1, 25.4, null, ['+0.1', '-0.1']],
+    ['word ending in mm', 'Comm <>', ['Comm 25.40'], 1, 25.4, [opts.units ? 'Comm 1.0000"' : 'Comm 50.80']],
+  ]) await t.test(`${name} ${JSON.stringify(opts)}`, () => {
+    const doc = W.newDoc();
+    W.addBlock(doc, '*D1', texts.map((x, i) => W.mtext(0, i, 2.5, x)));
+    W.addEntities(doc, W.entity('DIMENSION', [[2, '*D1'], [70, flags], [42, m42], ...(g1 == null ? [] : [[1, g1]])]));
+    const before = structuredClone(doc), report = W.writeDxfWithReport(doc, opts), out = readDxf(report.text);
+    assert.deepEqual(out.blocks['*D1'].entities.map((e) => e.r.v.slice(-1)[0]), shown || texts);
+    if (g1 != null) assert.equal(out.entities[0].r.v[out.entities[0].r.c.indexOf(1)], g1);
+    assert.deepEqual(report.unreadLabels, unread);
+    assert.deepEqual(doc, before);
+  });
+  for (const opts of [{ units: 'in' }, { scale: 2 }]) await t.test(`app override 30 ${JSON.stringify(opts)}`, () => {
+    let doc = W.newDoc();
+    Object.assign(doc, addDimension(doc, buildDim('aligned', { a: [0, 0], b: [25.4, 0], offset: 0, override: '30' }, 1, 'PD_DIM_1')));
+    doc = nativeDimensionOverrides(doc);
+    const before = structuredClone(doc), report = W.writeDxfWithReport(doc, opts);
+    assert.ok(report.text.split('  0\r\nDIMENSION\r\n')[1].split('  0\r\n')[0].includes('  1\r\n30\r\n'));
+    assert.deepEqual(report.unreadLabels, ['30']);
+    assert.deepEqual(doc, before);
+  });
+});
+
 test('TODO 109a fix 5: <> labels and blank texts stay without a note; Scale at factor 1 leaves .50; Scale keeps counts and codes', () => {
   const doc = W.newDoc();
   W.addBlock(doc, '*D1', [W.mtext(0, 0, 2.5, 'Width <>'), W.mtext(0, 1, 2.5, ' ')]);

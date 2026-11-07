@@ -336,17 +336,19 @@ export function writeDxfWithReport(doc, opts = {}) {
       if (e.type === 'DIMENSION') dimensions.set(e.r.v[e.r.c.indexOf(2)]?.trim(), e);
     }
     for (const [name, b] of Object.entries(doc.blocks)) if (DIM_BLOCK.test(name) || dimensions.has(name)) {
-      const target = unitChange ? { units, scale } : null;
+      const target = unitChange ? { units, scale } : null, app = readDim(name, b), native = dimensions.get(name);
+      const m42 = +native?.r.v[native.r.c.indexOf(42)];      // group 42 of 0 or below is no measurement
       if (unitChange) {
-        const dim = readDim(name, b), native = dimensions.get(name);
-        const m42 = +native?.r.v[native.r.c.indexOf(42)], value = dim ? dimGeom(dim.kind, dim.params, 1)?.mm : m42 > 0 ? m42 : NaN;      // group 42 of 0 or below is no measurement
+        const value = app ? dimGeom(app.kind, app.params, 1)?.mm : m42 > 0 ? m42 : NaN;
         if (Number.isFinite(value)) target.value = value;
       }
-      const native = dimensions.get(name), g1 = native?.r.c.indexOf(1) ?? -1, unread = (label) => unreadLabels.add(label);
+      const g1 = native?.r.c.indexOf(1) ?? -1, unread = (label) => unreadLabels.add(label);
       const typed = g1 >= 0 ? String(native.r.v[g1]) : '';      // a native group 1 with <> keeps its words; the block text's one number converts
-      b.entities = relabel(b.entities, factor, target, unread, typed.includes('<>'));
+      const how = { words: typed.includes('<>'), angle: [2, 5].includes((+native?.r.v[native.r.c.indexOf(70)] || 0) & 7),
+        measure: !typed ? NaN : app ? +/\d*\.?\d+/.exec(measuredText(b.entities))?.[0] : m42 > 0 ? m42 / factor : NaN };      // typed text must show the measurement
+      b.entities = relabel(b.entities, factor, target, unread, how);
       if (typed && !typed.includes('<>')) {      // a literal group 1 is a label too: write it converted
-        const e = relabel([text(0, 0, 1, typed)], factor, target, unread)[0];
+        const e = relabel([text(0, 0, 1, typed)], factor, target, unread, how)[0];
         native.r.v[g1] = e.r.v[e.r.c.indexOf(1)];
       }
       const dim = readDim(name, b), measured = measuredText(b.entities), override = readOverride(b.entities);
