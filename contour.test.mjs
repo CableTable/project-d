@@ -156,12 +156,29 @@ test('TODO 199b: Outside on an outline with a dent tighter than the distance gro
         const P = C.loopPoints(st[0], 3);
         assert.ok(!crosses(P), `step ${k + 1} crosses itself`);
         assert.ok(C.loopArea(st[0]) > C.loopArea(loop), 'it grew');
-        if (corners === 'rounded') for (const p of P) assert.ok(Math.min(...orig.map((a, i) => dseg(p, a, orig[(i + 1) % orig.length]))) > 5 * (k + 1) - 0.05, 'every point is a step away');
+        for (const p of P) assert.ok(Math.min(...orig.map((a, i) => dseg(p, a, orig[(i + 1) % orig.length]))) > 5 * (k + 1) - 0.05, 'every point is a step away');
       });
     }
     const inw = C.contour([loop], { dist: 2, steps: 1, outward: false, corners: 'sharp' });
     assert.equal(inw.made, 1, 'Inside still works');
   }
+});
+
+test('TODO 199b fix: Outside on a slot or keyway narrower than 2 × the distance is refused, not written too close to the source', () => {
+  const into = (x0, x1, dep) => [[0, 0], [100, 0], [100, 40], [x1, 40], [x1, 40 - dep], [x0, 40 - dep], [x0, 40], [0, 40]];   // a rectangle with a straight-walled slot in its top edge
+  const shapes = { slot: into(47, 53, 20), 'keyway 2 wide 3 deep': into(49, 51, 3), 'keyway 6 wide 2 deep': into(47, 53, 2) };
+  for (const [name, pts] of Object.entries(shapes)) for (const corners of ['sharp', 'rounded']) {
+    const r = C.contour([poly(pts)], { dist: 5, steps: 1, outward: true, corners });
+    assert.equal(r.made, 0, name + ' ' + corners);
+    assert.deepEqual(r.stopped, { step: 1, why: 'it would close up' }, name + ' ' + corners);
+  }
+  assert.equal(C.contour([poly(shapes.slot)], { dist: 1, steps: 1, outward: true, corners: 'sharp' }).made, 1, 'the same slot at 1 mm is wide enough');
+  // a flared slot: its offset crosses itself, so selfCrosses refuses it first (probe: still refused with the closest-approach check off,
+  // accepted with both off; the closest-approach check alone would refuse it too: no input was found that only selfCrosses stops)
+  const flared = [[0, 0], [100, 0], [100, 40], [56, 40], [54, 38], [54, 37], [46, 37], [46, 38], [44, 40], [0, 40]];
+  assert.equal(C.offsetLoop(poly(flared), 5, { corners: 'sharp' }).ok, false);
+  assert.equal(C.selfCrosses(poly([[0, 0], [10, 10], [10, 0], [0, 10]]), 1e-9), true, 'a bow tie crosses itself');
+  assert.equal(C.selfCrosses(poly([[0, 0], [10, 0], [10, 10], [0, 10]]), 1e-9), false, 'a square does not');
 });
 
 test('areas: a rectangle, a circle, a rounded rectangle, an L; anticlockwise is positive', () => {

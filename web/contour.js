@@ -335,7 +335,31 @@ export function offsetLoop(loop, t, opts = {}) {
   if (!(area > 0) || (t < 0 && area >= area0) || (t > 0 && area <= area0)) return { ok: false, why: 'it would close up' };
   const res = out.filter((s) => dist(s.p0, s.p1) > 1e-12 || s.b);
   if (selfCrosses(res, 1e-6 * size)) return { ok: false, why: 'it would close up' };
+  if (tooClose(res, loop, 0.9 * Math.abs(t))) return { ok: false, why: 'it would close up' };   // a slot or keyway narrower than 2 × t: the walls are eaten
   return { ok: true, loop: res };
+}
+
+/** Does any point of `a` lie closer than `r` to the (arc-sampled) edges of `b`? Edges go in a grid of cells r wide (sampled along their length). */
+function tooClose(a, b, r) {
+  const Q = loopPoints(b, 3), m = Q.length, grid = new Map(), key = (x, y) => (x + 1048576) * 2097152 + (y + 1048576);   // a clash only adds candidates
+  for (let i = 0; i < m; i++) {
+    const u = Q[i], v = Q[(i + 1) % m], n = Math.ceil(dist(u, v) / r);
+    for (let k = 0; k <= n; k++) {
+      const q = n ? add(mul(u, 1 - k / n), mul(v, k / n)) : u, id = key(Math.floor(q[0] / r), Math.floor(q[1] / r));
+      const cell = grid.get(id);
+      if (!cell) grid.set(id, [i]); else if (cell[cell.length - 1] !== i) cell.push(i);
+    }
+  }
+  for (const p of loopPoints(a, 3)) {
+    const cx = Math.floor(p[0] / r), cy = Math.floor(p[1] / r), seen = new Set();
+    for (let x = cx - 2; x <= cx + 2; x++) for (let y = cy - 2; y <= cy + 2; y++) for (const i of grid.get(key(x, y)) || []) {
+      if (seen.has(i)) continue;
+      seen.add(i);
+      const u = Q[i], v = sub(Q[(i + 1) % m], u), w = sub(p, u), l2 = dot(v, v), k = l2 ? Math.max(0, Math.min(1, dot(w, v) / l2)) : 0;
+      if (len(sub(w, mul(v, k))) < r) return true;
+    }
+  }
+  return false;
 }
 
 /** Does the loop (arcs sampled) cross itself? Edges are tested by a sweep along x; edges that share a point or only touch (within eps) do not count. */
