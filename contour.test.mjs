@@ -137,6 +137,33 @@ test('TODO 199: near-repeated closing and middle vertices, Inside and Outside, b
   }
 });
 
+test('TODO 199b: Outside on an outline with a dent tighter than the distance grows it, never crossing itself', () => {
+  const dent = [[0, 0], [100, 0], [100, 40], [55, 40]];                        // a rectangle whose top edge dips into a dent
+  const notch = [...dent, [52, 30], [48, 30], [45, 40], [0, 40]];             // a flat-bottomed notch: its short bottom piece is eaten at 5 mm
+  const curve = [...dent];                                                    // a curved dent of radius 2 (16 short pieces), all eaten at 5 mm
+  for (let k = 0; k <= 16; k++) curve.push([50 + 2 * Math.cos(-PI * k / 16), 40 + 2 * Math.sin(-PI * k / 16)]);
+  curve.push([0, 40]);
+  const dseg = (p, a, b) => { const u = [b[0] - a[0], b[1] - a[1]], k = Math.max(0, Math.min(1, ((p[0] - a[0]) * u[0] + (p[1] - a[1]) * u[1]) / (u[0] * u[0] + u[1] * u[1]))); return Math.hypot(p[0] - a[0] - k * u[0], p[1] - a[1] - k * u[1]); };
+  const cross = (a, b, c) => (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+  const crosses = (P) => { for (let i = 0; i < P.length; i++) for (let j = i + 2; j < P.length; j++) { if (i === 0 && j === P.length - 1) continue; const a = P[i], b = P[(i + 1) % P.length], c = P[j], d = P[(j + 1) % P.length]; if (cross(a, b, c) * cross(a, b, d) < -1e-9 && cross(c, d, a) * cross(c, d, b) < -1e-9) return true; } return false; };
+  for (const pts of [notch, curve]) {
+    const loop = poly(pts), orig = C.loopPoints(loop);
+    for (const corners of ['rounded', 'sharp']) for (const steps of [1, 3]) {
+      const r = C.contour([loop], { dist: 5, steps, outward: true, corners });
+      assert.equal(r.stopped, null, corners + ' ' + steps);
+      assert.equal(r.made, steps);
+      r.steps.forEach((st, k) => {
+        const P = C.loopPoints(st[0], 3);
+        assert.ok(!crosses(P), `step ${k + 1} crosses itself`);
+        assert.ok(C.loopArea(st[0]) > C.loopArea(loop), 'it grew');
+        if (corners === 'rounded') for (const p of P) assert.ok(Math.min(...orig.map((a, i) => dseg(p, a, orig[(i + 1) % orig.length]))) > 5 * (k + 1) - 0.05, 'every point is a step away');
+      });
+    }
+    const inw = C.contour([loop], { dist: 2, steps: 1, outward: false, corners: 'sharp' });
+    assert.equal(inw.made, 1, 'Inside still works');
+  }
+});
+
 test('areas: a rectangle, a circle, a rounded rectangle, an L; anticlockwise is positive', () => {
   near(C.loopArea(rect(0, 0, 100, 60)), 6000);
   near(C.loopArea(C.reverseLoop(rect(0, 0, 100, 60))), -6000);
