@@ -40,7 +40,7 @@ Bishop on again since 2026-11-07 ~20:55 IST (his call; pause = recreate lock `Pr
    The round after a fresh read has one line per fresh line: `fresh <n> -> Q<x> | brief line <y> | not needed: <why>`.
    A command shared by two tickets: the grill lists each caller's input (path or bytes) and the return encoding.
    `node tools/rook.mjs fresh <item> --as king` from the repo: detached, with a queue line and access to `E:/Project B/Claude/support`.
-   Raw command from runs<N> (Bishop paused: replace `claude2.cmd` with `claude3.cmd`):
+   Raw command from runs<N> (Bishop's folder busy: replace `claude2.cmd` with `claude3.cmd`):
    `echo "Fresh read of TODO <item>: read grill-<item>.md, TODO.md row <item> and the code files it names. Max 8 lines: gaps, contradictions, missing cases; for each 'X never Y' answer, quote the code line that keeps it or say not found. Change nothing." | /c/Users/raksh/.local/bin/claude2.cmd -p --model claude-opus-5-5 --effort medium --permission-mode dontAsk --max-budget-usd 2 --output-format text --add-dir "E:/Project B/Claude/Project D" --add-dir "E:/Project B/Claude/support" --allowedTools Read Grep Glob --disallowedTools Agent > fresh-<item>.out 2>&1`
 3. **Build:** a fresh builder session with a brief (spec = the chosen artboard, decisions for DECISIONS.md,
    tests, screenshots light + dark, commit (never push; TODO.md left alone, Rook ticks after the cherry-pick: S35 retro), don't stage `mockups/`). Keep its `session_id`.
@@ -158,7 +158,7 @@ Two claude2 sessions may run at once only on separate files (e.g. a mock-up whil
 - Tickets: `tr -d '\000' < "E:/Project B/Claude/support/tickets.md" | grep '| open |'`
 - Launch refuses: a branch that exists (always new `king/<id>` or `king/<id>fix`, the same in the brief's Branch line), a path not written `../runs<N>/`, over 5 numbered Do lines, a re-grill file not named exactly `runs<N>/grill-<id>-regrill.md`. Fetch only Knight branches; King's share objects. One King review at a time (`ProjectD-king2`).
 - Knight branch into the repo first: `git fetch "<extras>/ProjectD-rowan" <branch>`
-- Review (Bishop paused): Agent `reviewer` with `isolation: worktree` and a brief from `tools/briefs/review.txt`, or `node tools/rook.mjs review <sha> <brief file> <out jsonl> --as king [--from <clone folder> <branch>]`
+- Review: a chained `--review` goes to Bishop (claude2, `ProjectD-s15fix`); King only when that folder is busy. By hand: `node tools/rook.mjs review <sha> <brief file> <out jsonl> [--as king] [--from <clone folder> <branch>]`, or Agent `reviewer` with `isolation: worktree` and a brief from `tools/briefs/review.txt`
 - Review waiting and King and Knight at limit: `reviewer` subagent, under today's Rook cap.
 - King week over 70%: merge-critical work first.
 - Cut-off recipe: builders make a WIP commit of each passing slice (report it in the first line); Rook uses Read then Edit on the brief, then launches in a later message.
@@ -175,11 +175,14 @@ Two claude2 sessions may run at once only on separate files (e.g. a mock-up whil
 - Waiting on a reset: first do the grill and briefs (they need no builder) and launch whatever has headroom; start the timer last, because a gap over 60 min re-caches the whole context (S39: 49k).
 - Fix rounds: King, or Knight when King's 5h is high or its build worktree is busy. More than 2 failed rounds (his rule 2026-11-07): Opus high on King (raw `claude3.cmd` launch with `--model claude-opus-5-5 --effort high` plus a hand-written queue line, untried) until TODO 209; a Rook `builder` Agent only when King is at its limit.
 - Cherry-pick: suite running: no pick in the repo until it ends. `git cherry-pick` the builder's commits, tick TODO.md (`grep -n <ticket> TODO.md`: tick every row of that ticket), commit; push once per handover; UI item: run the Board line now, or write "Board due: <id>" in the resume. Write "ticked" only after the commit that edits that row; quote its subject from `git log -1`.
-- Retro: `node tools/rook.mjs retro --as king` while Bishop is paused (briefs `tools/briefs/retro*.txt`); at a handover `node tools/rook.mjs retro --handover` first (`handover` refuses without it, or `--no-retro`); merge: `node tools/rook.mjs merge <n> <sha>`
-- Handover: At a run end over 140k, start no grill: hand over, and leave the item as the next Rook's TO DO 1. First quote queue line 2 and your context in k; no trigger met and a run fits: launch it instead. Write the resume file `runs<N+1>/resume-rook.txt` (with "Open bugs checked <time>: <ids or none>"), then `node tools/rook.mjs handover <resume> "Rook S<N>x"` (it writes rook-next.txt) and `node tools/rook.mjs next`
+- Retro: `node tools/rook.mjs retro` (Bishop; `--as king` when Bishop is short) (briefs `tools/briefs/retro*.txt`); at a handover `node tools/rook.mjs retro --handover` first (`handover` refuses without it, or `--no-retro`); merge: `node tools/rook.mjs merge <n> <sha>`
+- Handover: At a run end over 140k, start no grill: hand over, and leave the item as the next Rook's TO DO 1. First quote queue line 2 and your context in k; no trigger met and a run fits: launch it instead. Write the resume file `runs<N+1>/resume-rook.txt` (with "Open bugs checked <time>: <ids or none>" and "CI: one ci-watch per push"), then `node tools/rook.mjs handover <resume> "Rook S<N>x"` (it writes rook-next.txt) and `node tools/rook.mjs next`
 - `gh ... --jq`: Bash only (PowerShell 5.1 strips the inner quotes)
 
 Briefs start from `tools/briefs/<kind>.txt` (build, fix, review).
+Builders can't write `.claude/`: Rook edits it in its own commit after the cherry-pick. A tool ticket naming >10 files is split (S39: 219a, 170k).
+Unit tests by hand: `npm.cmd test > "../Project D extras/runs<N>/npmtest-<id>.log" 2>&1; echo exit $?` (never piped into grep).
+Tests write only under mkdtemp, never a `runs<N>` literal (retro39d).
 Write the brief to a file and pass it on **stdin** (a quoted `-p "$(cat …)"` arrived empty once).
 Run `wait` in the background or as a Monitor, never in the foreground: it prints only at the end (S33f). `node tools/rook.mjs wait <run file>... [--ci <sha>]` (as a Monitor command) prints `DONE <file>` when the first run ends, or `CI RUN <id> <conclusion>`; with run files, `CI RUN none <reason>` (no CI run found, e.g. a branch with no PR) is only printed and the wait goes on, while `--ci` alone exits 1 there; every launch (build / knight / review, `--fix` too) is refused with `HANDOVER: context <N>k` once this Rook's context passes 150k (`--over` passes).
 
