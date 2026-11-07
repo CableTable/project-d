@@ -372,7 +372,7 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Bishop**: The family name for workers on Rakshith's second Claude account, launched through `claude2`. Where: `WORKFLOW.md`, Who does what. Avoid: Rook's main account. Old name: Pip (until 2026-10-21).
 
-**Bishop daily cap**: The cumulative weekly allowance of 14% times the number of days since Monday's 15:30 IST reset, carrying unused allowance forward and requiring approval to exceed it. Where: `WORKFLOW.md`, Bishop's daily budget. Avoid: 14% of the five-hour window.
+**Bishop daily cap**: The cumulative weekly allowance of 14% times IST calendar day k, from the reset date as day 1 (Monday's 15:30 IST reset), carrying unused allowance forward and requiring approval to exceed it. Where: `WORKFLOW.md`, Bishop's daily budget. Avoid: 14% of the five-hour window.
 
 **Bishop-build**: The second-account builder for mock-ups, screenshots and overflow builds, with a fresh session for each build or fix round. Where: `CLAUDE.md`, House rules; `WORKFLOW.md`, Who does what.
 

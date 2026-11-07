@@ -78,6 +78,9 @@ export function limitedRows(a, role, model, oldLimits, now, asOf) {
   const h5 = old('5h'), wk = old('week'), keep = h5 && Date.parse(h5.resets) > now ? h5 : { starts: '', resets: '' };
   return [[a, role, model, '5h', 100, '', keep.starts, keep.resets, asOf], ...(wk ? [[a, role, model, 'week', wk.used_pct, wk.cap_pct, wk.starts, wk.resets, wk.as_of]] : [])].map((r) => r.join(','));
 }
+// IST calendar days since the week start, counting the start day (TODO 207bfix: not 24 h blocks); cap 14% a day
+export const capDays = (now, start) => Math.floor((now + 198e5) / 864e5) - Math.floor((start + 198e5) / 864e5) + 1;
+export const weekCap = (now, start) => Math.min(100, 14 * capDays(now, start));
 export const limitedLine =(name, limited, suffix = '') => `${name}: 100%${limited ? ` (resets ${limited})` : ''}${suffix}`;
 
 // Git Bash, not WSL's bash.exe that PowerShell may find first: `git --exec-path` is <Git>/mingw64/libexec/git-core, three levels below <Git>.
@@ -236,9 +239,11 @@ export function failLines(text, log) {
     const name = /^FAIL (.+?)\s*$/.exec(line) || (i > summary && /^\s*✖ (.+?)(?: \(\d[\d.]*ms\))?\s*$/.exec(line));
     if (name) { out.push(name[1]); left = 3; } else if (left && /^\s*[+-] (?!actual - expected)\S/.test(line)) { out.push(line.trim()); left--; }
   }
-  if (out.length) return out.slice(0, 40);
+  const invalid = lines.filter((l) => /^SUITE INVALID/.test(l)).map((l) => l.trim()); // TODO 207a: an invalid suite run (HEAD moved) is never "no failures"
+  if (out.length) return [...invalid, ...out].slice(0, 40);
   const red = /^SUITE unit=(\d+) browser=(\d+)\s*$/m.exec(lines.join('\n'));
-  if (red && (red[1] !== '0' || red[2] !== '0')) return [`red (unit=${red[1]} browser=${red[2]}) but no failing step lines found in ${log}`];
+  if (red && (red[1] !== '0' || red[2] !== '0')) return [...invalid, `red (unit=${red[1]} browser=${red[2]}) but no failing step lines found in ${log}`];
+  if (invalid.length) return invalid;
   return [lines.some((l) => /^##\[error\]/.test(l)) ? `no failing step lines found in ${log}` : `no failures in ${log}`];
 }
 
@@ -351,10 +356,10 @@ if (cmd === 'result') {
     }
     if (a === 'Rowan') for (const w of ['h5', 'wk']) u[w] = codexWindow(u[w], now);
     const wkLen = 7 * 864e5, s = u.wk[1] * 1e3 - wkLen, el = now - s;
-    const cap = a === 'Pip' ? Math.min(100, 14 * Math.ceil((now - s) / 864e5)) : '';
+    const cap = a === 'Pip' || a === 'Rook' ? weekCap(now, s) : '';
     const atReset = el > 12 * 36e5 && u.wk[0] > 0 ? Math.round((u.wk[0] * wkLen) / el) : null;
     const fc = atReset == null ? 'too early' : atReset >= 100 ? `hits 100% ${ist((s + (el * 100) / u.wk[0]) / 1e3)}` : `~${atReset}% at reset`;
-    console.log(`${label(a)}: 5h ${Math.round(u.h5[0])}% (${resetLabel(u.h5[1], ist)}) · week ${Math.round(u.wk[0])}%${cap ? ' of ' + cap + '% cap' : ''} (${resetLabel(u.wk[1], ist)}) · ${fc}${suffix}`);
+    console.log(`${label(a)}: 5h ${Math.round(u.h5[0])}% (${resetLabel(u.h5[1], ist)}) · week ${Math.round(u.wk[0])}%${cap ? ' of ' + cap + '% cap' + (a === 'Rook' ? ' today' : '') : ''} (${resetLabel(u.wk[1], ist)}) · ${fc}${suffix}`);
     if (cached) continue;
     rows.push([a, role, model, '5h', Math.round(u.h5[0]), '', u.h5[1] == null ? '' : iso(u.h5[1] * 1e3 - 5 * 36e5), u.h5[1] == null ? '' : iso(u.h5[1] * 1e3), iso(now)].join(','));
     rows.push([a, role, model, 'week', Math.round(u.wk[0]), cap, u.wk[1] == null ? '' : iso(s), u.wk[1] == null ? '' : iso(u.wk[1] * 1e3), iso(now)].join(','));

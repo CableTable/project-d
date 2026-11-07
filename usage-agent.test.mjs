@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, utimesSync } from 'node:
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { parseTodo, parseCsv, parseTickets, tallyTokens, collectTokens, refreshFailure, firestoreValue, assertKeyOutsideRepo, isRookStale, LONGEST_RUN_MS, collectRookStatus, alertRook } from './tools/usage-agent.mjs';
-import { claudeUsage, usageProbe, limitedLine, limitedRows } from './tools/rook.mjs';
+import { claudeUsage, usageProbe, limitedLine, limitedRows, capDays, weekCap } from './tools/rook.mjs';
 
 test('TODO 198b: Rook stale needs over 30 minutes and a later queue with an ended line', () => {
   const jsonlMtime = Date.parse('2026-11-05T10:00:00Z');
@@ -280,6 +280,17 @@ test('TODO 196a: a limited account writes 5h at 100% (old 5h window kept while a
   assert.equal(rows([h5('2026-11-05T09:00:00Z')])[0], 'Pip,role,model,5h,100,,,,' + asOf); // the old window has reset: blank, nothing to carry
   assert.equal(rows([h5('')]).length, 1); // blank old reset, no week row
   assert.deepEqual(limitedRows('King', 'r', 'm', [wk], now, asOf), ['King,r,m,5h,100,,,,' + asOf]); // another agent's rows are not carried
+});
+
+test('TODO 207bfix: the weekly cap counts IST calendar days from the week start, 14% a day, max 100', () => {
+  const t = Date.parse;
+  const rook = t('2026-11-01T15:30:00+05:30'), pip = t('2026-11-02T15:30:00+05:30');
+  assert.equal(weekCap(t('2026-11-01T16:00:00+05:30'), rook), 14);
+  assert.equal(weekCap(t('2026-11-07T07:53:00+05:30'), rook), 98);
+  assert.equal(weekCap(t('2026-11-08T04:00:00+05:30'), rook), 100);
+  assert.equal(weekCap(t('2026-11-07T07:53:00+05:30'), pip), 84);
+  assert.equal(capDays(t('2026-11-01T23:59:00+05:30'), rook), 1); // still the start day
+  assert.equal(capDays(t('2026-11-02T00:01:00+05:30'), rook), 2); // IST midnight starts day 2
 });
 
 test('TODO keeps every section, continuation text and section-local numbers, with done winning duplicates', () => {

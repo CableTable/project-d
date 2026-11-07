@@ -15,8 +15,9 @@ export function rookStop(input, { read, exists, git, extras = EXTRAS }) {
     if (!n) return '';
     const head = git('rev-parse', 'HEAD'), dir = `${extras}/runs${n}`;
     if (git('branch', '-r', '--contains', head)) return '';
-    const green = [head, head.slice(0, 7)].some((h) => { try { return /SUITE unit=0 browser=0/.test(read(`${dir}/suite-${h}.log`)); } catch { return false; } });
-    if (green && !read(`${dir}/queue.txt`).includes(': running')) return 'Suite green: push now (git push)';
+    const logs = [head, head.slice(0, 7)].map((h) => { try { return read(`${dir}/suite-${h}.log`); } catch { return ''; } });
+    const invalid = logs.some((l) => /^SUITE INVALID/m.test(l)), green = !invalid && logs.some((l) => /SUITE unit=0 browser=0/.test(l));
+    if ((green || invalid) && !read(`${dir}/queue.txt`).includes(': running')) return green ? 'Suite green: push now (git push)' : `Suite invalid (HEAD moved during the run): rerun node tools/rook.mjs suite ${head}`;
   } catch { /* any read failing: no block */ }
   return '';
 }

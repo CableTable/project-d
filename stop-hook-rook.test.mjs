@@ -39,6 +39,9 @@ test('TODO 190a: rookStop blocks "Suite green: push now" only for a local-only h
   assert.equal(check({}, { files: { ...green, [`${dir}/suite-${HEAD}.log`]: undefined, [`${dir}/suite-${HEAD.slice(0, 7)}.log`]: 'SUITE unit=0 browser=0' } }), PUSH, 'short sha log');
   assert.equal(check({}, { files: { ...green, [`${dir}/suite-${HEAD}.log`]: 'SUITE unit=0 browser=1\n' } }), '', 'browser red');
   assert.equal(check({}, { files: { ...green, [`${dir}/suite-${HEAD}.log`]: 'SUITE unit=1 browser=0\n' } }), '', 'unit red');
+  const INVALID = `SUITE INVALID head abc -> def\nSUITE unit=0 browser=0\n`;
+  assert.equal(check({}, { files: { ...green, [`${dir}/suite-${HEAD}.log`]: INVALID } }), `Suite invalid (HEAD moved during the run): rerun node tools/rook.mjs suite ${HEAD}`, 'TODO 207a: invalid never green');
+  assert.equal(check({}, { files: { ...green, [`${dir}/suite-${HEAD}.log`]: INVALID, [`${dir}/queue.txt`]: 'build b -> c: running\n' } }), '', 'invalid but a run going');
   assert.equal(check({}, { files: { ...green, [`${dir}/queue.txt`]: 'a\nbuild b -> c: running\n' } }), '', 'a run going');
   assert.equal(check({}, { files: green, remote: '  origin/claude/session35' }), '', 'already pushed');
   assert.equal(check({}, { files: green, branch: 'king/190a' }), '', 'not a session branch');
