@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import { EventEmitter } from 'node:events';
 import { dedupePath, acad, acadArgs, board, boardArgs, pawn, pawnArgs, queueLineOf, retro, retroArgs, suite, launchFailed, launchRun, runningNote, parseReview, parseBuild, parseKnight, reviewerArgs, buildArgs, knightArgs, commandLine, review, build, knight, lintBrief, briefProblems, isFixBrief, fixRoundRefusal } from './rook-launch.mjs';
 import * as launches from './rook-launch.mjs';
-import { LONGEST_RUN_MS } from '../tools/usage-agent.mjs';
+import { LONGEST_RUN_MS } from './usage-agent.mjs';
 
 const X = 'E:/Project B/Claude/Project D extras';
 const REVIEWER = 'claude2.cmd -p --agent reviewer --model claude-opus-5-5 --effort medium --permission-mode dontAsk --max-budget-usd 6 '

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { isLockStale, shouldRefresh } from './tools/usage-agent-policy.mjs';
+import { isLockStale, shouldRefresh } from './usage-agent-policy.mjs';
 
 test('locks before boot are stale even when their PID is reused', () => {
   assert.equal(isLockStale(99, 100), true);

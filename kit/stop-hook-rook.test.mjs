@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { rookStop } from './tools/stop-hook-rook.mjs';
+import { rookStop } from './stop-hook-rook.mjs';
 
 const X = 'X:/extras', ME = '11111111-1111-4111-8111-111111111111', NEXT = '22222222-2222-4222-8222-222222222222';
 const HEAD = 'abcdef0123456789abcdef0123456789abcdef01';

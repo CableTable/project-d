@@ -1,8 +1,9 @@
-// tools/fg-hook.mjs: King's builder (account 3, agent_type builder) can't background Bash / PowerShell or use Monitor.
+// kit/fg-hook.mjs: King's builder (account 3, agent_type builder) can't background Bash / PowerShell or use Monitor.
 import { spawnSync } from 'node:child_process';
 import assert from 'node:assert/strict';
+import { fileURLToPath } from 'node:url';
 
-const run = (input, dir) => spawnSync(process.execPath, ['tools/fg-hook.mjs'], {
+const run = (input, dir) => spawnSync(process.execPath, [fileURLToPath(new URL('./fg-hook.mjs', import.meta.url))], {
   input: typeof input === 'string' ? input : JSON.stringify(input),
   encoding: 'utf8',
   env: { ...process.env, CLAUDE_CONFIG_DIR: dir },

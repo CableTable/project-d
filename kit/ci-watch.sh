@@ -5,7 +5,6 @@
 # Uses only gh's own --jq (jq is not installed on this PC, so a jq pipe stays silent forever).
 repo=""
 if [ "$#" -ge 2 ] && [ "${@: -2:1}" = "--repo" ]; then repo=${@: -1}; set -- "${@:1:$#-2}"; fi
-[ -n "$repo" ] || repo=$(node "$(dirname "$0")/rook.mjs" repo) || { echo "no github repo in rook.config.json"; exit 2; }
 run=""
 if [ "$1" = "--run" ] && [ "$#" = 2 ] && [ -n "$2" ]; then
   run=$2
@@ -15,6 +14,7 @@ elif [ "$#" = 1 ] && [ -n "$1" ] && [ "$1" != "--run" ]; then
 else
   echo "usage: ci-watch.sh <sha> | --run <id> [--repo <owner/repo>]"; exit 2
 fi
+[ -n "$repo" ] || repo=$(node "$(dirname "$0")/rook.mjs" repo) || { echo "no github repo in rook.config.json"; exit 2; }
 prev=""; fails=0
 while :; do
   id=$run

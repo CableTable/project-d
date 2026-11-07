@@ -3,9 +3,9 @@ import assert from 'node:assert/strict';
 import { mkdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
-import { parseTodo } from '../tools/usage-agent.mjs';
 
-const todo = parseTodo(readFileSync(new URL('../TODO.md', import.meta.url), 'utf8'));
+// A small parsed TODO (what the agent's parseTodo in kit/usage-agent.mjs makes): written out, so this test reads no kit file.
+const todo = {"sections":[{"title":"Whole TODO","items":[{"num":66,"title":"More Modify tools","size":"L","done":false,"text":"(L): Move, copy and rotate.","substeps":[{"num":"66a","done":true,"text":"Move objects with one undo."},{"num":"66b","done":false,"text":"Copy objects."}]},{"num":95,"title":"Open item","size":"M","done":false,"text":"(M): Open item."},{"num":98,"title":"Finished","size":"S","done":true,"text":"(S): Built."}]}]};
 const payload = '<img src=x onerror="window.injected=true">';
 todo.sections.push({ title: payload, items: [{ num: 1, title: payload, size: 'S', done: false, text: payload + 'x'.repeat(200) }] });
 const firebase = `

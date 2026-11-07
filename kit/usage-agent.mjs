@@ -5,15 +5,12 @@ import { promisify } from 'node:util';
 import { appendFileSync, closeSync, createReadStream, existsSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, rmdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { readdir, stat } from 'node:fs/promises';
 import { createInterface } from 'node:readline';
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { homedir, uptime } from 'node:os';
 import { isLockStale, shouldRefresh } from './usage-agent-policy.mjs';
-import { kitUrl } from './kit.mjs';
-const { project } = await import(kitUrl('project.mjs'));
-
-const repo = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+import { ROOT as repo, project } from './project.mjs'; // the project's checkout (ROOK_ROOT, else the folder it runs in), not this file's folder: the kit may sit outside it
 const run = promisify(execFile);
 
 export const LONGEST_RUN_MS = 3 * 3600_000; // shortcut: a guess at the longest build / review run, raise it if a real run outlasts it

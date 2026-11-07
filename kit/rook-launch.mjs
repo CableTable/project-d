@@ -4,15 +4,14 @@ import { execFileSync, execSync, spawn } from 'node:child_process';
 import { existsSync, openSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { gateOps, tickIds } from './handover-gate.mjs';
 import { setRunLine } from './rook-end.mjs';
 import { retroSessions } from './retro-brief.mjs';
 import { ROOT, fillProject, project, projectName, unknownKeys, winCmd } from './project.mjs';
 
 const KIT = dirname(fileURLToPath(import.meta.url)); // the kit's own files: briefs, helper scripts
-// shortcut: the usage agent and csv stay in the project until TODO 219d; upgrade when they move into the kit.
-const { LONGEST_RUN_MS, parseCsv } = await import(pathToFileURL(join(ROOT, 'tools', 'usage-agent.mjs')).href);
+import { LONGEST_RUN_MS, parseCsv } from './usage-agent.mjs';
 export const REPO = projectName === 'D' ? ROOT : project.main; // the project's repo: git, the suite, the session branch
 export const EXTRAS = project.extras;
 const MAIN_GIT = project.mainGit;

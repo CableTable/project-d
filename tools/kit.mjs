@@ -14,12 +14,14 @@ export const KIT = kitDir(existsSync(HQ) ? JSON.parse(readFileSync(HQ, 'utf8')) 
 export const kitFile = (name) => join(KIT, name);
 export const kitUrl = (name) => pathToFileURL(kitFile(name)).href;
 
-// What a shim runs: the arguments to run a kit file with `args`, same arguments after it (.sh runs under bash).
-export const kitCommand = (name, args) => (name.endsWith('.sh') ? ['bash', [kitFile(name), ...args]] : [process.execPath, [kitFile(name), ...args]]);
+// What a shim runs: the arguments to run a kit file with `args`, same arguments after it (.sh runs under `bash`, which runKit gives as Git Bash).
+export const kitCommand = (name, args, bash = 'bash') => (name.endsWith('.sh') ? [bash, [kitFile(name), ...args]] : [process.execPath, [kitFile(name), ...args]]);
 
-// The shims (tools/rook.mjs, base-check.mjs, ci-watch.sh) call this: the kit's file with the same arguments, the same exit code.
-export function runKit(name, args = process.argv.slice(2)) {
-  const [bin, argv] = kitCommand(name, args);
+// The shims (tools/rook.mjs, base-check.mjs, ci-watch.sh, the hooks) call this: the kit's file with the same arguments, stdin and exit code.
+// A missing kit file is one line and exit 1; `hook` shims exit 0 instead (a hook must not block a session).
+export async function runKit(name, args = process.argv.slice(2), hook = false) {
+  if (!existsSync(kitFile(name))) { console.error(`${name}: not found in the kit folder ${KIT} (hq.json "kit")`); process.exit(hook ? 0 : 1); }
+  const [bin, argv] = kitCommand(name, args, name.endsWith('.sh') ? (await import(kitUrl('rook.mjs'))).gitBash() : undefined); // Git Bash, not the WSL bash PATH may find first
   const r = spawnSync(bin, argv, { stdio: 'inherit' });
   if (r.error) console.error(`${name}: ${r.error.message}`);
   process.exit(r.status ?? 1);

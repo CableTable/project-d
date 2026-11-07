@@ -5,8 +5,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
 import { browserArgs, expandNeeds, shardSelector } from './tools/browser-shards.mjs';
-import { kitUrl } from './tools/kit.mjs';
-const { RUNNING_PROMPT } = await import(kitUrl('running-prompt.mjs'));
+const RUNNING_PROMPT = /Specify|Next point|Click inside|Select destination|Type the text|Esc (?:ends|cancels)[).:\s]*$/; // the command-bar prompt of a command still running (runStep fails a step that leaves one on); D's own copy, so no test reads a kit file
 import { chromium } from 'playwright';
 import { dimParams, readDim, dimGeom, GAP_MARK_CAP, addDimension, buildDim, dimOfEntity, lineOf as lineEnds } from './web/edit.js';
 import { read as readLeader, build as buildLeader } from './web/leader.js';

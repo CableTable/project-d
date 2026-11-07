@@ -2,11 +2,10 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { runInNewContext } from 'node:vm';
-import { kitUrl } from './tools/kit.mjs';
-const { project, winCmd } = await import(kitUrl('project.mjs'));
+import { project, winCmd } from './project.mjs';
 
 // Run the CLI with fake stdin, git and npm; no live hook or test subprocesses.
-const source = readFileSync(new URL('./tools/stop-hook.mjs', import.meta.url), 'utf8').replace(/^(import|const \{ project, winCmd \} = await import).*;\r?$/gm, '');
+const source = readFileSync(new URL('./stop-hook.mjs', import.meta.url), 'utf8').replace(/^(import|const \{ project, winCmd \} = await import).*;\r?$/gm, '');
 const STATUS = 'git status --porcelain -- web tools package.json';
 const LOG = 'git log HEAD --not --remotes --name-only --format= -- web tools package.json';
 

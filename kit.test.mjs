@@ -29,6 +29,7 @@ function fakeKit() {
   const dir = mkdtempSync(join(tmpdir(), 'kit-')).replaceAll('\\', '/'), kit = `${dir}/the-kit`;
   mkdirSync(kit);
   for (const [file, code] of [['rook.mjs', 3], ['base-check.mjs', 4]]) writeFileSync(`${kit}/${file}`, `process.stdout.write(JSON.stringify([process.env.ROOK_ROOT, ...process.argv.slice(2)])); process.exit(${code});`);
+  for (const file of ['fg-hook.mjs', 'stop-hook.mjs']) writeFileSync(`${kit}/${file}`, `import { readFileSync } from 'node:fs'; process.stdout.write(readFileSync(0, 'utf8')); process.exit(2);`); // a hook that blocks, echoing its stdin
   writeFileSync(`${dir}/hq.json`, JSON.stringify({ projects: {}, kit }));
   return { dir, hq: `${dir}/hq.json` };
 }
@@ -47,9 +48,32 @@ test('TODO 219c: a shim runs the kit file from hq.json "kit" with the same argum
   } finally { rmSync(w.dir, { recursive: true, force: true }); }
 });
 
-test('TODO 219c: the shim and the kit file print the same usage line and give the same exit code', () => {
-  const via = spawnSync(process.execPath, ['tools/rook.mjs', 'nonsense'], { encoding: 'utf8' });
-  const own = spawnSync(process.execPath, [kitFile('rook.mjs'), 'nonsense'], { encoding: 'utf8' });
-  assert.match(own.stdout, /^usage: node tools\/rook\.mjs usage/);
-  assert.deepEqual([via.status, via.stdout], [own.status, own.stdout]);
+test('TODO 219c2: the hook shims pass stdin and the exit code on; a missing kit folder is one stderr line, exit 0 for a hook, exit 1 for the rest', () => {
+  const w = fakeKit();
+  try {
+    for (const shim of ['tools/fg-hook.mjs', 'tools/stop-hook.mjs']) {
+      const r = spawnSync(process.execPath, [shim], { input: '{"tool_name":"Bash"}', encoding: 'utf8', env: { ...process.env, ROOK_HQ: w.hq } });
+      assert.deepEqual([r.status, r.stdout], [2, '{"tool_name":"Bash"}'], shim);
+    }
+    writeFileSync(`${w.dir}/gone.json`, JSON.stringify({ projects: {}, kit: `${w.dir}/no-such-kit` }));
+    for (const [shim, code] of [['tools/fg-hook.mjs', 0], ['tools/stop-hook.mjs', 0], ['tools/rook.mjs', 1], ['tools/base-check.mjs', 1]]) {
+      const r = spawnSync(process.execPath, [shim, 'x'], { input: '{}', encoding: 'utf8', env: { ...process.env, ROOK_HQ: `${w.dir}/gone.json` } });
+      assert.equal(r.status, code, shim);
+      assert.equal(r.stdout, '', shim);
+      assert.equal(r.stderr.trim().split('\n').length, 1, `${shim}: ${r.stderr}`);
+    }
+    assert.deepEqual(kitCommand('ci-watch.sh', ['abc'], 'C:/Git/bin/bash.exe'), ['C:/Git/bin/bash.exe', [kitFile('ci-watch.sh'), 'abc']]);
+  } finally { rmSync(w.dir, { recursive: true, force: true }); }
+});
+
+// The D tests need no kit folder: the unit set (but this file, which would run itself) passes with hq.json "kit" naming a folder that is not there.
+test('TODO 219c2: the unit set passes when hq.json "kit" is a missing folder', { timeout: 900_000 }, () => {
+  const w = fakeKit();
+  try {
+    writeFileSync(`${w.dir}/gone.json`, JSON.stringify({ projects: {}, kit: `${w.dir}/no-such-kit` }));
+    const { NODE_TEST_CONTEXT, ...env } = process.env; // inside a node --test run the inner one would report success whatever it found
+    const r = spawnSync(process.execPath, ['tools/unit.mjs', '--skip', 'kit.test.mjs'], { encoding: 'utf8', env: { ...env, ROOK_HQ: `${w.dir}/gone.json` }, maxBuffer: 1 << 28 });
+    assert.equal(r.status, 0, (r.stdout + r.stderr).split('\n').filter((l) => /✖|^ℹ (tests|pass|fail)/.test(l)).join('\n'));
+    assert.match(r.stdout, /^ℹ pass [1-9]/m);
+  } finally { rmSync(w.dir, { recursive: true, force: true }); }
 });

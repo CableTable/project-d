@@ -40,10 +40,9 @@ import { firstDone, peakContext } from './rook-result.mjs';
 import { randomUUID } from 'node:crypto';
 import { review, build, knight, suite, retro, pawn, acad, fresh, board, gate, handoverRetroName, runningNote, printRookContext, dedupePath, EXTRAS, REPO } from './rook-launch.mjs';
 
-// shortcut: the usage agent and the usage page's window maths stay in the project until TODO 219d; upgrade when they move into the kit.
-const fromRoot = (path) => import(pathToFileURL(join(ROOT, path)).href);
-const { parseCsv } = await fromRoot('tools/usage-agent.mjs');
-const { codexWindow, resetLabel } = await fromRoot('usage-site/public/usage-window.js');
+import { parseCsv } from './usage-agent.mjs';
+// shortcut: the usage page's window maths stay in the project until TODO 219d; upgrade when they move into the kit.
+const { codexWindow, resetLabel } = await import(pathToFileURL(join(ROOT, 'usage-site/public/usage-window.js')).href);
 
 stripProjectFlag(process.argv); // TODO 219b: project.mjs has already read `--project <name>`; the commands below parse their own flags only
 dedupePath(process.env); // TODO 206: every child below (and Rook.lnk's) inherits a PATH cmd.exe keeps
