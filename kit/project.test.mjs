@@ -170,7 +170,8 @@ console.log = () => {};
 L.suite(['abc1234', '--over'], x);
 process.stdout.write(JSON.stringify({ extras: L.EXTRAS, repo: L.REPO, accounts: L.ACCOUNTS, build: L.buildArgs(), board: L.boardArgs(), suite: launches[0].slice(1, 3) }));
 `);
-    const run = (...flags) => spawnSync(process.execPath, [script, ...flags], { encoding: 'utf8', env: { ...process.env, ROOK_HQ: w.hqFile } });
+    const { FORCE_COLOR, ...plain } = process.env; // FORCE_COLOR makes node add a warning line to the child's stderr
+    const run = (...flags) => spawnSync(process.execPath, [script, ...flags], { encoding: 'utf8', env: { ...plain, ROOK_HQ: w.hqFile } });
     const r = JSON.parse(run('--project', 'R').stdout);
     assert.equal(r.extras, `${w.dir}/runs`);
     assert.equal(r.repo, w.r);

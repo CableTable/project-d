@@ -66,12 +66,14 @@ test('TODO 219c2: the hook shims pass stdin and the exit code on; a missing kit 
   } finally { rmSync(w.dir, { recursive: true, force: true }); }
 });
 
-// A nested node --test run: no NODE_TEST_CONTEXT (inside a node --test run the inner one would report success whatever it found) and no FORCE_COLOR (it colours the "ℹ pass" line).
+// A nested node --test run: no NODE_TEST_CONTEXT (inside a node --test run the inner one would report success whatever it found), no FORCE_COLOR (it colours the count line), NO_COLOR set.
+// The count line is "ℹ pass N" (spec reporter, a TTY or Node 23+) or "# pass N" (TAP, CI without a TTY): both are read.
 const nested = (args, opts) => {
   const { NODE_TEST_CONTEXT, FORCE_COLOR, ...env } = process.env;
-  const r = spawnSync(process.execPath, args, { encoding: 'utf8', maxBuffer: 1 << 28, ...opts, env: { ...env, ...opts.env } });
-  assert.equal(r.status, 0, (r.stdout + r.stderr).split('\n').filter((l) => /✖|^ℹ (tests|pass|fail)|Error/.test(l)).join('\n'));
-  assert.match(r.stdout, /^ℹ pass [1-9]/m);
+  const r = spawnSync(process.execPath, args, { encoding: 'utf8', maxBuffer: 1 << 28, ...opts, env: { ...env, NO_COLOR: '1', ...opts.env } });
+  assert.equal(r.status, 0, (r.stdout + r.stderr).split('\n').filter((l) => /✖|^not ok|^(ℹ|#) (tests|pass|fail)|Error/.test(l)).join('\n'));
+  assert.match(r.stdout, /^(ℹ|#) pass [1-9]/m);
+  assert.match(r.stdout, /^(ℹ|#) fail 0$/m);
 };
 
 // The D tests need no kit folder: the unit set (but this file, which would run itself) passes with hq.json "kit" naming a folder that is not there.
