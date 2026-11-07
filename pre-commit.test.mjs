@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, copyFileSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { test } from 'node:test';
@@ -49,6 +49,32 @@ test('TODO 169: pre-commit refuses mixed staged endings, allows uniform endings 
     result = git('commit', '-m', 'two');
     assert.equal(result.status, 1, result.stdout + result.stderr);
     assert.ok(result.stderr.includes('in new name.txt') && result.stderr.includes('in other file.txt'), result.stderr);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+// TODO 219c: moved here from base-check.test.mjs (the hook is the project's, not the kit's).
+test('the pre-commit hook refuses a staged conflict marker and names the file; a marker mid-line passes', () => {
+  const repo = mkdtempSync(join(tmpdir(), 'hook-')), hooks = join(repo, '.git/hooks');
+  const git = (...a) => spawnSync('git', ['-C', repo, '-c', `core.hooksPath=${hooks}`, '-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', ...a], { encoding: 'utf8' });
+  try {
+    git('init', '-q');
+    mkdirSync(hooks, { recursive: true });
+    copyFileSync('tools/hooks/pre-commit', join(hooks, 'pre-commit'));
+    chmodSync(join(hooks, 'pre-commit'), 0o755);
+    writeFileSync(join(repo, 'ok.txt'), 'fine\nnot a <<<<<<< marker\n');
+    git('add', '.');
+    assert.equal(git('commit', '-m', 'ok').status, 0);
+    writeFileSync(join(repo, 'ok.txt'), 'staged update\n');
+    git('add', 'ok.txt');
+    writeFileSync(join(repo, 'ok.txt'), '<<<<<<< HEAD\n');
+    assert.equal(git('commit', '-m', 'unstaged marker').status, 0);
+    writeFileSync(join(repo, 'merged.js'), 'a\n<<<<<<< HEAD\nb\n=======\nc\n>>>>>>> branch\n');
+    git('add', '.');
+    const r = git('commit', '-m', 'bad');
+    assert.notEqual(r.status, 0);
+    assert.match(r.stderr, /merged\.js/);
   } finally {
     rmSync(repo, { recursive: true, force: true });
   }

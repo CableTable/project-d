@@ -170,8 +170,10 @@ export function todayCap(who, now) {
   if (anchor == null) return null;
   const day = new Date(now + 5.5 * 3_600_000).toISOString().slice(0, 10);
   if (who === 'Rook' && day in ROOK_THIS_WEEK) return ROOK_THIS_WEEK[day];
-  const k = Math.floor((((now - anchor) % (7 * DAY)) + 7 * DAY) % (7 * DAY) / DAY) + 1; // whole days since the reset + 1
-  return 14 * k;
+  // tools/rook.mjs capDays / weekCap rule; this mod is installed without the rest of tools/.
+  const start = anchor + Math.floor((now - anchor) / (7 * DAY)) * 7 * DAY;
+  const k = Math.floor((now + 198e5) / DAY) - Math.floor((start + 198e5) / DAY) + 1;
+  return Math.min(100, 14 * k);
 }
 // The 10-cell bar as kinds, the cap marker on the cell holding the cap: ['fill' | 'empty' | 'cap' x 10].
 export function barParts(pct, cap) {

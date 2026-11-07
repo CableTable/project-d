@@ -13,8 +13,9 @@
 // How a corner is made: where the offset pieces would leave a gap (the outside of a turn) a sharp corner extends both to meet (a miter,
 // flattened when it would be longer than 4 × the distance, i.e. under about 29°) and a rounded one adds an arc of radius d about the
 // original corner; where they overlap they are cut at their crossing. A step that would close the outline up (a piece turned round or
-// gone) is not made. KNOWN LIMIT: a concave outline whose offset runs into itself (a narrow notch or neck, a thin leg collapsing
-// before the rest) is not split into several outlines: such a step is refused, or comes out crossing itself.
+// gone) is not made. A piece the offset eats (a short piece on a concave stretch tighter than the distance) is dropped, the most eaten first.
+// KNOWN LIMIT: a concave outline whose offset runs into itself (a narrow notch or neck, a thin leg collapsing before the rest) is not split
+// into several outlines: such a step is refused (a result that crosses itself is refused too).
 import { mapply } from './drawing.js';
 import { line, arc, circle } from './dxf-write.js';
 import { chainAt, DIM_LAYER } from './edit.js';
@@ -270,7 +271,7 @@ export function offsetLoop(loop, t, opts = {}) {
     while (pieces[j].gone && j !== i) { V = pieces[j].c; j = (j + 1) % pieces.length; }
     ring.push({ ...p, V });
   }
-  const n = ring.length;
+  let n = ring.length;
   // 2. the corner after each piece
   const corner = (i, round) => {
     const A = ring[i], B = ring[(i + 1) % n], ua = endTan(A), ub = startTan(B), cr = crs(ua, ub), dt = dot(ua, ub);
@@ -294,14 +295,22 @@ export function offsetLoop(loop, t, opts = {}) {
     const s = ring[i], jin = joins[(i + n - 1) % n], jout = joins[i];
     return (jin.X ? grow(s, jin.X, false) : 0) + (jout.X ? grow(s, jout.X, true) : 0);
   };
-  // Retry only the two corners beside a piece lost to rounding, before emitting any neighbours.
-  for (let i = 0; i < n; i++) {
-    if (extent(ring[i]) + growth(i) > tolJ * 10) continue;
+  // Retry only the two corners beside a piece lost to rounding, before emitting any neighbours. A piece still eaten (the offset of a short piece
+  // on a concave stretch tighter than the distance) is dropped, the most eaten first, and its neighbours meet at their own corner; repeat until none is left.
+  for (;;) {
+    let i = -1, low = tolJ * 10;
+    for (let k = 0; k < n; k++) { const v = extent(ring[k]) + growth(k); if (v <= low) { i = k; low = v; } }
+    if (i < 0) break;
     const prev = (i + n - 1) % n;
     if (joins[prev].kind === 'round' || joins[i].kind === 'round') {
       joins[prev] = corner(prev, false); joins[i] = corner(i, false);
     }
-    if (extent(ring[i]) + growth(i) <= tolJ * 10) return { ok: false, why: 'it would close up' };
+    if (extent(ring[i]) + growth(i) > tolJ * 10) continue;
+    if (n <= 3) return { ok: false, why: 'it would close up' };                // a triangle losing a side is a sliver: closed up
+    ring[prev].V = ring[i].V;
+    ring.splice(i, 1); joins.splice(i, 1); n--;
+    const p = i === 0 ? n - 1 : prev;                                           // prev's index after the splice (it shifts when i was 0)
+    joins[p] = corner(p, rounded);
   }
   // 3. each piece with its ends moved to its corners; the pieces for round and bevel corners between
   const out = [];
@@ -324,7 +333,47 @@ export function offsetLoop(loop, t, opts = {}) {
   }
   const area = loopArea(out);
   if (!(area > 0) || (t < 0 && area >= area0) || (t > 0 && area <= area0)) return { ok: false, why: 'it would close up' };
-  return { ok: true, loop: out.filter((s) => dist(s.p0, s.p1) > 1e-12 || s.b) };
+  const res = out.filter((s) => dist(s.p0, s.p1) > 1e-12 || s.b);
+  if (selfCrosses(res, 1e-6 * size)) return { ok: false, why: 'it would close up' };
+  if (tooClose(res, loop, 0.9 * Math.abs(t))) return { ok: false, why: 'it would close up' };   // a slot or keyway narrower than 2 × t: the walls are eaten
+  return { ok: true, loop: res };
+}
+
+/** Does any point of `a` lie closer than `r` to the (arc-sampled) edges of `b`? Edges go in a grid of cells r wide (sampled along their length). */
+function tooClose(a, b, r) {
+  const Q = loopPoints(b, 3), m = Q.length, grid = new Map(), key = (x, y) => (x + 1048576) * 2097152 + (y + 1048576);   // a clash only adds candidates
+  for (let i = 0; i < m; i++) {
+    const u = Q[i], v = Q[(i + 1) % m], n = Math.ceil(dist(u, v) / r);
+    for (let k = 0; k <= n; k++) {
+      const q = n ? add(mul(u, 1 - k / n), mul(v, k / n)) : u, id = key(Math.floor(q[0] / r), Math.floor(q[1] / r));
+      const cell = grid.get(id);
+      if (!cell) grid.set(id, [i]); else if (cell[cell.length - 1] !== i) cell.push(i);
+    }
+  }
+  for (const p of loopPoints(a, 3)) {
+    const cx = Math.floor(p[0] / r), cy = Math.floor(p[1] / r), seen = new Set();
+    for (let x = cx - 2; x <= cx + 2; x++) for (let y = cy - 2; y <= cy + 2; y++) for (const i of grid.get(key(x, y)) || []) {
+      if (seen.has(i)) continue;
+      seen.add(i);
+      const u = Q[i], v = sub(Q[(i + 1) % m], u), w = sub(p, u), l2 = dot(v, v), k = l2 ? Math.max(0, Math.min(1, dot(w, v) / l2)) : 0;
+      if (len(sub(w, mul(v, k))) < r) return true;
+    }
+  }
+  return false;
+}
+
+/** Does the loop (arcs sampled) cross itself? Edges are tested by a sweep along x; edges that share a point or only touch (within eps) do not count. */
+export function selfCrosses(loop, eps) {
+  const pts = loopPoints(loop, 3), m = pts.length;
+  const E = pts.map((a, i) => { const b = pts[(i + 1) % m]; return { a, b, lo: Math.min(a[0], b[0]), hi: Math.max(a[0], b[0]), i }; }).sort((p, q) => p.lo - q.lo);
+  const side = (p, q, r) => crs(sub(q, p), sub(r, p)) / (dist(p, q) || 1);          // signed distance of r from the line p→q
+  const apart = (u, v, r, s) => { const d1 = side(u, v, r), d2 = side(u, v, s); return (d1 > eps && d2 < -eps) || (d1 < -eps && d2 > eps); };
+  for (let x = 0; x < m; x++) for (let y = x + 1; y < m && E[y].lo <= E[x].hi; y++) {
+    const A = E[x], B = E[y], gap = Math.abs(A.i - B.i);
+    if (gap === 1 || gap === m - 1) continue;
+    if (apart(A.a, A.b, B.a, B.b) && apart(B.a, B.b, A.a, A.b)) return true;
+  }
+  return false;
 }
 
 // ---------------------------------------------------------------- several loops, several steps

@@ -3,18 +3,9 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { chromium } from 'playwright';
-import { parseTodo } from './usage-agent.mjs';
 
-const todoFixture = parseTodo(`## Whole TODO
-66. **More Modify tools** (L): Move, copy and rotate.
-    66a. ✅ Move objects with one undo.
-    66b. Copy objects; <img src=x onerror=alert(1)> is plain text.
-    66c. Rotate about a chosen pivot.
-95. **<img src=x>** (M): Open item (a built, b next).
-98. ✅ **Finished** (S): Built.
-    98a. ✅ First fix.
-    98b. ✅ Second fix.
-`);
+// What the agent's parseTodo (kit/usage-agent.mjs) makes of a small TODO.md: written out, so this test reads no kit file.
+const todoFixture = {"sections":[{"title":"Whole TODO","items":[{"num":66,"title":"More Modify tools","size":"L","done":false,"text":"(L): Move, copy and rotate.","substeps":[{"num":"66a","done":true,"text":"Move objects with one undo."},{"num":"66b","done":false,"text":"Copy objects; <img src=x onerror=alert(1)> is plain text."},{"num":"66c","done":false,"text":"Rotate about a chosen pivot."}]},{"num":95,"title":"<img src=x>","size":"M","done":false,"text":"(M): Open item (a built, b next)."},{"num":98,"title":"Finished","size":"S","done":true,"text":"(S): Built.","substeps":[{"num":"98a","done":true,"text":"First fix."},{"num":"98b","done":true,"text":"Second fix."}]}]}]};
 
 const authModule = `
 export const getAuth = () => ({currentUser: {uid: 'owner'}});

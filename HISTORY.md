@@ -314,3 +314,6 @@ all its text. New rules: small lookups Rook does itself; every report has Result
 
 
 **2026-11-06, session 38 (Rook S38d-e): dimensions drive the drawing.** TODO 76 is done: double-click an aligned, horizontal or vertical dimension, type a number, and the LINE (76a-b) or a rectangle (76d, the world right / top side moves) follows; with no line the number becomes text and the status says why (76c). 76e turned out already built (Stretch has followed dims since 97g2). Two Contour bugs from his hexagon (199, 200) and his layout drag snap marker (201) were fixed the same day. Reviews and small fixes ran as subagents on the main account while Bishop was paused and King near its 5h limit.
+
+
+**2026-11-07, session 38 merged (PR #39, `796e6b0`, 05:00 IST standing OK).** Besides DWG open and dimension-driven edits: dynamic input for every drawing tool (TODO 106a-d, covering 69; 106a took three fix rounds over typed negative and relative coordinates), PDF / Print sheet size and grippers (202) and a full-screen preview (203), the Layouts work-area light / dark toggle bug (204), the side panel's Drawing scale and Tiny gaps (205), and the retro38 tool tickets (handover retro, PATH dedupe, card lines). 109a (Export text labels) stays held after four fix rounds, waiting for his scope answer.

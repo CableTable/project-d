@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
 import { browserArgs, expandNeeds, shardSelector } from './tools/browser-shards.mjs';
-import { RUNNING_PROMPT } from './tools/running-prompt.mjs';
+const RUNNING_PROMPT = /Specify|Next point|Click inside|Select destination|Type the text|Esc (?:ends|cancels)[).:\s]*$/; // the command-bar prompt of a command still running (runStep fails a step that leaves one on); D's own copy, so no test reads a kit file
 import { chromium } from 'playwright';
 import { dimParams, readDim, dimGeom, GAP_MARK_CAP, addDimension, buildDim, dimOfEntity, lineOf as lineEnds } from './web/edit.js';
 import { read as readLeader, build as buildLeader } from './web/leader.js';
@@ -18750,6 +18750,120 @@ try {
     } finally { await scCtx.close(); }
   });
 
+  await step('TODO 109a: File → Export DXF… writes a copy in inches, scaled, with 2 decimals; the drawing stays unchanged', async () => {
+    await closeTabs(/./); await menuItem('View', 'Theme: light');
+    const raw = newDoc(4); addEntities(raw, dxfLine(0, 0, 100, 0));
+    await page.evaluate((bytes) => {
+      localStorage.removeItem('pd-export-dxf-precision');
+      window.__exp109 = { asked: [], wrote: [], next: 'C:\\out\\plate-export.dxf' };
+      window.__TAURI__ = {
+        dialog: { open: async () => 'C:\\source\\plate.dxf', ask: async () => true,
+          save: async (opts) => { window.__exp109.asked.push(opts.defaultPath); return window.__exp109.next; } },
+        fs: { readFile: async () => new Uint8Array(bytes), exists: async () => false,
+          writeTextFile: async (path, text) => { window.__exp109.wrote.push({ path, text }); } },
+      };
+    }, [...Buffer.from(writeDxf(raw))]);
+    const dialog = t('export-dxf-dialog'), open = async () => { await menuItem('File', 'Export DXF…'); await dialog.waitFor(); };
+    const clean = async () => assert.equal(await page.locator('.tabs .dtab.on .dirty').count(), 0);
+    const written = () => page.evaluate(() => window.__exp109.wrote);
+    try {
+      await menuItem('File', 'Open…');
+      await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'plate.dxf');
+      await clean(); await open();
+      assert.equal(await t('export-dxf-name').inputValue(), 'plate-export.dxf');
+      assert.equal(await t('export-dxf-units').inputValue(), 'mm');
+      assert.equal(await t('export-dxf-scale').inputValue(), '1');
+      assert.equal(await t('export-dxf-precision').inputValue(), '6');
+      for (const value of ['', 'abc', '0', '-2', 'Infinity']) {
+        await t('export-dxf-scale').fill(value); await t('export-dxf-go').click();
+        assert.equal(await dialog.isVisible(), true); assert.match(await t('export-dxf-err').textContent(), /Scale must be a number above 0/);
+        assert.match(await t('export-dxf-scale').getAttribute('class'), /invalid/);
+      }
+      await t('export-dxf-scale').fill('2');
+      for (const value of ['-1', '9', '2.5']) {
+        await t('export-dxf-precision').fill(value); await t('export-dxf-go').click();
+        assert.match(await t('export-dxf-err').textContent(), /whole number from 0 to 8/);
+      }
+      await t('export-dxf-precision').fill('2'); await t('export-dxf-units').selectOption('in');
+      await page.screenshot({ path: `${shotDir}/export-dxf-light.png` });
+      await t('export-dxf-cancel').click(); await dialog.waitFor({ state: 'detached' });
+      await menuItem('View', 'Theme: dark'); await open();
+      await t('export-dxf-units').selectOption('in'); await t('export-dxf-scale').fill('2'); await t('export-dxf-precision').fill('2');
+      await page.screenshot({ path: `${shotDir}/export-dxf-dark.png` });
+      await page.keyboard.press('Escape'); await dialog.waitFor({ state: 'detached' });
+      assert.deepEqual(await written(), []); assert.deepEqual(await page.evaluate(() => window.__exp109.asked), []);
+      await menuItem('View', 'Theme: light'); await open();
+      await t('export-dxf-units').selectOption('in'); await t('export-dxf-scale').fill('2'); await t('export-dxf-precision').fill('2');
+      await t('export-dxf-go').click(); await page.waitForFunction(() => window.__exp109.wrote.length === 1);
+      const exported = readDxf((await written())[0].text);
+      assert.equal(exported.header.$INSUNITS, '1'); assert.equal(+exported.entities[0].r.v[exported.entities[0].r.c.indexOf(11)], 7.87);
+      assert.deepEqual(await page.evaluate(() => window.__exp109.asked), ['C:\\source\\plate-export.dxf']);
+      await said(/Exported plate-export.dxf/); await clean(); assert.deepEqual(await tabNames(), ['plate.dxf']);
+      await open(); assert.equal(await t('export-dxf-scale').inputValue(), '1');
+      assert.equal(await t('export-dxf-precision').inputValue(), '2'); assert.equal(await t('export-dxf-units').inputValue(), 'mm');
+      await page.evaluate(() => { window.__exp109.next = null; }); await t('export-dxf-go').click();
+      await page.waitForFunction(() => window.__exp109.asked.length === 2); assert.equal((await written()).length, 1, 'native Cancel writes nothing');
+      await page.evaluate(() => { window.__exp109.next = 'C:\\saved\\plate-edited.dxf'; });
+      await page.keyboard.press('Control+s'); await page.waitForFunction(() => window.__exp109.wrote.length === 2);
+      const original = readDxf((await written())[1].text);
+      assert.equal(original.header.$INSUNITS, '4'); assert.equal(+original.entities[0].r.v[original.entities[0].r.c.indexOf(11)], 100);
+      assert.equal(await page.evaluate(() => window.__exp109.asked.at(-1)), 'C:\\source\\plate-edited.dxf', 'Export did not change the Save path');
+      await open(); await t('export-dxf-go').click(); await dialog.waitFor({ state: 'detached' });
+      await said(/Export never writes over it/); assert.equal((await written()).length, 2, 'saved drawing cannot be overwritten by Export');
+      await page.evaluate(() => { window.__exp109.next = 'C:\\source\\plate.dxf'; });
+      await open(); await t('export-dxf-go').click(); await dialog.waitFor({ state: 'detached' });
+      await said(/Export never writes over it/);
+      assert.equal(await page.evaluate(() => window.__exp109.asked.length), 5, 'the picker ran for the opened-file guard');
+      assert.equal((await written()).length, 2, 'd.openPath cannot be overwritten after Save As sets d.path');
+      await page.evaluate(() => { window.__exp109.next = 'C:\\out\\layout-export.dxf'; });
+      const lay = newLayout('Export layout');
+      await t('picker').setInputFiles({ name: 'export-layout.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
+      await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'export-layout.dxf');
+      await clean(); await open(); await t('export-dxf-scale').fill('2'); await t('export-dxf-go').click();
+      await page.waitForFunction(() => window.__exp109.wrote.length === 3);
+      assert.equal(readMeta(readDxf((await written())[2].text)), null); await clean();
+      await closeTabs(/export-layout/);
+      const unitless = newDoc(0); addEntities(unitless, dxfLine(0, 0, 100, 0));
+      await t('picker').setInputFiles({ name: 'unitless.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(unitless)) });
+      await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'unitless.dxf');
+      await open(); assert.deepEqual(await t('export-dxf-units').locator('option').allTextContents(), ['Unitless (no conversion)']);
+      await t('export-dxf-cancel').click(); await closeTabs(/unitless/);
+      await page.evaluate(() => { window.__exp109.next = 'C:\\out\\plate-copy.dxf'; });
+      await page.keyboard.press('Control+s'); await page.waitForFunction(() => window.__exp109.wrote.length === 4);
+      assert.equal((await written())[3].path, 'C:\\saved\\plate-edited.dxf', 'later Save still uses its own path');
+      await page.locator('[data-tool=line]').click(); await typeCmd('20,20'); await typeCmd('40,20'); await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
+      await page.keyboard.press('Control+z');
+      await page.keyboard.press('Control+s'); await page.waitForFunction(() => window.__exp109.wrote.length === 5);
+      assert.equal(readDxf((await written())[4].text).entities.length, 1, 'source remains editable and one Undo removes the later edit');
+      await menuItem('File', 'Compare drawings…'); await t('cmp-name-1').waitFor();
+      await open(); assert.equal(await t('export-dxf-name').inputValue(), 'plate-edited-export.dxf');
+      await t('export-dxf-scale').fill('2'); await t('export-dxf-go').click();
+      await page.waitForFunction(() => window.__exp109.wrote.length === 6);
+      assert.equal(+readDxf((await written())[5].text).entities[0].r.v[readDxf((await written())[5].text).entities[0].r.c.indexOf(11)], 200);
+      assert.equal(await page.locator('.tabs .dtab.on .tname').textContent(), 'Compare'); await clean();
+      await closeTabs(/plate-edited/);
+      await menuItem('File', 'Export DXF…'); await said(/Open plate-edited.dxf to export DXF/);
+      assert.equal(await dialog.count(), 0, 'a closed Compare source cannot open Export');
+      assert.equal((await written()).length, 6, 'a closed Compare source writes nothing');
+      await clean();
+      const kilometres = newDoc(7); addEntities(kilometres, dxfLine(0, 0, 100, 0));
+      await t('picker').setInputFiles({ name: 'kilometres.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(kilometres)) });
+      await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'kilometres.dxf');
+      await page.evaluate(() => { window.__exp109.next = 'C:\\out\\kilometres-export.dxf'; });
+      await open(); assert.deepEqual(await t('export-dxf-units').locator('option').allTextContents(), ['km (no conversion)']);
+      await t('export-dxf-go').click(); await said(/Exported kilometres-export.dxf/);
+      const unchangedUnits = readDxf((await written())[6].text);
+      assert.equal(unchangedUnits.header.$INSUNITS, '7');
+      assert.equal(+unchangedUnits.entities[0].r.v[unchangedUnits.entities[0].r.c.indexOf(11)], 100); await clean();
+      for (const theme of ['light', 'dark']) assert.ok(readFileSync(`${shotDir}/export-dxf-${theme}.png`).length > 1000);
+      console.log(`109a: copy 7.87 in; clean source 100 mm; Cancel/Esc, d.path/d.openPath guards, layout, Compare closed source, unitless, remembered precision; screenshots ${shotDir}/export-dxf-{light,dark}.png`);
+    } finally {
+      await page.evaluate(() => { delete window.__TAURI__; delete window.__exp109; localStorage.removeItem('pd-export-dxf-precision'); });
+      await page.keyboard.press('Escape');
+      await closeTabs(/./);
+    }
+  });
+
   await step('TODO 52: File → Export for cutter… asks for the tolerance (bad values refused), cancels cleanly, then writes lines / arcs / polylines only; screenshots light and dark', async () => {
     await closeTabs(/./);
     const d = newDoc(4); addEntities(d, [dxfPoly([[0, 0], [100, 0], [100, 60], [0, 60]], { closed: true }), dxfCircle(50, 30, 15), dxfText(10, 10, 5, 'HELLO')]);
@@ -20292,6 +20406,107 @@ try {
       const p = await at(tx.x, tx.y + tx.h / 2); await page.mouse.dblclick(p.x, p.y); await t('text-editor').waitFor();
       assert.equal(await t('text-editor').inputValue(), 'Width 180.00 mm', tab + ': reopened text is editable');
       await page.keyboard.press('Escape');
+    }
+  });
+
+  await step('TODO 210: text edit box follows pan and zoom (text and dimension text, drawing and layout); Enter commits; one Undo', async () => {
+    const save = async () => (await downloaded(() => page.keyboard.press('Control+s'))).text;
+    const undo = async () => { await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z'); };
+    const dimIn = (text) => {
+      const [name, block] = Object.entries(readDxf(text).blocks).find(([k]) => /^PD_DIM_/.test(k));
+      const tx = block.entities.find((e) => e.type === 'TEXT');
+      return { ...readDim(name, block), override: readOverride(block.entities), label: tx.r.v[tx.r.c.indexOf(1)] };
+    };
+    const near2 = (a, b, what) => assert.ok(Math.abs(a - b) <= 2, `${what}: ${a.toFixed(1)} vs ${b.toFixed(1)}`);
+    /** The box's anchor on screen: the text's left end (ha 0) or its middle (ha 1), the inner top and the inner height. */
+    const anchor = async (ha) => { const r = await t('text-editor').boundingBox(); return { x: ha ? r.x + r.width / 2 : r.x + 6, y: r.y + 3, h: r.height - 6 }; };
+    /** Pan, then wheel-zoom: the anchor moves with the view each time (and the absolute x matches the text where it is known). */
+    const follows = async (tab, label, ha, absX) => {
+      // q sits above the box: a middle press on the box pastes the X selection on Linux (CI), which changed the text and made a second "Edit text" step
+      const cb = await t('canvas').boundingBox(), q = { x: cb.x + 500, y: cb.y + 100 };
+      let a = await anchor(ha);
+      const box = await t('text-editor').boundingBox();
+      assert.ok(q.y < box.y - 20 || q.y > box.y + box.height + 20 || q.x < box.x - 20 || q.x > box.x + box.width + 20, `${tab} ${label}: the pan starts outside the edit box`);
+      const typed = await t('text-editor').inputValue();
+      if (absX) near2(a.x, (await at(absX[0], absX[1])).x, `${tab} ${label}: open`);
+      // The canvas already cancels the middle press (pointerdown + auxclick); Linux Chromium still pastes the X primary selection ("180.00") into the focused editor, so clear the selection and veto the paste here
+      await page.evaluate(() => { getSelection().removeAllRanges(); window.__noPaste = (e) => e.preventDefault(); document.addEventListener('paste', window.__noPaste, true); });
+      await page.mouse.move(q.x, q.y); await page.mouse.down({ button: 'middle' }); await page.mouse.move(q.x - 50, q.y + 30, { steps: 4 }); await page.mouse.up({ button: 'middle' }); await frames();
+      await page.evaluate(() => document.removeEventListener('paste', window.__noPaste, true));
+      assert.equal(await t('text-edit-box').isVisible(), true, `${tab} ${label}: a pan keeps the edit open`);
+      let b = await anchor(ha);
+      near2(b.x, a.x - 50, `${tab} ${label}: pan x`); near2(b.y, a.y + 30, `${tab} ${label}: pan y`); near2(b.h, a.h, `${tab} ${label}: pan size`);
+      if (absX) near2(b.x, (await at(absX[0], absX[1])).x, `${tab} ${label}: after pan`);
+      a = b;
+      const s0 = (await sheetPx()).sc;
+      await page.mouse.move(q.x, q.y); await page.mouse.wheel(0, -300); await frames();
+      assert.equal(await t('text-edit-box').isVisible(), true, `${tab} ${label}: a zoom keeps the edit open`);
+      const k = (await sheetPx()).sc / s0;
+      assert.ok(k > 1.3, 'the wheel zoomed in');
+      b = await anchor(ha);
+      near2(b.x, q.x + (a.x - q.x) * k, `${tab} ${label}: zoom x`); near2(b.y, q.y + (a.y - q.y) * k, `${tab} ${label}: zoom y`); near2(b.h, a.h * k, `${tab} ${label}: zoom size`);
+      if (absX) near2(b.x, (await at(absX[0], absX[1])).x, `${tab} ${label}: after zoom`);
+      await page.mouse.wheel(0, 300); await frames();           // and back out
+      assert.equal(await t('text-edit-box').isVisible(), true, `${tab} ${label}: zooming out keeps the edit open`);
+      a = await anchor(ha); const s1 = (await sheetPx()).sc;                       // the Zoom in button zooms about the canvas middle
+      await page.locator('button[aria-label="Zoom in"]').click(); await frames();
+      assert.equal(await t('text-edit-box').isVisible(), true, `${tab} ${label}: the Zoom in button keeps the edit open`);
+      const k2 = (await sheetPx()).sc / s1, mid = { x: cb.x + cb.width / 2, y: cb.y + cb.height / 2 };
+      b = await anchor(ha);
+      near2(b.x, mid.x + (a.x - mid.x) * k2, `${tab} ${label}: button zoom x`); near2(b.y, mid.y + (a.y - mid.y) * k2, `${tab} ${label}: button zoom y`);
+      await page.locator('button:text-is("Fit")').click(); await frames();
+      assert.equal(await t('text-edit-box').isVisible(), true, `${tab} ${label}: Fit keeps the edit open`);
+      if (absX) near2((await anchor(ha)).x, (await at(absX[0], absX[1])).x, `${tab} ${label}: after Fit`);
+      assert.equal(await t('text-editor').inputValue(), typed, `${tab} ${label}: pan and zoom leave the typed text alone`);
+    };
+    for (const tab of ['drawing', 'layout']) {
+      if (tab === 'layout') {
+        await freshLayoutWithPlate();
+        await typeCmd('line'); await typeCmd('150,150'); await typeCmd('300,150'); await page.keyboard.press('Escape');
+        await typeCmd('dli'); await typeCmd('150,150'); await typeCmd('300,150'); await typeCmd('220,200'); await page.keyboard.press('Escape');
+      } else {
+        await closeTabs(/./);
+        const raw = newDoc(4);
+        addEntities(raw, dxfLine(150, 150, 300, 150));
+        Object.assign(raw, addDimension(raw, buildDim('linear', { a: [150, 150], b: [300, 150], offset: 50, axis: 'h', textH: 5 }, 1, 'PD_DIM_H1', 2)));
+        await t('picker').setInputFiles({ name: 'edit-follows.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(raw), 'latin1') });
+        await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'edit-follows.dxf');
+      }
+      await t('decimals').selectOption('2');
+      await page.locator('[data-tool=select]').click();
+      await page.locator('button:text-is("Fit")').click(); await frames();
+      if (tab === 'drawing') {                                  // a text: place it, then edit it
+        await page.evaluate(() => localStorage.removeItem('pd-text'));
+        await page.locator('[data-tool=text]').click();
+        await click(165, 170); await t('text-editor').waitFor(); await page.keyboard.type('FOLLOW ME'); await page.keyboard.press('Enter');
+        await page.locator('[data-tool=select]').click(); await page.keyboard.press('Escape');
+        const history = await histLabels();
+        const p = await at(185, 173); await page.mouse.dblclick(p.x, p.y); await t('text-editor').waitFor();
+        assert.equal(await t('text-editor').inputValue(), 'FOLLOW ME');
+        await follows(tab, 'text', 0, [165, 170]);
+        await page.keyboard.press('Escape');                    // (the theme menu would end an edit): the pictures open it again after a zoom
+        const q = await t('canvas').boundingBox();
+        await shotBoth('edit-follows', async () => {
+          await page.mouse.move(q.x + 500, q.y + 300); await page.mouse.wheel(0, -250); await frames();
+          const s = await at(185, 173); await page.mouse.dblclick(s.x, s.y); await t('text-editor').waitFor(); await wait(150);
+        }, async () => { await page.keyboard.press('Escape'); await page.mouse.move(q.x + 500, q.y + 300); await page.mouse.wheel(0, 250); await frames(); });
+        const again = await at(185, 173); await page.mouse.dblclick(again.x, again.y); await t('text-editor').waitFor();
+        await t('text-editor').fill('FOLLOWED'); await page.keyboard.press('Enter');
+        assert.equal(await t('text-edit-box').isVisible(), false);
+        assert.deepEqual((await histLabels()).slice(history.length), ['Edit text'], tab + ': one step for the edit');
+        assert.match(await save(), /FOLLOWED/);
+        await undo(); assert.match(await save(), /FOLLOW ME/, tab + ': one Undo gives the old text back');
+      }
+      // a dimension's text
+      const start = await save();
+      const p = await at(190, 200); await page.mouse.dblclick(p.x, p.y); await t('text-editor').waitFor();
+      assert.equal(await t('text-editor').inputValue(), '150.00');
+      await follows(tab, 'dimension', 1, null);
+      await t('text-editor').fill('7.125 TYP'); await page.keyboard.press('Enter');
+      assert.equal(await t('text-edit-box').isVisible(), false);
+      assert.equal((await histLabels()).at(-1), 'Dimension text', tab + ': the dimension text is a step');
+      assert.match(await save(), /7\.125 TYP/);
+      await undo(); assert.deepEqual(dimIn(await save()), dimIn(start), tab + ': one Undo gives the measured text back');
     }
   });
 

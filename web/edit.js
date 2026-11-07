@@ -902,7 +902,7 @@ export const SPEC = {
 export const OCS = new Set(['CIRCLE', 'ARC', 'LWPOLYLINE', 'POLYLINE', 'TEXT', 'ATTRIB', 'INSERT', 'SOLID', 'TRACE', 'HATCH']);
 
 /** Scales one record's pairs (codes are shared, values are new). a: the anchor [x, y] in this record's own coordinates. */
-function scaleRecord(type, r, s, a) {
+export function scaleRecord(type, r, s, a, keepInsertScale = false) {
   const spec = SPEC[type];
   if (!spec) return null;
   if (type === 'HATCH') return scaleHatch(r, s, a);
@@ -917,7 +917,7 @@ function scaleRecord(type, r, s, a) {
     else if ((pts.has(c - 20) && c >= 30 && c <= 38) || zs.has(c) || len.has(c)) v[k] = text(n * s);
   }
   let c = r.c;
-  if (type === 'INSERT') {                                          // the block's contents scale through the insert's factors
+  if (type === 'INSERT' && !keepInsertScale) {                       // export scales block definitions instead
     let at = -1;
     const have = {};
     for (let k = 0; k < r.c.length; k++) { const code = r.c[k]; if ([10, 20, 30, 41, 42, 43].includes(code)) at = k; if ([41, 42, 43].includes(code) && !(code in have)) have[code] = k; }
@@ -976,22 +976,69 @@ export const dimText = (v, dp = 2) => { const s = Number(v).toFixed(dp); return 
 /** The text of a dimension: its prefix (R, Ø), the number with dp decimals, in inches (then ended by ") when units is 'inch'. */
 export const dimLabel = (mm, dp = 2, units = 'mm', prefix = '') => prefix + (units === 'inch' ? dimText(mm / 25.4, dp) + '"' : dimText(mm, dp));
 const unesc = (s) => String(s).replace(/\\U\+([0-9A-Fa-f]{4})/g, (_, h) => String.fromCharCode(parseInt(h, 16)));     // a saved file writes Ø and ° as \U+00D8
-/** A scaled dimension's text says its new length: the old number times s, with as many decimals as it had (an angle keeps its value). */
-export function relabel(ents, s) {
+const MCODE = /\\[ACFHQTWacfhqtwp][^;]*;|\\[LlOoKkP~{}\\]|[{}]/g;      // MTEXT codes with and without parameters (\p takes parameters, \P is a line break)
+const NUM = String.raw`\d*\.?\d+`, LEN = String.raw`[+-]?${NUM}(?:\s*(?:"|mm\b))?`;
+const STACK = String.raw`\\S(?:[+-]?${NUM}[\^/][+-]?${NUM}|[+-]${NUM}#[+-]${NUM});`;      // # is a tolerance only with both parts signed
+/** A label Export may convert: [R / ∅ / %%c] one number or stack, [" / mm], [±, %%p or stack tolerance], [alternate in brackets]. */
+const PLAIN = new RegExp(String.raw`^\s*(?:R|[∅Ø⌀]|\\U\+(?:2205|00[Dd]8|2300)|%%[cC])?\s*(?:${LEN}|${STACK})(?:\s*(?:(?:±|%%[pP])\s*${LEN}|${STACK}))?(?:\s*\[${LEN}\])?\s*$`);
+const ANGLE = /^\s*[+-]?\d*\.?\d+\s*(?:°|%%[dD]|%%176|\\U\+00[Bb]0)\s*$/;
+/** Scale cached dimension labels, or replace their measurement from geometry on unit conversion; keep formatting and overrides. */
+// native (a native DIMENSION's): words: a label with words round one number (group 1 with <>) converts that number, in the text
+// that holds the measurement; measure: what group 1 typed must show to convert (drawing units); angle: angular, only plain angles pass
+export function relabel(ents, s, target = null, unread = null, native = {}) {
   const record = textRecord(ents), override = readOverride(ents), measured = measuredText(ents);
-  const scaled = (t) => {
-    const m = /^([RØ]?)(-?\d+(?:\.\d+)?)(["°]?)$/.exec(t);
-    return !m || m[3] === '°' ? t : m[1] + dimText(+m[2] * s, placesOf(t)) + m[3];
+  const texts = ents.filter((e) => (e.type === 'TEXT' || e.type === 'MTEXT') && e !== record && String(e.r.v[e.r.c.indexOf(1)] ?? '').trim());
+  const lead = texts.some((e) => !/^\s*[+-]/.test(String(e.r.v[e.r.c.indexOf(1)]).replace(MCODE, ' ')));      // tolerances with no main text are unread
+  let main = false;      // one primary value per block, not per text
+  const scaled = (t, follows = false) => {
+    if (!t.trim() || t.includes('<>') || s === 1 && !target) return t;
+    const bare = t.replace(MCODE, ' '), signed = follows && /^\s*[+-]/.test(bare);      // a code is a gap, never a join; a signed text before another text is a tolerance
+    if (ANGLE.test(bare)) return t;
+    const plain = PLAIN.test(bare), words = !plain && native.words && !/\d\s*(?:'|(?:ft|feet|foot|in|inch|inches|yd|[ckµu]?m)\b)/i.test(bare)
+      && (bare.replace(/\\U\+[0-9A-Fa-f]{4}/g, '').match(/\d*\.?\d+/g) || []).length === 1;
+    if (native.angle || !plain && !words || unread && !lead && /^\s*[+-]/.test(bare)) { unread?.(t); return t; }      // Scale (no unread list) still scales lone tolerances
+    let alternate = false, stack = false, tolerance = false, converted = false, bad = false;
+    const more = Math.max(0, Math.ceil(-Math.log10(s) - 1e-12));
+    // One scan: formatting parameters are opaque; stacked/tolerance lengths use s, alternate units use only scale.
+    const out = t.replace(/\\U\+[0-9A-Fa-f]{4}|\\[ACFHQTWacfhqtwp][^;]*;|\\[LlOoKkP~{}\\]|\\S|\\.|%%[a-zA-Z]|±|\[|\]|;|\d*\.?\d+(?:\s*(?:"|mm\b))?|"|[A-Za-z]*mm\b/g, (token, at) => {
+      if (token === '[') { if (alternate) bad = true; alternate = true; return token; }
+      if (token === ']') { if (!alternate) bad = true; alternate = false; return token; }
+      if (token === '\\S') { stack = true; return token; }
+      if (token === ';') { stack = false; return token; }
+      if (token === '±' || /^%%[pP]$/.test(token)) { tolerance = true; return token; }
+      if (token[0] === '\\') { if (token.length === 2 && !/[LlOoKkP~{}\\]/.test(token[1])) bad = true; return token; }
+      if (token === '"' || token === 'mm') { bad = true; return token; }      // a unit left alone (its number was in another code run)
+      if (!/^\d|^\./.test(token)) return token;
+      const n = /^\d*\.?\d+/.exec(token)[0], suffix = token.slice(n.length), length = !alternate && !stack && !tolerance, primary = !main && length && !signed;
+      if (/^[,/\.]\d/.test(t.slice(at + n.length))) bad = true;
+      const dp = (n.split('.')[1] || '').length, extra = alternate || length && !target ? 0 : more;
+      if (words && !primary || primary && Math.abs(+n - native.measure) > .5 * 10 ** -dp + 1e-9) { bad = true; return token; }      // a typed label off the measurement stays
+      const value = primary ? target?.value ?? +n * s : +n * (alternate ? target?.scale ?? s : s);
+      if (!Number.isFinite(value)) { bad = true; return token; }
+      let fixed = dimText(value, Math.min(100, dp + extra));
+      if (!primary && n[0] === '.') fixed = fixed.replace(/^(-?)0\./, '$1.');
+      if (primary) main = true;
+      converted = true;
+      return fixed + (!target || alternate ? suffix : primary || suffix ? (target.units === 'in' ? '"' : '') : '');
+    });
+    if (bad || alternate || stack || !converted) { unread?.(t); return t; }
+    return unesc(out);
   };
+  const label = record && scaled(measured);      // read once: every text of a kept dimension shows it
   return ents.map((e) => {
-    if (e === record) return overrideRecord(override, scaled(measured));
-    if (e.type !== 'TEXT') return e;
+    if (e === record) return overrideRecord(override, label);
+    if (e.type !== 'TEXT' && e.type !== 'MTEXT') return e;
     const k = e.r.c.indexOf(1);
     if (k < 0) return e;
-    const vv = e.r.v.slice(); vv[k] = record ? dimensionText(scaled(measured), override) : scaled(unesc(vv[k]));
+    const vv = e.r.v.slice(); vv[k] = record ? dimensionText(label, override) : scaled(vv[k], texts.indexOf(e) < texts.length - 1);
     if (vv[k] === unesc(e.r.v[k])) return e;
     return { ...e, r: { ...e.r, v: vv } };
   });
+}
+/** Maps a point of a dimension's block to where its INSERT e puts it (rotation, scale, position); a point stays when e is missing. */
+export function insertTransform(raw, e) {
+  const fl = e && flatten({ ...raw, entities: [{ ...e, hidden: false }] }), mat = fl && fl.items.length && fl.mats[fl.items[0].m];
+  return (p) => mat ? mapply(mat, ...p) : p;
 }
 /**
  * Every kept dimension re-labelled with dp decimals, from its own geometry (drawing units × factor), so no rounding
@@ -1006,8 +1053,7 @@ export function relabelDims(raw, factor, dp, kept = false) {       // kept: only
     if (kept && !callout) continue;
     if (kept) dp = placesOf(measuredText(b.entities));
     if (callout) {       // the deltas of the callout as drawn: the INSERT's transform applied to the block's points
-      const at = inserts.get(nm), fl = at != null && flatten({ ...raw, entities: [{ ...raw.entities[at], hidden: false }] }), mat = fl && fl.items.length && fl.mats[fl.items[0].m];
-      const w = (p) => mat ? mapply(mat, ...p) : p;
+      const w = insertTransform(raw, raw.entities[inserts.get(nm)]);
       m.params.override = measureOverride(w(m.params.a), w(m.params.b), factor || 1, dp, ov);
     }
     const g = m && dimGeom(m.kind, m.params, factor || 1, dp);

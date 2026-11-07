@@ -30,7 +30,7 @@ import * as PS from './pdf-sheets.js';
 import { paintDrawing, drawMarks, drawContour, drawDimPreview, ink, FONT_FAMILY } from './render.js';
 import { overlayBox } from './preview.js';
 import { snapPlace, snapUsable, heavy } from './perf.js';
-import { flatten, unionBox, CAP, ACI, mapply, mmul, pickIndex, arcSweep, DrawingError } from './drawing.js';
+import { flatten, unionBox, CAP, ACI, UNITS, mapply, mmul, pickIndex, arcSweep, DrawingError } from './drawing.js';
 import { writeDxf, writeDxfWithReport, saveReportNote, unwritable, addLayer, newDoc, lwpoly, point } from './dxf-write.js';
 import * as SH from './shaping.js';
 import { explodeSelection } from './explode.js';
@@ -439,7 +439,7 @@ function recentItems() {
 function buildMenus() {
   // an item: [text, action, shortcut hint (shown, and only a hint for a key that is really bound), enabled? (a function, asked when the menu opens)]
   const menus = {
-    File: () => [['Open…', openFile], ['New layout', newLayoutTab], ['Save', () => save(false), 'Ctrl+S'], ['Save As…', () => save(true), 'Ctrl+Shift+S'], ['Export for cutter…', exportCutter], ['Compare drawings…', cmpStart], ['Import background…', () => ui.bgPicker.click()], ['Trace bitmap…', traceBitmap], ['PDF / Print…', exportPdf],
+    File: () => [['Open…', openFile], ['New layout', newLayoutTab], ['Save', () => save(false), 'Ctrl+S'], ['Save As…', () => save(true), 'Ctrl+Shift+S'], ['Export DXF…', exportDxf], ['Export for cutter…', exportCutter], ['Compare drawings…', cmpStart], ['Import background…', () => ui.bgPicker.click()], ['Trace bitmap…', traceBitmap], ['PDF / Print…', exportPdf],
       ...recentItems()],
     Edit: [['Undo', () => undoCurrent(), 'Ctrl+Z', () => !!state.grip || !!historyOf(curDoc())?.canUndo],
       ['Redo', () => undoCurrent(true), 'Ctrl+Y', () => !!historyOf(curDoc())?.canRedo],
@@ -1548,7 +1548,7 @@ function buildCanvas() {
   ui.textArea.addEventListener('blur', () => { if (state.text.ed) textCommit(); });
   ui.canvas = h('div', { class: 'canvas', 'data-testid': 'canvas' }, ui.svg, ui.gridDisplay, ui.dcanvas, ui.ovlWrap, ui.tip, ui.measTag,ui.textHint, ui.textEd, ui.rubber, ui.dropHint, ui.picker, ui.bgPicker, ui.rulerTop, ui.rulerLeft, ui.rulerCorner, ui.guideTip, ui.contourPanel = buildContourPanel(), ui.balPic, ui.balSheets,
     h('div', { class: 'canvas-notices' }, ui.cmdUI.fade, ui.gripHint, ui.matchHint, ui.hintPill), ui.cmdUI.drawer, ui.cmdUI.bar,
-    h('div', { class: 'zoombox' },
+    h('div', { class: 'zoombox', onmousedown: (e) => { if (state.text.ed) e.preventDefault(); } },       // zoom buttons keep the focus in an open edit box
       h('button', { class: 'tog', type: 'button', 'aria-label': 'Zoom out', onclick: () => zoomBy(1 / 1.25) }, domIcon('minus', 12)),
       zoomLevel,
       h('button', { class: 'tog', type: 'button', 'aria-label': 'Zoom in', onclick: () => zoomBy(1.25) }, domIcon('plus', 12)),
@@ -3431,6 +3431,76 @@ async function save(forceAs) {
   }
 }
 
+/** Export the same content as Save, through the writer's copy-only settings. */
+function exportDxf() {
+  const active = curDoc(), d = active?.cmp ? cmpEdit('export DXF') : active;
+  if (active?.cmp && !d) return;
+  if (!d || (!d.raw && !d.lay)) { note('Export DXF: open a drawing first'); return; }
+  if (document.querySelector('[data-testid=export-dxf-dialog]')) return;
+  const sourceUnits = +(d.lay ? 4 : d.raw.header?.$INSUNITS) || 0;
+  const convertible = [1, 2, 4, 5, 6].includes(sourceUnits);
+  let remembered = 6;
+  try { const v = localStorage.getItem('pd-export-dxf-precision'); if (v !== null && Number.isInteger(+v) && +v >= 0 && +v <= 8) remembered = +v; } catch { /* local settings may be unavailable */ }
+  const field = (id, attrs) => h('input', { class: 'fld', 'data-testid': 'export-dxf-' + id, ...attrs });
+  const name = field('name', { type: 'text', value: baseName(dxfName(d.name)) + '-export.dxf' });
+  const units = h('select', { class: 'fld', 'data-testid': 'export-dxf-units' }, convertible
+    ? [h('option', { value: 'mm' }, 'mm'), h('option', { value: 'in' }, 'in')]
+    : h('option', { value: sourceUnits ? '' : 'unitless' }, `${sourceUnits ? UNITS[sourceUnits] || 'Drawing units' : 'Unitless'} (no conversion)`));
+  units.value = convertible ? sourceUnits === 1 ? 'in' : 'mm' : sourceUnits ? '' : 'unitless';
+  const scale = field('scale', { type: 'text', inputmode: 'decimal', value: '1' });
+  const precision = field('precision', { type: 'text', inputmode: 'numeric', value: remembered });
+  const err = h('div', { class: 'pd-bad', role: 'alert', hidden: true, 'data-testid': 'export-dxf-err' });
+  const validate = () => {
+    const problems = [
+      [name, !name.value.trim() || /[<>:"/\\|?*\x00-\x1f]/.test(name.value) ? 'Type a file name without < > : " / \\ | ? *' : ''],
+      [scale, scaleFactor(scale.value) === null ? 'Scale must be a number above 0' : ''],
+      [precision, !/^\d$/.test(precision.value.trim()) || +precision.value > 8 ? 'Precision must be a whole number from 0 to 8' : ''],
+    ];
+    for (const [input, why] of problems) flagInvalid(input, !!why);
+    const bad = problems.find(([, why]) => why);
+    err.textContent = bad?.[1] || ''; err.hidden = !bad;
+    return bad?.[0];
+  };
+  for (const input of [name, scale, precision]) { clearInvalid(input); input.addEventListener('input', validate); }
+  const finish = () => { back.remove(); document.removeEventListener('keydown', onKey, true); };
+  const go = async () => {
+    const bad = validate(); if (bad) { bad.focus(); validate(); return; }
+    const want = dxfName(name.value.trim()), settings = { units: units.value || undefined, scale: +scale.value, precision: +precision.value, escapeUnicode: true };
+    finish();
+    try {
+      const report = writeDxfWithReport(rawForSave(d), settings), t = window.__TAURI__;
+      try { localStorage.setItem('pd-export-dxf-precision', String(settings.precision)); } catch { /* local settings may be unavailable */ }
+      let written = want;
+      if (t && t.dialog?.save && t.fs?.writeTextFile) {
+        let path = await t.dialog.save({ defaultPath: saveDefault(want, d.path || d.openPath), filters: [{ name: 'DXF drawing', extensions: ['dxf'] }] });
+        if (!path) return;
+        path = await withExt(t, path, 'dxf'); if (!path) return;
+        if ([d.openPath, d.path].some((p) => p && pathKey(path) === pathKey(p))) { note('Pick another name: that is the drawing file, and Export never writes over it'); return; }
+        await t.fs.writeTextFile(path, report.text);
+        written = path.split(/[\\/]/).pop();
+      } else download(want, report.text);
+      note('Exported ' + written + saveReportNote(report));
+    } catch (e) { note('Export failed: ' + (e?.message || e)); }
+  };
+  const row = (label, input) => h('label', { class: 'qs-row' }, h('span', null, label), input);
+  const dlg = h('div', { class: 'pop-dialog export-dxf-dialog', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Export DXF', 'data-testid': 'export-dxf-dialog' },
+    h('div', { class: 'row between' }, h('strong', null, 'Export DXF'), h('button', { class: 'btn sm', type: 'button', 'aria-label': 'Close', onclick: finish }, '×')),
+    h('span', { class: 'lbl' }, 'Write a DXF copy with export settings.'),
+    row('File name', name), row('Units', units), row('Scale', scale), row('Precision', precision),
+    h('span', { class: 'lbl' }, 'Scale is applied about 0,0. Precision sets decimal places for coordinates and lengths.'), err,
+    h('div', { class: 'row' }, h('span', { class: 'lbl', style: 'flex:1' }, 'Next: native file picker'),
+      h('button', { class: 'btn', type: 'button', 'data-testid': 'export-dxf-cancel', onclick: finish }, 'Cancel'),
+      h('button', { class: 'btn primary', type: 'button', 'data-testid': 'export-dxf-go', onclick: go }, 'Export')));
+  const back = h('div', { class: 'pop-back' }, dlg);
+  const onKey = (e) => {
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish(); }
+    else if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); go(); }
+  };
+  back.addEventListener('pointerdown', (e) => { if (e.target === back) finish(); });
+  document.addEventListener('keydown', onKey, true);
+  document.body.append(back); name.focus(); name.select();
+}
+
 /**
  * File → Export for cutter… (TODO 52, mock-up R14 option B): a small dialog (the file name, "Curves flattened to [0.01] mm", what is left
  * out), then the native Save picker, defaulting to "<name>-cutter.dxf". The copy holds LINE, ARC and LWPOLYLINE only (dxf-cutter.js);
@@ -4461,6 +4531,7 @@ function applyView(gesture = false) {
   drawGuides();
   drawAlignmentGuides();
   drawRulers();
+  placeTextEditor();                                                    // an open text / dimension / leader edit box follows the view
   paintOverlay(gesture);
 }
 
@@ -11266,11 +11337,11 @@ const cmpSourceTab = (item) => item?.tabId ? state.docs.find((d) => d.tabId === 
 const cmpSourceState = (d) => [d.fl, d.raw.entities, d.factor, d.pdf?.page, d.name, ...d.off];
 const cmpEditingItem = (d) => { const c = cmpDoc()?.cmp, item = c && cmpSelected(c); return d && cmpSourceTab(item) === d ? item : null; };
 const drawingTransform = (d) => { const item = cmpEditingItem(d); return item ? `translate(${item.offset[0]} ${-item.offset[1]})` : null; };
-function cmpEdit() {
+function cmpEdit(action = 'edit') {
   const item = cmpDoc() && cmpSelected(cmpDoc().cmp), d = cmpSourceTab(item);
-  if (item && !item.visible) { note(`Show ${item.name} to edit`); return null; }
+  if (item && !item.visible) { note(`Show ${item.name} to ${action}`); return null; }
   if (d) return d;
-  note(item?.part ? 'Open the part as a drawing to edit' : item ? `Open ${item.name} to edit` : 'Pick a snapshot to edit');
+  note(item?.part ? `Open the part as a drawing to ${action}` : item ? `Open ${item.name} to ${action}` : `Pick a snapshot to ${action}`);
   return null;
 }
 /** Refresh changed linked artwork and measurements on return to Compare; closeTab also captures the final copy. */

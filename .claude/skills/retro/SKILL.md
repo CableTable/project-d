@@ -1,6 +1,6 @@
 ---
 name: retro
-description: "Retrospective on a Project D session (Rook, King or Bishop runs): suggests environment fixes. Runs on Bishop (WORKFLOW rule 4): Rook launches it and never runs it inline."
+description: "Retrospective on a Rook session for any project (Rook, King or Bishop runs): suggests environment fixes. Runs on Bishop (WORKFLOW rule 4): Rook launches it and never runs it inline."
 ---
 
 The user has asked for a **retrospective**. You are suggesting improvements to the coding agent's **environment** to improve future runs.
@@ -11,7 +11,7 @@ The user has asked for a **retrospective**. You are suggesting improvements to t
 
 2. Read the primary sources for the session the user specifies. This may mean searching through session logs on this machine. If the user doesn't specify a session, default to the current one.
 
-3. Look for candidates for improvement in these categories.
+3. Look for candidates for improvement in these categories. A session retro reads the session's handover retros first; a category found in 3+ of them becomes one class rule, not another narrow one.
 
 - **Navigation**: how easy was it for the agent to find the right files? Are there hidden dependencies between files? Would a **navigation pointer** make it easier? _Use when_ the session took a long time to find a piece of information.
 - **Automated checks**: are there automated checks that could catch errors the agent made? Linting, typing, tests, filesystem linters? Read the repo's own check command first (its `package.json`/build-tool `lint`/`check` scripts, its CI workflow), so a check that already exists but sits unwired or silently broken is the finding, not a reinvention. A repo with no **guardrail** (no pre-commit hook and no CI job running its lint/typecheck/test command) is itself a finding: an un-linted repo is a standing missed opportunity, not a neutral default. _Use when_ the agent made a mistake an automated check could have caught, or the repo has no guardrail at all.
@@ -21,7 +21,7 @@ The user has asked for a **retrospective**. You are suggesting improvements to t
 - **No-ops**: look for instructions in steering files that don't modify the agent's behavior. _Use when_ the steering files are large and unwieldy.
 - **Information access**: look for opportunities to increase the agent's access to information. Teeing dev server logs, readonly access to third-party services. _Use when_ a crucial piece of information was not available to the agent.
 
-4. Present these candidates to the user, in order of severity.
+4. Present these candidates to the user, in order of severity. A proposed edit to a file under tools/ names the test that checks that file.
 
 ## Reference
 
