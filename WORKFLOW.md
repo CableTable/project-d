@@ -122,8 +122,8 @@ A tool or PATH failure seen twice is a --tool ticket now, never a resume note.
    **150k tokens** (the "smart zone"). A ticket names what it depends on. A run whose peak context passes 150k
    (`rook.mjs result` shows it) means the ticket was too big: split the rest further.
    A ticket is one tool family or one command, plus its save / reopen; a brief listing more than ~5 behaviours is two
-   tickets (session 26 retro: every King build peaked 171k-216k). Count behaviours, not numbered lines: each transform family, output format and follow trigger is one (156b2c1: 5 lines, ~9 behaviours, peak 217k). A ticket that touches all 3 tabs AND adds a mode or command splits into a logic ticket and a per-tab wiring ticket (S37 retro: 97h / 97i1 peaked ~216k). Builders make a WIP commit of each passing slice
-   (said in the report's first line), so a cut-off run loses nothing.
+   tickets (session 26 retro: every King build peaked 171k-216k). Count behaviours, not numbered lines: each transform family, output format and follow trigger is one (156b2c1: 5 lines, ~9 behaviours, peak 217k). A ticket that touches all 3 tabs AND adds a mode or command splits into a logic ticket and a per-tab wiring ticket (S37 retro: 97h / 97i1 peaked ~216k).
+   For a cut-off run, follow the cut-off recipe in the Rook card.
    Briefs for pure geometry (S29 retro) name the **case grid** (positions before / at / inside / beyond, both orders, both picks; every entity type that shares the code) and ask for ONE table-driven unit test over it.
    Grip tickets (S30 retro: 4 of 5 King fix rounds): the grid also has several hot grips (with a grip of another entity, every hot order), and the preview (`gripAim`) is asserted equal to the commit (`gripCommit`).
    A brief that asks for every X (every button, every caller) carries the grep Rook ran to find them, with its hit list; the builder's report quotes the same grep (S31 retros: 175 took 2 fix rounds on "+" buttons a hand list missed).
@@ -156,6 +156,9 @@ Two claude2 sessions may run at once only on separate files (e.g. a mock-up whil
 - King: `node tools/rook.mjs build <brief file> <out jsonl> <branch> <sha> [--as king|bishop] [--fix] [--regrilled] [--tool] [--over] [--big] [--review <review brief> <review out jsonl>]` (`--fix` = fix round, `--tool` = tool ticket)
 - Knight branch into the repo first: `git fetch "<extras>/ProjectD-rowan" <branch>`
 - Review (Bishop paused): Agent `reviewer` with `isolation: worktree` and a brief from `tools/briefs/review.txt`, or `node tools/rook.mjs review <sha> <brief file> <out jsonl> --as king [--from <clone folder> <branch>]`
+- Review waiting and King and Knight at limit: `reviewer` subagent, under today's Rook cap.
+- King week over 70%: merge-critical work first.
+- Cut-off recipe: builders make a WIP commit of each passing slice (report it in the first line); Rook uses Read then Edit on the brief, then launches in a later message.
 - Probe: a change to `tools/`, `.github/` or `src-tauri/` (no cargo here) gets its `gh workflow run <file> --ref <branch>` probe before the full suite.
 - Run ended: `node tools/rook.mjs result <run file>` (report, denials, peak context). Gate: `node tools/rook.mjs usage --cached`.
 - Board: `node tools/rook.mjs board <brief> <out>`, brief from `tools/briefs/board.txt` (fill its `{placeholders}`).
@@ -448,6 +451,8 @@ For when Rook (main account) runs short of usage: Bishop leads and reviews, Knig
   (Without it, claude2 reads CLAUDE.md's builder rule and tries to start claude2 itself.)
 - Builders use ponytail full (the default level; his call 2026-10-21, was lite); plain commands, no `cd … &&`, no `$?` tricks; a refused command is reported, not worked around.
 - Branch name, the spec file, which files it may touch, what not to stage, what to reply (max N lines).
+- A tool brief that adds a refusal says how many recent briefs it would refuse.
+- Open tool tickets share no file.
 - Builders: `npm.cmd test`, their own new / changed browser steps while working (`node browser.test.mjs <port> '<step names>'`), then commit at once; Rook runs the full suite after them (S28b retro: the ~12 min suite outlives a builder's 10 min command limit, goes to the background and the run ends uncommitted, 3x). Every build branches from the CURRENT session head (items already on it), so two builds never conflict on the cherry-pick (S28b: 156b4 from an old base conflicted with 156c). Briefs say: the worktree is already your working folder, no `cd "<worktree>" &&` prefix (denied 6-11x a run). Screenshots light + dark through their steps. **Rook still runs the full browser suite** (background script, pass / fail summary only) on the combined branch before every push; reviewers `npm.cmd test` and the steps `reviewer.md` step 3 names, never the full suite (his call 2026-10-28, after builders' filtered runs missed 2 old steps and CI went red).
   Builders grep `browser.test.mjs` for every UI string they add or change, and the labels beside a new menu item (prompts, readouts like `R `) and add those steps to their `'<step names>'` filter.
   While fixing, filter on their own step only (`'TODO <id>'`); widen once, before commit, to whole step-name pieces they grepped, never single words like `Text` (session 26 King retro: 5 unrelated slow steps per run).

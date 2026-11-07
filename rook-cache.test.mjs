@@ -18,6 +18,41 @@ test('usage cache expires only after 75 minutes, using the older of both files',
   assert.equal(cacheAge([now + 1, now], now), null);
 });
 
+test('TODO 207b: Rook daily cap uses its own weekly reset and says cap today', () => {
+  const repo = mkdtempSync(join(tmpdir(), 'projectd-rook-cap-'));
+  try {
+    mkdirSync(join(repo, 'tools'));
+    mkdirSync(join(repo, 'usage-site/public'), { recursive: true });
+    copyFileSync(new URL('./usage-site/public/usage-window.js', import.meta.url), join(repo, 'usage-site/public/usage-window.js'));
+    for (const file of ['rook.mjs', 'rook-cache.mjs', 'rook-result.mjs', 'rook-launch.mjs', 'rook-end.mjs', 'handover-gate.mjs', 'usage-agent.mjs', 'usage-agent-policy.mjs', 'retro-brief.mjs']) {
+      copyFileSync(new URL('./tools/' + file, import.meta.url), join(repo, 'tools', file));
+    }
+    writeFileSync(join(repo, 'package.json'), '{"type":"module"}');
+    const usage = join(repo, 'mockups', '_design', 'usage');
+    mkdirSync(usage, { recursive: true });
+    const start = Date.parse('2026-11-01T10:00:00Z'), day = 86400_000;
+    for (const [elapsed, cap] of [[1, 14], [day, 14], [day + 1, 28], [6 * day + 1, 98], [7 * day + 1, 100]]) {
+      const now = start + elapsed;
+      const rows = ['agent,role,model,window,used_pct,cap_pct,starts,resets,as_of'];
+      for (const agent of ['Rook', 'Pip', 'King', 'Rowan']) {
+        for (const window of ['5h', 'week']) {
+          const reset = window === '5h' ? now + 3600_000 : agent === 'Rook' ? start + 7 * day : now + 5 * day;
+          rows.push(`${agent},role,model,${window},10,,,${new Date(reset).toISOString()},${new Date(now).toISOString()}`);
+        }
+      }
+      writeFileSync(join(usage, 'limits.csv'), rows.join('\n') + '\n');
+      writeFileSync(join(usage, 'history.csv'), 'at,agent,window,used_pct\n');
+      for (const file of ['limits.csv', 'history.csv']) utimesSync(join(usage, file), now / 1000, now / 1000);
+      writeFileSync(join(repo, 'clock.mjs'), `Date.now = () => ${now};`);
+      const lines = execFileSync(process.execPath, ['--import', './clock.mjs', 'tools/rook.mjs', 'usage', '--cached'], { cwd: repo, encoding: 'utf8', timeout: 5000 }).trim().split('\n');
+      assert.match(lines[0], new RegExp(`week 10% of ${cap}% cap today \\(Resets Sun 15:30\\)`));
+      assert.match(lines[1], /week 10% of 28% cap \(Resets/);
+      assert.doesNotMatch(lines[1], /cap today/);
+      for (const line of lines.slice(2)) assert.doesNotMatch(line, /cap/);
+    }
+  } finally { rmSync(repo, { recursive: true, force: true }); }
+});
+
 test('cached usage shares live summaries, avoids processes and writes, and falls back when missing or stale', () => {
   const repo = mkdtempSync(join(tmpdir(), 'projectd-rook-'));
   try {
