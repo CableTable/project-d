@@ -20,6 +20,7 @@
 //   node tools/rook.mjs fresh <id> [--as king|bishop]   WORKFLOW step 2b on grill-<id>.md -> fresh-<id>.out, detached with a queue line
 //   node tools/rook.mjs board <brief> <out> [--as king|bishop]   board / look (WORKFLOW.md line 194) on <brief> -> <out>, detached
 //     retro / acad / board default to King while ProjectD-s15fix/.run-lock exists, else Bishop.
+//   node tools/rook.mjs hq-install [--dry]   TODO 219d: copy kit/hq/ (WORKFLOW.md, global-CLAUDE.md, start-rook.ps1) to hq.json "hq" and CLAUDE.md to ~/.claude, ~/.claude-account2, ~/.claude-account3 (.bak of a changed file kept), Rook's memory once to the hq project's memory folder, and write the Startup Rook.lnk; idempotent, copies only, `--dry` prints the actions
 //   node tools/rook.mjs fails <log>   the failing steps of a browser-test or node:test log + the first 3 `+` / `-` lines after each, max 40 lines; `no failures in <log>`
 //   node tools/rook.mjs handover <resume file> <name> [--no-retro]   refused unless the outgoing Rook's handover retro was launched (runs<N>/retro<N><x>.out named by rook-next.txt line 2; --no-retro passes), else appends a "Handover retro: read ..." line to the resume file; write rook-next.txt (new uuid, name, resume file) and print it; refused when the resume file is missing, has no runs<N> in its path, lacks the merge-due.log line, lacks the `select:Monitor,TaskStop` or `one ci-watch per push` line (the same lines `next` requires), or its line 2 lacks the grilling + domain-modeling skills; exactly 2 arguments; does not start Rook.lnk
 //   node tools/rook.mjs wait <run file>... [--ci <sha>]   exits 0 on the first run that finished (`DONE <file>`; a .log: at its `SUITE ` line) or when the CI run for <sha> ends (`CI RUN <id> <conclusion>`; exit 1 `CI RUN none <reason>` when no run was found or the watcher failed); polls every 20 s
@@ -34,7 +35,8 @@ import { readFileSync, writeFileSync, appendFileSync, existsSync, readdirSync, s
 import { join, dirname, resolve, basename } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { ROOT, project, stripProjectFlag } from './project.mjs';
+import { ROOT, project, stripProjectFlag, hqConfig, inHq } from './project.mjs';
+import { hqInstall } from './hq-install.mjs';
 import { cacheAge } from './rook-cache.mjs';
 import { firstDone, peakContext } from './rook-result.mjs';
 import { randomUUID } from 'node:crypto';
@@ -258,7 +260,8 @@ export function failLines(text, log) {
 }
 
 // `handover <resume file> <name>` (TODO 196g): writes rook-next.txt (uuid, name, resume file) for `next`; refused when the resume file is missing or its line 2 lacks the grilling + domain-modeling rule. Returns the 3 lines.
-export function handover(resume, name, extras = EXTRAS, uuid = randomUUID(), noRetro = false) {
+// TODO 219d `hq` (hq.json): the file is also written to "runs" (where the session number is read) and, when the next session is in Rook HQ, to "hq", so the switch at runsFrom loses nothing.
+export function handover(resume, name, extras = EXTRAS, uuid = randomUUID(), noRetro = false, hq = null) {
   if (!resume || !name || /[\r\n]/.test(name)) throw new Error('usage: node tools/rook.mjs handover <resume file> <name> [--no-retro]');
   if (!handoverRetroName(name)) throw new Error(`refused: name "${name}" must end in S<N> (like "Rook S38j"): the next handover's retro check needs it`);
   let text = '';
@@ -276,7 +279,8 @@ export function handover(resume, name, extras = EXTRAS, uuid = randomUUID(), noR
   if (retroOut && !noRetro && !existsSync(`${extras}/${retroOut}`)) throw new Error(`refused: ${retroOut} is missing (run \`node tools/rook.mjs retro --handover\` for ${prev}, or pass --no-retro)`);
   if (retroOut && existsSync(`${extras}/${retroOut}`)) appendFileSync(resume, `${text.endsWith('\n') ? '' : '\n'}Handover retro: read ${retroOut} first and apply what it recommends.\n`);
   const lines = [uuid, name, resolve(resume).replaceAll('\\', '/')];
-  writeFileSync(`${extras}/rook-next.txt`, lines.join('\n') + '\n');
+  const next = lines.join('\n') + '\n', nextN = /runs(\d+)/.exec(lines[2])[1];
+  for (const dir of new Set([extras, ...(hq ? [hq.runs, inHq(hq, +nextN) && hq.hq] : [])].filter(Boolean))) { mkdirSync(dir, { recursive: true }); writeFileSync(`${dir}/rook-next.txt`, next); }
   return lines.join('\n');
 }
 
@@ -379,6 +383,9 @@ if (cmd === 'result') {
 } else if (['review', 'build', 'knight', 'suite', 'retro', 'pawn', 'acad', 'fresh', 'board'].includes(cmd)) {
   try { ({ review, build, knight, suite, retro, pawn, acad, fresh, board })[cmd](process.argv.slice(3)); }
   catch (e) { console.error(e.message); process.exit(1); }
+} else if (cmd === 'hq-install') {
+  try { hqInstall({ hq: hqConfig(), dry: process.argv.includes('--dry') }); }
+  catch (e) { console.error(e.message); process.exit(1); }
 } else if (cmd === 'fails') {
   try { console.log(failLines(readFileSync(arg, 'utf8'), arg).join('\n')); }
   catch (e) { console.error(e.message); process.exit(1); }
@@ -387,7 +394,7 @@ if (cmd === 'result') {
     const bad = handoverArgsError(process.argv);
     if (bad) throw new Error(bad);
     const [resume, hname] = process.argv.slice(3).filter((a) => a !== '--no-retro');
-    console.log(handover(resume, hname, EXTRAS, undefined, process.argv.includes('--no-retro')));
+    console.log(handover(resume, hname, EXTRAS, undefined, process.argv.includes('--no-retro'), hqConfig()));
   }
   catch (e) { console.error(e.message); process.exit(1); }
 } else if (cmd === 'wait') {
@@ -410,7 +417,7 @@ if (cmd === 'result') {
     projects: join(homedir(), '.claude', 'projects', project.claudeProject), own: process.env.CLAUDE_CODE_SESSION_ID,
   }).then(({ line, code }) => { console.log(line); process.exitCode = code; }, (e) => { console.error(e.message); process.exitCode = 1; });
 } else {
-  console.log('usage: node tools/rook.mjs usage [--cached] | result <file> | wait <run file>... [--ci <sha>] | merge <n> <sha> [--no-retro] | gate | next | review <sha> <brief> <out.jsonl> [--as bishop|king] [--from <clone> <branch>] [--over] | build <brief> <out.jsonl> <branch> <sha> [--as king|bishop] [--dir king2] [--fix] [--regrilled] [--tool] [--no-fresh] [--over] [--big] [--review <review brief> <review out.jsonl>] | knight <brief> <report.txt> <branch> <sha> [--fix] [--regrilled] [--tool] [--no-fresh] [--over] [--big] [--review <review brief> <review out.jsonl>] | suite <sha> [--over] | retro [--over] [--events "<text>"] [--as king|bishop] | pawn <out.json> "<question>" | fresh <id> [--as king|bishop] | acad <item> [--as king|bishop] | board <brief> <out> [--as king|bishop] | fails <log> | handover <resume file> <name> | any command: --project <D|R|B|P|WF>');
+  console.log('usage: node tools/rook.mjs usage [--cached] | result <file> | wait <run file>... [--ci <sha>] | merge <n> <sha> [--no-retro] | gate | next | review <sha> <brief> <out.jsonl> [--as bishop|king] [--from <clone> <branch>] [--over] | build <brief> <out.jsonl> <branch> <sha> [--as king|bishop] [--dir king2] [--fix] [--regrilled] [--tool] [--no-fresh] [--over] [--big] [--review <review brief> <review out.jsonl>] | knight <brief> <report.txt> <branch> <sha> [--fix] [--regrilled] [--tool] [--no-fresh] [--over] [--big] [--review <review brief> <review out.jsonl>] | suite <sha> [--over] | retro [--over] [--events "<text>"] [--as king|bishop] | pawn <out.json> "<question>" | fresh <id> [--as king|bishop] | acad <item> [--as king|bishop] | board <brief> <out> [--as king|bishop] | fails <log> | handover <resume file> <name> | hq-install [--dry] | any command: --project <D|R|B|P|WF>');
 }
 }
 

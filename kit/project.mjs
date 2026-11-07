@@ -14,8 +14,9 @@ export function loadProject(text, file = 'rook.config.json') {
   try { c = JSON.parse(text); } catch (e) { throw new Error(`${file}: ${e.message}`); }
   for (const key of REQUIRED) if (!c?.[key]) throw new Error(`${file}: missing "${key}"`);
   // Claude Code names a project's transcript folder after its path: every character but a letter or digit becomes "-".
-  return { ...DEFAULTS, ...c, docs: { ...DEFAULTS.docs, ...c.docs }, mainGit: `${c.main}/.git`, claudeProject: c.main.replace(/[^A-Za-z0-9]/g, '-') };
+  return { ...DEFAULTS, ...c, docs: { ...DEFAULTS.docs, ...c.docs }, mainGit: `${c.main}/.git`, claudeProject: claudeSlug(c.main) };
 }
+export const claudeSlug = (path) => path.replace(/[^A-Za-z0-9]/g, '-');
 
 // A command as cmd.exe runs it: `npm test` -> `npm.cmd test` (a .cmd shim needs its extension from node).
 export const winCmd = (command) => command.replace(/^npm\b/, 'npm.cmd');
@@ -27,13 +28,22 @@ export const ROOT = resolve(process.env.ROOK_ROOT || process.cwd());
 process.env.ROOK_ROOT = ROOT;
 const HQ = process.env.ROOK_HQ || join(ROOT, 'hq.json');
 
+export const hqConfig = () => JSON.parse(readFileSync(HQ, 'utf8'));
+
+// TODO 219d: hq.json "hq" is Rook's HQ folder. From session "runsFrom" (default 41) on, runs<N> and Rook's transcripts live there; earlier sessions stay in "runs" and the project's Claude folder.
+// The session is the N of rook-next.txt line 3 (runs<N>/resume-rook.txt); `handover` also writes that file into "runs" (`pointer`), so it is always found there.
+export const sessionOf = (nextText) => +(/runs(\d+)/.exec((nextText || '').split(/\r?\n/)[2] || '')?.[1] ?? 0);
+export const inHq = (hq, session) => !!hq.hq && session >= (hq.runsFrom ?? 41);
+const readNext = (hq) => { try { return readFileSync(join(hq.runs, 'rook-next.txt'), 'utf8'); } catch { return ''; } };
+
 // A project's values by name (D = the config in ROOT, so a worktree's own config counts); the runs folder is the registry's. Throws the refusal.
-export function projectFor(name, hq = JSON.parse(readFileSync(HQ, 'utf8'))) {
+export function projectFor(name, hq = hqConfig(), nextText = readNext(hq)) {
   const folder = Object.hasOwn(hq.projects, name) && hq.projects[name];
   if (!folder) throw new Error(`unknown project ${name} (known: ${Object.keys(hq.projects).join(', ')})`);
   const file = name === 'D' ? join(ROOT, 'rook.config.json') : `${folder}/rook.config.json`;
   if (!existsSync(file)) throw new Error(`project ${name} has no rook.config.json (TODO 219e)`);
-  return { ...loadProject(readFileSync(file, 'utf8'), file), extras: hq.runs };
+  const p = loadProject(readFileSync(file, 'utf8'), file), up = inHq(hq, sessionOf(nextText));
+  return { ...p, extras: up ? hq.hq : hq.runs, pointer: hq.runs, claudeProject: up ? claudeSlug(hq.hq) : p.claudeProject };
 }
 
 // `--project <name>` anywhere in argv (default D); stripProjectFlag removes it so each command parses only its own flags.
