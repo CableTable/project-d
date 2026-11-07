@@ -2,14 +2,14 @@
 // Every check that fails throws an Error whose message says why; nothing is launched after one.
 import { execFileSync, execSync, spawn } from 'node:child_process';
 import { existsSync, openSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { gateOps, tickIds } from './handover-gate.mjs';
 import { setRunLine } from './rook-end.mjs';
 import { LONGEST_RUN_MS, parseCsv } from './usage-agent.mjs';
 import { retroSessions } from './retro-brief.mjs';
-import { fillProject, project, winCmd } from './project.mjs';
+import { fillProject, project, unknownKeys, winCmd } from './project.mjs';
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 export const EXTRAS = project.extras;
@@ -130,6 +130,7 @@ export function lintBrief(text, fix = isFixBrief(text)) {
     if (/\b(cmd(\.exe)? \/c|powershell\.exe)\b/i.test(line)) problems.push(`line ${i + 1}: cmd /c and powershell.exe are off King's allowlist; use a tmp-*.mjs`);
     if (/\bcargo\b/i.test(line) && !/\bno cargo\b/i.test(line)) problems.push(`line ${i + 1}: cargo is unavailable on this PC; say no cargo on the same line`);
   }
+  for (const key of unknownKeys(text)) problems.push(`unknown placeholder {${key}} (not a rook.config.json value)`);
   if (behaviours > 5) problems.unshift(`${behaviours} behaviour lines (maximum 5)`);
   if (/^﻿?Build:/.test(text) && !/^Old steps\b/m.test(text)) problems.push('build brief needs an Old steps line');
   return problems;
@@ -209,10 +210,17 @@ export function launchRun(bin, args, cwd, inFd, outFd, env, outPath = '', spawnF
 // A launch's line in queue.txt as a job for rook-end.mjs; null when there is no queue.txt (lines 1-2 are Rook's, so the launcher never creates one).
 export const queueLineOf = (queue, kind, id, out, exists = existsSync) => (exists(queue) ? { queue, key: basename(out), out, text: `${kind} ${id} -> ${basename(out)}:` } : null);
 
-// A brief opened for reading gets its {project} / {test} / {extras} ... placeholders filled in place (TODO 219a); other modes open as they are.
+// A brief opened for reading gets its {project} / {test} / {extras} ... placeholders filled (TODO 219a); the brief file itself is never rewritten:
+// the filled text goes through a temp file that is unlinked once open. Other modes open as they are.
 export function openFilled(path, mode) {
-  if (mode === 'r') { const text = readFileSync(path, 'utf8'), filled = fillProject(text); if (filled !== text) writeFileSync(path, filled); }
-  return openSync(path, mode);
+  if (mode !== 'r') return openSync(path, mode);
+  const text = readFileSync(path, 'utf8'), filled = fillProject(text);
+  if (filled === text) return openSync(path, mode);
+  const tmp = join(tmpdir(), `rook-brief-${process.pid}-${Date.now()}-${basename(path)}`);
+  writeFileSync(tmp, filled);
+  const fd = openSync(tmp, 'r');
+  try { unlinkSync(tmp); } catch { /* Windows keeps a file that is still open: the OS temp folder cleans it */ }
+  return fd;
 }
 
 // Everything that touches git, npm, files or processes; the tests swap it for a recorder.

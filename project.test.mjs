@@ -89,18 +89,28 @@ test('TODO 219a: no brief template keeps a Project D literal, and filling the re
   assert.match(fillProject(readFileSync(new URL('./tools/briefs/retro.txt', import.meta.url), 'utf8')), new RegExp(`^Project D retro for session \\{N\\}.*${X}/runs\\{N\\}/`));
 });
 
-test('TODO 219a: a brief opened for reading is filled in place; a file without placeholders and a write open are left alone', async () => {
+test('TODO 219a fix: a brief opened for reading hands on the filled text and the brief file stays unchanged; a write open is left alone', async () => {
   const { openFilled } = await L();
   const dir = mkdtempSync(join(tmpdir(), 'cfg-'));
   try {
     const brief = join(dir, 'b.txt'), plain = join(dir, 'p.txt'), out = join(dir, 'o.txt');
-    writeFileSync(brief, '{project}: run {test}\r\nrow in {todo} {ID}\r\n');
+    const raw = '{project}: run {test}\r\nrow in {todo} {ID}\r\n';
+    writeFileSync(brief, raw);
     writeFileSync(plain, 'nothing {to} fill\r\n');
-    closeSync(openFilled(brief, 'r'));
-    closeSync(openFilled(plain, 'r'));
+    const fd = openFilled(brief, 'r'), fdPlain = openFilled(plain, 'r');
+    assert.equal(readFileSync(fd, 'utf8'), 'Project D: run npm test\r\nrow in TODO.md {ID}\r\n');
+    assert.equal(readFileSync(fdPlain, 'utf8'), 'nothing {to} fill\r\n');
+    closeSync(fd);
+    closeSync(fdPlain);
     closeSync(openFilled(out, 'w'));
-    assert.equal(readFileSync(brief, 'utf8'), 'Project D: run npm test\r\nrow in TODO.md {ID}\r\n');
+    assert.equal(readFileSync(brief, 'utf8'), raw);
     assert.equal(readFileSync(plain, 'utf8'), 'nothing {to} fill\r\n');
     assert.equal(readFileSync(out, 'utf8'), '');
   } finally { rmSync(dir, { recursive: true }); }
+});
+
+test('TODO 219a fix: lintBrief refuses a {lowercase} key that is no config value and names it', async () => {
+  const { lintBrief } = await L();
+  assert.deepEqual(lintBrief('1. Run {mian} and {mian} again'), ['unknown placeholder {mian} (not a rook.config.json value)']);
+  assert.deepEqual(lintBrief('1. Fix {project} in {todo}, runs{N}/{ID}, ${shotDir}'), []);
 });

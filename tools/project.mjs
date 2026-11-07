@@ -22,7 +22,11 @@ export const winCmd = (command) => command.replace(/^npm\b/, 'npm.cmd');
 export const project = loadProject(readFileSync(new URL('../rook.config.json', import.meta.url), 'utf8'));
 
 // Brief text: `{project}`, `{test}`, ... become the project's values; any other `{word}` stays for the caller.
+const valuesOf = (p) => ({ project: p.name, extras: p.extras, main: p.main, test: p.test, browserTest: p.browserTest, claudeProject: p.claudeProject, kingBuild: p.folders.king?.build, ...p.docs });
 export function fillProject(text, p = project) {
-  const values = { project: p.name, extras: p.extras, main: p.main, test: p.test, browserTest: p.browserTest, claudeProject: p.claudeProject, kingBuild: p.folders.king?.build, ...p.docs };
+  const values = valuesOf(p);
   return text.replace(/\{([a-zA-Z]+)\}/g, (all, key) => (Object.hasOwn(values, key) ? values[key] : all));
 }
+
+// A `{lowercase}` word that is no config value is a typo (`{mian}`): it would reach the builder unfilled. `${js}` template code is not one.
+export const unknownKeys = (text, p = project) => [...new Set([...text.matchAll(/(?<!\$)\{([a-z][a-zA-Z]*)\}/g)].map((m) => m[1]))].filter((key) => !Object.hasOwn(valuesOf(p), key));
