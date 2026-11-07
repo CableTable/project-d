@@ -331,7 +331,7 @@ test('TODO 196a: King builds and reviews are refused above 85% King 5h; --over, 
   };
   for (const [name, run] of Object.entries(calls)) {
     const refused = withUsage(row(86));
-    assert.throws(() => run(refused.x), /^Error: King 5h 86%: use Knight, or --over$/, name);
+    assert.throws(() => run(refused.x), /^Error: King 5h 86% \+ 0 King runs running \(10% each\) is over 85%: use Knight, or --over$/, name);
     assert.equal(refused.calls.some((c) => isSwitch(c) || ['open', 'npmCi', 'launch'].includes(c[0])), false, name);
     const ok = withUsage(row(85));
     run(ok.x);
@@ -351,6 +351,57 @@ test('TODO 196a: King builds and reviews are refused above 85% King 5h; --over, 
     build(['b.txt', 'o.jsonl', 'br', 'abc1234'], r.x);
     assert.ok(launched(r.calls), csv);
     assert.equal(warnings.mock.calls.length > before, !csv.includes('2020'), csv); // the reset window is a quiet pass
+  }
+});
+
+test('TODO 207a: kingGate adds 10% per running King build / King review line in the queue; ended, Knight, Bishop and suite lines do not count', (t) => {
+  t.mock.method(console, 'error', () => {});
+  t.mock.method(console, 'log', () => {});
+  const future = new Date(Date.now() + 36e5).toISOString();
+  const queue = [
+    'build king/a -> king-a.jsonl: running', 'review abc1234 --as king -> review-a.jsonl: running', // 2 count
+    'build king/old -> king-old.jsonl: ended', 'review abc1234 --as king -> r.jsonl: ended', 'knight knight/b -> k.txt: running', 'review abc1234 -> r2.jsonl: running', 'suite abc -> s.log: running', // none count
+  ].join('\r\n');
+  const mk = (h5, text) => {
+    const r = withUsage(`King,5h,${h5},${future}\n`), read = r.x.read;
+    r.x.read = (p) => (p.endsWith('queue.txt') ? text : read(p));
+    return r;
+  };
+  const go = (r) => build(['b.txt', 'o.jsonl', 'br', 'abc1234'], r.x);
+  assert.throws(() => go(mk(66, queue)), /^Error: King 5h 66% \+ 2 King runs running \(10% each\) is over 85%: use Knight, or --over$/);
+  go(mk(65, queue)); // 65 + 20 = 85 passes
+  const one = mk(76, queue.split('\r\n')[0]);
+  assert.throws(() => go(one), /King 5h 76% \+ 1 King run running/);
+  assert.equal(launched(one.calls), undefined);
+  go(mk(85, queue.split('\r\n').slice(2).join('\r\n'))); // only non-counting lines: the old rule
+  const over = mk(99, queue);
+  build(['b.txt', 'o.jsonl', 'br', 'abc1234', '--over'], over.x);
+  assert.ok(launched(over.calls));
+  const king = mk(60, queue); // a King review marks its queue line so the next gate counts it
+  review(['abc1234', 'b.txt', 'o.jsonl', '--as', 'king', '--over'], king.x);
+  assert.deepEqual(king.calls.find((c) => c[0] === 'queueOpen').slice(1, 3), ['review', 'abc1234 --as king']);
+});
+
+test('TODO 207a: build and knight refuse a brief whose line 1 says Branch <x> from <sha> for another branch; no Branch word on line 1: no check', (t) => {
+  t.mock.method(console, 'log', () => {});
+  for (const [run, args, branch] of [[build, ['b.txt', 'o.jsonl', 'king/207a', 'abc1234'], 'king/207a'], [knight, ['b.txt', 'k.txt', 'knight/207a', 'abc1234'], 'knight/207a']]) {
+    for (const [text, ok] of [
+      [`Build: TODO 207a. Branch ${branch} from f1f2af3.\n1. Do it\nOld steps: none\nbase-check`, true],
+      [`King fix: Branch ${branch}fix from f1f2af3.\n1. Do it`, false],
+      [`Build: TODO 207a. Branch king/other from f1f2af3.\n1. Do it\nOld steps: none\nbase-check`, false],
+      [`﻿Build: TODO 207a. Branch king/other from f1f2af3.\r\n1. Do it\r\nOld steps: none\r\nbase-check`, false],
+      [`Build: TODO 207a.\n1. Do it on Branch king/other from main\nOld steps: none\nbase-check`, true], // line 2: no check
+      ['Build: TODO 207a. On a new branch.\n1. Do it\nOld steps: none\nbase-check', true],
+    ]) {
+      const r = recorder();
+      r.x.read = () => text;
+      if (ok) { run(args, r.x); assert.ok(launched(r.calls), text); }
+      else {
+        const other = /Branch (\S+) from/.exec(text)[1];
+        assert.throws(() => run(args, r.x), { message: `brief says branch ${other}, run is ${branch}` });
+        assert.ok(!r.calls.some((c) => ['launch', 'open'].includes(c[0]) || isSwitch(c)), 'refusal precedes mutations');
+      }
+    }
   }
 });
 
@@ -438,12 +489,15 @@ test('TODO 185b: lint checks filters after apostrophes and accepts directly nega
   ]) assert.deepEqual(lintBrief(brief, true), problems, brief); // fix: only the 400-char rule differs
 });
 
-test('Retro 38ck A fix: a long Do line passes in a fix brief, is still refused in a Build brief', () => {
+test('TODO 207a: a Do line over 400 chars prints a warning and no longer refuses (fix brief: nothing printed)', (t) => {
+  const warnings = t.mock.method(console, 'error', () => {});
   const line = `1. ${'x'.repeat(433)}`;
   assert.equal(line.length, 436);
   assert.deepEqual(briefProblems(`King fix: x\n${line}`, false, true), []);
-  assert.deepEqual(briefProblems(`Build: TODO 1\n${line}\nOld steps: none\nbase-check`, false, false, false), ['line 2: Do line over 400 chars (436); split it into numbered items']);
-  assert.equal(briefProblems(`Build: TODO 1\n${line}\nOld steps: none`, false, true, false).length, 1); // --tool: still refused
+  assert.equal(warnings.mock.calls.length, 0);
+  assert.deepEqual(briefProblems(`Build: TODO 1\n${line}\nOld steps: none\nbase-check`, false, false, false), []);
+  assert.deepEqual(warnings.mock.calls.map((c) => c.arguments[0]), ['warning: line 2: Do line over 400 chars']);
+  assert.equal(briefProblems(`Build: TODO 1\n${line}\nOld steps: none`, false, true, false).length, 0); // --tool too
 });
 
 test('TODO 172: build and knight refuse every brief problem before changes; --big overrides, including fixes', () => {
@@ -672,13 +726,13 @@ test('TODO 196b: the third fix round needs a re-grill file in the current runs f
   const first = 'build king/196bfix1 -> fix1.jsonl: ended';
   const second = 'knight knight/196bfix2 -> fix2.txt: running';
   const other = 'build king/196bcfix1 -> other.jsonl: ended\nreview bishop/196bfix2 -> review.jsonl: ended';
-  const refusal = '3rd fix round of 196b: re-grill the root cause, then --regrilled';
+  const refusal = '3rd fix round of 196b: write ../runs33/grill-196b-regrill.md, then --regrilled'; // TODO 207a: names the file and the real runs folder
   for (const eol of ['\n', '\r\n']) {
-    assert.equal(fixRoundRefusal('196b', other), '');
-    assert.equal(fixRoundRefusal('196b', [first, other].join(eol)), '');
-    assert.equal(fixRoundRefusal('196b', [first, second, other].join(eol)), refusal);
-    assert.equal(fixRoundRefusal('196b', `${first} knight/196bfix2`), '', 'count lines, not mentions');
-    assert.equal(fixRoundRefusal('196b', `king/196bfix\nknight/196bfix10`), refusal, 'fix wildcard and branch at start');
+    assert.equal(fixRoundRefusal('196b', other, 'runs33'), '');
+    assert.equal(fixRoundRefusal('196b', [first, other].join(eol), 'runs33'), '');
+    assert.equal(fixRoundRefusal('196b', [first, second, other].join(eol), 'runs33'), refusal);
+    assert.equal(fixRoundRefusal('196b', `${first} knight/196bfix2`, 'runs33'), '', 'count lines, not mentions');
+    assert.equal(fixRoundRefusal('196b', `king/196bfix\nknight/196bfix10`, 'runs33'), refusal, 'fix wildcard and branch at start');
   }
   for (const [run, out, branch] of [[build, 'o.jsonl', 'king/196bfix3'], [knight, 'k.txt', 'knight/196bfix30']]) {
     const make = (text = '') => {
@@ -703,14 +757,15 @@ test('TODO 196b: the third fix round needs a re-grill file in the current runs f
     const normal = make();
     run(args, normal.x);
     assert.ok(launched(normal.calls), 'new builds do not count as fix rounds');
+    const here = refusal.replace('runs33', basename(dir)); // the queue's own folder name
     for (const flags of [['--fix'], ['--fix', '--over', '--tool', '--big'], []]) {
       const r = make(flags.length ? '' : 'Knight fix: TODO 196b');
-      assert.throws(() => run([...args, ...flags], r.x), { message: refusal });
+      assert.throws(() => run([...args, ...flags], r.x), { message: here });
       assert.ok(!r.calls.some((c) => ['launch', 'open', 'truncate'].includes(c[0]) || isSwitch(c)), 'refusal precedes mutations');
     }
     for (const name of [branch.replace(/\d+$/, ''), branch.replace(/fix\d+$/, '')]) {
       const r = make();
-      assert.throws(() => run(['b.txt', out, name, 'abc1234', '--fix'], r.x), { message: refusal });
+      assert.throws(() => run(['b.txt', out, name, 'abc1234', '--fix'], r.x), { message: here });
     }
     const proof = join(dir, 'grill-196b-regrill.md');
     for (const flags of [['--regrilled'], ['--fix', '--regrilled']]) {
@@ -1135,8 +1190,9 @@ test('Retro 38ck: the Old steps line may quote a grep -iE with single words; oth
   assert.equal(lintBrief("1. Run node browser.test.mjs <port> 'export|cutter'").length, 2);
 });
 
-test('Retro 38ck: --big still refuses more than 5 behaviours or a Do line over 400 chars unless the brief has "Not split: <why>"', (t) => {
+test('Retro 38ck: --big still refuses more than 5 behaviours unless the brief has "Not split: <why>"; a Do line over 400 chars only warns (TODO 207a)', (t) => {
   t.mock.method(console, 'log', () => {});
+  t.mock.method(console, 'error', () => {});
   const proof = 'New test proof: node tools/base-check.mjs abc1234 x.test.mjs\nOld steps: none';
   const six = Array.from({ length: 6 }, (_, i) => `${i + 1}. Change behaviour ${i + 1}`).join('\n');
   const long = (n) => `1. ${'x'.repeat(n - 3)}`;
@@ -1147,8 +1203,8 @@ test('Retro 38ck: --big still refuses more than 5 behaviours or a Do line over 4
       [`${six}\nNot split: one tool, one test`, ['--big'], true],
       [`${six}\nNot split:`, ['--big'], false],
       [six, [], false],
-      [long(401), ['--big'], false],
-      [long(401), [], false],
+      [long(401), ['--big'], true],
+      [long(401), [], true],
       [`${long(401)}\nNot split: one long list`, ['--big'], true],
       [long(400), [], true],
       [`${long(300)}\n${long(300)}`, [], true],

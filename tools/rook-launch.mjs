@@ -78,19 +78,25 @@ export function parseKnight(args) {
 // TODO 167c: a brief whose line 1 opens like a fix round counts as one without `--fix`.
 export const isFixBrief = (text) => /^﻿?(King fix|Knight fix|Fix round)\b/.test(text);
 
-export function fixRoundRefusal(id, queue) {
+export function fixRoundRefusal(id, queue, runs) {
   // shortcut: counts only this runs folder's queue lines; use cross-session history if fixes span folders.
   const count = queue.split(/\r?\n/).filter((line) => [...line.matchAll(/(?:^|\s)(?:king|knight)\/(\S+)/g)].some((m) => m[1].startsWith(`${id}fix`))).length;
-  return count >= 2 ? `3rd fix round of ${id}: re-grill the root cause, then --regrilled` : '';
+  return count >= 2 ? `3rd fix round of ${id}: write ../${runs}/grill-${id}-regrill.md, then --regrilled` : '';
 }
 
 function checkFixRound(x, branch, regrilled) {
   const queue = x.gate.queueFile(), id = branch.replace(/^(king|knight)\//, '').replace(/fix\d*$/, '');
   if (regrilled) x.need(join(dirname(queue), `grill-${id}-regrill.md`), 're-grill file');
   else {
-    const refusal = fixRoundRefusal(id, existsSync(queue) ? x.read(queue) : '');
+    const refusal = fixRoundRefusal(id, existsSync(queue) ? x.read(queue) : '', basename(dirname(queue)));
     if (refusal) throw new Error(refusal);
   }
+}
+
+// S38 retro: a brief whose line 1 says `Branch <x> from <sha>` must be launched on <x>; no Branch word on line 1: no check.
+function checkBranch(text, branch) {
+  const m = /^﻿?[^\r\n]*\bBranch (\S+) from\b/.exec(text);
+  if (m && m[1] !== branch) throw new Error(`brief says branch ${m[1]}, run is ${branch}`);
 }
 
 export function lintBrief(text, fix = isFixBrief(text)) {
@@ -105,7 +111,7 @@ export function lintBrief(text, fix = isFixBrief(text)) {
     if (numbered && !/^`?(Screenshots|npm\.cmd test|Tick|Append|Add a DECISIONS|Report)\b/i.test(numbered[1])) behaviours++;
     if (/^\s*(\d+\.\s+)?Also\b/i.test(line)) problems.push(`line ${i + 1}: line starts with Also (scope creep: make it a numbered item or drop it)`);
     if (new Set(tickIds(line)).size > 1) problems.push(`line ${i + 1}: Tick line names more than one TODO id`);
-    if (inItem && !fix && line.length > 400) problems.push(`line ${i + 1}: Do line over 400 chars (${line.length}); split it into numbered items`);
+    if (inItem && !fix && line.length > 400) console.error(`warning: line ${i + 1}: Do line over 400 chars`); // a warning, not a refusal (TODO 207a)
     if (!/^Old steps\b/.test(line)) for (const [, , filter] of line.matchAll(/\bbrowser\.test\.mjs\b(?:[^'"]|(?<=\w)['’](?=\w))*\s(['"])(.*?)\1/g)) {
       for (const piece of filter.split('|')) {
         if (/^(?:[a-z]|\[[a-z]{2}\])+$/i.test(piece.trim())) problems.push(`line ${i + 1}: one-word browser filter piece '${piece}'`);
@@ -122,9 +128,9 @@ export function lintBrief(text, fix = isFixBrief(text)) {
   return problems;
 }
 
-// Retro 38c / 38k: --big overrides the problems but not ticket size (behaviour count, Do line length) unless the brief has `Not split: <why>`;
+// Retro 38c / 38k: --big overrides the problems but not ticket size (behaviour count) unless the brief has `Not split: <why>`;
 // a new-item build brief (not --fix / --tool / --big) must name base-check, so its tests are proved red on the base.
-const SIZE_PROBLEM = /^\d+ behaviour lines|Do line over 400/;
+const SIZE_PROBLEM = /^\d+ behaviour lines/;
 export function briefProblems(text, big, noProof = false, fix = isFixBrief(text)) {
   const problems = lintBrief(text, fix);
   if (big) return /^Not split: *\S/m.test(text) ? [] : problems.filter((p) => SIZE_PROBLEM.test(p));
@@ -271,9 +277,14 @@ function cachedH5(x, names, who, what) {
 }
 
 // TODO 196a: King builds and reviews are refused above 85% of his cached 5h, like Bishop's review gate; --over passes.
+// TODO 207a: each King run still going (queue line `build king/...` or `review <sha> --as king`, running) is counted as 10% more.
+const KING_RUNNING = /^(?:build king\/|review \S+ --as king ).*: running$/;
 function kingGate(x, what) {
   const h5 = cachedH5(x, ['King'], 'King', what);
-  if (h5 > 85) throw new Error(`King 5h ${h5}%: use Knight, or --over`);
+  let text = '';
+  try { const queue = x.gate.queueFile(); if (x.exists(queue)) text = x.read(queue); } catch { /* no queue.txt: nothing running */ }
+  const n = text.split(/\r?\n/).filter((l) => KING_RUNNING.test(l.trim())).length;
+  if (h5 + 10 * n > 85) throw new Error(`King 5h ${h5}% + ${n} King run${n === 1 ? '' : 's'} running (10% each) is over 85%: use Knight, or --over`);
 }
 
 export function review(args, x = io) {
@@ -299,7 +310,7 @@ export function review(args, x = io) {
   const inFd = x.open(brief, 'r');
   x.git(wt, 'switch', '--detach', sha);
   x.npmCi(wt);
-  const q = x.queue.open('review', sha, out);
+  const q = x.queue.open('review', as === 'king' ? `${sha} --as king` : sha, out); // the marker lets kingGate count this run
   x.launch(claude(as), reviewerArgs(), wt, inFd, x.open(out, 'w'), undefined, out, afterOf(q));
   x.queue.set(q, 'running');
   console.log(`review ${sha} (${as}) -> ${out}`);
@@ -311,6 +322,7 @@ export function build(args, x = io) {
   x.need(brief, 'brief file');
   if (chain) { x.need(chain.brief, 'review brief file'); x.need(dirname(chain.out), 'review output folder'); }
   const text = x.read(brief), fix = fixFlag || isFixBrief(text);
+  checkBranch(text, branch);
   x.gate.check(fix, over, tool);
   if (as === 'king' && !over) kingGate(x, 'build');
   checkBrief(text, big, fix || tool, fix);
@@ -358,6 +370,7 @@ export function knight(args, x = io) {
   if (chain) { x.need(chain.brief, 'review brief file'); x.need(dirname(chain.out), 'review output folder'); }
   const text = x.read(brief), fix = fixFlag || isFixBrief(text);
   if (/\.\.\/runs\d+\/shots/.test(text)) throw new Error('shots go in shots-<id>/ in the clone root');
+  checkBranch(text, branch);
   x.gate.check(fix, over, tool);
   checkBrief(text, big, fix || tool, fix);
   if (!fix && !tool && !noFresh) checkFresh(x, text);
