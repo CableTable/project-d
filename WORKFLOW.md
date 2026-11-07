@@ -9,7 +9,7 @@ briefs, reading short reports and merging.
 
 ## Who does what
 
-Bishop paused since 2026-11-06 ~00:00 IST (his call; lock `ProjectD-s15fix/.run-lock`): review, retro, board and fresh read run with `--as king`; Bishop-acad waits.
+Bishop on again since 2026-11-07 ~20:55 IST (his call; pause = recreate lock `ProjectD-s15fix/.run-lock`). Rook week at 97%: Castle mode with King as the lead (his call, same day).
 
 | Role | Runs on | Model, effort | Does |
 |---|---|---|---|
