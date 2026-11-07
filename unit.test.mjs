@@ -21,6 +21,7 @@ test('TODO 219c: the kit\'s tests run while kit/ is inside the repo and are left
   assert.deepEqual(kitTests('/repo', '/repo/kit', list), ['kit/a.test.mjs', 'kit/b.test.mjs']);
   assert.deepEqual(kitTests('/repo', '/other/rook-kit', list), []);
   assert.deepEqual(kitTests('/repo', '/repo', list), []);
+  assert.deepEqual(kitTests('/no-such-repo', '/no-such-repo/kit'), []); // kit/ removed and "kit" unset: no tests, no crash
   const all = ['x.test.mjs', 'kit/a.test.mjs', 'kit/b.test.mjs'];
   assert.deepEqual(unitFiles(all, ['--skip', 'a.test.mjs']), ['x.test.mjs', 'kit/b.test.mjs']);
   assert.deepEqual(unitFiles(all, ['--skip', 'kit/b.test.mjs']), ['x.test.mjs', 'kit/a.test.mjs']);

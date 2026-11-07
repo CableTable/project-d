@@ -182,7 +182,7 @@ process.stdout.write(JSON.stringify({ extras: L.EXTRAS, repo: L.REPO, accounts: 
     assert.equal(r.suite[1], w.r);
     const d = JSON.parse(run().stdout);
     assert.deepEqual([d.extras, d.accounts.king.build, d.suite[0].length], [`${w.dir}/runs`, 'ProjectD-king', 1]);
-    assert.equal(d.repo, process.cwd());
+    assert.equal(d.repo, resolve(process.env.ROOK_ROOT || process.cwd())); // D = the project's checkout, wherever the kit folder is
     const bad = run('--project', 'Q');
     assert.equal(bad.status, 1);
     assert.equal(bad.stderr.trim(), 'unknown project Q (known: D, R, B)'); // TODO 219c: one line, no stack trace

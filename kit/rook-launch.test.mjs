@@ -7,6 +7,7 @@ import { EventEmitter } from 'node:events';
 import { dedupePath, acad, acadArgs, board, boardArgs, pawn, pawnArgs, queueLineOf, retro, retroArgs, suite, launchFailed, launchRun, runningNote, parseReview, parseBuild, parseKnight, reviewerArgs, buildArgs, knightArgs, commandLine, review, build, knight, lintBrief, briefProblems, isFixBrief, fixRoundRefusal } from './rook-launch.mjs';
 import * as launches from './rook-launch.mjs';
 import { LONGEST_RUN_MS } from './usage-agent.mjs';
+import { ROOT } from './project.mjs'; // the project's checkout (ROOK_ROOT, else the cwd), not the kit's folder
 
 const X = 'E:/Project B/Claude/Project D extras';
 const REVIEWER = 'claude2.cmd -p --agent reviewer --model claude-opus-5-5 --effort medium --permission-mode dontAsk --max-budget-usd 6 '
@@ -253,7 +254,7 @@ test('TODO 190b: review gates Bishop above 85 percent; King, over and unavailabl
         run();
         assert.ok(launched(r.calls));
       }
-      assert.deepEqual(reads, [resolve('mockups/_design/usage/limits.csv')]);
+      assert.deepEqual(reads, [join(ROOT, 'mockups/_design/usage/limits.csv')]);
     }
   }
   for (const flags of [['--over'], ['--as', 'king', '--over']]) { // TODO 196a: --as king alone now reads King's 99% and is refused
