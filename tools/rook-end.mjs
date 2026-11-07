@@ -47,7 +47,7 @@ function chainReview(job, code, x) {
     let tip;
     const d = reviewChain({ base: r.base, tip: () => (tip = x.git(r.dir, 'rev-parse', r.branch)), code });
     // --over: the launcher's 150k context gate must not refuse a review of a build that already ran
-    if (d.chain) { x.review(['review', tip, r.brief, r.out, ...(r.from ? ['--from', r.from, r.branch] : []), '--over']); return; }
+    if (d.chain) { x.review(['review', tip, r.brief, r.out, ...(r.from ? ['--from', r.from, r.branch] : []), '--over', ...(job.project ? ['--project', job.project] : [])]); return; }
     why = d.why;
   } catch (e) { why = `review not launched: ${e.message}`; }
   x.write(r.out, `NO REVIEW: ${why}\n`);

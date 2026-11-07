@@ -9,9 +9,10 @@ import { gateOps, tickIds } from './handover-gate.mjs';
 import { setRunLine } from './rook-end.mjs';
 import { LONGEST_RUN_MS, parseCsv } from './usage-agent.mjs';
 import { retroSessions } from './retro-brief.mjs';
-import { fillProject, project, unknownKeys, winCmd } from './project.mjs';
+import { fillProject, project, projectName, unknownKeys, winCmd } from './project.mjs';
 
-const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..'); // these tools' checkout: briefs, usage csv, helper scripts
+export const REPO = projectName === 'D' ? ROOT : project.main; // the project's repo: git, the suite, the session branch
 export const EXTRAS = project.extras;
 const MAIN_GIT = project.mainGit;
 const MAIN = project.main;
@@ -184,7 +185,7 @@ const RUN = 'const rm = () => { try { require("fs").unlinkSync(process.argv[2]);
   + 'const end = (c) => { if (process.argv[3]) try { require("child_process").execFileSync(process.execPath, [process.argv[3], process.argv[4], String(c)], { stdio: "ignore", windowsHide: true }); } catch {} };'
   + 'require("child_process").spawn(process.argv[1], { shell: true, stdio: "inherit", windowsHide: true }).on("exit", (c) => { rm(); end(c); process.exit(c); });';
 const lockFile = (dir) => `${dir}/.run-lock`;
-const END = join(REPO, 'tools', 'rook-end.mjs');
+const END = join(ROOT, 'tools', 'rook-end.mjs');
 
 // A run that never started must not leave its folder locked.
 export function launchFailed(cwd, e, exit = process.exit, lock = lockFile(cwd)) {
@@ -288,12 +289,12 @@ function needClean(x, dir) {
 }
 
 // What the RUN script hands to tools/rook-end.mjs when the run ends: its queue line (q) and the review to chain; null when there is neither.
-const afterOf = (q, review) => (q || review ? { ...q, review } : null);
+const afterOf = (q, review) => (q || review ? { ...q, review, ...(projectName === 'D' ? {} : { project: projectName }) } : null); // the chained review runs for the same project
 
 // The cached 5h reading of one account (limits.csv, written by `rook.mjs usage`); undefined, with a warning, when it is unreadable or the window has reset.
 function cachedH5(x, names, who, what) {
   try {
-    const row = parseCsv(x.read(join(REPO, 'mockups', '_design', 'usage', 'limits.csv'))).find((r) => names.includes(r.agent) && r.window === '5h');
+    const row = parseCsv(x.read(join(ROOT, 'mockups', '_design', 'usage', 'limits.csv'))).find((r) => names.includes(r.agent) && r.window === '5h');
     const used = Number(row?.used_pct);
     if (!row?.used_pct?.trim() || !Number.isFinite(used)) throw new Error(`missing or invalid ${who} 5h reading`);
     if (!(Date.parse(row.resets) < Date.now())) return used; // a past reset time = the window has reset, the reading is old
@@ -428,7 +429,7 @@ export function knight(args, x = io) {
 }
 
 // TODO 167e: `suite`, `retro`, `pawn`, `acad`: the other hand-typed launches of WORKFLOW.md (lines 87, 214, 215, 248-250), detached with a lock and a queue line.
-const SUITE = join(REPO, 'tools', 'rook-suite.mjs');
+const SUITE = join(ROOT, 'tools', 'rook-suite.mjs');
 const runsDir = (x) => dirname(x.gate.queueFile());
 
 function checkFresh(x, text) {
@@ -448,12 +449,11 @@ export const acadArgs = (extras = EXTRAS) => ['-p', '--model', 'claude-sonnet-5-
 
 // WORKFLOW step 2b: read the grill before its DECISIONS row and build brief are written.
 export function fresh(args, x = io) {
-  const usage = 'usage: fresh <id> [--as king]';
+  const usage = 'usage: fresh <id> [--as king|bishop]';
   const { pos, flags } = parseFlags(args, { '--as': 1 }, usage);
   const [id] = pos;
   if (pos.length !== 1 || !/^[\w][\w.-]*$/.test(id)) throw new Error(usage);
   const as = account(flags, 'king', usage), dir = runsDir(x), name = `fresh-${id}`;
-  if (as !== 'king') throw new Error(`${usage}\nBishop is paused: --as king only`);
   x.need(`${dir}/grill-${id}.md`, 'grill');
   x.need(claude(as), ACCOUNTS[as].bin);
   const prompt = `Fresh read of TODO ${id}: read grill-${id}.md, ${project.docs.todo} row ${id} and the code files it names. Max 8 lines: gaps, contradictions, missing cases; for each 'X never Y' answer, quote the code line that keeps it or say not found. Change nothing.`;
@@ -497,7 +497,7 @@ export function suite(args, x = io) {
       if (/\(High\)/.test(subject.join(' ')) && !x.exists(`${runsDir(x)}/rereview-${s7}.txt`)) throw new Error(`refused: High fix ${s7} not re-reviewed (--over passes)`);
     }
   }
-  plainRun(x, { kind: 'suite', id: sha, bin: process.execPath, args: [SUITE], cwd: REPO, out: `${runsDir(x)}/suite-${sha}.log` });
+  plainRun(x, { kind: 'suite', id: sha, bin: process.execPath, args: [SUITE, ...(projectName === 'D' ? [] : ['--project', projectName])], cwd: REPO, out: `${runsDir(x)}/suite-${sha}.log` });
 }
 
 // cmd.exe drops a variable over 8191 chars, and each Rook started by `next` inherits and grows PATH: drop empty and case-insensitive repeats, first order kept.
@@ -555,7 +555,7 @@ export function retro(args, x = io) {
     const values = { N: n, SESSIONS: [...sessions].join(', '), TRANSCRIPTS: transcripts.join(', '), EVENTS: flags['--events']?.[0] ?? 'none given.' };
     for (const name of missing) {
       const suffix = ho ? 'rook' : name.slice(`retro${n}`.length);
-      const template = x.read(join(REPO, 'tools', 'briefs', `retro${suffix ? `-${suffix}` : ''}.txt`));
+      const template = x.read(join(ROOT, 'tools', 'briefs', `retro${suffix ? `-${suffix}` : ''}.txt`));
       const note = ho ? `\nHandover retro: only this Rook; short (top 5 fixes); skip points already in runs${n}/retro${n}*.out\n` : '';
       x.write(`${dir}/${name}.txt`, fillProject(template).replace(/\{(N|SESSIONS|TRANSCRIPTS|EVENTS)\}/g, (_, key) => values[key]) + note);
     }

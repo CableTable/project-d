@@ -52,7 +52,7 @@ test('retro38ck: fresh runs step 2b with support access, its own lock and a queu
     assert.deepEqual(r.calls.find((c) => c[0] === 'queueOpen').slice(1), ['fresh', '109', out]);
     assert.equal(r.calls.find((c) => c[0] === 'queueSet')[2], 'running');
   }
-  for (const bad of [[], ['109', 'extra'], ['../109'], ['..'], ['109&echo'], ['109', '--as'], ['109', '--as', 'rook'], ['109', '--as', 'bishop'], ['109', '--as', 'king', '--as', 'king'], ['109', '--unknown']]) {
+  for (const bad of [[], ['109', 'extra'], ['../109'], ['..'], ['109&echo'], ['109', '--as'], ['109', '--as', 'rook'], ['109', '--as', 'king', '--as', 'king'], ['109', '--unknown']]) {
     const r = recorder();
     assert.throws(() => launches.fresh(bad, r.x), /usage/);
     assert.equal(r.calls.some((c) => ['open', 'launch'].includes(c[0])), false);

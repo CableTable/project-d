@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, readdirSync, existsSync, rmSync, writeFileSync, closeSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, existsSync, rmSync, writeFileSync, closeSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { test } from 'node:test';
 
 // Dynamic imports: on a base without tools/project.mjs each test fails (red), not the whole file (a load error).
@@ -123,4 +125,78 @@ test('TODO 219a fix 2: unknownKeys skips one-line code spans, still refuses a ba
   if (!existsSync(runs)) return; // CI has no runs folder
   const briefs = readdirSync(runs).filter((f) => /^(b|rv|f)-.*\.txt$/.test(f));
   for (const f of briefs) assert.deepEqual(lintBrief(readFileSync(join(runs, f), 'utf8')), [], f);
+});
+
+// TODO 219b: a temp registry with a project R config; `runs` is the registry's folder, not the config's.
+function hqWorld() {
+  const dir = mkdtempSync(join(tmpdir(), 'hq-')).replaceAll('\\', '/'), r = `${dir}/R`;
+  mkdirSync(r);
+  const R = { name: 'Project R', slug: 'project-r', extras: 'E:/ignored', main: r, support: `${dir}/rsupport`, github: 'CableTable/project-r', test: 'npm run check', folders: { king: { review: 'R-king2', build: 'R-king' }, bishop: { review: 'R-b', build: 'R-b' }, knight: 'R-rowan' } };
+  writeFileSync(`${r}/rook.config.json`, JSON.stringify(R));
+  const hq = { projects: { D, R: r, B: `${dir}/none` }, runs: `${dir}/runs` };
+  writeFileSync(`${dir}/hq.json`, JSON.stringify(hq));
+  return { dir, r, hq, hqFile: `${dir}/hq.json` };
+}
+
+test('TODO 219b: projectFor gives a project\'s config with the registry\'s runs folder; an unknown name and a project without rook.config.json are refused', async () => {
+  const { projectFor, projectNameOf, stripProjectFlag } = await P();
+  const w = hqWorld();
+  try {
+    const r = projectFor('R', w.hq);
+    assert.deepEqual([r.name, r.main, r.extras, r.test, r.github, r.folders.king.build, r.claudeProject], ['Project R', w.r, `${w.dir}/runs`, 'npm run check', 'CableTable/project-r', 'R-king', w.r.replace(/[^A-Za-z0-9]/g, '-')]);
+    assert.equal(projectFor('D', w.hq).name, 'Project D'); // D = the config beside the tools
+    assert.equal(projectFor('D', w.hq).extras, `${w.dir}/runs`);
+    assert.throws(() => projectFor('Q', w.hq), /unknown project Q \(known: D, R, B\)/);
+    assert.throws(() => projectFor('toString', w.hq), /unknown project toString/);
+    assert.throws(() => projectFor('B', w.hq), /^Error: project B has no rook\.config\.json \(TODO 219e\)$/);
+    assert.equal(projectNameOf(['node', 'rook.mjs', 'build']), 'D');
+    assert.equal(projectNameOf(['node', 'rook.mjs', 'build', '--project', 'R', '--tool']), 'R');
+    assert.equal(projectNameOf(['node', 'rook.mjs', 'build', '--project']), ''); // no name: refused as unknown
+    const argv = ['node', 'rook.mjs', '--project', 'R', 'build', 'b.txt'];
+    assert.deepEqual(stripProjectFlag(argv), ['node', 'rook.mjs', 'build', 'b.txt']);
+  } finally { rmSync(w.dir, { recursive: true }); }
+});
+
+test('TODO 219b: the launcher run with --project R uses R\'s folders, test command, repo and runs folder; without the flag it is D (real child processes)', async () => {
+  const w = hqWorld();
+  try {
+    const script = `${w.dir}/probe.mjs`, launch = pathToFileURL(join(process.cwd(), 'tools', 'rook-launch.mjs')).href;
+    writeFileSync(script, `import * as L from '${launch}';
+const launches = [];
+const x = { git: (dir, ...a) => (a[0] === 'rev-parse' ? 'abc1234' + '0'.repeat(33) : ''), exists: () => true, locked: () => false, open: () => 'fd', queue: { open: () => null, set() {} }, launch: (...a) => launches.push(a), gate: { queueFile: () => L.EXTRAS + '/runs40/queue.txt' } };
+console.log = () => {};
+L.suite(['abc1234', '--over'], x);
+process.stdout.write(JSON.stringify({ extras: L.EXTRAS, repo: L.REPO, accounts: L.ACCOUNTS, build: L.buildArgs(), board: L.boardArgs(), suite: launches[0].slice(1, 3) }));
+`);
+    const run = (...flags) => spawnSync(process.execPath, [script, ...flags], { encoding: 'utf8', env: { ...process.env, ROOK_HQ: w.hqFile } });
+    const r = JSON.parse(run('--project', 'R').stdout);
+    assert.equal(r.extras, `${w.dir}/runs`);
+    assert.equal(r.repo, w.r);
+    assert.deepEqual(r.accounts.king, { bin: 'claude3.cmd', review: 'R-king2', build: 'R-king' });
+    assert.deepEqual(r.build.slice(r.build.indexOf('--add-dir'), r.build.indexOf('--add-dir') + 4), ['--add-dir', `${w.r}/.git`, '--add-dir', `${w.dir}/runs`]);
+    assert.deepEqual(r.board.slice(r.board.indexOf('--add-dir')), ['--add-dir', `${w.dir}/runs`, '--add-dir', w.r, '--allowedTools', 'Read', 'Write', 'Edit', 'Glob', 'Grep', 'Bash(node:*)', '--disallowedTools', 'Agent']);
+    assert.deepEqual(r.suite[0].slice(1), ['--project', 'R']); // rook-suite.mjs runs R's test command, in R's repo
+    assert.equal(r.suite[0][0].replaceAll('\\', '/').endsWith('/tools/rook-suite.mjs'), true);
+    assert.equal(r.suite[1], w.r);
+    const d = JSON.parse(run().stdout);
+    assert.deepEqual([d.extras, d.accounts.king.build, d.suite[0].length], [`${w.dir}/runs`, 'ProjectD-king', 1]);
+    assert.equal(d.repo, process.cwd());
+    const bad = run('--project', 'Q');
+    assert.notEqual(bad.status, 0);
+    assert.match(bad.stderr, /unknown project Q/);
+    assert.match(run('--project', 'B').stderr, /project B has no rook\.config\.json \(TODO 219e\)/);
+  } finally { rmSync(w.dir, { recursive: true }); }
+});
+
+test('TODO 219b: a chained review runs for the build\'s project; D\'s job and review line stay as before; fresh allows --as bishop', async () => {
+  const { finish } = await import('./tools/rook-end.mjs'), { fresh } = await L();
+  const reviews = [], x = { read: () => '', write() {}, git: () => 'def5678', review: (a) => reviews.push(a) };
+  const review = { dir: '/wt', branch: 'br', base: 'abc1234', brief: '/b', out: '/o' };
+  finish({ review }, 0, x);
+  finish({ review, project: 'R' }, 0, x);
+  assert.deepEqual(reviews, [['review', 'def5678', '/b', '/o', '--over'], ['review', 'def5678', '/b', '/o', '--over', '--project', 'R']]);
+  const launches = [], f = { need() {}, locked: () => false, open: (p) => `fd:${p}`, queue: { open: () => null, set() {} }, launch: (...a) => launches.push(a), gate: { queueFile: () => `${X}/runs39/queue.txt` } };
+  const log = console.log; console.log = () => {};
+  try { fresh(['219b', '--as', 'bishop'], f); } finally { console.log = log; }
+  assert.match(launches[0][0], /claude2\.cmd$/);
 });

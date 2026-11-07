@@ -16,7 +16,8 @@
 //     review / build --as king (and review falling back to King) are refused above 85% cached King 5h (--over passes); `usage` prints `<name>: 100%` for an account at its limit
 //   node tools/rook.mjs pawn <out.json> "<question>"   one Pawn (agy) lookup from ~/agy-research, detached; adds the https-only / no-commands / 3-pages / cite sentence
 //   node tools/rook.mjs acad <item> [--as king|bishop]   acad on runs<N>/acad<item>.txt -> acad<item>.out, detached
-//   node tools/rook.mjs fresh <id> [--as king]   WORKFLOW step 2b on grill-<id>.md -> fresh-<id>.out, detached with a queue line
+//   --project <D|R|B|P|WF> (any command, default D, TODO 219b): runs the command for that project: its rook.config.json (folder from hq.json, env ROOK_HQ), runs folder from hq.json; refused when the name is unknown or the project has no rook.config.json
+//   node tools/rook.mjs fresh <id> [--as king|bishop]   WORKFLOW step 2b on grill-<id>.md -> fresh-<id>.out, detached with a queue line
 //   node tools/rook.mjs board <brief> <out> [--as king|bishop]   board / look (WORKFLOW.md line 194) on <brief> -> <out>, detached
 //     retro / acad / board default to King while ProjectD-s15fix/.run-lock exists, else Bishop.
 //   node tools/rook.mjs fails <log>   the failing steps of a browser-test or node:test log + the first 3 `+` / `-` lines after each, max 40 lines; `no failures in <log>`
@@ -32,13 +33,14 @@ import { join, dirname, resolve, basename } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseCsv } from './usage-agent.mjs';
-import { project } from './project.mjs';
+import { project, stripProjectFlag } from './project.mjs';
 import { cacheAge } from './rook-cache.mjs';
 import { firstDone, peakContext } from './rook-result.mjs';
 import { codexWindow, resetLabel } from '../usage-site/public/usage-window.js';
 import { randomUUID } from 'node:crypto';
-import { review, build, knight, suite, retro, pawn, acad, fresh, board, gate, handoverRetroName, runningNote, printRookContext, dedupePath, EXTRAS } from './rook-launch.mjs';
+import { review, build, knight, suite, retro, pawn, acad, fresh, board, gate, handoverRetroName, runningNote, printRookContext, dedupePath, EXTRAS, REPO } from './rook-launch.mjs';
 
+stripProjectFlag(process.argv); // TODO 219b: project.mjs has already read `--project <name>`; the commands below parse their own flags only
 dedupePath(process.env); // TODO 206: every child below (and Rook.lnk's) inherits a PATH cmd.exe keeps
 
 const U = join(dirname(fileURLToPath(import.meta.url)), '..', 'mockups', '_design', 'usage');
@@ -98,7 +100,7 @@ export function gitBash(exec = execFileSync, exists = existsSync) {
 // keep (wait with run files): a `none` line is printed but does not exit, the files are still waited on.
 export function watchCi(sha, spawnFn = spawn, exit = process.exit, bash = gitBash(), keep = false) {
   const tools = dirname(fileURLToPath(import.meta.url));
-  const ci = spawnFn(bash, [join(tools, 'ci-watch.sh'), sha], { cwd: join(tools, '..'), stdio: ['ignore', 'pipe', 'pipe'] });
+  const ci = spawnFn(bash, [join(tools, 'ci-watch.sh'), sha], { cwd: REPO, stdio: ['ignore', 'pipe', 'pipe'] });
   process.on('exit', () => ci.kill()); // a killed wait must not leave the watcher holding the pipes
   let done = false;
   const end = (line, code) => { if (!done) { done = true; console.log(line); if (!(keep && code)) exit(code); } };
@@ -185,7 +187,7 @@ export function mergeRefusal({ n, pr, sha, head, retro, applied, noRetro, ci }) 
 }
 
 // `merge <n> <sha> [--no-retro]`: checks, merges, confirms; returns the `MERGED` line or throws the refusal.
-export function merge(args, run = (cmd, a) => execFileSync(cmd, a, { encoding: 'utf8', cwd: join(dirname(fileURLToPath(import.meta.url)), '..') }).trim(), extras = EXTRAS) {
+export function merge(args, run = (cmd, a) => execFileSync(cmd, a, { encoding: 'utf8', cwd: REPO }).trim(), extras = EXTRAS) {
   const noRetro = args.includes('--no-retro'), [pr, short, ...rest] = args.filter((a) => a !== '--no-retro');
   if (!/^\d+$/.test(pr || '') || !short || rest.length) throw new Error('usage: node tools/rook.mjs merge <n> <sha> [--no-retro]');
   const sha = run('git', ['rev-parse', '--verify', `${short}^{commit}`]);
@@ -209,7 +211,7 @@ export function merge(args, run = (cmd, a) => execFileSync(cmd, a, { encoding: '
 }
 
 // `merge --due` (TODO 191, the 05:00 IST task): inside his OK window (extras/merge-ok-until.txt, an IST date), merges the one open claude/session<N> PR; logs each run to extras/merge-due.log. Throws the refusal.
-export function mergeDue(run = (cmd, a) => execFileSync(cmd, a, { encoding: 'utf8', cwd: join(dirname(fileURLToPath(import.meta.url)), '..') }).trim(), extras = EXTRAS, now = Date.now()) {
+export function mergeDue(run = (cmd, a) => execFileSync(cmd, a, { encoding: 'utf8', cwd: REPO }).trim(), extras = EXTRAS, now = Date.now()) {
   const ist = new Date(now + 19800e3).toISOString(); // shifted so the UTC fields read as IST
   let line;
   try {
@@ -399,7 +401,7 @@ if (cmd === 'result') {
     projects: join(homedir(), '.claude', 'projects', project.claudeProject), own: process.env.CLAUDE_CODE_SESSION_ID,
   }).then(({ line, code }) => { console.log(line); process.exitCode = code; }, (e) => { console.error(e.message); process.exitCode = 1; });
 } else {
-  console.log('usage: node tools/rook.mjs usage [--cached] | result <file> | wait <run file>... [--ci <sha>] | merge <n> <sha> [--no-retro] | gate | next | review <sha> <brief> <out.jsonl> [--as bishop|king] [--from <clone> <branch>] [--over] | build <brief> <out.jsonl> <branch> <sha> [--as king|bishop] [--dir king2] [--fix] [--regrilled] [--tool] [--no-fresh] [--over] [--big] [--review <review brief> <review out.jsonl>] | knight <brief> <report.txt> <branch> <sha> [--fix] [--regrilled] [--tool] [--no-fresh] [--over] [--big] [--review <review brief> <review out.jsonl>] | suite <sha> [--over] | retro [--over] [--events "<text>"] [--as king|bishop] | pawn <out.json> "<question>" | fresh <id> [--as king] | acad <item> [--as king|bishop] | board <brief> <out> [--as king|bishop] | fails <log> | handover <resume file> <name>');
+  console.log('usage: node tools/rook.mjs usage [--cached] | result <file> | wait <run file>... [--ci <sha>] | merge <n> <sha> [--no-retro] | gate | next | review <sha> <brief> <out.jsonl> [--as bishop|king] [--from <clone> <branch>] [--over] | build <brief> <out.jsonl> <branch> <sha> [--as king|bishop] [--dir king2] [--fix] [--regrilled] [--tool] [--no-fresh] [--over] [--big] [--review <review brief> <review out.jsonl>] | knight <brief> <report.txt> <branch> <sha> [--fix] [--regrilled] [--tool] [--no-fresh] [--over] [--big] [--review <review brief> <review out.jsonl>] | suite <sha> [--over] | retro [--over] [--events "<text>"] [--as king|bishop] | pawn <out.json> "<question>" | fresh <id> [--as king|bishop] | acad <item> [--as king|bishop] | board <brief> <out> [--as king|bishop] | fails <log> | handover <resume file> <name> | any command: --project <D|R|B|P|WF>');
 }
 }
 
