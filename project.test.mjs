@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync, closeSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, existsSync, rmSync, writeFileSync, closeSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -113,4 +113,14 @@ test('TODO 219a fix: lintBrief refuses a {lowercase} key that is no config value
   const { lintBrief } = await L();
   assert.deepEqual(lintBrief('1. Run {mian} and {mian} again'), ['unknown placeholder {mian} (not a rook.config.json value)']);
   assert.deepEqual(lintBrief('1. Fix {project} in {todo}, runs{N}/{ID}, ${shotDir}'), []);
+});
+
+test('TODO 219a fix 2: unknownKeys skips one-line code spans, still refuses a bare key beside one; every runs39 brief passes lintBrief', async () => {
+  const { lintBrief } = await L();
+  assert.deepEqual(lintBrief('1. A key like `{mian}` or `x {foo} y` is a typo'), []);
+  assert.deepEqual(lintBrief('1. `{mian}` is fine but {oops} is not'), ['unknown placeholder {oops} (not a rook.config.json value)']);
+  const runs = join(X, 'runs39');
+  if (!existsSync(runs)) return; // CI has no runs folder
+  const briefs = readdirSync(runs).filter((f) => /^(b|rv|f)-.*\.txt$/.test(f));
+  for (const f of briefs) assert.deepEqual(lintBrief(readFileSync(join(runs, f), 'utf8')), [], f);
 });

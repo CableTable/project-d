@@ -212,9 +212,12 @@ export const queueLineOf = (queue, kind, id, out, exists = existsSync) => (exist
 
 // A brief opened for reading gets its {project} / {test} / {extras} ... placeholders filled (TODO 219a); the brief file itself is never rewritten:
 // the filled text goes through a temp file that is unlinked once open. Other modes open as they are.
-export function openFilled(path, mode) {
+// `strict` (review briefs, which get no lintBrief): a typo like {mian} is refused instead of reaching the reviewer unfilled.
+export function openFilled(path, mode, strict = false) {
   if (mode !== 'r') return openSync(path, mode);
   const text = readFileSync(path, 'utf8'), filled = fillProject(text);
+  const unknown = strict ? unknownKeys(text) : [];
+  if (unknown.length) throw new Error(`brief refused: unknown placeholder ${unknown.map((k) => `{${k}}`).join(', ')} (not a rook.config.json value)`);
   if (filled === text) return openSync(path, mode);
   const tmp = join(tmpdir(), `rook-brief-${process.pid}-${Date.now()}-${basename(path)}`);
   writeFileSync(tmp, filled);
@@ -329,7 +332,7 @@ export function review(args, x = io) {
   if (from) x.git(REPO, 'fetch', from.clone, from.branch);
   if (!x.has(REPO, sha)) throw new Error(`commit ${sha} not in the repo${from ? '' : ' (use --from <clone folder> <branch> for a Knight build)'}`);
   x.need(dirname(out), 'output folder');
-  const inFd = x.open(brief, 'r');
+  const inFd = x.open(brief, 'r', true);
   x.git(wt, 'switch', '--detach', sha);
   x.npmCi(wt);
   const q = x.queue.open('review', as === 'king' ? `${sha} --as king` : sha, out); // the marker lets kingGate count this run

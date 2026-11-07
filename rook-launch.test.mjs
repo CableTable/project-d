@@ -1247,3 +1247,21 @@ test('Retro 38ck: a new-item Build brief without base-check is refused; --fix, -
     }
   }
 });
+
+test('TODO 219a fix 2: review refuses a brief with an unknown {key} before any git, npm or launch; a code span or config key passes', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'rv-'));
+  try {
+    const run = (text) => {
+      const brief = join(dir, 'rv.txt'), r = recorder();
+      writeFileSync(brief, text);
+      r.x.open = (path, mode, strict) => launches.openFilled(path, mode, strict); // the real opener on a real file
+      return { r, go: () => review(['abc1234', brief, 'o.jsonl'], r.x) };
+    };
+    const bad = run('Review {mian} now');
+    assert.throws(bad.go, /unknown placeholder \{mian\}/);
+    assert.equal(bad.r.calls.some((c) => isSwitch(c) || ['npmCi', 'launch'].includes(c[0])), false);
+    const ok = run('Review `{mian}` and {project} in {main}');
+    ok.go();
+    assert.ok(launched(ok.r.calls));
+  } finally { rmSync(dir, { recursive: true }); }
+});

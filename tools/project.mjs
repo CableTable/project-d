@@ -28,5 +28,5 @@ export function fillProject(text, p = project) {
   return text.replace(/\{([a-zA-Z]+)\}/g, (all, key) => (Object.hasOwn(values, key) ? values[key] : all));
 }
 
-// A `{lowercase}` word that is no config value is a typo (`{mian}`): it would reach the builder unfilled. `${js}` template code is not one.
-export const unknownKeys = (text, p = project) => [...new Set([...text.matchAll(/(?<!\$)\{([a-z][a-zA-Z]*)\}/g)].map((m) => m[1]))].filter((key) => !Object.hasOwn(valuesOf(p), key));
+// A `{lowercase}` word that is no config value is a typo (`{mian}`): it would reach the builder unfilled. `${js}` template code is not one; neither is anything inside a one-line `code span`.
+export const unknownKeys = (text, p = project) => [...new Set([...text.replace(/`[^`\r\n]*`/g, '').matchAll(/(?<!\$)\{([a-z][a-zA-Z]*)\}/g)].map((m) => m[1]))].filter((key) => !Object.hasOwn(valuesOf(p), key));
