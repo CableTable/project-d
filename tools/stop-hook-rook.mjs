@@ -1,6 +1,7 @@
 // The main-account (Rook) checks of tools/stop-hook.mjs (TODO 190a): pure, every read and git call is injected.
 // Returns '' to let Rook stop, else the stderr text for exit 2. Any read that fails means no block.
-import { project } from './project.mjs';
+import { kitUrl } from './kit.mjs';
+const { project } = await import(kitUrl('project.mjs'));
 const EXTRAS = project.extras;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 

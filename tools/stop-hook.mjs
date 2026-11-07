@@ -3,7 +3,8 @@
 import { execSync, execFileSync } from 'node:child_process';
 import { readFileSync, existsSync } from 'node:fs';
 import { rookStop } from './stop-hook-rook.mjs';
-import { project, winCmd } from './project.mjs';
+import { kitUrl } from './kit.mjs';
+const { project, winCmd } = await import(kitUrl('project.mjs'));
 
 let input = {};
 try { input = JSON.parse(readFileSync(0, 'utf8') || '{}'); } catch {}

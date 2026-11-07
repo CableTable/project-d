@@ -10,7 +10,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { homedir, uptime } from 'node:os';
 import { isLockStale, shouldRefresh } from './usage-agent-policy.mjs';
-import { project } from './project.mjs';
+import { kitUrl } from './kit.mjs';
+const { project } = await import(kitUrl('project.mjs'));
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const run = promisify(execFile);

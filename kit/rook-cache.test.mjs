@@ -4,7 +4,9 @@ import { mkdtempSync, mkdirSync, copyFileSync, readFileSync, writeFileSync, utim
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
-import { cacheAge } from './tools/rook-cache.mjs';
+import { cacheAge } from './rook-cache.mjs';
+
+delete process.env.ROOK_ROOT; // the scratch repos below find their own checkout (kit/project.mjs: ROOK_ROOT, else cwd)
 
 test('usage cache expires only after 75 minutes, using the older of both files', () => {
   const now = 10_000_000;
@@ -22,13 +24,13 @@ test('TODO 207b: Rook daily cap uses its own weekly reset and says cap today', (
   const repo = mkdtempSync(join(tmpdir(), 'projectd-rook-cap-'));
   try {
     mkdirSync(join(repo, 'tools'));
+    mkdirSync(join(repo, 'kit'));
     mkdirSync(join(repo, 'usage-site/public'), { recursive: true });
-    copyFileSync(new URL('./usage-site/public/usage-window.js', import.meta.url), join(repo, 'usage-site/public/usage-window.js'));
-    for (const file of ['rook.mjs', 'rook-cache.mjs', 'rook-result.mjs', 'rook-launch.mjs', 'rook-end.mjs', 'handover-gate.mjs', 'usage-agent.mjs', 'usage-agent-policy.mjs', 'retro-brief.mjs', 'project.mjs']) {
-      copyFileSync(new URL('./tools/' + file, import.meta.url), join(repo, 'tools', file));
-    }
-    copyFileSync(new URL('./rook.config.json', import.meta.url), join(repo, 'rook.config.json')); // tools/project.mjs reads it from the repo root
-    copyFileSync(new URL('./hq.json', import.meta.url), join(repo, 'hq.json')); // and the registry beside it (TODO 219b)
+    copyFileSync(new URL('../usage-site/public/usage-window.js', import.meta.url), join(repo, 'usage-site/public/usage-window.js'));
+    for (const file of ['rook.mjs', 'rook-cache.mjs', 'rook-result.mjs', 'rook-launch.mjs', 'rook-end.mjs', 'handover-gate.mjs', 'retro-brief.mjs', 'project.mjs']) copyFileSync(new URL('./' + file, import.meta.url), join(repo, 'kit', file));
+    for (const file of ['usage-agent.mjs', 'usage-agent-policy.mjs', 'kit.mjs']) copyFileSync(new URL('../tools/' + file, import.meta.url), join(repo, 'tools', file));
+    copyFileSync(new URL('../rook.config.json', import.meta.url), join(repo, 'rook.config.json')); // kit/project.mjs reads it from the repo root
+    copyFileSync(new URL('../hq.json', import.meta.url), join(repo, 'hq.json')); // and the registry beside it (TODO 219b)
     writeFileSync(join(repo, 'package.json'), '{"type":"module"}');
     const usage = join(repo, 'mockups', '_design', 'usage');
     mkdirSync(usage, { recursive: true });
@@ -46,7 +48,7 @@ test('TODO 207b: Rook daily cap uses its own weekly reset and says cap today', (
       writeFileSync(join(usage, 'history.csv'), 'at,agent,window,used_pct\n');
       for (const file of ['limits.csv', 'history.csv']) utimesSync(join(usage, file), now / 1000, now / 1000);
       writeFileSync(join(repo, 'clock.mjs'), `Date.now = () => ${now};`);
-      const lines = execFileSync(process.execPath, ['--import', './clock.mjs', 'tools/rook.mjs', 'usage', '--cached'], { cwd: repo, encoding: 'utf8', timeout: 5000 }).trim().split('\n');
+      const lines = execFileSync(process.execPath, ['--import', './clock.mjs', 'kit/rook.mjs', 'usage', '--cached'], { cwd: repo, encoding: 'utf8', timeout: 5000 }).trim().split('\n');
       assert.match(lines[0], new RegExp(`week 10% of ${cap}% cap today \\(Resets Sun 15:30\\)`));
       assert.match(lines[1], /week 10% of 42% cap \(Resets/); // week start 2 days before now: IST day 3
       assert.doesNotMatch(lines[1], /cap today/);
@@ -59,15 +61,15 @@ test('cached usage shares live summaries, avoids processes and writes, and falls
   const repo = mkdtempSync(join(tmpdir(), 'projectd-rook-'));
   try {
     mkdirSync(join(repo, 'tools'));
+    mkdirSync(join(repo, 'kit'));
     mkdirSync(join(repo, 'usage-site/public'), { recursive: true });
-    copyFileSync(new URL('./usage-site/public/usage-window.js', import.meta.url), join(repo, 'usage-site/public/usage-window.js'));
+    copyFileSync(new URL('../usage-site/public/usage-window.js', import.meta.url), join(repo, 'usage-site/public/usage-window.js'));
     const usage = join(repo, 'mockups', '_design', 'usage');
     mkdirSync(usage, { recursive: true });
-    for (const file of ['rook.mjs', 'rook-cache.mjs', 'rook-result.mjs', 'rook-launch.mjs', 'rook-end.mjs', 'handover-gate.mjs', 'usage-agent.mjs', 'usage-agent-policy.mjs', 'retro-brief.mjs', 'project.mjs']) {
-      copyFileSync(new URL('./tools/' + file, import.meta.url), join(repo, 'tools', file));
-    }
-    copyFileSync(new URL('./rook.config.json', import.meta.url), join(repo, 'rook.config.json')); // tools/project.mjs reads it from the repo root
-    copyFileSync(new URL('./hq.json', import.meta.url), join(repo, 'hq.json')); // and the registry beside it (TODO 219b)
+    for (const file of ['rook.mjs', 'rook-cache.mjs', 'rook-result.mjs', 'rook-launch.mjs', 'rook-end.mjs', 'handover-gate.mjs', 'retro-brief.mjs', 'project.mjs']) copyFileSync(new URL('./' + file, import.meta.url), join(repo, 'kit', file));
+    for (const file of ['usage-agent.mjs', 'usage-agent-policy.mjs', 'kit.mjs']) copyFileSync(new URL('../tools/' + file, import.meta.url), join(repo, 'tools', file));
+    copyFileSync(new URL('../rook.config.json', import.meta.url), join(repo, 'rook.config.json')); // kit/project.mjs reads it from the repo root
+    copyFileSync(new URL('../hq.json', import.meta.url), join(repo, 'hq.json')); // and the registry beside it (TODO 219b)
     writeFileSync(join(repo, 'package.json'), '{"type":"module"}');
     const now = Date.parse('2026-10-20T12:00:00Z'), asOf = now - 120_000;
     const reset5h = new Date(now + 3600_000).toISOString(), resetWeek = new Date(now + 5 * 86400_000).toISOString();
@@ -89,7 +91,7 @@ test('cached usage shares live summaries, avoids processes and writes, and falls
       syncBuiltinESMExports();
       Date.now = () => ${now};
     `);
-    const output = execFileSync(process.execPath, ['--import', './guard.mjs', 'tools/rook.mjs', 'usage', '--cached'], { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 5000 });
+    const output = execFileSync(process.execPath, ['--import', './guard.mjs', 'kit/rook.mjs', 'usage', '--cached'], { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 5000 });
     const lines = output.trim().split('\n');
     assert.equal(lines.length, 4);
     for (const [i, agent] of ['Rook', 'Bishop', 'King', 'Knight'].entries()) {
@@ -131,7 +133,7 @@ test('cached usage shares live summaries, avoids processes and writes, and falls
         for (const name of ['limits.csv', 'history.csv']) utimesSync(join(usage, name), asOf / 1000, asOf / 1000);
         if (missing) rmSync(join(usage, file));
         else utimesSync(join(usage, file), (now - 4_500_001) / 1000, (now - 4_500_001) / 1000);
-        const live = execFileSync(process.execPath, ['--import', './live.mjs', 'tools/rook.mjs', 'usage', '--cached'], { cwd: repo, encoding: 'utf8', timeout: 5000 });
+        const live = execFileSync(process.execPath, ['--import', './live.mjs', 'kit/rook.mjs', 'usage', '--cached'], { cwd: repo, encoding: 'utf8', timeout: 5000 });
         assert.deepEqual(live.trim().split('\n'), lines.map((line) => line.replace(/ \(as of .*\)$/, ' (live)')));
       }
     }
@@ -139,14 +141,14 @@ test('cached usage shares live summaries, avoids processes and writes, and falls
     for (const name of ['limits.csv', 'history.csv']) utimesSync(join(usage, name), asOf / 1000, asOf / 1000);
     writeFileSync(join(usage, 'limits.csv'), readFileSync(join(usage, 'limits.csv'), 'utf8').split('\n').filter((l) => !l.startsWith('King,')).join('\n'));
     utimesSync(join(usage, 'limits.csv'), asOf / 1000, asOf / 1000);
-    const noKing = execFileSync(process.execPath, ['--import', './live.mjs', 'tools/rook.mjs', 'usage', '--cached'], { cwd: repo, encoding: 'utf8', timeout: 5000 });
+    const noKing = execFileSync(process.execPath, ['--import', './live.mjs', 'kit/rook.mjs', 'usage', '--cached'], { cwd: repo, encoding: 'utf8', timeout: 5000 });
     assert.deepEqual(noKing.trim().split('\n'), lines.map((line) => line.replace(/ \(as of .*\)$/, ' (live)')));
     // A King probe that fails (not logged in, missing, 100%) skips King only; Rook, Bishop and Knight are still written, here from a pre-King cache too.
     const failKing = "child.execSync = (command, { env }) => {\n        if (/claude3\\.cmd/.test(command)) { calls++; throw Object.assign(Error('not logged in'), { status: 1 }); }";
     const liveSource = readFileSync(join(repo, 'live.mjs'), 'utf8');
     assert.ok(liveSource.includes('child.execSync = (command, { env }) => {'));
     writeFileSync(join(repo, 'noking.mjs'), liveSource.replace('child.execSync = (command, { env }) => {', failKing));
-    const noKingLive = execFileSync(process.execPath, ['--import', './noking.mjs', 'tools/rook.mjs', 'usage', '--cached'], { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 5000 });
+    const noKingLive = execFileSync(process.execPath, ['--import', './noking.mjs', 'kit/rook.mjs', 'usage', '--cached'], { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 5000 });
     assert.deepEqual(noKingLive.trim().split('\n'), lines.map((line, i) => (i === 2 ? 'King: no reading (live)' : line.replace(/ \(as of .*\)$/, ' (live)'))));
     const written = readFileSync(join(usage, 'limits.csv'), 'utf8');
     assert.match(written, /^Rook,/m);
@@ -154,12 +156,12 @@ test('cached usage shares live summaries, avoids processes and writes, and falls
     assert.match(written, /^Rowan,/m);
     assert.doesNotMatch(written, /^King,/m);
     rmSync(usage, { recursive: true });
-    const live = execFileSync(process.execPath, ['--import', './live.mjs', 'tools/rook.mjs', 'usage', '--cached'], { cwd: repo, encoding: 'utf8', timeout: 5000 });
+    const live = execFileSync(process.execPath, ['--import', './live.mjs', 'kit/rook.mjs', 'usage', '--cached'], { cwd: repo, encoding: 'utf8', timeout: 5000 });
     assert.deepEqual(live.trim().split('\n'), lines.map((line) => line.replace(/ \(as of .*\)$/, ' (live)')));
     for (const missingRoot of [false, true]) {
       if (missingRoot) rmSync(join(repo, '.codex'), { recursive: true });
       else writeFileSync(join(repo, '.codex', 'sessions', 'reading.jsonl'), '{}\n');
-      const partial = execFileSync(process.execPath, ['--import', './live.mjs', 'tools/rook.mjs', 'usage'], { cwd: repo, encoding: 'utf8', timeout: 5000 });
+      const partial = execFileSync(process.execPath, ['--import', './live.mjs', 'kit/rook.mjs', 'usage'], { cwd: repo, encoding: 'utf8', timeout: 5000 });
       assert.deepEqual(partial.trim().split('\n'), [...lines.slice(0, 3).map((line) => line.replace(/ \(as of .*\)$/, ' (live)')), 'Knight: no reading (live)']);
       const limits = readFileSync(join(usage, 'limits.csv'), 'utf8');
       assert.match(limits, /Rook,role|Rook,Lead/);

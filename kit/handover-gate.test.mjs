@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { briefIds, contextOf, countTicked, gateOps, itemsOf, nextState, queueLine, setLine2, skipIds, tickIds } from './tools/handover-gate.mjs';
+import { briefIds, contextOf, countTicked, gateOps, itemsOf, nextState, queueLine, setLine2, skipIds, tickIds } from './handover-gate.mjs';
 
 const BEFORE = [
   '- [ ] 162. **Quick Select**',

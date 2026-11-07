@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { retroSessions } from './tools/retro-brief.mjs';
+import { retroSessions } from './retro-brief.mjs';
 
 test('TODO 196e: only the first user message selects a Rook transcript and its distinct session names', () => {
   const user = (content) => JSON.stringify({ type: 'user', message: { content } });

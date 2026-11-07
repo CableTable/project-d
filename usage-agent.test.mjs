@@ -4,7 +4,8 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, utimesSync } from 'node:
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { parseTodo, parseCsv, parseTickets, tallyTokens, collectTokens, refreshFailure, firestoreValue, assertKeyOutsideRepo, isRookStale, LONGEST_RUN_MS, collectRookStatus, alertRook } from './tools/usage-agent.mjs';
-import { claudeUsage, usageProbe, limitedLine, limitedRows, capDays, weekCap } from './tools/rook.mjs';
+import { kitUrl } from './tools/kit.mjs';
+const { claudeUsage, usageProbe, limitedLine, limitedRows, capDays, weekCap } = await import(kitUrl('rook.mjs'));
 
 test('TODO 198b: Rook stale needs over 30 minutes and a later queue with an ended line', () => {
   const jsonlMtime = Date.parse('2026-11-05T10:00:00Z');

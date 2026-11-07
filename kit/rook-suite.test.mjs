@@ -2,10 +2,10 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { runInNewContext } from 'node:vm';
-import { project, winCmd } from './tools/project.mjs';
+import { project, winCmd } from './project.mjs';
 
 // Exercise the detached script's decisions without starting either suite.
-const source = readFileSync(new URL('./tools/rook-suite.mjs', import.meta.url), 'utf8').replace(/^import .*;\r?$/gm, '');
+const source = readFileSync(new URL('./rook-suite.mjs', import.meta.url), 'utf8').replace(/^import .*;\r?$/gm, '');
 
 test('TODO 185b: rook-suite runs unit then browser, reports both codes, and fails if either is red; TODO 193a: a red unit run skips the browser run and says so', () => {
   for (const [unit, browser, code] of [[0, 0, 0], [1, 0, 1], [0, 2, 1], [1, 2, 1]]) {

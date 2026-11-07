@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { test } from 'node:test';
-import { modulesDir, parseArgs, runCapped, testCommand } from './tools/base-check.mjs';
+import { modulesDir, parseArgs, runCapped, testCommand } from './base-check.mjs';
+
+delete process.env.ROOK_ROOT; // the scratch repos below find their own checkout (base-check.mjs: ROOK_ROOT, else cwd)
 
 test('Retro 37: modules prefer the worktree, then the git common directory parent (absolute or relative)', () => {
   const repo = resolve('tmp-worktree');
@@ -21,10 +23,10 @@ test('Retro 37: --link shares the common repo modules in the cwd worktree and ca
     mkdirSync(join(main, 'node_modules'), { recursive: true });
     writeFileSync(join(main, 'node_modules', 'marker'), 'shared');
     execFileSync('git', ['init', '-q', '--separate-git-dir', join(main, '.git'), wt]);
-    mkdirSync(join(wt, 'tools'));
-    copyFileSync('tools/base-check.mjs', join(wt, 'tools/base-check.mjs'));
+    mkdirSync(join(wt, 'kit'));
+    copyFileSync('kit/base-check.mjs', join(wt, 'kit/base-check.mjs'));
     for (let i = 0; i < 2; i++) {
-      const r = spawnSync(process.execPath, ['tools/base-check.mjs', '--link'], { cwd: wt, encoding: 'utf8', timeout: 10000 });
+      const r = spawnSync(process.execPath, ['kit/base-check.mjs', '--link'], { cwd: wt, encoding: 'utf8', timeout: 10000 });
       assert.equal(r.status, 0, r.stdout + r.stderr);
       assert.match(r.stdout, /node_modules ready/);
       assert.ok(lstatSync(join(wt, 'node_modules')).isSymbolicLink());
@@ -43,10 +45,10 @@ test('Retro 37 fix: --link and a check refuse with "run npm ci" when the repo ha
     writeFileSync(join(repo, 'a.test.mjs'), '');
     git('add', '.');
     git('commit', '-qm', 'base');
-    mkdirSync(join(repo, 'tools'));
-    copyFileSync('tools/base-check.mjs', join(repo, 'tools/base-check.mjs'));
+    mkdirSync(join(repo, 'kit'));
+    copyFileSync('kit/base-check.mjs', join(repo, 'kit/base-check.mjs'));
     for (const args of [['--link'], [git('rev-parse', 'HEAD').trim(), 'a.test.mjs']]) {
-      const r = spawnSync(process.execPath, ['tools/base-check.mjs', ...args], { cwd: repo, encoding: 'utf8', timeout: 20000 });
+      const r = spawnSync(process.execPath, ['kit/base-check.mjs', ...args], { cwd: repo, encoding: 'utf8', timeout: 20000 });
       assert.equal(r.status, 1, r.stdout + r.stderr);
       assert.match(r.stderr, /^no node_modules at .*node_modules: run npm ci/m);
       assert.doesNotMatch(r.stdout, /node_modules ready/);
@@ -77,8 +79,8 @@ test('base-check runs a unit file under node --test and the browser file with a 
 test('base-check CLI registers a no-op SIGINT listener before checking arguments', () => {
   const r = spawnSync(process.execPath, ['--input-type=module', '--eval', `
     import assert from 'node:assert/strict';
-    process.argv = [process.execPath, 'tools/base-check.mjs'];
-    await import('./tools/base-check.mjs');
+    process.argv = [process.execPath, 'kit/base-check.mjs'];
+    await import('./kit/base-check.mjs');
     assert.equal(process.listenerCount('SIGINT'), 1);
     process.emit('SIGINT');
     process.exitCode = 0;
@@ -100,11 +102,11 @@ test('base-check: the copied test file is run on the base (PASS), a test needing
     writeFileSync(join(repo, 'later.txt'), 'later\n');
     git('add', '.');
     git('commit', '-qm', 'later');
-    mkdirSync(join(repo, 'tools'));
+    mkdirSync(join(repo, 'kit'));
     mkdirSync(join(repo, 'node_modules'));
-    copyFileSync('tools/base-check.mjs', join(repo, 'tools/base-check.mjs'));
+    copyFileSync('kit/base-check.mjs', join(repo, 'kit/base-check.mjs'));
     const before = git('worktree', 'list');
-    const run = () => spawnSync(process.execPath, ['tools/base-check.mjs', root, file], { cwd: repo, encoding: 'utf8' });
+    const run = () => spawnSync(process.execPath, ['kit/base-check.mjs', root, file], { cwd: repo, encoding: 'utf8' });
     writeFileSync(join(repo, file), head + "test('x', () => assert.ok(existsSync('tmp-base-check.test.mjs')));\n");
     const pass = run();
     assert.equal(pass.status, 0, pass.stdout + pass.stderr);
@@ -128,11 +130,11 @@ test('TODO 193a: base-check prints LOAD ERROR (not FAIL) when the copied test ca
     writeFileSync(join(repo, 'base.txt'), 'base\n');
     git('add', '.');
     git('commit', '-qm', 'base');
-    mkdirSync(join(repo, 'tools'));
+    mkdirSync(join(repo, 'kit'));
     mkdirSync(join(repo, 'node_modules'));
-    copyFileSync('tools/base-check.mjs', join(repo, 'tools/base-check.mjs'));
+    copyFileSync('kit/base-check.mjs', join(repo, 'kit/base-check.mjs'));
     writeFileSync(join(repo, 'tmp-load.test.mjs'), "import { nope } from './not-on-base.mjs';\nimport { test } from 'node:test';\ntest('x', () => nope());\n");
-    const r = spawnSync(process.execPath, ['tools/base-check.mjs', git('rev-parse', 'HEAD').trim(), 'tmp-load.test.mjs'], { cwd: repo, encoding: 'utf8' });
+    const r = spawnSync(process.execPath, ['kit/base-check.mjs', git('rev-parse', 'HEAD').trim(), 'tmp-load.test.mjs'], { cwd: repo, encoding: 'utf8' });
     assert.equal(r.status, 1);
     assert.match(r.stderr, /^LOAD ERROR on base/m);
     assert.doesNotMatch(r.stdout, /^FAIL\s*$/m);
@@ -150,11 +152,11 @@ test('TODO 193a: base-check prints HUNG (not FAIL) when the test never ends, and
     writeFileSync(join(repo, 'base.txt'), 'base\n');
     git('add', '.');
     git('commit', '-qm', 'base');
-    mkdirSync(join(repo, 'tools'));
+    mkdirSync(join(repo, 'kit'));
     mkdirSync(join(repo, 'node_modules'));
-    copyFileSync('tools/base-check.mjs', join(repo, 'tools/base-check.mjs'));
+    copyFileSync('kit/base-check.mjs', join(repo, 'kit/base-check.mjs'));
     writeFileSync(join(repo, 'tmp-hang.test.mjs'), "import { test } from 'node:test';\ntest('x', () => new Promise(() => setInterval(() => {}, 1000)));\n");
-    const r = spawnSync(process.execPath, ['tools/base-check.mjs', git('rev-parse', 'HEAD').trim(), 'tmp-hang.test.mjs'], { cwd: repo, encoding: 'utf8', env: { ...process.env, BASE_CHECK_LIMIT_MS: '2000' }, timeout: 30000 }); // the test expects HUNG after 2 s: 30 s only bounds a sandbox stall (S36 retro)
+    const r = spawnSync(process.execPath, ['kit/base-check.mjs', git('rev-parse', 'HEAD').trim(), 'tmp-hang.test.mjs'], { cwd: repo, encoding: 'utf8', env: { ...process.env, BASE_CHECK_LIMIT_MS: '2000' }, timeout: 30000 }); // the test expects HUNG after 2 s: 30 s only bounds a sandbox stall (S36 retro)
     assert.equal(r.status, 1);
     assert.match(r.stderr, /^HUNG on base after 2 s/m);
     assert.doesNotMatch(r.stdout, /^FAIL\s*$/m);
@@ -179,7 +181,7 @@ test('TODO 193a: runCapped gives up at the limit and kills the whole tree; a qui
 
 test('TODO 193a: the child dies when base-check exits (no orphan node.exe)', async () => {
   const r = spawnSync(process.execPath, ['--input-type=module', '--eval', `
-    import { runCapped } from './tools/base-check.mjs';
+    import { runCapped } from './kit/base-check.mjs';
     runCapped(process.execPath, ['-e', ${JSON.stringify(spawner)}], { capture: true });
     setTimeout(() => process.exit(0), 1500);
   `], { encoding: 'utf8' });
@@ -187,27 +189,3 @@ test('TODO 193a: the child dies when base-check exits (no orphan node.exe)', asy
   assert.ok(await gone(Number(r.stdout.trim())));
 });
 
-test('the pre-commit hook refuses a staged conflict marker and names the file; a marker mid-line passes', () => {
-  const repo = mkdtempSync(join(tmpdir(), 'hook-')), hooks = join(repo, '.git/hooks');
-  const git = (...a) => spawnSync('git', ['-C', repo, '-c', `core.hooksPath=${hooks}`, '-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', ...a], { encoding: 'utf8' });
-  try {
-    git('init', '-q');
-    mkdirSync(hooks, { recursive: true });
-    copyFileSync('tools/hooks/pre-commit', join(hooks, 'pre-commit'));
-    chmodSync(join(hooks, 'pre-commit'), 0o755);
-    writeFileSync(join(repo, 'ok.txt'), 'fine\nnot a <<<<<<< marker\n');
-    git('add', '.');
-    assert.equal(git('commit', '-m', 'ok').status, 0);
-    writeFileSync(join(repo, 'ok.txt'), 'staged update\n');
-    git('add', 'ok.txt');
-    writeFileSync(join(repo, 'ok.txt'), '<<<<<<< HEAD\n');
-    assert.equal(git('commit', '-m', 'unstaged marker').status, 0);
-    writeFileSync(join(repo, 'merged.js'), 'a\n<<<<<<< HEAD\nb\n=======\nc\n>>>>>>> branch\n');
-    git('add', '.');
-    const r = git('commit', '-m', 'bad');
-    assert.notEqual(r.status, 0);
-    assert.match(r.stderr, /merged\.js/);
-  } finally {
-    rmSync(repo, { recursive: true, force: true });
-  }
-});

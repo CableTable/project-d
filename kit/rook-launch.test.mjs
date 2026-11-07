@@ -4,9 +4,9 @@ import { tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { test } from 'node:test';
 import { EventEmitter } from 'node:events';
-import { dedupePath, acad, acadArgs, board, boardArgs, pawn, pawnArgs, queueLineOf, retro, retroArgs, suite, launchFailed, launchRun, runningNote, parseReview, parseBuild, parseKnight, reviewerArgs, buildArgs, knightArgs, commandLine, review, build, knight, lintBrief, briefProblems, isFixBrief, fixRoundRefusal } from './tools/rook-launch.mjs';
-import * as launches from './tools/rook-launch.mjs';
-import { LONGEST_RUN_MS } from './tools/usage-agent.mjs';
+import { dedupePath, acad, acadArgs, board, boardArgs, pawn, pawnArgs, queueLineOf, retro, retroArgs, suite, launchFailed, launchRun, runningNote, parseReview, parseBuild, parseKnight, reviewerArgs, buildArgs, knightArgs, commandLine, review, build, knight, lintBrief, briefProblems, isFixBrief, fixRoundRefusal } from './rook-launch.mjs';
+import * as launches from './rook-launch.mjs';
+import { LONGEST_RUN_MS } from '../tools/usage-agent.mjs';
 
 const X = 'E:/Project B/Claude/Project D extras';
 const REVIEWER = 'claude2.cmd -p --agent reviewer --model claude-opus-5-5 --effort medium --permission-mode dontAsk --max-budget-usd 6 '
@@ -1189,7 +1189,7 @@ test('Retro 38ck: a fresh read newer than its grill file is refused (--no-fresh 
 });
 
 test('Retro 38ck: the Old steps line may quote a grep -iE with single words; other lines still may not', () => {
-  const template = readFileSync(resolve('tools/briefs/build.txt'), 'utf8');
+  const template = readFileSync(new URL('./briefs/build.txt', import.meta.url), 'utf8');
   const filled = template.replace('<area words>', 'export|cutter').replace('<Do list>', '1. Add the thing').replace('<report size>', '10');
   assert.match(filled, /grep -iE 'export\|cutter'/);
   assert.deepEqual(lintBrief(filled), []);
@@ -1255,7 +1255,7 @@ test('TODO 219a fix 2: review refuses a brief with an unknown {key} before any g
       const brief = join(dir, 'rv.txt'), r = recorder();
       writeFileSync(brief, text);
       r.x.open = (path, mode, strict) => launches.openFilled(path, mode, strict); // the real opener on a real file
-      return { r, go: () => review(['abc1234', brief, 'o.jsonl'], r.x) };
+      return { r, go: () => review(['abc1234', brief, join(dir, 'o.jsonl')], r.x) }; // the real opener creates the out file: under the temp folder, never the repo root (retro39d)
     };
     const bad = run('Review {mian} now');
     assert.throws(bad.go, /unknown placeholder \{mian\}/);

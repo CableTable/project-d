@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { finish, reviewChain, setRunLine } from './tools/rook-end.mjs';
+import { finish, reviewChain, setRunLine } from './rook-end.mjs';
 
 test('TODO 167d: reviewChain chains a clean build with a new commit; not an error exit, not a tip equal to the base (short or full sha)', () => {
   const full = 'abc1234' + 'f'.repeat(33);

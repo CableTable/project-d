@@ -4,14 +4,15 @@ import { execFileSync, execSync, spawn } from 'node:child_process';
 import { existsSync, openSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { gateOps, tickIds } from './handover-gate.mjs';
 import { setRunLine } from './rook-end.mjs';
-import { LONGEST_RUN_MS, parseCsv } from './usage-agent.mjs';
 import { retroSessions } from './retro-brief.mjs';
-import { fillProject, project, projectName, unknownKeys, winCmd } from './project.mjs';
+import { ROOT, fillProject, project, projectName, unknownKeys, winCmd } from './project.mjs';
 
-const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..'); // these tools' checkout: briefs, usage csv, helper scripts
+const KIT = dirname(fileURLToPath(import.meta.url)); // the kit's own files: briefs, helper scripts
+// shortcut: the usage agent and csv stay in the project until TODO 219d; upgrade when they move into the kit.
+const { LONGEST_RUN_MS, parseCsv } = await import(pathToFileURL(join(ROOT, 'tools', 'usage-agent.mjs')).href);
 export const REPO = projectName === 'D' ? ROOT : project.main; // the project's repo: git, the suite, the session branch
 export const EXTRAS = project.extras;
 const MAIN_GIT = project.mainGit;
@@ -180,12 +181,13 @@ export function commandLine(bin, args) {
 
 // A detached cmd.exe loses its redirected output on Windows (tested 2026-10-29), so a detached node holds the handles
 // and runs the .cmd under them. The command returns at once and the run goes on. stdin = brief, stdout and stderr = the out file.
-// When the run ends it deletes the folder's lock (argv[2]), then (TODO 167d) runs tools/rook-end.mjs (argv[3]) with the job JSON (argv[4]) and the exit code.
+// When the run ends it deletes the folder's lock (argv[2]), then (TODO 167d) runs kit/rook-end.mjs (argv[3]) with the job JSON (argv[4]) and the exit code.
 const RUN = 'const rm = () => { try { require("fs").unlinkSync(process.argv[2]); } catch {} };'
   + 'const end = (c) => { if (process.argv[3]) try { require("child_process").execFileSync(process.execPath, [process.argv[3], process.argv[4], String(c)], { stdio: "ignore", windowsHide: true }); } catch {} };'
-  + 'require("child_process").spawn(process.argv[1], { shell: true, stdio: "inherit", windowsHide: true }).on("exit", (c) => { rm(); end(c); process.exit(c); });';
+  + 'const { ROOK_ROOT, ...env } = process.env;' // the run's own checkout finds its project; only the end step above keeps the launcher's ROOK_ROOT
+  + 'require("child_process").spawn(process.argv[1], { shell: true, stdio: "inherit", windowsHide: true, env }).on("exit", (c) => { rm(); end(c); process.exit(c); });';
 const lockFile = (dir) => `${dir}/.run-lock`;
-const END = join(ROOT, 'tools', 'rook-end.mjs');
+const END = join(KIT, 'rook-end.mjs');
 
 // A run that never started must not leave its folder locked.
 export function launchFailed(cwd, e, exit = process.exit, lock = lockFile(cwd)) {
@@ -429,7 +431,7 @@ export function knight(args, x = io) {
 }
 
 // TODO 167e: `suite`, `retro`, `pawn`, `acad`: the other hand-typed launches of WORKFLOW.md (lines 87, 214, 215, 248-250), detached with a lock and a queue line.
-const SUITE = join(ROOT, 'tools', 'rook-suite.mjs');
+const SUITE = join(KIT, 'rook-suite.mjs');
 const runsDir = (x) => dirname(x.gate.queueFile());
 
 function checkFresh(x, text) {
@@ -555,7 +557,7 @@ export function retro(args, x = io) {
     const values = { N: n, SESSIONS: [...sessions].join(', '), TRANSCRIPTS: transcripts.join(', '), EVENTS: flags['--events']?.[0] ?? 'none given.' };
     for (const name of missing) {
       const suffix = ho ? 'rook' : name.slice(`retro${n}`.length);
-      const template = x.read(join(ROOT, 'tools', 'briefs', `retro${suffix ? `-${suffix}` : ''}.txt`));
+      const template = x.read(join(KIT, 'briefs', `retro${suffix ? `-${suffix}` : ''}.txt`));
       const note = ho ? `\nHandover retro: only this Rook; short (top 5 fixes); skip points already in runs${n}/retro${n}*.out\n` : '';
       x.write(`${dir}/${name}.txt`, fillProject(template).replace(/\{(N|SESSIONS|TRANSCRIPTS|EVENTS)\}/g, (_, key) => values[key]) + note);
     }

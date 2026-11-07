@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
 import { test } from 'node:test';
-import { lintBrief } from './tools/rook-launch.mjs';
+import { lintBrief } from './rook-launch.mjs';
 
-const dir = new URL('./tools/briefs/', import.meta.url);
+const dir = new URL('./briefs/', import.meta.url);
 const values = {
   'King|Knight': 'King', item: '170', summary: 'brief templates', branch: 'knight/170', sha: '943c3e1',
   'base sha': '9572997', 'spec path': '../runs32/grill-170.md', 'brief path': '../runs32/b-170.txt',

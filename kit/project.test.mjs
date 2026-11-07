@@ -1,14 +1,15 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, existsSync, rmSync, writeFileSync, closeSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, existsSync, rmSync, writeFileSync, closeSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { join, resolve } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { test } from 'node:test';
 
-// Dynamic imports: on a base without tools/project.mjs each test fails (red), not the whole file (a load error).
-const P = () => import('./tools/project.mjs').catch(() => assert.fail('tools/project.mjs is missing'));
-const L = () => import('./tools/rook-launch.mjs');
+// Dynamic imports: on a base without kit/project.mjs each test fails (red), not the whole file (a load error).
+const P = () => import('./project.mjs').catch(() => assert.fail('kit/project.mjs is missing'));
+const L = () => import('./rook-launch.mjs').catch(() => assert.fail('kit/rook-launch.mjs is missing'));
+const KIT = fileURLToPath(new URL('.', import.meta.url));
 
 const X = 'E:/Project B/Claude/Project D extras';
 const D = 'E:/Project B/Claude/Project D';
@@ -84,11 +85,11 @@ test('TODO 219a: the launcher\'s argument lists for D\'s config equal the litera
 test('TODO 219a: no brief template keeps a Project D literal, and filling the retro briefs leaves no config placeholder behind', async () => {
   const { fillProject } = await P();
   for (const file of ['board', 'build', 'retro', 'retro-king', 'retro-rook']) {
-    const text = readFileSync(new URL(`./tools/briefs/${file}.txt`, import.meta.url), 'utf8');
+    const text = readFileSync(new URL(`./briefs/${file}.txt`, import.meta.url), 'utf8');
     assert.doesNotMatch(text, /Project D|ProjectD|E:\/Project B|E--Project|npm\.cmd test|\b(TODO|DECISIONS|WORKFLOW)\.md/, file);
     assert.doesNotMatch(fillProject(text), /\{(project|extras|main|test|browserTest|claudeProject|kingBuild|todo|decisions|history|glossary|workflow)\}/, file);
   }
-  assert.match(fillProject(readFileSync(new URL('./tools/briefs/retro.txt', import.meta.url), 'utf8')), new RegExp(`^Project D retro for session \\{N\\}.*${X}/runs\\{N\\}/`));
+  assert.match(fillProject(readFileSync(new URL('./briefs/retro.txt', import.meta.url), 'utf8')), new RegExp(`^Project D retro for session \\{N\\}.*${X}/runs\\{N\\}/`));
 });
 
 test('TODO 219a fix: a brief opened for reading hands on the filled text and the brief file stays unchanged; a write open is left alone', async () => {
@@ -121,8 +122,9 @@ test('TODO 219a fix 2: unknownKeys skips one-line code spans, still refuses a ba
   const { lintBrief } = await L();
   assert.deepEqual(lintBrief('1. A key like `{mian}` or `x {foo} y` is a typo'), []);
   assert.deepEqual(lintBrief('1. `{mian}` is fine but {oops} is not'), ['unknown placeholder {oops} (not a rook.config.json value)']);
-  const runs = join(X, 'runs39');
-  if (!existsSync(runs)) return; // CI has no runs folder
+  const latest = existsSync(X) ? readdirSync(X).filter((f) => /^runs\d+$/.test(f)).sort((a, b) => a.slice(4) - b.slice(4)).pop() : null; // the newest runs<N>: no session number written here (retro39d)
+  if (!latest) return; // CI has no runs folder
+  const runs = join(X, latest);
   const briefs = readdirSync(runs).filter((f) => /^(b|rv|f)-.*\.txt$/.test(f));
   for (const f of briefs) assert.deepEqual(lintBrief(readFileSync(join(runs, f), 'utf8')), [], f);
 });
@@ -160,7 +162,7 @@ test('TODO 219b: projectFor gives a project\'s config with the registry\'s runs 
 test('TODO 219b: the launcher run with --project R uses R\'s folders, test command, repo and runs folder; without the flag it is D (real child processes)', async () => {
   const w = hqWorld();
   try {
-    const script = `${w.dir}/probe.mjs`, launch = pathToFileURL(join(process.cwd(), 'tools', 'rook-launch.mjs')).href;
+    const script = `${w.dir}/probe.mjs`, launch = pathToFileURL(join(KIT, 'rook-launch.mjs')).href;
     writeFileSync(script, `import * as L from '${launch}';
 const launches = [];
 const x = { git: (dir, ...a) => (a[0] === 'rev-parse' ? 'abc1234' + '0'.repeat(33) : ''), exists: () => true, locked: () => false, open: () => 'fd', queue: { open: () => null, set() {} }, launch: (...a) => launches.push(a), gate: { queueFile: () => L.EXTRAS + '/runs40/queue.txt' } };
@@ -176,20 +178,36 @@ process.stdout.write(JSON.stringify({ extras: L.EXTRAS, repo: L.REPO, accounts: 
     assert.deepEqual(r.build.slice(r.build.indexOf('--add-dir'), r.build.indexOf('--add-dir') + 4), ['--add-dir', `${w.r}/.git`, '--add-dir', `${w.dir}/runs`]);
     assert.deepEqual(r.board.slice(r.board.indexOf('--add-dir')), ['--add-dir', `${w.dir}/runs`, '--add-dir', w.r, '--allowedTools', 'Read', 'Write', 'Edit', 'Glob', 'Grep', 'Bash(node:*)', '--disallowedTools', 'Agent']);
     assert.deepEqual(r.suite[0].slice(1), ['--project', 'R']); // rook-suite.mjs runs R's test command, in R's repo
-    assert.equal(r.suite[0][0].replaceAll('\\', '/').endsWith('/tools/rook-suite.mjs'), true);
+    assert.equal(r.suite[0][0].replaceAll('\\', '/').endsWith('/kit/rook-suite.mjs'), true);
     assert.equal(r.suite[1], w.r);
     const d = JSON.parse(run().stdout);
     assert.deepEqual([d.extras, d.accounts.king.build, d.suite[0].length], [`${w.dir}/runs`, 'ProjectD-king', 1]);
     assert.equal(d.repo, process.cwd());
     const bad = run('--project', 'Q');
-    assert.notEqual(bad.status, 0);
-    assert.match(bad.stderr, /unknown project Q/);
-    assert.match(run('--project', 'B').stderr, /project B has no rook\.config\.json \(TODO 219e\)/);
+    assert.equal(bad.status, 1);
+    assert.equal(bad.stderr.trim(), 'unknown project Q (known: D, R, B)'); // TODO 219c: one line, no stack trace
+    const none = run('--project', 'B');
+    assert.equal(none.status, 1);
+    assert.equal(none.stderr.trim(), 'project B has no rook.config.json (TODO 219e)');
+  } finally { rmSync(w.dir, { recursive: true }); }
+});
+
+test('TODO 219c: kit/project.mjs finds the project from ROOK_ROOT or the folder it runs in, never from its own folder (a copy elsewhere gives the same project)', () => {
+  const w = hqWorld();
+  try {
+    mkdirSync(`${w.dir}/elsewhere`);
+    copyFileSync(join(KIT, 'project.mjs'), `${w.dir}/elsewhere/project.mjs`);
+    const probe = `${w.dir}/elsewhere/probe.mjs`;
+    writeFileSync(probe, "import { ROOT, project } from './project.mjs'; process.stdout.write(JSON.stringify([ROOT, project.name, process.env.ROOK_ROOT]));");
+    const run = (env, cwd) => JSON.parse(spawnSync(process.execPath, [probe], { cwd, encoding: 'utf8', env: { ...process.env, ROOK_ROOT: '', ROOK_HQ: w.hqFile, ...env } }).stdout);
+    const root = resolve(w.r);
+    assert.deepEqual(run({ ROOK_ROOT: w.r }, tmpdir()), [root, 'Project R', root]); // env wins, whatever the folder it runs in
+    assert.deepEqual(run({}, w.r), [root, 'Project R', root]); // else the folder it runs in; children inherit the answer
   } finally { rmSync(w.dir, { recursive: true }); }
 });
 
 test('TODO 219b: a chained review runs for the build\'s project; D\'s job and review line stay as before; fresh allows --as bishop', async () => {
-  const { finish } = await import('./tools/rook-end.mjs'), { fresh } = await L();
+  const { finish } = await import('./rook-end.mjs').catch(() => assert.fail('kit/rook-end.mjs is missing')), { fresh } = await L();
   const reviews = [], x = { read: () => '', write() {}, git: () => 'def5678', review: (a) => reviews.push(a) };
   const review = { dir: '/wt', branch: 'br', base: 'abc1234', brief: '/b', out: '/o' };
   finish({ review }, 0, x);

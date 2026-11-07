@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { RUNNING_PROMPT } from './tools/running-prompt.mjs';
+import { RUNNING_PROMPT } from './running-prompt.mjs';
 
 // Real prompt strings from web/ (app.js, draw.js, move.js); r158d.txt lists none, so they were read from web/.
 const RUNNING = [

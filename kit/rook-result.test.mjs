@@ -6,9 +6,12 @@ import { join, resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
-import { firstDone, peakContext } from './tools/rook-result.mjs';
-import { printRookContext, EXTRAS } from './tools/rook-launch.mjs';
-import { watchCi, nextRook, startArgs, startWatched, gitBash, mergeRefusal, merge, mergeDue, failLines, handover, handoverArgsError } from './tools/rook.mjs';
+import { fileURLToPath } from 'node:url';
+import { firstDone, peakContext } from './rook-result.mjs';
+import { printRookContext, EXTRAS } from './rook-launch.mjs';
+import { watchCi, nextRook, startArgs, startWatched, gitBash, mergeRefusal, merge, mergeDue, failLines, handover, handoverArgsError } from './rook.mjs';
+
+const ROOK = fileURLToPath(new URL('./rook.mjs', import.meta.url)); // the kit's own file, wherever the kit folder is
 
 const assistant = (usage) => ({ type: 'assistant', message: { usage } });
 
@@ -47,8 +50,8 @@ test('wait (CLI): exits 0 printing DONE <file> for a finished run; a bad --ci is
   try {
     const report = join(dir, 'k.txt');
     writeFileSync(report, 'Knight report\n');
-    assert.equal(execFileSync(process.execPath, ['tools/rook.mjs', 'wait', join(dir, 'missing.jsonl'), report], { encoding: 'utf8' }).trim(), `DONE ${report}`);
-    assert.throws(() => execFileSync(process.execPath, ['tools/rook.mjs', 'wait', report, '--ci'], { encoding: 'utf8', stdio: 'pipe' }), (e) => e.status === 1 && /usage: node tools\/rook\.mjs wait/.test(e.stderr));
+    assert.equal(execFileSync(process.execPath, [ROOK,'wait', join(dir, 'missing.jsonl'), report], { encoding: 'utf8' }).trim(), `DONE ${report}`);
+    assert.throws(() => execFileSync(process.execPath, [ROOK,'wait', report, '--ci'], { encoding: 'utf8', stdio: 'pipe' }), (e) => e.status === 1 && /usage: node tools\/rook\.mjs wait/.test(e.stderr));
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -70,7 +73,7 @@ test('wait --ci: spawns the watcher with piped stderr, forwards it, prints CI <R
   } finally { console.log = log; console.error = error; process.stderr.write = write; }
   assert.deepEqual(calls[0].slice(0, 1), ['GIT-BASH']);
   assert.match(calls[0][1][0], /ci-watch\.sh$/);
-  assert.deepEqual([calls[0][1][1], calls[0][2]], ['abc', ['ignore', 'pipe', 'pipe']]);
+  assert.deepEqual([calls[0][1].slice(1), calls[0][2]], [['abc', '--repo', 'CableTable/project-d'], ['ignore', 'pipe', 'pipe']]); // TODO 219c: the watcher gets the repo from the config
   assert.deepEqual(seen, ['gh: boom\n']);
   assert.deepEqual(out, ['CI RUN 77 failure', 'CI RUN none ci-watch.sh exit 3']);
   assert.deepEqual(codes, [0, 1]);
@@ -239,7 +242,8 @@ test('merge: refuses without a non-empty retro file unless --no-retro, a non-hea
     assert.throws(() => merge(['5', 'cc'], gh({ branch: 'king/167b' }), extras), /not claude\/session/);
     assert.ok(!cmds.some((c) => c.includes('pr merge')));
     assert.equal(merge(['5', 'cc'], gh(), extras), `MERGED #5 ${sha}`);
-    assert.ok(cmds.includes(`gh pr merge 5 --merge --match-head-commit ${sha}`));
+    assert.ok(cmds.includes(`gh pr merge 5 --merge --match-head-commit ${sha} --repo CableTable/project-d`));
+    assert.ok(cmds.filter((c) => c.startsWith('gh ')).every((c) => c.endsWith(' --repo CableTable/project-d')), 'TODO 219c: every gh call names the config\'s repo');
     assert.ok(!existsSync(join(extras, 'runs34')), 'no resume note when the retro exists');
     assert.throws(() => merge(['5', 'cc'], gh({ state: 'OPEN' }), extras), /not MERGED/);
     merge(['5', 'cc', '--no-retro'], gh(), extras);
@@ -289,7 +293,8 @@ test('TODO 191: merge --due merges the one open session PR inside the OK window,
     assert.throws(() => mergeDue(gh([pr(5, 'claude/session35')]), extras, T), /retro35\.applied is missing/);
     writeFileSync(join(extras, 'runs35', 'retro35.applied'), '2026-11-03 applied all\n');
     assert.equal(mergeDue(gh([pr(5, 'claude/session35'), pr(7, 'king/191')]), extras, T), `MERGED #5 ${sha}`);
-    assert.ok(cmds.includes(`gh pr merge 5 --merge --match-head-commit ${sha}`));
+    assert.ok(cmds.includes(`gh pr merge 5 --merge --match-head-commit ${sha} --repo CableTable/project-d`));
+    assert.ok(cmds.filter((c) => c.startsWith('gh ')).every((c) => c.endsWith(' --repo CableTable/project-d')), 'TODO 219c: gh pr list gets the repo too');
     assert.throws(() => mergeDue(gh([pr(5, 'claude/session35')]), extras, at('2026-11-09T05:00:00')), /merge OK expired 2026-11-08: ask him/);
     assert.throws(() => mergeDue(gh([pr(5, 'claude/session35')]), extras, at('2026-11-09T00:00:00')), /expired/);
     assert.equal(mergeDue(gh([]), extras, at('2026-11-08T23:59:00')), 'NOTHING DUE');
@@ -341,9 +346,9 @@ test('result skips a half-written last line: no result yet for an unfinished run
     const run = join(dir, 'run.jsonl'), line = (e) => JSON.stringify(e) + '\n';
     const result = { type: 'result', result: 'Done', usage: { input_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0, output_tokens: 1 }, permission_denials: [] };
     writeFileSync(run, line(assistant({ input_tokens: 5 })) + '{"type":"assis');
-    assert.throws(() => execFileSync(process.execPath, ['tools/rook.mjs', 'result', run], { encoding: 'utf8', stdio: 'pipe' }), (e) => e.status === 1 && e.stdout.trim() === 'no result yet');
+    assert.throws(() => execFileSync(process.execPath, [ROOK,'result', run], { encoding: 'utf8', stdio: 'pipe' }), (e) => e.status === 1 && e.stdout.trim() === 'no result yet');
     writeFileSync(run, line(assistant({ input_tokens: 5 })) + line(result) + '{"type":"assis');
-    assert.match(execFileSync(process.execPath, ['tools/rook.mjs', 'result', run], { encoding: 'utf8' }), /^Done/);
+    assert.match(execFileSync(process.execPath, [ROOK,'result', run], { encoding: 'utf8' }), /^Done/);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -352,7 +357,7 @@ test('retro38i fix: result of a LAUNCH DIED line (no usage) prints it and exits 
   try {
     const run = join(dir, 'run.jsonl');
     writeFileSync(run, '{"type":"result","is_error":true,"result":"LAUNCH DIED"}\n');
-    assert.throws(() => execFileSync(process.execPath, ['tools/rook.mjs', 'result', run], { encoding: 'utf8', stdio: 'pipe' }), (e) => e.status === 1 && e.stdout.trim() === 'LAUNCH DIED' && !/TypeError/.test(e.stderr));
+    assert.throws(() => execFileSync(process.execPath, [ROOK,'result', run], { encoding: 'utf8', stdio: 'pipe' }), (e) => e.status === 1 && e.stdout.trim() === 'LAUNCH DIED' && !/TypeError/.test(e.stderr));
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -362,7 +367,7 @@ test('TODO 193a: result ends its token line with the report line count (blank li
     const run = join(dir, 'run.jsonl');
     const result = { type: 'result', result: 'one\n\ntwo\r\n  \nthree\n', usage: { input_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0, output_tokens: 1 }, permission_denials: [] };
     writeFileSync(run, JSON.stringify(assistant({ input_tokens: 5 })) + '\n' + JSON.stringify(result) + '\n');
-    const lines = execFileSync(process.execPath, ['tools/rook.mjs', 'result', run], { encoding: 'utf8' }).split(/\r?\n/);
+    const lines = execFileSync(process.execPath, [ROOK,'result', run], { encoding: 'utf8' }).split(/\r?\n/);
     assert.match(lines.find((l) => l.startsWith('tokens ')), /· denials 0 · report 3 lines$/);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
@@ -379,7 +384,7 @@ test('result prints peak context and warns strictly above 150k; Codex logs skip 
   try {
     const run = join(dir, 'run.jsonl');
     const result = { type: 'result', result: 'Done', usage: { input_tokens: 500_000, cache_read_input_tokens: 1_000_000, cache_creation_input_tokens: 200_000, output_tokens: 3000 }, permission_denials: [] };
-    const read = (file) => execFileSync(process.execPath, ['tools/rook.mjs', 'result', file], { encoding: 'utf8' });
+    const read = (file) => execFileSync(process.execPath, [ROOK,'result', file], { encoding: 'utf8' });
     for (const peak of [149_999, 150_000, 150_001, 1_100_000]) {
       writeFileSync(run, [assistant({ input_tokens: peak - 50_000, cache_read_input_tokens: 40_000, cache_creation_input_tokens: 10_000 }), result].map((e) => JSON.stringify(e)).join('\r\n') + '\r\n');
       const output = read(run);
