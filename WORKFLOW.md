@@ -137,6 +137,7 @@ A tool or PATH failure seen twice is a --tool ticket now, never a resume note.
    No cargo or MSYS2 here: Rust and `ci.yml` compile only in CI, so a Rust brief says "CI is the compiler; read every Rust line as a compiler would" and never asks for `cargo test` (S38 retro).
    Split tickets (S38 King retro): before launch, the grill lists every way in from the spec with what it passes the other ticket (path, bytes, return type); a way in with no input available becomes a command in the first ticket.
    A brief naming a UI surface greps it first; no hits: the brief says "does not exist: build it / skip".
+   A brief built from a retro item copies that item's worked value into the Do line and the unit test (S39: 207b built the 84% that retro38l item 1 had called wrong).
 **Rook's daily cap** (his call, 2026-10-20): Rook's week must last to the Sun 15:30 reset. 14% × k by the end of day k
 after the reset, like Bishop. At the cap Rook finishes the step it is on, says so in one line, and pauses until the next day.
 **Usage gate** (his call, 2026-10-20): before every sub-agent launch, read the cached usage
@@ -151,9 +152,9 @@ Two claude2 sessions may run at once only on separate files (e.g. a mock-up whil
 
 ### Rook card
 - Lookup: `sed -n '/^### Rook card/,/^Briefs start/p' WORKFLOW.md`
-- Fresh read: `node tools/rook.mjs fresh <id> --as king`, right after grill-<id>.md, before the DECISIONS row and the brief.
-- Knight: `node tools/rook.mjs knight <brief file> <report txt> <branch> <sha> [--fix] [--regrilled] [--tool] [--over] [--big] [--review <review brief> <review out jsonl>]`
-- King: `node tools/rook.mjs build <brief file> <out jsonl> <branch> <sha> [--as king|bishop] [--fix] [--regrilled] [--tool] [--over] [--big] [--review <review brief> <review out jsonl>]` (`--fix` = fix round, `--tool` = tool ticket)
+- Fresh read: `node tools/rook.mjs fresh <id> --as king`, right after grill-<id>.md, before the DECISIONS row and the brief. --fix / --tool are exempt; --no-fresh only for an S item with no invariant.
+- Knight: `node tools/rook.mjs knight <brief file> <report txt> <branch> <sha> [--no-fresh] [--fix] [--regrilled] [--tool] [--over] [--big] [--review <review brief> <review out jsonl>]`
+- King: `node tools/rook.mjs build <brief file> <out jsonl> <branch> <sha> [--as king|bishop] [--no-fresh] [--fix] [--regrilled] [--tool] [--over] [--big] [--review <review brief> <review out jsonl>]` (`--fix` = fix round, `--tool` = tool ticket)
 - Knight branch into the repo first: `git fetch "<extras>/ProjectD-rowan" <branch>`
 - Review (Bishop paused): Agent `reviewer` with `isolation: worktree` and a brief from `tools/briefs/review.txt`, or `node tools/rook.mjs review <sha> <brief file> <out jsonl> --as king [--from <clone folder> <branch>]`
 - Review waiting and King and Knight at limit: `reviewer` subagent, under today's Rook cap.
@@ -165,12 +166,14 @@ Two claude2 sessions may run at once only on separate files (e.g. a mock-up whil
 - Pawn: `node tools/rook.mjs pawn <out.json> "<one question>"` (one question per call).
 - Full suite: `node tools/rook.mjs suite <sha>` (`<sha>` = HEAD), then `wait` on `runs<N>/suite-<sha>.log`; red: `node tools/rook.mjs fails <log>`
 - Wait: `node tools/rook.mjs wait <run file>... [--ci <sha>]` as a Monitor, never in the foreground
-- CI of a push: Monitor `bash tools/ci-watch.sh <sha>` (head sha)
+- CI of a push: Monitor `bash tools/ci-watch.sh <sha>` (head sha). Expired: re-arm, or bash tools/ci-watch.sh --run <id>; a main release run passes 30 min.
 - CI red, run still going: `jid=$(gh run view <id> --json jobs --jq '.jobs[]|select(.conclusion=="failure")|.databaseId' | head -1); gh api --allow-escape-sequences repos/CableTable/project-d/actions/jobs/$jid/logs > f.log; node tools/rook.mjs fails f.log`
-- Run ended, no major change: no text to Rakshith; the state is in queue.txt. Your own recommended answer: take it and note it. Fix rounds: King, or Knight when King's 5h is high or its build worktree is busy.
+- Run ended, no major change: no text to Rakshith; the state is in queue.txt. Your own recommended answer: take it and note it. Asked him and you hold a pick: take it now, write it in the grill file, tell him once ("took X; say if not"). A resume says "waits for his answer" only for what only he knows (a file name, a credential); that question goes in one message per Rook.
+- Waiting on a reset: first do the grill and briefs (they need no builder) and launch whatever has headroom; start the timer last, because a gap over 60 min re-caches the whole context (S39: 49k).
+- Fix rounds: King, or Knight when King's 5h is high or its build worktree is busy.
 - Cherry-pick: suite running: no pick in the repo until it ends. `git cherry-pick` the builder's commits, tick TODO.md (`grep -n <ticket> TODO.md`: tick every row of that ticket), commit; push once per handover; UI item: run the Board line now, or write "Board due: <id>" in the resume
 - Retro: `node tools/rook.mjs retro --as king` while Bishop is paused (briefs `tools/briefs/retro*.txt`); at a handover `node tools/rook.mjs retro --handover` first (`handover` refuses without it, or `--no-retro`); merge: `node tools/rook.mjs merge <n> <sha>`
-- Handover: write `runs<N+1>/resume-rook.txt` (with "Open bugs checked <time>: <ids or none>") + `rook-next.txt`, then `node tools/rook.mjs handover <resume> "Rook S<N>x"` and `node tools/rook.mjs next`
+- Handover: First quote queue line 2 and your context in k; no trigger met and a run fits: launch it instead. Write the resume file `runs<N+1>/resume-rook.txt` (with "Open bugs checked <time>: <ids or none>"), then `node tools/rook.mjs handover <resume> "Rook S<N>x"` (it writes rook-next.txt) and `node tools/rook.mjs next`
 - `gh ... --jq`: Bash only (PowerShell 5.1 strips the inner quotes)
 
 Briefs start from `tools/briefs/<kind>.txt` (build, fix, review).
@@ -346,14 +349,13 @@ read + cache write + output from the final `result.usage`; new = input + cache w
   started (his call 2026-10-31, was 3 from 2026-10-30; review fix bundles and tool tickets don't count), its context
   passes ~150k (auto-compact fires at ~218k: S29, 3 times), he is shutting down / going to sleep, or a usage reset is near. A merge alone is no reason; a big session hands over mid-PR
   (the resume file names the open PR and branch). The next Rook is `Rook S<N>b`, `c`, … on the same branch and runs<N>;
-  the session number goes up only with a new PR. Handover = runs<N>/resume-rook.txt + rook-next.txt (see Session end); the resume file must contain the lines `merge-due.log`, `select:Monitor,TaskStop` and `one ci-watch per push`: `handover` refuses without them, before it writes rook-next.txt, exactly as `next` would. Then `node tools/rook.mjs next` starts Rook.lnk and waits for the new transcript (`NEXT ROOK <uuid> started`); the Stop hook blocks a Rook that has not done it (TODO 190a); `next` refuses while rook-next.txt still names this session. Shutting down: stop again, the second stop passes.
+  the session number goes up only with a new PR. Handover = the resume file + the handover command (see Session end); the resume file must contain the lines `merge-due.log`, `select:Monitor,TaskStop` and `one ci-watch per push`: `handover` refuses without them, before it writes rook-next.txt, exactly as `next` would. Then `node tools/rook.mjs next` starts Rook.lnk and waits for the new transcript (`NEXT ROOK <uuid> started`); the Stop hook blocks a Rook that has not done it (TODO 190a); `next` refuses while rook-next.txt still names this session. Shutting down: stop again, the second stop passes.
   **The launcher enforces the 2** (his ask 2026-10-31, TODO 165; S29 built 9 against this rule): `rook.mjs build` / `knight` count
   the new-item launches per Rook (rook-next.txt line 1 = the uuid; state in runs<N>/rook-gate.json), refuse the 3rd, and keep line 2 of
   queue.txt ("items since start ...", `rook.mjs gate` rewrites it). Fix rounds pass `--fix`; a 3rd item needs `--over` with his OK.
   A new Rook rewrites rook-next.txt (new uuid) at its start; that resets the count. Until the new Rook's `claude/session<N+1>` branch exists locally, item launches are refused (fix / `--over` pass).
 - Give him a handover time only as "after <named run> + CI", never a clock time (S29 retro).
 - Call a run "building" only after this turn's `node tools/rook.mjs result <file>` says it is still running; end a turn with a run going only once its waiter has started (S29: builds sat done 4.7 h while Rook said "still building").
-- Read `rook-next.txt`, then Write it (a Write without a Read first fails).
 - Read WORKFLOW.md by section (`grep -n "^## "` first); answer "what's left" from TODO.md's top-level open items only (`| head -30`).
 
 Resume template (keep the required startup and watcher lines too):

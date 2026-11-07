@@ -31,7 +31,7 @@ test('TODO 207b: Rook daily cap uses its own weekly reset and says cap today', (
     const usage = join(repo, 'mockups', '_design', 'usage');
     mkdirSync(usage, { recursive: true });
     const start = Date.parse('2026-11-01T10:00:00Z'), day = 86400_000;
-    for (const [elapsed, cap] of [[1, 14], [day, 14], [day + 1, 28], [6 * day + 1, 98], [7 * day + 1, 100]]) {
+    for (const [elapsed, cap] of [[1, 14], [day, 28], [day + 1, 28], [6 * day + 1, 98], [7 * day + 1, 100]]) {
       const now = start + elapsed;
       const rows = ['agent,role,model,window,used_pct,cap_pct,starts,resets,as_of'];
       for (const agent of ['Rook', 'Pip', 'King', 'Rowan']) {
@@ -46,7 +46,7 @@ test('TODO 207b: Rook daily cap uses its own weekly reset and says cap today', (
       writeFileSync(join(repo, 'clock.mjs'), `Date.now = () => ${now};`);
       const lines = execFileSync(process.execPath, ['--import', './clock.mjs', 'tools/rook.mjs', 'usage', '--cached'], { cwd: repo, encoding: 'utf8', timeout: 5000 }).trim().split('\n');
       assert.match(lines[0], new RegExp(`week 10% of ${cap}% cap today \\(Resets Sun 15:30\\)`));
-      assert.match(lines[1], /week 10% of 28% cap \(Resets/);
+      assert.match(lines[1], /week 10% of 42% cap \(Resets/); // week start 2 days before now: IST day 3
       assert.doesNotMatch(lines[1], /cap today/);
       for (const line of lines.slice(2)) assert.doesNotMatch(line, /cap/);
     }
@@ -92,7 +92,7 @@ test('cached usage shares live summaries, avoids processes and writes, and falls
       assert.ok(lines[i].startsWith(`${agent}: 5h 20% (Resets Tue 18:30) · week 10%`));
       assert.ok(lines[i].endsWith('· ~35% at reset (as of 17:28 IST, 2 min old)'));
     }
-    assert.match(lines[1], /10% of 28% cap/);
+    assert.match(lines[1], /10% of 42% cap/);
     assert.doesNotMatch(lines[2], /cap/);
 
     mkdirSync(join(repo, '.codex', 'sessions'), { recursive: true });
