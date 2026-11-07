@@ -1548,7 +1548,7 @@ function buildCanvas() {
   ui.textArea.addEventListener('blur', () => { if (state.text.ed) textCommit(); });
   ui.canvas = h('div', { class: 'canvas', 'data-testid': 'canvas' }, ui.svg, ui.gridDisplay, ui.dcanvas, ui.ovlWrap, ui.tip, ui.measTag,ui.textHint, ui.textEd, ui.rubber, ui.dropHint, ui.picker, ui.bgPicker, ui.rulerTop, ui.rulerLeft, ui.rulerCorner, ui.guideTip, ui.contourPanel = buildContourPanel(), ui.balPic, ui.balSheets,
     h('div', { class: 'canvas-notices' }, ui.cmdUI.fade, ui.gripHint, ui.matchHint, ui.hintPill), ui.cmdUI.drawer, ui.cmdUI.bar,
-    h('div', { class: 'zoombox' },
+    h('div', { class: 'zoombox', onmousedown: (e) => { if (state.text.ed) e.preventDefault(); } },       // zoom buttons keep the focus in an open edit box
       h('button', { class: 'tog', type: 'button', 'aria-label': 'Zoom out', onclick: () => zoomBy(1 / 1.25) }, domIcon('minus', 12)),
       zoomLevel,
       h('button', { class: 'tog', type: 'button', 'aria-label': 'Zoom in', onclick: () => zoomBy(1.25) }, domIcon('plus', 12)),
@@ -4531,6 +4531,7 @@ function applyView(gesture = false) {
   drawGuides();
   drawAlignmentGuides();
   drawRulers();
+  placeTextEditor();                                                    // an open text / dimension / leader edit box follows the view
   paintOverlay(gesture);
 }
 

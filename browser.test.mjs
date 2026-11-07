@@ -20409,6 +20409,99 @@ try {
     }
   });
 
+  await step('TODO 210: text edit box follows pan and zoom (text and dimension text, drawing and layout); Enter commits; one Undo', async () => {
+    const save = async () => (await downloaded(() => page.keyboard.press('Control+s'))).text;
+    const undo = async () => { await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z'); };
+    const dimIn = (text) => {
+      const [name, block] = Object.entries(readDxf(text).blocks).find(([k]) => /^PD_DIM_/.test(k));
+      const tx = block.entities.find((e) => e.type === 'TEXT');
+      return { ...readDim(name, block), override: readOverride(block.entities), label: tx.r.v[tx.r.c.indexOf(1)] };
+    };
+    const near2 = (a, b, what) => assert.ok(Math.abs(a - b) <= 2, `${what}: ${a.toFixed(1)} vs ${b.toFixed(1)}`);
+    /** The box's anchor on screen: the text's left end (ha 0) or its middle (ha 1), the inner top and the inner height. */
+    const anchor = async (ha) => { const r = await t('text-editor').boundingBox(); return { x: ha ? r.x + r.width / 2 : r.x + 6, y: r.y + 3, h: r.height - 6 }; };
+    /** Pan, then wheel-zoom: the anchor moves with the view each time (and the absolute x matches the text where it is known). */
+    const follows = async (tab, label, ha, absX) => {
+      const cb = await t('canvas').boundingBox(), q = { x: cb.x + 500, y: cb.y + 300 };
+      let a = await anchor(ha);
+      if (absX) near2(a.x, (await at(absX[0], absX[1])).x, `${tab} ${label}: open`);
+      await page.mouse.move(q.x, q.y); await page.mouse.down({ button: 'middle' }); await page.mouse.move(q.x - 50, q.y + 30, { steps: 4 }); await page.mouse.up({ button: 'middle' }); await frames();
+      assert.equal(await t('text-edit-box').isVisible(), true, `${tab} ${label}: a pan keeps the edit open`);
+      let b = await anchor(ha);
+      near2(b.x, a.x - 50, `${tab} ${label}: pan x`); near2(b.y, a.y + 30, `${tab} ${label}: pan y`); near2(b.h, a.h, `${tab} ${label}: pan size`);
+      if (absX) near2(b.x, (await at(absX[0], absX[1])).x, `${tab} ${label}: after pan`);
+      a = b;
+      const s0 = (await sheetPx()).sc;
+      await page.mouse.move(q.x, q.y); await page.mouse.wheel(0, -300); await frames();
+      assert.equal(await t('text-edit-box').isVisible(), true, `${tab} ${label}: a zoom keeps the edit open`);
+      const k = (await sheetPx()).sc / s0;
+      assert.ok(k > 1.3, 'the wheel zoomed in');
+      b = await anchor(ha);
+      near2(b.x, q.x + (a.x - q.x) * k, `${tab} ${label}: zoom x`); near2(b.y, q.y + (a.y - q.y) * k, `${tab} ${label}: zoom y`); near2(b.h, a.h * k, `${tab} ${label}: zoom size`);
+      if (absX) near2(b.x, (await at(absX[0], absX[1])).x, `${tab} ${label}: after zoom`);
+      await page.mouse.wheel(0, 300); await frames();           // and back out
+      assert.equal(await t('text-edit-box').isVisible(), true, `${tab} ${label}: zooming out keeps the edit open`);
+      a = await anchor(ha); const s1 = (await sheetPx()).sc;                       // the Zoom in button zooms about the canvas middle
+      await page.locator('button[aria-label="Zoom in"]').click(); await frames();
+      assert.equal(await t('text-edit-box').isVisible(), true, `${tab} ${label}: the Zoom in button keeps the edit open`);
+      const k2 = (await sheetPx()).sc / s1, mid = { x: cb.x + cb.width / 2, y: cb.y + cb.height / 2 };
+      b = await anchor(ha);
+      near2(b.x, mid.x + (a.x - mid.x) * k2, `${tab} ${label}: button zoom x`); near2(b.y, mid.y + (a.y - mid.y) * k2, `${tab} ${label}: button zoom y`);
+      await page.locator('button:text-is("Fit")').click(); await frames();
+      assert.equal(await t('text-edit-box').isVisible(), true, `${tab} ${label}: Fit keeps the edit open`);
+      if (absX) near2((await anchor(ha)).x, (await at(absX[0], absX[1])).x, `${tab} ${label}: after Fit`);
+    };
+    for (const tab of ['drawing', 'layout']) {
+      if (tab === 'layout') {
+        await freshLayoutWithPlate();
+        await typeCmd('line'); await typeCmd('150,150'); await typeCmd('300,150'); await page.keyboard.press('Escape');
+        await typeCmd('dli'); await typeCmd('150,150'); await typeCmd('300,150'); await typeCmd('220,200'); await page.keyboard.press('Escape');
+      } else {
+        await closeTabs(/./);
+        const raw = newDoc(4);
+        addEntities(raw, dxfLine(150, 150, 300, 150));
+        Object.assign(raw, addDimension(raw, buildDim('linear', { a: [150, 150], b: [300, 150], offset: 50, axis: 'h', textH: 5 }, 1, 'PD_DIM_H1', 2)));
+        await t('picker').setInputFiles({ name: 'edit-follows.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(raw), 'latin1') });
+        await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'edit-follows.dxf');
+      }
+      await t('decimals').selectOption('2');
+      await page.locator('[data-tool=select]').click();
+      await page.locator('button:text-is("Fit")').click(); await frames();
+      if (tab === 'drawing') {                                  // a text: place it, then edit it
+        await page.evaluate(() => localStorage.removeItem('pd-text'));
+        await page.locator('[data-tool=text]').click();
+        await click(165, 170); await t('text-editor').waitFor(); await page.keyboard.type('FOLLOW ME'); await page.keyboard.press('Enter');
+        await page.locator('[data-tool=select]').click(); await page.keyboard.press('Escape');
+        const history = await histLabels();
+        const p = await at(185, 173); await page.mouse.dblclick(p.x, p.y); await t('text-editor').waitFor();
+        assert.equal(await t('text-editor').inputValue(), 'FOLLOW ME');
+        await follows(tab, 'text', 0, [165, 170]);
+        await page.keyboard.press('Escape');                    // (the theme menu would end an edit): the pictures open it again after a zoom
+        const q = await t('canvas').boundingBox();
+        await shotBoth('edit-follows', async () => {
+          await page.mouse.move(q.x + 500, q.y + 300); await page.mouse.wheel(0, -250); await frames();
+          const s = await at(185, 173); await page.mouse.dblclick(s.x, s.y); await t('text-editor').waitFor(); await wait(150);
+        }, async () => { await page.keyboard.press('Escape'); await page.mouse.move(q.x + 500, q.y + 300); await page.mouse.wheel(0, 250); await frames(); });
+        const again = await at(185, 173); await page.mouse.dblclick(again.x, again.y); await t('text-editor').waitFor();
+        await t('text-editor').fill('FOLLOWED'); await page.keyboard.press('Enter');
+        assert.equal(await t('text-edit-box').isVisible(), false);
+        assert.deepEqual((await histLabels()).slice(history.length), ['Edit text'], tab + ': one step for the edit');
+        assert.match(await save(), /FOLLOWED/);
+        await undo(); assert.match(await save(), /FOLLOW ME/, tab + ': one Undo gives the old text back');
+      }
+      // a dimension's text
+      const start = await save();
+      const p = await at(190, 200); await page.mouse.dblclick(p.x, p.y); await t('text-editor').waitFor();
+      assert.equal(await t('text-editor').inputValue(), '150.00');
+      await follows(tab, 'dimension', 1, null);
+      await t('text-editor').fill('7.125 TYP'); await page.keyboard.press('Enter');
+      assert.equal(await t('text-edit-box').isVisible(), false);
+      assert.equal((await histLabels()).at(-1), 'Dimension text', tab + ': the dimension text is a step');
+      assert.match(await save(), /7\.125 TYP/);
+      await undo(); assert.deepEqual(dimIn(await save()), dimIn(start), tab + ': one Undo gives the measured text back');
+    }
+  });
+
   await step('TODO 156b2c3b: Explode a dimension on a drawing and on a layout: lines, SOLID arrows and one MTEXT on its layer, no attdef or block, one Undo restores it', async () => {
     const save = async () => (await downloaded(() => page.keyboard.press('Control+s'))).text;
     const undo = async () => { await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z'); };
