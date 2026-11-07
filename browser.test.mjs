@@ -20422,8 +20422,12 @@ try {
     const anchor = async (ha) => { const r = await t('text-editor').boundingBox(); return { x: ha ? r.x + r.width / 2 : r.x + 6, y: r.y + 3, h: r.height - 6 }; };
     /** Pan, then wheel-zoom: the anchor moves with the view each time (and the absolute x matches the text where it is known). */
     const follows = async (tab, label, ha, absX) => {
-      const cb = await t('canvas').boundingBox(), q = { x: cb.x + 500, y: cb.y + 300 };
+      // q sits above the box: a middle press on the box pastes the X selection on Linux (CI), which changed the text and made a second "Edit text" step
+      const cb = await t('canvas').boundingBox(), q = { x: cb.x + 500, y: cb.y + 100 };
       let a = await anchor(ha);
+      const box = await t('text-editor').boundingBox();
+      assert.ok(q.y < box.y - 20 || q.y > box.y + box.height + 20 || q.x < box.x - 20 || q.x > box.x + box.width + 20, `${tab} ${label}: the pan starts outside the edit box`);
+      const typed = await t('text-editor').inputValue();
       if (absX) near2(a.x, (await at(absX[0], absX[1])).x, `${tab} ${label}: open`);
       await page.mouse.move(q.x, q.y); await page.mouse.down({ button: 'middle' }); await page.mouse.move(q.x - 50, q.y + 30, { steps: 4 }); await page.mouse.up({ button: 'middle' }); await frames();
       assert.equal(await t('text-edit-box').isVisible(), true, `${tab} ${label}: a pan keeps the edit open`);
@@ -20450,6 +20454,7 @@ try {
       await page.locator('button:text-is("Fit")').click(); await frames();
       assert.equal(await t('text-edit-box').isVisible(), true, `${tab} ${label}: Fit keeps the edit open`);
       if (absX) near2((await anchor(ha)).x, (await at(absX[0], absX[1])).x, `${tab} ${label}: after Fit`);
+      assert.equal(await t('text-editor').inputValue(), typed, `${tab} ${label}: pan and zoom leave the typed text alone`);
     };
     for (const tab of ['drawing', 'layout']) {
       if (tab === 'layout') {
