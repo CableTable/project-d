@@ -195,7 +195,8 @@ test('TODO 109a fix 4: one number scan, one row per dimension label form through
 test('TODO 109a fix 4: unreadable labels stay unchanged and are listed in the Export report note', async (t) => {
   const labels = ['25,40', 'unreadable', '25.40\\S+0.1#-0.1', '{\\H2.5 25.40}',
     '4X∅10', '2X25.40', '2 X 25.40', '2X 25.40', 'M10', 'SEE NOTE 3', '25.40 (NOTE 3)', '4 HOLES ∅10', '(25.40)', '25.40 TYP', '25.40 50.80',
-    '5\'-6"', '10\'-12"', '2.00 x 45°', '2.5 m', '25.4 cm', '5.5 ft', '%%176 60', '60° TYP'];
+    '5\'-6"', '10\'-12"', '2.00 x 45°', '2.5 m', '25.4 cm', '5.5 ft', '%%176 60', '60° TYP',
+    '25\\P50', '25{\\H2;50}', '2{\\H2;5}.40', '25.40{\\H0.7x; mm}', '1\\S1#2;'];      // a code is a gap, a unit run apart from its number, an unsigned # stack
   for (const opts of [{ units: 'in' }, { scale: 2 }]) for (const label of labels) await t.test(`${label} ${JSON.stringify(opts)}`, () => {
     const doc = W.newDoc();
     W.addBlock(doc, '*D1', [W.mtext(0, 0, 2.5, label)]);
@@ -206,6 +207,15 @@ test('TODO 109a fix 4: unreadable labels stay unchanged and are listed in the Ex
     assert.ok(W.saveReportNote(report).includes(label));
     assert.deepEqual(doc, before);
   });
+});
+
+test('TODO 109a fix 6: a \\U+0032 digit is not a plain number: listed (the reader shows it as 2)', () => {
+  const doc = W.newDoc();
+  W.addBlock(doc, '*D1', [W.mtext(0, 0, 2.5, '\\U+0032 25.40')]);
+  W.addEntities(doc, W.entity('DIMENSION', [[2, '*D1'], [70, 1], [42, 25.4]]));
+  const report = W.writeDxfWithReport(doc, { units: 'in' });
+  assert.equal(readDxf(report.text).blocks['*D1'].entities[0].r.v.slice(-1)[0], '2 25.40');
+  assert.deepEqual(report.unreadLabels, ['\\U+0032 25.40']);
 });
 
 test('TODO 109a fix 4: kept Measure deltas are recomputed after relabel, including native overrides', async (t) => {
@@ -249,12 +259,33 @@ test('TODO 109a fix 5: native group 42 counts only above 0; a block has one prim
     ['42 missing', ['25.40'], null, ['1.0000"']],
     ['42 = 25.4', ['25.40'], 25.4, ['1.0000"']],
     ['separate +0.1 text', ['25.40', '+0.1'], 25.4, ['1.0000"', '+0.004']],
+    ['signed text first', ['+0.1', '25.40'], 25.4, ['+0.004', '1.0000"']],
   ]) await t.test(name, () => {
     const doc = W.newDoc();
     W.addBlock(doc, '*D1', texts.map((x, i) => W.mtext(0, i, 2.5, x)));
     W.addEntities(doc, W.entity('DIMENSION', [[2, '*D1'], [70, 1], ...(m42 == null ? [] : [[42, m42]])]));
     const before = structuredClone(doc), got = back(doc, { units: 'in' }).blocks['*D1'].entities.map((e) => e.r.v[e.r.c.indexOf(1)]);
     assert.deepEqual(got, expected);
+    assert.deepEqual(doc, before);
+  });
+});
+
+test('TODO 109a fix 6: a native group 1 with <> converts the block text number; a literal group 1 is written converted', async (t) => {
+  for (const [name, g1, block, opts, shown, saved, unread] of [      // [name, group 1, block text, options, block text saved, group 1 saved, listed]
+    ['<> words, to inches', 'Width <>', 'Width 25.40', { units: 'in' }, 'Width 1.0000"', 'Width <>'],
+    ['<> words, scale 2', 'Width <>', 'Width 25.40', { scale: 2 }, 'Width 50.80', 'Width <>'],
+    ['literal, to inches', '25.40', '25.40', { units: 'in' }, '1.0000"', '1.0000"'],
+    ['literal, scale 2', '25.40', '25.40', { scale: 2 }, '50.80', '50.80'],
+    ['literal with words stays, listed', 'Width 25.40', 'Width 25.40', { units: 'in' }, 'Width 25.40', 'Width 25.40', ['Width 25.40']],
+    ['literal note stays, listed', 'SEE NOTE 3', 'SEE NOTE 3', { units: 'in' }, 'SEE NOTE 3', 'SEE NOTE 3', ['SEE NOTE 3']],
+  ]) await t.test(name, () => {
+    const doc = W.newDoc();
+    W.addBlock(doc, '*D1', [W.mtext(0, 0, 2.5, block)]);
+    W.addEntities(doc, W.entity('DIMENSION', [[2, '*D1'], [70, 1], [42, 25.4], [1, g1]]));
+    const before = structuredClone(doc), report = W.writeDxfWithReport(doc, opts), out = readDxf(report.text);
+    assert.equal(out.blocks['*D1'].entities[0].r.v.slice(-1)[0], shown);
+    assert.equal(out.entities[0].r.v[out.entities[0].r.c.indexOf(1)], saved);
+    assert.deepEqual(report.unreadLabels, unread);
     assert.deepEqual(doc, before);
   });
 });

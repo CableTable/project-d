@@ -342,7 +342,13 @@ export function writeDxfWithReport(doc, opts = {}) {
         const m42 = +native?.r.v[native.r.c.indexOf(42)], value = dim ? dimGeom(dim.kind, dim.params, 1)?.mm : m42 > 0 ? m42 : NaN;      // group 42 of 0 or below is no measurement
         if (Number.isFinite(value)) target.value = value;
       }
-      b.entities = relabel(b.entities, factor, target, (label) => unreadLabels.add(label));
+      const native = dimensions.get(name), g1 = native?.r.c.indexOf(1) ?? -1, unread = (label) => unreadLabels.add(label);
+      const typed = g1 >= 0 ? String(native.r.v[g1]) : '';      // a native group 1 with <> keeps its words; the block text's one number converts
+      b.entities = relabel(b.entities, factor, target, unread, typed.includes('<>'));
+      if (typed && !typed.includes('<>')) {      // a literal group 1 is a label too: write it converted
+        const e = relabel([text(0, 0, 1, typed)], factor, target, unread)[0];
+        native.r.v[g1] = e.r.v[e.r.c.indexOf(1)];
+      }
       const dim = readDim(name, b), measured = measuredText(b.entities), override = readOverride(b.entities);
       if (dim) {
         const dp = (/\.(\d+)/.exec(measured)?.[1] || '').length;

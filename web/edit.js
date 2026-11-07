@@ -977,31 +977,34 @@ export const dimText = (v, dp = 2) => { const s = Number(v).toFixed(dp); return 
 export const dimLabel = (mm, dp = 2, units = 'mm', prefix = '') => prefix + (units === 'inch' ? dimText(mm / 25.4, dp) + '"' : dimText(mm, dp));
 const unesc = (s) => String(s).replace(/\\U\+([0-9A-Fa-f]{4})/g, (_, h) => String.fromCharCode(parseInt(h, 16)));     // a saved file writes Ø and ° as \U+00D8
 const MCODE = /\\[ACFHQTWacfhqtwp][^;]*;|\\[LlOoKkP~{}\\]|[{}]/g;      // MTEXT codes with and without parameters (\p takes parameters, \P is a line break)
-const LEN = String.raw`[+-]?\d*\.?\d+(?:\s*(?:"|mm\b))?`, STACK = String.raw`\\S[+-]?\d*\.?\d+[\^#/][+-]?\d*\.?\d+;`;
+const NUM = String.raw`\d*\.?\d+`, LEN = String.raw`[+-]?${NUM}(?:\s*(?:"|mm\b))?`;
+const STACK = String.raw`\\S(?:[+-]?${NUM}[\^/][+-]?${NUM}|[+-]${NUM}#[+-]${NUM});`;      // # is a tolerance only with both parts signed
 /** A label Export may convert: [R / ∅ / %%c] one number or stack, [" / mm], [±, %%p or stack tolerance], [alternate in brackets]. */
 const PLAIN = new RegExp(String.raw`^\s*(?:R|[∅Ø⌀]|\\U\+(?:2205|00[Dd]8|2300)|%%[cC])?\s*(?:${LEN}|${STACK})(?:\s*(?:(?:±|%%[pP])\s*${LEN}|${STACK}))?(?:\s*\[${LEN}\])?\s*$`);
-const ANGLE = /^\s*[+-]?\d*\.?\d+\s*(?:°|%%[dD]|%%176|\\U\+00[Bb]0)$/;
+const ANGLE = /^\s*[+-]?\d*\.?\d+\s*(?:°|%%[dD]|%%176|\\U\+00[Bb]0)\s*$/;
 /** Scale cached dimension labels, or replace their measurement from geometry on unit conversion; keep formatting and overrides. */
-export function relabel(ents, s, target = null, unread = null) {
+export function relabel(ents, s, target = null, unread = null, words = false) {      // words: a label with words round one number (a native group 1 with <>) converts that number
   const record = textRecord(ents), override = readOverride(ents), measured = measuredText(ents);
+  const texts = ents.filter((e) => (e.type === 'TEXT' || e.type === 'MTEXT') && e !== record && String(e.r.v[e.r.c.indexOf(1)] ?? '').trim());
   let main = false;      // one primary value per block, not per text
-  const scaled = (t) => {
+  const scaled = (t, follows = false) => {
     if (!t.trim() || t.includes('<>') || s === 1 && !target) return t;
-    const bare = t.replace(MCODE, '');
+    const bare = t.replace(MCODE, ' '), signed = follows && /^\s*[+-]/.test(bare);      // a code is a gap, never a join; a signed text before another text is a tolerance
     if (ANGLE.test(bare)) return t;
-    if (!PLAIN.test(bare)) { unread?.(t); return t; }
+    if (!PLAIN.test(bare) && !(words && (bare.replace(/\\U\+[0-9A-Fa-f]{4}/g, '').match(/\d*\.?\d+/g) || []).length === 1)) { unread?.(t); return t; }
     let alternate = false, stack = false, tolerance = false, converted = false, bad = false;
     const more = Math.max(0, Math.ceil(-Math.log10(s) - 1e-12));
     // One scan: formatting parameters are opaque; stacked/tolerance lengths use s, alternate units use only scale.
-    const out = t.replace(/\\U\+[0-9A-Fa-f]{4}|\\[ACFHQTWacfhqtwp][^;]*;|\\[LlOoKkP~{}\\]|\\S|\\.|%%[a-zA-Z]|±|\[|\]|;|\d*\.?\d+(?:\s*(?:"|mm\b))?/g, (token, at) => {
+    const out = t.replace(/\\U\+[0-9A-Fa-f]{4}|\\[ACFHQTWacfhqtwp][^;]*;|\\[LlOoKkP~{}\\]|\\S|\\.|%%[a-zA-Z]|±|\[|\]|;|\d*\.?\d+(?:\s*(?:"|mm\b))?|"|mm\b/g, (token, at) => {
       if (token === '[') { if (alternate) bad = true; alternate = true; return token; }
       if (token === ']') { if (!alternate) bad = true; alternate = false; return token; }
       if (token === '\\S') { stack = true; return token; }
       if (token === ';') { stack = false; return token; }
       if (token === '±' || /^%%[pP]$/.test(token)) { tolerance = true; return token; }
       if (token[0] === '\\') { if (token.length === 2 && !/[LlOoKkP~{}\\]/.test(token[1])) bad = true; return token; }
+      if (token === '"' || token === 'mm') { bad = true; return token; }      // a unit left alone (its number was in another code run)
       if (!/^\d|^\./.test(token)) return token;
-      const n = /^\d*\.?\d+/.exec(token)[0], suffix = token.slice(n.length), length = !alternate && !stack && !tolerance, primary = !main && length;
+      const n = /^\d*\.?\d+/.exec(token)[0], suffix = token.slice(n.length), length = !alternate && !stack && !tolerance, primary = !main && length && !signed;
       if (/^[,/\.]\d/.test(t.slice(at + n.length))) bad = true;
       const dp = (n.split('.')[1] || '').length, extra = alternate || length && !target ? 0 : more;
       const value = primary ? target?.value ?? +n * s : +n * (alternate ? target?.scale ?? s : s);
@@ -1021,7 +1024,7 @@ export function relabel(ents, s, target = null, unread = null) {
     if (e.type !== 'TEXT' && e.type !== 'MTEXT') return e;
     const k = e.r.c.indexOf(1);
     if (k < 0) return e;
-    const vv = e.r.v.slice(); vv[k] = record ? dimensionText(label, override) : scaled(vv[k]);
+    const vv = e.r.v.slice(); vv[k] = record ? dimensionText(label, override) : scaled(vv[k], texts.indexOf(e) < texts.length - 1);
     if (vv[k] === unesc(e.r.v[k])) return e;
     return { ...e, r: { ...e.r, v: vv } };
   });
