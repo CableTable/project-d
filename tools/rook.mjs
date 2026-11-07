@@ -236,9 +236,11 @@ export function failLines(text, log) {
     const name = /^FAIL (.+?)\s*$/.exec(line) || (i > summary && /^\s*✖ (.+?)(?: \(\d[\d.]*ms\))?\s*$/.exec(line));
     if (name) { out.push(name[1]); left = 3; } else if (left && /^\s*[+-] (?!actual - expected)\S/.test(line)) { out.push(line.trim()); left--; }
   }
-  if (out.length) return out.slice(0, 40);
+  const invalid = lines.filter((l) => /^SUITE INVALID/.test(l)).map((l) => l.trim()); // TODO 207a: an invalid suite run (HEAD moved) is never "no failures"
+  if (out.length) return [...invalid, ...out].slice(0, 40);
   const red = /^SUITE unit=(\d+) browser=(\d+)\s*$/m.exec(lines.join('\n'));
-  if (red && (red[1] !== '0' || red[2] !== '0')) return [`red (unit=${red[1]} browser=${red[2]}) but no failing step lines found in ${log}`];
+  if (red && (red[1] !== '0' || red[2] !== '0')) return [...invalid, `red (unit=${red[1]} browser=${red[2]}) but no failing step lines found in ${log}`];
+  if (invalid.length) return invalid;
   return [lines.some((l) => /^##\[error\]/.test(l)) ? `no failing step lines found in ${log}` : `no failures in ${log}`];
 }
 

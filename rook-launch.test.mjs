@@ -6,6 +6,7 @@ import { test } from 'node:test';
 import { EventEmitter } from 'node:events';
 import { dedupePath, acad, acadArgs, board, boardArgs, pawn, pawnArgs, queueLineOf, retro, retroArgs, suite, launchFailed, launchRun, runningNote, parseReview, parseBuild, parseKnight, reviewerArgs, buildArgs, knightArgs, commandLine, review, build, knight, lintBrief, briefProblems, isFixBrief, fixRoundRefusal } from './tools/rook-launch.mjs';
 import * as launches from './tools/rook-launch.mjs';
+import { LONGEST_RUN_MS } from './tools/usage-agent.mjs';
 
 const X = 'E:/Project B/Claude/Project D extras';
 const REVIEWER = 'claude2.cmd -p --agent reviewer --model claude-opus-5-5 --effort medium --permission-mode dontAsk --max-budget-usd 6 '
@@ -365,9 +366,14 @@ test('TODO 207a: kingGate adds 10% per running King build / King review line in 
   const mk = (h5, text) => {
     const r = withUsage(`King,5h,${h5},${future}\n`), read = r.x.read;
     r.x.read = (p) => (p.endsWith('queue.txt') ? text : read(p));
+    r.x.mtime = (p) => (p.endsWith('queue.txt') ? Date.now() - age : 0);
     return r;
   };
+  let age = 0;
   const go = (r) => build(['b.txt', 'o.jsonl', 'br', 'abc1234'], r.x);
+  age = LONGEST_RUN_MS + 1; // a queue.txt untouched for longer than any run: its running lines are dead (usage-agent rule)
+  go(mk(66, queue));
+  age = 0;
   assert.throws(() => go(mk(66, queue)), /^Error: King 5h 66% \+ 2 King runs running \(10% each\) is over 85%: use Knight, or --over$/);
   go(mk(65, queue)); // 65 + 20 = 85 passes
   const one = mk(76, queue.split('\r\n')[0]);

@@ -427,6 +427,10 @@ test('TODO 196g fix: fails reads the real suite-log lines (browser [shard n/m] F
   assert.deepEqual(failLines('ok 1\nok step\nSUITE unit=0 browser=0\n', 'x.log'), ['no failures in x.log']);
   assert.deepEqual(failLines('lots of output\nSUITE unit=1 browser=0\n', 'r.log'), ['red (unit=1 browser=0) but no failing step lines found in r.log']);
   assert.deepEqual(failLines('SUITE unit=0 browser=2', 'r.log'), ['red (unit=0 browser=2) but no failing step lines found in r.log']);
+  const inv = 'SUITE INVALID head abc -> def';
+  assert.deepEqual(failLines(`ok 1\n${inv}\nSUITE unit=0 browser=0\n`, 'i.log'), [inv], 'TODO 207a: invalid run is never "no failures"');
+  assert.deepEqual(failLines(`FAIL a step\n${inv}\nSUITE unit=0 browser=1`, 'i.log'), [inv, 'a step']);
+  assert.deepEqual(failLines(`${inv}\nSUITE unit=1 browser=0`, 'i.log'), [inv, 'red (unit=1 browser=0) but no failing step lines found in i.log']);
   const many = Array.from({ length: 30 }, (_, i) => `FAIL step ${i}\n+ a\n- b`).join('\n');
   assert.equal(failLines(many, 'm.log').length, 40);
 });

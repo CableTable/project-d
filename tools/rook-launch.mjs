@@ -7,7 +7,7 @@ import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { gateOps, tickIds } from './handover-gate.mjs';
 import { setRunLine } from './rook-end.mjs';
-import { parseCsv } from './usage-agent.mjs';
+import { LONGEST_RUN_MS, parseCsv } from './usage-agent.mjs';
 import { retroSessions } from './retro-brief.mjs';
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -282,7 +282,8 @@ const KING_RUNNING = /^(?:build king\/|review \S+ --as king ).*: running$/;
 function kingGate(x, what) {
   const h5 = cachedH5(x, ['King'], 'King', what);
   let text = '';
-  try { const queue = x.gate.queueFile(); if (x.exists(queue)) text = x.read(queue); } catch { /* no queue.txt: nothing running */ }
+  // a queue.txt untouched for longer than any run is dead (the usage-agent rule): its running lines count as none
+  try { const queue = x.gate.queueFile(); if (x.exists(queue) && Date.now() - x.mtime(queue) <= LONGEST_RUN_MS) text = x.read(queue); } catch { /* no queue.txt: nothing running */ }
   const n = text.split(/\r?\n/).filter((l) => KING_RUNNING.test(l.trim())).length;
   if (h5 + 10 * n > 85) throw new Error(`King 5h ${h5}% + ${n} King run${n === 1 ? '' : 's'} running (10% each) is over 85%: use Knight, or --over`);
 }
