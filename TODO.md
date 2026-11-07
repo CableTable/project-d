@@ -372,7 +372,7 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
 - [ ] 217. **PDF / Print: custom margins per side, Office printer 5 mm** (S, T66).
 - [ ] 218. **Combine (Ctrl+L) / Break Apart** (M, T67).
 - [ ] 219. **One setup for all projects** (L, his call 2026-11-07, grill `runs39/grill-global-setup.md`; no D feature builds until done). Tickets, King, `--tool`:
-  - [ ] 219a. Project values from `rook.config.json` (no Project D literals in `tools/`, briefs, agents, retro skill, hooks).
+  - [x] 219a. Project values from `rook.config.json` (no Project D literals in `tools/`, briefs, agents, retro skill, hooks).
   - [ ] 219b. `--project <D|R|B|P|WF>` on `rook.mjs`; `rook-hq/projects.json`; runs and handovers in `rook-hq/runs<N>`.
   - [ ] 219c. Generic files move to `E:/Project B/Claude/rook-kit` (local git, plugin dir for 3 accounts); D keeps its config and D-only tools. Also: `.claude/agents/*.md` and the retro skill say "this project" (219a review finding 1; builders can't write `.claude/`).
   - [ ] 219d. Rook HQ: global `CLAUDE.md` + general memories (3 accounts), `Rook.lnk`, generic `WORKFLOW.md`, Bishop-support project tags and the ticket order.
