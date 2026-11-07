@@ -1,6 +1,6 @@
 ---
 name: retro
-description: "Retrospective on a Project D session (Rook, King or Bishop runs): suggests environment fixes. Runs on Bishop (WORKFLOW rule 4): Rook launches it and never runs it inline."
+description: "Retrospective on a Rook session for any project (Rook, King or Bishop runs): suggests environment fixes. Runs on Bishop (WORKFLOW rule 4): Rook launches it and never runs it inline."
 ---
 
 The user has asked for a **retrospective**. You are suggesting improvements to the coding agent's **environment** to improve future runs.
