@@ -20429,7 +20429,10 @@ try {
       assert.ok(q.y < box.y - 20 || q.y > box.y + box.height + 20 || q.x < box.x - 20 || q.x > box.x + box.width + 20, `${tab} ${label}: the pan starts outside the edit box`);
       const typed = await t('text-editor').inputValue();
       if (absX) near2(a.x, (await at(absX[0], absX[1])).x, `${tab} ${label}: open`);
+      // The canvas already cancels the middle press (pointerdown + auxclick); Linux Chromium still pastes the X primary selection ("180.00") into the focused editor, so clear the selection and veto the paste here
+      await page.evaluate(() => { getSelection().removeAllRanges(); window.__noPaste = (e) => e.preventDefault(); document.addEventListener('paste', window.__noPaste, true); });
       await page.mouse.move(q.x, q.y); await page.mouse.down({ button: 'middle' }); await page.mouse.move(q.x - 50, q.y + 30, { steps: 4 }); await page.mouse.up({ button: 'middle' }); await frames();
+      await page.evaluate(() => document.removeEventListener('paste', window.__noPaste, true));
       assert.equal(await t('text-edit-box').isVisible(), true, `${tab} ${label}: a pan keeps the edit open`);
       let b = await anchor(ha);
       near2(b.x, a.x - 50, `${tab} ${label}: pan x`); near2(b.y, a.y + 30, `${tab} ${label}: pan y`); near2(b.h, a.h, `${tab} ${label}: pan size`);
