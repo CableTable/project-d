@@ -35,7 +35,7 @@ import { readFileSync, writeFileSync, appendFileSync, existsSync, readdirSync, s
 import { join, dirname, resolve, basename } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { ROOT, project, stripProjectFlag, hqConfig, inHq } from './project.mjs';
+import { ROOT, project, stripProjectFlag, hqConfig } from './project.mjs';
 import { hqInstall } from './hq-install.mjs';
 import { cacheAge } from './rook-cache.mjs';
 import { firstDone, peakContext } from './rook-result.mjs';
@@ -260,7 +260,7 @@ export function failLines(text, log) {
 }
 
 // `handover <resume file> <name>` (TODO 196g): writes rook-next.txt (uuid, name, resume file) for `next`; refused when the resume file is missing or its line 2 lacks the grilling + domain-modeling rule. Returns the 3 lines.
-// TODO 219d `hq` (hq.json): the file is also written to "runs" (where the session number is read) and, when the next session is in Rook HQ, to "hq", so the switch at runsFrom loses nothing.
+// TODO 219d `hq` (hq.json): the file is also written to "runs" (where the session number is read) and to "hq" whenever hq.hq is set (review of 219d1: the new Rook.lnk's start-rook.ps1 reads only <hq>/rook-next.txt, and it is installed mid-session 40).
 export function handover(resume, name, extras = EXTRAS, uuid = randomUUID(), noRetro = false, hq = null) {
   if (!resume || !name || /[\r\n]/.test(name)) throw new Error('usage: node tools/rook.mjs handover <resume file> <name> [--no-retro]');
   if (!handoverRetroName(name)) throw new Error(`refused: name "${name}" must end in S<N> (like "Rook S38j"): the next handover's retro check needs it`);
@@ -279,8 +279,8 @@ export function handover(resume, name, extras = EXTRAS, uuid = randomUUID(), noR
   if (retroOut && !noRetro && !existsSync(`${extras}/${retroOut}`)) throw new Error(`refused: ${retroOut} is missing (run \`node tools/rook.mjs retro --handover\` for ${prev}, or pass --no-retro)`);
   if (retroOut && existsSync(`${extras}/${retroOut}`)) appendFileSync(resume, `${text.endsWith('\n') ? '' : '\n'}Handover retro: read ${retroOut} first and apply what it recommends.\n`);
   const lines = [uuid, name, resolve(resume).replaceAll('\\', '/')];
-  const next = lines.join('\n') + '\n', nextN = /runs(\d+)/.exec(lines[2])[1];
-  for (const dir of new Set([extras, ...(hq ? [hq.runs, inHq(hq, +nextN) && hq.hq] : [])].filter(Boolean))) { mkdirSync(dir, { recursive: true }); writeFileSync(`${dir}/rook-next.txt`, next); }
+  const next = lines.join('\n') + '\n';
+  for (const dir of new Set([extras, ...(hq ? [hq.runs, hq.hq] : [])].filter(Boolean))) { mkdirSync(dir, { recursive: true }); writeFileSync(`${dir}/rook-next.txt`, next); }
   return lines.join('\n');
 }
 

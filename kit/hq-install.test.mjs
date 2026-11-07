@@ -85,6 +85,28 @@ test('TODO 219d: a different existing CLAUDE.md gets a .bak first and the first 
     await w.run();
     assert.equal(readFileSync(`${w.home}/.claude/CLAUDE.md.bak`, 'utf8'), 'his old rules');
     assert.equal(readFileSync(`${w.home}/.claude/CLAUDE.md`, 'utf8'), readFileSync(`${w.kitHq}/global-CLAUDE.md`, 'utf8'));
+    const stamped = () => readdirSync(`${w.home}/.claude`).filter((f) => /^CLAUDE\.md\.\d.*\.bak$/.test(f));
+    assert.deepEqual(stamped().map((f) => readFileSync(`${w.home}/.claude/${f}`, 'utf8')), ['edited again'], 'the second edit is kept in a timestamped .bak');
+    await new Promise((r) => setTimeout(r, 5));
+    writeFileSync(`${w.hqDir}/WORKFLOW.md`, 'rook edit 1'); // Rook's edits of the HQ copy between installs: each round is kept
+    await w.run();
+    writeFileSync(`${w.hqDir}/WORKFLOW.md`, 'rook edit 2');
+    await w.run();
+    assert.equal(readFileSync(`${w.hqDir}/WORKFLOW.md.bak`, 'utf8'), 'rook edit 1');
+    assert.deepEqual(readdirSync(w.hqDir).filter((f) => /^WORKFLOW\.md\.\d.*\.bak$/.test(f)).length, 1);
+    await w.run(); // nothing changed since: no further backup
+    assert.equal(readdirSync(w.hqDir).filter((f) => /\.bak$/.test(f) && f.startsWith('WORKFLOW')).length, 2);
+  } finally { rmSync(w.dir, { recursive: true }); }
+});
+
+test('TODO 219d: the memory copy takes files only: a subfolder is skipped, not a crash', async () => {
+  const w = world();
+  try {
+    mkdirSync(`${w.mem}/sub`);
+    writeFileSync(`${w.mem}/sub/c.md`, 'in a folder');
+    const { out } = await w.run();
+    assert.equal(readdirSync(`${w.home}/.claude/projects/${w.slug}/memory`).join(), 'a.md,b.md');
+    assert.match(out.join('\n'), /copy memory .*: 2 new, 0 already there/);
   } finally { rmSync(w.dir, { recursive: true }); }
 });
 
@@ -117,7 +139,7 @@ test('TODO 219d: the runs folder and Rook\'s transcript folder are the old ones 
   } finally { rmSync(w.dir, { recursive: true }); }
 });
 
-test('TODO 219d: handover writes rook-next.txt into "runs" and, when the next session is in rook-hq, into "hq" too; before 41 only the old folder', async () => {
+test('TODO 219d: handover writes rook-next.txt into "runs" and, whenever hq.hq is set (session 40 too), into "hq"; no "hq" key: only the old folder', async () => {
   const { handover } = await import('./rook.mjs');
   const w = world();
   try {
@@ -125,12 +147,26 @@ test('TODO 219d: handover writes rook-next.txt into "runs" and, when the next se
     const needs = 'read merge-due.log\nselect:Monitor,TaskStop\none ci-watch per push\n';
     const resume = (n) => { mkdirSync(`${w.hq.runs}/runs${n}`, { recursive: true }); const f = `${w.hq.runs}/runs${n}/resume-rook.txt`; writeFileSync(f, `Rook S${n}\n${skills}\n${needs}`); return f; };
     handover(resume(40), 'Rook S40', w.hq.runs, 'u-40', true, w.hq);
-    assert.ok(existsSync(`${w.hq.runs}/rook-next.txt`) && !existsSync(`${w.hqDir}/rook-next.txt`), 'session 40: old folder only');
+    for (const dir of [w.hq.runs, w.hqDir]) assert.equal(readFileSync(`${dir}/rook-next.txt`, 'utf8').split('\n')[0], 'u-40', 'session 40 feeds rook-hq too (the new Rook.lnk reads only there)');
+    const { hq: _unset, ...noHq } = w.hq, old = `${w.dir}/old-runs`;
+    mkdirSync(`${old}/runs40`, { recursive: true });
+    const f = `${old}/runs40/resume-rook.txt`;
+    writeFileSync(f, `Rook S40\n${skills}\n${needs}`);
+    handover(f, 'Rook S40', old, 'u-old', true, noHq);
+    assert.ok(existsSync(`${old}/rook-next.txt`) && readFileSync(`${w.hqDir}/rook-next.txt`, 'utf8').split('\n')[0] === 'u-40', 'no hq.hq: rook-hq untouched');
     handover(resume(41), 'Rook S41', w.hq.runs, 'u-41', true, w.hq); // the 40 -> 41 handover runs in the old folder and still feeds rook-hq
     for (const dir of [w.hq.runs, w.hqDir]) assert.equal(readFileSync(`${dir}/rook-next.txt`, 'utf8').split('\n')[0], 'u-41');
     handover(resume(42), 'Rook S42', w.hqDir, 'u-42', true, w.hq); // a Rook in rook-hq: its own folder and the pointer in "runs"
     for (const dir of [w.hq.runs, w.hqDir]) assert.equal(readFileSync(`${dir}/rook-next.txt`, 'utf8').split('\n')[0], 'u-42');
   } finally { rmSync(w.dir, { recursive: true }); }
+});
+
+test('TODO 219d1: key rules of the old single WORKFLOW.md (37a35b3) are in D\'s file or the hq file after the split', async () => {
+  const { ROOT } = await P(); // the project's checkout, also when this kit folder is a copy elsewhere
+  const both = [join(ROOT, 'WORKFLOW.md'), join(KIT, 'hq', 'WORKFLOW.md')].map((f) => readFileSync(f, 'utf8')).join('\n').toLowerCase();
+  const phrases = ['real failure', 'seen twice', 'ponytail-debt', 'worked value', 'trial moves', 'over 70', '140k', 'Open bugs checked', 'way in', 'audit',
+    'pr` skill', 'one background script', 'rate_limit_event', 'cache write', 'checks the new uuid', 'overruled fix first', 'lows.txt', 'rook-gate.json', 'no review:', 'wip todo', 'tell him once'];
+  for (const p of phrases) assert.ok(both.includes(p.toLowerCase()), `"${p}" is in neither WORKFLOW.md`);
 });
 
 test('TODO 219d: every `node tools/rook.mjs <verb>` the staged WORKFLOW.md names exists in kit/rook.mjs; the three staged files exist and the global rules carry the house lines', () => {
