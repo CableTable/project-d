@@ -1,6 +1,6 @@
 Build: TODO <item> (<summary>). Branch <branch> from <sha> (already switched for you).
 
-Spec: "<spec path>" (read it first). TODO.md row <item>. Leave TODO.md alone: Rook ticks it after the cherry-pick.
+Spec: "<spec path>" (read it first). {todo} row <item>. Leave {todo} alone: Rook ticks it after the cherry-pick.
 
 Do:
 <Do list>

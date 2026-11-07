@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { runInNewContext } from 'node:vm';
+import { project, winCmd } from './tools/project.mjs';
 
 // Run the CLI with fake stdin, git and npm; no live hook or test subprocesses.
 const source = readFileSync(new URL('./tools/stop-hook.mjs', import.meta.url), 'utf8').replace(/^import .*;\r?$/gm, '');
@@ -12,6 +13,7 @@ function run({ input = '{}', dir = 'C:/Users/raksh/.claude-account3', status = '
   const calls = [], stopped = {}, result = { code: 0, stderr: '', calls };
   try {
     runInNewContext(source, {
+      project, winCmd, // the script's own import lines are stripped above
       rookStop(i, deps) { assert.equal(typeof deps.read, 'function'); assert.equal(typeof deps.exists, 'function'); assert.equal(typeof deps.git, 'function'); return rook(i); },
       execFileSync() { throw new Error('unused'); },
       existsSync() { return false; },

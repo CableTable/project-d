@@ -1,6 +1,8 @@
 // The launcher's handover gate (TODO 165): at most LIMIT new-item launches per Rook, so the pipeline drains to a clean break.
 // A rule in WORKFLOW.md did not hold (Rook S29 built 9 items), so `rook.mjs build` / `knight` count and refuse.
 // State: runs<N>/rook-gate.json { uuid, startSha, launches: [{ kind: item | fix | tool, ids, brief, branch, at, over? }] }; one Rook = one uuid (rook-next.txt line 1).
+import { project } from './project.mjs';
+const { todo: TODO, workflow: WORKFLOW } = project.docs;
 export const LIMIT = 2;
 const ROW = /^(\s*)(?:- \[([ x])\] )?(\d+[a-z]*\d*)\.\s*(✅)?/; // "- [x] 160." / "    155a. ✅" / "1. ✅"; ids repeat in old lists, so rows are keyed id#occurrence
 
@@ -71,7 +73,7 @@ export function setLine2(text, line) {
 
 export const refusal = (name, state) => {
   const items = itemsOf(state);
-  return `handover due: ${items.length} new items launched since ${name} started (${items.map((l) => l.branch).join(', ')}). Hand over (WORKFLOW.md Handover), or pass --over with his OK.`;
+  return `handover due: ${items.length} new items launched since ${name} started (${items.map((l) => l.branch).join(', ')}). Hand over (${WORKFLOW} Handover), or pass --over with his OK.`;
 };
 
 // env: { extras, read(path) -> text | null, write(path, text), git(...args) } (git runs in the repo). The launcher and `rook.mjs gate` share this.
@@ -90,7 +92,7 @@ export function gateOps(env) {
     return { name, dir, file, head, state };
   }
   function show(g) {
-    const ticked = countTicked(env.git('show', `${g.state.startSha}:TODO.md`), env.git('show', `${g.head}:TODO.md`), skipIds(g.state, env.read));
+    const ticked = countTicked(env.git('show', `${g.state.startSha}:${TODO}`), env.git('show', `${g.head}:${TODO}`), skipIds(g.state, env.read));
     const line = queueLine(g.name, ticked, itemsOf(g.state).length, toolsOf(g.state).length);
     const q = `${g.dir}/queue.txt`;
     env.write(q, setLine2(env.read(q) || '', line));
@@ -107,7 +109,7 @@ export function gateOps(env) {
     if (over) return;
     const n = ownContext();
     if (!n) return void console.log(`context not checked: no transcript for this Rook in ${env.claudeDir}`);
-    if (n > CONTEXT_LIMIT) throw new Error(`HANDOVER: context ${Math.round(n / 1e3)}k (over ${CONTEXT_LIMIT / 1e3}k). Hand over (WORKFLOW.md Handover), or pass --over with his OK.`);
+    if (n > CONTEXT_LIMIT) throw new Error(`HANDOVER: context ${Math.round(n / 1e3)}k (over ${CONTEXT_LIMIT / 1e3}k). Hand over (${WORKFLOW} Handover), or pass --over with his OK.`);
   }
   return {
     context,

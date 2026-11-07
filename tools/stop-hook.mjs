@@ -3,6 +3,7 @@
 import { execSync, execFileSync } from 'node:child_process';
 import { readFileSync, existsSync } from 'node:fs';
 import { rookStop } from './stop-hook-rook.mjs';
+import { project, winCmd } from './project.mjs';
 
 let input = {};
 try { input = JSON.parse(readFileSync(0, 'utf8') || '{}'); } catch {}
@@ -19,9 +20,9 @@ const changed = git('git status --porcelain -- web tools package.json') || git('
 if (!changed) process.exit(0);                                         // reviewers and lookups edit nothing
 
 try {
-  execSync('npm.cmd test', { stdio: 'pipe', encoding: 'utf8' });
+  execSync(winCmd(project.test), { stdio: 'pipe', encoding: 'utf8' });
 } catch (e) {
   const out = `${e.stdout || ''}${e.stderr || ''}`.split('\n').slice(-40).join('\n');
-  process.stderr.write(`npm test is red with unpushed changes in web/. Fix it before finishing:\n${out}\n`);
+  process.stderr.write(`${project.test} is red with unpushed changes in web/. Fix it before finishing:\n${out}\n`);
   process.exit(2);
 }

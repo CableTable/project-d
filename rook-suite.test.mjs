@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { runInNewContext } from 'node:vm';
+import { project, winCmd } from './tools/project.mjs';
 
 // Exercise the detached script's decisions without starting either suite.
 const source = readFileSync(new URL('./tools/rook-suite.mjs', import.meta.url), 'utf8').replace(/^import .*;\r?$/gm, '');
@@ -23,6 +24,7 @@ function suiteRun({ unit = 0, browser = 0, heads = ['aaa', 'aaa'], env = {} }) {
   const calls = [], lines = [], process = { env };
   let n = 0;
   runInNewContext(source, {
+    project, winCmd, // the script's own import lines are stripped above
     spawnSync(command, options) {
       if (command.startsWith('git ')) return { stdout: heads[n++] + '\n' };
       calls.push([command, { ...options, env: options.env && { TEST_PORT: options.env.TEST_PORT } }]);

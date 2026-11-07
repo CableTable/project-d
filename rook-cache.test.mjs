@@ -24,9 +24,10 @@ test('TODO 207b: Rook daily cap uses its own weekly reset and says cap today', (
     mkdirSync(join(repo, 'tools'));
     mkdirSync(join(repo, 'usage-site/public'), { recursive: true });
     copyFileSync(new URL('./usage-site/public/usage-window.js', import.meta.url), join(repo, 'usage-site/public/usage-window.js'));
-    for (const file of ['rook.mjs', 'rook-cache.mjs', 'rook-result.mjs', 'rook-launch.mjs', 'rook-end.mjs', 'handover-gate.mjs', 'usage-agent.mjs', 'usage-agent-policy.mjs', 'retro-brief.mjs']) {
+    for (const file of ['rook.mjs', 'rook-cache.mjs', 'rook-result.mjs', 'rook-launch.mjs', 'rook-end.mjs', 'handover-gate.mjs', 'usage-agent.mjs', 'usage-agent-policy.mjs', 'retro-brief.mjs', 'project.mjs']) {
       copyFileSync(new URL('./tools/' + file, import.meta.url), join(repo, 'tools', file));
     }
+    copyFileSync(new URL('./rook.config.json', import.meta.url), join(repo, 'rook.config.json')); // tools/project.mjs reads it from the repo root
     writeFileSync(join(repo, 'package.json'), '{"type":"module"}');
     const usage = join(repo, 'mockups', '_design', 'usage');
     mkdirSync(usage, { recursive: true });
@@ -61,9 +62,10 @@ test('cached usage shares live summaries, avoids processes and writes, and falls
     copyFileSync(new URL('./usage-site/public/usage-window.js', import.meta.url), join(repo, 'usage-site/public/usage-window.js'));
     const usage = join(repo, 'mockups', '_design', 'usage');
     mkdirSync(usage, { recursive: true });
-    for (const file of ['rook.mjs', 'rook-cache.mjs', 'rook-result.mjs', 'rook-launch.mjs', 'rook-end.mjs', 'handover-gate.mjs', 'usage-agent.mjs', 'usage-agent-policy.mjs', 'retro-brief.mjs']) {
+    for (const file of ['rook.mjs', 'rook-cache.mjs', 'rook-result.mjs', 'rook-launch.mjs', 'rook-end.mjs', 'handover-gate.mjs', 'usage-agent.mjs', 'usage-agent-policy.mjs', 'retro-brief.mjs', 'project.mjs']) {
       copyFileSync(new URL('./tools/' + file, import.meta.url), join(repo, 'tools', file));
     }
+    copyFileSync(new URL('./rook.config.json', import.meta.url), join(repo, 'rook.config.json')); // tools/project.mjs reads it from the repo root
     writeFileSync(join(repo, 'package.json'), '{"type":"module"}');
     const now = Date.parse('2026-10-20T12:00:00Z'), asOf = now - 120_000;
     const reset5h = new Date(now + 3600_000).toISOString(), resetWeek = new Date(now + 5 * 86400_000).toISOString();

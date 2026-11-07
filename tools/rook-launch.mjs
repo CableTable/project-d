@@ -9,16 +9,19 @@ import { gateOps, tickIds } from './handover-gate.mjs';
 import { setRunLine } from './rook-end.mjs';
 import { LONGEST_RUN_MS, parseCsv } from './usage-agent.mjs';
 import { retroSessions } from './retro-brief.mjs';
+import { fillProject, project, winCmd } from './project.mjs';
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-export const EXTRAS = 'E:/Project B/Claude/Project D extras';
-const MAIN_GIT = 'E:/Project B/Claude/Project D/.git';
+export const EXTRAS = project.extras;
+const MAIN_GIT = project.mainGit;
+const MAIN = project.main;
+const TRANSCRIPTS = `C:/Users/raksh/.claude/projects/${project.claudeProject}`;
 const CODEX = join(homedir(), 'AppData', 'Roaming', 'npm', 'codex.cmd');
 const SHA = /^[0-9a-f]{7,40}$/i;
 // Two Claude accounts x two roles: the account's launcher and the folder it reviews / builds in.
 export const ACCOUNTS = {
-  bishop: { bin: 'claude2.cmd', review: 'ProjectD-s15fix', build: 'ProjectD-s15fix' },
-  king: { bin: 'claude3.cmd', review: 'ProjectD-king2', build: 'ProjectD-king' },
+  bishop: { bin: 'claude2.cmd', ...project.folders.bishop },
+  king: { bin: 'claude3.cmd', ...project.folders.king },
 };
 
 // Positionals first, then flags (name -> number of values). Returns { pos, flags: { name: [values] } } or throws the usage.
@@ -99,6 +102,10 @@ function checkBranch(text, branch) {
   if (m && m[1] !== branch) throw new Error(`brief says branch ${m[1]}, run is ${branch}`);
 }
 
+// A numbered line that is no behaviour: the test line (the project's test command, `npm.cmd test` for D) or a house chore.
+const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const NOT_BEHAVIOUR = new RegExp(`^\`?(Screenshots|${escapeRe(winCmd(project.test))}|Tick|Append|Add a ${escapeRe(project.docs.decisions.replace(/\.md$/, ''))}|Report)\\b`, 'i');
+
 export function lintBrief(text, fix = isFixBrief(text)) {
   const problems = [];
   let behaviours = 0;
@@ -108,7 +115,7 @@ export function lintBrief(text, fix = isFixBrief(text)) {
     if (/^\s*\d+\./.test(line)) inItem = true;
     else if (line.trim() && !/^\s+/.test(line)) inItem = false;
     if (inItem && /\b(every|all) \w*\s*(caller|button|site)s?\b/i.test(line) && !/\bgrep -n\b|`grep\b/.test(line)) problems.push(`line ${i + 1}: every-caller instruction needs a grep command (grep -n or \`grep)`);
-    if (numbered && !/^`?(Screenshots|npm\.cmd test|Tick|Append|Add a DECISIONS|Report)\b/i.test(numbered[1])) behaviours++;
+    if (numbered && !NOT_BEHAVIOUR.test(numbered[1])) behaviours++;
     if (/^\s*(\d+\.\s+)?Also\b/i.test(line)) problems.push(`line ${i + 1}: line starts with Also (scope creep: make it a numbered item or drop it)`);
     if (new Set(tickIds(line)).size > 1) problems.push(`line ${i + 1}: Tick line names more than one TODO id`);
     if (inItem && !fix && line.length > 400) console.error(`warning: line ${i + 1}: Do line over 400 chars`); // a warning, not a refusal (TODO 207a)
@@ -119,7 +126,7 @@ export function lintBrief(text, fix = isFixBrief(text)) {
     }
     if (/full (browser )?suite/i.test(line) && !/\bRook\b/i.test(line) && !/\b(never|not|no|don['’]?t)\s+(ever\s+)?(run\s+)?(the\s+)?full (browser )?suite/i.test(line)) problems.push(`line ${i + 1}: builder asked for the full suite`);
     if (/(^|[\s(`'"])runs\d+\//.test(line)) problems.push(`line ${i + 1}: bare runs<N>/ path; use ../runs<N>/ or an absolute path`);
-    if (/\.\.\/Project D extras\/runs/.test(line)) problems.push(`line ${i + 1}: use ../runs<N>/ (the worktree sits beside runs<N>/)`);
+    if (line.includes(`../${basename(EXTRAS)}/runs`)) problems.push(`line ${i + 1}: use ../runs<N>/ (the worktree sits beside runs<N>/)`);
     if (/\b(cmd(\.exe)? \/c|powershell\.exe)\b/i.test(line)) problems.push(`line ${i + 1}: cmd /c and powershell.exe are off King's allowlist; use a tmp-*.mjs`);
     if (/\bcargo\b/i.test(line) && !/\bno cargo\b/i.test(line)) problems.push(`line ${i + 1}: cargo is unavailable on this PC; say no cargo on the same line`);
   }
@@ -158,7 +165,7 @@ export const buildArgs = (extras = EXTRAS, gitDir = MAIN_GIT) => ['-p', '--agent
   '--output-format', 'stream-json', '--verbose'];
 
 // WORKFLOW.md's Knight-build flags: its clone, the clone's git folder and the Playwright folder.
-export const knightArgs = (report, clone = `${EXTRAS}/ProjectD-rowan`, home = homedir().replaceAll('\\', '/')) => ['exec', '-p', 'builder',
+export const knightArgs = (report, clone = `${EXTRAS}/${project.folders.knight}`, home = homedir().replaceAll('\\', '/')) => ['exec', '-p', 'builder',
   '-C', clone, '--add-dir', `${clone}-git`, '--add-dir', `${home}/AppData/Local/ms-playwright`, '-o', report, '-'];
 
 // Safe words stay bare; everything else (spaces, parentheses, *) goes in double quotes for cmd.exe.
@@ -202,6 +209,12 @@ export function launchRun(bin, args, cwd, inFd, outFd, env, outPath = '', spawnF
 // A launch's line in queue.txt as a job for rook-end.mjs; null when there is no queue.txt (lines 1-2 are Rook's, so the launcher never creates one).
 export const queueLineOf = (queue, kind, id, out, exists = existsSync) => (exists(queue) ? { queue, key: basename(out), out, text: `${kind} ${id} -> ${basename(out)}:` } : null);
 
+// A brief opened for reading gets its {project} / {test} / {extras} ... placeholders filled in place (TODO 219a); other modes open as they are.
+export function openFilled(path, mode) {
+  if (mode === 'r') { const text = readFileSync(path, 'utf8'), filled = fillProject(text); if (filled !== text) writeFileSync(path, filled); }
+  return openSync(path, mode);
+}
+
 // Everything that touches git, npm, files or processes; the tests swap it for a recorder.
 const io = {
   git(dir, ...a) {
@@ -215,7 +228,7 @@ const io = {
   mtime: (path) => statSync(path).mtimeMs,
   list: (path) => readdirSync(path, { withFileTypes: true }).filter((e) => e.isFile()).map((e) => e.name),
   write: (path, text) => writeFileSync(path, text, { flag: 'wx' }),
-  open: (path, mode) => openSync(path, mode),
+  open: openFilled,
   locked: (dir, lock = lockFile(dir)) => existsSync(lock),
   npmCi(dir) {
     try { execSync('npm.cmd ci --silent', { cwd: dir, stdio: 'pipe' }); }
@@ -237,14 +250,14 @@ const io = {
   },
 };
 // The handover gate (tools/handover-gate.mjs) reads the Rook's files in the extras folder and the session branch in this repo.
-io.gate = gateOps({ extras: EXTRAS, claudeDir: join(homedir(), '.claude', 'projects', 'E--Project-B-Claude-Project-D'), read: (p) => (existsSync(p) ? readFileSync(p, 'utf8') : null), write: writeFileSync, git: (...a) => io.git(REPO, ...a) });
+io.gate = gateOps({ extras: EXTRAS, claudeDir: join(homedir(), '.claude', 'projects', project.claudeProject), read: (p) => (existsSync(p) ? readFileSync(p, 'utf8') : null), write: writeFileSync, git: (...a) => io.git(REPO, ...a) });
 
 const claude = (as) => join(homedir(), '.local', 'bin', ACCOUNTS[as].bin);
 const folder = (as, role) => `${EXTRAS}/${ACCOUNTS[as][role]}`;
 const defaultAccount = (x) => (x.locked(folder('bishop', 'review')) ? 'king' : 'bishop');
 
 // "RUNNING (lock since <time>)" while a launch whose out file is `file` has not ended (its folder still has the lock), else ''.
-export function runningNote(file, dirs = [...new Set([...Object.values(ACCOUNTS).flatMap((a) => [a.review, a.build]), 'ProjectD-rowan'])].map((d) => `${EXTRAS}/${d}`)) {
+export function runningNote(file, dirs = [...new Set([...Object.values(ACCOUNTS).flatMap((a) => [a.review, a.build]), project.folders.knight])].map((d) => `${EXTRAS}/${d}`)) {
   for (const dir of dirs) {
     try {
       const [since, out] = readFileSync(lockFile(dir), 'utf8').split('\n');
@@ -366,7 +379,7 @@ function needHooks(x, dir) {
 
 export function knight(args, x = io) {
   const { brief, report, branch, sha, log, fix: fixFlag, regrilled, tool, noFresh, over, big, review: chain } = parseKnight(args);
-  const clone = `${EXTRAS}/ProjectD-rowan`;
+  const clone = `${EXTRAS}/${project.folders.knight}`;
   x.need(brief, 'brief file');
   if (chain) { x.need(chain.brief, 'review brief file'); x.need(dirname(chain.out), 'review output folder'); }
   const text = x.read(brief), fix = fixFlag || isFixBrief(text);
@@ -417,7 +430,7 @@ function checkFresh(x, text) {
 
 // WORKFLOW.md line 215's retro flags and line 87's Bishop-acad flags.
 export const retroArgs = (extras = EXTRAS, home = homedir().replaceAll('\\', '/')) => ['-p', '--model', 'claude-opus-5-5', '--effort', 'medium', '--permission-mode', 'dontAsk', '--max-budget-usd', '6',
-  '--output-format', 'text', '--add-dir', extras, '--add-dir', MAIN_GIT.replace(/\/\.git$/, ''), '--add-dir', `${home}/.claude/projects/E--Project-B-Claude-Project-D`, '--add-dir', `${home}/.claude/plugins/cache/mattpocock`,
+  '--output-format', 'text', '--add-dir', extras, '--add-dir', MAIN, '--add-dir', `${home}/.claude/projects/${project.claudeProject}`, '--add-dir', `${home}/.claude/plugins/cache/mattpocock`,
   '--allowedTools', 'Read', 'Grep', 'Glob', 'Write', 'Bash(git log:*)', 'Bash(git show:*)', 'Bash(wc:*)', '--disallowedTools', 'Agent'];
 export const acadArgs = (extras = EXTRAS) => ['-p', '--model', 'claude-sonnet-5-5', '--effort', 'high', '--permission-mode', 'dontAsk', '--max-budget-usd', '4', '--output-format', 'text',
   '--add-dir', extras, '--allowedTools', 'PowerShell', 'Read', 'Write', 'Edit', 'Glob', 'Grep', 'WebFetch(domain:help.autodesk.com)', '--disallowedTools', 'Agent'];
@@ -432,9 +445,9 @@ export function fresh(args, x = io) {
   if (as !== 'king') throw new Error(`${usage}\nBishop is paused: --as king only`);
   x.need(`${dir}/grill-${id}.md`, 'grill');
   x.need(claude(as), ACCOUNTS[as].bin);
-  const prompt = `Fresh read of TODO ${id}: read grill-${id}.md, TODO.md row ${id} and the code files it names. Max 8 lines: gaps, contradictions, missing cases; for each 'X never Y' answer, quote the code line that keeps it or say not found. Change nothing.`;
+  const prompt = `Fresh read of TODO ${id}: read grill-${id}.md, ${project.docs.todo} row ${id} and the code files it names. Max 8 lines: gaps, contradictions, missing cases; for each 'X never Y' answer, quote the code line that keeps it or say not found. Change nothing.`;
   plainRun(x, { kind: 'fresh', id, bin: claude(as), args: ['-p', prompt, '--model', 'claude-opus-5-5', '--effort', 'medium', '--permission-mode', 'dontAsk', '--max-budget-usd', '2', '--output-format', 'text',
-    '--add-dir', MAIN_GIT.replace(/\/\.git$/, ''), '--add-dir', 'E:/Project B/Claude/support', '--allowedTools', 'Read', 'Grep', 'Glob', '--disallowedTools', 'Agent'],
+    '--add-dir', MAIN, '--add-dir', project.support, '--allowedTools', 'Read', 'Grep', 'Glob', '--disallowedTools', 'Agent'],
   cwd: dir, out: `${dir}/${name}.out`, lock: `${dir}/.run-lock-${name}` });
 }
 // WORKFLOW.md lines 248-250: one question, the house sentence added here; a newline would end the cmd.exe line.
@@ -508,7 +521,7 @@ export function retro(args, x = io) {
     if (m.n !== n) throw new Error(`refused: ${hName} is session ${m.n} but this is runs${n}`);
     names = [m.id];
   }
-  const transcript = `C:/Users/raksh/.claude/projects/E--Project-B-Claude-Project-D/${hUuid}.jsonl`;
+  const transcript = `${TRANSCRIPTS}/${hUuid}.jsonl`;
   if (ho && !x.exists(transcript)) throw new Error(`refused: no transcript ${transcript}`);
   if (!over) { // TODO 196a: three Opus retros took Bishop from 61% to 100% (S36)
     const h5 = cachedH5(x, as === 'king' ? ['King'] : ['Pip', 'Bishop'], who, 'retro');
@@ -519,13 +532,12 @@ export function retro(args, x = io) {
   const missing = names.filter((name) => !x.exists(`${dir}/${name}.txt`)); // filled last: a refused run writes nothing
   if (missing.length) {
     const transcripts = [], sessions = new Set();
-    const project = 'C:/Users/raksh/.claude/projects/E--Project-B-Claude-Project-D';
-    const files = ho ? [] : x.list(project).filter((f) => f.endsWith('.jsonl')).sort().map((f) => [f, x.mtime(`${project}/${f}`)]).sort((a, b) => a[1] - b[1]); // oldest first: S37, S37b, S37c
+    const files = ho ? [] : x.list(TRANSCRIPTS).filter((f) => f.endsWith('.jsonl')).sort().map((f) => [f, x.mtime(`${TRANSCRIPTS}/${f}`)]).sort((a, b) => a[1] - b[1]); // oldest first: S37, S37b, S37c
     if (ho) { transcripts.push(transcript); sessions.add(hName); }
     for (const [file] of files) {
-      const found = retroSessions(x.read(`${project}/${file}`), n);
+      const found = retroSessions(x.read(`${TRANSCRIPTS}/${file}`), n);
       if (found === null) continue;
-      transcripts.push(`${project}/${file}`);
+      transcripts.push(`${TRANSCRIPTS}/${file}`);
       for (const session of found) sessions.add(session);
     }
     if (!transcripts.length) throw new Error(`no Rook transcripts for session ${n}`);
@@ -534,7 +546,7 @@ export function retro(args, x = io) {
       const suffix = ho ? 'rook' : name.slice(`retro${n}`.length);
       const template = x.read(join(REPO, 'tools', 'briefs', `retro${suffix ? `-${suffix}` : ''}.txt`));
       const note = ho ? `\nHandover retro: only this Rook; short (top 5 fixes); skip points already in runs${n}/retro${n}*.out\n` : '';
-      x.write(`${dir}/${name}.txt`, template.replace(/\{(N|SESSIONS|TRANSCRIPTS|EVENTS)\}/g, (_, key) => values[key]) + note);
+      x.write(`${dir}/${name}.txt`, fillProject(template).replace(/\{(N|SESSIONS|TRANSCRIPTS|EVENTS)\}/g, (_, key) => values[key]) + note);
     }
   }
   for (const name of names) x.need(`${dir}/${name}.txt`, 'retro brief');
@@ -567,7 +579,7 @@ export function pawn(args, x = io) {
 
 // TODO 196g: WORKFLOW.md line 194's Bishop board / look flags.
 export const boardArgs = (extras = EXTRAS) => ['-p', '--model', 'claude-sonnet-5-5', '--effort', 'high', '--permission-mode', 'dontAsk', '--max-budget-usd', '4', '--output-format', 'text',
-  '--add-dir', extras, '--add-dir', MAIN_GIT.replace(/\/\.git$/, ''), '--allowedTools', 'Read', 'Write', 'Edit', 'Glob', 'Grep', 'Bash(node:*)', '--disallowedTools', 'Agent'];
+  '--add-dir', extras, '--add-dir', MAIN, '--allowedTools', 'Read', 'Write', 'Edit', 'Glob', 'Grep', 'Bash(node:*)', '--disallowedTools', 'Agent'];
 
 // `board <brief> <out>`: the chosen account on <brief> (stdin) -> <out>, from runs<N>.
 export function board(args, x = io) {

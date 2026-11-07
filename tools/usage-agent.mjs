@@ -10,6 +10,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { homedir, uptime } from 'node:os';
 import { isLockStale, shouldRefresh } from './usage-agent-policy.mjs';
+import { project } from './project.mjs';
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const run = promisify(execFile);
@@ -28,7 +29,7 @@ export function collectRookStatus(extras, home = homedir(), now = Date.now(), lo
   try {
     const uuid = readFileSync(join(extras, 'rook-next.txt'), 'utf8').replace(/^\uFEFF/, '').split(/\r?\n/)[0].trim();
     if (!/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(uuid)) return { stuck: false, since: null };
-    jsonlMtime = statSync(join(home, '.claude', 'projects', 'E--Project-B-Claude-Project-D', uuid + '.jsonl')).mtimeMs;
+    jsonlMtime = statSync(join(home, '.claude', 'projects', project.claudeProject, uuid + '.jsonl')).mtimeMs;
     const queues = readdirSync(extras, { withFileTypes: true })
       .filter((entry) => entry.isDirectory() && /^runs\d+$/.test(entry.name))
       .sort((a, b) => Number(b.name.slice(4)) - Number(a.name.slice(4)))
@@ -358,7 +359,7 @@ async function main() {
     async function refresh(requestedAt) {
       busy = true;
       nextRefresh = Date.now() + 3600_000;
-      const rook = collectRookStatus('E:/Project B/Claude/Project D extras', homedir(), Date.now(), log);
+      const rook = collectRookStatus(project.extras, homedir(), Date.now(), log);
       const rookWrite = { update: { name: `${database}/usage/rook`, fields: firestoreValue(rook).mapValue.fields } };
       try {
         await alertRook(rook, join(home, 'usage-agent-rook.json'), log);
@@ -375,9 +376,9 @@ async function main() {
         const items = existsSync(analysisPath) ? JSON.parse(readFileSync(analysisPath, 'utf8')) : [];
         if (!Array.isArray(items) || items.some((i) => !i || typeof i.id !== 'string' || typeof i.topic !== 'string' || typeof i.note !== 'string')) throw new Error('analysis.json must be an array of {id, topic, note} strings');
         docs.push(['analysis', { items }]);
-        docs.push(['todo', parseTodo(readFileSync(join(repo, 'TODO.md'), 'utf8'))]);
-        const ticketsNew = join(repo, '..', 'Project D extras', 'support', 'tickets.md');
-        try { docs.push(['tickets', parseTickets(readFileSync(existsSync(ticketsNew) ? ticketsNew : join(repo, '..', 'support', 'tickets.md'), 'utf8'), log)]); }
+        docs.push(['todo', parseTodo(readFileSync(join(repo, project.docs.todo), 'utf8'))]);
+        const ticketsNew = join(project.extras, 'support', 'tickets.md');
+        try { docs.push(['tickets', parseTickets(readFileSync(existsSync(ticketsNew) ? ticketsNew : join(project.support, 'tickets.md'), 'utf8'), log)]); }
         catch (e) { if (e.code !== 'ENOENT') throw e; }
         docs.push(['tokens', await collectTokens()]);
         const writes = docs.map(([name, data]) => {
