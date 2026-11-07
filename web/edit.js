@@ -976,23 +976,31 @@ export const dimText = (v, dp = 2) => { const s = Number(v).toFixed(dp); return 
 /** The text of a dimension: its prefix (R, Ø), the number with dp decimals, in inches (then ended by ") when units is 'inch'. */
 export const dimLabel = (mm, dp = 2, units = 'mm', prefix = '') => prefix + (units === 'inch' ? dimText(mm / 25.4, dp) + '"' : dimText(mm, dp));
 const unesc = (s) => String(s).replace(/\\U\+([0-9A-Fa-f]{4})/g, (_, h) => String.fromCharCode(parseInt(h, 16)));     // a saved file writes Ø and ° as \U+00D8
+const MCODE = /\\[ACFHQTWacfhqtwp][^;]*;|\\[LlOoKkP~{}\\]|[{}]/g;      // MTEXT codes with and without parameters (\p takes parameters, \P is a line break)
+const LEN = String.raw`[+-]?\d*\.?\d+(?:\s*(?:"|mm\b))?`, STACK = String.raw`\\S[+-]?\d*\.?\d+[\^#/][+-]?\d*\.?\d+;`;
+/** A label Export may convert: [R / ∅ / %%c] one number or stack, [" / mm], [±, %%p or stack tolerance], [alternate in brackets]. */
+const PLAIN = new RegExp(String.raw`^\s*(?:R|[∅Ø⌀]|\\U\+(?:2205|00[Dd]8|2300)|%%[cC])?\s*(?:${LEN}|${STACK})(?:\s*(?:(?:±|%%[pP])\s*${LEN}|${STACK}))?(?:\s*\[${LEN}\])?\s*$`);
+const ANGLE = /^\s*[+-]?\d*\.?\d+\s*(?:°|%%[dD]|%%176|\\U\+00[Bb]0)$/;
 /** Scale cached dimension labels, or replace their measurement from geometry on unit conversion; keep formatting and overrides. */
 export function relabel(ents, s, target = null, unread = null) {
   const record = textRecord(ents), override = readOverride(ents), measured = measuredText(ents);
+  let main = false;      // one primary value per block, not per text
   const scaled = (t) => {
-    if (/°|%%[dD]|\\U\+00[Bb]0/.test(t)) return t;
-    let alternate = false, stack = false, tolerance = false, main = false, converted = false, bad = false;
+    if (!t.trim() || t.includes('<>') || s === 1 && !target) return t;
+    const bare = t.replace(MCODE, '');
+    if (ANGLE.test(bare)) return t;
+    if (!PLAIN.test(bare)) { unread?.(t); return t; }
+    let alternate = false, stack = false, tolerance = false, converted = false, bad = false;
     const more = Math.max(0, Math.ceil(-Math.log10(s) - 1e-12));
     // One scan: formatting parameters are opaque; stacked/tolerance lengths use s, alternate units use only scale.
-    const out = t.replace(/\\U\+[0-9A-Fa-f]{4}|\\[ACFHQTWacfhqtw][^;]*;|\\[LlOoKkPp~{}\\]|\\S|\\.|%%[a-zA-Z]|±|\[|\]|;|\d*\.?\d+(?:\s*(?:"|mm\b|in\b))?/g, (token, at) => {
+    const out = t.replace(/\\U\+[0-9A-Fa-f]{4}|\\[ACFHQTWacfhqtwp][^;]*;|\\[LlOoKkP~{}\\]|\\S|\\.|%%[a-zA-Z]|±|\[|\]|;|\d*\.?\d+(?:\s*(?:"|mm\b))?/g, (token, at) => {
       if (token === '[') { if (alternate) bad = true; alternate = true; return token; }
       if (token === ']') { if (!alternate) bad = true; alternate = false; return token; }
       if (token === '\\S') { stack = true; return token; }
       if (token === ';') { stack = false; return token; }
       if (token === '±' || /^%%[pP]$/.test(token)) { tolerance = true; return token; }
-      if (token[0] === '\\') { if (token.length === 2 && !/[LlOoKkPp~{}\\]/.test(token[1])) bad = true; return token; }
+      if (token[0] === '\\') { if (token.length === 2 && !/[LlOoKkP~{}\\]/.test(token[1])) bad = true; return token; }
       if (!/^\d|^\./.test(token)) return token;
-      if (/^[xX×]\s/.test(t.slice(at + token.length))) return token;
       const n = /^\d*\.?\d+/.exec(token)[0], suffix = token.slice(n.length), length = !alternate && !stack && !tolerance, primary = !main && length;
       if (/^[,/\.]\d/.test(t.slice(at + n.length))) bad = true;
       const dp = (n.split('.')[1] || '').length, extra = alternate || length && !target ? 0 : more;
@@ -1002,20 +1010,26 @@ export function relabel(ents, s, target = null, unread = null) {
       if (!primary && n[0] === '.') fixed = fixed.replace(/^(-?)0\./, '$1.');
       if (primary) main = true;
       converted = true;
-      return fixed + (primary && target ? (target.units === 'in' ? '"' : '') : suffix);
+      return fixed + (!target || alternate ? suffix : primary || suffix ? (target.units === 'in' ? '"' : '') : '');
     });
     if (bad || alternate || stack || !converted) { unread?.(t); return t; }
     return unesc(out);
   };
+  const label = record && scaled(measured);      // read once: every text of a kept dimension shows it
   return ents.map((e) => {
-    if (e === record) return overrideRecord(override, scaled(measured));
+    if (e === record) return overrideRecord(override, label);
     if (e.type !== 'TEXT' && e.type !== 'MTEXT') return e;
     const k = e.r.c.indexOf(1);
     if (k < 0) return e;
-    const vv = e.r.v.slice(); vv[k] = record ? dimensionText(scaled(measured), override) : scaled(vv[k]);
+    const vv = e.r.v.slice(); vv[k] = record ? dimensionText(label, override) : scaled(vv[k]);
     if (vv[k] === unesc(e.r.v[k])) return e;
     return { ...e, r: { ...e.r, v: vv } };
   });
+}
+/** Maps a point of a dimension's block to where its INSERT e puts it (rotation, scale, position); a point stays when e is missing. */
+export function insertTransform(raw, e) {
+  const fl = e && flatten({ ...raw, entities: [{ ...e, hidden: false }] }), mat = fl && fl.items.length && fl.mats[fl.items[0].m];
+  return (p) => mat ? mapply(mat, ...p) : p;
 }
 /**
  * Every kept dimension re-labelled with dp decimals, from its own geometry (drawing units × factor), so no rounding
@@ -1030,8 +1044,7 @@ export function relabelDims(raw, factor, dp, kept = false) {       // kept: only
     if (kept && !callout) continue;
     if (kept) dp = placesOf(measuredText(b.entities));
     if (callout) {       // the deltas of the callout as drawn: the INSERT's transform applied to the block's points
-      const at = inserts.get(nm), fl = at != null && flatten({ ...raw, entities: [{ ...raw.entities[at], hidden: false }] }), mat = fl && fl.items.length && fl.mats[fl.items[0].m];
-      const w = (p) => mat ? mapply(mat, ...p) : p;
+      const w = insertTransform(raw, raw.entities[inserts.get(nm)]);
       m.params.override = measureOverride(w(m.params.a), w(m.params.b), factor || 1, dp, ov);
     }
     const g = m && dimGeom(m.kind, m.params, factor || 1, dp);

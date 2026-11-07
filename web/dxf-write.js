@@ -18,7 +18,7 @@ import { flatten } from './drawing.js';
 import { nearestAci, unpack420 } from './colour.js';
 import { fillHatch, fillHoles } from './fill.js';
 import { remap } from './groups.js';
-import { scaleRecord, SPEC, relabel, DIM_BLOCK, readDim, dimGeom } from './edit.js';
+import { scaleRecord, SPEC, relabel, DIM_BLOCK, readDim, dimGeom, insertTransform } from './edit.js';
 import { measuredText, readOverride, textRecord, overrideRecord, dimensionText, measureOverride } from './dimension-text.js';
 
 const SUPPORTED = new Set(['LINE', 'CIRCLE', 'ARC', 'LWPOLYLINE', 'POLYLINE', 'ELLIPSE', 'SPLINE', 'POINT', 'TEXT', 'MTEXT',
@@ -339,14 +339,17 @@ export function writeDxfWithReport(doc, opts = {}) {
       const target = unitChange ? { units, scale } : null;
       if (unitChange) {
         const dim = readDim(name, b), native = dimensions.get(name);
-        const value = dim ? dimGeom(dim.kind, dim.params, 1)?.mm : +native?.r.v[native.r.c.indexOf(42)];
+        const m42 = +native?.r.v[native.r.c.indexOf(42)], value = dim ? dimGeom(dim.kind, dim.params, 1)?.mm : m42 > 0 ? m42 : NaN;      // group 42 of 0 or below is no measurement
         if (Number.isFinite(value)) target.value = value;
       }
       b.entities = relabel(b.entities, factor, target, (label) => unreadLabels.add(label));
       const dim = readDim(name, b), measured = measuredText(b.entities), override = readOverride(b.entities);
       if (dim) {
         const dp = (/\.(\d+)/.exec(measured)?.[1] || '').length;
-        const next = measureOverride(dim.params.a, dim.params.b, 1, dp, override);
+        // ΔX / ΔY in the label's unit, from the points as the INSERT draws them (as relabelDims does)
+        const w = insertTransform(doc, doc.entities.find((e) => e.type === 'INSERT' && e.r.v[e.r.c.indexOf(2)] === name));
+        const exportMm = unitChange ? (units === 'in' ? 25.4 : 1) : mm[source] || 1;
+        const next = measureOverride(w(dim.params.a), w(dim.params.b), exportMm / (dim.params.units === 'inch' ? 25.4 : 1), dp, override);
         if (next !== override) {
           const record = textRecord(b.entities);
           b.entities = b.entities.map((e) => e === record ? overrideRecord(next, measured) : e.type === 'TEXT'
