@@ -18831,7 +18831,7 @@ try {
       await page.evaluate(() => { window.__exp109.next = 'C:\\out\\plate-copy.dxf'; });
       await page.keyboard.press('Control+s'); await page.waitForFunction(() => window.__exp109.wrote.length === 4);
       assert.equal((await written())[3].path, 'C:\\saved\\plate-edited.dxf', 'later Save still uses its own path');
-      await page.locator('[data-tool=line]').click(); await typeCmd('20,20'); await typeCmd('40,20'); await page.keyboard.press('Escape');
+      await page.locator('[data-tool=line]').click(); await typeCmd('20,20'); await typeCmd('40,20'); await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
       await page.keyboard.press('Control+z');
       await page.keyboard.press('Control+s'); await page.waitForFunction(() => window.__exp109.wrote.length === 5);
       assert.equal(readDxf((await written())[4].text).entities.length, 1, 'source remains editable and one Undo removes the later edit');
