@@ -138,8 +138,8 @@ A tool or PATH failure seen twice is a --tool ticket now, never a resume note.
    Split tickets (S38 King retro): before launch, the grill lists every way in from the spec with what it passes the other ticket (path, bytes, return type); a way in with no input available becomes a command in the first ticket.
    A brief naming a UI surface greps it first; no hits: the brief says "does not exist: build it / skip".
    A brief built from a retro item copies that item's worked value into the Do line and the unit test (S39: 207b built the 84% that retro38l item 1 had called wrong).
-**Rook's daily cap** (his call, 2026-10-20): Rook's week must last to the Sun 15:30 reset. 14% × k by the end of day k
-after the reset, like Bishop. At the cap Rook finishes the step it is on, says so in one line, and pauses until the next day.
+**Rook's daily cap** (his call, 2026-10-20): Rook's week must last to the Sun 15:30 reset. 14% × k by the end of IST calendar day k,
+from the reset date as day 1, like Bishop. At the cap Rook finishes the step it is on, says so in one line, and pauses until the next day.
 **Usage gate** (his call, 2026-10-20): before every sub-agent launch, read the cached usage
 (`node tools/rook.mjs usage --cached`, no prompts; the PC agent refreshes it hourly) and pick the worker with headroom,
 wait for a reset, or pause the session. **Knight builds** (his call, 2026-10-26, replaces 2026-10-22's lower-usage rule): every build
@@ -314,7 +314,7 @@ echo "Reply OK" | $C2 -p --model claude-haiku-5-5 --output-format stream-json --
 The same line with `claude` instead of `$C2` gives the main account's usage. Report both.
 Check it before starting big work and after each run. No usage report after a merge: the pd-band line and the usage page show it (his call, 2026-10-21; replaces the 2026-10-20 rule).
 **Bishop's daily budget** (his rule, 2026-10-20): at most 14% of the weekly limit per day, so the week lasts 7 days. The week
-resets Mon 15:30 IST; by the end of day k (reset + k×24 h) Bishop's weekly use may be at most 14% × k (unused budget carries
+resets Mon 15:30 IST; by the end of IST calendar day k, from the reset date as day 1, Bishop's weekly use may be at most 14% × k (unused budget carries
 over). Check before each Bishop run; a run that would cross today's cap waits. Going above needs his OK, each time. Above ~0.85 of the 5-hour window, don't start a new
 Opus run; let running builders finish (a builder cut off mid-work leaves uncommitted changes: resume it after the reset).
 

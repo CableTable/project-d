@@ -122,10 +122,15 @@ test('usage rows, bars, colours, IST', async () => {
 
 const ist = (d: number, h: number, m = 0) => Date.UTC(2026, 9, d, h - 5, m - 30) // Oct <d> <h>:<m> IST
 
-test('today cap: Rook this week fixed, then 14 x k from Sun 15:30; Bishop 14 x k from Mon 15:30; Knight none', async () => {
-  expect([todayCap('Rook', ist(23, 12)), todayCap('Rook', ist(24, 12)), todayCap('Rook', ist(25, 15, 29))]).toEqual([83, 94, 98])
-  expect([todayCap('Rook', ist(25, 15, 30)), todayCap('Rook', ist(26, 15, 29)), todayCap('Rook', ist(26, 15, 30)), todayCap('Rook', ist(32, 15, 29))]).toEqual([14, 14, 28, 98]) // day 32 = Sun Nov 1, a minute before the next reset
-  expect([todayCap('Bishop', ist(23, 12)), todayCap('Bishop', ist(26, 15, 29)), todayCap('Bishop', ist(26, 15, 30)), todayCap('Bishop', ist(27, 15, 30))]).toEqual([56, 98, 14, 28])
+test('today cap: IST calendar days from the reset date as day 1, max 100; historical Rook overrides; King and Knight none', async () => {
+  expect([todayCap('Rook', ist(23, 12)), todayCap('Rook', ist(24, 12)), todayCap('Rook', ist(25, 15, 29))]).toEqual([83, 94, 100])
+  expect([todayCap('Rook', ist(25, 15, 30)), todayCap('Rook', ist(26, 15, 29)), todayCap('Rook', ist(26, 15, 30)), todayCap('Rook', ist(32, 15, 29))]).toEqual([14, 28, 28, 100]) // day 32 = Sun Nov 1, a minute before the next reset
+  expect([todayCap('Bishop', ist(23, 12)), todayCap('Bishop', ist(26, 15, 29)), todayCap('Bishop', ist(26, 15, 30)), todayCap('Bishop', ist(27, 15, 30))]).toEqual([70, 100, 14, 28])
+  expect(['2026-11-01T16:00:00+05:30', '2026-11-07T07:53:00+05:30', '2026-11-08T04:00:00+05:30'].map(t => todayCap('Rook', Date.parse(t)))).toEqual([14, 98, 100])
+  expect(todayCap('Bishop', Date.parse('2026-11-07T07:53:00+05:30'))).toBe(84)
+  expect([todayCap('Rook', ist(32, 23, 59)), todayCap('Rook', ist(33, 0))]).toEqual([14, 28])
+  expect([todayCap('Bishop', ist(33, 23, 59)), todayCap('Bishop', ist(34, 0))]).toEqual([14, 28])
+  expect(todayCap('King', NOW)).toBe(null)
   expect(todayCap('Knight', NOW)).toBe(null)
   // the marker sits on the cell holding the cap; no cap, no marker
   expect(barParts(50, 83)).toEqual(['fill', 'fill', 'fill', 'fill', 'fill', 'empty', 'empty', 'empty', 'cap', 'empty'])
