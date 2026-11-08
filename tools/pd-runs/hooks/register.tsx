@@ -121,6 +121,7 @@ export const register: Register = (on, options) => {
 
   // Render only records notices; refresh applies them at the next tick (up to 30 s later).
   on('ui.render', { component: 'UserMessage', props: { origin: { kind: 'task-notification' } } }, async ($, e, next) => {
+    if (hidden) return next(e)
     const task = e.props.task
     const state = endState(task?.status)
     if (state && (task?.id || task?.toolUseId)) {

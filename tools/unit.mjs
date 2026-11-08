@@ -1,4 +1,4 @@
-// Runs every *.test.mjs in the repo folder except browser.test.mjs, plus tools/browser-lint.test.mjs (browser flows run separately).
+// Runs every *.test.mjs in the repo folder except browser.test.mjs, plus tools/browser-lint.test.mjs; no args also runs the pd-runs plugin tests.
 // `--skip <file>` leaves one unit file out (a sandbox where base-check.test.mjs stalls); an unknown name is an error.
 import { existsSync, readdirSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
@@ -25,10 +25,23 @@ export function kitTests(root, kit, list = (d) => (existsSync(d) ? readdirSync(d
   return !rel || rel.startsWith('..') || isAbsolute(rel) ? [] : list(kit).filter((f) => f.endsWith('.test.mjs')).map((f) => `${rel}/${f}`);
 }
 
+export function runUnitTests(files, argv, run = spawnSync) {
+  const r = run(process.execPath, ['--test', '--test-timeout=120000', ...files], { stdio: 'inherit' });
+  let pluginStatus = 0;
+  if (!argv.length) {
+    const plugin = run('claude', ['plugin', 'test', 'tools/pd-runs'], { stdio: 'inherit' });
+    if (plugin.error?.code === 'ENOENT') console.log('skipped: pd-runs plugin test (no claude)');
+    else {
+      if (plugin.error) console.error(plugin.error.message);
+      pluginStatus = plugin.status ?? 1;
+    }
+  }
+  return (r.status ?? 1) || pluginStatus;
+}
+
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
   const all = readdirSync('.').filter((f) => f.endsWith('.test.mjs') && f !== 'browser.test.mjs').concat('tools/browser-lint.test.mjs', kitTests(ROOT, KIT)).sort();
   let files;
   try { files = unitFiles(all, process.argv.slice(2)); } catch (e) { console.error(e.message); process.exit(1); }
-  const r = spawnSync(process.execPath, ['--test', '--test-timeout=120000', ...files], { stdio: 'inherit' });
-  process.exit(r.status ?? 1);
+  process.exit(runUnitTests(files, process.argv.slice(2)));
 }
