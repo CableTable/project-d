@@ -93,7 +93,7 @@ rows), and add a row for a new one. Where it and `Project-D-scope.md` disagree, 
 - **First action of every Rook session, whatever the starting prompt or handover file says:** the Skill tool for
   `mattpocock-skills:grilling` AND `mattpocock-skills:domain-modeling`, before any other work; every grill round uses
   them (his rule, 2026-10-27, after a hand-written handover left it out). A handover file Rook writes repeats this line.
-- **How a session runs: WORKFLOW.md** (the roles, the exact commands, the loop, the budgets). In short:
+- **How a session runs: `E:/Project B/Claude/rook-hq/WORKFLOW.md`** (shared by every project: the roles, the exact commands, the loop, the budgets) **plus D's own `WORKFLOW.md`** (TODO 219d; sources in `kit/hq/`, copied out by `node tools/rook.mjs hq-install`). In short:
   **Rook** is the lead (Opus, main account, this session): plans, writes briefs, reads short reports,
   merges, and writes no code: review findings, however small, go to Knight or King (his call, 2026-10-20). **Bishop** is everything on the 2nd account
   (`claude2`): Bishop-review (Opus medium, `--agent reviewer`, in its own throwaway worktree, every build gets one),
