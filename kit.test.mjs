@@ -7,9 +7,10 @@ import { test } from 'node:test';
 import { KIT, ROOT, kitCommand, kitDir, kitFile } from './tools/kit.mjs';
 
 test('TODO 219c: the kit folder is hq.json "kit" when set, else <repo>/kit; kit.mjs hands the project its checkout', () => {
-  assert.equal(kitDir({ kit: 'E:/rook-kit' }, '/r'), 'E:/rook-kit');
+  assert.equal(kitDir({ kit: 'E:/rook-kit' }, '/r', () => true), 'E:/rook-kit');
   assert.equal(kitDir({}, '/r'), join('/r', 'kit'));
   assert.equal(kitDir(null, '/r'), join('/r', 'kit'));
+  assert.equal(kitDir({ kit: 'E:/rook-kit' }, '/r', () => false), join('/r', 'kit')); // TODO 219e1: "kit" naming a folder that is not there falls back to <repo>/kit
   assert.equal(process.env.ROOK_ROOT, ROOT);
   assert.deepEqual(kitCommand('base-check.mjs', ['a', 'b c']), [process.execPath, [kitFile('base-check.mjs'), 'a', 'b c']]);
   assert.deepEqual(kitCommand('ci-watch.sh', ['abc']), ['bash', [kitFile('ci-watch.sh'), 'abc']]);
@@ -21,6 +22,12 @@ test('TODO 219c: the kit folder is hq.json "kit" when set, else <repo>/kit; kit.
     const [def, root] = probe(`${w.dir}/none.json`);
     assert.equal(def, join(root, 'kit'));
     assert.equal(probe(w.hq)[0].replaceAll('\\', '/'), `${w.dir}/the-kit`);
+    writeFileSync(`${w.dir}/gone.json`, JSON.stringify({ projects: {}, kit: `${w.dir}/no-such-kit` }));
+    assert.equal(probe(`${w.dir}/gone.json`)[0], join(root, 'kit')); // TODO 219e1
+    const gone = spawnSync(process.execPath, ['--input-type=module', '--eval', `import './tools/kit.mjs'; import './tools/kit.mjs';`], { encoding: 'utf8', env: { ...process.env, ROOK_HQ: `${w.dir}/gone.json` } });
+    assert.equal(gone.stderr.trim().split(/\r?\n/).length, 1, gone.stderr); // one warning, naming the folder
+    assert.ok(gone.stderr.includes(`${w.dir}/no-such-kit`), gone.stderr);
+    assert.equal(spawnSync(process.execPath, ['--input-type=module', '--eval', `import './tools/kit.mjs';`], { encoding: 'utf8', env: { ...process.env, ROOK_HQ: w.hq } }).stderr, ''); // a "kit" that exists: silent
   } finally { rmSync(w.dir, { recursive: true, force: true }); }
 });
 
@@ -56,11 +63,13 @@ test('TODO 219c2: the hook shims pass stdin and the exit code on; a missing kit 
       assert.deepEqual([r.status, r.stdout], [2, '{"tool_name":"Bash"}'], shim);
     }
     writeFileSync(`${w.dir}/gone.json`, JSON.stringify({ projects: {}, kit: `${w.dir}/no-such-kit` }));
+    mkdirSync(`${w.dir}/tools`); // TODO 219e1: a "kit" that is not there falls back to <repo>/kit, so the missing kit is shown in a repo copy that has none
+    for (const f of ['kit', 'fg-hook', 'stop-hook', 'rook', 'base-check']) copyFileSync(`tools/${f}.mjs`, `${w.dir}/tools/${f}.mjs`);
     for (const [shim, code] of [['tools/fg-hook.mjs', 0], ['tools/stop-hook.mjs', 0], ['tools/rook.mjs', 1], ['tools/base-check.mjs', 1]]) {
-      const r = spawnSync(process.execPath, [shim, 'x'], { input: '{}', encoding: 'utf8', env: { ...process.env, ROOK_HQ: `${w.dir}/gone.json` } });
+      const r = spawnSync(process.execPath, [shim, 'x'], { input: '{}', encoding: 'utf8', cwd: w.dir, env: { ...process.env, ROOK_HQ: `${w.dir}/gone.json` } });
       assert.equal(r.status, code, shim);
       assert.equal(r.stdout, '', shim);
-      assert.equal(r.stderr.trim().split('\n').length, 1, `${shim}: ${r.stderr}`);
+      assert.equal(r.stderr.trim().split('\n').length, 2, `${shim}: ${r.stderr}`); // TODO 219e1 fix: the kit-path warning, then the not-found line
     }
     assert.deepEqual(kitCommand('ci-watch.sh', ['abc'], 'C:/Git/bin/bash.exe'), ['C:/Git/bin/bash.exe', [kitFile('ci-watch.sh'), 'abc']]);
   } finally { rmSync(w.dir, { recursive: true, force: true }); }
@@ -76,12 +85,11 @@ const nested = (args, opts) => {
   assert.match(r.stdout, /^(ℹ|#) fail 0$/m);
 };
 
-// The D tests need no kit folder: the unit set (but this file, which would run itself) passes with hq.json "kit" naming a folder that is not there.
-test('TODO 219c2: the unit set passes when hq.json "kit" is a missing folder', { timeout: 900_000 }, () => {
+// The D tests need no kit folder: the unit set (but this file, which would run itself) passes with hq.json "kit" naming a folder outside the repo (TODO 219e1: one that exists; a missing one falls back to kit/).
+test('TODO 219c2: the unit set passes when hq.json "kit" is a folder outside the repo', { timeout: 900_000 }, () => {
   const w = fakeKit();
   try {
-    writeFileSync(`${w.dir}/gone.json`, JSON.stringify({ projects: {}, kit: `${w.dir}/no-such-kit` }));
-    nested(['tools/unit.mjs', '--skip', 'kit.test.mjs'], { env: { ROOK_HQ: `${w.dir}/gone.json` } });
+    nested(['tools/unit.mjs', '--skip', 'kit.test.mjs'], { env: { ROOK_HQ: w.hq } });
   } finally { rmSync(w.dir, { recursive: true, force: true }); }
 });
 

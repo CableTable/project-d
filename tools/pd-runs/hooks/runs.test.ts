@@ -1,4 +1,5 @@
 import { expect, test } from 'claude-code/testing'
+import * as runs from './runs.mjs'
 
 import { findRuns, newestRunsDir, usageRows, barCells, barColor, barParts, todayCap, queueRows, branchOf, parseCi, snapshot, toastsFor, istHM, paneRows, endState, parseProcs, fit, wrap, ciLines, hiddenIn, reapJobs, goScripts, scriptFiles } from './runs.mjs'
 
@@ -92,6 +93,31 @@ test('Rook jobs: done only when the notice says it ended', async () => {
   const v = paneRows([wait, ended], [{ who: 'Bishop', name: 'x', state: 'testing', age: 3 * 60_000 }], NOW)
   expect(brief(v.running)).toEqual(['Rook go-0417 queued 04:17', 'Bishop x testing'])
   expect(brief(v.recent)).toEqual(['Rook tests done'])
+})
+
+test('TODO 219o: pending task ends match running jobs by task or tool use id and drain without mutating inputs', async () => {
+  const jobs = [
+    { id: 'tool-a', taskId: 'task-a', state: 'running' },
+    { id: 'tool-b', state: 'running' },
+    { id: 'tool-c', state: 'running' },
+    { id: 'tool-d', taskId: 'task-d', state: 'completed', endedMs: min(1) },
+  ]
+  const pendingEnds = [
+    { id: 'task-a', state: 'failed', endedMs: NOW },
+    { toolUseId: 'tool-b', state: 'killed', endedMs: NOW },
+    { id: 'unknown', state: 'completed', endedMs: NOW },
+    { id: 'task-d', state: 'failed', endedMs: NOW },
+  ]
+  const applied = runs.applyTaskEnds(jobs, pendingEnds)
+  expect(applied.jobs).toEqual([
+    { ...jobs[0], state: 'failed', endedMs: NOW },
+    { ...jobs[1], state: 'killed', endedMs: NOW },
+    jobs[2], jobs[3],
+  ])
+  expect(applied.pendingEnds).toEqual([])
+  expect(jobs.map(j => j.state)).toEqual(['running', 'running', 'running', 'completed'])
+  expect(pendingEnds.length).toBe(4)
+  expect(runs.applyTaskEnds(applied.jobs, applied.pendingEnds).jobs).toEqual(applied.jobs)
 })
 
 test('King runs: only a king- file; claude3 in a process line or in the run text stays Bishop', async () => {

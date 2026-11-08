@@ -1,4 +1,4 @@
-// TODO 219c: the one resolver for the Rook kit (the generic tools, kit/): hq.json "kit" (an absolute folder) wins, else <this repo>/kit.
+// TODO 219c: the one resolver for the Rook kit (the generic tools, kit/): hq.json "kit" (an absolute folder that exists) wins, else <this repo>/kit.
 // The kit finds the project from ROOK_ROOT (kit/project.mjs), which this file sets to the checkout it sits in.
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
@@ -9,8 +9,11 @@ export const ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)));
 process.env.ROOK_ROOT = ROOT;
 const HQ = process.env.ROOK_HQ || join(ROOT, 'hq.json');
 
-export const kitDir = (hq, root = ROOT) => hq?.kit || join(root, 'kit');
-export const KIT = kitDir(existsSync(HQ) ? JSON.parse(readFileSync(HQ, 'utf8')) : null);
+// TODO 219e1: hq.json "kit" counts only while that folder exists (rook.mjs local-init KIT writes it after the copy); otherwise <repo>/kit.
+export const kitDir = (hq, root = ROOT, exists = existsSync) => (hq?.kit && exists(hq.kit) ? hq.kit : join(root, 'kit'));
+const hqData = existsSync(HQ) ? JSON.parse(readFileSync(HQ, 'utf8')) : null;
+if (hqData?.kit && !existsSync(hqData.kit)) console.error(`kit: hq.json "kit" folder ${hqData.kit} does not exist, using ${join(ROOT, 'kit')}`); // once per process: a typo must not run the stale in-repo kit silently
+export const KIT = kitDir(hqData);
 export const kitFile = (name) => join(KIT, name);
 export const kitUrl = (name) => pathToFileURL(kitFile(name)).href;
 
