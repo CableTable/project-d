@@ -207,14 +207,20 @@ try {
   if (Array.isArray(saved)) openSubsteps = new Set(saved);
 } catch { /* Start closed when storage is unavailable. */ }
 
+let todoClosed = false, todoSections = [];
+for (const [id, closed] of [['todo-open', false], ['todo-closed', true]]) document.getElementById(id).addEventListener('click', () => { todoClosed = closed; drawTodo(todoSections); });
 function drawTodo(sections) {
+  todoSections = sections;
   const box = document.getElementById('todo-sections'); box.replaceChildren();
+  document.getElementById('todo-open').setAttribute('aria-pressed', !todoClosed);
+  document.getElementById('todo-closed').setAttribute('aria-pressed', todoClosed);
   if (!sections.length) box.append(el('p', 'ud-muted', 'No TODO uploaded yet.'));
   for (const section of sections) {
     const card = el('div', 'ud-card ud-todo');
     card.append(el('h3', null, section.title));
-    const open = el('ul', 'ud-todo-list'), completed = el('ul', 'ud-todo-list');
+    const open = el('ul', 'ud-todo-list');
     for (const item of section.items) {
+      if (!!item.done !== todoClosed) continue;
       const row = el('li');
       const head = el('div', 'ud-todo-head');
       head.append(el('span', 'ud-muted', item.num + '.'), el('strong', null, item.title));
@@ -239,15 +245,9 @@ function drawTodo(sections) {
         });
         row.append(details);
       }
-      (item.done ? completed : open).append(row);
+      open.append(row);
     }
-    if (open.childElementCount) card.append(open);
-    else card.append(el('p', 'ud-muted', 'No open items.'));
-    if (completed.childElementCount) {
-      const details = el('details');
-      details.append(el('summary', null, completed.childElementCount + ' done'), completed);
-      card.append(details);
-    }
+    card.append(open.childElementCount ? open : el('p', 'ud-muted', todoClosed ? 'No closed items.' : 'No open items.'));
     box.append(card);
   }
 }
@@ -316,7 +316,7 @@ function drawTickets() {
   document.getElementById('ticket-open').setAttribute('aria-pressed', !ticketClosed);
   document.getElementById('ticket-closed').setAttribute('aria-pressed', ticketClosed);
   box.replaceChildren();
-  const rows = data.tickets.filter((row) => isClosed(row) === ticketClosed && (!ticketTag || row.tags.includes(ticketTag)));
+  const rows = data.tickets.filter((row) => isClosed(row) === ticketClosed && (!ticketTag || (row.tags || []).includes(ticketTag)));
   if (!rows.length) { box.append(el('p', 'ud-muted', 'No tickets')); return; }
   const card = el('div', 'ud-card'), table = el('table', 'ticket-table'), head = el('thead'), headings = el('tr'), body = el('tbody');
   for (const name of ['#', 'Status', 'Size', 'Type', 'Tags', 'Title', 'TODO', 'Updated']) headings.append(el('th', null, name));
@@ -325,9 +325,9 @@ function drawTickets() {
     const tr = el('tr', 'ticket'); tr.dataset.id = row.id;
     const cell = (name, text) => { const td = el('td', null, text); td.dataset.label = name; tr.append(td); return td; };
     cell('#', row.id);
-    const statusClass = /^(?:merged|checked in exe)/i.test(row.status) ? 'ok' : /^built/i.test(row.status) ? 'info' : /^(?:building|in TODO)/i.test(row.status) ? 'warn' : 'bad';
+    const statusClass = isClosed(row) ? 'ok' : /^built/i.test(row.status) ? 'info' : /^(?:building|in TODO)/i.test(row.status) ? 'warn' : 'bad';
     cell('Status').append(el('span', 'ud-chip ' + statusClass, row.status));
-    cell('Size', row.size); cell('Type', row.type); cell('Tags', row.tags.join(', '));
+    cell('Size', row.size); cell('Type', row.type); cell('Tags', (row.tags || []).join(', '));
     const details = el('details'), summary = el('summary', null, row.title);
     details.append(summary, el('p', 'ticket-note', row.note || 'No note yet.')); cell('Title').append(details);
     cell('TODO', row.todo); cell('Updated', row.updated);
