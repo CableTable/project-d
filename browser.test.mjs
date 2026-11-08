@@ -8875,7 +8875,7 @@ try {
         return { x: b.x + x * sc, y: b.y + (+sheet.getAttribute('height') - y) * sc };
       }, [x, y]);
       const move = async (x, y) => { const a = await atPoint(x, y); await p.mouse.move(a.x, a.y); };
-      const follow = async () => { await move(70, 90); await p.keyboard.press('Control+v'); assert.match(await q('cmd-prompt').textContent(), /follows the cursor, click to place/); };
+      const follow = async () => { await move(70, 90); await p.keyboard.press('Control+v'); await p.waitForFunction(() => /follows the cursor, click to place/.test(document.querySelector('[data-testid=cmd-prompt]').textContent)); };
       const noGhost = () => p.waitForFunction(() => +document.querySelector('[data-testid=drawing]').dataset.preview === 0);
       const source = newDoc(1); addEntities(source, dxfLine(1, 2, 3, 4));
       await q('picker').setInputFiles({ name: '211a inches.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(source)) });
@@ -8900,6 +8900,9 @@ try {
           assert.equal(doc.entities.length, n + 1);
           for (const [c, expected] of [[10, x], [20, y - 50.8], [11, x + 50.8], [21, y]]) assert.ok(Math.abs(fieldOf(ent, c) - expected) < .02, `code ${c}: ${fieldOf(ent, c)} vs ${expected}`);
           assert.match(await q('sel-count').textContent(), /1 selected/);
+          await p.keyboard.press('Delete');                                  // the selected one is the pasted line: deleting it leaves the original drawing
+          assert.deepEqual((await saveDoc()).entities, before.entities, 'the pasted object is the one selected');
+          await p.keyboard.press('Control+z');
         };
         await follow(); await move(140.2, 140.2);
         await p.waitForFunction(() => +document.querySelector('[data-testid=drawing]').dataset.preview > 0);
@@ -8943,6 +8946,54 @@ try {
         await p.locator('.dtab', { hasText: '211a inches' }).click();
         await p.locator('.coords').click(); await p.keyboard.press('Control+a'); await p.keyboard.press('Delete');
         assert.equal((await saveDoc()).entities.length, 0, 'editing the source after paste leaves the clipboard snapshot usable');
+      }
+    } finally { await context.close(); }
+  });
+  await step('TODO 211a fix: the middle button pans during follow paste on a drawing tab and a PDF sheet tab, a click then places at the cursor', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    try {
+      const p = await context.newPage(), q = (id) => p.getByTestId(id);
+      p.on('pageerror', (e) => errors.push(String(e)));
+      await p.goto(URL_); await q('count').waitFor({ state: 'attached' });
+      const saveDoc = async () => {
+        await p.waitForTimeout(110);
+        const [dl] = await Promise.all([p.waitForEvent('download'), p.keyboard.press('Control+s')]);
+        return readDxf(readFileSync(await dl.path(), 'latin1'));
+      };
+      const atPoint = (x, y) => p.evaluate(([x, y]) => {
+        const sheet = document.querySelector('rect.sheet'), b = sheet.getBoundingClientRect(), sc = b.width / +sheet.getAttribute('width');
+        return { x: b.x + x * sc, y: b.y + (+sheet.getAttribute('height') - y) * sc };
+      }, [x, y]);
+      const source = newDoc(1); addEntities(source, dxfLine(1, 2, 3, 4));
+      await q('picker').setInputFiles({ name: '211a pan source.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(source)) });
+      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === '211a pan source.dxf');
+      await p.locator('.coords').click(); await p.keyboard.press('Control+a'); await p.keyboard.press('Control+c');
+      for (const pdf of [false, true]) {
+        if (pdf) {
+          const sheet = new Page(300, 240);
+          sheet.moveTo(0, 0); sheet.lineTo(220, 220); sheet.moveTo(140, 140); sheet.lineTo(180, 140); sheet.stroke();
+          await q('picker').setInputFiles({ name: '211a pan sheets.pdf', mimeType: 'application/pdf', buffer: Buffer.from(writePdf([sheet, sheet])) });
+          await q('bal-sheets').waitFor();
+        } else {
+          const target = newDoc(4); addEntities(target, dxfLine(0, 0, 220, 220), dxfLine(140, 140, 180, 140));
+          await q('picker').setInputFiles({ name: '211a pan target.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(target)) });
+          await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === '211a pan target.dxf');
+        }
+        await p.locator('[data-testid=canvas]').getByRole('button', { name: 'Fit', exact: true }).click();
+        if (await q('tog-snap').getAttribute('aria-pressed') !== 'true') await q('tog-snap').click();
+        const before = await saveDoc(), n = before.entities.length;
+        const home = await atPoint(0, 0), start = await atPoint(70, 90);
+        await p.mouse.move(start.x, start.y); await p.keyboard.press('Control+v');
+        await p.waitForFunction(() => /follows the cursor, click to place/.test(document.querySelector('[data-testid=cmd-prompt]').textContent));
+        await p.mouse.down({ button: 'middle' }); await p.mouse.move(start.x + 40, start.y + 25, { steps: 4 }); await p.mouse.up({ button: 'middle' });
+        const panned = await atPoint(0, 0);
+        assert.ok(Math.abs(panned.x - home.x - 40) < 1.5 && Math.abs(panned.y - home.y - 25) < 1.5, `${pdf ? 'PDF' : 'drawing'}: the view panned during follow paste: ${home.x},${home.y} -> ${panned.x},${panned.y}`);
+        assert.ok(await p.waitForFunction(() => +document.querySelector('[data-testid=drawing]').dataset.preview > 0), 'the ghost is still following');
+        const spot = await atPoint(100, 60); await p.mouse.move(spot.x, spot.y); await p.mouse.click(spot.x, spot.y);
+        const doc = await saveDoc(), ent = doc.entities.at(-1);
+        assert.equal(doc.entities.length, n + 1, 'one click places one paste');
+        for (const [c, expected] of [[10, 100], [20, 60 - 50.8], [11, 150.8], [21, 60]]) assert.ok(Math.abs(fieldOf(ent, c) - expected) < .02, `${pdf ? 'PDF' : 'drawing'} code ${c}: ${fieldOf(ent, c)} vs ${expected}`);
+        await p.keyboard.press('Control+z');
       }
     } finally { await context.close(); }
   });

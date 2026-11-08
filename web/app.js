@@ -4837,6 +4837,12 @@ function attachCanvasEvents() {
   c.addEventListener('pointermove', (e) => {
     snapPointer = { clientX: e.clientX, clientY: e.clientY, shiftKey: e.shiftKey, buttons: e.buttons };
     snapQuery = null;
+    if (pan) {                                                         // before the paste return: the middle button pans while a paste follows the cursor
+      view.ox -= (e.clientX - pan.x) / view.scale; view.oy -= (e.clientY - pan.y) / view.scale;
+      pan = { x: e.clientX, y: e.clientY };
+      view.fitted = false;
+      applyView(true);
+    }
     if (state.paste) { pasteMove(e); return; }
     const p = local(e);
     if (gdrag) guideMove(e);
@@ -4844,12 +4850,6 @@ function attachCanvasEvents() {
     if (pdrag) placedMove(e);
     if (state.drawingRotate?.drag) drawingRotateMove(e);
     if (lrub) { if (!lrub.moved && Math.hypot(e.clientX - lrub.x, e.clientY - lrub.y) > 4) lrub.moved = true; if (lrub.moved) showRubber(lrub, e); }
-    if (pan) {
-      view.ox -= (e.clientX - pan.x) / view.scale; view.oy -= (e.clientY - pan.y) / view.scale;
-      pan = { x: e.clientX, y: e.clientY };
-      view.fitted = false;
-      applyView(true);
-    }
     const d = pointTarget();
     if (drawLive()) drawHoverAt(state.drawDoc, e.clientX, e.clientY, e.shiftKey);
     if (d && modLive()) modHover(d, e.clientX, e.clientY, e.shiftKey);
