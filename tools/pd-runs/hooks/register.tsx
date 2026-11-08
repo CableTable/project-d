@@ -2,11 +2,12 @@ import { atom, read, update } from 'claude-code'
 import type { Register } from 'claude-code'
 
 import type { Ci, Disk, Job, RunRow, UsageCell } from '../types'
-import { findRuns, paneRows, jsonlToRead, newestRunsDir, parseProcs, usageRows, barParts, barColor, endState, fit, ago, queueRows, branchOf, parseCi, snapshot, toastsFor, CI_EVERY_MS, PIECE, WHO_COLOR, PS_ARGV, WIDTH, wrap, ciLines, hiddenIn, goScripts, scriptFiles, reapJobs } from './runs.mjs'
+import { findRuns, paneRows, jsonlToRead, newestRunsDir, parseProcs, usageRows, barParts, barColor, endState, applyTaskEnds, fit, ago, queueRows, branchOf, parseCi, snapshot, toastsFor, CI_EVERY_MS, PIECE, WHO_COLOR, PS_ARGV, WIDTH, wrap, ciLines, hiddenIn, goScripts, scriptFiles, reapJobs } from './runs.mjs'
 
 const PANE = 'pd-runs'
 const jobs = atom({ plugin: 'pd-runs', key: 'jobs' } as const, [])
 const disk = atom({ plugin: 'pd-runs', key: 'disk' } as const, null)
+let pendingEnds: { id?: string; toolUseId?: string; state: Job['state']; endedMs: number }[] = []
 let busy = false
 let hidden = false // this session's folder is in hideInDirs: nothing is registered or tracked
 let ci: Ci | null = null // last gh result; gh runs at most every CI_EVERY_MS, not every tick
@@ -67,7 +68,11 @@ async function refresh($: any, extrasDir: string, usageFile: string, repoDir: st
       }
       if (ok) found[j.id] = names
     }
-    await update($, jobs, l => reapJobs(l.map(j => (found[j.id] ? { ...j, files: found[j.id] } : j)), procs, now))
+    await update($, jobs, l => {
+      const applied = applyTaskEnds(l, pendingEnds)
+      pendingEnds = applied.pendingEnds
+      return reapJobs(applied.jobs.map(j => (found[j.id] ? { ...j, files: found[j.id] } : j)), procs, now)
+    })
     const next: Disk = { at: now, usage: usageRows(csv, now), cacheAge, dir, rows, queue, ci }
     await update($, disk, () => next)
     // A failed process listing makes every live row look finished for a tick: no toasts, and keep the last states.
@@ -114,14 +119,13 @@ export const register: Register = (on, options) => {
     return ran
   }).catch(($, e, next) => next(e)) // a tracking failure must never block the call
 
-  // A background call returns at once; the job is done only when its task notice says it ended (a notice with no end word changes nothing).
+  // Render only records notices; refresh applies them at the next tick (up to 30 s later).
   on('ui.render', { component: 'UserMessage', props: { origin: { kind: 'task-notification' } } }, async ($, e, next) => {
     const task = e.props.task
     const state = endState(task?.status)
     if (state && (task?.id || task?.toolUseId)) {
       const endedMs: number = await $.clock.now()
-      const mine = (j: Job) => j.state === 'running' && ((!!task.id && j.taskId === task.id) || (!!task.toolUseId && j.id === task.toolUseId))
-      await update($, jobs, l => l.map(j => (mine(j) ? { ...j, state, endedMs } : j)))
+      pendingEnds.push({ id: task.id, toolUseId: task.toolUseId, state, endedMs })
     }
     return next(e)
   })

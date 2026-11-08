@@ -211,6 +211,18 @@ export function endState(status) {
   return /fail|error/.test(s) ? 'failed' : /kill|stop|cancel/.test(s) ? 'killed' : 'completed';
 }
 
+// Apply queued render notices without mutating the inputs; refresh keeps the returned empty queue.
+export function applyTaskEnds(jobs, pendingEnds) {
+  return {
+    jobs: jobs.map((j) => {
+      if (j.state !== 'running') return j;
+      const end = pendingEnds.find((e) => (!!e.id && j.taskId === e.id) || (!!e.toolUseId && j.id === e.toolUseId));
+      return end ? { ...j, state: end.state, endedMs: end.endedMs } : j;
+    }),
+    pendingEnds: [],
+  };
+}
+
 // The go-<name>.sh scripts a command runs: [{ name, path }]; path is where to read it (an absolute one as typed, else in `dir`).
 export function goScripts(command, dir) {
   return [...(command ?? '').matchAll(/([^\s'"]*?)(go-[\w.-]+\.sh)(?![\w.-])/g)].map((m) => ({ name: m[2], path: /^([A-Za-z]:|\/)/.test(m[1]) ? `${m[1]}${m[2]}` : `${dir}/${m[2]}` }));
