@@ -9,6 +9,7 @@
   },
   "runs": "E:/Project B/Claude/Project D extras",
   "hq": "E:/Project B/Claude/rook-hq",
+  "support": "E:/Project B/Claude/support",
   "runsFrom": 41,
   "kit": "E:/Project B/Claude/rook-kit"
 }
