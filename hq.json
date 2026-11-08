@@ -4,9 +4,11 @@
     "R": "E:/Project B/Claude/Project R",
     "B": "E:/Project B/Claude/project-b-v3",
     "P": "E:/Project B/Claude/project-p",
-    "WF": "E:/Project B/Claude/project-wf"
+    "WF": "E:/Project B/Claude/project-wf",
+    "KIT": "E:/Project B/Claude/rook-kit"
   },
   "runs": "E:/Project B/Claude/Project D extras",
   "hq": "E:/Project B/Claude/rook-hq",
-  "runsFrom": 41
+  "runsFrom": 41,
+  "kit": "E:/Project B/Claude/rook-kit"
 }
