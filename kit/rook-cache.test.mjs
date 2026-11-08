@@ -27,7 +27,7 @@ test('TODO 207b: Rook daily cap uses its own weekly reset and says cap today', (
     mkdirSync(join(repo, 'kit'));
     mkdirSync(join(repo, 'usage-site/public'), { recursive: true });
     copyFileSync(join(ROOT, 'usage-site/public/usage-window.js'), join(repo, 'usage-site/public/usage-window.js'));
-    for (const file of ['rook.mjs', 'rook-cache.mjs', 'rook-result.mjs', 'rook-launch.mjs', 'rook-end.mjs', 'handover-gate.mjs', 'retro-brief.mjs', 'hq-install.mjs', 'project.mjs', 'usage-agent.mjs', 'usage-agent-policy.mjs']) copyFileSync(new URL('./' + file, import.meta.url), join(repo, 'kit', file));
+    for (const file of ['rook.mjs', 'rook-cache.mjs', 'rook-result.mjs', 'rook-launch.mjs', 'rook-end.mjs', 'handover-gate.mjs', 'retro-brief.mjs', 'hq-install.mjs', 'local-init.mjs', 'project.mjs', 'usage-agent.mjs', 'usage-agent-policy.mjs']) copyFileSync(new URL('./' + file, import.meta.url), join(repo, 'kit', file));
     copyFileSync(join(ROOT, 'rook.config.json'), join(repo, 'rook.config.json')); // kit/project.mjs reads it from the repo root
     copyFileSync(join(ROOT, 'hq.json'), join(repo, 'hq.json')); // and the registry beside it (TODO 219b)
     writeFileSync(join(repo, 'package.json'), '{"type":"module"}');
@@ -64,7 +64,7 @@ test('cached usage shares live summaries, avoids processes and writes, and falls
     copyFileSync(join(ROOT, 'usage-site/public/usage-window.js'), join(repo, 'usage-site/public/usage-window.js'));
     const usage = join(repo, 'mockups', '_design', 'usage');
     mkdirSync(usage, { recursive: true });
-    for (const file of ['rook.mjs', 'rook-cache.mjs', 'rook-result.mjs', 'rook-launch.mjs', 'rook-end.mjs', 'handover-gate.mjs', 'retro-brief.mjs', 'hq-install.mjs', 'project.mjs', 'usage-agent.mjs', 'usage-agent-policy.mjs']) copyFileSync(new URL('./' + file, import.meta.url), join(repo, 'kit', file));
+    for (const file of ['rook.mjs', 'rook-cache.mjs', 'rook-result.mjs', 'rook-launch.mjs', 'rook-end.mjs', 'handover-gate.mjs', 'retro-brief.mjs', 'hq-install.mjs', 'local-init.mjs', 'project.mjs', 'usage-agent.mjs', 'usage-agent-policy.mjs']) copyFileSync(new URL('./' + file, import.meta.url), join(repo, 'kit', file));
     copyFileSync(join(ROOT, 'rook.config.json'), join(repo, 'rook.config.json')); // kit/project.mjs reads it from the repo root
     copyFileSync(join(ROOT, 'hq.json'), join(repo, 'hq.json')); // and the registry beside it (TODO 219b)
     writeFileSync(join(repo, 'package.json'), '{"type":"module"}');

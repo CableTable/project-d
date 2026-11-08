@@ -26,7 +26,7 @@ export const winCmd = (command) => command.replace(/^npm\b/, 'npm.cmd');
 // The kit's own folder is never used for this, so the kit can sit outside the repo.
 export const ROOT = resolve(process.env.ROOK_ROOT || process.cwd());
 process.env.ROOK_ROOT = ROOT;
-const HQ = process.env.ROOK_HQ || join(ROOT, 'hq.json');
+export const HQ = process.env.ROOK_HQ || join(ROOT, 'hq.json');
 
 export const hqConfig = () => JSON.parse(readFileSync(HQ, 'utf8'));
 

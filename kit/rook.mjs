@@ -21,6 +21,7 @@
 //   node tools/rook.mjs board <brief> <out> [--as king|bishop]   board / look (WORKFLOW.md line 194) on <brief> -> <out>, detached
 //     retro / acad / board default to King while ProjectD-s15fix/.run-lock exists, else Bishop.
 //   node tools/rook.mjs hq-install [--dry]   TODO 219d: copy kit/hq/ (WORKFLOW.md, global-CLAUDE.md, start-rook.ps1) to hq.json "hq" and CLAUDE.md to ~/.claude, ~/.claude-account2, ~/.claude-account3 (.bak of a changed file kept), Rook's memory once to the hq project's memory folder, and write the Startup Rook.lnk; idempotent, copies only, `--dry` prints the actions
+//   node tools/rook.mjs local-init <KIT|WF> [--dry]   TODO 219e1: KIT copies D's kit/ to hq.json "kit" (default E:/Project B/Claude/rook-kit) with its rook.config.json, .gitignore, package.json, git init and one commit, and adds "kit" and projects.KIT to hq.json; WF does git init + .gitignore + rook.config.json (test `node build-wfs.mjs`) + one commit in hq.json's WF folder; idempotent, refuses a folder whose .git has other commits, `--dry` prints the actions
 //   node tools/rook.mjs fails <log>   the failing steps of a browser-test or node:test log + the first 3 `+` / `-` lines after each, max 40 lines; `no failures in <log>`
 //   node tools/rook.mjs handover <resume file> <name> [--no-retro]   refused unless the outgoing Rook's handover retro was launched (runs<N>/retro<N><x>.out named by rook-next.txt line 2; --no-retro passes), else appends a "Handover retro: read ..." line to the resume file; write rook-next.txt (new uuid, name, resume file) and print it; refused when the resume file is missing, has no runs<N> in its path, lacks the merge-due.log line, lacks the `select:Monitor,TaskStop` or `one ci-watch per push` line (the same lines `next` requires), or its line 2 lacks the grilling + domain-modeling skills; exactly 2 arguments; does not start Rook.lnk
 //   node tools/rook.mjs wait <run file>... [--ci <sha>]   exits 0 on the first run that finished (`DONE <file>`; a .log: at its `SUITE ` line) or when the CI run for <sha> ends (`CI RUN <id> <conclusion>`; exit 1 `CI RUN none <reason>` when no run was found or the watcher failed); polls every 20 s
@@ -35,8 +36,9 @@ import { readFileSync, writeFileSync, appendFileSync, existsSync, readdirSync, s
 import { join, dirname, resolve, basename } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { ROOT, project, stripProjectFlag, hqConfig } from './project.mjs';
+import { ROOT, HQ, project, stripProjectFlag, hqConfig } from './project.mjs';
 import { hqInstall } from './hq-install.mjs';
+import { localInit } from './local-init.mjs';
 import { cacheAge } from './rook-cache.mjs';
 import { firstDone, peakContext } from './rook-result.mjs';
 import { randomUUID } from 'node:crypto';
@@ -386,6 +388,9 @@ if (cmd === 'result') {
 } else if (cmd === 'hq-install') {
   try { hqInstall({ hq: hqConfig(), dry: process.argv.includes('--dry') }); }
   catch (e) { console.error(e.message); process.exit(1); }
+} else if (cmd === 'local-init') {
+  try { localInit({ name: arg, hqFile: HQ, root: ROOT, dry: process.argv.includes('--dry') }); }
+  catch (e) { console.error(e.message); process.exit(1); }
 } else if (cmd === 'fails') {
   try { console.log(failLines(readFileSync(arg, 'utf8'), arg).join('\n')); }
   catch (e) { console.error(e.message); process.exit(1); }
@@ -417,7 +422,7 @@ if (cmd === 'result') {
     projects: join(homedir(), '.claude', 'projects', project.claudeProject), own: process.env.CLAUDE_CODE_SESSION_ID,
   }).then(({ line, code }) => { console.log(line); process.exitCode = code; }, (e) => { console.error(e.message); process.exitCode = 1; });
 } else {
-  console.log('usage: node tools/rook.mjs usage [--cached] | result <file> | wait <run file>... [--ci <sha>] | merge <n> <sha> [--no-retro] | gate | next | review <sha> <brief> <out.jsonl> [--as bishop|king] [--from <clone> <branch>] [--over] | build <brief> <out.jsonl> <branch> <sha> [--as king|bishop] [--dir king2] [--fix] [--regrilled] [--tool] [--no-fresh] [--over] [--big] [--review <review brief> <review out.jsonl>] | knight <brief> <report.txt> <branch> <sha> [--fix] [--regrilled] [--tool] [--no-fresh] [--over] [--big] [--review <review brief> <review out.jsonl>] | suite <sha> [--over] | retro [--over] [--events "<text>"] [--as king|bishop] | pawn <out.json> "<question>" | fresh <id> [--as king|bishop] | acad <item> [--as king|bishop] | board <brief> <out> [--as king|bishop] | fails <log> | handover <resume file> <name> | hq-install [--dry] | any command: --project <D|R|B|P|WF>');
+  console.log('usage: node tools/rook.mjs usage [--cached] | result <file> | wait <run file>... [--ci <sha>] | merge <n> <sha> [--no-retro] | gate | next | review <sha> <brief> <out.jsonl> [--as bishop|king] [--from <clone> <branch>] [--over] | build <brief> <out.jsonl> <branch> <sha> [--as king|bishop] [--dir king2] [--fix] [--regrilled] [--tool] [--no-fresh] [--over] [--big] [--review <review brief> <review out.jsonl>] | knight <brief> <report.txt> <branch> <sha> [--fix] [--regrilled] [--tool] [--no-fresh] [--over] [--big] [--review <review brief> <review out.jsonl>] | suite <sha> [--over] | retro [--over] [--events "<text>"] [--as king|bishop] | pawn <out.json> "<question>" | fresh <id> [--as king|bishop] | acad <item> [--as king|bishop] | board <brief> <out> [--as king|bishop] | fails <log> | handover <resume file> <name> | hq-install [--dry] | local-init <KIT|WF> [--dry] | any command: --project <D|R|B|P|WF>');
 }
 }
 
