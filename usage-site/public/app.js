@@ -304,19 +304,20 @@ function drawTokenChart() {
   });
 }
 
-let ticketTag = 'All';
+let ticketClosed = false;
+const isClosed = (row) => /^(?:merged|done|checked in exe)/i.test(row.status);
+for (const [id, closed] of [['ticket-open', false], ['ticket-closed', true]]) document.getElementById(id).addEventListener('click', () => { ticketClosed = closed; drawTickets(); });
+document.getElementById('ticket-tag').addEventListener('change', drawTickets);
 function drawTickets() {
-  const filters = document.getElementById('ticket-tags'), box = document.getElementById('ticket-list');
+  const box = document.getElementById('ticket-list'), select = document.getElementById('ticket-tag');
   const tags = [...new Set(data.tickets.flatMap((row) => row.tags || []))].sort();
-  if (!tags.includes(ticketTag)) ticketTag = 'All';
-  filters.replaceChildren(); box.replaceChildren();
-  for (const tag of ['All', ...tags]) {
-    const button = el('button', null, tag); button.type = 'button'; button.setAttribute('aria-pressed', tag === ticketTag);
-    button.addEventListener('click', () => { ticketTag = tag; drawTickets(); [...filters.children].find((b) => b.textContent === tag)?.focus(); });
-    filters.append(button);
-  }
-  const rows = data.tickets.filter((row) => ticketTag === 'All' || row.tags.includes(ticketTag));
-  if (!rows.length) { box.append(el('p', 'ud-muted', 'No tickets to show.')); return; }
+  const ticketTag = tags.includes(select.value) ? select.value : '';
+  select.replaceChildren(new Option('All tags', ''), ...tags.map((tag) => new Option(tag, tag))); select.value = ticketTag;
+  document.getElementById('ticket-open').setAttribute('aria-pressed', !ticketClosed);
+  document.getElementById('ticket-closed').setAttribute('aria-pressed', ticketClosed);
+  box.replaceChildren();
+  const rows = data.tickets.filter((row) => isClosed(row) === ticketClosed && (!ticketTag || row.tags.includes(ticketTag)));
+  if (!rows.length) { box.append(el('p', 'ud-muted', 'No tickets')); return; }
   const card = el('div', 'ud-card'), table = el('table', 'ticket-table'), head = el('thead'), headings = el('tr'), body = el('tbody');
   for (const name of ['#', 'Status', 'Size', 'Type', 'Tags', 'Title', 'TODO', 'Updated']) headings.append(el('th', null, name));
   head.append(headings); table.append(head, body); card.append(table); box.append(card);

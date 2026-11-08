@@ -97,7 +97,11 @@
   </section>
   <section class="ud-sec" id="tickets" data-page hidden>
     <h2>Tickets</h2>
-    <div class="tag-filters" id="ticket-tags" role="group" aria-label="Filter tickets by tag"></div>
+    <div class="tag-filters" id="ticket-tags" role="group" aria-label="Filter tickets">
+      <button type="button" id="ticket-open" aria-pressed="true">Open</button>
+      <button type="button" id="ticket-closed" aria-pressed="false">Closed</button>
+      <label for="ticket-tag">Tag</label><select id="ticket-tag"></select>
+    </div>
     <div id="ticket-list" class="ud-sec"></div>
   </section>
 </main>

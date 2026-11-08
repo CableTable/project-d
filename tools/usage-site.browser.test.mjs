@@ -116,6 +116,8 @@ test('Usage site: remembered TODO sub-steps, tabs, tickets, forecasts and safe r
           tickets: { rows: [
             { id: 'T14', status: 'building', size: 'M', type: 'ask', tags: ['feature', 'usage-page', 'mod'], title: '<img src=x onerror=alert(1)>', todo: '95', updated: '2026-10-21', note: '<script>plain note</script>\nSecond line.' },
             { id: 'T17', status: 'checked in exe', size: 'S', type: 'bug', tags: ['bug', 'usage-page'], title: 'Refresh error', todo: '98', updated: '2026-10-21', note: 'Keep last good readings.' },
+            { id: 'T20', status: 'Done 2026-11-01', size: 'S', type: 'ask', tags: ['feature'], title: 'Closed feature', todo: '99', updated: '2026-11-01', note: '' },
+            { id: 'T21', status: 'open', size: 'S', type: 'bug', tags: ['bug'], title: 'Open bug', todo: '', updated: '2026-11-02', note: '' },
           ] },
           status: { lastUpdate: Date.now() - 60_000, lastError: '', lastErrorAt: 0 },
         };
@@ -315,17 +317,34 @@ test('Usage site: remembered TODO sub-steps, tabs, tickets, forecasts and safe r
       };
       await checkSubsteps('phone');
 
-      // Ticket tags filter, All restores, tapping a ticket opens its plain-text note.
+      // Ticket Open / Closed buttons + Tag dropdown (AND), All tags restores, tapping a ticket opens its plain-text note.
       await page.locator('[data-tab=tickets]').click();
-      assert.equal(await page.locator('.ticket').count(), 2);
-      await page.getByRole('button', { name: 'bug', exact: true }).click();
-      assert.deepEqual(await page.locator('.ticket').getAttribute('data-id'), 'T17');
-      await page.getByRole('button', { name: 'All', exact: true }).click();
+      const ticketIds = () => page.locator('.ticket').evaluateAll((rows) => rows.map((r) => r.dataset.id));
+      const tagSelect = page.getByLabel('Tag', { exact: true });
+      const pressed = (name) => page.getByRole('button', { name, exact: true }).getAttribute('aria-pressed');
+      assert.equal(await pressed('Open'), 'true');
+      assert.equal(await pressed('Closed'), 'false');
+      assert.deepEqual(await ticketIds(), ['T14', 'T21']);
+      assert.deepEqual(await tagSelect.locator('option').allTextContents(), ['All tags', 'bug', 'feature', 'mod', 'usage-page']);
+      await tagSelect.selectOption('bug');
+      assert.deepEqual(await ticketIds(), ['T21']);
+      await page.getByRole('button', { name: 'Closed', exact: true }).click();
+      assert.equal(await pressed('Open'), 'false');
+      assert.equal(await pressed('Closed'), 'true');
+      assert.deepEqual(await ticketIds(), ['T17']);
+      await tagSelect.selectOption('mod');
+      assert.deepEqual(await ticketIds(), []);
+      assert.equal(await page.locator('#ticket-list').textContent(), 'No tickets');
+      await tagSelect.selectOption('');
+      assert.deepEqual(await ticketIds(), ['T17', 'T20']);
+      assert.equal(await page.locator('.ticket[data-id=T17] .ud-chip').getAttribute('class'), 'ud-chip ok');
+      await page.getByRole('button', { name: 'Open', exact: true }).click();
+      assert.deepEqual(await ticketIds(), ['T14', 'T21']);
       await page.locator('.ticket[data-id=T14] summary').click();
       assert.equal(await page.locator('.ticket[data-id=T14] .ticket-note').textContent(), '<script>plain note</script>\nSecond line.');
-      assert.equal(await page.locator('.ticket[data-id=T17] .ud-chip').getAttribute('class'), 'ud-chip ok');
       assert.equal(await page.locator('#dashboard img, #dashboard script').count(), 0);
       await noOverflow();
+      await page.screenshot({ path: `${shotDir}/tickets-filter-phone-${colorScheme}.png`, fullPage: true });
       await page.reload();
       await page.locator('.ticket').first().waitFor();
       assert.equal(await page.locator('[data-tab=tickets]').getAttribute('aria-pressed'), 'true');
