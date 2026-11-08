@@ -139,6 +139,8 @@ test('Usage site: remembered TODO sub-steps, tabs, tickets, forecasts and safe r
       await page.goto('http://usage.test/');
       await page.locator('#agents h3').last().waitFor();
       assert.deepEqual(await page.locator('#agents h3').allTextContents(), ['Rook', 'Bishop', 'King', 'Knight']);
+      assert.equal(await page.title(), 'Usage');
+      assert.equal(await page.locator('#top').textContent(), 'Usage');
       const knight = page.locator('#agents .ud-card').filter({has: page.getByRole('heading', {name: 'Knight', exact: true})});
       assert.equal(await knight.locator('.ud-agent p').textContent(), 'Builder');
       // King: its own card with both windows, a forecast line, and its own colour (not Bishop's or Knight's).
