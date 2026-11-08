@@ -441,11 +441,12 @@ function buildMenus() {
   const menus = {
     File: () => [['Open…', openFile], ['New layout', newLayoutTab], ['Save', () => save(false), 'Ctrl+S'], ['Save As…', () => save(true), 'Ctrl+Shift+S'], ['Export DXF…', exportDxf], ['Export for cutter…', exportCutter], ['Compare drawings…', cmpStart], ['Import background…', () => ui.bgPicker.click()], ['Trace bitmap…', traceBitmap], ['PDF / Print…', exportPdf],
       ...recentItems()],
-    Edit: [['Undo', () => undoCurrent(), 'Ctrl+Z', () => !!state.grip || !!historyOf(curDoc())?.canUndo],
+    Edit: [['Undo', () => undoCurrent(), 'Ctrl+Z', () => !!state.paste || !!state.grip || !!historyOf(curDoc())?.canUndo],
       ['Redo', () => undoCurrent(true), 'Ctrl+Y', () => !!historyOf(curDoc())?.canRedo],
       ['Copy', copySelection, 'Ctrl+C', () => curLay() ? !!selItems().length : !!editable()?.sel.size],
       ['Cut', cutSelection, null, () => !!editable()?.sel.size],
       ['Paste', pasteSelection, 'Ctrl+V', () => !!clipboard && (!!curDoc()?.lay || !!editable())],
+      ['Paste in place', pasteInPlace, 'Ctrl+Shift+V', () => !!clipboard && (!!curDoc()?.lay || !!editable())],
       ['Undo history…', showHistory, null, () => !!historyOf(curDoc())],
       ['Select all', selectAll, 'Ctrl+A', () => !!editable() || !!curLay()],
       ['Delete', () => (curLay() ? deletePlaced() : deleteSelection()), 'Del', () => { const d = editable(); return d ? d.sel.size > 0 : !!selectedPlaced(); }]],
@@ -1027,6 +1028,7 @@ function cycleTab(step) {
 
 /** The active tab changed: its drawing, layers and status, and Fit if the view is still fitted. */
 function showDoc() {
+  state.paste = null;
   for (const item of cmpDoc()?.cmp.items || []) { const source = cmpSourceTab(item); if (source) cmpRefresh(source); }
   selectionCycle = null;
   if (state.pointDoc !== curDoc()) { state.pointLast = null; state.pointDoc = curDoc(); }
@@ -1380,6 +1382,7 @@ function setDimType(type) {
 }
 
 function setTool(id) {
+  state.paste = null;
   state.orthoAsk = false;
   state.attdispAsk = null;
   state.eatteditAsk = null;
@@ -2059,6 +2062,7 @@ function pushHistory(d, snapshot, label) {
   d.hist.push(snapshot, label);
 }
 function undoCurrent(forward = false) {
+  if (state.paste && !forward) { cancelPaste(); return; }
   const g = state.grip;
   if (g) { if (forward) note('Redo: finish the grip first'); else if (g.copy) gripUndoCopy(g); else gripCancel(); return; }       // in a grip run Undo is the run's own: the last copy, else the grip edit
   const tab = curDoc(), hist = historyOf(tab);
@@ -4004,6 +4008,7 @@ function buildCommand() {
 }
 /** A command is on (a tool, a grip, a rotate, …): its name and what it asks for, for the bar. Null when nothing is running. */
 function activeCmd() {
+  if (state.paste) return { label: 'PASTE', prompt: 'Paste: follows the cursor, click to place (Esc cancels):', takes: () => false };
   if (state.eatteditAsk) return { label: 'EATTEDIT', prompt: 'Select a block:', takes: () => false };
   if (state.attdispAsk) {
     const d = state.attdispAsk, mode = d.lay ? d.lay.s.attmode : +(d.raw.header.$ATTMODE ?? 1);
@@ -4139,6 +4144,7 @@ const DO = {
   undo: () => undoCurrent(),
   redo: () => undoCurrent(true),
   paste: pasteSelection,
+  pasteorig: pasteInPlace,
   history: () => showHistory(), selectall: () => selectAll(), qselect: startQuickSelect, delete: () => (curLay() ? deletePlaced() : deleteSelection()),
   fit: fitView, zoomwindow: zoomWindow, zoomselection: zoomSelection, zoomprevious: zoomPrevious, rulers: () => setRulers(!state.rulers), properties: () => toggleProps(),
   wireframe: () => toggleWireframe(), dotcross: toggleDotCross,
@@ -4656,7 +4662,7 @@ function paintOverlay(gesture = false) {
 
 function paintEditable(c, d, base, marks) {
   const ed = state.text.ed?.d === d && state.text.ed.dim ? state.text.ed : null;
-  const dragSnap = state.entityDrag?.d === d && state.entityDrag.to;
+  const dragSnap = state.paste?.d === d ? state.paste.to : state.entityDrag?.d === d && state.entityDrag.to;
   if (dragSnap?.[2]) marks = [[dragSnap[0], dragSnap[1], dragSnap[2], true]];
   const drawn = paintDrawing(c, { ...base, fl: ed ? ed.dim.fl : d && d.fl, off: base.cmpOff || d && d.off, factor: d ? d.factor : 1,
     bg: d && d.bg, hl: d ? ((state.drawingRotate?.drag?.items || state.entityDrag?.items) ? null : (state.grip && state.grip.d === d && state.grip.next ? d.hl.filter((it) => !gripShown(state.grip).includes(it.e)) : textSel(d) ? d.hl.filter((it) => it.k !== 't') : ed ? d.hl.filter((it) => it.e !== ed.e || it.k !== 't') : d.hl)) : null, hide: hideNow(d), marks: marks || (drawLive() && state.drawHover && state.drawHover[2] ? [[state.drawHover[0] / d.factor, state.drawHover[1] / d.factor, state.drawHover[2], true]] : state.grip && state.grip.d === d && state.grip.to && state.grip.to[2] ? [[state.grip.to[0], state.grip.to[1], state.grip.to[2], true]] : null), dim: previewDim(d), gaps: d && d.ed && editable() ? Ed.gapMarks(gapsOf(d), d.gapShow) : null,
@@ -4667,6 +4673,8 @@ function paintEditable(c, d, base, marks) {
     dimCol: cssVar('--dim', '#0f766e'), previewBounds: (box) => { canvasPreviewBounds = unionBox(canvasPreviewBounds, box); } });
   const move = state.drawingRotate?.drag || state.entityDrag || (state.grip?.d === d && state.grip.move) || (modLive() && ['move', 'copy', 'stretch', 'array', 'rotate', 'scale', 'mirror', 'align'].includes(state.mod.kind) ? state.mod.move : null);
   c.dataset.preview = move?.items ? paintDrawing(c, { ...base, ox: base.ox - move.dx * d.factor, oy: base.oy + move.dy * d.factor, keep: true, fl: move.preview, off: d.off, factor: d.factor, slots: (!state.entityDrag && !state.grip && modTypedSlots(d)) || move.slots, tint: cssVar('--selection', '#4f46e5'), previewBounds: (box) => { canvasPreviewBounds = unionBox(canvasPreviewBounds, box); } }) : 0;
+  const paste = state.paste;
+  if (paste?.d === d && paste.from) c.dataset.preview = paintDrawing(c, { ...base, ox: base.ox - paste.dx * d.factor, oy: base.oy + paste.dy * d.factor, keep: true, fl: paste.preview, off: d.off, factor: d.factor, tint: `color-mix(in srgb, ${cssVar('--selection', '#4f46e5')} 50%, transparent)`, previewBounds: (box) => { canvasPreviewBounds = unionBox(canvasPreviewBounds, box); } });
   return drawn;
 }
 
@@ -4775,6 +4783,7 @@ function attachCanvasEvents() {
   }, { passive: false });
   c.addEventListener('pointerdown', (e) => {
     if (e.target.closest('.zoombox, .contourpanel, .preflightpanel, .balsheets, .balpic, .meas-tag')) return;
+    if (state.paste && e.button === 0) { e.preventDefault(); if (pasteMove(e)) placePaste(); return; }
     if (state.eatteditAsk && e.button === 0) { attributePick(e, true); e.preventDefault(); return; }
     if (state.orthoAsk || state.attdispAsk) return;
     if (e.button === 0 && state.zwin) { lrub = { x: e.clientX, y: e.clientY, moved: false, zoom: true }; capture(c, e); return; }       // Zoom Window: the left button drags the box
@@ -4828,6 +4837,7 @@ function attachCanvasEvents() {
   c.addEventListener('pointermove', (e) => {
     snapPointer = { clientX: e.clientX, clientY: e.clientY, shiftKey: e.shiftKey, buttons: e.buttons };
     snapQuery = null;
+    if (state.paste) { pasteMove(e); return; }
     const p = local(e);
     if (gdrag) guideMove(e);
     if (state.sheetDrag) sheetMove(e);
@@ -4955,6 +4965,7 @@ function attachCanvasEvents() {
 
 // ---- keeping the panels in step with the layout ----
 function renderCommand() {
+  if (state.paste) { ui.hist.textContent = 'Command: PASTE'; ui.prompt.textContent = activeCmd().prompt; return; }
   if (state.eatteditAsk) { ui.hist.textContent = 'Command: EATTEDIT'; ui.prompt.textContent = activeCmd().prompt; return; }
   if (state.attdispAsk) { ui.hist.textContent = 'Command: ATTDISP'; ui.prompt.textContent = activeCmd().prompt; return; }
   if (state.orthoAsk) { ui.hist.textContent = 'Command: ORTHO'; ui.prompt.textContent = activeCmd().prompt; return; }
@@ -5436,7 +5447,9 @@ function cutSelection() {
   if (!editable()?.sel.size) return;
   copySelection(); deleteSelection();
 }
-async function pasteSelection() {
+function pasteSelection() { return pasteClipboard(false); }
+function pasteInPlace() { return pasteClipboard(true); }
+async function pasteClipboard(inPlace) {
   const d = editable() || curDoc();
   if (!clipboard) { note('Nothing to paste: copy drawing objects first'); return; }
   if (!d?.lay && !editable()) { note('Paste: open a drawing or layout first'); return; }
@@ -5468,16 +5481,51 @@ async function pasteSelection() {
       note(`Part ${part.name} saved to the Parts library and placed at the same coordinates. Ctrl+Z removes the placement` + saveReportNote(report) + (ok ? '' : KEPT_ONLY_NOW));
       return;
     }
+    if (!inPlace) setTool('select');
     const names = new Set([...Object.keys(d.raw.layers), ...d.fl.layers.map((l) => l.name)]);
     const r = pasteSnapshot(clipboard, { raw: d.raw, factor: d.factor, names, hidden: hiddenLayerNames(d), locked: d.locked || [], cur: curLayerName(d), space: spaceOf(d.fl), dp: state.dp });
-    if (!commit(d, { entities: r.entities, groups: r.groups, blocks: r.blocks, layers: r.layers, ltypes: r.ltypes }, `Paste ${r.count}`)) return;       // too nested: commit showed why
-    if (r.made.length) d.newLayer = r.made[0];
-    setSel(d, new Set(Array.from({ length: r.count }, (_, i) => r.from + i)));
-    renderLayers();
-    const moved = Object.entries(r.moved);
-    note(`Pasted ${r.count} drawing object${r.count === 1 ? '' : 's'} at the same coordinates` +
-      (moved.length ? `. Layer ${moved.map(([l, n]) => `${l} (${n})`).join(', ')} is locked or hidden here, so those went on ${curLayerName(d)}` : '') + '. Ctrl+Z takes them away');
+    const sel = new Set(Array.from({ length: r.count }, (_, i) => r.from + i));
+    if (!inPlace) {
+      const preview = flatten({ ...d.raw, ...r, entities: r.entities.slice(r.from) });
+      const box = OB.boxOf(preview, new Set(r.entities.slice(r.from).map((_, i) => i)));
+      if (!box) { note('Paste: the selection has no size'); return; }
+      state.paste = { d, r, sel, raw: d.raw.entities, preview, anchor: [box[0], box[3]], from: null };
+      note('Paste: follows the cursor, click to place');
+      renderEdit();
+      if (snapPointer) pasteMove(snapPointer);
+      return;
+    }
+    state.paste = null;
+    finishPaste(d, r, sel, true);
   } catch (err) { note(`Paste: ${err.message}`); }
+}
+function finishPaste(d, r, sel, inPlace = false) {
+  if (!commit(d, { entities: r.entities, groups: r.groups, blocks: r.blocks, layers: r.layers, ltypes: r.ltypes }, `Paste ${r.count}`)) return;       // too nested: commit showed why
+  if (r.made.length) d.newLayer = r.made[0];
+  setSel(d, sel);
+  renderLayers();
+  const moved = Object.entries(r.moved);
+  note(`Pasted ${r.count} drawing object${r.count === 1 ? '' : 's'}${inPlace ? ' at the same coordinates' : ' at the cursor'}` +
+    (moved.length ? `. Layer ${moved.map(([l, n]) => `${l} (${n})`).join(', ')} is locked or hidden here, so those went on ${curLayerName(d)}` : '') + '. Ctrl+Z takes them away');
+}
+function cancelPaste() {
+  state.paste = null; trackClear(); note('Paste cancelled'); renderEdit(); paintOverlay();
+}
+function pasteMove(e) {
+  const g = state.paste;
+  if (g.d !== editable() || g.raw !== g.d.raw.entities) { cancelPaste(); return false; }
+  const p = snapPoint(g.d, toDrawing(g.d, e.clientX, e.clientY), -1, [], g.from);
+  if (!g.from) g.from = p.slice(0, 2);
+  const { to, dx, dy } = dragTarget(g.from, p, g.d.factor, e.shiftKey || state.ortho);
+  g.to = to; g.dx = g.from[0] - g.anchor[0] + dx; g.dy = g.from[1] - g.anchor[1] + dy;
+  paintOverlay(); return true;
+}
+function placePaste() {
+  const g = state.paste;
+  state.paste = null; trackClear();
+  try { finishPaste(g.d, { ...g.r, ...Ed.moveEntities({ ...g.d.raw, ...g.r }, g.sel, g.dx, g.dy) }, g.sel); }
+  catch (err) { note(`Paste: ${err.message}`); }
+  renderEdit(); paintOverlay();
 }
 /** The edit index of a tab (pick grid, ends), built on first use and again after a change. */
 function edIndex(d) { if (!d.ed) d.ed = Ed.makeIndex(d.raw, d.fl, d.off, hidIdx(d)); return d.ed; }
@@ -5888,6 +5936,7 @@ function stepHist(d, dir, snapshot = d.lay ? laySnap(d.lay) : snapshotOf(d)) {
   return st;
 }
 function undo(d) {
+  if (state.paste) { cancelPaste(); return; }
   if (d.vlay) { undoLay(); return; }
   if (dropLinePoint(d)) return;
   const m = state.modDoc === d && state.mod?.kind === 'copy' ? state.mod : null;
@@ -10142,6 +10191,7 @@ function editKey(e) {
   if (e.key === 'F2' && !e.ctrlKey && !e.altKey && !e.shiftKey) { e.preventDefault(); ui.cmdUI.toggleHistory(); return; }
   const d = editable();
   if (e.key === 'Escape') {
+    if (state.paste) { e.preventDefault(); ui.cmdUI.escape(); cancelPaste(); return; }
     if (state.eatteditAsk) { e.preventDefault(); state.eatteditAsk = null; ui.cmdUI.escape(); renderCommand(); return; }
     if (state.attdispAsk) { e.preventDefault(); state.attdispAsk = null; ui.cmdUI.escape(); renderCommand(); return; }
     if (state.orthoAsk) { e.preventDefault(); state.orthoAsk = false; ui.cmdUI.escape(); renderCommand(); return; }
@@ -10185,9 +10235,9 @@ function editKey(e) {
     return;
   }
   const key = SC.eventKey(e), own = ownCommands.find((c) => c.key && c.key === key && !SC.fixedKey(c.name));
-  if (key === 'Ctrl+C' || key === 'Ctrl+V') {
+  if (key === 'Ctrl+C' || key === 'Ctrl+V' || key === 'Ctrl+Shift+V') {
     if (inField || e.target?.isContentEditable) return;
-    e.preventDefault(); if (key === 'Ctrl+C') copySelection(); else pasteSelection(); return;
+    e.preventDefault(); if (key === 'Ctrl+C') copySelection(); else if (key === 'Ctrl+Shift+V') pasteInPlace(); else pasteSelection(); return;
   }
   if (own && (!inField || own.name === 'properties' || (e.target === ui.cmd && /^F\d+$/.test(key)))) { e.preventDefault(); runCommand(own); return; }       // Function keys also work while typing a command.
   if (inField || e.target?.isContentEditable) return;
@@ -11302,7 +11352,7 @@ function renderEdit() {
   ui['set-length'].disabled = !scalable;
   ui['set-length'].classList.toggle('on', !!L);
   for (const [id, fix] of [['unit-up', UF.UNIT_FIXES.up], ['unit-down', UF.UNIT_FIXES.down]]) { ui[id].disabled = !scalable; ui[id].title = UF.unitFixTip(fix, b); }
-  ui.undo.disabled = !state.grip && !historyOf(curDoc()).canUndo; ui.redo.disabled = !historyOf(curDoc()).canRedo;
+  ui.undo.disabled = !state.paste && !state.grip && !historyOf(curDoc()).canUndo; ui.redo.disabled = !historyOf(curDoc()).canRedo;
   const gl = gapsOf(d);
   ui.gapRow.hidden = !d.ed;
   const countOnly = gl && gl.length > Ed.GAP_MARK_CAP;

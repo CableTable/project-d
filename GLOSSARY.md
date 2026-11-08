@@ -128,7 +128,11 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Keep only this**: Deletes everything except the selected outline or geometry from the drawing. Where: `DECISIONS.md`, Outline. Avoid: Extract part.
 
-**In-app clipboard**: The session-only snapshot of selected drawing objects or placed parts taken with Ctrl+C. Ctrl+V pastes at the same coordinates and true size. Drawing objects pasted on a layout become a new Parts library part; copied placed parts keep their library links on a layout and become plain drawing objects on a drawing tab or PDF sheet, with rotation and mirrors applied. It remembers drawing source names at Ctrl+C, survives source edits and closing the source tab, and is separate from the system clipboard. Where: `web/clipboard.js`; `DECISIONS.md`, Copy and paste inside the app first, Ctrl+C on layout tabs.
+**In-app clipboard**: The session-only snapshot of selected drawing objects or placed parts taken with Ctrl+C. On drawing and PDF sheet tabs, Ctrl+V starts follow paste; Ctrl+Shift+V pastes in place at true size. Layout paste still uses the same coordinates. Drawing objects pasted on a layout become a new Parts library part; copied placed parts keep their library links on a layout and become plain drawing objects on a drawing tab or PDF sheet, with rotation and mirrors applied. It remembers drawing source names at Ctrl+C, survives source edits and closing the source tab, and is separate from the system clipboard. Where: `web/clipboard.js`; `DECISIONS.md`, Copy and paste inside the app first, Ctrl+C on layout tabs.
+
+**Follow paste**: Ctrl+V, Paste or `paste` on a drawing or PDF sheet tab shows a see-through clipboard preview with the scaled box's top-left at the cursor. SNAP applies; Shift / ORTHO keeps movement straight from the first cursor position. One click places and selects it in one Undo step. Esc, Undo, a tab or sheet switch, or a tool change cancels; Ctrl+V restarts. Where: `web/app.js`; `DECISIONS.md`, 211a.
+
+**Paste in place**: Ctrl+Shift+V, Edit > Paste in place or `pasteorig` pastes the clipboard at its copied coordinates and true size, selected, in one Undo step. Where: `web/app.js`, `web/clipboard.js`; `DECISIONS.md`, 211a.
 
 **Layout object**: A line, arc, text or other drawing object drawn straight onto a layout sheet, not part of any part, such as a setup line, note or frame. Where: `DECISIONS.md`, Tools on Layouts. Avoid: Loose part (a placed part outside the step and repeat grid).
 

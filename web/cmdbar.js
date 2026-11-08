@@ -86,7 +86,8 @@ const TABLE = [
   ['undo', 'Edit', 'Take back the last step', [], '', 'Ctrl+Z'],
   ['redo', 'Edit', 'Bring back the step taken back', [], '', 'Ctrl+Y / Ctrl+Shift+Z'],
   ['copy', 'Edit', 'Copy objects repeatedly from a base point to targets (Ctrl+C: clipboard)', ['co'], 'draw', 'Ctrl+C'],
-  ['paste', 'Edit', 'Paste drawing objects at the same coordinates', [], '', 'Ctrl+V'],
+  ['paste', 'Edit', 'Paste: follows the cursor, click to place', [], '', 'Ctrl+V'],
+  ['pasteorig', 'Edit', 'Paste in place: at the same coordinates', [], '', 'Ctrl+Shift+V'],
   ['history', 'Edit', 'Undo history: go back to any step', ['uh'], ''],
   ['selectall', 'Edit', 'Select everything', ['all'], '', 'Ctrl+A'],
   ['qselect', 'Edit', 'Quick Select by object type and property', [], ''],
@@ -103,7 +104,7 @@ const TABLE = [
 ];
 
 export const COMMANDS = TABLE.map(([name, cat, desc, alias, where, key = '']) => ({ name, cat, desc, alias, where, key }));
-export const fixedKey = (name) => ['save', 'saveas', 'undo', 'redo', 'copy', 'paste', 'delete'].includes(name);
+export const fixedKey = (name) => ['save', 'saveas', 'undo', 'redo', 'copy', 'paste', 'pasteorig', 'delete'].includes(name);
 
 /** Button name followed by its first typed alias and keyboard shortcut, when present. */
 export function tooltipText(label, command, tab = '', description = '') {

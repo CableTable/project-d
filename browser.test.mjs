@@ -1163,7 +1163,7 @@ try {
       await p.waitForFunction(() => /^Copied/.test(document.querySelector('[data-testid=cmd-prompt]').textContent));
       await p.keyboard.press('Delete'); await p.waitForFunction(() => /^Deleted/.test(document.querySelector('[data-testid=cmd-prompt]').textContent), null, { timeout: 60000 });
       await p.keyboard.press('Control+z'); await p.waitForFunction(() => /^Undone/.test(document.querySelector('[data-testid=cmd-prompt]').textContent), null, { timeout: 60000 });       // a Redo step is waiting
-      await p.keyboard.press('Control+v');
+      await p.keyboard.press('Control+Shift+v');
       const shown = await (await p.waitForFunction(() => { const t = document.querySelector('[data-testid=cmd-prompt]').textContent; return /Too many nested blocks/.test(t) && t; }, null, { timeout: 60000 })).jsonValue();
       assert.match(shown, /Too many nested blocks to draw this file/);
       assert.doesNotMatch(shown, /^Pasted/);
@@ -6723,7 +6723,7 @@ try {
     assert.equal(await hint('Line'), 'L'); assert.equal(await hint('Text'), 'T');
     await page.keyboard.press('Escape');
     await page.locator('[data-menu=Edit]').click();
-    assert.deepEqual(await page.locator('.dropdown button').evaluateAll((bs) => bs.map((b) => b.textContent)), ['UndoCtrl+Z', 'RedoCtrl+Y', 'CopyCtrl+C', 'Cut', 'PasteCtrl+V', 'Undo history…', 'Select allCtrl+A', 'DeleteDel']);
+    assert.deepEqual(await page.locator('.dropdown button').evaluateAll((bs) => bs.map((b) => b.textContent)), ['UndoCtrl+Z', 'RedoCtrl+Y', 'CopyCtrl+C', 'Cut', 'PasteCtrl+V', 'Paste in placeCtrl+Shift+V', 'Undo history…', 'Select allCtrl+A', 'DeleteDel']);
     assert.equal(await page.getByRole('menuitem', { name: 'Undo', exact: true }).isDisabled(), true, 'nothing to undo yet');
     assert.equal(await page.getByRole('menuitem', { name: 'Delete', exact: true }).isDisabled(), true, 'nothing selected');
     await page.keyboard.press('Escape');
@@ -8855,6 +8855,97 @@ try {
   // ---- Next sessions 1: the drawing tools (draw.js): Line, Polyline, Rectangle, Rounded rectangle, Circle, Ellipse, Arc ----
   const fieldOf = (e, code) => +e.r.v[e.r.c.indexOf(code)];
   const savedDoc = async () => readDxf((await downloaded(() => page.keyboard.press('Control+s'))).text);
+  await step('TODO 211a: follow paste on drawing and PDF sheets; scaled top-left, SNAP, Shift, click, one Undo and cancel', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    try {
+      const p = await context.newPage(), q = (id) => p.getByTestId(id);
+      p.on('pageerror', (e) => errors.push(String(e)));
+      await p.goto(URL_); await q('count').waitFor({ state: 'attached' });
+      const command = async (word) => {
+        if (!await q('cmd-input').isVisible()) await q('cmd-echo').click();
+        await q('cmd-input').fill(word); await q('cmd-input').press('Enter');
+      };
+      const saveDoc = async () => {
+        await p.waitForTimeout(110);
+        const [dl] = await Promise.all([p.waitForEvent('download'), p.keyboard.press('Control+s')]);
+        return readDxf(readFileSync(await dl.path(), 'latin1'));
+      };
+      const atPoint = (x, y) => p.evaluate(([x, y]) => {
+        const sheet = document.querySelector('rect.sheet'), b = sheet.getBoundingClientRect(), sc = b.width / +sheet.getAttribute('width');
+        return { x: b.x + x * sc, y: b.y + (+sheet.getAttribute('height') - y) * sc };
+      }, [x, y]);
+      const move = async (x, y) => { const a = await atPoint(x, y); await p.mouse.move(a.x, a.y); };
+      const follow = async () => { await move(70, 90); await p.keyboard.press('Control+v'); assert.match(await q('cmd-prompt').textContent(), /follows the cursor, click to place/); };
+      const noGhost = () => p.waitForFunction(() => +document.querySelector('[data-testid=drawing]').dataset.preview === 0);
+      const source = newDoc(1); addEntities(source, dxfLine(1, 2, 3, 4));
+      await q('picker').setInputFiles({ name: '211a inches.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(source)) });
+      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === '211a inches.dxf');
+      await p.locator('.coords').click(); await p.keyboard.press('Control+a'); await p.keyboard.press('Control+c');
+      for (const pdf of [false, true]) {
+        if (pdf) {
+          const sheet = new Page(300, 240);
+          sheet.moveTo(0, 0); sheet.lineTo(220, 220); sheet.moveTo(140, 140); sheet.lineTo(180, 140); sheet.stroke();
+          await q('picker').setInputFiles({ name: '211a sheets.pdf', mimeType: 'application/pdf', buffer: Buffer.from(writePdf([sheet, sheet])) });
+          await q('bal-sheets').waitFor();
+        } else {
+          const target = newDoc(4); addEntities(target, dxfLine(0, 0, 220, 220), dxfLine(140, 140, 180, 140));
+          await q('picker').setInputFiles({ name: '211a target.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(target)) });
+          await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === '211a target.dxf');
+        }
+        await p.locator('[data-testid=canvas]').getByRole('button', { name: 'Fit', exact: true }).click();
+        if (await q('tog-snap').getAttribute('aria-pressed') !== 'true') await q('tog-snap').click();
+        const before = await saveDoc(), n = before.entities.length;
+        const checkLanding = async (x, y) => {
+          const doc = await saveDoc(), ent = doc.entities.at(-1);
+          assert.equal(doc.entities.length, n + 1);
+          for (const [c, expected] of [[10, x], [20, y - 50.8], [11, x + 50.8], [21, y]]) assert.ok(Math.abs(fieldOf(ent, c) - expected) < .02, `code ${c}: ${fieldOf(ent, c)} vs ${expected}`);
+          assert.match(await q('sel-count').textContent(), /1 selected/);
+        };
+        await follow(); await move(140.2, 140.2);
+        await p.waitForFunction(() => +document.querySelector('[data-testid=drawing]').dataset.preview > 0);
+        assert.deepEqual((await saveDoc()).entities, before.entities, 'follow has no committed geometry');
+        for (const theme of ['light', 'dark']) {
+          await p.locator('[data-menu=View]').click();
+          await p.getByRole('menuitemcheckbox', { name: new RegExp(`Theme: ${theme}\\b`) }).click();
+          await move(140.2, 140.2);
+          await p.screenshot({ path: `${shotDir}/todo211a-${pdf ? 'pdf' : 'drawing'}-follow-${theme}.png` });
+        }
+        await p.locator('[data-menu=View]').click();
+        await p.getByRole('menuitemcheckbox', { name: /Theme: light\b/ }).click();
+        const snapped = await atPoint(140.2, 140.2); await p.mouse.click(snapped.x, snapped.y);
+        await checkLanding(140, 140); await noGhost();
+        await p.keyboard.press('Control+z'); assert.deepEqual((await saveDoc()).entities, before.entities, 'one Undo removes the whole paste');
+        await follow(); await p.keyboard.down('Shift'); await move(120, 105);
+        const straight = await atPoint(120, 105); await p.mouse.click(straight.x, straight.y); await p.keyboard.up('Shift');
+        await checkLanding(120, 90); await p.keyboard.press('Control+z');
+        await follow(); await move(110, 100); await p.keyboard.press('Control+v');
+        await p.keyboard.down('Shift'); await move(120, 125);
+        const restarted = await atPoint(120, 125); await p.mouse.click(restarted.x, restarted.y); await p.keyboard.up('Shift');
+        await checkLanding(110, 125); await p.keyboard.press('Control+z');
+        for (const end of [() => p.keyboard.press('Escape'), () => p.keyboard.press('Control+z'), () => p.locator('[data-tool=measure]').click(), () => p.keyboard.press('Control+Tab')]) {
+          await follow(); await end(); await noGhost();
+          if (!await p.locator('.dtab.on .tname').filter({ hasText: pdf ? '211a sheets' : '211a target' }).count()) await p.locator('.dtab', { hasText: pdf ? '211a sheets' : '211a target' }).click();
+          await p.locator('[data-tool=select]').click();
+          assert.deepEqual((await saveDoc()).entities, before.entities, 'cancellation adds no paste');
+        }
+        if (pdf) {
+          await follow(); await p.locator('[data-sheet="2"]').click(); await noGhost();
+          await p.locator('[data-sheet="1"]').click(); assert.deepEqual((await saveDoc()).entities, before.entities);
+        }
+        await p.locator('[data-ribbon-tab=Home]').click();
+        await p.locator('.ribbon-body').getByRole('button', { name: 'Paste', exact: true }).click();
+        await move(100, 100); await p.keyboard.press('Escape'); await noGhost();
+        await command('paste'); await move(100, 100); await p.keyboard.press('Escape'); await noGhost();
+        await command('pasteorig');
+        const original = (await saveDoc()).entities.at(-1);
+        for (const [c, expected] of [[10, 25.4], [20, 50.8], [11, 76.2], [21, 101.6]]) assert.ok(Math.abs(fieldOf(original, c) - expected) < .001);
+        await p.keyboard.press('Control+z');
+        await p.locator('.dtab', { hasText: '211a inches' }).click();
+        await p.locator('.coords').click(); await p.keyboard.press('Control+a'); await p.keyboard.press('Delete');
+        assert.equal((await saveDoc()).entities.length, 0, 'editing the source after paste leaves the clipboard snapshot usable');
+      }
+    } finally { await context.close(); }
+  });
   await step('TODO 111a: copy between drawing tabs at the same coordinates, selected and one Undo; private dimension blocks; PDF sheet 1 to 2', async () => {
     await closeTabs(/./);
     const editItem = (name) => page.getByRole('menuitem', { name, exact: true });
@@ -8892,7 +8983,7 @@ try {
     target = { ...target, ...addDimension(target, buildDim('radius', { c: [180, 60], r: 10, p: [220, 60] }, 1, 'PD_DIM_R1', 2)) };
     await open('clipboard-B.dxf', target);
     const before = await savedDoc();
-    await page.keyboard.press('Control+v'); await waitSel('2 selected');
+    await page.keyboard.press('Control+Shift+v'); await waitSel('2 selected');
     const pasted = await savedDoc(), dimName = blockName(pasted.entities[3]);
     assert.deepEqual(entityData(pasted.entities[2]), entityData(source.entities[0]), 'same drawing coordinates, size and layer');
     assert.notEqual(dimName, 'PD_DIM_R1', 'a clashing dimension gets its own valid name');
@@ -8905,7 +8996,7 @@ try {
     assert.deepEqual(undone.entities, before.entities); assert.deepEqual(undone.blocks, before.blocks);
     assert.equal(undone.layers['111a CUT'], undefined, 'one Undo also removes the imported layer');
     assert.equal(undone.ltypes['111A DASH'], undefined, 'and its linetype');
-    await menuItem('Edit', 'Paste'); await waitSel('2 selected');
+    await menuItem('Edit', 'Paste in place'); await waitSel('2 selected');
     await selectDim(3); await t('dim-height').fill('9'); await t('dim-height').press('Enter');
     const edited = await savedDoc();
     assert.equal(readDim(dimName, edited.blocks[dimName]).params.textH, 9);
@@ -8913,7 +9004,7 @@ try {
     await page.locator('.tabs .dtab', { hasText: 'clipboard-A' }).click();
     assert.deepEqual((await savedDoc()).blocks, changedSource.blocks, 'editing the pasted dimension leaves its source alone');
     await closeTabs(/clipboard-A/);
-    await page.keyboard.press('Control+v'); await waitSel('2 selected');
+    await page.keyboard.press('Control+Shift+v'); await waitSel('2 selected');
     const twice = await savedDoc();
     assert.equal(twice.entities.length, 6, 'clipboard survives closing the source; a second paste adds another copy');
     assert.deepEqual(entityData(twice.entities[4]), entityData(pasted.entities[2]), 'successive pastes overlap at the same position');
@@ -8932,7 +9023,7 @@ try {
     await page.locator('[data-sheet="2"]').click();
     await page.waitForFunction(() => document.querySelector('[data-testid=sheet-chip]').textContent === 'Sheet 2 / 3');
     const sheet2 = await savedDoc();
-    await page.keyboard.press('Control+v');
+    await page.keyboard.press('Control+Shift+v');
     await waitSel(`${sheet1.entities.length} selected`);
     assert.deepEqual((await savedDoc()).entities.slice(sheet2.entities.length).map(entityData), sheet1.entities.map(entityData), 'sheet 1 objects paste at the same coordinates on sheet 2');
     await shotBoth('todo111a-pdf');
@@ -8998,7 +9089,7 @@ try {
     const target = newDoc(4); addEntities(target, dxfLine(300, 300, 320, 320));
     await open('144 drawing.dxf', target);
     const before = await savedDoc();
-    await page.keyboard.press('Control+v'); await waitSel('3 selected');
+    await page.keyboard.press('Control+Shift+v'); await waitSel('3 selected');
     const drawing = await savedDoc(), pasted = drawing.entities.slice(before.entities.length);
     assert.deepEqual(pasted.map((e) => e.type), ['LINE', 'LINE', 'CIRCLE']);
     const field = (e, c) => +e.r.v[e.r.c.indexOf(c)];
