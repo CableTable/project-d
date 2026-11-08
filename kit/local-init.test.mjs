@@ -96,7 +96,7 @@ test('TODO 219e1: a target whose .git has other commits is refused untouched, as
     assert.equal(git(w.wf, 'rev-list', '--count', 'HEAD'), '1');
     assert.throws(() => w.run('WF', true), /refused/); // also in --dry
     mkdirSync(w.kit); writeFileSync(`${w.kit}/mine.txt`, 'x');
-    assert.throws(() => w.run('KIT'), /not empty and has no \.git/);
+    assert.throws(() => w.run('KIT'), /not empty and has no commits/);
     assert.equal(existsSync(`${w.kit}/.git`), false);
     assert.throws(() => w.run('R'), /takes KIT or WF/);
     rmSync(`${w.wf}/.git`, { recursive: true, force: true });
@@ -116,5 +116,35 @@ test('TODO 219e1: `rook.mjs local-init KIT --dry` is wired up (real child proces
     assert.equal(existsSync(w.kit), false);
     const bad = spawnSync(process.execPath, [rook, 'local-init', 'R'], { encoding: 'utf8', env });
     assert.deepEqual([bad.status, bad.stderr.trim()], [1, 'local-init takes KIT or WF']);
+  } finally { done(w); }
+});
+
+test('TODO 219e1 fix: a git error stops local-init before any write (broken .git); an empty .git plus a file is refused', () => {
+  const w = world();
+  try {
+    mkdirSync(`${w.kit}/.git`, { recursive: true }); writeFileSync(`${w.kit}/mine.txt`, 'x'); // .git is not a repository
+    const before = readFileSync(w.hqFile, 'utf8');
+    assert.throws(() => w.run('KIT'), /not a git repository|git/i);
+    assert.equal(existsSync(`${w.kit}/a.txt`), false);
+    assert.equal(existsSync(`${w.kit}/rook.config.json`), false);
+    assert.equal(readFileSync(w.hqFile, 'utf8'), before);
+    rmSync(`${w.kit}/.git`, { recursive: true, force: true });
+    git(w.kit, 'init', '-q'); // a real, empty repo and the user's file
+    assert.throws(() => w.run('KIT'), /not empty and has no commits/);
+    assert.equal(existsSync(`${w.kit}/a.txt`), false);
+    assert.equal(git(w.kit, 'status', '--porcelain'), '?? mine.txt');
+    rmSync(`${w.kit}/mine.txt`);
+    w.run('KIT'); // an empty repo alone is fine
+    assert.equal(git(w.kit, 'rev-list', '--count', 'HEAD'), '1');
+  } finally { done(w); }
+});
+
+test('TODO 219e1 fix: a hq.json without "projects" gets one (KIT), nothing throws after the commit', () => {
+  const w = world();
+  try {
+    writeFileSync(w.hqFile, JSON.stringify({ kit: w.kit }));
+    w.run('KIT');
+    assert.deepEqual(JSON.parse(readFileSync(w.hqFile, 'utf8')), { kit: w.kit, projects: { KIT: w.kit } });
+    assert.equal(git(w.kit, 'rev-list', '--count', 'HEAD'), '1');
   } finally { done(w); }
 });

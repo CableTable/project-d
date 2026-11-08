@@ -24,6 +24,10 @@ test('TODO 219c: the kit folder is hq.json "kit" when set, else <repo>/kit; kit.
     assert.equal(probe(w.hq)[0].replaceAll('\\', '/'), `${w.dir}/the-kit`);
     writeFileSync(`${w.dir}/gone.json`, JSON.stringify({ projects: {}, kit: `${w.dir}/no-such-kit` }));
     assert.equal(probe(`${w.dir}/gone.json`)[0], join(root, 'kit')); // TODO 219e1
+    const gone = spawnSync(process.execPath, ['--input-type=module', '--eval', `import './tools/kit.mjs'; import './tools/kit.mjs';`], { encoding: 'utf8', env: { ...process.env, ROOK_HQ: `${w.dir}/gone.json` } });
+    assert.equal(gone.stderr.trim().split(/\r?\n/).length, 1, gone.stderr); // one warning, naming the folder
+    assert.ok(gone.stderr.includes(`${w.dir}/no-such-kit`), gone.stderr);
+    assert.equal(spawnSync(process.execPath, ['--input-type=module', '--eval', `import './tools/kit.mjs';`], { encoding: 'utf8', env: { ...process.env, ROOK_HQ: w.hq } }).stderr, ''); // a "kit" that exists: silent
   } finally { rmSync(w.dir, { recursive: true, force: true }); }
 });
 
@@ -65,7 +69,7 @@ test('TODO 219c2: the hook shims pass stdin and the exit code on; a missing kit 
       const r = spawnSync(process.execPath, [shim, 'x'], { input: '{}', encoding: 'utf8', cwd: w.dir, env: { ...process.env, ROOK_HQ: `${w.dir}/gone.json` } });
       assert.equal(r.status, code, shim);
       assert.equal(r.stdout, '', shim);
-      assert.equal(r.stderr.trim().split('\n').length, 1, `${shim}: ${r.stderr}`);
+      assert.equal(r.stderr.trim().split('\n').length, 2, `${shim}: ${r.stderr}`); // TODO 219e1 fix: the kit-path warning, then the not-found line
     }
     assert.deepEqual(kitCommand('ci-watch.sh', ['abc'], 'C:/Git/bin/bash.exe'), ['C:/Git/bin/bash.exe', [kitFile('ci-watch.sh'), 'abc']]);
   } finally { rmSync(w.dir, { recursive: true, force: true }); }

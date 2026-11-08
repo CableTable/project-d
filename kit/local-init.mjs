@@ -11,8 +11,8 @@ const IGNORE = { KIT: 'node_modules\ntmp-*.mjs\n', WF: 'node_modules\nbuild\npre
 const json = (o) => JSON.stringify(o, null, 2) + '\n';
 const runGit = (dir, args, env) => execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, ...env } });
 
-// The commit subjects of a repo ([] when it has none yet).
-const subjects = (dir, git) => { try { return git(dir, ['log', '--all', '--format=%s']).split(/\r?\n/).filter(Boolean); } catch { return []; } };
+// The commit subjects of a repo ([] when it has none yet: `git log --all` exits 0 on an empty repo; any other git error throws before the first write).
+const subjects = (dir, git) => git(dir, ['log', '--all', '--format=%s']).split(/\r?\n/).filter(Boolean);
 
 // hqFile = hq.json; root = project D's checkout (its kit/ is the source, its rook.config.json gives "support"). Returns the actions (also sent to `log`).
 export function localInit({ name, hqFile, root, dry = false, log = console.log, git = runGit } = {}) {
@@ -21,9 +21,11 @@ export function localInit({ name, hqFile, root, dry = false, log = console.log, 
   const dir = kit ? hq.kit || KIT_DEFAULT : hq.projects?.WF;
   if (!dir) throw new Error('hq.json has no WF project');
   const actions = [], say = (m) => { actions.push(m); log((dry ? 'would ' : '') + m); };
+  const next = structuredClone(hq); // built before any write, so a hq.json without "projects" cannot fail after the commit
+  if (kit) { next.kit = dir; (next.projects ??= {}).KIT = dir; }
   const hasGit = existsSync(join(dir, '.git')), have = hasGit ? subjects(dir, git) : [];
   if (have.length && !have.some((s) => s.startsWith(`local-init ${name}:`))) throw new Error(`${dir} already has git commits that local-init did not make: refused`);
-  if (kit && !hasGit && existsSync(dir) && readdirSync(dir).length) throw new Error(`${dir} is not empty and has no .git: refused`);
+  if (kit && !have.length && existsSync(dir) && readdirSync(dir).some((f) => f !== '.git')) throw new Error(`${dir} is not empty and has no commits: refused`);
   const src = join(root, 'kit');
   if (kit && !have.length && !existsSync(src)) throw new Error(`no kit folder ${src} to copy`);
 
@@ -48,8 +50,6 @@ export function localInit({ name, hqFile, root, dry = false, log = console.log, 
     }
   }
 
-  const next = structuredClone(hq);
-  if (kit) { next.kit = dir; next.projects.KIT = dir; }
   if (json(next) !== json(hq)) {
     say(`write ${hqFile}: "kit" and projects.KIT = ${dir}`);
     if (!dry) writeFileSync(hqFile, json(next).replace(/\n/g, text.includes('\r\n') ? '\r\n' : '\n'));

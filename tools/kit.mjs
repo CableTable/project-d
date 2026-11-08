@@ -11,7 +11,9 @@ const HQ = process.env.ROOK_HQ || join(ROOT, 'hq.json');
 
 // TODO 219e1: hq.json "kit" counts only while that folder exists (rook.mjs local-init KIT writes it after the copy); otherwise <repo>/kit.
 export const kitDir = (hq, root = ROOT, exists = existsSync) => (hq?.kit && exists(hq.kit) ? hq.kit : join(root, 'kit'));
-export const KIT = kitDir(existsSync(HQ) ? JSON.parse(readFileSync(HQ, 'utf8')) : null);
+const hqData = existsSync(HQ) ? JSON.parse(readFileSync(HQ, 'utf8')) : null;
+if (hqData?.kit && !existsSync(hqData.kit)) console.error(`kit: hq.json "kit" folder ${hqData.kit} does not exist, using ${join(ROOT, 'kit')}`); // once per process: a typo must not run the stale in-repo kit silently
+export const KIT = kitDir(hqData);
 export const kitFile = (name) => join(KIT, name);
 export const kitUrl = (name) => pathToFileURL(kitFile(name)).href;
 
