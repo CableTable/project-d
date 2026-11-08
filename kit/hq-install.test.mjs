@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
@@ -23,7 +23,10 @@ function world() {
   writeFileSync(`${mem}/b.md`, 'memory b');
   const hq = { projects: { D, R: `${dir}/R` }, runs: `${dir}/runs`, hq: hqDir, runsFrom: 41 };
   const lnks = [];
-  const run = (extra = {}) => { const out = []; const actions = H().then(({ hqInstall }) => hqInstall({ hq, kitHq, home, lnk: (...a) => lnks.push(a), log: (m) => out.push(m), ...extra })); return actions.then((a) => ({ a, out })); };
+  // fake WScript.Shell: the "lnk" file holds its target / args / cwd as JSON, and its bytes differ on every save like a real one
+  const lnk = (...a) => { lnks.push(a); mkdirSync(dirname(a[0]), { recursive: true }); writeFileSync(a[0], JSON.stringify({ target: a[1], args: a[2], cwd: a[3], n: lnks.length })); };
+  const lnkRead = (f) => { if (!existsSync(f)) return null; const { target, args, cwd } = JSON.parse(readFileSync(f, 'utf8')); return { target, args, cwd }; };
+  const run = (extra = {}) => { const out = []; const actions = H().then(({ hqInstall }) => hqInstall({ hq, kitHq, home, lnk, lnkRead, log: (m) => out.push(m), ...extra })); return actions.then((a) => ({ a, out })); };
   return { dir, home, hq, hqDir, kitHq, mem, lnks, run, slug: hqDir.replace(/[^A-Za-z0-9]/g, '-') };
 }
 
@@ -60,7 +63,8 @@ test('TODO 219d: a real run copies the files, fills start-rook.ps1, writes the l
     assert.equal(cwd, w.hqDir);
     assert.match(args, /^new-tab --title "Rook" -d ".*rook-hq" powershell -NoExit -ExecutionPolicy Bypass -File ".*start-rook\.ps1"$/);
     const { a, out } = await w.run(); // idempotent: equal files are left alone, no .bak, memory already there
-    assert.ok(a.filter((l) => /^(write|backup)/.test(l)).every((l) => /Rook\.lnk/.test(l)), a.join('\n')); // the lnk is rewritten (its bytes cannot be compared), nothing else
+    assert.ok(!a.some((l) => /^(write|backup)/.test(l)), a.join('\n')); // the lnk too: target, args and folder match, so it is not rewritten
+    assert.equal(w.lnks.length, 1);
     assert.match(out.join('\n'), /copy memory .*: 0 new, 2 already there/);
     assert.ok(!existsSync(`${w.hqDir}/WORKFLOW.md.bak`) && !existsSync(`${w.home}/.claude/CLAUDE.md.bak`));
   } finally { rmSync(w.dir, { recursive: true }); }
@@ -96,6 +100,30 @@ test('TODO 219d: a different existing CLAUDE.md gets a .bak first and the first 
     assert.deepEqual(readdirSync(w.hqDir).filter((f) => /^WORKFLOW\.md\.\d.*\.bak$/.test(f)).length, 1);
     await w.run(); // nothing changed since: no further backup
     assert.equal(readdirSync(w.hqDir).filter((f) => /\.bak$/.test(f) && f.startsWith('WORKFLOW')).length, 2);
+  } finally { rmSync(w.dir, { recursive: true }); }
+});
+
+test('TODO 219d1 fix 2: Rook.lnk is backed up only when its target, arguments or folder differ; 3 runs give at most one .bak', async () => {
+  const w = world();
+  const startup = `${w.home}/AppData/Roaming/Microsoft/Windows/Start Menu/Programs/Startup`, baks = () => readdirSync(startup).filter((f) => /\.bak$/.test(f));
+  try {
+    await w.run(); // no lnk yet: written, nothing to back up
+    assert.deepEqual(baks(), []);
+    const good = JSON.parse(readFileSync(`${startup}/Rook.lnk`, 'utf8'));
+    for (const [what, change] of [['target', { target: 'C:\\old\\wt.exe' }], ['args', { args: 'old args' }], ['folder', { cwd: 'C:\\old' }]]) {
+      writeFileSync(`${startup}/Rook.lnk`, JSON.stringify({ ...good, ...change }));
+      for (const f of readdirSync(startup)) if (f.endsWith('.bak')) rmSync(`${startup}/${f}`);
+      for (let i = 0; i < 3; i++) await w.run();
+      assert.equal(baks().length, 1, `${what} differs: one .bak over 3 runs`);
+      assert.equal(JSON.parse(readFileSync(`${startup}/Rook.lnk`, 'utf8')).target, good.target, `${what}: the lnk is rewritten`);
+    }
+    const before = w.lnks.length;
+    const { a } = await w.run();
+    assert.equal(w.lnks.length, before, 'unchanged: no write');
+    assert.ok(a.some((l) => /^same .*Rook\.lnk/.test(l)));
+    writeFileSync(`${startup}/Rook.lnk`, JSON.stringify({ ...good, target: good.target.replaceAll('/', '\\').toUpperCase() })); // Windows hands back backslashes and its own case
+    await w.run();
+    assert.equal(w.lnks.length, before, 'slash and case differences are not a change');
   } finally { rmSync(w.dir, { recursive: true }); }
 });
 
@@ -165,7 +193,11 @@ test('TODO 219d1: key rules of the old single WORKFLOW.md (37a35b3) are in D\'s 
   const { ROOT } = await P(); // the project's checkout, also when this kit folder is a copy elsewhere
   const both = [join(ROOT, 'WORKFLOW.md'), join(KIT, 'hq', 'WORKFLOW.md')].map((f) => readFileSync(f, 'utf8')).join('\n').toLowerCase();
   const phrases = ['real failure', 'seen twice', 'ponytail-debt', 'worked value', 'trial moves', 'over 70', '140k', 'Open bugs checked', 'way in', 'audit',
-    'pr` skill', 'one background script', 'rate_limit_event', 'cache write', 'checks the new uuid', 'overruled fix first', 'lows.txt', 'rook-gate.json', 'no review:', 'wip todo', 'tell him once'];
+    'pr` skill', 'one background script', 'rate_limit_event', 'cache write', 'checks the new uuid', 'overruled fix first', 'lows.txt', 'rook-gate.json', 'no review:', 'wip todo', 'tell him once',
+    // fix 2: the rules review 2 found missing, then a rule-by-rule pass over the old file
+    'never by `sed` on another script', 'print it (`head`)', 'never FETCH_HEAD', '`switch -c <branch> <sha>`', 'never with `--dangerously-skip-permissions`', 'small lookups (one grep', 'one tool family or one command',
+    'never piped into grep', '`replace_all` for a rename', '`reviewer.md` step 3 names', 'must be HEAD', 'the next Rook reads its `.out` first', 'no placeholder commands', 'report quotes that FAIL', 'Rook lists the ones it recommends',
+    'recommendation', 'only paths inside a brief'];
   for (const p of phrases) assert.ok(both.includes(p.toLowerCase()), `"${p}" is in neither WORKFLOW.md`);
 });
 

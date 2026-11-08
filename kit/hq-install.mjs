@@ -3,7 +3,7 @@
 //   kit/hq/WORKFLOW.md + global-CLAUDE.md          -> <hq>/ ; global-CLAUDE.md also -> CLAUDE.md in ~/.claude, ~/.claude-account2, ~/.claude-account3 (a missing account folder is skipped)
 //   kit/hq/start-rook.ps1 ({{...}} filled)         -> <hq>/start-rook.ps1
 //   Rook's memory (project D's folder)             -> the <hq> project's memory folder, files already there are skipped, subfolders are not copied
-//   Rook.lnk in the Startup folder (WScript.Shell) -> wt.exe tab in <hq> running <hq>/start-rook.ps1
+//   Rook.lnk in the Startup folder (WScript.Shell) -> wt.exe tab in <hq> running <hq>/start-rook.ps1; left alone (no .bak) when its target, arguments and folder already match
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { homedir } from 'node:os';
@@ -21,8 +21,17 @@ export function writeLnk(lnk, target, args, cwd, run = spawnSync) {
   if (r.error || r.status) throw new Error(`Rook.lnk not written: ${r.error?.message || String(r.stderr).trim().split(/\r?\n/)[0] || `exit ${r.status}`}`);
 }
 
+// The shortcut as {target, args, cwd}, or null when there is none.
+export function readLnk(lnk, run = spawnSync) {
+  if (!existsSync(lnk)) return null;
+  const script = '$s=(New-Object -ComObject WScript.Shell).CreateShortcut($env:LNK_PATH);[pscustomobject]@{target=$s.TargetPath;args=$s.Arguments;cwd=$s.WorkingDirectory}|ConvertTo-Json -Compress';
+  const r = run('powershell.exe', ['-NoProfile', '-Command', script], { env: { ...process.env, LNK_PATH: lnk }, encoding: 'utf8', windowsHide: true });
+  if (r.error || r.status) throw new Error(`Rook.lnk not read: ${r.error?.message || String(r.stderr).trim().split(/\r?\n/)[0] || `exit ${r.status}`}`);
+  return JSON.parse(r.stdout);
+}
+
 // hq = the hq.json object. Everything lives under `home` (tests pass a temp one). Returns the list of actions (also sent to `log`); `dry` changes nothing.
-export function hqInstall({ hq, kitHq = KIT_HQ, home = homedir(), dry = false, lnk = writeLnk, log = console.log } = {}) {
+export function hqInstall({ hq, kitHq = KIT_HQ, home = homedir(), dry = false, lnk = writeLnk, lnkRead = readLnk, log = console.log } = {}) {
   if (!hq?.hq) throw new Error('hq.json has no "hq" folder');
   const actions = [], say = (m) => { actions.push(m); log((dry ? 'would ' : '') + m); };
   // The first backup is `<dst>.bak`; later ones that differ from it get a timestamped name, one that equals it needs none (review of 219d1: Rook edits the HQ files between installs).
@@ -55,12 +64,15 @@ export function hqInstall({ hq, kitHq = KIT_HQ, home = homedir(), dry = false, l
   say(`copy memory ${memFrom} -> ${memTo}: ${fresh.length} new, ${files.length - fresh.length} already there`);
   if (!dry) { mkdirSync(memTo, { recursive: true }); for (const f of fresh) copyFileSync(join(memFrom, f), join(memTo, f)); }
   const startup = join(home, 'AppData', 'Roaming', 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Startup', 'Rook.lnk'), wt = join(home, 'AppData', 'Local', 'Microsoft', 'WindowsApps', 'wt.exe');
+  const args = `new-tab --title "Rook" -d "${hq.hq}" powershell -NoExit -ExecutionPolicy Bypass -File "${join(hq.hq, 'start-rook.ps1')}"`, norm = (s) => String(s).replaceAll('/', '\\').toLowerCase();
+  const have = lnkRead(startup); // a lnk's bytes differ on every save: compare what it opens, and back up only when that changes
+  if (have && norm(have.target) === norm(wt) && have.args === args && norm(have.cwd) === norm(hq.hq)) { say(`same ${startup}`); return actions; }
   const bak = bakFor(startup);
   if (bak) say(`backup ${startup} -> ${bak}`);
   say(`write ${startup} (wt.exe tab in ${hq.hq}, ${Object.keys(hq.projects).length} projects + runs as --add-dir)`);
   if (!dry) {
     if (bak) copyFileSync(startup, bak);
-    lnk(startup, wt, `new-tab --title "Rook" -d "${hq.hq}" powershell -NoExit -ExecutionPolicy Bypass -File "${join(hq.hq, 'start-rook.ps1')}"`, hq.hq);
+    lnk(startup, wt, args, hq.hq);
   }
   return actions;
 }
