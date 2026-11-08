@@ -21,7 +21,7 @@ The user has asked for a **retrospective**. You are suggesting improvements to t
 - **No-ops**: look for instructions in steering files that don't modify the agent's behavior. _Use when_ the steering files are large and unwieldy.
 - **Information access**: look for opportunities to increase the agent's access to information. Teeing dev server logs, readonly access to third-party services. _Use when_ a crucial piece of information was not available to the agent.
 
-4. Present these candidates to the user, in order of severity. A proposed edit to a file under tools/ or kit/ (briefs too) names the test that checks it: `grep -rn "<quoted old text>" kit/*.test.mjs tools/*.test.mjs`. Each change quotes the exact text it replaces or follows (an Edit old_string); a line number is a hint only.
+4. Present these candidates to the user, in order of severity. A proposed edit to a file under tools/ or kit/ (briefs too) names the test that checks it: `grep -rn "<quoted old text>" kit/*.test.mjs tools/*.test.mjs`. Each change quotes the exact text it replaces or follows (an Edit old_string, grepped in the source file (kit/, not the rook-hq copy) before you send it); a line number is a hint only.
 
 ## Reference
 
