@@ -32,3 +32,4 @@ Proof before done (WORKFLOW): each claim in the report quotes the line of a comm
    A step that asserts a label right after an action, with no wait for the new value, is a finding.
    A finding about a test quotes the asserted line; no quote means write 'not asserted'.
    A test that runs `node --test` and reads its output must pass `--test-reporter=spec` and remove FORCE_COLOR from the child's env; if not, it is a finding (S39e: red CI on 02f7952).
+   A test that spawns node or git passes an env with `GIT_*`, `FORCE_COLOR` and `NODE_TEST_CONTEXT` removed; if not, it is a finding (retro40king: 3 of 13 fix-first reviews).
