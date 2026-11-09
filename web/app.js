@@ -7885,7 +7885,7 @@ function modTyped(d, raw) {
   if (!c) { modEnter(d); return true; }
   if (m.kind === 'divide' || m.kind === 'measurepoints') {
     if (m.stage !== 'value') return false;
-    const length = DU.parse(c, drawingUnit());
+    const length = m.kind === 'measurepoints' && c.includes(',') ? null : DU.parse(c, drawingUnit());       // Measure points: "x,y" is a point, not a decimal comma
     if (m.kind === 'divide' || length !== null) pointsRun(d, m.kind === 'divide' ? Number(c) : length);
     else {
       const q = DR.typedPoint(DR.parseInput(raw, drawingUnit()), m.p1?.map((v) => v * d.factor));
@@ -8783,7 +8783,7 @@ function lengthenTyped(d, raw, c) {
     return true;
   }
   if (m.stage === 'value' && /^(a|angle)$/.test(c) && ['Delta', 'Total'].includes(m.mode)) { m.mode += 'Angle'; m.p1 = null; note(lengthenPrompt(m)); return true; }
-  const value = ['Delta', 'Total'].includes(m.mode) ? DU.parse(c, drawingUnit()) : Number(c);
+  const value = ['Delta', 'Total'].includes(m.mode) && !c.includes(',') ? DU.parse(c, drawingUnit()) : Number(c);       // "x,y" is a point here, not a decimal comma
   if (m.stage === 'value' && value !== null && Number.isFinite(value)) { lengthenValue(d, value); return true; }
   const point = DR.typedPoint(DR.parseInput(raw, drawingUnit()), (m.p1 || m.p0)?.map((v) => v * d.factor));
   if (point) lengthenPick(d, point.map((v) => v / d.factor), true);

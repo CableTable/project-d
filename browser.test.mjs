@@ -6297,7 +6297,7 @@ try {
       await command('line'); await click(45.05, 50.05); await click(60.05, 50.05); await p.keyboard.press('Escape'); await p.keyboard.press('Escape');
       assert.equal(await q('cmp-count').textContent(), 'No differences', 'Draw snaps to the other snapshot and recalculates Differences');
       const drawnDiff = await diff();
-      await click(52.5, 50); await command('move'); await command('145,150'); await command('@10,5');
+      await click(52.5, 50); await command('move'); await command('145mm,150mm'); await command('@10mm,5mm');
       assert.notDeepEqual(await diff(), drawnDiff, 'Move recalculates Differences');
       const movedDiff = await diff();
       await p.keyboard.press('Control+z'); assert.deepEqual(await diff(), drawnDiff, 'Compare Undo uses source drawing history');
@@ -6305,7 +6305,7 @@ try {
       await p.locator('[data-tool=select]').click(); await click(62.5, 55);
       await q('grip').first().waitFor();
       const a = await point(55, 55);
-      await p.mouse.click(a.x, a.y); await command('@0,5');
+      await p.mouse.click(a.x, a.y); await command('@0mm,5mm');
       assert.notDeepEqual(await diff(), movedDiff, 'grip edit also refreshes Differences');
       await q('cmp-count').scrollIntoViewIfNeeded();
       for (const theme of ['light', 'dark']) {
@@ -6320,7 +6320,7 @@ try {
       await tab('first-156c1.dxf').click();
       assert.equal(await tab('first-156c1.dxf').locator('.dot').count(), 0, 'drawing 1 stays clean');
       assert.deepEqual(flatten(await saveDoc()).items, flatten(readDxf(writeDxf(first))).items, 'drawing 1 unchanged');
-      await compare(); await command('d'); await command('155,160'); await command('170,155'); await command('160,170');
+      await compare(); await command('d'); await command('155mm,160mm'); await command('170mm,155mm'); await command('160mm,170mm');
       await tab('second-156c1.dxf').click();
       assert.equal((await saveDoc()).entities.length, 3, 'Dimension also commits into the linked source');
       await compare(); await p.keyboard.press('Control+z'); await tab('second-156c1.dxf').click();
@@ -20039,7 +20039,7 @@ try {
           if (command !== 'grant_balloon_sidecar') throw new Error('unexpected command: ' + command);
           check(path);
           await new Promise((resolve) => setTimeout(resolve, 10));
-          allowed.add(sidecarPath(path)); log.grants.push(path);
+          allowed.add(sidecarPath(path)); allowed.add(path + '.pdunits.json'); log.grants.push(path);       // like the Rust grant: both sidecars
         } },
         dialog: {
           open: async () => grant('C:/jobs/plate.dxf'),
@@ -20048,7 +20048,7 @@ try {
         },
         fs: {
           readFile: async (p) => { check(p); return new Uint8Array(bytes); },
-          exists: async (p) => { check(p); log.checked.push(p); return files.has(p); },
+          exists: async (p) => { check(p); if (!/\.pdunits\.json$/.test(p)) log.checked.push(p); return files.has(p); },
           readTextFile: async (p) => { check(p); return files.get(p); },
           writeTextFile: async (p, text) => {
             check(p);
@@ -21858,7 +21858,7 @@ try {
       assert.ok(await teal() > 30, 'hovering the bottom edge ghosts its dimension in Compare');
       await click(40, 20); assert.equal(await prompt(), 'Specify dimension line location or second line for angle [Text/Undo]:');
       await click(40, 8);
-      assert.match(await prompt(), /Dimension placed: 60\.00 mm/);
+      assert.match(await prompt(), /Dimension placed: 2\.36"/, 'the linked source is an inch drawing, so Follow prints inches');
       await tab('second-155l1.dxf').click();
       assert.equal((await saved()).entities.length, 2, 'the dimension is in the linked source');
       await tab('Compare').click(); await q('cmp-name-2').click();
@@ -25453,7 +25453,7 @@ try {
     await setup([line()]); await typeCmd('compare'); await page.keyboard.press('Control+a'); await hot('b'); await move(80, 30); await enter('50');
     await page.locator('.dtab').filter({ has: page.locator('.tname', { hasText: /^typed-points70(?:-edited)*\.dxf$/ }) }).click();
     near70(line70((await savedDoc()).entities[0]), [20, 30, 70, 30]);
-    await setup([dxfLine(1, 1, 3, 1)], 1); await hot('b'); await move(100, 25.4); await enter('76.2');
+    await setup([dxfLine(1, 1, 3, 1)], 1); await hot('b'); await move(100, 25.4); await enter('3');       // the cursor field takes digits only: 3 inch = the 76.2 mm of the old step
     near70(line70((await savedDoc()).entities[0]), [1, 1, 4, 1]);
     await setup([line()]); await hot('b'); await move(80, 30); await page.keyboard.press('F12'); await frames();
     assert.equal(await page.locator('.cursor-field:visible').count(), 0);
@@ -25583,11 +25583,12 @@ try {
     await move(80, 60); await fields('X', 'Y'); assert.notEqual(await t('cursor-length').inputValue(), '10', 'Text clears its insertion typing before the next text');
 
     await setup(1); await typeCmd('balloon'); await t('bal-dock').waitFor({ state: 'visible' }); await frames(); await move(80, 60);
+    // The cursor fields take digits only, so this inch drawing is typed in inch: 10,20 then 25<90 (screen y runs down from 700).
     await fields('X', 'Y'); await enter('10,20'); await move(90, 70); await fields('Length', 'Angle');
     await page.keyboard.type('25<90'); await frames();
-    near70([Number(await t('balloon-ghost').locator('circle').getAttribute('cx')), Number(await t('balloon-ghost').locator('circle').getAttribute('cy'))], [10, 655]);
+    near70([Number(await t('balloon-ghost').locator('circle').getAttribute('cx')), Number(await t('balloon-ghost').locator('circle').getAttribute('cy'))], [10 * 25.4, 700 - 45 * 25.4]);
     await page.keyboard.press('Enter'); await frames();
-    near70([Number(await t('balloon').locator('circle').getAttribute('cx')), Number(await t('balloon').locator('circle').getAttribute('cy'))], [10, 655]);
+    near70([Number(await t('balloon').locator('circle').getAttribute('cx')), Number(await t('balloon').locator('circle').getAttribute('cy'))], [10 * 25.4, 700 - 45 * 25.4]);
 
     await setup(); await typeCmd('break'); await said(/Select object:/); await move(40, 40); assert.equal(await t('cursor-length').isVisible(), false, 'object picks have no fields');
     await click(40, 40); await typeCmd('f'); await move(80, 60); await fields('X', 'Y'); await enter('30,35'); await move(90, 70); await fields('Length', 'Angle');
