@@ -3,6 +3,7 @@
 
 /** [name, category, description, aliases, where ('draw' | 'layout' | '' = both), default key (optional)] */
 const TABLE = [
+  ['units', 'View', 'Choose the drawing unit: mm, inch, ft or ft-in', [], ''],
   ['osnap', 'Edit', 'Open the Snap types tick list', ['os'], ''],
   ['ortho', 'Edit', 'Set Ortho ON or OFF', [], ''],
   ['attdisp', 'View', 'Set attribute visibility to Normal, ON or OFF', [], ''],

@@ -93,26 +93,33 @@ export function dynamicInputPlacement(a, b, { w, h }, boxes, kind = 'segment') {
 
 // ---------------------------------------------------------------- typed input
 
+import { parse as parseLength } from './units.js';
 const NUM = '[-+]?(?:\\d+\\.?\\d*|\\.\\d+)';
-const RE_PT = new RegExp(`^([@#]?)\\s*(${NUM})\\s*,\\s*(${NUM})$`);
-const RE_POLAR = new RegExp(`^([@#]?)\\s*(${NUM})\\s*<\\s*(${NUM})$`);
-const RE_NUM = new RegExp(`^(${NUM})$`);
+const RE_PT = /^([@#]?)\s*([^,]+),\s*([^,]+)$/;
+const RE_POLAR = new RegExp(`^([@#]?)\\s*(.+)\\s*<\\s*(${NUM})$`);
 
 /**
  * What was typed → { kind: 'enter' } | { kind: 'xy', rel, abs, x, y } | { kind: 'polar', rel, abs, len, ang } | { kind: 'len', v } | { kind: 'word', w } | { kind: 'bad' }.
  * "x,y" or "#x,y" is absolute, "@dx,dy" relative to the last point; "len<ang" (also with #) is polar from the origin, "@len<ang" from the last point; a bare
  * number is a length (direct distance entry); letters are an option word (lower case).
  */
-export function parseInput(text) {
+export function parseInput(text, unit = 'mm') {
   const t = String(text == null ? '' : text).trim();
   if (!t) return { kind: 'enter' };
   let m = RE_PT.exec(t);
-  if (m) return { kind: 'xy', rel: m[1] === '@', abs: m[1] === '#', x: +m[2], y: +m[3] };
+  if (m) {
+    const x = parseLength(m[2], unit), y = parseLength(m[3], unit);
+    return x !== null && y !== null ? { kind: 'xy', rel: m[1] === '@', abs: m[1] === '#', x, y } : { kind: 'bad' };
+  }
+  if (t.includes(',')) return { kind: 'bad' };
   m = RE_POLAR.exec(t);
-  if (m) return { kind: 'polar', rel: m[1] === '@', abs: m[1] === '#', len: +m[2], ang: +m[3] };
-  m = RE_NUM.exec(t);
-  if (m) return { kind: 'len', v: +m[1] };
-  if (/^[a-z]+(\s+[-+.\d]+)?$/i.test(t)) return { kind: 'word', w: t.toLowerCase() };
+  if (m) {
+    const len = parseLength(m[2], unit);
+    return len !== null && Number.isFinite(+m[3]) ? { kind: 'polar', rel: m[1] === '@', abs: m[1] === '#', len, ang: +m[3] } : { kind: 'bad' };
+  }
+  const v = parseLength(t, unit);
+  if (v !== null) return { kind: 'len', v };
+  if (/^[a-z]+$/i.test(t) || /^[a-z]+\s+/i.test(t) && parseLength(t.replace(/^[a-z]+\s+/i, ''), unit) !== null) return { kind: 'word', w: t.toLowerCase() };
   return { kind: 'bad' };
 }
 
@@ -369,8 +376,8 @@ function undoPoint(T) {
 }
 
 /** What was typed in the command line. */
-export function toolType(T, text) {
-  const inp = parseInput(text), k = T.kind;
+export function toolType(T, text, unit = 'mm') {
+  const inp = parseInput(text, unit), k = T.kind;
   if (inp.kind === 'bad') return say(`I do not understand "${String(text).trim()}". Type x,y or @dx,dy, a length, or a word from the prompt`);
   if (T.stage === 'radius') {                                         // the rounded rectangle's corner radius first
     if (inp.kind === 'enter') { T.stage = 'pts'; return say(`Corner radius ${n2(T.radius)} mm`); }
@@ -380,7 +387,7 @@ export function toolType(T, text) {
   if (inp.kind === 'enter') return toolFinish(T);
   const ref = toolRef(T);
   if (inp.kind === 'word') {
-    const [w, arg] = inp.w.split(/\s+/);
+    const [w, ...rest] = inp.w.split(/\s+/), arg = rest.length ? parseLength(rest.join(' '), unit) : null;
     if ((k === 'line' || k === 'polyline') && (w === 'c' || w === 'close')) {
       if (k === 'line') {
         if (T.trail.length < 2) return say(`Close needs two segments; there ${T.trail.length === 1 ? 'is' : 'are'} ${T.trail.length}`);

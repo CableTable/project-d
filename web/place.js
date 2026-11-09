@@ -4,6 +4,7 @@
 // the sheet (mm, y up), rot is degrees anticlockwise, and a mirror flips the part about its own corner before it is turned.
 // Every function takes the part ({ w, h } in mm) and a placement and returns a NEW placement; nothing is changed in place.
 import { placedBox } from './apply.js';
+import { parse } from './units.js';
 
 /** A number rounded to 6 decimals (what a DXF keeps), never "-0". */
 /** The grid a new part's position snaps to when it is added to a sheet (TODO 45), mm: whole mm (his pick, 2026-10-18). */
@@ -155,16 +156,14 @@ export function offSheet(part, pl, W, H) {
   return b[0] < -t || b[1] < -t || b[2] > W + t || b[3] > H + t;
 }
 
-/** A length typed in mm ("12", "12.5", "12,5", "-3"): the number, or null. */
-export function parseMm(text) {
-  const s = String(text).trim().replace(',', '.').replace(/\s*mm$/i, '');
-  if (s === '' || !/^[+-]?(\d+\.?\d*|\.\d+)$/.test(s)) return null;
-  const v = Number(s);
-  return Number.isFinite(v) ? v : null;
-}
+/** A length typed in the drawing unit → mm, or null; mm keeps decimal commas. */
+export const parseMm = (text, unit = 'mm') => parse(text, unit);
 
 /** An angle typed in degrees ("30", "-15.5", "30°"): the number, or null. */
-export const parseAngle = (text) => parseMm(String(text).trim().replace(/\s*(°|deg)$/i, ''));
+export const parseAngle = (text) => {
+  const s = String(text).trim().replace(/\s*(°|deg)$/i, '').replace(',', '.');
+  return /^[+-]?(\d+\.?\d*|\.\d+)$/.test(s) && Number.isFinite(+s) ? +s : null;
+};
 
 /** Is this placement the same as that one (position, turn, mirror)? */
 export const samePlacement = (a, b) => a.partId === b.partId && Math.abs(a.x - b.x) < 1e-9 && Math.abs(a.y - b.y) < 1e-9 &&

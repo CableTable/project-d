@@ -22,6 +22,7 @@ import { SNAP_NAME, snapTypes, lineSnaps, preferSnap } from './snap.js';
 import { pushView, popView } from './viewhist.js';
 import { zoomScale } from './zoom-level.js';
 import * as UF from './unitfix.js';
+import * as DU from './units.js';
 import * as CL from './cleanup.js';
 import * as DM from './dims.js';
 import * as LR from './leader.js';
@@ -1028,6 +1029,25 @@ async function saveDirtyPages(d) {
 }
 
 const curDoc = () => state.docs[state.doc];
+const unitDoc = () => editable() || curDoc();
+const drawingUnit = () => unitDoc()?.drawingUnit || DU.defaultUnit(unitDoc()?.raw?.header?.$INSUNITS);
+
+function chooseUnits() {
+  if (cmpDoc() && !editable()) { note('Drawing unit: select a snapshot whose source drawing is open'); return; }
+  const d = unitDoc();
+  if (!d || document.querySelector('[data-testid=units-dialog]')) return;
+  const finish = () => { back.remove(); document.removeEventListener('keydown', onKey, true); ui.drawingUnit.focus(); };
+  const onKey = (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish(); } };
+  const choices = DU.UNITS.map((unit) => h('button', { class: 'btn' + (unit === drawingUnit() ? ' primary' : ''), type: 'button', 'data-unit': unit, 'aria-pressed': String(unit === drawingUnit()), onclick: () => {
+    if (unit !== drawingUnit()) { d.drawingUnit = unit; d.unitsDirty = true; d.dirty = true; renderTabs(); renderStatus(); }
+    finish();
+  } }, unit));
+  const back = h('div', { class: 'pop-back', 'data-testid': 'units-dialog', onclick: (e) => { if (e.target === back) finish(); } },
+    h('section', { class: 'pop-dialog', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Drawing unit' },
+      h('strong', null, 'Drawing unit'), h('span', { class: 'lbl' }, 'Lengths you type use this unit. Geometry stays the same.'),
+      h('div', { class: 'row' }, choices), h('div', { class: 'row end' }, h('button', { class: 'btn', type: 'button', onclick: finish }, 'Cancel'))));
+  document.body.append(back); document.addEventListener('keydown', onKey, true); choices[DU.UNITS.indexOf(drawingUnit())].focus();
+}
 
 function cycleTab(step) {
   state.doc = (state.doc + step + state.docs.length) % state.docs.length;
@@ -1076,7 +1096,7 @@ async function readDrawing(bytes) {
 /** What a tab holds for a drawing: the DXF document (to save and to copy as a part), what is drawn, its layers and size. */
 function tabFields(raw, fl) {
   const factor = unitFactor(fl.units);
-  return { raw, fl, factor, titleBlock: readTitleBlock(raw), off: startHidden(fl), counts: layerCounts(raw, fl), entities: entityCount(raw, fl), conv: convertedNote(fl.units), box: drawingBoxMm(fl, factor) };
+  return { raw, fl, factor, drawingUnit: DU.defaultUnit(raw.header?.$INSUNITS), titleBlock: readTitleBlock(raw), off: startHidden(fl), counts: layerCounts(raw, fl), entities: entityCount(raw, fl), conv: convertedNote(fl.units), box: drawingBoxMm(fl, factor) };
 }
 
 function addTab(d, replaceEmpty = true) {
@@ -1124,7 +1144,7 @@ async function openBytes(name, buf, path = null) {
   const subs = fontSubstitutions(r.doc.styles, fl.items);
   const fontNote = subs.length ? 'Fonts: ' + subs.map(({ asked, shown }) => `${asked} → ${shown}`).join(', ') : '';
   const lay = LD.layoutFromRaw(r.doc, name);
-  if (lay) { openLayoutFile(lay, name, path, fontNote, readTitleBlock(r.doc), dwg); if (dwg && path) rememberRecent(path); return; } // one of our saved layouts: it opens as a layout tab
+  if (lay) { openLayoutFile(lay, name, path, fontNote, readTitleBlock(r.doc), dwg); await unitsLoad(curDoc(), path, name); if (dwg && path) rememberRecent(path); return; } // one of our saved layouts: it opens as a layout tab
   // openPath: the file itself, which Save never writes over. A DWG tab has no path of its own until Save As writes its .dxf
   const doc = { name, path: dwg ? null : path, openPath: path, guideFile: G.fileKey(path, name), dirty: false, ...(dwg && { fromDwg: true }), ...tabFields(r.doc, fl) };
   addTab(doc);
@@ -1224,6 +1244,7 @@ async function attachLaunchFiles() {
 /** A file from the browser's own picker or a drop. */
 async function openPicked(file) {
   try {
+    if (DU.isSidecar(file.name)) { unitsPicked(file.name, await file.text()); return; }
     if (BAL.isSidecar(file.name)) { balPicked(file.name, await file.text()); return; }
     await openBytes(file.name, await file.arrayBuffer());
   } catch (err) { note('Open failed: ' + (err && err.message ? err.message : err)); }
@@ -3401,9 +3422,10 @@ async function save(forceAs) {
   const d = curDoc();
   if (!d) return;
   if (!d.raw && !d.lay) { note('Nothing to save yet: open a DXF first'); return; }
-  if (!d.lay && d.bg && !d.raw.entities.length && balOf(d).items.length) {          // a picture alone: only its balloons are saved
-    await balSave(d);
-    if (d.balSaved === balOf(d)) { d.dirty = false; renderTabs(); }
+  if (!d.lay && d.bg && !d.raw.entities.length && (balOf(d).items.length || d.unitsDirty)) {          // a picture alone saves its sidecars
+    try { await unitsSave(d, d.openPath, d.unitsName || d.name); }
+    catch (err) { note('Saving the drawing unit failed: ' + (err.message || err)); return; }
+    if (await balSave(d) !== false) { d.dirty = false; renderTabs(); }
     return;
   }
   const raw = rawForSave(d);
@@ -3438,6 +3460,8 @@ async function save(forceAs) {
       name = ask || !path ? want : dxfName(d.name);
       download(name, text);
     }
+    await unitsSave(d, path, name);
+    d.unitsName = d.pdf?.name || name;
     d.name = name; d.path = path; d.dirty = false; d.saved = true;
     if (d.fromDwg) { d.fromDwg = false; d.openPath = null; }              // the tab is now the .dxf it just wrote
     d.guideFile = G.fileKey(path, name); rememberGuides(d);
@@ -4076,7 +4100,7 @@ function cmdEnter(raw) {
   if (dimAutoLive() && dimAutoTyped(raw)) return;
   const d = state.tool === 'measure' || layModLive() ? measureTarget() : pointTarget(), pointAction = pointToolAction();
   if (d && pointAction) {
-    const f = d.lay ? 1 : d.factor, inp = DR.parseInput(raw);
+    const f = d.lay ? 1 : d.factor, inp = DR.parseInput(raw, drawingUnit());
     if (inp.kind === 'xy' || inp.kind === 'polar') {
       const p = DR.typedPoint(inp, state.pointLast?.map((v) => v * f));
       if (p) { trackStop(); pointAction(d, p.map((v) => v / f), false, true); }
@@ -4126,6 +4150,7 @@ function cmdEnter(raw) {
 const TOOL_OF = { rectangle: 'rect' };
 const DIM_OF = { dimauto: 'auto', dimlinear: 'linear', dimradius: 'radius', dimdiameter: 'diameter', dimangular: 'angle' };
 const DO = {
+  units: chooseUnits,
   eattedit: () => {
     if (cmpDoc() && !cmpEdit()) return;
     const d = dimTarget();
@@ -4267,7 +4292,7 @@ function buildStatus() {
   return h('div', { class: 'status' }, ui.fontNote = h('span', { class: 'font-note', hidden: true, 'data-testid': 'font-note' }), ui.cmdUI.echo, ui.cmdUI.hint, ui.coords, toggles, ui.wireframe, ui.workArea, ui.toolChip, ui.sheetChip, h('span', { class: 'gap' }),
     ui.entities = h('span', { class: 'lbl', 'data-testid': 'entities' }),
     ui.units = h('span', { class: 'lbl', 'data-testid': 'units' }),
-    ui.layerInfo = h('span', { class: 'lbl', 'data-testid': 'layer-info' }), h('span', { class: 'lbl' }, 'mm'),
+    ui.layerInfo = h('span', { class: 'lbl', 'data-testid': 'layer-info' }), ui.drawingUnit = h('button', { class: 'tog', type: 'button', 'data-testid': 'drawing-unit', 'aria-label': 'Drawing unit', title: 'Choose the drawing unit (UNITS)', onclick: chooseUnits }, 'mm'),
     h('label', { class: 'lbl dp', title: 'Decimal places in dimensions' }, 'Dim ',
       ui.dp = h('select', { class: 'dp-sel', 'data-testid': 'decimals', 'aria-label': 'Decimal places in dimensions' },
         [0, 1, 2, 3, 4].map((n) => h('option', { value: String(n) }, n ? '0.' + '0'.repeat(n) : '0')))));
@@ -4310,6 +4335,7 @@ function toggleWireframe() {
 
 function renderStatus() {
   const d = editable() || curDoc();
+  ui.drawingUnit.textContent = drawingUnit();
   ui.entities.textContent = d && d.fl ? 'Entities ' + d.entities : '';
   ui.units.textContent = d && d.fl ? d.conv : '';
   // the layer: a layout's parts are all on "Parts"; on a drawing tab it is the selection's own layer ("—" when nothing is selected)
@@ -6706,6 +6732,7 @@ async function balSheet(d, n) {
     PS.keepPage(d);
     if (P.picture) d.bg?.bitmap?.close();
     Object.assign(d, PS.pageFields(next));
+    if (d.unitsDirty) d.dirty = true;
     d.sel = new Set(); d.stretchSelection = null; d.hl = []; d.ed = d.outl = d.hidC = d.txtMemo = d.gripCache = d.cAn = d.cRes = d.gaps = d.duplicates = d.txoSel = d.lastPick = d.newLayer = null;
     P.page = n;
   } catch (err) { note(`Sheet ${n}: could not read this page (${err && err.message ? err.message : err})`); return false; }
@@ -6733,9 +6760,51 @@ async function deleteSheet(d) {
   note(`Deleted sheet ${n} from this tab. The PDF on disk is not changed`);
 }
 
+// Drawing units use the same picked-file and disk-sidecar paths as balloons.
+function unitsAttach(d, text, path) {
+  const unit = DU.decode(text);
+  if (!unit) { d.unitsBlocked = path; note(path + ': could not read the drawing unit'); return; }
+  d.drawingUnit = unit; d.unitsBlocked = null; renderStatus();
+}
+async function unitsLoad(d, path, name) {
+  d.unitsName = name;
+  const side = DU.sidecarPath(name), t = window.__TAURI__;
+  if (path && t?.fs?.readTextFile) {
+    const file = DU.sidecarPath(path);
+    try {
+      if (t.core) await t.core.invoke('grant_balloon_sidecar', { path });
+      if (await t.fs.exists(file)) unitsAttach(d, await t.fs.readTextFile(file), file);
+    } catch (err) { d.unitsBlocked = file; note(`${side}: could not be read (${err.message || err})`); }
+  } else {
+    const text = state.sidecars.get(side.toLowerCase());
+    state.sidecars.delete(side.toLowerCase());
+    if (text != null) unitsAttach(d, text, side);
+  }
+}
+function unitsPicked(name, text) {
+  const d = state.docs.find((x) => x.unitsName && DU.sidecarPath(x.unitsName).toLowerCase() === name.toLowerCase());
+  if (d) unitsAttach(d, text, name);
+  else { state.sidecars.set(name.toLowerCase(), text); note(`${name} read: open the drawing of the same name too`); }
+}
+async function unitsSave(d, path = d.path, name = d.name) {
+  if (d.pdf) { path = d.openPath; name = d.pdf.name; }
+  const unit = d.drawingUnit || DU.defaultUnit(d.raw?.header?.$INSUNITS), base = DU.defaultUnit(d.raw?.header?.$INSUNITS);
+  const side = DU.sidecarPath(path || name), t = window.__TAURI__;
+  if (d.unitsBlocked && pathKey(d.unitsBlocked) === pathKey(side)) throw new Error(side + ': unreadable drawing unit file; pick another name');
+  if (path && t?.fs?.writeTextFile) {
+    if (t.core) await t.core.invoke('grant_balloon_sidecar', { path });
+    const exists = await t.fs.exists(side);
+    if (exists && !DU.decode(await t.fs.readTextFile(side))) throw new Error(side + ': unreadable drawing unit file; pick another name');
+    if (unit !== base) await t.fs.writeTextFile(side, DU.encode(unit));
+    else if (exists) await t.fs.remove(side);
+  } else if (unit !== base) download(side, DU.encode(unit));
+  d.unitsDirty = false;
+}
+
 // -- the sidecar: <name>.pdballoons.json next to the file; read when the file opens, written by Save --
 /** The balloons that belong to a file just opened: in the app from the file next to it, in a browser from the .pdballoons.json picked or dropped with it. */
 async function balLoad(d, path, name) {
+  await unitsLoad(d, path, name);
   d.balName = name;
   const side = BAL.sidecarName(name), t = window.__TAURI__;
   let text = null;
@@ -6784,7 +6853,7 @@ async function balSave(d, ask = true) {
 }
 
 /** Balloon files first, so a drawing picked together with its balloons finds them waiting. */
-const balFirst = (files) => [...files].sort((a, b) => BAL.isSidecar(b.name) - BAL.isSidecar(a.name));
+const balFirst = (files) => [...files].sort((a, b) => Number(BAL.isSidecar(b.name) || DU.isSidecar(b.name)) - Number(BAL.isSidecar(a.name) || DU.isSidecar(a.name)));
 /** A .pdballoons.json picked or dropped (a browser cannot look next to the file): kept for its drawing, or given to the open tab it belongs to. */
 function balPicked(name, text) {
   state.sidecars.set(name.toLowerCase(), text);
@@ -7029,7 +7098,7 @@ function applyLength() {
 function ensureScratch(d) {
   if (d.raw || d.lay) return;
   const raw = newDoc(4), fl = flatten(raw);
-  Object.assign(d, tabFields(raw, fl), { scratch: true });
+  Object.assign(d, tabFields(raw, fl), { scratch: true, drawingUnit: d.drawingUnit || 'mm' });
   d.hist = Ed.createHistory(); d.sel = new Set(); d.hl = []; d.ed = null; warm(d);
   update();
 }
@@ -7139,7 +7208,7 @@ function drawTyped(raw) {
   T.cursorInput = null;
   if (word && !DR.toolBusy(T) && !DR.toolWords(T).has(word)) { const cmd = CB.resolve(word, 'draw', ownCommands); if (cmd && (TOOL_OF[cmd.name] || cmd.name) !== T.kind) { runCommand(cmd); return true; } }       // a command typed between two shapes
   state.msg = null;
-  drawApply(DR.toolType(T, raw));
+  drawApply(DR.toolType(T, raw, drawingUnit()));
   return true;
 }
 
@@ -7334,7 +7403,7 @@ function gripCursorPreview() {
   g.inputError = null;
   if (!typed) return;
   const result = cursorPoint();
-  if (!result.why && !g.baseAsk && (!g.ref || g.ref.step === 'new')) { g.cursorPreview = true; g.inputError = gripEvaluate(g, DR.parseInput(result.text), result.text); }
+  if (!result.why && !g.baseAsk && (!g.ref || g.ref.step === 'new')) { g.cursorPreview = true; g.inputError = gripEvaluate(g, DR.parseInput(result.text, drawingUnit()), result.text); }
 }
 
 /** Cursor fields use one tool of mm points (y up); object picks and options return no tool. */
@@ -7377,11 +7446,11 @@ function cursorInput() {
   return H.cursorInput;
 }
 const cursorPoint = () => {
-  const T = cursorTool(), input = cursorInput(), result = DI.toolPointInput(input, T);
+  const T = cursorTool(), input = cursorInput(), result = DI.toolPointInput(input, T, drawingUnit());
   if (T.grip) {
     // A line's plain length starts at the other end; relative points still start at the grip base.
-    if (input.mode === 'polar' && T.lineEnd && input.prefix !== '@') result.text = '#' + result.point?.map((v) => v.toLocaleString('en-US', { useGrouping: false, maximumSignificantDigits: 21 })).join(',');
-    if (DI.isSingle(input.mode)) { result.text = input.values[0] || result.text; result.why = result.errors[0] = input.values[0] && DI.notFinite(input.values[0]) ? `${result.labels[0]} must be a finite number` : ''; }
+    if (input.mode === 'polar' && T.lineEnd && input.prefix !== '@') result.text = '#' + result.point?.map((v) => v.toLocaleString('en-US', { useGrouping: false, maximumSignificantDigits: 21 }) + (drawingUnit() === 'mm' ? '' : 'mm')).join(',');
+    if (DI.isSingle(input.mode)) { result.text = input.values[0] || result.text; result.why = result.errors[0] = input.values[0] && DI.notFinite(input.values[0], ['angle', 'factor'].includes(input.mode) ? null : drawingUnit()) ? `${result.labels[0]} must be a finite number` : ''; }
     if (input.mode === 'distance') { const g = T.A, normal = GR.rectEdgePoint(g.ent, g.id, 1); result.live[0] = T.hover.reduce((sum, v, i) => sum + (v / T.f - g.base[i]) * (normal[i] - g.pos[i]) * T.f, 0); }
     if (input.mode === 'polar' && !input.values[1] && !input.prefix && input.values[0]) result.text = input.values[0];
     if (T.A.inputError) { result.why = T.A.inputError; result.errors[input.active] = result.why; }
@@ -7799,9 +7868,10 @@ function modTyped(d, raw) {
   if (!c) { modEnter(d); return true; }
   if (m.kind === 'divide' || m.kind === 'measurepoints') {
     if (m.stage !== 'value') return false;
-    if (m.kind === 'divide' || Number.isFinite(Number(c))) pointsRun(d, Number(c));
+    const length = DU.parse(c, drawingUnit());
+    if (m.kind === 'divide' || length !== null) pointsRun(d, m.kind === 'divide' ? Number(c) : length);
     else {
-      const q = DR.typedPoint(DR.parseInput(raw), m.p1?.map((v) => v * d.factor));
+      const q = DR.typedPoint(DR.parseInput(raw, drawingUnit()), m.p1?.map((v) => v * d.factor));
       if (q) pointsLength(d, q.map((v) => v / d.factor)); else note('Requires numeric value or two points.');
     }
     return true;
@@ -7812,7 +7882,7 @@ function modTyped(d, raw) {
     if (m.kind === 'break' && m.stage === 'second' && /^(f|first|first point)$/.test(c)) { m.first = true; m.stage = 'first'; note(modPrompt(d).prompt); paintOverlay(); return true; }
     if (m.stage === 'second' && c === '@') { breakDo(d, m.p0); return true; }
     if (m.stage !== 'obj') {
-      const q = DR.typedPoint(DR.parseInput(raw), m.p0?.map((v) => v * d.factor));
+      const q = DR.typedPoint(DR.parseInput(raw, drawingUnit()), m.p0?.map((v) => v * d.factor));
       if (q) breakPoint(d, q.map((v) => v / d.factor));
       else note(modPrompt(d).prompt);
       return true;
@@ -7837,7 +7907,7 @@ function modTyped(d, raw) {
     }
     if (m.stage === 'p1' && m.kind === 'copy' && (c === 'o' || c === 'mode')) { m.stage = 'mode'; note(modPrompt(d).prompt); paintOverlay(); return true; }
     if (m.stage === 'p1' && (c === 'd' || c === 'displacement')) { modEnter(d); return true; }
-    if (DR.parseInput(raw).kind === 'word') { note('Unknown option: ' + raw.trim()); ui.cmdUI.message(state.msg); return true; }
+    if (DR.parseInput(raw, drawingUnit()).kind === 'word') { note('Unknown option: ' + raw.trim()); ui.cmdUI.message(state.msg); return true; }
   }
   if (m.kind === 'array' && m.stage !== 'pick') return arrayTyped(d, raw, c);
   if (m.kind === 'fillet') {
@@ -7854,12 +7924,12 @@ function modTyped(d, raw) {
       if (c === 't' || c === 'trim') { m.askTrim = true; note(modPrompt(d).prompt); return true; }
     }
     if (!m.askR && (c === 'r' || c === 'radius')) { m.askR = true; note(`Fillet radius <${mmText(state.filR)}> mm: type it`); return true; }
-    const v = Number(c);
-    if (m.askR && Number.isFinite(v) && v >= 0) {
+    const v = DU.parse(c, drawingUnit());
+    if (m.askR && v !== null && v >= 0) {
       state.filR = v; m.askR = false; try { localStorage.setItem(FILLET_SAVED, String(v)); } catch { /* ignore */ }
       note(`Fillet radius ${mmText(v)} mm. Pick the ${m.stage === 'obj' ? 'first' : 'second'} line, arc, circle or polyline segment`); paintOverlay(); return true;
     }
-    if (!m.askR && DR.parseInput(raw).kind === 'word') return false;
+    if (!m.askR && DR.parseInput(raw, drawingUnit()).kind === 'word') return false;
     note(`I do not understand "${raw.trim()}". ${m.askR ? 'Type a radius of 0 or more' : 'Type R to change the radius'}`); return true;
   }
   if (m.ref && m.ref.step === 'new' && (c === 'p' || c === 'points')) { m.ref.step = 'newpts'; m.ref.pts = []; if (m.move) m.move.slots = null; note(modPrompt(d).prompt); paintOverlay(); return true; }
@@ -7868,10 +7938,10 @@ function modTyped(d, raw) {
     if (m.stage === 'p2' && !m.ref && (c === 'r' || c === 'reference')) { refStart(d); return true; }
     if (m.stage === 'p2' && (c === 'c' || c === 'copy')) { m.copy = !m.copy; note(m.copy ? 'Scale a copy: on' : 'Scale a copy: off'); return true; }
     if (m.stage === 'p1') {
-      const q = DR.typedPoint(DR.parseInput(raw), null);
+      const q = DR.typedPoint(DR.parseInput(raw, drawingUnit()), null);
       if (q) { transformBase(d, q.map((v) => v / d.factor)); return true; }
     } else {
-      const q = DR.typedPoint(DR.parseInput(raw), m.p1.map((v) => v * d.factor));
+      const q = DR.typedPoint(DR.parseInput(raw, drawingUnit()), m.p1.map((v) => v * d.factor));
       if (q) {
         const factor = scaleDistance(m.p1, q.map((v) => v / d.factor));
         if (factor > 0) transformDo(d, factor); else note('Pick a point away from the base');
@@ -7880,17 +7950,17 @@ function modTyped(d, raw) {
       const factor = scaleFactor(raw);
       if (factor != null) { transformDo(d, factor); return true; }
     }
-    if (DR.parseInput(raw).kind === 'word') return false;
+    if (DR.parseInput(raw, drawingUnit()).kind === 'word') return false;
     note(`I do not understand "${raw.trim()}". Type ${m.stage === 'p1' ? 'x,y' : 'a number above 0'}`); return true;
   }
   if (m.kind === 'rotate' && m.stage !== 'pick') {
     if (m.stage === 'p2' && !m.ref && (c === 'r' || c === 'reference')) { refStart(d); return true; }
     if (m.stage === 'p2' && (c === 'c' || c === 'copy')) { m.copy = !m.copy; note(m.copy ? 'Rotate a copy: on' : 'Rotate a copy: off'); return true; }
     if (m.stage === 'p1') {
-      const q = DR.typedPoint(DR.parseInput(raw), null);
+      const q = DR.typedPoint(DR.parseInput(raw, drawingUnit()), null);
       if (q) { transformBase(d, q.map((v) => v / d.factor)); return true; }
     } else {
-      const q = DR.typedPoint(DR.parseInput(raw), m.p1.map((v) => v * d.factor));
+      const q = DR.typedPoint(DR.parseInput(raw, drawingUnit()), m.p1.map((v) => v * d.factor));
       if (q) {
         const p = q.map((v) => v / d.factor);
         if (DR.dist(m.p1, p) > 1e-9) transformDo(d, rotationAngle(m.p1, p)); else note('Click a point away from the pivot');
@@ -7899,12 +7969,12 @@ function modTyped(d, raw) {
       const a = PL.parseAngle(raw);
       if (a != null) { transformDo(d, a); return true; }
     }
-    if (DR.parseInput(raw).kind === 'word') return false;
+    if (DR.parseInput(raw, drawingUnit()).kind === 'word') return false;
     note(`I do not understand "${raw.trim()}". Type ${m.stage === 'p1' ? 'x,y' : 'degrees'}`); return true;
   }
   if (['move', 'copy', 'stretch'].includes(m.kind) && m.stage !== 'pick') {
     const mm = (p) => p && p.slice(0, 2).map((v) => v * d.factor);
-    const q = movePoint(raw, mm(m.p1), mm(m.cur), mm(state.pointLast));
+    const q = movePoint(raw, mm(m.p1), mm(m.cur), mm(state.pointLast), drawingUnit());
     if (q) moveTo(d, q.map((v) => v / d.factor));
     else note(`I do not understand "${raw.trim()}". Type ${m.stage === 'p1' ? 'x,y' : 'dx,dy or a positive distance toward the cursor'}`);
     return true;
@@ -8146,15 +8216,15 @@ function arrayTyped(d, raw, c) {
       note('Polar: click the center point of the array, or type x,y'); renderCommand(); paintOverlay(); return true;
     }
   } else if (m.stage === 'center') {
-    const q = DR.typedPoint(DR.parseInput(raw), null);
+    const q = DR.typedPoint(DR.parseInput(raw, drawingUnit()), null);
     if (q) { arrayCenter(d, q.map((v) => v / d.factor)); return true; }
   } else if (m.ask) {
     const yn = m.ask[0] === 'rotate' ? AR.yesNo(c) : null;
-    const r = m.ask[0] === 'rotate' && yn === null ? { error: 'Type Yes or No' } : AR.withField(m.cfg, m.ask[0], m.ask[0] === 'rotate' ? +yn : Number(c), m.sel.size);
+    const r = m.ask[0] === 'rotate' && yn === null ? { error: 'Type Yes or No' } : AR.withField(m.cfg, m.ask[0], m.ask[0] === 'rotate' ? +yn : ['dx', 'dy'].includes(m.ask[0]) ? DU.parse(c, drawingUnit()) : Number(c), m.sel.size);
     if (r.error) { note(r.error); return true; }
     m.cfg = r.cfg; m.ask = m.ask.length > 1 ? m.ask.slice(1) : null; arrayPreview(d); return true;
   } else {
-    const steps = AR.parseLine(c, m.type);
+    const steps = AR.parseLine(c, m.type, drawingUnit());
     if (steps) {
       const r = AR.applyLine(m.cfg, steps, m.sel.size);
       if (r.error) { note(r.error); return true; }
@@ -8163,7 +8233,7 @@ function arrayTyped(d, raw, c) {
       return true;
     }
   }
-  if (m.stage === 'opts' || DR.parseInput(raw).kind === 'word') { note('Unknown option. ' + arrayPrompt(d, m).prompt); renderCommand(); return true; }
+  if (m.stage === 'opts' || DR.parseInput(raw, drawingUnit()).kind === 'word') { note('Unknown option. ' + arrayPrompt(d, m).prompt); renderCommand(); return true; }
   note(`I do not understand "${raw.trim()}". ${m.stage === 'type' ? 'Type R for Rectangular or PO for Polar' : 'Type x,y or click'}`); return true;
 }
 /** Polar's centre point is set (clicked or typed): the default ring shows at once. */
@@ -8251,7 +8321,7 @@ function refClick(d, p, q, shift) {
 }
 /** What is typed at a Reference step. → true when taken (false lets a command word through) */
 function refTyped(d, R, kind, H, raw) {
-  const scaling = kind === 'scale', f = d.factor, inp = DR.parseInput(raw), from = (R.pts.at(-1) || H.base).map((v) => v * f), q = DR.typedPoint(inp, from);
+  const scaling = kind === 'scale', f = d.factor, inp = DR.parseInput(raw, drawingUnit()), from = (R.pts.at(-1) || H.base).map((v) => v * f), q = DR.typedPoint(inp, from);
   if (q) {
     const p = q.map((v) => v / f);
     if (R.step === 'new') { if (DR.dist(H.base, p) > 1e-9) refGot(d, R, kind, H, scaling ? scaleDistance(H.base, p) : rotationAngle(H.base, p)); else note('Type a point away from the ' + (scaling ? 'base' : 'pivot')); }
@@ -8260,7 +8330,7 @@ function refTyped(d, R, kind, H, raw) {
   }
   if (inp.kind === 'word') return false;
   if (R.step === 'newpts' || R.pts.length) { note('Pick two points, or Esc cancels'); return true; }
-  const v = scaling ? Number(raw.trim().replace(',', '.')) : PL.parseAngle(raw);
+  const v = scaling ? DU.parse(raw, drawingUnit()) : PL.parseAngle(raw);
   if (v == null || !Number.isFinite(v)) { note(`I do not understand "${raw.trim()}". Type ${scaling ? 'a length in mm' : 'degrees'}, or click two points`); return true; }
   if (scaling && !(v > 0)) { note(`The ${R.step === 'ref' ? 'reference' : 'new'} length must be above 0`); return true; }
   refGot(d, R, kind, H, scaling ? v / f : v);
@@ -8345,7 +8415,7 @@ function alignEnter(d) {
 }
 function alignTyped(d, raw, c) {
   if (state.mod.stage === 'scale') { if (/^(y|yes)$/.test(c)) alignDo(d, true); else if (/^(n|no)$/.test(c)) alignDo(d, false); else note('Type Yes or No (Enter = No)'); return true; }
-  const f = d.lay ? 1 : d.factor, inp = DR.parseInput(raw), q = DR.typedPoint(inp, state.pointLast && state.pointLast.map((v) => v * f));
+  const f = d.lay ? 1 : d.factor, inp = DR.parseInput(raw, drawingUnit()), q = DR.typedPoint(inp, state.pointLast && state.pointLast.map((v) => v * f));
   if (q) alignPoint(d, q.map((v) => v / f));
   else note(inp.kind === 'word' ? `Unknown option: ${raw.trim()}` : `I do not understand "${raw.trim()}". Type x,y or click`);
   return true;
@@ -8576,7 +8646,7 @@ function offsetTyped(d, raw, c) {
     else if (c === 'e' || c === 'erase') m.stage = 'erase';
     else if (c === 'l' || c === 'layer') m.stage = 'layer';
     else {
-      const v = PL.parseMm(raw);
+      const v = PL.parseMm(raw, drawingUnit());
       if (!(v > 0) || v > 1e6) { note('The offset distance must be more than 0 and at most 1000000 mm'); return true; }
       state.offDist = v; m.through = false; m.stage = 'obj';
       try { localStorage.setItem(OFFSET_SAVED, String(v)); } catch { /* applies for this session */ }
@@ -8587,7 +8657,7 @@ function offsetTyped(d, raw, c) {
   else if (['obj', 'side'].includes(m.stage) && /^(u|undo)$/.test(c)) { offsetUndo(d); return true; }
   else if (m.stage === 'side' && /^(m|multiple)$/.test(c)) m.multiple = true;
   else if (m.stage === 'side') {
-    const q = DR.typedPoint(DR.parseInput(raw), state.pointLast?.map((v) => v * d.factor));
+    const q = DR.typedPoint(DR.parseInput(raw, drawingUnit()), state.pointLast?.map((v) => v * d.factor));
     if (q) { offsetDo(d, q.map((v) => v / d.factor)); return true; }
     note(offsetPrompt(m)); return true;
   } else { note(offsetPrompt(m)); return true; }
@@ -8696,8 +8766,9 @@ function lengthenTyped(d, raw, c) {
     return true;
   }
   if (m.stage === 'value' && /^(a|angle)$/.test(c) && ['Delta', 'Total'].includes(m.mode)) { m.mode += 'Angle'; m.p1 = null; note(lengthenPrompt(m)); return true; }
-  if (m.stage === 'value' && Number.isFinite(Number(c))) { lengthenValue(d, Number(c)); return true; }
-  const point = DR.typedPoint(DR.parseInput(raw), (m.p1 || m.p0)?.map((v) => v * d.factor));
+  const value = ['Delta', 'Total'].includes(m.mode) ? DU.parse(c, drawingUnit()) : Number(c);
+  if (m.stage === 'value' && value !== null && Number.isFinite(value)) { lengthenValue(d, value); return true; }
+  const point = DR.typedPoint(DR.parseInput(raw, drawingUnit()), (m.p1 || m.p0)?.map((v) => v * d.factor));
   if (point) lengthenPick(d, point.map((v) => v / d.factor), true);
   else note(m.stage === 'value' ? 'Requires numeric value.' : lengthenPrompt(m));
   return true;
@@ -8849,8 +8920,8 @@ function chamferTyped(d, c) {
     if (c) v.method = c === 'd' || c === 'distance' ? 'Distance' : 'Angle';
     m.ask = null;
   } else if (m.ask) {
-    const key = m.ask, value = c ? Number(c) : key === 'd2' ? m.firstDistance : v[key];
-    if (!Number.isFinite(value) || value < 0 || key === 'angle' && !(value > 0 && value < 180)) { note(key === 'angle' ? 'Angle must be above 0 and below 180 degrees' : 'Chamfer distances must be 0 or more'); return true; }
+    const key = m.ask, value = c ? key === 'angle' ? Number(c) : DU.parse(c, drawingUnit()) : key === 'd2' ? m.firstDistance : v[key];
+    if (value === null || !Number.isFinite(value) || value < 0 || key === 'angle' && !(value > 0 && value < 180)) { note(key === 'angle' ? 'Angle must be above 0 and below 180 degrees' : 'Chamfer distances must be 0 or more'); return true; }
     if (key === 'd1') { m.firstDistance = value; m.ask = 'd2'; }
     else if (key === 'length') { m.firstLength = value; m.ask = 'angle'; }
     else {
@@ -9379,7 +9450,7 @@ function textCommit() {
 function dimDrive(d, ed, typed) {
   const dim = ed.dim;
   const view = d.lay && LD.linkView(d.lay), at = view ? view.at.findIndex((a) => d.lay.placed[a] === dim.placed) : ed.e;
-  const raw = view ? { header: {}, layers: view.layers, ltypes: {}, blocks: view.blocks, entities: view.entities } : d.raw, entry = at >= 0 && dimensionEntry(raw, at, typed);
+  const raw = view ? { header: {}, layers: view.layers, ltypes: {}, blocks: view.blocks, entities: view.entities } : d.raw, entry = at >= 0 && dimensionEntry(raw, at, typed, drawingUnit());
   if (!entry || entry.reason === 'kind') return false;
   const done = () => { renderCommand(); renderEdit(); paintOverlay(); return true; };
   if (entry.unchanged) return done();       // no step or note, even without a LINE or on a locked layer
@@ -9589,7 +9660,7 @@ function renderTextBar() {
 }
 /** A typed height (mm) → the property, or what is wrong with it. */
 function textHeightTyped(v) {
-  const x = PL.parseMm(v);
+  const x = PL.parseMm(v, drawingUnit());
   if (x == null || !(x > 0) || x > 100000) return 'Height must be a number above 0 (mm)';
   textProp({ h: x });
   return null;
@@ -9645,7 +9716,7 @@ function textTyped(raw) {
   m = /^(?:style|s)\s+(standard|arial|mono)$/.exec(c);
   if (m) { textProp({ font: { standard: 'Standard', arial: 'Arial', mono: 'Mono' }[m[1]] }); return; }
   if (c === 'bold' || c === 'b') { textProp({ bold: !c0.bold }); return; }
-  const inp = DR.parseInput(raw);
+  const inp = DR.parseInput(raw, drawingUnit());
   const p = DR.typedPoint(inp, state.pointLast?.map((v) => v * d.factor));
   if (p) { textOpen(d, p.map((v) => v / d.factor)); return; }
   if (/^(height|justify|style)$/.test(c)) { note('Type it with a value: Height 12, Justify Centre, Style Mono'); return; }
@@ -10056,7 +10127,7 @@ function gripHotsRaw(g) {
 function gripTyped(raw) {
   const g = state.grip, d = g && g.d;
   if (!g || !d) return;
-  const f = d.factor, inp = DR.parseInput(raw);
+  const f = d.factor, inp = DR.parseInput(raw, drawingUnit());
   if (inp.kind === 'enter') { gripCycle(); return; }                // Enter on an empty bar cycles the grip mode, as Space (AutoCAD)
   if (inp.kind === 'word') {
     const word = inp.w, M = GM.MODES[g.mode];
@@ -10084,7 +10155,7 @@ function gripTyped(raw) {
 function gripEvaluate(g, inp, raw) {
   const f = g.d.factor;
   if (g.mode) return gripModeTyped(g, inp, raw);
-  if (g.opt) return gripOptionTyped(g, inp);
+  if (g.opt) return gripOptionTyped(g, inp, raw);
   if (!g.hots && GR.isRectEdge(g.ent, g.id)) {
     if (inp.kind !== 'len') return 'Type the distance to move the side, or drag the edge';
     const to = GR.rectEdgePoint(g.ent, g.id, inp.v / f);
@@ -10107,7 +10178,7 @@ function gripEvaluate(g, inp, raw) {
   return null;
 }
 /** Typed in an option (163a): Radius the radius, Lengthen on a line the distance ADDED, on an arc the end's new angle in degrees (AutoCAD); mm for the first two. */
-function gripOptionTyped(g, inp) {
+function gripOptionTyped(g, inp, raw) {
   const name = g.opts[g.opt], deg = name === 'Lengthen' && g.ent.type === 'ARC';
   if (name === 'Insert vertex' || name === 'Convert to Arc' || name === 'Origin Point') {             // 163b: a point, as the click
     const mm = DR.typedPoint(inp, g.base.map((v) => v * g.d.factor));
@@ -10117,7 +10188,9 @@ function gripOptionTyped(g, inp) {
   }
   const total = name === 'Hatch Angle' || name === 'Hatch Scale';       // 164b1: a typed hatch angle (degrees) or scale is the new total, not a length
   if (inp.kind !== 'len') return `Type ${deg || name === 'Hatch Angle' ? 'an angle in degrees' : name === 'Hatch Scale' ? 'the new scale' : name === 'Radius' ? 'the radius' : 'the length to add'}, or click a point`;
-  const r = GR.typedOption(g.ent, g.id, name, deg || total ? inp.v : inp.v / g.d.factor);
+  const scalar = deg || total ? PL.parseAngle(raw) : inp.v / g.d.factor;
+  if (scalar === null) return 'Type a number without a length mark';
+  const r = GR.typedOption(g.ent, g.id, name, scalar);
   if (!r) return `That would leave nothing of the shape, or change nothing. ${GR.optionPrompt(g.ent, name)}`;
   g.next = r.ent; g.label = r.label; g.to = g.to || g.base;
   return null;
@@ -10127,7 +10200,11 @@ function gripModeTyped(g, inp, raw) {
   const f = g.d.factor, M = GM.MODES[g.mode], baseMm = g.base.map((v) => v * f);
   let v;
   if (inp.kind === 'bad') return `I do not understand "${raw.trim()}". Type ${M === 'ROTATE' ? 'an angle' : M === 'SCALE' ? 'a factor' : 'x,y or @dx,dy'}`;
-  if (inp.kind === 'len' && (M === 'ROTATE' || M === 'SCALE')) v = gripRefVal(g, g.ref && M === 'SCALE' ? inp.v / f : inp.v);       // with Reference a typed scale is the new length (mm)
+  if (inp.kind === 'len' && (M === 'ROTATE' || M === 'SCALE')) {
+    const scalar = g.ref && M === 'SCALE' ? inp.v / f : PL.parseAngle(raw);
+    if (scalar === null) return 'Type a number without a length mark';
+    v = gripRefVal(g, scalar);       // with Reference a typed scale is the new length (mm)
+  }
   else {
     const mm = inp.kind === 'len' ? DR.directDistance(baseMm, g.to && g.to.map((x) => x * f), inp.v) : DR.typedPoint(inp, baseMm);
     if (!mm) return inp.kind === 'len' ? 'Move the pointer the way you want it to go, then type the length' : 'Point coordinates must be finite';

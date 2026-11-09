@@ -165,6 +165,108 @@ try {
   const shotDir = shard ? join(shotRoot, `shard-${shard.index}-of-${shard.count}`) : shotRoot;
   if (shard || process.argv.includes('--shots')) process.env.SHOTS_DIR = shotDir; // Older screenshot steps read the environment directly.
   mkdirSync(shotDir, { recursive: true });
+  await step(`TODO 222a: drawing unit ft / ft-in: typed 3'6", switching keeps the geometry, a DXF in feet, the sidecar`, async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
+    try {
+      const p = await context.newPage(), q = (id) => p.getByTestId(id);
+      p.on('pageerror', (e) => errors.push(String(e)));
+      await p.goto(URL_ + '?autosave=86400000'); await q('count').waitFor({ state: 'attached' });
+      const command = async (text) => {
+        if (!(await q('cmd-input').isVisible())) await q('cmd-echo').click();
+        await q('cmd-input').fill(text); await q('cmd-input').press('Enter');
+      };
+      const pick = async (unit) => { await q('drawing-unit').click(); await p.locator(`[data-unit="${unit}"]`).click(); assert.equal(await q('drawing-unit').textContent(), unit); };
+      const saveFiles = async (withSide = true) => {
+        const files = [], collect = (d) => files.push((async () => ({ name: d.suggestedFilename(), text: readFileSync(await d.path(), 'utf8') }))());
+        p.on('download', collect);
+        const done = p.waitForEvent('download', (d) => d.suggestedFilename().endsWith(withSide ? '.pdunits.json' : '.dxf'));
+        await command('save'); await done;
+        await p.waitForFunction(() => document.querySelector('[data-testid=cmd-prompt]').textContent.startsWith('Saved '));
+        p.off('download', collect); return Promise.all(files);
+      };
+      const drawing = (files) => readDxf(files.find((f) => f.name.endsWith('.dxf')).text);
+      await command('units'); await q('units-dialog').waitFor(); await p.keyboard.press('Escape');
+      assert.equal(await q('drawing-unit').textContent(), 'mm');
+      await pick('ft-in');
+      for (const theme of ['light', 'dark']) {
+        await p.locator('[data-menu=View]').click(); await p.getByRole('menuitemcheckbox', { name: new RegExp('Theme: ' + theme + '\\b') }).click();
+        await q('drawing-unit').click(); await q('units-dialog').waitFor();
+        await p.screenshot({ path: `${shotDir}/todo222a-units-${theme}.png` });
+        await p.keyboard.press('Escape');
+        assert.ok(readFileSync(`${shotDir}/todo222a-units-${theme}.png`).length > 0);
+      }
+      await command('line'); await command('0,0');
+      const canvas = await q('canvas').boundingBox(); await p.mouse.move(canvas.x + canvas.width - 60, canvas.y + 80);
+      await command(`3'6"`); await p.keyboard.press('Escape'); await p.keyboard.press('Escape');
+      const made = await saveFiles(), before = drawing(made), line = before.entities.find((e) => e.type === 'LINE');
+      const ends = lineEnds(line); assert.ok(Math.abs(Math.hypot(ends[2] - ends[0], ends[3] - ends[1]) - 1066.8) < 2e-6);
+      for (const unit of ['ft', 'inch', 'mm', 'ft-in']) {
+        await pick(unit); const after = drawing(await saveFiles(unit !== 'mm'));
+        assert.deepEqual(after.entities, before.entities, 'switching preserves every coordinate');
+      }
+      await command('undo'); const undone = drawing(await saveFiles()); assert.equal(undone.entities.filter((e) => e.type === 'LINE').length, 0);
+      await command('redo'); await command('line'); await command('0,0'); await p.keyboard.press('Escape'); await p.keyboard.press('Escape');
+      assert.deepEqual(drawing(await saveFiles()).entities, before.entities, 'Esc mid-command leaves the source editable');
+
+      const raw = newDoc(2); addEntities(raw, dxfLine(1, 2, 4.5, 2));
+      const file = { name: 'feet.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(raw)) };
+      await q('picker').setInputFiles(file);
+      await p.waitForFunction(() => document.querySelector('[data-testid=drawing-unit]').textContent === 'ft');
+      const feetSaved = drawing(await saveFiles(false)); assert.equal(+feetSaved.header.$INSUNITS, 2); assert.deepEqual(feetSaved.entities.map(lineEnds), raw.entities.map(lineEnds));
+      await pick('ft-in'); const kept = await saveFiles(), side = kept.find((f) => f.name.endsWith('.pdunits.json')), dxf = kept.find((f) => f.name.endsWith('.dxf'));
+      await p.reload(); await q('count').waitFor({ state: 'attached' });
+      await q('picker').setInputFiles([{ name: dxf.name, mimeType: 'application/dxf', buffer: Buffer.from(dxf.text) }, { name: side.name, mimeType: 'application/json', buffer: Buffer.from(side.text) }]);
+      await p.waitForFunction(() => document.querySelector('[data-testid=drawing-unit]').textContent === 'ft-in');
+      assert.deepEqual(drawing(await saveFiles()).entities.map(lineEnds), raw.entities.map(lineEnds), 'sidecar reopen preserves feet coordinates');
+      await p.reload(); await q('count').waitFor({ state: 'attached' });
+      await p.evaluate(({ dxf, side }) => {
+        const dt = new DataTransfer(); for (const f of [dxf, side]) dt.items.add(new File([f.text], f.name));
+        document.querySelector('[data-testid=canvas]').dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt }));
+      }, { dxf, side });
+      await p.waitForFunction(() => document.querySelector('[data-testid=drawing-unit]').textContent === 'ft-in');
+      await command('newlayout'); await pick('ft');
+      await p.locator('.dtab').filter({ hasText: dxf.name }).first().click(); assert.equal(await q('drawing-unit').textContent(), 'ft-in');
+      await command('compare'); await pick('inch');
+      await p.locator('.dtab').filter({ hasText: dxf.name }).first().click(); assert.equal(await q('drawing-unit').textContent(), 'inch', 'Compare changes its selected open source drawing');
+      const sheet = new Page(100, 80); sheet.rect(10, 10, 40, 30); sheet.stroke();
+      await q('picker').setInputFiles({ name: 'unit-sheet.pdf', mimeType: 'application/pdf', buffer: Buffer.from(writePdf([sheet, sheet])) });
+      await p.waitForFunction(() => document.querySelector('.dtab.on').textContent.includes('unit-sheet'));
+      await pick('ft-in');
+      await p.locator('[data-sheet="2"]').click();
+      await p.waitForFunction(() => document.querySelector('[data-testid=sheet-chip]').textContent.includes('Sheet 2'));
+      assert.equal(await q('drawing-unit').textContent(), 'ft-in', 'PDF sheets share their drawing unit');
+      const pdfSide = (await saveFiles()).find((f) => f.name === 'unit-sheet.pdunits.json'); assert.ok(pdfSide, 'the PDF setting is saved beside its source PDF');
+      await p.reload(); await q('count').waitFor({ state: 'attached' });
+      await q('picker').setInputFiles([{ name: 'unit-sheet.pdf', mimeType: 'application/pdf', buffer: Buffer.from(writePdf([sheet, sheet])) }, { name: pdfSide.name, mimeType: 'application/json', buffer: Buffer.from(pdfSide.text) }]);
+      await p.waitForFunction(() => document.querySelector('[data-testid=drawing-unit]').textContent === 'ft-in');
+      const installDisk = async (files, open = 'E:/units/native-feet.dxf') => p.evaluate(({ files, open }) => {
+        window.unitFiles = files; window.unitOpen = open; window.unitRemoved = [];
+        window.__TAURI__ = {
+          core: { invoke: async (name) => { if (name !== 'grant_balloon_sidecar') throw new Error(name); } },
+          dialog: { open: async () => window.unitOpen, save: async () => 'E:/units/native-feet-edited.dxf' },
+          fs: {
+            readFile: async (path) => new TextEncoder().encode(window.unitFiles[path]),
+            readTextFile: async (path) => window.unitFiles[path], exists: async (path) => Object.hasOwn(window.unitFiles, path),
+            writeTextFile: async (path, text) => { window.unitFiles[path] = text; },
+            remove: async (path) => { delete window.unitFiles[path]; window.unitRemoved.push(path); },
+          },
+        };
+      }, { files, open });
+      await p.reload(); await q('count').waitFor({ state: 'attached' });
+      await installDisk({ 'E:/units/native-feet.dxf': writeDxf(raw) });
+      await command('open'); await p.waitForFunction(() => document.querySelector('[data-testid=drawing-unit]').textContent === 'ft');
+      await pick('ft-in'); await command('save');
+      const nativeSide = 'E:/units/native-feet-edited.pdunits.json';
+      await p.waitForFunction((path) => !!window.unitFiles[path], nativeSide);
+      const native = readDxf(await p.evaluate(() => window.unitFiles['E:/units/native-feet-edited.dxf']));
+      assert.equal(+native.header.$INSUNITS, 2); assert.deepEqual(native.entities.map(lineEnds), raw.entities.map(lineEnds));
+      await pick('ft'); await command('save'); await p.waitForFunction((path) => window.unitRemoved.includes(path), nativeSide);
+      await pick('ft-in'); await command('save'); await p.waitForFunction((path) => !!window.unitFiles[path], nativeSide);
+      const disk = await p.evaluate(() => window.unitFiles);
+      await p.reload(); await q('count').waitFor({ state: 'attached' }); await installDisk(disk, 'E:/units/native-feet-edited.dxf');
+      await command('open'); await p.waitForFunction(() => document.querySelector('[data-testid=drawing-unit]').textContent === 'ft-in');
+    } finally { await context.close(); }
+  });
   await step('TODO 73: hover tooltips teach aliases and keys; F3 / F7 / F8 flip chips, F9 Wireframe and F12 Dynamic input; fields keep their keys', async () => {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const p = await context.newPage(), q = (id) => p.getByTestId(id);

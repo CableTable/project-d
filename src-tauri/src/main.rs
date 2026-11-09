@@ -27,7 +27,9 @@ fn grant_balloon_sidecar(app: tauri::AppHandle, path: std::path::PathBuf) -> Res
         return Err("The source file is outside the allowed scope".into());
     }
     let sidecar = balloons::sidecar_path(&path).ok_or("The source has no file name")?;
-    scope.allow_file(sidecar).map_err(|error| error.to_string())
+    let units = path.with_extension("pdunits.json");
+    scope.allow_file(sidecar).map_err(|error| error.to_string())?;
+    scope.allow_file(units).map_err(|error| error.to_string())
 }
 
 #[tauri::command]

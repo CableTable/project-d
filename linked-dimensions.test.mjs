@@ -528,7 +528,8 @@ test('TODO 76a: a line touching the moved end stays and the driven dimension is 
 test('TODO 76a: typedLength reads one number', () => {
   assert.equal(typedLength('150'), 150); assert.equal(typedLength(' 150,5 '), 150.5); assert.equal(typedLength('.5'), 0.5);
   assert.equal(typedLength('-5'), -5); assert.equal(typedLength('7.5"', 'inch'), 7.5);
-  for (const t of ['7.5"', '120 TYP', '<> TYP', '1.2.3', '', 'abc', '1e3']) assert.equal(typedLength(t), null, t);
+  assert.equal(typedLength('7.5"'), 190.5);
+  for (const t of ['120 TYP', '<> TYP', '1.2.3', '', 'abc', '1e3']) assert.equal(typedLength(t), null, t);
 });
 
 test('TODO 76b: h / v drive only the measured coordinate, keeping direction and the a end', () => {

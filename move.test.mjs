@@ -29,7 +29,8 @@ test('Move: absolute base, relative target, signed decimals and direct distance 
   assert.deepEqual(movePoint('25', [10, 20], [13, 24]), [25, 40]);
   assert.deepEqual(movePoint('5', [10, 20], [0, 20]), [5, 20]);
   assert.deepEqual(movePoint('5', [10, 20], [10, 0]), [10, 15]);
-  for (const text of ['', '1,', ',2', '1,2,3', 'NaN,2', 'Infinity', '12mm', '1foo']) {
+  assert.deepEqual(movePoint('12mm', [0, 0], [12, 0]), [12, 0]);
+  for (const text of ['', '1,', ',2', '1,2,3', 'NaN,2', 'Infinity', '1foo']) {
     assert.equal(movePoint(text), null, text);
     assert.equal(movePoint(text, [0, 0], [3, 4]), null, text);
   }

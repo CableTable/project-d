@@ -3,6 +3,7 @@ import { flatten, pickIndex, mapply, mscale } from './drawing.js';
 import { dimOfEntity, buildDim, replaceDimension, lineOf, dimLabel, DIM_LAYER } from './edit.js';
 import { overrideText, measuredText } from './dimension-text.js';
 import { dragGrip, gripsOf } from './grips.js';
+import { parse as parseLength } from './units.js';
 
 const DEG = Math.PI / 180;
 /** Per entity (its index in `entities`): its vertices, arcs ({ c, r }) and straight pieces ([x1, y1, x2, y2]), in drawing order. */
@@ -154,10 +155,10 @@ export function followDimensions(raw, next, factor = 1) {
   return result;
 }
 
-/** TODO 76a: a typed length ("150", "150,5", "7.5\"" for an inch dimension) → the number, or null when the text is anything else. A sign is read, so "-5" can be refused. */
-export function typedLength(text, units = 'mm') {
-  const m = /^(-?(?:\d+[.,]?\d*|[.,]\d+))(")?$/.exec(String(text).trim());
-  return !m || (m[2] && units !== 'inch') ? null : parseFloat(m[1].replace(',', '.'));
+/** A typed drawing-unit length → the dimension style's number, or null. Marks work in every style; signs let the caller refuse negative lengths. */
+export function typedLength(text, units = 'mm', drawingUnit = units) {
+  const mm = parseLength(text, drawingUnit);
+  return mm === null ? null : mm / (units === 'inch' ? 25.4 : units === 'ft' || units === 'ft-in' ? 304.8 : 1);
 }
 
 /** The one LINE whose two ends are the two points of an aligned or h / v dimension at entity `e` (our own PD_DIM only; none, or stacked duplicates → null).
@@ -211,8 +212,8 @@ function dimensionLine(raw, e) {
 }
 
 /** Plain number entry: existing overrides stay text; the shown value is no change even without a LINE. */
-export function dimensionEntry(raw, e, typed) {
-  const dim = dimOfEntity(raw, e), n = dim && !overrideText(dim.params.override) ? typedLength(typed, dim.params.units) : null;
+export function dimensionEntry(raw, e, typed, drawingUnit) {
+  const dim = dimOfEntity(raw, e), n = dim && !overrideText(dim.params.override) ? typedLength(typed, dim.params.units, drawingUnit) : null;
   if (n == null) return null;
   const link = dimensionLine(raw, e);
   if (link.reason === 'kind') return link;

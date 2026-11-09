@@ -1,5 +1,6 @@
 // Cursor typing stays separate from the tools; point parsing and geometry stay shared.
 import { angleOf, dist, parseInput, typedPoint } from './draw.js';
+import { parse as parseLength } from './units.js';
 
 export const createInput = (first, mode = first ? 'xy' : 'polar') => ({ mode, prefix: '', values: ['', ''], locked: [false, false], active: 0 });
 export const hasTyped = (s) => !!(s.prefix || s.values.some(Boolean));
@@ -47,15 +48,15 @@ export function modifyPoints(m, previous) {
   if (kind === 'array' && stage === 'center') return [];
   return null;
 }
-export function toolPointInput(s, T) {
+export function toolPointInput(s, T, drawingUnit = 'mm') {
   const last = anchorOf(T);
-  if (isSingle(s.mode)) return valueInput(s, last, T.hover || last, s.mode === 'factor' ? T.f || 1 : 1, T.dia);
-  const result = pointInput(s, last, T.hover || last || [0, 0], T.kind === 'dimension' ? 'Distance' : 'Length');
-  if (s.mode === 'polar' && ['ellipse', 'arc'].includes(T.kind) && s.values[0] && !(+s.values[0] > 0) && !result.errors[0]) {   // no axis or chord of 0 or less
+  if (isSingle(s.mode)) return valueInput(s, last, T.hover || last, s.mode === 'factor' ? T.f || 1 : 1, T.dia, drawingUnit);
+  const result = pointInput(s, last, T.hover || last || [0, 0], T.kind === 'dimension' ? 'Distance' : 'Length', drawingUnit);
+  if (s.mode === 'polar' && ['ellipse', 'arc'].includes(T.kind) && s.values[0] && !(parseLength(s.values[0], drawingUnit) > 0) && !result.errors[0]) {   // no axis or chord of 0 or less
     result.errors[0] = result.why = 'Length must be more than 0'; result.point = null;
   }
   // Rectangle's command-bar grammar takes sizes even when cursor entry used absolute X / Y.
-  if (rectangle(T) && last && result.point) result.text = '@' + result.point.map((v, i) => (v - last[i]).toLocaleString('en-US', { useGrouping: false, maximumSignificantDigits: 21 })).join(',');
+  if (rectangle(T) && last && result.point) result.text = '@' + result.point.map((v, i) => (v - last[i]).toLocaleString('en-US', { useGrouping: false, maximumSignificantDigits: 21 }) + (drawingUnit === 'mm' ? '' : 'mm')).join(',');
   return result;
 }
 
@@ -65,7 +66,7 @@ export const escapeInput = (s, first) => hasTyped(s) ? createInput(first, s.mode
 /** A routed key gives a new state; null leaves the key to the command bar. */
 export function inputKey(s, key, first) {
   if (key === 'Escape') return escapeInput(s, first);
-  if (!/^[0-9.\-,@#<]$/.test(key) && !['Tab', 'Backspace'].includes(key)) return null;
+  if (!/^[0-9.\-,@#<'"]$/.test(key) && !['Tab', 'Backspace'].includes(key)) return null;
   if (isSingle(s.mode) && /^[,@#<]$/.test(key)) return null;                   // one number: x,y and polar text stay in the command box
   const next = { ...s, values: [...s.values], locked: [...s.locked] }, i = s.active;
   if (key === 'Tab') {
@@ -89,36 +90,38 @@ export function inputKey(s, key, first) {
 }
 
 /** A typed field that is not a plain finite number. */
-export const notFinite = (v) => !!v && (parseInput(v).kind !== 'len' || !Number.isFinite(+v));
+export const notFinite = (v, unit = null) => !!v && (unit ? parseLength(v, unit) === null : parseInput(v).kind !== 'len' || !Number.isFinite(+v));
 
 /** Untyped fields use full precision mouse values, never the rounded display text. */
-export function pointInput(s, last, mouse, lengthLabel = 'Length') {
+export function pointInput(s, last, mouse, lengthLabel = 'Length', unit = 'mm') {
   const origin = last || [0, 0], relative = s.prefix === '@' || (!!last && s.prefix !== '#');
   const live = s.mode === 'size' ? mouse.map((v, i) => Math.abs(v - origin[i]))
     : s.mode === 'polar' ? [dist(origin, mouse), angleOf(origin, mouse)]
     : mouse.map((v, i) => v - (relative ? origin[i] : 0));
   const labels = s.mode === 'size' ? ['Width', 'Height'] : s.mode === 'polar' ? [lengthLabel, 'Angle'] : relative ? ['Δx', 'Δy'] : ['X', 'Y'];
-  const errors = s.values.map((v, i) => notFinite(v) ? `${labels[i]} must be a finite number`
-    : s.mode === 'size' && +(v || live[i]) === 0 ? `${labels[i]} must not be zero` : '');
+  const errors = s.values.map((v, i) => notFinite(v, s.mode === 'polar' && i === 1 ? null : unit) ? `${labels[i]} must be a finite number`
+    : s.mode === 'size' && (v ? parseLength(v, unit) : live[i]) === 0 ? `${labels[i]} must not be zero` : '');
   // The typed-point grammar has no exponent notation (tiny mouse deltas can have it).
   const values = s.values.map((v, i) => {
-    const value = s.mode === 'size' ? +(v || live[i]) * (mouse[i] < origin[i] ? -1 : 1) : v || live[i];
+    const typed = v ? s.mode === 'polar' && i === 1 ? +v : parseLength(v, unit) : live[i];
+    const value = s.mode === 'size' ? typed * (mouse[i] < origin[i] ? -1 : 1) : typed;
     return typeof value === 'number' ? value.toLocaleString('en-US', { useGrouping: false, maximumSignificantDigits: 21 }) : value;
   });
-  const text = (relative ? '@' : '') + values.join(s.mode === 'polar' ? '<' : ',');
+  const text = (relative ? '@' : '') + values.map((v, i) => v + (unit !== 'mm' && !(s.mode === 'polar' && i === 1) ? 'mm' : '')).join(s.mode === 'polar' ? '<' : ',');
   const point = errors.some(Boolean) ? null : typedPoint(parseInput(text), last);
   return { text, point, live, labels, errors, why: errors.find(Boolean) || (point ? '' : 'Point coordinates must be finite') };
 }
 
 const ONE = { angle: 'Angle', factor: 'Factor', radius: 'Radius', length: 'Length', distance: 'Distance' };
 /** The one number of Rotate (degrees from the pivot), Scale (a factor), Circle (radius, or diameter after D) or an ellipse's last half-axis (mm); untyped, it is the mouse's value. `unit` is mm per drawing unit: a factor is a ratio of drawing-unit distances. A length also gives `point`, along the mouse's way, so the tool's own preview follows it. */
-function valueInput(s, base, mouse, unit, dia) {
+function valueInput(s, base, mouse, unit, dia, drawingUnit) {
   const mode = s.mode, label = mode === 'radius' && dia ? 'Diameter' : ONE[mode], typed = s.values[0];
   const live = [mode === 'angle' ? angleOf(base, mouse) : dist(base, mouse) / unit];
-  const bad = notFinite(typed) ? `${label} must be a finite number` : '';
-  const value = typed ? +typed : live[0];
+  const length = !['angle', 'factor'].includes(mode);
+  const bad = notFinite(typed, length ? drawingUnit : null) ? `${label} must be a finite number` : '';
+  const value = typed ? length ? parseLength(typed, drawingUnit) : +typed : live[0];
   const error = bad || (!['angle', 'distance'].includes(mode) && !(value > 0) && (typed || mode === 'factor') ? `${label} must be more than 0` : '');
   const point = (mode === 'radius' || mode === 'length') && !error ? alongTo(base, mouse, value) : null;
-  return { value: error ? null : value, point, live, labels: [label], errors: [error, ''], text: String(value), why: error };
+  return { value: error ? null : value, point, live, labels: [label], errors: [error, ''], text: String(value) + (length && drawingUnit !== 'mm' ? 'mm' : ''), why: error };
 }
 const alongTo = (a, b, v) => { const d = dist(a, b), u = d > 1e-9 ? [(b[0] - a[0]) / d, (b[1] - a[1]) / d] : [1, 0]; return [a[0] + u[0] * v, a[1] + u[1] * v]; };

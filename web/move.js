@@ -10,8 +10,8 @@ export function movePrompt(kind, stage, mode, displacement = [0, 0]) {
 }
 
 /** Bare target pairs stay displacement from base; explicit relative points use the last pick. */
-export function movePoint(text, base = null, cursor = null, last = base) {
-  const p = parseInput(text);
+export function movePoint(text, base = null, cursor = null, last = base, unit = 'mm') {
+  const p = parseInput(text, unit);
   let q = null;
   if (p.kind === 'xy' && !p.rel && !p.abs && base) q = typedPoint({ ...p, rel: true }, base);
   else if (p.kind === 'len' && p.v > 0) q = directDistance(base, cursor, p.v);
