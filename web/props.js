@@ -70,6 +70,17 @@ export const withColour = (ent, key) => {
 export const withLineType = (ent, key) => ({ ...ent, lt: key === 'BYLAYER' ? null : key });
 
 export const WIDTHS = ['ByLayer', 'Hairline', 0.10, 0.25, 0.50, 1.00, 2.00];
+/** Valid typed widths, newest first; presets have their own entries. */
+export function recentWidths(list, value) {
+  return [...new Set([value, ...(Array.isArray(list) ? list : [])].filter((w) => typeof w === 'number' && Number.isFinite(w) && w > 0 && w <= 327.67 && w !== .05 && !WIDTHS.includes(w)))].slice(0, 5);
+}
+/** A null option is a separator; keep an unlisted current value before Custom…. */
+export function widthOptions(current, recent) {
+  const options = WIDTHS.map((w) => [String(w), typeof w === 'number' ? w.toFixed(2) + ' mm' : w]);
+  if (recent.length) options.push([null, ''], ...recent.map((w) => [String(w), w + ' mm']));
+  if (current !== '' && !options.some(([value]) => value === String(current))) options.push([String(current), typeof current === 'number' ? current + ' mm' : current]);
+  return [...options, ['custom', 'Custom…']];
+}
 /** Outline setting in mm; null for a polyline with varying vertex widths. */
 export function widthKey(ent, factor = 1) {
   if (ent.type === 'LWPOLYLINE' || ent.type === 'POLYLINE') {

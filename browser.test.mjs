@@ -13820,6 +13820,83 @@ try {
     await page.keyboard.press('Control+1'); await closeTabs(/./);
   });
 
+  await step('TODO 213: ribbon Custom… width, recent widths', async () => {
+    await closeTabs(/./);
+    await page.evaluate(() => localStorage.removeItem('pd-recent-widths'));
+    await page.reload(); await t('count').waitFor({ state: 'attached' });
+    await propsOpen(); await propsOnNow(); await click(70, 30); await frames();
+    await page.locator('[data-ribbon-tab=Home]').click();
+    const width = page.getByLabel('Ribbon line width', { exact: true });
+    const box = page.getByRole('dialog', { name: 'Custom line width', exact: true });
+    const input = box.getByRole('textbox');
+    const recent = () => page.evaluate(() => JSON.parse(localStorage.getItem('pd-recent-widths')));
+    const typeWidth = async (value) => {
+      await width.selectOption('custom'); await input.fill(value); await input.press('Enter');
+      await box.waitFor({ state: 'detached' });
+    };
+    assert.equal(await width.locator('option').last().textContent(), 'Custom…');
+    await width.selectOption('custom'); assert.equal(await input.inputValue(), '', 'ByLayer has no numeric prefill');
+    await input.press('Escape'); assert.equal(await width.inputValue(), 'ByLayer');
+    await width.selectOption('0.5');
+    const before = (await histLabels()).length;
+    await width.selectOption('custom'); assert.equal(await input.inputValue(), '0.5');
+    const anchor = await width.boundingBox(), pop = await box.boundingBox();
+    assert.ok(Math.abs(pop.y - anchor.y - anchor.height) < 2, 'popover sits under the width list');
+    await input.fill('0.37'); await input.press('Enter');
+    assert.equal((await savedDoc()).entities[0].lw, 37);
+    assert.equal(await width.locator('option:checked').textContent(), '0.37 mm');
+    assert.equal((await histLabels()).length, before + 1, 'one undo for Custom');
+    await page.keyboard.press('Control+z');
+    assert.equal((await savedDoc()).entities[0].lw, 50);
+    await click(70, 30); await frames();
+    await width.selectOption('0.37');
+    assert.equal((await savedDoc()).entities[0].lw, 37, 'recent width applies like a preset');
+    const saved = await savedDoc();
+    await page.reload(); await t('count').waitFor({ state: 'attached' });
+    await openGrips(writeDxf(saved), 'recent-width.dxf'); await click(70, 30); await frames();
+    await page.locator('[data-ribbon-tab=Home]').click();
+    assert.deepEqual(await recent(), [.37], 'reload remembers custom widths');
+    assert.equal(await width.locator('option[value="0.37"]').count(), 1);
+    assert.equal(await width.locator('hr').count(), 1, 'recent list follows a separator');
+    const history = await histLabels();
+    await typeWidth('328');
+    assert.match(await prompt(), /Outline width: type a positive number up to 327\.67 mm/);
+    assert.equal((await savedDoc()).entities[0].lw, 37);
+    assert.deepEqual(await histLabels(), history);
+    assert.deepEqual(await recent(), [.37], 'invalid width adds nothing');
+    await width.selectOption('custom'); assert.equal(await input.inputValue(), '0.37');
+    await input.fill('0.91'); await input.press('Escape'); await box.waitFor({ state: 'detached' });
+    assert.equal(await width.inputValue(), '0.37');
+    assert.equal((await savedDoc()).entities[0].lw, 37);
+    await width.selectOption('custom'); await input.fill('0.92');
+    await page.locator('[data-ribbon-tab=Home]').click(); await box.waitFor({ state: 'detached' });
+    assert.equal(await width.inputValue(), '0.37');
+    assert.deepEqual(await recent(), [.37], 'Escape and click away add nothing');
+    await click(190, 100, { shift: true }); await frames();
+    assert.equal(await width.locator('option:checked').textContent(), '*varies*');
+    await width.selectOption('custom'); assert.equal(await input.inputValue(), '', 'mixed widths have no prefill');
+    await input.press('Escape'); await page.keyboard.press('Escape');
+    await click(80, 30); await frames();
+    for (const value of ['0.31', '0.32', '0.33', '0.34', '0.35', '0.36']) await typeWidth(value);
+    assert.deepEqual(await recent(), [.36, .35, .34, .33, .32], 'six custom widths keep the newest five');
+    assert.deepEqual(await width.locator('hr ~ option').allTextContents(), ['0.36 mm', '0.35 mm', '0.34 mm', '0.33 mm', '0.32 mm', 'Custom…']);
+    await typeWidth('0.34'); assert.deepEqual(await recent(), [.34, .36, .35, .33, .32], 'typing a duplicate moves it first');
+    await typeWidth('0.5'); assert.deepEqual(await recent(), [.34, .36, .35, .33, .32], 'typed presets stay out');
+    await propsOnNow();
+    await t('prop-width-custom').fill('0.89'); await t('prop-width-custom').press('Enter');
+    assert.deepEqual(await recent(), [.89, .34, .36, .35, .33], 'Properties shares the list');
+    assert.equal(await width.locator('option:checked').textContent(), '0.89 mm');
+    await t('prop-width-custom').fill('328'); await t('prop-width-custom').press('Enter');
+    assert.deepEqual(await recent(), [.89, .34, .36, .35, .33], 'invalid Properties input adds nothing');
+    for (const theme of ['light', 'dark']) {
+      await menuItem('View', 'Theme: ' + theme); await width.selectOption('custom');
+      await page.screenshot({ path: `${shotDir}/todo213-custom-width-${theme}.png` });
+      assert.ok(readFileSync(`${shotDir}/todo213-custom-width-${theme}.png`).length > 1000);
+      await input.press('Escape');
+    }
+    await menuItem('View', 'Theme: light'); await closeTabs(/./);
+  });
+
   const cleanupDrawing = () => {
     const d = newDoc(); addLayer(d, 'Laser CUT'); addLayer(d, 'Artwork');
     addEntities(d, dxfLine(20, 20, 50, 20, { layer: 'Laser CUT', lw: 5 }),

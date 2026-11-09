@@ -364,7 +364,13 @@ const clearInvalid = (input) => { input.addEventListener('focus', () => flagInva
 const MAX_SHEET = 100000;              // mm: a sheet side above this is refused (1e308 made invalid SVG)
 function numField(label, key, opts = {}) {
   const caption = key === 'sheetW' ? 'W mm' : key === 'sheetH' ? 'H mm' : label;
-  const input = h('input', { class: 'fld', type: 'text', inputmode: 'decimal', value: String(state[key]), 'data-key': key });
+  const input = h('input', { class: 'fld', type: 'text', inputmode: 'decimal', value: String(opts.value ?? state[key]), 'data-key': key });
+  if (opts.onEnter) {
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); opts.onEnter(input.value); }
+    });
+    return h('label', { class: 'field' }, caption, input);
+  }
   // a whole-number field (Rows, Columns) says why a typed value is refused instead of snapping back silently
   const refusal = () => {
     const raw = input.value.trim(), v = Number(raw);
@@ -769,7 +775,7 @@ function ribbonContents(kind) {
   groups.push(group('Layers', stack(ribbonField('Layer', ui.ribbonLayer)), btn('+ Add layer', '<path d="M12 3l9 5-9 5-9-5zM3 13l9 5 9-5"/>', addLayerNow, { small: true, enabled: () => !!curDoc() && !curLay() && !cmpDoc() })));
   if (kind === 'drawing') {
     ui.ribbonColour = h('select', { 'aria-label': 'Ribbon colour', onchange: (e) => e.target.value === 'custom' ? pickPropColour() : propSet('colour', e.target.value) });
-    ui.ribbonWidth = h('select', { 'aria-label': 'Ribbon line width', onchange: (e) => propWidthSet(['ByLayer', 'Hairline'].includes(e.target.value) ? e.target.value : PL.parseMm(e.target.value)) });
+    ui.ribbonWidth = h('select', { 'aria-label': 'Ribbon line width', onchange: (e) => e.target.value === 'custom' ? ribbonCustomWidth() : propWidthSet(['ByLayer', 'Hairline'].includes(e.target.value) ? e.target.value : PL.parseMm(e.target.value)) });
     ui.ribbonLt = h('select', { 'aria-label': 'Ribbon line style', onchange: (e) => propSet('lt', e.target.value) });
     const colourField = ribbonField('Colour', ui.ribbonColour);
     ui.ribbonSwatch = h('button', { class: 'ribbon-swatch', type: 'button', 'aria-label': 'Pick ribbon colour', onclick: pickPropColour });
@@ -826,12 +832,12 @@ function renderRibbon() {
   }
   if (ui.ribbonColour) {
     const ents = editable() ? propEnts(d).map((x) => x[1]) : [], all = editable() ? propEnts(d, true).map((x) => x[1]) : [], sm = PR.summarize(ents);
-    const values = all.map((e) => PR.widthKey(e, d.factor)), width = values.length && values.every((w) => w === values[0]) ? values[0] : '';
+    const values = all.map((e) => PR.widthKey(e, d.factor)), width = values.length && values.every((w) => w === values[0]) ? values[0] ?? '' : '';
     const colour = ents.length ? sm.colour : currentColour;
     ui.ribbonSwatch.style.background = colour == null ? 'var(--muted)' : colourCss(colour === 'bylayer' ? (ents.length ? PR.effectiveColour(ents[0], layerMap(d)) : editable() ? PR.effectiveColour({ layer: curLayerName(d) }, layerMap(d)) : 'aci:7') : colour);
     for (const [sel, options, value] of [[ui.ribbonColour, PR.colourOptions(colour), colour],
       [ui.ribbonLt, PR.LINETYPES.map((c) => [c.key, c.label]), sm.lt],
-      [ui.ribbonWidth, PR.WIDTHS.map((w) => [String(w), typeof w === 'number' ? w.toFixed(2) + ' mm' : w]), String(width)]]) {
+      [ui.ribbonWidth, PR.widthOptions(width, recentWidths), String(width)]]) {
       if (value && !options.some(([v]) => v === value)) options.push([value, value]);
       setSelect(sel, [['', ents.length || all.length ? '*varies*' : 'Select objects'], ...options], value || '');
       sel.disabled = sel === ui.ribbonColour ? false : sel === ui.ribbonWidth ? !all.length : !ents.length;
@@ -3202,6 +3208,7 @@ function askName({ title, label = 'Name', value, ok, rows = [], validate }) {
 function popMenu(x, y, items) {
   hideMenu();
   const m = h('div', { class: 'pop ctxmenu', role: 'menu', 'data-testid': 'ctx-menu' }, items.map((it) => {
+    if (it instanceof HTMLElement) return it;
     if (it === '-') return h('div', { class: 'msep', role: 'separator' });
     const [text, fn, hint, enabled, svg] = it;                        // svg: an icon on a 20 px box
     const b = h('button', { class: 'mi', type: 'button', role: 'menuitem', disabled: enabled === false }, svg ? h('span', { class: 'mi-l' }, icon(svg, { size: 16, box: 20, width: 1.5, cap: 'round', join: 'round' }), text) : text, hint ? h('span', { class: 'hint', 'aria-hidden': 'true' }, hint) : null);
@@ -3217,6 +3224,7 @@ function popMenu(x, y, items) {
   document.addEventListener('keydown', esc, true);
   ui.ctx = m;
   ui.ctxOff = () => { document.removeEventListener('keydown', esc, true); document.removeEventListener('pointerdown', away, true); };
+  return m;
 }
 function hideMenu() {
   if (ui.ctx) { ui.ctx.remove(); ui.ctx = null; }
@@ -10593,7 +10601,7 @@ function buildPropsSection() {
     else if (e.key === 'Escape') { ui.propWidthInput.dataset.cancel = '1'; ui.propWidthInput.blur(); }
   });
   ui.propWidthInput.addEventListener('change', () => {
-    if (!ui.propWidthInput.dataset.cancel) propWidthSet(PL.parseMm(ui.propWidthInput.value));
+    if (!ui.propWidthInput.dataset.cancel) propWidthSet(PL.parseMm(ui.propWidthInput.value), true);
   });
   ui.propWidthInput.addEventListener('blur', () => { delete ui.propWidthInput.dataset.cancel; renderEdit(); });
   ui.propWidthPresets = h('div', { class: 'widthpresets', role: 'group', 'aria-label': 'Outline width presets' },
@@ -10618,7 +10626,7 @@ function buildPropsSection() {
 
 function setSelect(sel, options, current) {
   const sig = options.map((o) => o[0] + '\n' + o[1]).join('\n\n');
-  if (sel.dataset.sig !== sig) { sel.replaceChildren(...options.map(([v, text]) => h('option', { value: v }, text))); sel.dataset.sig = sig; }
+  if (sel.dataset.sig !== sig) { sel.replaceChildren(...options.map(([v, text]) => v === null ? h('hr') : h('option', { value: v }, text))); sel.dataset.sig = sig; }
   sel.value = current;
 }
 function renderPropsPanel(d) {
@@ -10702,7 +10710,18 @@ function propCommit(d, label, fn, all = false) {
   setSel(d, keep);
   return repl.size;
 }
-function propWidthSet(value) {
+let recentWidths = [];
+function ribbonCustomWidth() {
+  renderRibbon();                       // Custom… is an action; the list keeps showing the selection's width.
+  const value = ui.ribbonWidth.value, r = ui.ribbonWidth.getBoundingClientRect();
+  const field = numField('Line width (mm)', 'ribbon-width-custom', { value: Number.isFinite(PL.parseMm(value)) ? value : '', onEnter: (raw) => {
+    hideMenu(); propWidthSet(PL.parseMm(raw), true); ui.ribbonWidth.focus();
+  } });
+  const menu = popMenu(r.left, r.bottom, [field]);
+  menu.setAttribute('role', 'dialog'); menu.setAttribute('aria-label', 'Custom line width');
+  const input = field.querySelector('input'); input.focus(); input.select();
+}
+function propWidthSet(value, custom = false) {
   const d = propDoc();
   if (!d) return;
   const all = propEnts(d, true);
@@ -10716,6 +10735,11 @@ function propWidthSet(value) {
     return PR.widthKey(next, d.factor) === PR.widthKey(ent, d.factor) ? null : next;
   }, true);
   if (n) note(`Outline width ${label} on ${n} shape${n === 1 ? '' : 's'}. Ctrl+Z takes it back`);
+  if (custom) {
+    recentWidths = PR.recentWidths(recentWidths, value);
+    try { localStorage.setItem('pd-recent-widths', JSON.stringify(recentWidths)); }
+    catch { note('Could not remember recent widths; they still apply until the app closes'); }
+  }
   renderEdit();
 }
 function propSet(what, value) {
@@ -11790,6 +11814,7 @@ async function init() {
   try { state.shapingKeepOriginals = (await shapingStore.all()).some((r) => r.id === 'keepOriginals' && r.on === true); } catch { /* storage may be blocked */ }
   const app = document.getElementById('app');
   try { strip.recent = recentColours(JSON.parse(localStorage.getItem('pd-recent-colours'))); } catch { /* storage may be blocked */ }
+  try { recentWidths = PR.recentWidths(JSON.parse(localStorage.getItem('pd-recent-widths'))); } catch { /* storage may be blocked */ }
   try { strip.saved = await swatches.all(); } catch { /* storage may be blocked */ }
   state.contourCfg = loadContourCfg();
   state.text.cfg = loadTextCfg();
