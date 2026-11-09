@@ -308,6 +308,7 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 **POLYLINE**: The older DXF polyline form with separate VERTEX records, distinct from LWPOLYLINE and sometimes carrying mesh data. Where: `web/drawing.js`, `web/dxf-write.js`.
 
 **Snap**: Places a picked point on supported drawing features such as endpoints, midpoints, centres or the nearest point on a line. Where: `DECISIONS.md`, Snap. Avoid: Grid fit.
+**Snap preview**: The chip beside SNAP that shows the nearest ticked snap marker and its type name while hovering in Select mode, with SNAP on and no drag. Off by default and remembered on this PC; clicks and selection stay unchanged. Where: `DECISIONS.md`, TODO 212.
 **Nearest snap**: The lowest-priority snap: the closest point on a line, arc, circle, ellipse, polyline or spline under the pointer, drawn as an hourglass; ends, middles and centres win when they are in reach. Where: `DECISIONS.md`, Nearest snap. Avoid: On-line snap.
 
 **Snap types**: The tick list beside SNAP, also opened by `OSNAP` / `OS`: end, middle, centre (AutoCAD Center), geometric centre, point (AutoCAD Node), quadrant, intersection, extension, insertion, perpendicular, tangent, nearest, apparent intersection and parallel. All default on; ticks are remembered on this PC, outside drawing files. Where: `TODO.md`, items 68 and 155k; `web/snap.js`.

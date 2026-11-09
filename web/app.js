@@ -241,6 +241,7 @@ const state = {
   hidden: { parts: false, marks: false, dims: false },
   docs: [], doc: 0,
   snap: true,                      // the SNAP toggle in the status bar (kept for the session)
+  snapPreview: false,              // Select hover markers, remembered on this PC
   grid: false,
   snapTypes: snapTypes(),          // per-type ticks, remembered on this PC
   ortho: false,                    // the ORTHO toggle: a sticky Shift (picks kept straight along X or Y from the first point)
@@ -4202,6 +4203,7 @@ function buildSnapTypes() {
 function buildStatus() {
   ui.coords = h('span', { class: 'mono coords', 'data-testid': 'coords', style: 'white-space:pre' }, 'X 0.00   Y 0.00 mm');
   loadTrack();
+  try { state.snapPreview = localStorage.getItem('pd-snap-preview') === 'true'; } catch { /* defaults if storage is blocked */ }
   const TITLES = { SNAP: 'Snap (F3): on/off. Right-click: snap types', GRID: 'Grid (F7): show/hide the drawing grid', ORTHO: 'Ortho (F8): keep picked points straight along X or Y from the first point (Shift does it for one pick)',
     POLAR: 'Polar tracking (F10): picks lock onto the angles of the increment from the last point. Right-click: the increment', OTRACK: 'Object snap tracking (F11): hover on a snap point to acquire it, then line up with it', DYN: 'Dynamic input (F12): type in fields by the cursor in Line, Polyline, Rectangle, Circle, Ellipse, Arc, Measure, Dimension, Set length, Move, Copy, Rotate and Scale' };
   ui.tog = {};
@@ -4224,6 +4226,13 @@ function buildStatus() {
     return b;
   });
   toggles[1] = buildSnapTypes();                    // AutoCAD's order: GRID SNAP ORTHO POLAR OTRACK DYN (TODO 155q)
+  ui.tog['snap-preview'] = h('button', { class: 'tog' + (state.snapPreview ? ' on' : ''), type: 'button', 'data-testid': 'tog-snap-preview', 'aria-pressed': String(state.snapPreview), title: 'Snap preview: show the nearest ticked snap while hovering in Select mode (SNAP must be on)', onclick: () => {
+    state.snapPreview = !state.snapPreview;
+    chip('snap-preview', state.snapPreview);
+    try { localStorage.setItem('pd-snap-preview', String(state.snapPreview)); } catch { /* storage may be blocked */ }
+    paintOverlay();
+  } }, 'Snap preview');
+  toggles.splice(2, 0, ui.tog['snap-preview']);
   ui.tog.POLAR.addEventListener('contextmenu', (e) => {
     e.preventDefault();
     const r = ui.tog.POLAR.getBoundingClientRect();
@@ -4610,14 +4619,15 @@ function paintOverlay(gesture = false) {
       : (modLive() || layModLive()) && state.mod.kind === 'array' && state.mod.type === 'polar' ? { pts: state.mod.center ? [state.mod.center] : [], hover: state.mod.stage === 'center' ? state.mod.cur : null } : null);
     const hv = L2 && (typedAt() || L2.hover);                       // typed cursor fields: the rubber line goes to the typed point
     const dragSnap = (d?.lay || d?.cmp) && (state.paste?.to || (pdrag?.moved && state.snap && !pdrag.skipSnap && pdrag.to));
-    const marks = dragSnap?.[2] ? [[dragSnap[0], dragSnap[1], dragSnap[2], true]] : L2 && d ? [...L2.pts.map((q) => [q[0], q[1], q[2], false]), ...(L2.pts.length < 2 && hv ? [[hv[0], hv[1], hv[2], true]] : [])] : null;
+    const preview = selectSnapPreview(d);
+    const marks = preview?.[2] ? [[preview[0], preview[1], preview[2], true]] : dragSnap?.[2] ? [[dragSnap[0], dragSnap[1], dragSnap[2], true]] : L2 && d ? [...L2.pts.map((q) => [q[0], q[1], q[2], false]), ...(L2.pts.length < 2 && hv ? [[hv[0], hv[1], hv[2], true]] : [])] : null;
     if (d?.cmp) {
       const paste = state.paste?.d === d && state.paste;
       c.dataset.preview = 0;
-      cmpPaint(c, d.cmp, base, paste ? null : marks);
+      cmpPaint(c, d.cmp, base, paste || preview ? null : marks);
       if (paste?.from) c.dataset.preview = paintDrawing(c, { ...base, ox: base.ox - paste.dx, oy: base.oy + paste.dy, keep: true, fl: paste.preview, off: paste.source.off, factor: paste.source.factor,
         tint: `color-mix(in srgb, ${cssVar('--selection', '#4f46e5')} 50%, transparent)`, previewBounds: (box) => { canvasPreviewBounds = unionBox(canvasPreviewBounds, box); } });
-      if (marks && (state.tool === 'measure' || paste)) {
+      if (marks && (state.tool === 'measure' || paste || preview)) {
         const k = base.scale * dpr, T = [k, 0, 0, -k, -base.ox * k, (base.sheetH - base.oy) * k];
         drawMarks(c.getContext('2d'), marks, T, dpr, cssVar('--selection', '#4f46e5'), cssVar('--snap-mark', '#00c000'));
         canvasPreviewBounds = unionBox(canvasPreviewBounds, overlayBox({ marks }, T, dpr));
@@ -4754,6 +4764,8 @@ function attachCanvasEvents() {
   const local = (e) => { const r = c.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };
   let altPick = false, suppressAltUp = false;
   c.addEventListener('pointerdown', (e) => {
+    snapPreviewHover = false;
+    if (state.snapPreview) paintOverlay();
     altPick = false;
     if (!e.altKey && selectionCycle) { selectionCycle = null; renderCommand(); }
     if (e.button !== 0 || !e.altKey || !['select', 'step'].includes(state.tool) || state.setlen || state.match || state.colourTool || state.zwin || state.grip || state.mod || state.entityDrag || e.target.closest('.zoombox, .contourpanel, .preflightpanel, input, textarea, button')) return;
@@ -4849,6 +4861,7 @@ function attachCanvasEvents() {
   });
   c.addEventListener('pointermove', (e) => {
     snapPointer = { clientX: e.clientX, clientY: e.clientY, shiftKey: e.shiftKey, buttons: e.buttons };
+    snapPreviewHover = !e.buttons;
     snapQuery = null;
     if (pan) {                                                         // before the paste return: the middle button pans while a paste follows the cursor
       view.ox -= (e.clientX - pan.x) / view.scale; view.oy -= (e.clientY - pan.y) / view.scale;
@@ -4890,9 +4903,11 @@ function attachCanvasEvents() {
     const mx = view.ox + p.x / view.scale, my = view.oy + p.y / view.scale;
     const [cx, cy] = cursorMm(mx, my, state.sheetH);
     ui.coords.textContent = `X ${fmt(cx)}   Y ${fmt(cy)} mm`;
+    if (state.snapPreview) paintOverlay();
   });
   c.addEventListener('pointerleave', () => {
     snapCycle = null; snapQuery = null; snapPointer = null; snapRef = null; snapWatch(null);
+    if (state.snapPreview) paintOverlay();
     clearTimeout(gripOptTimer);
     if (state.gripHover) { state.gripHover = null; drawOvl(); }
     if ((modLive() || layModLive()) && state.mod.kind === 'trim') { state.mod.client = null; state.mod.p = null; paintOverlay(); }
@@ -5622,6 +5637,7 @@ function cycleSelect(e) {
 }
 /** The point to use for a click: snapped (with its kind) when SNAP is on and something is near, else the exact point. */
 let snapQuery = null, snapCycle = null, snapPointer = null, snapRef = null;
+let snapPreviewHover = false;
 let snapPending = null, snapRefTimer = 0;
 function snapWatch(ref) {
   if (ref && snapPending && ref.ed === snapPending.ed && ref.d === snapPending.d && ref.pl === snapPending.pl && (ref.source || ref.piece) === (snapPending.source || snapPending.piece)) return;
@@ -5629,6 +5645,15 @@ function snapWatch(ref) {
   if (ref) snapRefTimer = setTimeout(() => { snapRef = ref; snapRefTimer = 0; paintOverlay(); }, 500);
 }
 const snapPlaced = () => state.hidden.parts ? [] : (pdrag?.snapTargets || placedNow).filter((pl) => !partHid(pl));
+function selectSnapPreview(d) {
+  if (!d || !state.snapPreview || !state.snap || !snapPointer || !snapPreviewHover || state.tool !== 'select' || d.lay && state.mode !== 'select' || state.setlen || state.match || state.colourTool || state.zwin || state.orthoAsk || state.attdispAsk || state.eatteditAsk || state.paste || state.grip || state.entityDrag || state.drawingRotate?.drag || state.text.ed || state.text.drag || state.sheetDrag || state.balDrag || pdrag || gdrag || d.cmp?.moving) return null;
+  // Hover uses the pick dispatcher without changing a tool's Tab snap candidates.
+  const query = snapQuery, cycle = snapCycle;
+  snapCycle = null;
+  const q = snapPoint(d, toDrawing(d, snapPointer.clientX, snapPointer.clientY));
+  snapQuery = query; snapCycle = cycle;
+  return q;
+}
 const snapPoint = (d, p, skip = -1, extra = [], from = null) => {
   if (state.trk.d !== d) { trackClear(); state.trk.d = d; }
   const item = cmpEditingItem(d);

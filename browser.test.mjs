@@ -637,7 +637,7 @@ try {
       const p = await context.newPage();
       await p.goto(URL_); await p.waitForSelector('[data-testid=count]', { state: 'attached' });
       const ids = () => p.evaluate(() => [...document.querySelectorAll('.status [data-testid^=tog-]')].map((b) => b.dataset.testid.slice(4)));
-      assert.deepEqual(await ids(), ['grid', 'snap', 'ortho', 'polar', 'otrack', 'dyn']);
+      assert.deepEqual(await ids(), ['grid', 'snap', 'snap-preview', 'ortho', 'polar', 'otrack', 'dyn']);
       const dir = process.env.SHOTS_DIR || 'shots';
       mkdirSync(dir, { recursive: true });
       await p.locator('.status').screenshot({ path: dir + '/status-light.png' });
@@ -2001,6 +2001,105 @@ try {
         }
         await p.keyboard.press('Escape'); await p.keyboard.press('Escape'); await command('select');
       }
+    } finally { await context.close(); }
+  });
+  await step('TODO 212: Snap preview', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    try {
+      const p = await context.newPage(), q = (id) => panelControl(p, p.getByTestId(id)), errs = [];
+      p.on('pageerror', (e) => errs.push(String(e)));
+      await p.addInitScript(() => {
+        const clear = CanvasRenderingContext2D.prototype.clearRect, text = CanvasRenderingContext2D.prototype.fillText;
+        CanvasRenderingContext2D.prototype.clearRect = function (...args) {
+          if (this.canvas.dataset.testid === 'drawing') window.__snapLabels = [];
+          return clear.apply(this, args);
+        };
+        CanvasRenderingContext2D.prototype.fillText = function (label, ...args) {
+          if (this.canvas.dataset.testid === 'drawing' && ['end', 'middle', 'nearest'].includes(label)) window.__snapLabels.push(label);
+          return text.call(this, label, ...args);
+        };
+      });
+      const ready = async () => { await q('count').waitFor({ state: 'attached' }); };
+      const frame = () => p.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      let check = 0;
+      const labels = async (want) => { await frame(); assert.deepEqual(await p.evaluate(() => window.__snapLabels), want, `preview check ${++check}`); };
+      const open = async (name, raw) => {
+        await q('picker').setInputFiles({ name, mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(raw)) });
+        await p.waitForFunction((name) => document.querySelector('.dtab.on .tname').textContent === name, name);
+        await p.locator('[data-tool=select]').click();
+      };
+      const at = async (x, y) => {
+        const r = await p.locator('rect.sheet').evaluate((el) => { const r = el.getBoundingClientRect(); return { x: r.x, y: r.y, scale: r.width / el.width.baseVal.value, h: el.height.baseVal.value }; });
+        const pt = { x: r.x + x * r.scale + 2, y: r.y + (r.h - y) * r.scale - 1 };
+        await p.mouse.move(pt.x, pt.y); return pt;
+      };
+      const doc = newDoc(4); addEntities(doc, dxfLine(20, 30, 120, 30));
+      await p.goto(URL_); await ready();
+      const chip = q('tog-snap-preview');
+      assert.equal(await chip.count(), 1, 'Snap preview has its own chip');
+      assert.equal(await chip.textContent(), 'Snap preview');
+      assert.equal(await chip.getAttribute('aria-pressed'), 'false', 'off by default');
+      assert.equal(await chip.evaluate((el) => el.previousElementSibling.className), 'snap-control', 'directly right of SNAP');
+      await open('preview-212.dxf', doc);
+      await at(20, 30); await labels([]);
+      await chip.click(); await at(20, 30); await labels(['end']);
+      for (const theme of ['light', 'dark']) {
+        await p.locator('[data-ribbon-tab=View]').click();
+        await p.locator('.ribbon-body').getByRole('button', { name: theme === 'light' ? 'Light' : 'Dark', exact: true }).click();
+        await at(20, 30); await labels(['end']);
+        await p.screenshot({ path: `${shotDir}/todo212-snap-preview-${theme}.png` });
+      }
+      await p.mouse.move(5, 5); await labels([]);
+      await at(20, 30); await labels(['end']);
+      await chip.click(); await labels([]); await at(20, 30); await labels([]);
+      await p.reload(); await ready();
+      assert.equal(await chip.getAttribute('aria-pressed'), 'false', 'off survives reload');
+      await chip.click(); await p.reload(); await ready();
+      assert.equal(await chip.getAttribute('aria-pressed'), 'true', 'on survives reload');
+      await open('preview-212.dxf', doc);
+      await at(20, 30); await labels(['end']);
+      await q('tog-snap').click(); await at(20, 30); await labels([]);
+      await q('tog-snap').click(); await at(20, 30); await labels(['end']);
+      await q('snap-types-open').click(); await q('snap-type-end').uncheck(); await p.keyboard.press('Escape');
+      await at(20, 30); await labels(['nearest']);
+      await q('snap-types-open').click(); await q('snap-type-near').uncheck(); await p.keyboard.press('Escape');
+      await at(20, 30); await labels([]);
+      await q('snap-types-open').click(); await q('snap-type-end').check(); await q('snap-type-near').check(); await p.keyboard.press('Escape');
+      await at(20, 30); await labels(['end']);
+      await p.mouse.down(); await labels([]); await p.mouse.up();
+      await q('grip').first().waitFor({ state: 'visible' });
+      const grip = await q('grip').first().boundingBox();
+      await p.mouse.click(grip.x + grip.width / 2, grip.y + grip.height / 2);
+      await q('grip-hot').waitFor(); await at(20, 30); await labels([]);
+      await p.keyboard.press('Escape');
+      await p.keyboard.press('Delete'); await at(20, 30); await labels([]);
+      await p.keyboard.press('Control+z'); await at(20, 30); await labels(['end']);
+      await p.keyboard.press('Escape');
+      await p.locator('[data-tool=measure]').click(); await p.keyboard.press('Escape');
+      await p.locator('[data-tool=select]').click();
+      await p.keyboard.press('Escape'); await at(20, 30); await labels(['end']);
+      await p.locator('[data-menu=File]').click(); await p.getByRole('menuitem', { name: 'Compare drawings…', exact: true }).click();
+      await q('cmp-item').first().waitFor();
+      await at(20, 30); await labels(['end']);
+      const plate = newDoc(4); addEntities(plate, dxfLine(20, 30, 120, 30), dxfLine(20, 30, 20, 80));
+      const lay = newLayout('Preview layout 212'); lay.parts.line = makePart('line', 'Preview line', plate);
+      Object.assign(lay.s, { sheetW: 420, sheetH: 297, gridPart: null });
+      lay.placed.push({ partId: 'line', x: 50, y: 50, rot: 0 });
+      await open('preview-layout-212.dxf', layoutRaw(lay));
+      const placed = await p.locator('.part-hit').first().boundingBox();
+      await p.mouse.move(placed.x + 2, placed.y + placed.height - 1); await labels(['end']);
+      await chip.click(); await labels([]);
+      await p.mouse.move(placed.x + 2, placed.y + placed.height - 1); await labels([]);
+      await chip.click();
+      await q('picker').setInputFiles('fixtures/three-sheets.pdf'); await q('bal-sheets').waitFor();
+      for (const raw of ['line', '20,30', '120,30']) {
+        if (!await q('cmd-input').isVisible()) await q('cmd-echo').click();
+        await q('cmd-input').fill(raw); await q('cmd-input').press('Enter');
+      }
+      await p.keyboard.press('Escape'); await p.keyboard.press('Escape'); await p.locator('[data-tool=select]').click();
+      await at(20, 30); await labels(['end']);
+      assert.deepEqual(errs, []);
+      console.log('212: default/off/on, marker labels, leave, SNAP/types, reload, selection, source edit/Undo, Esc and drawing/PDF/layout/Compare passed; light/dark screenshots saved');
     } finally { await context.close(); }
   });
   await step('TODO 68a: snap per type', async () => {
