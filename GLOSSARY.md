@@ -363,7 +363,7 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Registration marks**: Common marks repeated on the colour pages so the printed colours can be aligned. Where: `DECISIONS.md`, PDF colour pages and Marks default. Avoid: Crop marks.
 
-**Selection only**: The PDF / Print tick that exports only selected drawing objects, with hidden objects still excluded. Off on each open, disabled without a selection. On a layout tab it exports the selected placed parts, cut to their box (default) or on the sheet page. The page keeps the drawing's existing cut and title block rules. Where: `web/export.js`; `DECISIONS.md`, PDF (TODO 214a).
+**Selection only**: The PDF / Print tick that exports only selected drawing objects, with hidden objects still excluded. Off on each open, disabled without a selection. On a layout tab it exports the selected placed parts, cut to their box (default) or on the sheet page. On Compare it exports the selected visible drawing, cut to its box with no selection page radios. The page keeps the drawing's existing cut and title block rules. Where: `web/export.js`; `DECISIONS.md`, PDF (TODO 214a–c).
 
 **Tile**: One overlapping A4 or A3 page of a larger 1:1 output, used to assemble the full-size drawing. Where: `DECISIONS.md`, PDF page rules. Avoid: A repeat-grid copy.
 

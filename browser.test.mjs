@@ -4627,6 +4627,125 @@ try {
     } finally { await ctx.close(); }
   });
 
+  await step('TODO 214c: PDF / Print on the Compare tab', async () => {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const p = await ctx.newPage(), q = (id) => panelControl(p, p.getByTestId(id));
+    p.on('pageerror', (e) => errors.push(String(e)));
+    // Compare normally always picks a drawing; exercise the no-selection source state too.
+    await p.route('**/app.js', async (route) => {
+      const response = await route.fetch();
+      await route.fulfill({ response, body: await response.text() + '\nwindow.__clearCompareSelection = () => { curDoc().cmp.selected = null; };' });
+    });
+    const open = async () => { await q('pdf-open').click(); await q('pdf-dialog').waitFor(); };
+    const compare = async () => { await p.locator('[data-menu=File]').click(); await p.getByRole('menuitem', { name: 'Compare drawings…', exact: true }).click(); };
+    const texts = async (id, second, first = true) => {
+      await p.waitForFunction(([id, second, first]) => {
+        const a = window.__pdfTexts[id] || [];
+        return a.includes('FIRST214C') === first && a.includes('SECOND214C') === second && !a.includes('HIDDEN214C');
+      }, [id, second, first]);
+    };
+    const printed = async (second, first = true) => {
+      await p.evaluate(() => { window.__printed = null; });
+      await q('pdf-print').click(); await q('pdf-dialog').waitFor({ state: 'detached' });
+      const pdf = await p.evaluate(() => window.__printed);
+      assert.equal(pdf.includes('(FIRST214C)'), first);
+      assert.equal(pdf.includes('(SECOND214C)'), second);
+      assert.equal(pdf.includes('(HIDDEN214C)'), false);
+      return pdf;
+    };
+    try {
+      await p.goto(URL_);
+      for (const [name, label] of [['first214c.dxf', 'FIRST214C'], ['second214c.dxf', 'SECOND214C']]) {
+        const raw = newDoc(4); addLayer(raw, 'Hidden');
+        addEntities(raw, dxfPoly([[0, 0], [40, 0], [40, 20], [0, 20]], { closed: true }), dxfText(5, 5, 3, label), dxfText(500, 500, 3, 'HIDDEN214C', { layer: 'Hidden' }));
+        await q('picker').setInputFiles({ name, mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(raw)) });
+        await p.waitForFunction((name) => document.querySelector('.dtab.on .tname').textContent === name, name);
+      }
+      await p.locator('.dtab', { hasText: 'first214c.dxf' }).click(); await compare();
+      await q('ptab-drawing').click(); await q('cmp-lineup-manual').click();
+      for (const n of [1, 2]) {
+        await q('cmp-name-' + n).click(); await q('ptab-layers').click();
+        await p.locator('[data-file-layer]', { hasText: 'Hidden' }).locator('.vis').click();
+        await q('ptab-drawing').click();
+      }
+      await p.locator('.coords').click();
+      await p.keyboard.press('Shift+ArrowRight'); await p.keyboard.press('Shift+ArrowUp');
+      await q('cmp-check').nth(1).uncheck(); // unchecked drawings still paint and print
+      await p.evaluate(() => {
+        window.__pdfTexts = {};
+        const clearRect = CanvasRenderingContext2D.prototype.clearRect, fillText = CanvasRenderingContext2D.prototype.fillText;
+        CanvasRenderingContext2D.prototype.clearRect = function (...args) {
+          const id = this.canvas.dataset.testid;
+          if (id === 'pdf-preview' || id === 'pdf-full-canvas') window.__pdfTexts[id] = [];
+          return clearRect.apply(this, args);
+        };
+        CanvasRenderingContext2D.prototype.fillText = function (...args) {
+          const id = this.canvas.dataset.testid;
+          if (id === 'pdf-preview' || id === 'pdf-full-canvas') (window.__pdfTexts[id] ||= []).push(args[0]);
+          return fillText.apply(this, args);
+        };
+        window.__TAURI__ = { dialog: { save: async () => 'C:/prints/compare214c.pdf' }, fs: { writeFile: async (_path, bytes) => { window.__printed = new TextDecoder().decode(bytes); } } };
+        window.__clearCompareSelection();
+      });
+      await open();
+      assert.equal(await q('pdf-selection-only').isDisabled(), true);
+      assert.equal(await q('pdf-selection-only').isChecked(), false);
+      await texts('pdf-preview', true); await p.keyboard.press('Escape');
+      assert.equal(await q('pdf-dialog').count(), 0);
+      await q('cmp-name-2').click(); await open();
+      assert.equal(await q('pdf-selection-only').isDisabled(), false);
+      await q('pdf-mirror').uncheck(); await q('pdf-black').uncheck();
+      await q('pdf-page-check').check();
+      assert.equal(await q('pdf-title-file').inputValue(), 'Compare first214c.dxf vs second214c');
+      assert.match(await q('pdf-title-scale').inputValue(), /^NOT 1:1/);
+      await q('pdf-page-sheet').check();
+      assert.equal(await q('pdf-sheet-size').textContent(), '50 × 30 + 10 mm border');
+      await texts('pdf-preview', true);
+      const both = await printed(true);
+      assert.match(both, /15 15 Tm \(FIRST214C\) Tj/);
+      assert.match(both, /25 25 Tm \(SECOND214C\) Tj/);
+      await open(); await q('pdf-selection-only').check();
+      assert.equal(await q('pdf-sel-cut').isVisible(), false, 'Compare has no selection page radios');
+      assert.equal(await q('pdf-sel-sheet').isVisible(), false);
+      assert.equal(await q('pdf-sheet-size').textContent(), '40 × 20 + 10 mm border');
+      await texts('pdf-preview', true, false);
+      await q('pdf-fullscreen').click(); await texts('pdf-full-canvas', true, false);
+      await q('pdf-selection-only').evaluate((el) => { el.checked = false; el.dispatchEvent(new Event('change')); });
+      await texts('pdf-preview', true); await texts('pdf-full-canvas', true);
+      await q('pdf-selection-only').evaluate((el) => { el.checked = true; el.dispatchEvent(new Event('change')); });
+      await texts('pdf-preview', true, false); await texts('pdf-full-canvas', true, false);
+      await p.keyboard.press('Escape');
+      for (const theme of ['light', 'dark']) {
+        await p.evaluate((theme) => { document.documentElement.dataset.theme = theme; return new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))); }, theme);
+        await texts('pdf-preview', true, false);
+        await p.screenshot({ path: `${shotDir}/todo214c-compare-${theme}.png` });
+        assert.ok(readFileSync(`${shotDir}/todo214c-compare-${theme}.png`).length > 1000);
+      }
+      await printed(true, false);
+      await p.locator('.dtab', { hasText: 'first214c.dxf' }).click();
+      await q('ptab-objects').click();
+      const layer = p.locator('.or.layer[data-layer="0"]');
+      if (await layer.getAttribute('aria-expanded') === 'false') await layer.click();
+      await p.locator('.or.obj[data-e="1"] .onm').click();
+      await p.locator('.coords').click(); await p.keyboard.press('Delete');
+      await compare(); await open(); await texts('pdf-preview', true, false);
+      await printed(true, false); // a linked source edit reaches the next export
+      await p.locator('.dtab', { hasText: 'first214c.dxf' }).click();
+      await p.locator('.coords').click(); await p.keyboard.press('Control+z');
+      await compare(); await open(); await texts('pdf-preview', true); await q('pdf-close').click();
+      await q('ptab-drawing').click();
+      await q('cmp-eye').nth(1).click(); await open();
+      assert.equal(await q('pdf-selection-only').isChecked(), false, 'off on each open');
+      await texts('pdf-preview', false); await printed(false);
+      await open(); await q('pdf-selection-only').check();
+      assert.equal(await q('pdf-print').isDisabled(), true, 'hidden selected drawing stays out');
+      await q('pdf-close').click(); await q('cmp-eye').first().click();
+      await q('pdf-open').click();
+      assert.match(await q('cmd-prompt').textContent(), /Nothing to export/);
+      assert.equal(await q('pdf-dialog').count(), 0);
+    } finally { await ctx.close(); }
+  });
+
   await step('TODO 203: PDF / Print full-screen preview', async () => {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const p = await ctx.newPage(), q = (id) => p.getByTestId(id);
@@ -4748,12 +4867,13 @@ try {
       assert.equal(await q('pdf-full').count(), 0);
       assert.equal(await q('pdf-dialog').count(), 1);
       await q('pdf-close').click();
-      // Compare has nothing to export (no new print there)
+      // Compare drawings have the same PDF / Print preview (TODO 214c, R7).
       await p.locator('[data-menu=File]').click(); await p.getByRole('menuitem', { name: 'Compare drawings…', exact: true }).click();
       await p.locator('.tabs .dtab.on', { hasText: 'Compare' }).waitFor();
       await q('pdf-open').click();
-      assert.match(await q('cmd-prompt').textContent(), /Nothing to export/);
-      assert.equal(await q('pdf-dialog').count(), 0);
+      await q('pdf-dialog').waitFor();
+      assert.equal(await q('pdf-dialog').count(), 1);
+      await q('pdf-close').click();
     } finally { await ctx.close(); }
   });
 

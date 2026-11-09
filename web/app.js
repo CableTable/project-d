@@ -79,6 +79,7 @@ import * as LC from './layoutcontour.js';
 import * as OB from './objects.js';
 import * as C from './compare.js';
 import * as CMP from './compare-list.js';
+import { compareSource } from './compare-export.js';
 import * as TK from './track.js';
 import { loadParts, savePart, removePart } from './partstore.js';
 import { baseName, saveDefault, withExt } from './savepath.js';
@@ -3243,6 +3244,10 @@ function exportSource(selectionOnly = false, cut = true) {
   const d = curDoc();
   if (!d) return null;
   const path = d.path || d.openPath;
+  if (d.cmp) {
+    const selected = cmpSelected(d.cmp), src = compareSource(selectionOnly ? (selected ? [selected] : []) : d.cmp.items, cmpCss);
+    return src && { ...src, hasSelection: !!selected };
+  }
   if (d.lay) {                                                     // a layout: the sheet as the page, the placed parts as artwork (its Sheet and Marks layers are not artwork)
     const lay = shownLayout(d);
     if (!LD.placedAll(lay).length) return null;
