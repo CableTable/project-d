@@ -364,7 +364,7 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
 - [ ] 209. **Fix rounds after 2 failed ones run on Opus high** (tool ticket, his rule 2026-11-07 ~08:30 IST via Rook S39b): `rook.mjs build` / `knight` with `--fix` count the item's earlier fix rounds (the `--regrilled` / 3rd-fix count it already keeps); more than 2 -> `buildArgs` uses `--model claude-opus-5-5 --effort high` (King or Bishop account; Knight -> King instead). Add a WORKFLOW Rook-card line. Unit test for the count -> model pick.
 - [x] 210. **Text edit box follows pan / zoom** (bug, ticket T59, grilled by Bishop-support, `support/tickets.md`).
 - [x] 220. **Bishop-support on the new rules; fresh session at 120k context** (built: rook-kit `a0ae276`, Knight, review ship 2 Lows, npm test 239/0; not live yet: hq.json `support` field + `hq-install` + first `support-next` wait his OK) (tool ticket, KIT, his call 2026-11-08, grill `runs40/grill-220.md`): prompt to `rook-kit/hq/support-prompt.md` (all projects, cwd rook-hq, half size, facts via Haiku Explore, no self id rewrite); Stop hook under `BISHOP_SUPPORT=1` at >= 120k asks for `support/handover.md` then `rook.mjs support-next` (new uuid, start file rewritten with `--session-id`, new window).
-- [ ] 211. **Ctrl+V paste follows the cursor, lands on click; Ctrl+Shift+V = in place** (M, T60).
+- [x] 211. **Ctrl+V paste follows the cursor, lands on click; Ctrl+Shift+V = in place** (M, T60).
 - [ ] 212. **Snap preview toggle in Select mode** (S, T61).
 - [ ] 213. **Ribbon Line width: Custom… and last 5 custom widths** (S, T62).
 - [ ] 214. **PDF / Print: Selection only** (M, T63).
