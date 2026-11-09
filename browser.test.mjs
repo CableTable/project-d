@@ -349,13 +349,22 @@ try {
         await command('save'); await p.waitForFunction(() => window.unitSaveFinished);
       };
       const saveFiles = async (withSide = true) => {
-        const files = [], collect = (d) => files.push((async () => ({ name: d.suggestedFilename(), text: readFileSync(await d.path(), 'utf8') }))());
-        p.on('download', collect);
-        const done = ['.dxf', ...(withSide ? ['.pdunits.json'] : [])].map((ext) => p.waitForEvent('download', (d) => d.suggestedFilename().endsWith(ext)));
-        await saveCommand(); await Promise.all(done);
-        p.off('download', collect);
-        const saved = await Promise.all(files);
+        // Spy on the app's own download calls (the anchor clicks): Chromium drops a 2nd download fired right after the 1st.
+        await p.evaluate(() => {
+          window.unitDl = [];
+          if (HTMLAnchorElement.prototype.click.spied) return;
+          const click = HTMLAnchorElement.prototype.click, create = URL.createObjectURL, blobs = new Map();
+          URL.createObjectURL = (blob) => { const url = create(blob); blobs.set(url, blob); return url; }; // the page's CSP blocks fetch(blob:)
+          HTMLAnchorElement.prototype.click = Object.assign(function () {
+            if (this.download) window.unitDl.push(blobs.get(this.href).text().then((text) => ({ name: this.download, text })));
+            else click.call(this);
+          }, { spied: true });
+        });
+        await saveCommand();
+        const saved = await p.evaluate(() => Promise.all(window.unitDl));
         assert.equal(saved.length, withSide ? 2 : 1, 'the header default writes no unit sidecar');
+        assert.ok(saved.some((f) => f.name.endsWith('.dxf')), 'the save asks for the DXF');
+        if (withSide) assert.ok(saved.some((f) => f.name.endsWith('.pdunits.json')), 'the save asks for the unit sidecar');
         return saved;
       };
       const drawing = (files) => readDxf(files.find((f) => f.name.endsWith('.dxf')).text);
