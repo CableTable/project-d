@@ -972,6 +972,10 @@ export const LDR_BLOCK = /^PD_LDR_/;
 export const DIM_LAYER = 'Dimensions';
 /** Decimal places in a dimension's text ("300.00" → 2; "R25.00", "7.87\"" and "45.00°" too). */
 const placesOf = (t) => { const m = /\.(\d+)["'°]?$/.exec(String(t)); return m ? m[1].length : 0; };
+/** The Decimals setting (app.js setDecimals). ft-in text drops trailing zeros (3'-6"), so a dimension read back in ft-in keeps at least this many places. */
+let styleDp = 0;
+export const setStyleDp = (dp) => { styleDp = dp; };
+const readDp = (t, units) => Math.max(placesOf(t), units === 'ft-in' ? styleDp : 0);
 /** A dimension's value with exactly dp decimals (0–4), no "-0". */
 export const dimText = (v, dp = 2) => { const s = Number(v).toFixed(dp); return /^-0(\.0*)?$/.test(s) ? s.slice(1) : s; };
 /** The text of a dimension: its prefix (R, Ø) and length in its resolved style unit, with dp decimals. */
@@ -996,7 +1000,7 @@ export function relabel(ents, s, target = null, unread = null, native = {}) {
     const bare = t.replace(MCODE, ' '), signed = follows && /^\s*[+-]/.test(bare);      // a code is a gap, never a join; a signed text before another text is a tolerance
     if (ANGLE.test(bare)) return t;
     const feet = /^((?:R|[∅Ø⌀]|%%[cC])?)([+-]?\d*\.?\d+'(?:-\d*\.?\d+")?)$/.exec(unesc(t));
-    if (!target && !unread && feet && !native.angle) return dimLabel(parseLength(feet[2]) * s, placesOf(feet[2]), feet[2].endsWith('"') ? 'ft-in' : 'ft', feet[1]);
+    if (!target && !unread && feet && !native.angle) { const units = feet[2].endsWith('"') ? 'ft-in' : 'ft'; return dimLabel(parseLength(feet[2]) * s, readDp(feet[2], units), units, feet[1]); }
     const plain = PLAIN.test(bare), words = !plain && native.words && !/\d\s*(?:'|(?:ft|feet|foot|in|inch|inches|yd|[ckµu]?m)\b)/i.test(bare)
       && (bare.replace(/\\U\+[0-9A-Fa-f]{4}/g, '').match(/\d*\.?\d+/g) || []).length === 1;
     if (native.angle || !plain && !words || unread && !lead && /^\s*[+-]/.test(bare)) { unread?.(t); return t; }      // Scale (no unread list) still scales lone tolerances
@@ -1054,7 +1058,7 @@ export function relabelDims(raw, factor, dp, kept = false) {       // kept: only
   for (const [nm, b] of Object.entries(raw.blocks)) {
     const m = readDim(nm, b), ov = m && m.params.override || '', callout = m && (m.kind === 'aligned' || m.kind === 'linear') && isMeasureOverride(ov);       // radius / diameter / angle have no points a, b: their text stays
     if (kept && !callout) continue;
-    if (kept) dp = placesOf(measuredText(b.entities));
+    if (kept) dp = readDp(measuredText(b.entities), m.params.units);
     if (callout) {       // the deltas of the callout as drawn: the INSERT's transform applied to the block's points
       const w = insertTransform(raw, raw.entities[inserts.get(nm)]);
       m.params.override = measureOverride(w(m.params.a), w(m.params.b), factor || 1, dp, ov);
@@ -1575,7 +1579,7 @@ export function dimOfEntity(raw, e) {
   const name = fieldOf(ent.r, 2), block = raw.blocks[name], m = readDim(name, block);
   if (!m) return null;
   const label = measuredText(block.entities);
-  return { name, ...m, dp: label ? placesOf(label) : 2 };
+  return { name, ...m, dp: label ? readDp(label, m.params.units) : 2 };
 }
 /** { entities, blocks } with dimension block `built.name` rebuilt (the INSERT stays); the label follows the new geometry. */
 export function replaceDimension(raw, built) {

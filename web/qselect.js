@@ -17,7 +17,7 @@ export function propertiesOf(entities, type, factor = 1, dp = 2) {
 }
 export const operatorsOf = (kind) => ['eq', 'ne', ...(kind === 'number' ? ['gt', 'lt'] : kind === 'text' ? ['wildcard'] : []), 'all'].map((key) => [key, OPS[key]]);
 export function numberValue(value, prop, unit = 'mm') {
-  if (prop?.unit === 'mm') return parse(value, unit);
+  if (prop?.unit === 'mm' && unit !== 'mm') return parse(value, unit);       // an mm drawing keeps Number() (1e3 yes, "1066,8" no), as before the drawing unit
   const n = Number(value) * (prop?.unit === 'mm²' ? parse('1', unit) ** 2 : 1);
   return String(value).trim() && Number.isFinite(n) ? n : null;
 }

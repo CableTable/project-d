@@ -1368,7 +1368,7 @@ function buildSelbar() {
     ui.selArea = h('span', { class: 'lbl area', 'data-testid': 'sel-area', title: 'Area of the closed outlines (holes taken off) and the length of every line and arc selected' }),
     ui.barKeep = h('button', { class: 'btn', type: 'button', 'data-testid': 'bar-keep', onclick: keepSelection }, 'Keep only'),
     ui.barExtract = h('button', { class: 'btn primary', type: 'button', 'data-testid': 'bar-extract', onclick: extractPart }, 'Extract part…'),
-    h('span', { class: 'lbl unit' }, 'mm'));
+    ui.selUnit = h('span', { class: 'lbl unit' }, 'mm'));
 }
 
 function buildRail() {
@@ -2241,7 +2241,7 @@ function selectedPlaced() {
 const placementOf = (p) => ({ ...placement1(p.partId, p.x, p.y, p.rot, p.mirrorX, p.mirrorY), ...(p.sc && p.sc !== 1 ? { sc: p.sc } : {}), ...(p.g ? { g: p.g } : {}), ...(p.lock ? { lock: true } : {}), ...(p.cid ? { cid: p.cid } : {}), ...(p.ct ? { ct: p.ct } : {}) });
 /** The turn's pivot of the selected part as a sheet point (mm, y up). */
 const pivotPoint = (part, pl) => PL.pivotOf(part, pl, state.pivot.kind, [state.pivot.x, state.pivot.y]);
-const showBox = (i) => { if (multiSel()) { const b = selBox(); return b ? fmt(b[i]) : '—'; } const s = selectedPlaced(); return s ? fmt(placedBox(s.part, s.p)[i]) : '—'; };
+const showBox = (i) => { if (multiSel()) { const b = selBox(); return b ? lengthText(b[i]) : '—'; } const s = selectedPlaced(); return s ? lengthText(placedBox(s.part, s.p)[i]) : '—'; };
 const showAngle = () => { if (multiSel()) return '0°'; const s = selectedPlaced(); return s ? +Number(s.p.rot).toFixed(2) + '°' : '—'; };
 const showNudge = () => fmt1(state.nudge);
 /** What to add to a message: that the part is off the sheet (it is drawn in orange, and still placed). */
@@ -2310,8 +2310,8 @@ const carryPivot = (dx, dy) => { if (state.pivot.kind === 'custom') state.pivot 
 
 /** X or Y typed: the lower-left of the part's box (or of the box round the selection) goes there. → '' or what is wrong. */
 function setBoxPos(axis, text) {
-  const v = PL.parseMm(text);
-  if (v == null) return `${axis.toUpperCase()} must be a number in mm`;
+  const v = PL.parseMm(text, drawingUnit());
+  if (v == null) return `${axis.toUpperCase()} must be a number${drawingUnit() === 'mm' ? ' in mm' : ''}`;
   const b0 = selBox();
   if (!b0) return '';
   const dx = axis === 'x' ? v - b0[0] : 0, dy = axis === 'y' ? v - b0[1] : 0;
@@ -4315,7 +4315,7 @@ function buildStatus() {
 
 /** Decimal places for dimensions: the selected placed part's width on a layout, and every kept dimension, re-labelled (undoable). */
 function setDecimals(n) {
-  state.dp = Math.max(0, Math.min(4, Math.round(+n) || 0));
+  state.dp = Math.max(0, Math.min(4, Math.round(+n) || 0)); Ed.setStyleDp(state.dp);
   ui.dp.value = String(state.dp);
   try { localStorage.setItem('pd-decimals', String(state.dp)); } catch { /* storage may be blocked */ }
   let k = 0, refused = false;
@@ -6155,8 +6155,8 @@ function sizeTyped(input, axis) {
   const b = d && resizeBox(d);
   if (!d || !b) return;
   const cur = axis === 'w' ? b[2] - b[0] : b[3] - b[1];
-  const s = Ed.scaleFactor(Number(input.value.trim().replace(',', '.')), cur);
-  if (s == null) { note('Type the size in mm: a number above 0'); renderEdit(); return; }
+  const unit = drawingUnit(), s = Ed.scaleFactor(unit === 'mm' ? Number(input.value.trim().replace(',', '.')) : DU.parse(input.value, unit), cur);       // mm keeps Number(): 1e3 yes
+  if (s == null) { note(`Type the size${unit === 'mm' ? ' in mm' : ''}: a number above 0`); renderEdit(); return; }
   if (Math.abs(s - 1) < 1e-9) { renderEdit(); return; }
   if (!d.sel.size && sizeLocked) { scaleDrawing(d, s); return; }
   if (!d.sel.size && sizeTarget(d) === 'bg') { note('Background pictures need the padlock locked to keep their proportions'); renderEdit(); return; }
@@ -8629,17 +8629,17 @@ function layArrayDo(d) {
   setTool('select'); selectMany(m.keep, m.main); update();
   note(`Array added ${added} ${added === 1 ? 'copy' : 'copies'}. Ctrl+Z takes them all back`);
 }
-const showSize = (axis) => { const b = selBox(); return b ? fmt(axis === 'w' ? b[2] - b[0] : b[3] - b[1]) : '—'; };
+const showSize = (axis) => { const b = selBox(); return b ? lengthText(axis === 'w' ? b[2] - b[0] : b[3] - b[1]) : '—'; };
 /** W or H typed on the Part tab: the selection is scaled evenly (the placement's scale) so that side has that length; the lower-left of its box stays. → '' or what is wrong. */
 function setBoxSize(axis, text) {
-  const v = PL.parseMm(text), b = selBox(), name = axis.toUpperCase();
-  if (v == null || !(v > 0)) return `${name} must be a number above 0 in mm`;
+  const v = PL.parseMm(text, drawingUnit()), b = selBox(), name = axis.toUpperCase();
+  if (v == null || !(v > 0)) return `${name} must be a number above 0${drawingUnit() === 'mm' ? ' in mm' : ''}`;
   if (!b) return '';
   const cur = axis === 'w' ? b[2] - b[0] : b[3] - b[1], k = v / cur;
   if (!(cur > 1e-9)) return `${name} is 0: the part cannot be scaled to a size`;
   if (!(k >= 1e-4 && k <= 1e4)) return `${name} would scale the part by ${+k.toPrecision(3)}: the factor must be between 0.0001 and 10000`;
   const r = editSelected((part, pl) => PL.scaleAbout(part, pl, [b[0], b[1]], k), { label: 'Scale' });
-  if (r) { const nb = A.unionBox(r.items.map((x, j) => placedBox(x.part, r.nexts[j]))); afterEdit(r, `${r.name} scaled ×${+k.toPrecision(6)}: W ${fmt(nb[2] - nb[0])} × H ${fmt(nb[3] - nb[1])} mm`); }
+  if (r) { const nb = A.unionBox(r.items.map((x, j) => placedBox(x.part, r.nexts[j]))); afterEdit(r, `${r.name} scaled ×${+k.toPrecision(6)}: W ${lengthText(nb[2] - nb[0])} × H ${lengthText(nb[3] - nb[1])}${lengthSuffix()}`); }
   return '';
 }
 function sizeField(label, id, axis) {
@@ -11556,9 +11556,10 @@ function renderEdit() {
     button.replaceChildren(icon(sizeLocked ? ICONS.lock : ICONS.unlock, { size: 16 }));
     button.disabled = !rb;
   }
-  put(ui.dw, rb ? fmtSize(rb[2] - rb[0]) : ''); put(ui.dh, rb ? fmtSize(rb[3] - rb[1]) : '');
+  put(ui.dw, rb ? lengthText(rb[2] - rb[0], fmtSize) : ''); put(ui.dh, rb ? lengthText(rb[3] - rb[1], fmtSize) : '');
   const sizeFmt = n ? fmt : fmtSize;
-  put(ui['sel-w'], rb ? sizeFmt(rb[2] - rb[0]) : '—'); put(ui['sel-h'], rb ? sizeFmt(rb[3] - rb[1]) : '—');
+  put(ui['sel-w'], rb ? lengthText(rb[2] - rb[0], sizeFmt) : '—'); put(ui['sel-h'], rb ? lengthText(rb[3] - rb[1], sizeFmt) : '—');
+  ui.selUnit.hidden = drawingUnit() !== 'mm';
   ui.dw.disabled = ui.dh.disabled = ui['sel-w'].disabled = ui['sel-h'].disabled = !rb;
   ui['set-length'].disabled = !scalable;
   ui['set-length'].classList.toggle('on', !!L);
@@ -11970,7 +11971,7 @@ async function init() {
   try { const t = localStorage.getItem('pd-theme'); if (t) setTheme(t); } catch { /* ignore */ }
   let dp = 2;
   try { const v = localStorage.getItem('pd-decimals'); if (v != null) dp = +v; } catch { /* ignore */ }
-  state.dp = Math.max(0, Math.min(4, Math.round(dp) || 0)); ui.dp.value = String(state.dp);
+  state.dp = Math.max(0, Math.min(4, Math.round(dp) || 0)); Ed.setStyleDp(state.dp); ui.dp.value = String(state.dp);
   try { const v = PL.parseMm(localStorage.getItem('pd-gaptol') || ''); if (v != null && v > 0 && v <= 5) state.gapMm = v; } catch { /* ignore */ }
   try { const v = localStorage.getItem('pd-gapmethod'); if (v in Ed.JOIN_METHODS) state.gapMethod = v; } catch { /* ignore */ }
   ui.gapMethod.value = state.gapMethod;

@@ -28,6 +28,7 @@ const grip = (raw, id, to) => followDimensions(raw, {
 const label = (raw, e = 1) => { const r = raw.blocks[E.dimOfEntity(raw, e).name].entities.find((e) => e.type === 'TEXT').r; return r.v[r.c.indexOf(1)]; };
 
 test('TODO 222c: all dimension units drive lengths with marks and follow later source edits', () => {
+  E.setStyleDp(3);       // the Decimals setting the dimensions are built with
   for (const [units, shown] of [['mm', '1066.800'], ['inch', '42.000"'], ['ft', "3.500'"], ['ft-in', `3'-6"`]]) for (const factor of [1, 25.4, 304.8]) {
     const raw = drawing(W.line(0, 0, 1066.8 / factor, 0), { a: [0, 0], b: [1066.8 / factor, 0], units }, 'aligned', factor);
     assert.equal(label(raw), shown);
@@ -37,10 +38,30 @@ test('TODO 222c: all dimension units drive lengths with marks and follow later s
     close(E.lineOf(driven.line)[2], 1219.2 / factor);
     const next = { ...raw, entities: [driven.line, raw.entities[1]], blocks: { ...raw.blocks, [driven.built.name]: driven.built.block } };
     assert.equal(model(next).params.units, units);
-    const followed = followDimensions(next, { entities: [dragGrip(next.entities[0], 'b', [1524 / factor, 0]).ent, next.entities[1]], blocks: next.blocks }, factor);
-    assert.equal(label(followed), E.dimLabel(1524, model(next).dp, units));
+    // 1606.55 mm is 63.25": the label needs the style's 3 decimals even where the old text (3'-6") shows none
+    const followed = followDimensions(next, { entities: [dragGrip(next.entities[0], 'b', [1606.55 / factor, 0]).ent, next.entities[1]], blocks: next.blocks }, factor);
+    assert.equal(label(followed), E.dimLabel(1606.55, 3, units));
     close(E.lineOf(raw.entities[0])[2], 1066.8 / factor);
   }
+  E.setStyleDp(0);
+});
+
+test('TODO 222c: an ft-in dimension keeps the Decimals setting when its line is dragged or the drawing is scaled', () => {
+  E.setStyleDp(2);
+  try {
+    const raw = drawing(W.line(0, 0, 1066.8, 0), { a: [0, 0], b: [1066.8, 0], units: 'ft-in' }, 'aligned', 1);
+    assert.equal(label(raw), `3'-6"`);
+    assert.equal(model(raw).dp, 2, 'text shows no decimals: the style gives them');
+    const followed = grip(raw, 'b', [1606.55, 0]);
+    assert.equal(label(followed), `5'-3.25"`);
+    const t = E.relabel(followed.blocks[model(followed).name].entities, 1.01).find((e) => e.type === 'TEXT').r;       // Scale: 63.25" × 1.01 = 63.8825"
+    assert.equal(t.v[t.c.indexOf(1)], `5'-3.88"`);
+    E.setStyleDp(0);
+    assert.equal(model(raw).dp, 0, 'with no style the text alone decides (as before)');
+    const mm = drawing(W.line(0, 0, 1066.8, 0), { a: [0, 0], b: [1066.8, 0], units: 'mm' }, 'aligned', 1);
+    E.setStyleDp(4);
+    assert.equal(model(mm).dp, 3, 'mm and inch dimensions keep the places their text has');
+  } finally { E.setStyleDp(0); }
 });
 
 test('rectangle corner: aligned dimension value and position follow, one Undo / Redo restores both', () => {

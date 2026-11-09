@@ -277,6 +277,7 @@ try {
           return { x: b.x + 1066.8 * k, y: b.y + (+sheet.getAttribute('height') - 100) * k };
         });
         await p.mouse.move(point.x, point.y);
+        await p.waitForFunction(() => /X 3'-6"/.test(document.querySelector('[data-testid=coords]').textContent));       // the status bar follows the mouse: wait, never read right after the move
         assert.match(await q('coords').textContent(), /X 3'-6"/, mode + ' status bar');
         if (mode === 'Drawing') for (const theme of ['light', 'dark']) {
           await p.locator('[data-menu=View]').click();
@@ -284,12 +285,30 @@ try {
           const path = `${shotDir}/todo222b-properties-ruler-${theme}.png`;
           await p.screenshot({ path }); assert.ok(readFileSync(path).length > 0);
         }
-        await command('qselect');
-        const dialog = q('qselect-dialog'); await dialog.waitFor();
-        await dialog.getByRole('listbox', { name: 'Properties', exact: true }).selectOption('length');
-        assert.equal(await dialog.getByRole('textbox', { name: 'Value', exact: true }).getAttribute('placeholder'), 'ft-in');
-        await dialog.getByRole('textbox', { name: 'Value', exact: true }).fill(`3'6"`);
-        await dialog.getByRole('button', { name: 'OK', exact: true }).click();
+        if (mode === 'Layout') {       // the Part tab X, Y, W, H show and take the drawing unit
+          assert.deepEqual([await q('px').inputValue(), await q('py').inputValue(), await q('pw').inputValue(), await q('ph').inputValue()], [`0'-0"`, `0'-3.94"`, `3'-6"`, `0'-0"`]);
+          await q('pw').fill(`4'`); await q('pw').press('Enter');
+          await p.waitForFunction(() => document.querySelector('[data-testid=pw]').value === `4'-0"`);
+          await p.keyboard.press('Control+z');
+          await p.waitForFunction(() => document.querySelector('[data-testid=pw]').value === `3'-6"`);
+        }
+        if (mode === 'Drawing') {       // the selection bar and the panel Size show and take the drawing unit
+          assert.equal(await q('sel-w').inputValue(), `3'-6"`); assert.equal(await q('dw').inputValue(), `3'-6"`);
+          assert.equal(await q('selbar').locator('.lbl.unit').isVisible(), false, 'no "mm" next to ft-in sizes');
+          await q('sel-w').fill(`4'`); await q('sel-w').press('Enter');
+          await p.waitForFunction(() => document.querySelector('[data-testid=sel-w]').value === `4'-0"`);
+          await p.keyboard.press('Control+z');
+          await p.waitForFunction(() => document.querySelector('[data-testid=sel-w]').value === `3'-6"`);
+        }
+        for (const [typed, count] of [[`4'6"`, 0], [`3'6"`, 1]]) {       // what the filter selects: no line of 4'-6", the line of 3'-6"
+          await command('qselect');
+          const dialog = q('qselect-dialog'); await dialog.waitFor();
+          await dialog.getByRole('listbox', { name: 'Properties', exact: true }).selectOption('length');
+          assert.equal(await dialog.getByRole('textbox', { name: 'Value', exact: true }).getAttribute('placeholder'), 'ft-in');
+          await dialog.getByRole('textbox', { name: 'Value', exact: true }).fill(typed);
+          await dialog.getByRole('button', { name: 'OK', exact: true }).click();
+          await p.waitForFunction((n) => document.querySelector('[data-testid=cmd-prompt]').textContent.includes(`${n} item(s) selected.`), count);
+        }
         assert.equal(await length().inputValue(), `3'-6"`);
         await command('measure'); await command('0mm,100mm'); await command('1066.8mm,100mm');
         await q('meas-tag').waitFor();
@@ -16131,7 +16150,7 @@ try {
   });
   await step('dimension styles: Save as preset… (a taken name refused), pick, Delete; presets are remembered on this PC and survive a reload of the page', async () => {
     await openStyle();
-    await setStyle({ arrow: 3, text: 5, gap: 1.5, pos: 'centre' });
+    await setStyle({ arrow: 3, text: 5, gap: 1.5, pos: 'centre', units: 'mm' });
     await t('ds-save').click(); await t('name-input').fill('Standard'); await t('name-ok').click();
     assert.equal(await t('name-error').textContent(), 'A preset with this name already exists');
     await t('name-input').fill('Plate drawings'); await t('name-ok').click();
@@ -16141,7 +16160,7 @@ try {
     await t('ds-preset').selectOption('Standard');
     assert.deepEqual(await styleFields(), { arrow: '2.50', text: '3.50', dp: '2', gap: '0.80', units: 'ds-units-follow', pos: 'ds-pos-above' }, 'picking a preset loads it');
     await t('ds-preset').selectOption('Plate drawings');
-    assert.deepEqual(await styleFields(), { arrow: '3.00', text: '5.00', dp: '2', gap: '1.50', units: 'ds-units-follow', pos: 'ds-pos-centre' });
+    assert.deepEqual(await styleFields(), { arrow: '3.00', text: '5.00', dp: '2', gap: '1.50', units: 'ds-units-mm', pos: 'ds-pos-centre' }, 'a saved preset keeps mm (only Standard follows)');
     await t('ds-save').click(); await t('name-input').fill('Inch jobs'); await t('name-ok').click();
     await t('ds-delete').click();
     assert.deepEqual(await t('ds-preset').locator('option').allTextContents(), ['Standard', 'Plate drawings'], 'Delete removed Inch jobs');
