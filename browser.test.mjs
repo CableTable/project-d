@@ -2652,6 +2652,10 @@ try {
         await p.emulateMedia({ colorScheme: theme }); await p.waitForTimeout(150);
         await p.screenshot({ path: `${shotDir}/todo142-paste-${theme}.png` });
       }
+      await p.keyboard.press('Control+v');
+      await q('canvas').click({ position: { x: 200, y: 200 } });
+      const followPasteNote = pasteNote.replace('plate paste ', 'plate paste 2 ').replace('at the same coordinates', 'at the cursor');
+      await p.waitForFunction((text) => document.querySelector('[data-testid=cmd-prompt]').textContent === text, followPasteNote);
       const end = fixture.lastIndexOf('0\nENDSEC\n');
       const table = fixture.slice(fixture.indexOf('0\nACAD_TABLE\n'), end).replace('10\n100\n', '10\n150\n');
       const extra = table + '0\nIMAGE\n8\n0\n0\nIMAGE\n8\n0\n0\nWIPEOUT\n8\n0\n';
@@ -24942,6 +24946,8 @@ try {
     await key97b('Control+a'); await key97b('ArrowRight'); assert.notDeepEqual(geometry97b(await savedDoc()), baseline); await back();
     await key97b('Control+a'); await key97b('Delete'); assert.equal((await savedDoc()).entities.length, 0); assert.equal((await savedDoc()).groups.length, 0); await back();
     await key97b('Control+a'); await key97b('Control+c'); await key97b('Control+Shift+v');
+    assert.deepEqual((await savedDoc()).groups.map((g) => g.members), [[0, 1], [2, 3]]); await back();
+    await key97b('Control+v'); await click(150, 130);
     assert.deepEqual((await savedDoc()).groups.map((g) => g.members), [[0, 1], [2, 3]]); await back();
     const raw = lines97b(true); addEntities(raw, dxfPoly([[240, 100], [280, 100], [280, 140]], false));
     await open97b(raw, 'flat97b.dxf'); await key97b('Control+a'); await typeCmd('group');

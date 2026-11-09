@@ -1382,7 +1382,7 @@ function setDimType(type) {
 }
 
 function setTool(id) {
-  state.paste = null;
+  if (state.paste) cancelPaste();
   state.orthoAsk = false;
   state.attdispAsk = null;
   state.eatteditAsk = null;
@@ -4584,7 +4584,7 @@ function paintOverlay(gesture = false) {
   paintQueued = requestAnimationFrame(() => {
     paintQueued = 0;
     canvasPreviewBounds = null;
-    drawAlignmentGuides();
+    if (state.paste?.d.lay) drawAlignmentGuides();
     drawOvl(true);
     const { w, h: ch } = canvasSize(), dpr = window.devicePixelRatio || 1, c = ui.dcanvas;
     const cw = Math.max(1, Math.round(w * dpr)), chh = Math.max(1, Math.round(ch * dpr));
@@ -5532,7 +5532,7 @@ function finishPaste(d, r, sel, inPlace = false) {
     (moved.length ? `. Layer ${moved.map(([l, n]) => `${l} (${n})`).join(', ')} is locked or hidden here, so those went on ${curLayerName(d)}` : '') + '. Ctrl+Z takes them away');
 }
 function cancelPaste() {
-  state.paste = null; trackClear(); note('Paste cancelled'); renderEdit(); paintOverlay();
+  state.paste = null; trackClear(); drawAlignmentGuides(); note('Paste cancelled'); renderEdit(); paintOverlay();
 }
 function pasteMove(e) {
   const g = state.paste;
@@ -5550,7 +5550,7 @@ function pasteMove(e) {
 }
 async function placePaste() {
   const g = state.paste;
-  state.paste = null; trackClear();
+  state.paste = null; trackClear(); drawAlignmentGuides();
   try {
     if (g.d.lay) await finishLayoutPaste(g);
     else finishPaste(g.d, { ...g.r, ...Ed.moveEntities({ ...g.d.raw, ...g.r }, g.sel, g.dx, g.dy) }, g.sel);
