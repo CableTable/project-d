@@ -13109,9 +13109,17 @@ try {
       // Undo of a paste removes its selected objects: no dangling selection or grips; the grip edit before it still gives its grips back.
       await page.keyboard.press('Control+a'); await gripWhen(3);
       await page.keyboard.press('Control+c'); await page.keyboard.press('Escape'); await gripWhen(0);
-      await page.keyboard.press('Control+Shift+v'); await gripWhen(3);
-      await page.keyboard.press('Control+z'); await gripWhen(0);
-      await page.keyboard.press('Control+z'); await gripWhen(3);
+      // Compare (211c, Q13): a paste is always a new snapshot, which has no tab to edit, so it shows no grips; Undo takes the snapshot away.
+      // grips / snapshots after: paste, Undo, Redo, Esc, Undo, Undo (null = not checked: Redo of a drawing paste leaves no selection today, a layout's does)
+      const grid = { Drawing: { grips: [3, 0, null, 0, 0, 3] }, Layout: { grips: [3, 0, null, 0, 0, 3] }, Compare: { grips: [0, 0, 0, 0, 0, 3], items: [1, 0, 1, 1, 0, 0] } }[kind];
+      const items0 = kind === 'Compare' ? await t('cmp-item').count() : 0;
+      await page.keyboard.press('Control+Shift+v');
+      for (const [i, key] of [null, 'Control+z', 'Control+y', 'Escape', 'Control+z', 'Control+z'].entries()) {
+        if (key) await page.keyboard.press(key);
+        await frames(); await frames();
+        if (grid.grips[i] !== null) await gripWhen(grid.grips[i]);
+        if (grid.items) assert.equal(await t('cmp-item').count(), items0 + grid.items[i], `${kind} after ${key || 'paste'}: snapshots`);
+      }
       console.log(`188 ${kind}: Undo / Redo keep grips; removed objects leave selection; Esc clears grips`);
     }
     assert.deepEqual(errors, []); await closeTabs(/./);
