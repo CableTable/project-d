@@ -2035,6 +2035,7 @@ function layRestore(d, st, dirty = true) {
   d.dirty = dirty; renderTabs(); update(sized && view.fitted);
 }
 function undoLay() {
+  if (state.paste) { cancelPaste(); return; }
   const d = curDoc();
 
   if (!d?.lay) { if (d?.hist) undo(d); return; }
@@ -2635,7 +2636,7 @@ function snapPlacedDrag(p, dx, dy) {
 }
 
 function drawAlignmentGuides() {
-  const p = pdrag, g = ui.gAlignment;
+  const p = pdrag || (state.paste?.d.lay && state.paste), g = ui.gAlignment;
   if (!g) return;
   if (!p || !p.moved || p.kind !== 'move' || !p.snapped || !state.snap || p.skipSnap) { g.replaceChildren(); return; }
   const box = p.box.map((v, i) => v + (i % 2 ? p.dy : p.dx));
@@ -4583,6 +4584,7 @@ function paintOverlay(gesture = false) {
   paintQueued = requestAnimationFrame(() => {
     paintQueued = 0;
     canvasPreviewBounds = null;
+    drawAlignmentGuides();
     drawOvl(true);
     const { w, h: ch } = canvasSize(), dpr = window.devicePixelRatio || 1, c = ui.dcanvas;
     const cw = Math.max(1, Math.round(w * dpr)), chh = Math.max(1, Math.round(ch * dpr));
@@ -4607,7 +4609,7 @@ function paintOverlay(gesture = false) {
     const L2 = state.setlen || state.meas || state.dim || state.ldr || ((modLive() || layModLive()) && ['move', 'copy', 'stretch', 'rotate', 'scale', 'lengthen', 'align'].includes(state.mod.kind) ? { pts: state.mod.ref && state.mod.ref.step !== 'new' ? state.mod.ref.pts : state.mod.p1 ? [state.mod.p1] : [], hover: state.mod.cur }
       : (modLive() || layModLive()) && state.mod.kind === 'array' && state.mod.type === 'polar' ? { pts: state.mod.center ? [state.mod.center] : [], hover: state.mod.stage === 'center' ? state.mod.cur : null } : null);
     const hv = L2 && (typedAt() || L2.hover);                       // typed cursor fields: the rubber line goes to the typed point
-    const dragSnap = d?.lay && pdrag?.moved && state.snap && !pdrag.skipSnap && pdrag.to;
+    const dragSnap = d?.lay && (state.paste?.to || (pdrag?.moved && state.snap && !pdrag.skipSnap && pdrag.to));
     const marks = dragSnap?.[2] ? [[dragSnap[0], dragSnap[1], dragSnap[2], true]] : L2 && d ? [...L2.pts.map((q) => [q[0], q[1], q[2], false]), ...(L2.pts.length < 2 && hv ? [[hv[0], hv[1], hv[2], true]] : [])] : null;
     if (d?.cmp) {
       cmpPaint(c, d.cmp, base, marks);
@@ -4634,6 +4636,13 @@ function paintOverlay(gesture = false) {
       }
       const gm = state.grip?.d.vlay === d && state.grip.move;                                 // a text, hatch or block a grip moves: its objects' drawing (sheet mm) shifted
       c.dataset.preview = gm?.items ? paintDrawing(c, { ...base, ox: base.ox - gm.dx, oy: base.oy + gm.dy, keep: true, fl: gm.preview, off: state.grip.d.off, factor: 1, tint: cssVar('--selection', '#4f46e5'), previewBounds: (box) => { canvasPreviewBounds = unionBox(canvasPreviewBounds, box); } }) : 0;
+      const paste = state.paste;
+      if (paste?.d === d && paste.from) for (const [id, part] of Object.entries(paste.parts)) {
+        const slots = paste.placed.filter((p) => p.partId === id).map((p) => placedMat(part, PL.translate(p, paste.dx, paste.dy), state.sheetH));
+        paintDrawing(c, { ...base, keep: true, fl: part.fl, off: part.off, factor: part.factor || 1, slots,
+          tint: `color-mix(in srgb, ${cssVar('--selection', '#4f46e5')} 50%, transparent)`, previewBounds: (box) => { canvasPreviewBounds = unionBox(canvasPreviewBounds, box); } });
+        c.dataset.preview = +c.dataset.preview + slots.length;
+      }
       if (state.layCt && state.tool === 'contour') {                                          // Contour's preview on the placed parts (sheet mm, y up)
         const k = base.scale * dpr, T = [k, 0, 0, -k, -base.ox * k, (base.sheetH - base.oy) * k];
         drawContour(c.getContext('2d'), state.layCt, T, dpr, contourColour(d).replace('var(--text)', base.dark ? '#ededef' : '#18181b'), contourStyle().dash);
@@ -5454,34 +5463,27 @@ async function pasteClipboard(inPlace) {
   if (!clipboard) { note('Nothing to paste: copy drawing objects first'); return; }
   if (!d?.lay && !editable()) { note('Paste: open a drawing or layout first'); return; }
   try {
+    if (!inPlace) setTool('select');
+    state.paste = null;
     if (d.lay) {
-      if (clipboard.placed) {
-        const { parts, placed } = structuredClone(clipboard), lay = d.lay, groups = {};
-        pushLay(d, null, '', `Paste ${placed.length} parts`);
-        for (const [id, part] of Object.entries(parts)) if (!lay.parts[id]) lay.parts[id] = part;
-        const own = LD.layersOf(lay), more = {};       // an object's layer comes with it (a new table, as the history holds the old one)
-        for (const part of Object.values(parts)) if (part.obj) for (const [n, def] of Object.entries(part.raw.layers)) if (!(n in own) && !(n in more)) more[n] = def;
-        if (Object.keys(more).length) lay.layers = { ...own, ...more };
-        const from = lay.placed.length;
-        lay.placed.push(...placed.map((p) => fresh(p, groups)));
-        if (sheetSelOn()) selectSheet(false);
-        selLooseMany = placed.map((_, i) => from + i);
-        touch(); update();
-        note(`Pasted ${placed.length} placed part${placed.length === 1 ? '' : 's'} at the same coordinates. Ctrl+Z takes them away`);
-        return;
+      let parts, placed, part;
+      if (clipboard.placed) ({ parts, placed } = structuredClone(clipboard));
+      else {
+        part = partFromSnapshot(clipboard, uid(), lib.items.map((r) => r.name));
+        if (!part) { note('Paste: the selection has no size (kept dimensions are not part of a part)'); return; }
+        parts = { [part.id]: part };
+        placed = [placement1(part.id, part.box[0] * part.factor, part.box[1] * part.factor)];
       }
-      const part = partFromSnapshot(clipboard, uid(), lib.items.map((r) => r.name));
-      if (!part) { note('Paste: the selection has no size (kept dimensions are not part of a part)'); return; }
-      const report = writeDxfWithReport(part.raw, { escapeUnicode: true });
-      const rec = { id: part.id, name: part.name, w: part.w, h: part.h, dxf: report.text, thumb: thumbFor(part), source: part.src, t: Date.now() };
-      libCache.set(part.id, part);
-      const saving = libAdd(rec);
-      addLibToSheet(rec, null, true);
-      const ok = await saving;
-      note(`Part ${part.name} saved to the Parts library and placed at the same coordinates. Ctrl+Z removes the placement` + saveReportNote(report) + (ok ? '' : KEPT_ONLY_NOW));
+      const g = { d, parts, placed, part, dx: 0, dy: 0 };
+      if (inPlace) { await finishLayoutPaste(g, true); return; }
+      const box = A.unionBox(placed.map((p) => placedBox(parts[p.partId], p)));
+      state.paste = { ...g, box, anchor: [box[0], box[3]], from: null, kind: 'move', moved: true,
+        alignmentLines: [...sheetAlignmentLines(d.lay.s), ...partAlignmentLines(d.lay.parts, placedNow, partSelectable)] };
+      note('Paste: follows the cursor, click to place');
+      renderEdit();
+      if (snapPointer) pasteMove(snapPointer);
       return;
     }
-    if (!inPlace) setTool('select');
     const names = new Set([...Object.keys(d.raw.layers), ...d.fl.layers.map((l) => l.name)]);
     const r = pasteSnapshot(clipboard, { raw: d.raw, factor: d.factor, names, hidden: hiddenLayerNames(d), locked: d.locked || [], cur: curLayerName(d), space: spaceOf(d.fl), dp: state.dp });
     const sel = new Set(Array.from({ length: r.count }, (_, i) => r.from + i));
@@ -5499,6 +5501,27 @@ async function pasteClipboard(inPlace) {
     finishPaste(d, r, sel, true);
   } catch (err) { note(`Paste: ${err.message}`); }
 }
+async function finishLayoutPaste(g, inPlace = false) {
+  const { d, parts, placed, part } = g, lay = d.lay, groups = {};
+  const report = part && writeDxfWithReport(part.raw, { escapeUnicode: true });
+  const rec = part && { id: part.id, name: part.name, w: part.w, h: part.h, dxf: report.text, thumb: thumbFor(part), source: part.src, t: Date.now() };
+  pushLay(d, null, '', `Paste ${placed.length}`);
+  for (const [id, part] of Object.entries(parts)) if (!lay.parts[id]) lay.parts[id] = part;
+  const own = LD.layersOf(lay), more = {};       // an object's layer comes with it (history holds the old table)
+  for (const part of Object.values(parts)) if (part.obj) for (const [n, def] of Object.entries(part.raw.layers)) if (!(n in own) && !(n in more)) more[n] = def;
+  if (Object.keys(more).length) lay.layers = { ...own, ...more };
+  const from = lay.placed.length;
+  lay.placed.push(...placed.map((p) => fresh(inPlace ? p : PL.translate(p, g.dx, g.dy), groups)));
+  if (sheetSelOn()) selectSheet(false);
+  selLooseMany = placed.map((_, i) => from + i);
+  touch(); update();
+  const where = inPlace ? 'at the same coordinates' : 'at the cursor';
+  if (part) {
+    libCache.set(part.id, part);
+    const ok = await libAdd(rec);
+    note(`Part ${part.name} saved to the Parts library and placed ${where}. Ctrl+Z removes the placement` + saveReportNote(report) + (ok ? '' : KEPT_ONLY_NOW));
+  } else note(`Pasted ${placed.length} placed part${placed.length === 1 ? '' : 's'} ${where}. Ctrl+Z takes them away`);
+}
 function finishPaste(d, r, sel, inPlace = false) {
   if (!commit(d, { entities: r.entities, groups: r.groups, blocks: r.blocks, layers: r.layers, ltypes: r.ltypes }, `Paste ${r.count}`)) return;       // too nested: commit showed why
   if (r.made.length) d.newLayer = r.made[0];
@@ -5513,17 +5536,25 @@ function cancelPaste() {
 }
 function pasteMove(e) {
   const g = state.paste;
-  if (g.d !== editable() || g.raw !== g.d.raw.entities) { cancelPaste(); return false; }
+  if (g.d.lay ? g.d !== curDoc() : g.d !== editable() || g.raw !== g.d.raw.entities) { cancelPaste(); return false; }
   const p = snapPoint(g.d, toDrawing(g.d, e.clientX, e.clientY), -1, [], g.from);
   if (!g.from) g.from = p.slice(0, 2);
-  const { to, dx, dy } = dragTarget(g.from, p, g.d.factor, e.shiftKey || state.ortho);
+  g.straight = !!(e.shiftKey || state.ortho);
+  const { to, dx, dy } = dragTarget(g.from, p, g.d.lay ? 1 : g.d.factor, g.straight);
   g.to = to; g.dx = g.from[0] - g.anchor[0] + dx; g.dy = g.from[1] - g.anchor[1] + dy;
+  if (g.d.lay) {
+    const sn = p[2] ? { dx, dy, hit: null } : snapPlacedDrag({ ...g, box: g.box.map((v, i) => v + g.from[i % 2] - g.anchor[i % 2]) }, dx, dy);
+    g.dx = g.from[0] - g.anchor[0] + sn.dx; g.dy = g.from[1] - g.anchor[1] + sn.dy; g.snapped = sn.hit;
+  }
   paintOverlay(); return true;
 }
-function placePaste() {
+async function placePaste() {
   const g = state.paste;
   state.paste = null; trackClear();
-  try { finishPaste(g.d, { ...g.r, ...Ed.moveEntities({ ...g.d.raw, ...g.r }, g.sel, g.dx, g.dy) }, g.sel); }
+  try {
+    if (g.d.lay) await finishLayoutPaste(g);
+    else finishPaste(g.d, { ...g.r, ...Ed.moveEntities({ ...g.d.raw, ...g.r }, g.sel, g.dx, g.dy) }, g.sel);
+  }
   catch (err) { note(`Paste: ${err.message}`); }
   renderEdit(); paintOverlay();
 }
