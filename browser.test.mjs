@@ -4427,6 +4427,108 @@ try {
     } finally { await ctx.close(); }
   });
 
+  await step('TODO 214a: PDF / Print Selection only', async () => {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const p = await ctx.newPage(), q = (id) => panelControl(p, p.getByTestId(id));
+    p.on('pageerror', (e) => errors.push(String(e)));
+    const raw = newDoc(4);
+    addEntities(raw, dxfText(20, 20, 8, 'SELECTED214'), dxfText(200, 100, 8, 'OTHER214'), dxfText(400, 200, 8, 'HIDDEN214'));
+    const open = async () => { await q('pdf-open').click(); await q('pdf-dialog').waitFor(); };
+    const texts = async (id, selected) => {
+      await p.waitForFunction(([id, selected]) => {
+        const a = window.__pdfTexts[id] || [];
+        return a.includes('SELECTED214') && a.includes('OTHER214') === !selected && !a.includes('HIDDEN214');
+      }, [id, selected]).catch(async (e) => { throw new Error(`${id}, selected=${selected}: ${JSON.stringify(await p.evaluate(() => window.__pdfTexts))}; ${e.message}`); });
+    };
+    const clear = () => p.evaluate(() => { window.__pdfTexts = {}; });
+    const printed = async (selected) => {
+      await p.evaluate(() => { window.__printed = null; });
+      await q('pdf-print').click(); await q('pdf-dialog').waitFor({ state: 'detached' });
+      const pdf = await p.evaluate(() => window.__printed);
+      assert.ok(pdf.includes('(SELECTED214)'));
+      assert.equal(pdf.includes('(OTHER214)'), !selected);
+      assert.equal(pdf.includes('(HIDDEN214)'), false);
+    };
+    try {
+      await p.goto(URL_);
+      await q('picker').setInputFiles({ name: 'selection214.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(raw)) });
+      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'selection214.dxf');
+      await q('ptab-objects').click();
+      const layer = p.locator('.or.layer[data-layer="0"]');
+      if (await layer.getAttribute('aria-expanded') === 'false') await layer.click();
+      await p.locator('.or.obj[data-e="2"] [data-act=vis]').click();
+      await p.evaluate(() => {
+        window.__pdfTexts = {};
+        const clearRect = CanvasRenderingContext2D.prototype.clearRect;
+        CanvasRenderingContext2D.prototype.clearRect = function (...args) {
+          const id = this.canvas.dataset.testid;
+          if (id === 'pdf-preview' || id === 'pdf-full-canvas') window.__pdfTexts[id] = [];
+          return clearRect.apply(this, args);
+        };
+        const fillText = CanvasRenderingContext2D.prototype.fillText;
+        CanvasRenderingContext2D.prototype.fillText = function (...args) {
+          const id = this.canvas.dataset.testid;
+          if (id === 'pdf-preview' || id === 'pdf-full-canvas') (window.__pdfTexts[id] ||= []).push(args[0]);
+          return fillText.apply(this, args);
+        };
+        window.__TAURI__ = { dialog: { save: async () => 'C:/prints/selection214.pdf' }, fs: { writeFile: async (_path, bytes) => { window.__printed = new TextDecoder().decode(bytes); } } };
+      });
+      await open();
+      assert.equal(await q('pdf-selection-only').isChecked(), false);
+      assert.equal(await q('pdf-selection-only').isDisabled(), true);
+      await p.keyboard.press('Escape');
+      assert.equal(await q('pdf-dialog').count(), 0);
+      await p.locator('.or.obj[data-e="0"] .onm').click();
+      await open();
+      assert.equal(await q('pdf-selection-only').isDisabled(), false);
+      await texts('pdf-preview', false);
+      const allSize = await q('pdf-sheet-size').textContent();
+      await clear(); await q('pdf-selection-only').check();
+      await texts('pdf-preview', true);
+      assert.notEqual(await q('pdf-sheet-size').textContent(), allSize, 'page cut follows selection');
+      await q('pdf-page-check').check();
+      assert.match(await q('pdf-title-scale').inputValue(), /^NOT 1:1/);
+      assert.equal(await q('pdf-title-footnote').inputValue(), 'Fitted to one page: not 1:1, not to be used as film');
+      await q('pdf-fullscreen').click(); await texts('pdf-full-canvas', true);
+      await clear();
+      await q('pdf-selection-only').evaluate((el) => { el.checked = false; el.dispatchEvent(new Event('change')); });
+      await texts('pdf-preview', false); await texts('pdf-full-canvas', false);
+      await p.keyboard.press('Escape');
+      await clear(); await q('pdf-selection-only').check(); await texts('pdf-preview', true);
+      for (const theme of ['light', 'dark']) {
+        await p.evaluate((theme) => { document.documentElement.dataset.theme = theme; }, theme);
+        await p.screenshot({ path: `${shotDir}/todo214a-selection-${theme}.png` });
+        assert.ok(readFileSync(`${shotDir}/todo214a-selection-${theme}.png`).length > 1000);
+      }
+      await printed(true);
+      await open();
+      assert.equal(await q('pdf-selection-only').isChecked(), false, 'off on each open');
+      await q('pdf-selection-only').check();
+      await clear(); await q('pdf-selection-only').uncheck(); await texts('pdf-preview', false);
+      await q('pdf-fullscreen').click(); await texts('pdf-full-canvas', false); await p.keyboard.press('Escape');
+      await printed(false);
+      await p.locator('.coords').click(); await p.keyboard.press('Delete');
+      await clear();
+      await open(); assert.equal(await q('pdf-selection-only').isDisabled(), true);
+      assert.equal((await p.evaluate(() => window.__pdfTexts['pdf-preview'])).includes('SELECTED214'), false, 'source deletion reaches next export');
+      await q('pdf-close').click();
+      await p.locator('.coords').click(); await p.keyboard.press('Control+z');
+      await clear(); await open(); await texts('pdf-preview', false); await q('pdf-close').click();
+      await p.locator('.or.obj[data-e="2"] .onm').click();
+      await open(); await q('pdf-selection-only').check();
+      assert.equal(await q('pdf-go').isDisabled(), true, 'a hidden-only selection has nothing to export');
+      assert.equal(await q('pdf-print').isDisabled(), true);
+      assert.equal(await q('pdf-fullscreen').isDisabled(), true);
+      assert.equal(await q('pdf-preview-label').textContent(), 'Preview · nothing to export');
+      await q('pdf-selection-only').uncheck();
+      await texts('pdf-preview', false); await q('pdf-close').click();
+      const lay = newLayout('Selection hidden'); lay.parts.p = makePart('p', 'Plate', raw); lay.placed = [{ partId: 'p', x: 100, y: 100, rot: 0 }];
+      await q('picker').setInputFiles({ name: 'selection-layout214.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
+      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'selection-layout214.dxf');
+      await open(); assert.equal(await q('pdf-selection-only').count(), 0);
+    } finally { await ctx.close(); }
+  });
+
   await step('TODO 203: PDF / Print full-screen preview', async () => {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const p = await ctx.newPage(), q = (id) => p.getByTestId(id);

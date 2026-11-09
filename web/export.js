@@ -83,7 +83,7 @@ export function paintPage(canvas, page, box, colours, view) {
 // ---------------------------------------------------------------- the dialog
 
 /**
- * host: { source() → { name, path, fl, factor, off, sheetW, sheetH, hide } | null, sheet() → { w, h },
+ * host: { source(selectionOnly) → { name, path, fl, factor, off, sheetW, sheetH, hide, hasSelection } | null, sheet() → { w, h },
  *         readDrawing(bytes) → { ok, result, doc, sorry, error }, setTitleBlock(value), note(text) }
  */
 export function openExport(host) {
@@ -92,7 +92,7 @@ export function openExport(host) {
   if (!src) { host.note('Nothing to export: open a drawing first'); return; }
   const date = today();
   const part = !!src.part, settings = part ? partSettings : layoutSettings;        // Part: the drawing and its dimensions alone, three ways
-  const srcFull = { ...src, date, name: baseName(src.name) };
+  let selectionOnly = false, srcFull = { ...src, date, name: baseName(src.name) };
   let titleBlock = cleanTitleBlock(src.titleBlock);
   const t = window.__TAURI__;
   const inApp = !!(t && t.dialog && t.dialog.save && t.fs && t.fs.writeFile);
@@ -167,11 +167,22 @@ export function openExport(host) {
     h('div', { class: 'pd-two pd-title-fields' }, titleField('file', 'File name'), titleField('scale', 'Scale'), titleField('size', 'Part / size / page'), titleField('date', 'Date'), titleField('footnote', 'Footnote')),
     h('div', { class: 'pd-row' }, ref.titleReset, h('span', { class: 'lbl' }, 'Restore automatic text · empty hides the field')));
 
+  ref.selectionOnly = h('input', { type: 'checkbox', checked: selectionOnly, disabled: !src.hasSelection, 'data-testid': 'pdf-selection-only' });
+  ref.selectionOnly.addEventListener('change', () => {
+    selectionOnly = ref.selectionOnly.checked;
+    const next = host.source(selectionOnly), wasFull = !!full;
+    if (full) full(false);
+    srcFull = next && { ...next, date, name: baseName(next.name) };
+    settings.pageIdx = 0;
+    refresh();
+    if (wasFull && plan) openFull();
+  });
   const left = h('div', { class: 'pd-left' },
     fieldset('Page',
       radio('sheet', 'pdf-page-sheet', part ? 'Page cut to the part, 1:1 ' : 'Sheet size, 1:1 ', ref.sheetLbl),
       radio('tile', 'pdf-page-tile', 'Tile 1:1 on ', ref.tilePaper, ' pages ', ref.tileLbl),
-      radio('check', 'pdf-page-check', part ? 'Scaled to fit one ' : 'Check print, fit to ', ref.checkPaper, part ? ' page ' : ' ', ref.checkLbl)),
+      radio('check', 'pdf-page-check', part ? 'Scaled to fit one ' : 'Check print, fit to ', ref.checkPaper, part ? ' page ' : ' ', ref.checkLbl),
+      ...(part ? [h('label', { class: 'pd-row' }, ref.selectionOnly, ' Selection only')] : [])),
     ref.titleSet,
     fieldset('Film',
       check('mirror', 'Mirror (emulsion down)', 'pdf-mirror'),
@@ -260,13 +271,21 @@ export function openExport(host) {
       return;
     }
     ref.go.textContent = 'Save PDF';
+    ref.fullBtn.disabled = !srcFull;
+    if (!srcFull) {
+      plan = null; ref.print.disabled = true; ref.go.disabled = true;
+      ref.canvas.getContext('2d').clearRect(0, 0, ref.canvas.width, ref.canvas.height);
+      ref.preLabel.textContent = 'Preview · nothing to export'; ref.foot.textContent = 'Nothing to export';
+      ref.sheetLbl.textContent = ''; ref.tileLbl.textContent = ''; ref.checkLbl.textContent = ''; fill(ref.pageBtns, []);
+      return;
+    }
     const o = opts(), check = o.page === 'check';
     if (!part) { ref.sheetSizeGripper.disabled = !check; ref.sheetSizeGripper.title = check ? '' : 'Check print only'; }
     srcFull.date = today();
     plan = planPdf(srcFull, o);
     if (settings.pageIdx >= plan.count) settings.pageIdx = plan.count - 1;
     if (settings.pageIdx < 0) settings.pageIdx = 0;
-    const W = src.sheetW, Hh = src.sheetH;
+    const W = srcFull.sheetW, Hh = srcFull.sheetH;
     // a part's page is the part plus a border all round: say the part's own size and the border, not the page's
     ref.sheetLbl.textContent = part ? `${Number((W - 2 * PART_BORDER).toFixed(1))} × ${Number((Hh - 2 * PART_BORDER).toFixed(1))} + ${PART_BORDER} mm border` : `${Number(W.toFixed(1))} × ${Number(Hh.toFixed(1))}`;
     ref.sheetLbl.title = part ? 'The part plus a 10 mm border' : '';

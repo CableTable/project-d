@@ -3239,7 +3239,7 @@ function shownLayout(d) {
   return { ...d.lay, s: { ...d.lay.s, gridPart: hid.has(d.lay.s.gridPart) ? null : d.lay.s.gridPart }, placed: d.lay.placed.filter((p) => !hid.has(p.partId)) };
 }
 /** What the PDF is made from: the active tab's drawing (a layout's Sheet and Marks layers are not artwork), or null (nothing open yet). */
-function exportSource() {
+function exportSource(selectionOnly = false) {
   const d = curDoc();
   if (!d) return null;
   const path = d.path || d.openPath;
@@ -3249,16 +3249,18 @@ function exportSource() {
     const { gripTop, gripRight, gripBottom, gripLeft } = lay.s;
     return { name: d.name, path, fl: flatten(LD.layoutRaw(lay)), factor: 1, off: new Set(), sheetW: d.lay.s.sheetW, sheetH: d.lay.s.sheetH, grippers: { gripTop, gripRight, gripBottom, gripLeft }, hide: ['Sheet', 'Marks'] };
   }
-  const hid = hidIdx(d), fl = hid && hid.size ? { ...d.fl, items: d.fl.items.filter((it) => !hid.has(it.e)) } : d.fl;       // objects hidden one by one are left out too: what you see is what prints
+  const hid = hidIdx(d);
+  let fl = hid && hid.size ? { ...d.fl, items: d.fl.items.filter((it) => !hid.has(it.e)) } : d.fl;       // objects hidden one by one are left out too: what you see is what prints
+  if (selectionOnly && fl) fl = { ...fl, items: fl.items.filter((it) => d.sel.has(it.e)) };
   if (d.fl && partView(d) && !d.bgOnly) {                            // a drawing tab: the drawing and its dimensions alone (never the background or a sheet)
-    return partSource({ fl, factor: d.factor, off: d.off, name: d.name, path, hide: [] });
+    return partSource({ fl, factor: d.factor, off: d.off, name: d.name, path, hide: [], hasSelection: d.sel.size > 0 });
   }
   if (d.fl) return { name: d.name, path, fl, factor: d.factor, off: d.off, sheetW: state.sheetW, sheetH: state.sheetH, hide: [] };
   return null;
 }
 function exportPdf() {
-  const d = curDoc(), src = exportSource();
-  openExport({ source: () => src && { ...src, titleBlock: d.titleBlock }, sheet: () => ({ w: state.sheetW, h: state.sheetH }), readDrawing, note,
+  const d = curDoc();
+  openExport({ source: (selectionOnly) => { const src = exportSource(selectionOnly); return src && { ...src, titleBlock: d.titleBlock }; }, sheet: () => ({ w: state.sheetW, h: state.sheetH }), readDrawing, note,
     setTitleBlock: (value) => { d.titleBlock = value; d.dirty = true; renderTabs(); } });
 }
 
