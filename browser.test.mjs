@@ -12987,7 +12987,7 @@ try {
       // Undo of a paste removes its selected objects: no dangling selection or grips; the grip edit before it still gives its grips back.
       await page.keyboard.press('Control+a'); await gripWhen(3);
       await page.keyboard.press('Control+c'); await page.keyboard.press('Escape'); await gripWhen(0);
-      await page.keyboard.press('Control+v'); await gripWhen(3);
+      await page.keyboard.press('Control+Shift+v'); await gripWhen(3);
       await page.keyboard.press('Control+z'); await gripWhen(0);
       await page.keyboard.press('Control+z'); await gripWhen(3);
       console.log(`188 ${kind}: Undo / Redo keep grips; removed objects leave selection; Esc clears grips`);
@@ -21395,7 +21395,7 @@ try {
 
   await step('TODO 84: menu and tooltip command hints match COMMANDS, light then dark', async () => {
     await closeTabs(/./); await t('new-tab').click();
-    const names = { rect: 'rectangle', 'Rounded rectangle': 'rrect', 'Measure points': 'measurepoints', 'Text to outlines': 'textoutlines', 'Break Apart': 'breakapart', 'Fit to window': 'fit', 'Zoom Window': 'zoomwindow', 'Zoom Selection': 'zoomselection', 'Zoom Previous': 'zoomprevious', 'Save As…': 'saveas', 'Select all': 'selectall' };
+    const names = { rect: 'rectangle', 'Rounded rectangle': 'rrect', 'Measure points': 'measurepoints', 'Text to outlines': 'textoutlines', 'Break Apart': 'breakapart', 'Fit to window': 'fit', 'Zoom Window': 'zoomwindow', 'Zoom Selection': 'zoomselection', 'Zoom Previous': 'zoomprevious', 'Save As…': 'saveas', 'Select all': 'selectall', 'Paste in place': 'pasteorig' };
     const dimNames = { Linear: 'dimlinear', Radius: 'dimradius', Diameter: 'dimdiameter', Angle: 'dimangular' };
     for (const th of ['light', 'dark']) {
       await page.evaluate((x) => { document.documentElement.dataset.theme = x; }, th);
@@ -24948,6 +24948,8 @@ try {
     await key97b('Control+a'); await key97b('Control+c'); await key97b('Control+Shift+v');
     assert.deepEqual((await savedDoc()).groups.map((g) => g.members), [[0, 1], [2, 3]]); await back();
     await key97b('Control+v'); await click(150, 130);
+    const landed = geometry97b(await savedDoc()).slice(2);
+    for (const [i, line] of [[150, 70, 250, 70], [150, 130, 250, 130]].entries()) for (const [j, want] of line.entries()) assert.ok(Math.abs(landed[i][j] - want) < 1, 'the pasted group lands with its top-left at the click');
     assert.deepEqual((await savedDoc()).groups.map((g) => g.members), [[0, 1], [2, 3]]); await back();
     const raw = lines97b(true); addEntities(raw, dxfPoly([[240, 100], [280, 100], [280, 140]], false));
     await open97b(raw, 'flat97b.dxf'); await key97b('Control+a'); await typeCmd('group');
