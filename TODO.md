@@ -372,6 +372,7 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
 - [ ] 216. **Print… to the printer (Windows print dialog)** (M, T65).
 - [ ] 217. **PDF / Print: custom margins per side, Office printer 5 mm** (S, T66).
 - [ ] 218. **Combine (Ctrl+L) / Break Apart** (M, T67).
+- [ ] 221. **Support sessions start on effort medium** (S, tool ticket, KIT, T68): `rook-kit/rook.mjs:151` support flags `--effort high` -> `medium` (+ `rook.test.mjs:26`), `rook-hq/support-prompt.md:15`, regenerate `support/start-bishop-support.cmd`; check WORKFLOW.md effort mentions.
 - [x] 219. **One setup for all projects** (done S40i: R `8d51cbd` and B `e7630c6` main pushed, CI + deploy green, runs 42498263214 / 42498341093; L, his call 2026-11-07, grill `runs39/grill-global-setup.md`; no D feature builds until done). Tickets, King, `--tool`:
   - [x] 219a. Project values from `rook.config.json` (no Project D literals in `tools/`, briefs, agents, retro skill, hooks).
   - [x] 219b. `--project <D|R|B|P|WF>` on `rook.mjs`; `rook-hq/projects.json`; runs and handovers in `rook-hq/runs<N>`.
