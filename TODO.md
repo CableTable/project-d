@@ -368,7 +368,9 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
 - [x] 212. **Snap preview toggle in Select mode** (S, T61).
 - [x] 213. **Ribbon Line width: Custom… and last 5 custom widths** (S, T62).
 - [x] 214. **PDF / Print: Selection only** (M, T63; done S41: 214a `4999cfb` drawing tab, 214b `1c5dd60` layout, 214c `b71ad5e` Compare; suite-b71ad5e green; Lows in runs41/lows.txt).
-- [ ] 215. **PDF / Print: custom scale, also in the preview bar** (M, T64).
+- [ ] 215. **PDF / Print: custom scale, also in the preview bar** (M, T64; grill `runs41/grill-215.md`):
+  - [x] 215a. The dialog: Custom scale page, paper A4-A0, tiles (built: `1adbf7e`, King, review ship).
+  - [ ] 215b. The full-screen bar: Scale box beside Fit, "View 100%" relabel, margin fields.
 - [ ] 216. **Print… to the printer (Windows print dialog)** (M, T65).
 - [ ] 217. **PDF / Print: custom margins per side, Office printer 5 mm** (S, T66).
 - [ ] 218. **Combine (Ctrl+L) / Break Apart** (M, T67).
