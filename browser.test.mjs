@@ -4380,10 +4380,11 @@ try {
     assert.deepEqual(await dialog.locator('legend').allTextContents(), ['Page', 'Title block', 'Film', 'Pages', 'Marks']);
     const labels = (await dialog.locator('.pd-left .pd-set:not([hidden]) label').allTextContents()).map((x) => x.replace(/\s+/g, ' ').trim());
     assert.deepEqual(labels.slice(0, 3), ['Sheet size, 1:1 1000 × 700', 'Tile 1:1 on A3A4 pages 3 × 3 tiles'.replace('3 × 3', '4 × 2'), 'Check print, fit to A4A3 scale 1 : 3.97'.replace('3.97', labels[2].match(/1 : [\d.]+/)[0].slice(4))]);
-    assert.deepEqual(labels.slice(3, 8), ['Margins (mm) StandardOffice printer (5 mm)Custom', 'Top', 'Right', 'Bottom', 'Left'], 'TODO 217: the Margins row (hidden on the 1:1 sheet page)');
-    assert.deepEqual(labels.slice(8, 11), ['Selection only', 'Cut to selection', 'Sheet page'], 'TODO 214b: the tick and its two radios (the radios hidden until ticked)');
-    assert.deepEqual(labels.slice(11, 17), ['Mirror (emulsion down)', 'Negative', 'All colours print black', 'One page per print colour (layer)', 'Crop marks', 'Registration marks'].slice(0, 3).concat(['One page per print colour (layer)', 'Crop marks', 'Registration marks']));
-    assert.equal(labels[17], 'Job strip: file, date, colour');
+    assert.equal(labels[3], 'Custom scale on A4A3A2A1A0', 'TODO 215a: the Custom scale radio');
+    assert.deepEqual(labels.slice(4, 9), ['Margins (mm) StandardCustom', 'Top', 'Right', 'Bottom', 'Left'], 'TODO 217: the Margins row (the Office printer preset is a button since fa7d67f)');
+    assert.deepEqual(labels.slice(9, 12), ['Selection only', 'Cut to selection', 'Sheet page'], 'TODO 214b: the tick and its two radios (the radios hidden until ticked)');
+    assert.deepEqual(labels.slice(12, 18), ['Mirror (emulsion down)', 'Negative', 'All colours print black', 'One page per print colour (layer)', 'Crop marks', 'Registration marks'].slice(0, 3).concat(['One page per print colour (layer)', 'Crop marks', 'Registration marks']));
+    assert.equal(labels[18], 'Job strip: file, date, colour');
     assert.deepEqual(await dialog.locator('.pd-footer button').allTextContents(), ['Cancel', 'Print…', 'Save PDF']);
     assert.equal(await t('pdf-foot').textContent(), 'sample-copy layout.pdf');
     const note = await t('pdf-pages-note').textContent();
