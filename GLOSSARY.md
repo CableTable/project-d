@@ -199,7 +199,7 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Unit fix**: Multiplies or divides the whole drawing or background by 25.4 about 0,0 to correct an inch/mm size mistake without changing the unit header. Where: `DECISIONS.md`, Unit fix. Avoid: Changing display units.
 
-**Drawing unit**: The unit a drawing shows and reads lengths in (mm, inch, ft or ft-in), chosen per drawing and saved with it; the geometry itself is always in mm, so changing it never moves anything. Where: `DECISIONS.md`, Drawing unit (TODO 222). Avoid: Unit fix (that rescales the geometry), display units.
+**Drawing unit**: The unit a drawing shows and reads lengths in (mm, inch, ft or ft-in), chosen per drawing and saved with it; it only changes how lengths show and are typed, never the geometry. Where: `DECISIONS.md`, Drawing unit (TODO 222). Avoid: Unit fix (that rescales the geometry), display units.
 
 **Work area**: The background used to view and edit a drawing, independently set to Follow app, Light or Dark from the status bar or View menu. Its drawing colours and feedback adapt to the background, on Drawings, Layouts (sheet paper included) and Compare alike; PDF / Print keeps its appearance. Where: `web/workarea.js`, `DECISIONS.md`, Work area (TODO 96).
 
