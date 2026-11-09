@@ -35,13 +35,14 @@ export function angleOf(a, b) {
 const norm360 = (t) => { t %= 360; if (t < 0) t += 360; return t >= 360 - 1e-9 ? 0 : t; };
 
 /** Dynamic input cursor fields: points in mm, Y up; fixed decimals, without negative zero or 360°. */
-export function dynamicInput(a, b, dp) {
+export function dynamicInput(a, b, dp, unit = 'mm') {
   const fixed = (v) => { const s = v.toFixed(dp); return +s === 0 ? (0).toFixed(dp) : s; };
+  const length = (v) => formatLength(v, unit, fixed) + (unit === 'mm' ? ' mm' : '');
   return {
-    length: fixed(dist(a, b)) + ' mm',
+    length: length(dist(a, b)),
     angle: fixed(+angleOf(a, b).toFixed(dp) % 360) + '°',
-    dx: fixed(b[0] - a[0]) + ' mm',
-    dy: fixed(b[1] - a[1]) + ' mm',
+    dx: length(b[0] - a[0]),
+    dy: length(b[1] - a[1]),
   };
 }
 
@@ -93,7 +94,7 @@ export function dynamicInputPlacement(a, b, { w, h }, boxes, kind = 'segment') {
 
 // ---------------------------------------------------------------- typed input
 
-import { parse as parseLength, parseCoordinate } from './units.js';
+import { parse as parseLength, parseCoordinate, format as formatLength } from './units.js';
 const NUM = '[-+]?(?:\\d+\\.?\\d*|\\.\\d+)';
 const RE_PT = /^([@#]?)\s*([^,]+),\s*([^,]+)$/;
 const RE_POLAR = new RegExp(`^([@#]?)\\s*(.+)\\s*<\\s*(${NUM})$`);

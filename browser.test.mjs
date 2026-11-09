@@ -165,6 +165,102 @@ try {
   const shotDir = shard ? join(shotRoot, `shard-${shard.index}-of-${shard.count}`) : shotRoot;
   if (shard || process.argv.includes('--shots')) process.env.SHOTS_DIR = shotDir; // Older screenshot steps read the environment directly.
   mkdirSync(shotDir, { recursive: true });
+  await step('TODO 222b: lengths in the drawing unit', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
+    try {
+      const p = await context.newPage(), q = (id) => p.getByTestId(id);
+      p.on('pageerror', (e) => errors.push(String(e)));
+      await p.goto(URL_ + '?autosave=86400000'); await q('count').waitFor({ state: 'attached' });
+      const command = async (text) => {
+        if (!(await q('cmd-input').isVisible())) await q('cmd-echo').click();
+        await q('cmd-input').fill(text); await q('cmd-input').press('Enter');
+      };
+      const pick = async (unit) => {
+        await q('drawing-unit').click(); await p.locator(`[data-unit="${unit}"]`).click();
+        await p.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      };
+      const props = async () => {
+        await p.keyboard.press('Escape'); await p.keyboard.press('Escape'); await command('selectall');
+        if (!(await q('ptab-drawing').isVisible())) await p.keyboard.press('Control+1');
+        await q('ptab-drawing').click();
+        const toggle = q('props-panel').locator('.section-toggle');
+        if (await toggle.getAttribute('aria-expanded') === 'false') await toggle.click();
+        await p.locator('[data-prop=length]').waitFor();
+      };
+      const length = () => p.locator('[data-prop=length]');
+      const saved = async () => {
+        const download = p.waitForEvent('download', (d) => d.suggestedFilename().endsWith('.dxf'));
+        await command('save'); return readDxf(readFileSync(await (await download).path(), 'utf8'));
+      };
+      const raw = newDoc(4); addEntities(raw, dxfLine(0, 100, 1066.8, 100));
+      await q('picker').setInputFiles({ name: 'display-units.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(raw)) });
+      await p.waitForFunction(() => document.querySelector('.dtab.on').textContent.includes('display-units.dxf'));
+      const sourceIndex = await p.locator('.dtab.on').evaluate((el) => [...el.parentElement.querySelectorAll('.dtab')].indexOf(el));
+      for (const mode of ['Drawing', 'Compare', 'Layout']) {
+        if (mode === 'Compare') await command('compare');
+        if (mode === 'Layout') {
+          const lay = newLayout('Display units'); lay.layers = raw.layers; lay.s.sheetW = 1400;
+          lay.parts.line = objectPart('line', 'Line', raw.entities[0], raw.layers);
+          lay.placed.push(objectPlacement(lay.parts.line));
+          await q('picker').setInputFiles({ name: 'display-layout.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
+          await p.waitForFunction(() => document.querySelector('.dtab.on').textContent.includes('display-layout.dxf'));
+        }
+        await pick('ft-in'); await props();
+        assert.equal(await length().inputValue(), `3'-6"`, mode + ' Properties');
+        assert.equal(await p.locator('[data-prop=endX]').inputValue(), `3'-6"`);
+        assert.equal(await q('ruler-corner').textContent(), 'ft-in');
+        const labels = await q('ruler-top').locator('text').allTextContents();
+        assert.ok(labels.length && labels.every((s) => /^-?\d+'-0"$/.test(s)), mode + ' whole-foot ruler labels: ' + labels);
+        const point = await p.evaluate(() => {
+          const sheet = document.querySelector('rect.sheet'), b = sheet.getBoundingClientRect(), k = b.width / +sheet.getAttribute('width');
+          return { x: b.x + 1066.8 * k, y: b.y + (+sheet.getAttribute('height') - 100) * k };
+        });
+        await p.mouse.move(point.x, point.y);
+        assert.match(await q('coords').textContent(), /X 3'-6"/, mode + ' status bar');
+        if (mode === 'Drawing') for (const theme of ['light', 'dark']) {
+          await p.locator('[data-menu=View]').click();
+          await p.getByRole('menuitemcheckbox', { name: new RegExp('Theme: ' + theme + '\\b') }).click();
+          const path = `${shotDir}/todo222b-properties-ruler-${theme}.png`;
+          await p.screenshot({ path }); assert.ok(readFileSync(path).length > 0);
+        }
+        await command('qselect');
+        const dialog = q('qselect-dialog'); await dialog.waitFor();
+        await dialog.getByRole('listbox', { name: 'Properties', exact: true }).selectOption('length');
+        assert.equal(await dialog.getByRole('textbox', { name: 'Value', exact: true }).getAttribute('placeholder'), 'ft-in');
+        await dialog.getByRole('textbox', { name: 'Value', exact: true }).fill(`3'6"`);
+        await dialog.getByRole('button', { name: 'OK', exact: true }).click();
+        assert.equal(await length().inputValue(), `3'-6"`);
+        await command('measure'); await command('0mm,100mm'); await command('1066.8mm,100mm');
+        await q('meas-tag').waitFor();
+        assert.match(await q('meas-tag-text').textContent(), /Distance 3'-6"/);
+        assert.match(await q('cmd-prompt').textContent(), /Distance 3'-6"/);
+        await pick('mm');
+        assert.match(await q('meas-tag-text').textContent(), /Distance 1066\.8 mm/);
+        await props(); assert.equal(await length().inputValue(), '1066.80');
+        await pick('ft-in'); await length().fill("4'"); await length().press('Enter');
+        await p.waitForFunction(() => document.querySelector('[data-prop=length]').value === `4'-0"`);
+        let back = mode === 'Compare' ? null : await saved();
+        if (back) {
+          const ents = mode === 'Layout' ? objectDoc(layoutFromRaw(back)).raw.entities : back.entities;
+          assert.ok(Math.abs(lineEnds(ents.find((e) => e.type === 'LINE'))[2] - 1219.2) < 1e-6, mode + ' stores mm');
+          assert.equal(+back.header.$INSUNITS, 4);
+        }
+        await pick('mm'); assert.equal(await length().inputValue(), '1219.20');
+        await p.keyboard.press('Control+z'); await props(); assert.equal(await length().inputValue(), '1066.80');
+        if (mode === 'Compare') {
+          await p.locator('.dtab').nth(sourceIndex).click();
+          back = await saved(); assert.ok(Math.abs(lineEnds(back.entities.find((e) => e.type === 'LINE'))[2] - 1066.8) < 1e-6);
+        }
+      }
+      const feet = newDoc(2); addEntities(feet, dxfLine(0, 0, 3.5, 0));
+      await q('picker').setInputFiles({ name: 'display-feet.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(feet)) });
+      await p.waitForFunction(() => document.querySelector('[data-testid=drawing-unit]').textContent === 'ft');
+      await pick('ft-in'); await props(); await length().fill("4'"); await length().press('Enter');
+      const back = await saved(); assert.equal(+back.header.$INSUNITS, 2);
+      assert.equal(lineEnds(back.entities.find((e) => e.type === 'LINE'))[2], 4, 'Properties keeps the feet file coordinates');
+      await p.keyboard.press('Escape'); await p.keyboard.press('Escape');
+    } finally { await context.close(); }
+  });
   await step(`TODO 222a: drawing unit ft / ft-in: typed 3'6", switching keeps the geometry, a DXF in feet, the sidecar`, async () => {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
     try {
@@ -24452,7 +24548,7 @@ try {
       else if (tool === 'rotate' || tool === 'mirror') { await typeCmd(`@${length(1)}<90`); if (tool === 'mirror') await typeCmd('n'); }
       else if (tool === 'scale') await typeCmd(`@${length(2)}<0`);
       else { await typeCmd(`@${length(1)},${length(2)}`); if (tool === 'dimension') await typeCmd(`@${length(0)},${length(1)}`); if (tool === 'leader') { await typeCmd(`@${length(1)}<0`); await typeNote('Inches'); } }
-      if (tool === 'measure') { assert.match(await prompt(), /ΔX 25\.4\s+ΔY 50\.8/); continue; }
+      if (tool === 'measure') { assert.match(await prompt(), /ΔX 1\.000"\s+ΔY 2\.000"/); continue; }
       const doc = await savedDoc();
       if (tool === 'text') near70([fieldOf(doc.entities.at(-1), 10), fieldOf(doc.entities.at(-1), 20)], [1, 1]);
       else if (tool === 'leader') near70(readLeader('PD_LDR_1', doc.blocks.PD_LDR_1).pts.flat(), [1, 1, 2, 3, 3, 3]);

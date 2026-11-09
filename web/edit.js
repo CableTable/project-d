@@ -15,6 +15,7 @@
 //   createHistory()              → undo / redo of { entities, blocks } states
 import { mapply, mscale, pickIndex, pickAt, piecesNear, flatten } from './drawing.js';
 import { rotateRecord } from './rotate.js';
+import { format as formatLength } from './units.js';
 import { spaceOf, itemVisible } from './doc.js';
 import { line, insert, entity, addLayer, arc, lwpoly } from './dxf-write.js';
 import { DEFAULT_TYPES, perpFoot, preferSnap, tangentPoints, orderCandidates } from './snap.js';
@@ -1332,8 +1333,9 @@ export function orthoLock(from, p) {
 /** A number for people: 2 decimals, no trailing zeros, no "-0". */
 export const mmText = (v) => { const s = String(+Number(v).toFixed(2)); return s === '-0' ? '0' : s; };
 /** "Distance 100 mm   ΔX 100   ΔY 0   Angle 0°" */
-export function formatMeasure(m) {
-  return `Distance ${mmText(m.dist)} mm   ΔX ${mmText(m.dx)}   ΔY ${mmText(m.dy)}   Angle ${mmText(m.angle)}°`;
+export function formatMeasure(m, unit = 'mm') {
+  const length = (v) => formatLength(v, unit, mmText);
+  return `Distance ${length(m.dist)}${unit === 'mm' ? ' mm' : ''}   ΔX ${length(m.dx)}   ΔY ${length(m.dy)}   Angle ${mmText(m.angle)}°`;
 }
 
 // ---------------------------------------------------------------- the background (a picture under the drawing)

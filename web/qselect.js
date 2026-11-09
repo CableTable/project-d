@@ -1,6 +1,7 @@
 // Quick Select's scope and rules; indices always refer to the source drawing.
 import { typeName, fieldsOf, effectiveColour, colourLabel, ltKey, ltLabel } from './props.js';
 import { decode } from './text.js';
+import { parse, format, formatArea } from './units.js';
 
 const COMMON = [['colour', 'Colour'], ['layer', 'Layer'], ['lt', 'Line type'], ['lw', 'Line weight']];
 const OPS = { eq: '= Equals', ne: '<> Not Equal', gt: '> Greater than', lt: '< Less than', wildcard: '* Wildcard Match', all: 'Select All' };
@@ -11,10 +12,15 @@ export function objectTypes(entities) {
 export function propertiesOf(entities, type, factor = 1, dp = 2) {
   const ents = entities.filter((e) => e.type === type);
   return [...COMMON.map(([key, label]) => ({ key, label, kind: 'list' })),
-    ...fieldsOf(ents, factor).map((f) => ({ key: f.key, label: f.label + (f.group ? (f.key.endsWith('X') ? ' X' : ' Y') : ''), kind: 'number', decimals: f.key === 'vertices' ? 0 : dp })),
+    ...fieldsOf(ents, factor).map((f) => ({ key: f.key, label: f.label + (f.group ? (f.key.endsWith('X') ? ' X' : ' Y') : ''), kind: 'number', unit: f.unit, decimals: f.key === 'vertices' ? 0 : dp })),
     ...(['TEXT', 'MTEXT'].includes(type) ? [{ key: 'contents', label: 'Contents', kind: 'text' }] : [])];
 }
 export const operatorsOf = (kind) => ['eq', 'ne', ...(kind === 'number' ? ['gt', 'lt'] : kind === 'text' ? ['wildcard'] : []), 'all'].map((key) => [key, OPS[key]]);
+export function numberValue(value, prop, unit = 'mm') {
+  if (prop?.unit === 'mm') return parse(value, unit);
+  const n = Number(value) * (prop?.unit === 'mm²' ? parse('1', unit) ** 2 : 1);
+  return String(value).trim() && Number.isFinite(n) ? n : null;
+}
 const weight = (e) => e.lw ?? -1;
 const valueOf = (e, layers, key, factor) => key === 'colour' ? effectiveColour(e, layers) : key === 'layer' ? e.layer : key === 'lt' ? ltKey(e) : key === 'lw' ? weight(e)
   : key === 'contents' ? decode(e)?.lines.join('\n') ?? '' : fieldsOf([e], factor).find((f) => f.key === key)?.value;
@@ -28,12 +34,12 @@ function wildcard(pattern) {
 }
 /** rule: { scope?: indices, type, property, operator, value, exclude?, factor?, dp? (decimals shown) }. */
 export function quickSelect(entities, layers, rule) {
-  const { type = 'Multiple', property, operator, value, exclude = false, factor = 1, dp = 2 } = rule;
+  const { type = 'Multiple', property, operator, value, exclude = false, factor = 1, dp = 2, unit = 'mm' } = rule;
   const scope = [...(rule.scope ?? entities.keys())], out = [];
   // Properties come from the scope, as in the dialog; an entity without the field simply does not match.
   const prop = propertiesOf(scope.map((i) => entities[i]).filter(Boolean), type, factor, dp).find((p) => p.key === property);
   if (!prop || !operatorsOf(prop.kind).some(([op]) => op === operator)) return out;
-  if (operator !== 'all' && (String(value ?? '').trim() === '' || (prop.kind === 'number' && !Number.isFinite(Number(value))))) return out;
+  if (operator !== 'all' && (String(value ?? '').trim() === '' || (prop.kind === 'number' && numberValue(value, prop, unit) == null))) return out;
   const pattern = operator === 'wildcard' ? wildcard(value) : null;
   for (const i of scope) {
     const e = entities[i], layer = e && layers[e.layer];
@@ -42,7 +48,9 @@ export function quickSelect(entities, layers, rule) {
     if (match && operator !== 'all') {
       let have = valueOf(e, layers, property, factor), want = value;
       if (prop.kind === 'number') {
-        have = have == null ? null : Number(have.toFixed(prop.decimals)); want = Number(Number(value).toFixed(prop.decimals));
+        want = numberValue(value, prop, unit);
+        const shown = (v) => prop.unit === 'mm' && unit !== 'mm' ? parse(format(v, unit), unit) : prop.unit === 'mm²' && unit !== 'mm' ? numberValue(formatArea(v, unit).split(' ')[0], prop, unit) : Number(v.toFixed(prop.decimals));
+        have = have == null ? null : shown(have); want = shown(want);
       } else { have = String(have).toLowerCase(); want = String(value).toLowerCase(); }
       match = have != null && (operator === 'eq' ? have === want : operator === 'ne' ? have !== want : operator === 'gt' ? have > want : operator === 'lt' ? have < want : pattern.test(have));
     }

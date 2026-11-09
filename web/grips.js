@@ -37,6 +37,7 @@
 //   stretchHots (here): normalize hot grips so each vertex stretches once.
 import { arcThrough3, sweepOf, angleOf, dist, n2 } from './draw.js';
 import { moveEntities } from './edit.js';          // a move-type grip moves the whole object the way the Move command does (155e4)
+import { format as formatLength } from './units.js';
 import { bulgeOf3 } from './contour.js';             // 163b: the bulge of the arc through a pointer
 import { mtextBox } from './drawing.js';             // 164a: an MTEXT's box
 
@@ -683,26 +684,26 @@ export function shapeOf(ent, factor = 1) {
 }
 
 /** What the readout beside the pointer says while grip `id` of `ent` is dragged to produce `next` (the changed entity); factor: mm per unit. */
-export function readoutOf(ent, id, next, factor = 1) {
-  const g = find(ent, id), f = factor;
+export function readoutOf(ent, id, next, factor = 1, unit = 'mm') {
+  const g = find(ent, id), f = factor, L = (v) => formatLength(v, unit, n2), suffix = unit === 'mm' ? ' mm' : '';
   if (!g || !next) return '';
-  if (ent.type === 'LINE' && id !== 'm') { const n = shapeOf(next, f); return `${n2(dist(n.a, n.b))} mm · ${n2(angleOf(n.a, n.b))}°`; }
-  if (ent.type === 'CIRCLE' && id.startsWith('q')) return `R ${n2(shapeOf(next, f).r)}`;
-  if (ent.type === 'ARC' && (id === 'a' || id === 'b' || id === 'm')) { const n = shapeOf(next, f); return `R ${n2(n.r)} · ${n2(sweepOf(n.a0, n.a1))}°`; }
-  if (ent.type === 'ELLIPSE' && id !== 'c') { const q = ellipseOf(next.r), a = Math.hypot(...q.m) * f; return `Major ${n2(2 * a)} · Minor ${n2(2 * a * q.ratio)} mm`; }
-  if (ent.type === 'MTEXT' && id !== 'i') { const b = mtextBox(next.r); return id === 'w' ? `Width ${n2(b.W * f)} mm` : id === 'h' ? `Height ${n2(b.boxH * f)} mm` : `Width ${n2(b.W * f)} · Height ${n2(b.boxH * f)} mm`; }
+  if (ent.type === 'LINE' && id !== 'm') { const n = shapeOf(next, f); return `${L(dist(n.a, n.b))}${suffix} · ${n2(angleOf(n.a, n.b))}°`; }
+  if (ent.type === 'CIRCLE' && id.startsWith('q')) return `R ${L(shapeOf(next, f).r)}`;
+  if (ent.type === 'ARC' && (id === 'a' || id === 'b' || id === 'm')) { const n = shapeOf(next, f); return `R ${L(n.r)} · ${n2(sweepOf(n.a0, n.a1))}°`; }
+  if (ent.type === 'ELLIPSE' && id !== 'c') { const q = ellipseOf(next.r), a = Math.hypot(...q.m) * f; return `Major ${L(2 * a)} · Minor ${L(2 * a * q.ratio)}${suffix}`; }
+  if (ent.type === 'MTEXT' && id !== 'i') { const b = mtextBox(next.r); return id === 'w' ? `Width ${L(b.W * f)}${suffix}` : id === 'h' ? `Height ${L(b.boxH * f)}${suffix}` : `Width ${L(b.W * f)} · Height ${L(b.boxH * f)}${suffix}`; }
   const m = ent.type === 'HATCH' && PATH_ID.exec(id);       // 164b2: a boundary grip reads as its path's polyline does
-  if (m) return readoutOf(virtOf(hatchPaths(ent.r)[+m[2]]), m[1] + m[3], virtOf(hatchPaths(next.r)[+m[2]]), f);
+  if (m) return readoutOf(virtOf(hatchPaths(ent.r)[+m[2]]), m[1] + m[3], virtOf(hatchPaths(next.r)[+m[2]]), f, unit);
   if (ent.type === 'HATCH') {       // 164b1: an option's result; Stretch (the centre moved) reads as a Move
     const a = get(next.r, 52) ?? 0, s = get(next.r, 41) ?? 1, p = patternOf(next.r)[0], b = p && p.bx >= 0 && p.by >= 0 ? [num(next.r.v[p.bx]), num(next.r.v[p.by])] : null;
     if (a !== (get(ent.r, 52) ?? 0)) return `Angle ${n2(a)}°`;
     if (s !== (get(ent.r, 41) ?? 1)) return `Scale ${n2(s)}`;
-    if (Math.hypot(find(next, id).x - g.x, find(next, id).y - g.y) < 1e-12 && b) return `Origin X ${n2(b[0] * f)} · Y ${n2(b[1] * f)}`;
+    if (Math.hypot(find(next, id).x - g.x, find(next, id).y - g.y) < 1e-12 && b) return `Origin X ${L(b[0] * f)} · Y ${L(b[1] * f)}`;
   }
   if (ent.type === 'LWPOLYLINE' && lwVertices(next.r).length !== lwVertices(ent.r).length) return `${lwVertices(next.r).length} vertices`;       // Insert / Remove vertex
-  if (ent.type === 'LWPOLYLINE' || ent.type === 'LEADER') { const n = find(next, id); return `X ${n2(n.x * f)} · Y ${n2(n.y * f)}`; }
+  if (ent.type === 'LWPOLYLINE' || ent.type === 'LEADER') { const n = find(next, id); return `X ${L(n.x * f)} · Y ${L(n.y * f)}`; }
   const n = find(next, id);
-  return `Move ΔX ${n2((n.x - g.x) * f)} ΔY ${n2((n.y - g.y) * f)}`;
+  return `Move ΔX ${L((n.x - g.x) * f)} ΔY ${L((n.y - g.y) * f)}`;
 }
 
 /** The name of the command line's word for dragging this grip. */

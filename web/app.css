@@ -606,6 +606,8 @@ select.fld { font-family: var(--sans); }
 .ruler.top { left: 0; top: 0; right: 0; height: 22px; border-bottom: 1px solid var(--line); cursor: s-resize; }
 .ruler.left { left: 0; top: 0; bottom: 0; width: 22px; border-right: 1px solid var(--line); cursor: e-resize; }
 .ruler.corner { left: 0; top: 0; width: 22px; height: 22px; background: var(--app); border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); z-index: 6; display: flex; align-items: center; justify-content: center; font: 500 9px var(--mono); cursor: default; }
+.ruler.corner[data-unit="inch"] { font-size: 8px; }
+.ruler.corner[data-unit="ft-in"] { font-size: 7px; }
 .canvas .ruler.top svg { width: calc(100% - 22px); height: 22px; margin-left: 22px; pointer-events: none; }
 .canvas .ruler.left svg { width: 22px; height: calc(100% - 22px); margin-top: 22px; pointer-events: none; }
 .ruler path { stroke: var(--muted); stroke-width: 1; fill: none; }

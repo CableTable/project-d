@@ -4,6 +4,8 @@
 // Points and normals are flat arrays [x, y, z, x, y, z, …]; a triangle is three indices into them. A STEP file's
 // faces come from occt-import-js as triangle ranges (brep_faces: first … last), so a face is a run of triangles.
 
+import { format as formatLength } from './units.js';
+
 const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
 const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
@@ -200,16 +202,18 @@ export function featureEdges(pos, index, faceOf, tol) {
 
 /** A length as the viewer shows it: 3 figures, trailing zeros gone; with the unit when known. */
 export function fmtLength(n, unitName) {
+  if (['inch', 'ft', 'ft-in'].includes(unitName)) return formatLength(n, unitName);
   const a = Math.abs(n), s = (a >= 100 ? n.toFixed(1) : a >= 10 ? n.toFixed(2) : n.toFixed(3)).replace(/\.?0+$/, '').replace(/^-0$/, '0');
-  return unitName ? s + ' ' + unitName : s;
+  return formatLength(n, 'mm', () => unitName ? s + ' ' + unitName : s);
 }
 
 /** A measurement's x, y (and z) parts, where it has them: " (x 10 · y 7.5 · z 0)". */
-const parts = (m) => m.dx == null ? '' : ' (x ' + fmtLength(m.dx) + ' · y ' + fmtLength(m.dy) + (m.dz == null ? '' : ' · z ' + fmtLength(m.dz)) + ')';
+const parts = (m, unit) => m.dx == null ? '' : ' (x ' + fmtLength(m.dx, unit) + ' · y ' + fmtLength(m.dy, unit) + (m.dz == null ? '' : ' · z ' + fmtLength(m.dz, unit)) + ')';
 
 /** What a measurement reads as: "Ø 8.2 mm", "Gap 40 mm", "Angle 90°", "Distance 12.5 mm (x 10 · y 7.5 · z 0)". */
 export function label(m, unitName) {
   const L = (n) => fmtLength(n, unitName);
+  const unit = ['inch', 'ft', 'ft-in'].includes(unitName) ? unitName : undefined;
   switch (m.kind) {
     case 'diameter': return 'Ø ' + L(m.value);
     case 'radius': return 'R ' + L(m.value);
@@ -217,12 +221,12 @@ export function label(m, unitName) {
     case 'point': return 'A point';
     case 'gap': return 'Gap ' + L(m.value);
     case 'angle': return 'Angle ' + fmtLength(m.value) + '°';
-    case 'centres': return 'Centre to centre ' + L(m.value) + parts(m);
+    case 'centres': return 'Centre to centre ' + L(m.value) + parts(m, unit);
     case 'axis-face': return 'Axis to face ' + L(m.value);
     case 'length': return 'Length ' + L(m.value);
     case 'centre-line': return 'Centre to line ' + L(m.value);
     case 'point-line': return 'Point to line ' + L(m.value);
-    case 'at': return 'At x ' + fmtLength(m.x) + ' · y ' + fmtLength(m.y);
-    default: return 'Distance ' + L(m.value) + parts(m);
+    case 'at': return 'At x ' + fmtLength(m.x, unit) + ' · y ' + fmtLength(m.y, unit);
+    default: return 'Distance ' + L(m.value) + parts(m, unit);
   }
 }

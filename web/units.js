@@ -30,14 +30,22 @@ export function parse(text, unit = 'mm') {
 }
 
 /** The drawing's printed length; rounded forms parse back to the printed precision. */
-export function format(mm, unit = 'mm') {
+export function format(mm, unit = 'mm', mmFormat) {
   if (unit === 'inch' || unit === 'ft') return (+(mm / FACTOR[unit]).toFixed(3) || 0).toLocaleString('en-US', { useGrouping: false, minimumFractionDigits: 3, maximumFractionDigits: 3 }) + (unit === 'inch' ? '"' : "'");
   if (unit === 'ft-in') {
     const inches = Math.round(Math.abs(mm) / 25.4 * 100) / 100;
     return (mm < 0 && inches ? '-' : '') + Math.floor(inches / 12).toLocaleString('en-US', { useGrouping: false }) + "'-" + +(inches % 12).toFixed(2) + '"';
   }
-  return (+mm.toFixed(2) || 0).toLocaleString('en-US', { useGrouping: false, maximumFractionDigits: 2 });
+  return mmFormat ? mmFormat(mm) : (+mm.toFixed(2) || 0).toLocaleString('en-US', { useGrouping: false, maximumFractionDigits: 2 });
 }
+
+/** Areas keep the existing two decimals; feet-inches uses square feet. */
+export function formatArea(mm2, unit = 'mm') {
+  const factor = FACTOR[unit] || 1, suffix = unit === 'inch' ? 'in²' : unit === 'ft' || unit === 'ft-in' ? 'ft²' : 'mm²';
+  return (mm2 / (factor * factor)).toFixed(2) + ' ' + suffix;
+}
+
+export const displayUnit = (doc) => doc?.drawingUnit || defaultUnit(doc?.raw?.header?.$INSUNITS);
 
 export const defaultUnit = (insunits) => +insunits === 1 ? 'inch' : +insunits === 2 ? 'ft' : 'mm';
 export const sidecarPath = (path) => String(path) + '.pdunits.json';

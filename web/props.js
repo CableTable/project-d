@@ -13,9 +13,16 @@
 import { lwVertices, hasGrips } from './grips.js';
 import { sweepOf } from './draw.js';
 import * as TX from './text.js';
+import * as DU from './units.js';
 import { rgbHex, keyRgb } from './colour.js';
 
 const DEG = Math.PI / 180;
+export const fieldUnit = (field, unit) => field.unit === 'mm' ? unit : field.unit === 'mm²' ? DU.formatArea(0, unit).split(' ')[1] : field.unit;
+export function fieldText(field, unit = 'mm') {
+  const fixed = (v) => Number(v).toFixed(2);
+  return field.unit === 'mm' ? DU.format(field.value, unit, fixed) : field.unit === 'mm²' ? DU.formatArea(field.value, unit).split(' ')[0] : field.key === 'vertices' ? String(field.value) : fixed(field.value);
+}
+export const parseField = (key, text, unit = 'mm') => key === 'textAngle' ? DU.parse(text) : DU.parse(text, unit);
 const num = (v) => { const n = parseFloat(v); return Number.isFinite(n) ? n : 0; };
 const at = (r, code, which = 0) => { let n = -1; for (let k = 0; k < r.c.length; k++) if (r.c[k] === code && ++n === which) return k; return -1; };
 const get = (r, code) => { const k = at(r, code); return k < 0 ? null : num(r.v[k]); };
