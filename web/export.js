@@ -4,7 +4,7 @@
 import { h, fill, icon } from './dom.js';
 import { fitBase, zoomAt, panBy, paintView, FIT } from './pdf-view.js';
 import { baseName, saveDefault, withExt } from './savepath.js';
-import { planPdf, freePdfName, DEFAULT_OPTIONS, tileGrid, scaleText, titleBlockTexts, cleanTitleBlock, readTitleBlock, PAPERS, PART_BORDER, marginsOf, OFFICE_MARGINS, MARGIN_MAX } from './pdf-export.js';
+import { planPdf, freePdfName, DEFAULT_OPTIONS, tileGrid, scaleText, titleBlockTexts, cleanTitleBlock, readTitleBlock, PAPERS, PART_BORDER, marginsOf, OFFICE_MARGINS, MARGIN_MAX, parseScale, percentText, PageCapError } from './pdf-export.js';
 import { batchPdfSource } from './pdf-source.js';
 
 /** Shared by PDF dialogs: the drawing/layout and Part settings keep their existing split, even without storage. */
@@ -17,15 +17,20 @@ export function rememberPdfSettings(part, value) {
   } catch { return {}; }
 }
 const savedLayout = rememberPdfSettings(false), savedPart = rememberPdfSettings(true);
+/** The Custom scale page's box text, its scale (the last valid one) and its paper: what was remembered on this PC, else 1 : 2 on A3. */
+const customSettings = (saved) => {
+  const scaleText = parseScale(saved.scaleText) ? saved.scaleText : '1 : 2';
+  return { scaleText, scale: parseScale(scaleText), customPaper: Object.hasOwn(PAPERS, saved.customPaper) ? saved.customPaper : DEFAULT_OPTIONS.customPaper };
+};
 const layoutSettings = {
-  ...DEFAULT_OPTIONS, tab: 'one', pageIdx: 0,
+  ...DEFAULT_OPTIONS, ...customSettings(savedLayout), tab: 'one', pageIdx: 0,
   marginPreset: ['standard', 'office', 'custom'].includes(savedLayout.marginPreset) ? savedLayout.marginPreset : 'standard',
   margins: marginsOf({ margins: savedLayout.margins || OFFICE_MARGINS }),
   batch: { folder: '', dxf: true, dwg: true, cdr: true, sub: false, mode: 'same', saveTo: 'same', saveDir: null, all: [], busy: false },
 };
 
 /** The Part screen's own settings: one page, as drawn (no mirror, no marks, no separations), fitted to A4 unless changed. */
-const partSettings = { ...DEFAULT_OPTIONS, mirror: false, separate: false, crop: false, reg: false, strip: false, tab: 'one', pageIdx: 0,
+const partSettings = { ...DEFAULT_OPTIONS, ...customSettings(savedPart), mirror: false, separate: false, crop: false, reg: false, strip: false, tab: 'one', pageIdx: 0,
   marginPreset: ['standard', 'office', 'custom'].includes(savedPart.marginPreset) ? savedPart.marginPreset : 'standard',
   margins: marginsOf({ margins: savedPart.margins || OFFICE_MARGINS }), batch: layoutSettings.batch };
 
@@ -128,9 +133,11 @@ export function openExport(host) {
   const prevFocus = document.activeElement;
   const onKey = (e) => { if (!full && e.key === 'Escape') { e.stopPropagation(); close(); } };      // Esc closes the full-screen preview first
 
-  // Mirror and Negative are for film: greyed on a check print, and then they do not apply (they come back as they were)
+  // Mirror and Negative are for film: greyed on a check print and a custom scale, and then they do not apply (they come back as they were)
+  const scaled = () => settings.page === 'check' || settings.page === 'custom';
   const opts = () => ({
-    page: settings.page, tilePaper: settings.tilePaper, checkPaper: settings.checkPaper, mirror: settings.mirror && settings.page !== 'check', negative: settings.negative && settings.page !== 'check',
+    page: settings.page, tilePaper: settings.tilePaper, checkPaper: settings.checkPaper, customPaper: settings.customPaper, scale: settings.scale,
+    mirror: settings.mirror && !scaled(), negative: settings.negative && !scaled(),
     black: settings.black, separate: settings.separate, crop: settings.crop, reg: settings.reg, strip: settings.strip, sheetSizeGripper: settings.sheetSizeGripper, titleBlock,
     margins: settings.marginPreset === 'standard' ? undefined : settings.margins,
   });
@@ -155,6 +162,7 @@ export function openExport(host) {
   };
   const fieldset = (legend, ...kids) => h('fieldset', { class: 'pd-set' }, h('legend', { class: 'sec' }, legend), ...kids);
   const pickPage = (value) => { settings.page = value; settings.pageIdx = 0; ref['page_' + value].checked = true; refresh(); };
+  const save = (patch) => rememberPdfSettings(part, { ...rememberPdfSettings(part), ...patch });      // margins, scale and paper share one saved object
 
   // ---- This layout
   ref.sheetLbl = h('span', { class: 'lbl mono', 'data-testid': 'pdf-sheet-size' });
@@ -162,6 +170,18 @@ export function openExport(host) {
   ref.checkLbl = h('span', { class: 'lbl mono', 'data-testid': 'pdf-scale' });
   ref.tilePaper = sel([['A3', 'A3'], ['A4', 'A4']], settings.tilePaper, (v) => { settings.tilePaper = v; pickPage('tile'); }, { style: 'width:70px', 'data-testid': 'pdf-tile-paper', 'aria-label': 'Tile paper size' });
   ref.checkPaper = sel(part ? [['A4', 'A4'], ['A3', 'A3'], ['A0', 'A0']] : [['A4', 'A4'], ['A3', 'A3']], settings.checkPaper, (v) => { settings.checkPaper = v; pickPage('check'); }, { style: 'width:70px', 'data-testid': 'pdf-check-paper', 'aria-label': 'Check print paper size' });
+  // Custom scale: the box takes 1:50 or 2% and shows the other form; a bad entry keeps the last good scale in the preview and blocks Save / Print. Check print's scale is read out in the same box.
+  ref.customPaper = sel(Object.keys(PAPERS).map((k) => [k, k]), settings.customPaper, (v) => { settings.customPaper = v; save({ customPaper: v }); pickPage('custom'); }, { style: 'width:70px', 'data-testid': 'pdf-custom-paper', 'aria-label': 'Custom scale paper size' });
+  ref.scaleBox = h('input', { class: 'fld', type: 'text', value: settings.scaleText, style: 'width:90px', 'aria-label': 'Scale', 'data-testid': 'pdf-scale-box' });
+  ref.scaleBox.addEventListener('input', () => {
+    settings.scaleText = ref.scaleBox.value;
+    const s = parseScale(settings.scaleText);
+    if (s) { settings.scale = s; save({ scaleText: settings.scaleText }); }
+    pickPage('custom');
+  });
+  ref.scaleOther = h('span', { class: 'lbl mono', 'data-testid': 'pdf-scale-other' });
+  ref.customLbl = h('span', { class: 'lbl mono', 'data-testid': 'pdf-custom-info' });
+  ref.scaleError = h('div', { class: 'pd-margin-error', role: 'alert', hidden: true, style: 'padding-left:22px', 'data-testid': 'pdf-scale-error' });
   ref.pagesNote = h('div', { class: 'lbl', style: 'padding-left:22px', 'data-testid': 'pdf-pages-note' });
   ref.pagesNote2 = h('div', { class: 'lbl', style: 'padding-left:22px' });
   ref.preLabel = h('div', { class: 'lbl', 'data-testid': 'pdf-preview-label' });
@@ -205,8 +225,9 @@ export function openExport(host) {
   };
   ref.selPage = h('div', { class: 'pd-sub', hidden: true }, selRadio(true, 'Cut to selection', 'pdf-sel-cut'), selRadio(false, 'Sheet page', 'pdf-sel-sheet'));
   // ---- Margins (tiled and check print pages): a preset, or four numbers; editing a number picks Custom
-  const shownMargins = () => marginsOf({ page: settings.page, margins: settings.marginPreset === 'standard' ? undefined : settings.margins });
-  const rememberMargins = () => { rememberPdfSettings(part, { marginPreset: settings.marginPreset, margins: settings.margins }); refresh(); };
+  const shownMargins = () => marginsOf({ page: settings.page === 'custom' ? (plan && plan.pages[0].tile ? 'tile' : 'check') : settings.page, margins: settings.marginPreset === 'standard' ? undefined : settings.margins });   // a custom scale page is a check page when it is one page, else tiles
+  const fillMargins = () => { for (const [k, v] of Object.entries(shownMargins())) if (Number(ref.marginInputs[k].value) !== v || ref.marginInputs[k].value === '') ref.marginInputs[k].value = v; };
+  const rememberMargins = () => { save({ marginPreset: settings.marginPreset, margins: settings.margins }); refresh(); };
   ref.marginPreset = sel([['standard', 'Standard'], ['custom', 'Custom']], settings.marginPreset, (v) => {
     if (v === 'custom') settings.margins = { ...shownMargins() };
     settings.marginPreset = v; rememberMargins();
@@ -241,6 +262,7 @@ export function openExport(host) {
       radio('sheet', 'pdf-page-sheet', part ? 'Page cut to the part, 1:1 ' : 'Sheet size, 1:1 ', ref.sheetLbl),
       radio('tile', 'pdf-page-tile', 'Tile 1:1 on ', ref.tilePaper, ' pages ', ref.tileLbl),
       radio('check', 'pdf-page-check', part ? 'Scaled to fit one ' : 'Check print, fit to ', ref.checkPaper, part ? ' page ' : ' ', ref.checkLbl),
+      radio('custom', 'pdf-page-custom', 'Custom scale ', ref.scaleBox, ' on ', ref.customPaper, ' ', ref.scaleOther, ' ', ref.customLbl), ref.scaleError,
       ref.marginRow,
       h('label', { class: 'pd-row', hidden: !(part || src.hasSelection !== undefined) }, ref.selectionOnly, ' Selection only'), ref.selPage),
     ref.titleSet,
@@ -273,7 +295,7 @@ export function openExport(host) {
   const subs = h('input', { type: 'checkbox', checked: B.sub, 'data-testid': 'pdf-sub' });
   subs.addEventListener('change', async () => { B.sub = subs.checked; if (inApp && B.folder) await scanFolder(B.folder); else renderList(); });
   ref.list = h('div', { class: 'pd-list', 'data-testid': 'pdf-list' });
-  ref.mode = sel([['same', 'Same as “This layout”'], ['check', 'Check print, A4 fit'], ['plain', 'Sheet size 1:1, no film options']], B.mode, (v) => { B.mode = v; }, { 'data-testid': 'pdf-batch-mode' });
+  ref.mode = sel([['same', 'Same as “This layout”'], ['check', 'Check print, A4 fit'], ['plain', 'Sheet size 1:1, no film options']], B.mode, (v) => { B.mode = v; refresh(); }, { 'data-testid': 'pdf-batch-mode' });      // refresh: an invalid custom scale blocks Convert in "Same as This layout" only
   ref.saveTo = sel([['same', 'Same folder as each file'], ['choose', 'Choose a folder…']], B.saveTo, (v) => { B.saveTo = v; B.saveDir = null; }, { 'data-testid': 'pdf-batch-save' });
   const batchBody = h('div', { class: 'pd-batch' },
     h('div', { style: 'display:flex;gap:8px;align-items:flex-end' },
@@ -321,7 +343,8 @@ export function openExport(host) {
     const nB = B.all.filter((e) => e.include && e.type === 'dxf' && B[e.type]).length;
     ref.print.disabled = busy || !one;
     ref.print.title = one ? 'Saves the PDF, then open it to print' : 'Print works on one layout';
-    ref.go.disabled = busy || (!one && !nB);
+    const badScale = settings.page === 'custom' && !parseScale(settings.scaleText);       // the box holds no valid scale: Save / Print wait (the preview keeps the last good one)
+    ref.go.disabled = busy || (!one && (!nB || (badScale && B.mode === 'same')));
     if (!one) {
       ref.go.textContent = nB === 1 ? 'Convert 1 file' : `Convert ${nB} files`;
       const shown = B.all.filter((e) => B[e.type]);
@@ -339,25 +362,36 @@ export function openExport(host) {
       ref.sheetLbl.textContent = ''; ref.tileLbl.textContent = ''; ref.checkLbl.textContent = ''; fill(ref.pageBtns, []);
       return;
     }
-    const o = opts(), check = o.page === 'check';
+    const o = opts(), check = o.page === 'check', custom = o.page === 'custom';
     const sheet = o.page === 'sheet';
     ref.marginRow.style.opacity = sheet ? '0.5' : '';
     for (const input of [ref.marginPreset, ref.marginOffice, ref.marginLink, ...Object.values(ref.marginInputs)]) input.disabled = sheet;
     ref.marginPreset.value = settings.marginPreset === 'office' ? 'custom' : settings.marginPreset;
-    for (const [k, v] of Object.entries(shownMargins())) if (Number(ref.marginInputs[k].value) !== v || ref.marginInputs[k].value === '') ref.marginInputs[k].value = v;
-    if (!part) { ref.sheetSizeGripper.disabled = !check; ref.sheetSizeGripper.title = check ? '' : 'Check print only'; }
+    fillMargins();
     srcFull.date = today();
     ref.marginError.hidden = true;
+    const showScaleError = (msg) => { ref.scaleError.textContent = msg; ref.scaleError.hidden = !msg; };
+    showScaleError(badScale ? 'Type a scale like 1 : 50 or 2% (from 1 : 1000 to 1000 : 1)' : '');
+    ref.scaleBox.setAttribute('aria-invalid', String(badScale));
     try { plan = planPdf(srcFull, o); }
     catch (err) {
       if (!(err instanceof RangeError)) throw err;
+      const cap = err instanceof PageCapError;
       plan = null; ref.print.disabled = true; ref.go.disabled = true; ref.fullBtn.disabled = true;
-      ref.marginError.textContent = err.message; ref.marginError.hidden = false;
+      if (cap) showScaleError(err.message); else { ref.marginError.textContent = err.message; ref.marginError.hidden = false; }
       ref.canvas.getContext('2d').clearRect(0, 0, ref.canvas.width, ref.canvas.height);
-      ref.preLabel.textContent = 'Preview · no printable area'; ref.checkLbl.textContent = ''; ref.tileLbl.textContent = '';
+      ref.preLabel.textContent = cap ? 'Preview · too many pages' : 'Preview · no printable area'; ref.checkLbl.textContent = ''; ref.tileLbl.textContent = ''; ref.customLbl.textContent = ''; ref.scaleOther.textContent = '';
       fill(ref.pageBtns, []);
       return;
     }
+    if (badScale) { ref.print.disabled = true; ref.go.disabled = true; }
+    const p0 = plan.pages[0], oneCheck = check || (custom && !p0.tile);       // a custom page that is one page is a check print at the typed scale
+    fillMargins();
+    if (!part) { ref.sheetSizeGripper.disabled = !oneCheck; ref.sheetSizeGripper.title = oneCheck ? '' : custom ? 'Needs one page: pick a bigger paper or a smaller scale' : 'Check print only'; }
+    if (document.activeElement !== ref.scaleBox) ref.scaleBox.value = check ? scaleText(p0.scale) : settings.scaleText;     // Check print / Scaled to fit: its computed scale, read out
+    const typed = parseScale(settings.scaleText);
+    ref.scaleOther.textContent = check ? '= ' + percentText(p0.scale) : custom && typed ? '= ' + (settings.scaleText.includes('%') ? scaleText(typed) : percentText(typed)) : '';
+    ref.customLbl.textContent = custom ? (p0.tile ? `${p0.tile.cols} × ${p0.tile.rows} tiles` : 'one page') : '';
     if (settings.pageIdx >= plan.count) settings.pageIdx = plan.count - 1;
     if (settings.pageIdx < 0) settings.pageIdx = 0;
     const W = srcFull.sheetW, Hh = srcFull.sheetH;
@@ -370,15 +404,16 @@ export function openExport(host) {
     ref.tileLbl.textContent = `${g.cols} × ${g.rows} tiles`;
     ref.checkLbl.textContent = (cut ? 'not 1:1 · scale ' : 'scale ') + scaleText(plan.pages[0].scale || 1);
     ref.checkLbl.hidden = !check;                                   // the scale belongs to the Scaled / Check print option only
-    for (const k of ['mirror', 'negative']) { ref[k].disabled = check; ref[k].checked = !check && settings[k]; }
-    ref.filmNote.textContent = check ? (cut ? 'Mirror and negative are for film, not a scaled print' : 'Mirror and negative are for film, not a check print') : '';
+    const noFilm = check || custom;                                 // Mirror and Negative are for film
+    for (const k of ['mirror', 'negative']) { ref[k].disabled = noFilm; ref[k].checked = !noFilm && settings[k]; }
+    ref.filmNote.textContent = noFilm ? (cut || custom ? 'Mirror and negative are for film, not a scaled print' : 'Mirror and negative are for film, not a check print') : '';
     const names = [...new Set(plan.pages.map((p) => p.layer || 'All layers'))];
     const shownNames = names.length > 5 ? [...names.slice(0, 5), `+${names.length - 5} more`] : names;
     ref.pagesNote.textContent = `${shownNames.join(' · ')} = ${plan.count} ${plan.count === 1 ? 'page' : 'pages'}`;
     ref.pagesNote2.textContent = '';
     const p = plan.pages[settings.pageIdx];
-    ref.titleSet.hidden = !check;
-    if (check) {
+    ref.titleSet.hidden = !oneCheck;
+    if (oneCheck) {
       const texts = titleBlockTexts(srcFull, p, titleBlock);
       for (const [key, input] of Object.entries(ref.titleInputs)) { input.value = texts[key]; input.disabled = !titleBlock.enabled; }
     }

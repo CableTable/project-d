@@ -24,6 +24,7 @@ import { svgPath } from './web/draw.js';
 import { COMMANDS, placeBar } from './web/cmdbar.js';
 import { SNAP_NAME } from './web/snap.js';
 import { Page, writePdf, winAnsi } from './web/pdf-write.js';
+import { tileGrid, PAPERS as PDF_PAPERS } from './web/pdf-export.js';
 import { bigDoc } from './tools/gen-big-dxf.mjs';
 
 // WCAG relative luminance; opacity composites drawing feedback onto its background.
@@ -4941,6 +4942,157 @@ try {
       // Compare
       await p.locator('[data-menu=File]').click(); await p.getByRole('menuitem', { name: 'Compare drawings…', exact: true }).click();
       await rowOn('compare');
+    } finally { await ctx.close(); }
+  });
+
+  await step('TODO 215a: PDF / Print custom scale', async () => {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const p = await ctx.newPage(), q = (id) => panelControl(p, p.getByTestId(id));
+    p.on('pageerror', (e) => errors.push(String(e)));
+    const open = async () => { await q('pdf-open').click(); await q('pdf-dialog').waitFor(); await p.waitForFunction(() => { const c = document.querySelector('[data-testid=pdf-preview]'); return c && c.width > 100; }); };
+    const load = async () => {
+      const raw = newDoc(4); addEntities(raw, dxfPoly([[0, 0], [2000, 0], [2000, 1000], [0, 1000]], { closed: true }));
+      await q('picker').setInputFiles({ name: 'c215.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(raw)) });
+      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'c215.dxf');
+    };
+    const loadLayout = async () => {
+      const lay = newLayout('Scale 215'), part = newDoc(4); addEntities(part, dxfPoly([[0, 0], [600, 0], [600, 400], [0, 400]], { closed: true }));
+      lay.parts.a = makePart('a', 'Plate', part); lay.placed = [{ partId: 'a', x: 100, y: 100, rot: 0 }];
+      await q('picker').setInputFiles({ name: 'lay215.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
+      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'lay215.dxf');
+    };
+    const info = (text) => p.waitForFunction((t) => document.querySelector('[data-testid=pdf-custom-info]').textContent === t, text);
+    const tilesOn = async (paper, s) => {                             // what the dialog must say for this sheet at scale s on this paper
+      const [W, H] = (await q('pdf-sheet-size').textContent()).match(/([\d.]+) × ([\d.]+)/).slice(1).map((v) => Number(v) + 20), [pw, ph] = PDF_PAPERS[paper];      // a drawing tab prints as a part: its box plus a 10 mm border
+      const a = tileGrid(W * s, H * s, pw, ph), b = tileGrid(W * s, H * s, ph, pw), g = b.cols * b.rows < a.cols * a.rows ? b : a;
+      return g.cols * g.rows === 1 ? 'one page' : `${g.cols} × ${g.rows} tiles`;
+    };
+    const setScale = async (text) => { await q('pdf-scale-box').fill(text); };
+    const shape = async (name) => {                                   // light, dark, 1024 px
+      for (const theme of ['light', 'dark']) {
+        await p.evaluate((theme) => { document.documentElement.dataset.theme = theme; return new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))); }, theme);
+        await p.screenshot({ path: `${shotDir}/todo215a-${name}-${theme}.png` });
+        assert.ok(readFileSync(`${shotDir}/todo215a-${name}-${theme}.png`).length > 1000);
+      }
+      await p.evaluate(() => { document.documentElement.dataset.theme = 'light'; });
+      await p.setViewportSize({ width: 1024, height: 768 });
+      await p.screenshot({ path: `${shotDir}/todo215a-${name}-1024.png` });
+      assert.ok(readFileSync(`${shotDir}/todo215a-${name}-1024.png`).length > 1000);
+      assert.ok(await q('pdf-scale-box').isVisible() && await q('pdf-go').isVisible(), 'the Scale box and Save PDF fit at 1024 px');
+      await p.setViewportSize({ width: 1440, height: 900 });
+    };
+    try {
+      await p.goto(URL_);
+      await load();
+      await open();
+      assert.equal(await q('pdf-sheet-size').textContent(), '2000 × 1000 + 10 mm border');
+      // ratio and percent, each showing the other form; A1 paper tiles with the count
+      await q('pdf-page-custom').check();
+      assert.equal(await q('pdf-scale-box').inputValue(), '1 : 2', 'first use: 1 : 2');
+      await q('pdf-custom-paper').selectOption('A1');
+      assert.deepEqual(await q('pdf-custom-paper').evaluate((s) => [...s.options].map((o) => o.value)), ['A4', 'A3', 'A2', 'A1', 'A0']);
+      await setScale('1:1');
+      await info(await tilesOn('A1', 1));
+      assert.equal(await q('pdf-custom-info').textContent(), '3 × 2 tiles');
+      assert.equal(await q('pdf-scale-other').textContent(), '= 100%');
+      assert.equal(await p.getByTestId('pdf-pagebtn').count(), 6, 'six tile pages');
+      assert.match(await q('pdf-preview-label').textContent(), /page 1 of 6 .*tile 1\/6/);
+      assert.equal(await q('pdf-scale-error').isVisible(), false);
+      await setScale('50%');
+      assert.equal(await q('pdf-scale-other').textContent(), '= 1 : 2');
+      await info(await tilesOn('A1', 0.5));
+      await setScale('2%');
+      assert.equal(await q('pdf-scale-other').textContent(), '= 1 : 50');
+      await info('one page');
+      assert.equal(await p.getByTestId('pdf-pagebtn').count(), 1);
+      assert.equal(await q('pdf-title-block').isVisible(), true, 'one page: the check title block');
+      assert.match(await q('pdf-title-scale').inputValue(), /scale 1 : 50$/i);
+      // Mirror / Negative greyed as on check print
+      for (const id of ['pdf-mirror', 'pdf-negative']) assert.equal(await q(id).isDisabled(), true, id + ' greyed');
+      assert.match(await q('pdf-page-custom').evaluate((el) => el.closest('fieldset').textContent), /Custom scale/);
+      // tiled again for the shots
+      await setScale('1:1');
+      await info('3 × 2 tiles');
+      await shape('tiles');
+      // invalid: a red line, the last valid scale stays in the preview, Save / Print wait
+      for (const bad of ['0', 'abc', '-5%', '1:1001', '1001:1', '1:0', '0%', '']) {
+        await setScale(bad);
+        await q('pdf-scale-error').waitFor();
+        assert.match(await q('pdf-scale-error').textContent(), /Type a scale like 1 : 50/, 'invalid: ' + JSON.stringify(bad));
+        assert.equal(await q('pdf-go').isDisabled(), true, 'Save off for ' + JSON.stringify(bad));
+        assert.equal(await q('pdf-print').isDisabled(), true, 'Print off for ' + JSON.stringify(bad));
+        assert.equal(await q('pdf-custom-info').textContent(), '3 × 2 tiles', 'the last valid scale stays in the preview');
+      }
+      const red = await q('pdf-scale-error').evaluate((el) => getComputedStyle(el).color.match(/[\d.]+/g).map(Number));
+      assert.ok(red[0] > red[1] && red[0] > red[2], 'the error line is red');
+      await shape('invalid');
+      await q('pdf-page-sheet').check();                              // another page choice does not need a scale
+      assert.equal(await q('pdf-go').isDisabled(), false);
+      await q('pdf-page-custom').check();
+      assert.equal(await q('pdf-go').isDisabled(), true, 'the bad text is still in the box');
+      await setScale('1:1000');
+      assert.equal(await q('pdf-go').isDisabled(), false, '1 : 1000 is the smallest allowed');
+      await setScale('1000:1');
+      await q('pdf-scale-error').waitFor();                           // 1000 : 1 on A1 is far past 60 pages (a different red line)
+      await setScale('1:1');
+      assert.equal(await q('pdf-go').isDisabled(), false);
+      // more than 60 pages: a red line, Save / Print off, no preview pages
+      await q('pdf-custom-paper').selectOption('A4');
+      await setScale('200%');
+      await q('pdf-scale-error').waitFor();
+      assert.match(await q('pdf-scale-error').textContent(), /^Too many pages \(\d+\): pick a bigger paper or a smaller scale$/);
+      assert.ok(Number((await q('pdf-scale-error').textContent()).match(/\((\d+)\)/)[1]) > 60);
+      assert.equal(await q('pdf-go').isDisabled(), true); assert.equal(await q('pdf-print').isDisabled(), true);
+      assert.equal(await p.getByTestId('pdf-pagebtn').count(), 0);
+      assert.equal(await q('pdf-fullscreen').isDisabled(), true);
+      await shape('cap');
+      await q('pdf-custom-paper').selectOption('A0');                 // a bigger paper brings it back under the cap
+      await info(await tilesOn('A0', 2));
+      assert.equal(await q('pdf-go').isDisabled(), false);
+      assert.equal(await q('pdf-scale-error').isVisible(), false);
+      // Check print reads its computed scale out in the same box; typing there turns it into a custom scale
+      await q('pdf-page-check').check();
+      assert.match(await q('pdf-scale-box').inputValue(), /^1 : [\d.]+$/, 'check print: the computed scale in the box');
+      assert.equal(await q('pdf-scale-box').inputValue(), (await q('pdf-scale').textContent()).replace(/^.*scale /, ''));
+      assert.match(await q('pdf-scale-other').textContent(), /^= [\d.]+%$/);
+      // A folder at once, "Same as This layout": the custom scale goes on to every file; an invalid one blocks Convert
+      await q('pdf-close').click(); await loadLayout(); await open();       // a layout tab has the folder tab (a drawing tab is a part) and its own saved scale
+      await q('pdf-page-custom').check(); await q('pdf-custom-paper').selectOption('A3'); await setScale('1:100');
+      await q('pdf-tab-batch').click();
+      await q('pdf-dirpicker').setInputFiles(['fixtures/sample.dxf']);
+      await p.waitForFunction(() => document.querySelectorAll('[data-testid=pdf-include]').length === 1);
+      assert.equal(await q('pdf-go').isDisabled(), false);
+      const got = [], onDl = async (d) => got.push(readFileSync(await d.path(), 'latin1'));
+      p.on('download', onDl);
+      await q('pdf-go').click();
+      await p.waitForFunction(() => [...document.querySelectorAll('[data-testid=pdf-status]')].some((e) => /^Done · \d+ pages?$/.test(e.textContent)), null, { timeout: 20000 });
+      for (let i = 0; i < 200 && !got.length; i++) await p.waitForTimeout(100);
+      p.off('download', onDl);
+      assert.ok(got[0].includes('/Subject (Scale 1 : 100)'), 'the batch PDF is at the dialog\'s custom scale');
+      await q('pdf-tab-one').click(); await setScale('x'); await q('pdf-tab-batch').click();
+      assert.equal(await q('pdf-go').isDisabled(), true, 'an invalid scale blocks Convert');
+      await q('pdf-batch-mode').selectOption('plain');
+      assert.equal(await q('pdf-go').isDisabled(), false, 'but not the other batch settings');
+      await q('pdf-tab-one').click();
+      // remembered on this PC next to the margins (one saved object): reload and look
+      await q('pdf-page-custom').check();
+      await q('pdf-custom-paper').selectOption('A2');
+      await setScale('1:20');
+      await q('pdf-margin-office').click();
+      await setScale('junk');                                         // an invalid entry is not remembered
+      await q('pdf-close').click(); await p.reload();
+      await loadLayout(); await open();
+      await q('pdf-page-custom').check();
+      assert.equal(await q('pdf-scale-box').inputValue(), '1:20', 'the last valid scale is remembered');
+      assert.equal(await q('pdf-custom-paper').inputValue(), 'A2', 'and the paper');
+      assert.equal(await q('pdf-margin-preset').inputValue(), 'custom', 'the margins are still remembered beside them');
+      assert.equal(await q('pdf-scale-other').textContent(), '= 5%');
+      await q('pdf-close').click();
+      await load(); await open();                                     // the part's own bucket: what it had last (200% on A0)
+      await q('pdf-page-custom').check();
+      assert.equal(await q('pdf-scale-box').inputValue(), '200%', 'the part keeps its own scale');
+      assert.equal(await q('pdf-custom-paper').inputValue(), 'A0');
+      await q('pdf-close').click();
     } finally { await ctx.close(); }
   });
 

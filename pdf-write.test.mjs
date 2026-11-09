@@ -387,3 +387,67 @@ test('freePdfName: never a name that is taken (in this run or on disk)', async (
   assert.equal(await X.freePdfName('bracket', async (n) => onDisk.has(n)), 'bracket (3).pdf');
   assert.equal(await X.freePdfName('other', async (n) => onDisk.has(n)), 'other.pdf');
 });
+
+test('TODO 215a: scale text parses as 1:50 or 2%, nothing else; A2 and A1 exist', () => {
+  assert.deepEqual(Object.keys(X.PAPERS), ['A4', 'A3', 'A2', 'A1', 'A0']);
+  assert.deepEqual(X.PAPERS.A2, [594, 420]); assert.deepEqual(X.PAPERS.A1, [841, 594]);
+  for (const [t, s] of [['1:50', 0.02], [' 1 : 50 ', 0.02], ['2:1', 2], ['2%', 0.02], ['50 %', 0.5], ['0.5%', 0.005], ['1:1000', 0.001], ['1000:1', 1000], ['100000%', 1000], ['.5:1', 0.5]]) near(X.parseScale(t), s, 1e-12, t);
+  for (const t of ['', 'abc', '0', '0%', '0:1', '1:0', '-1:5', '1:-5', '-5%', '1:1001', '1001:1', '0.09%', '100001%', '50', '1:2:3', '1/50', null, undefined, '1e2%']) assert.equal(X.parseScale(t), null, String(t));
+  assert.equal(X.percentText(0.02), '2%'); assert.equal(X.scaleText(0.02), '1 : 50'); assert.equal(X.percentText(1 / 3), '33.33%');
+});
+
+test('TODO 215a: custom scale is one check-style page when the sheet fits, with "scale 1 : n" and Subject; Standard check print is untouched', () => {
+  const src = srcOf('sample.dxf'), s = X.checkFit(1000, 700, 297, 210).s;
+  const plan = X.planPdf(src, { page: 'custom', customPaper: 'A3', scale: 0.25, separate: false });
+  assert.equal(plan.count, 1); assert.equal(plan.pages[0].tile, null); near(plan.pages[0].scale, 0.25);
+  const t = text(plan.bytes());
+  near(mediaBoxes(t)[0][0] / P.MM, 420); near(mediaBoxes(t)[0][1] / P.MM, 297);
+  assert.ok(t.includes('/Subject (Scale 1 : 4)'));
+  assert.ok(content(t, 0).includes('Scale 1 : 4') && content(t, 0).includes('Check print: not to be used as film'));
+  // at the scale a check print would pick, A4 custom is that check print, byte for byte (Mirror / Negative do not apply)
+  const check = X.planPdf(src, { page: 'check', checkPaper: 'A4', separate: false }).bytes();
+  assert.deepEqual(X.planPdf(src, { page: 'custom', customPaper: 'A4', scale: s, separate: false, mirror: true, negative: true }).bytes(), check);
+  assert.notDeepEqual(X.planPdf(src, { page: 'custom', customPaper: 'A4', scale: s * 1.01, separate: false }).bytes(), check);
+  // title block off: the page's free area grows by the block
+  assert.equal(X.planPdf(src, { page: 'custom', customPaper: 'A4', scale: 0.26, separate: false, titleBlock: { enabled: false } }).pages[0].tile, null);
+  assert.ok(X.planPdf(src, { page: 'custom', customPaper: 'A4', scale: 0.26, separate: false }).pages[0].tile);
+  // a part's page takes it too
+  assert.equal(X.planPdf(partSrc(), { page: 'custom', customPaper: 'A4', scale: 1, separate: false }).count, 1);
+});
+
+test('TODO 215a: custom scale too big for the paper tiles it at that scale; every tile says "scale 1 : n"; 217 margins apply', () => {
+  const src = srcOf('sample.dxf');
+  const plan = X.planPdf(src, { page: 'custom', customPaper: 'A3', scale: 0.5, separate: false });
+  const a = X.tileGrid(500, 350, 420, 297), b = X.tileGrid(500, 350, 297, 420), n = Math.min(a.cols * a.rows, b.cols * b.rows);
+  assert.equal(plan.count, n); assert.ok(n > 1);
+  plan.pages.forEach((p, i) => { assert.ok(p.tile); near(p.scale, 0.5); assert.ok(content(text(plan.bytes()), i).includes(`Tile ${i + 1}/${n}`) && content(text(plan.bytes()), i).includes('scale 1 : 2')); });
+  const g = plan.pages[0]._geo.tile, h = plan.pages[1]._geo.tile;
+  near(g.cols > 1 ? g.x0 + g.tw - h.x0 : h.y0 + h.th - g.y0, X.TILE.overlap);    // adjacent tiles overlap by 10 mm (page mm, at the scale)
+  near(g.y0 + g.th, 350);                                                       // the first row is the scaled sheet's top
+  // margins: 20 mm all round shrinks the printable area of a tile by 40 mm
+  const big = X.planPdf(src, { page: 'custom', customPaper: 'A3', scale: 0.5, separate: false, margins: { top: 20, right: 20, bottom: 20, left: 20 } });
+  assert.equal(big.pages[0]._geo.tile.tw, big.pages[0].w - 40); assert.equal(big.pages[0]._geo.tile.th, big.pages[0].h - 40);
+  assert.equal(X.planPdf(src, { page: 'custom', customPaper: 'A3', scale: 0.5, separate: false, mirror: true, negative: true }).bytes().length, plan.bytes().length);
+  // enlarging works too, on every paper, and no NaN anywhere
+  for (const paper of Object.keys(X.PAPERS)) for (const sc of [0.001, 0.02, 1, 2, 10]) {
+    let pl;
+    try { pl = X.planPdf(src, { page: 'custom', customPaper: paper, scale: sc, separate: false, crop: true, reg: true }); } catch (e) { assert.ok(e instanceof X.PageCapError); continue; }
+    if (pl.count > 1) assert.ok(pl.pages.every((p) => p.tile));
+    assert.ok(!/NaN|Infinity/.test(text(pl.bytes())), `${paper} ${sc}`);
+  }
+});
+
+test('TODO 215a (F7): custom scale never plans more than 60 pages, or an invalid scale', () => {
+  const src = srcOf('sample.dxf');
+  const big = () => X.planPdf(src, { page: 'custom', customPaper: 'A4', scale: 5, separate: false });
+  assert.throws(big, (e) => e instanceof X.PageCapError && e instanceof RangeError && e.pages > 60 && e.message === `Too many pages (${e.pages}): pick a bigger paper or a smaller scale`);
+  assert.throws(() => X.planPdf(src, { page: 'custom', customPaper: 'A4', scale: 1000, separate: false }), X.PageCapError);   // millions of tiles: counted, not generated
+  for (const scale of [0, -1, NaN, Infinity, 2000, 0.0005, undefined, '1:50']) assert.throws(() => X.planPdf(src, { page: 'custom', scale }), /Scale must be/);
+  // the invariant over a sweep: a plan is either refused with the cap error or has at most 60 pages (separations included)
+  let ok = 0, refused = 0;
+  for (const separate of [false, true]) for (const customPaper of Object.keys(X.PAPERS)) for (let sc = 0.05; sc < 6; sc += 0.1) {
+    try { const pl = X.planPdf(src, { page: 'custom', customPaper, scale: sc, separate }); assert.ok(pl.count <= X.PAGE_CAP); ok++; }
+    catch (e) { assert.ok(e instanceof X.PageCapError && e.pages > X.PAGE_CAP, `${customPaper} ${sc}: ${e.message}`); refused++; }
+  }
+  assert.ok(ok > 20 && refused > 20, `${ok} ok, ${refused} refused`);
+});
