@@ -197,6 +197,34 @@ test('check print: fitted to the paper at a stated scale, with a title block', (
   assert.ok(tall.h > tall.w);
 });
 
+test('margins per side (TODO 217): Standard is today\'s 8 / 10 mm, Office printer 5 mm grows the printable area by 3 mm / 5 mm a side', () => {
+  const office = X.OFFICE_MARGINS;
+  assert.deepEqual(X.marginsOf({ page: 'tile' }), { top: 8, right: 8, bottom: 8, left: 8 });
+  assert.deepEqual(X.marginsOf({ page: 'check' }), { top: 10, right: 10, bottom: 10, left: 10 });
+  assert.deepEqual(X.marginsOf({ page: 'check', margins: { top: 'x', left: -4, right: 99 } }), { top: 10, right: 50, bottom: 10, left: 0 });   // junk → Standard's side, clamped to 0 – 50
+  // Standard gives today's tile count and check scale
+  assert.deepEqual(X.tileGrid(1000, 700, 420, 297, X.marginsOf({ page: 'tile' })), X.tileGrid(1000, 700, 420, 297));
+  const src = srcOf('sample.dxf');
+  assert.equal(X.planPdf(src, { page: 'tile', tilePaper: 'A3', separate: false, margins: undefined }).count, 8);
+  near(X.planPdf(src, { page: 'check', separate: false }).pages[0].scale, X.checkFit(1000, 700, 297, 210).s);
+  // Office printer: the tile is 3 mm bigger a side, the check print is bigger
+  const t = X.tileGrid(1000, 700, 420, 297, office);
+  assert.deepEqual([t.tw, t.th], [410, 287]);
+  const plan = X.planPdf(src, { page: 'tile', tilePaper: 'A3', separate: false, margins: office });
+  assert.equal(plan.pages[0]._geo.tile.tw, 287);                           // the portrait page (fewer tiles) is picked: 297 − 10
+  assert.ok(plan.pages[0]._geo.tile.th > 400);
+  const std = X.checkFit(1000, 700, 297, 210), off = X.checkFit(1000, 700, 297, 210, true, office);
+  assert.ok(off.s > std.s);
+  near(off.s, Math.min((297 - 10) / 1000, (210 - 10 - 22) / 700));
+  assert.ok(X.planPdf(src, { page: 'check', separate: false, margins: office }).pages[0].scale > std.s);
+  // each side on its own: a 20 mm left margin moves the art 20 − 8 = 12 mm right and narrows the tile by 12
+  const lop = X.planPdf(src, { page: 'tile', tilePaper: 'A3', separate: false, margins: { top: 8, right: 8, bottom: 8, left: 20 } });
+  assert.equal(lop.pages[0]._geo.tile.tw, X.planPdf(src, { page: 'tile', tilePaper: 'A3', separate: false }).pages[0]._geo.tile.tw - 12);
+  assert.ok(text(lop.bytes()).length > 0);
+  // the 1:1 sheet page has no margin
+  assert.deepEqual(X.planPdf(src, { page: 'sheet', separate: false, margins: { top: 40, right: 40, bottom: 40, left: 40 } }).pages.map((p) => [p.w, p.h]), X.planPdf(src, { page: 'sheet', separate: false }).pages.map((p) => [p.w, p.h]));
+});
+
 test('text: escaping, WinAnsi, widths', () => {
   assert.equal(P.pdfString(P.winAnsi('a (b) c\\d')), '(a \\(b\\) c\\\\d)');
   assert.equal(P.pdfString(P.winAnsi('Ø12 ± 0.1° é')), '(\\330' + '12 \\261 0.1\\260 \\351)');

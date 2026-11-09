@@ -4,16 +4,16 @@
 import { h, fill, icon } from './dom.js';
 import { fitBase, zoomAt, panBy, paintView, FIT } from './pdf-view.js';
 import { baseName, saveDefault, withExt } from './savepath.js';
-import { planPdf, freePdfName, DEFAULT_OPTIONS, tileGrid, scaleText, titleBlockTexts, cleanTitleBlock, readTitleBlock, PAPERS, PART_BORDER } from './pdf-export.js';
+import { planPdf, freePdfName, DEFAULT_OPTIONS, tileGrid, scaleText, titleBlockTexts, cleanTitleBlock, readTitleBlock, PAPERS, PART_BORDER, marginsOf, OFFICE_MARGINS, MARGIN_MAX } from './pdf-export.js';
 import { batchPdfSource } from './pdf-source.js';
 
 const layoutSettings = {
-  ...DEFAULT_OPTIONS, tab: 'one', pageIdx: 0,
+  ...DEFAULT_OPTIONS, tab: 'one', pageIdx: 0, marginPreset: 'standard', margins: { ...OFFICE_MARGINS },
   batch: { folder: '', dxf: true, dwg: true, cdr: true, sub: false, mode: 'same', saveTo: 'same', saveDir: null, all: [], busy: false },
 };
 
 /** The Part screen's own settings: one page, as drawn (no mirror, no marks, no separations), fitted to A4 unless changed. */
-const partSettings = { ...DEFAULT_OPTIONS, mirror: false, separate: false, crop: false, reg: false, strip: false, tab: 'one', pageIdx: 0, batch: layoutSettings.batch };
+const partSettings = { ...DEFAULT_OPTIONS, mirror: false, separate: false, crop: false, reg: false, strip: false, tab: 'one', pageIdx: 0, marginPreset: 'standard', margins: { ...OFFICE_MARGINS }, batch: layoutSettings.batch };
 
 const joinPath = (dir, name) => String(dir).replace(/[\\/]+$/, '') + (String(dir).includes('\\') ? '\\' : '/') + name;
 const today = () => { const d = new Date(); return [d.getDate(), d.getMonth() + 1].map((n) => String(n).padStart(2, '0')).join('-') + '-' + d.getFullYear(); };
@@ -113,6 +113,7 @@ export function openExport(host) {
   const opts = () => ({
     page: settings.page, tilePaper: settings.tilePaper, checkPaper: settings.checkPaper, mirror: settings.mirror && settings.page !== 'check', negative: settings.negative && settings.page !== 'check',
     black: settings.black, separate: settings.separate, crop: settings.crop, reg: settings.reg, strip: settings.strip, sheetSizeGripper: settings.sheetSizeGripper, titleBlock,
+    margins: settings.marginPreset === 'standard' ? undefined : settings.margins,
   });
 
   // ---- little builders
@@ -184,11 +185,34 @@ export function openExport(host) {
     return h('label', { class: 'pd-row' }, i, ' ' + text);
   };
   ref.selPage = h('div', { class: 'pd-sub', hidden: true }, selRadio(true, 'Cut to selection', 'pdf-sel-cut'), selRadio(false, 'Sheet page', 'pdf-sel-sheet'));
+  // ---- Margins (tiled and check print pages): a preset, or four numbers; editing a number picks Custom
+  const shownMargins = () => marginsOf({ page: settings.page, margins: settings.marginPreset === 'standard' ? undefined : settings.margins });
+  ref.marginPreset = sel([['standard', 'Standard'], ['office', 'Office printer (5 mm)'], ['custom', 'Custom']], settings.marginPreset, (v) => {
+    if (v === 'office') settings.margins = { ...OFFICE_MARGINS };
+    else if (v === 'custom') settings.margins = { ...shownMargins() };
+    settings.marginPreset = v; refresh();
+  }, { 'data-testid': 'pdf-margin-preset', 'aria-label': 'Margins preset' });
+  ref.marginInputs = {};
+  const marginField = (key, text) => {
+    const i = h('input', { class: 'fld', type: 'number', min: 0, max: MARGIN_MAX, step: 0.5, style: 'width:64px', 'data-testid': 'pdf-margin-' + key });
+    i.addEventListener('input', () => {
+      const v = Number(i.value);
+      if (i.value === '' || !Number.isFinite(v)) return;
+      settings.margins = { ...shownMargins(), [key]: Math.min(MARGIN_MAX, Math.max(0, v)) };
+      settings.marginPreset = 'custom'; refresh();
+    });
+    ref.marginInputs[key] = i;
+    return h('label', { class: 'lbl' }, text + ' ', i);
+  };
+  ref.marginRow = h('div', { class: 'pd-sub', 'data-testid': 'pdf-margins' },
+    h('label', { class: 'lbl' }, 'Margins (mm) ', ref.marginPreset),
+    h('div', { style: 'display:grid;grid-template-columns:1fr 1fr;gap:6px 12px;margin-top:6px' }, marginField('top', 'Top'), marginField('right', 'Right'), marginField('bottom', 'Bottom'), marginField('left', 'Left')));
   const left = h('div', { class: 'pd-left' },
     fieldset('Page',
       radio('sheet', 'pdf-page-sheet', part ? 'Page cut to the part, 1:1 ' : 'Sheet size, 1:1 ', ref.sheetLbl),
       radio('tile', 'pdf-page-tile', 'Tile 1:1 on ', ref.tilePaper, ' pages ', ref.tileLbl),
       radio('check', 'pdf-page-check', part ? 'Scaled to fit one ' : 'Check print, fit to ', ref.checkPaper, part ? ' page ' : ' ', ref.checkLbl),
+      ref.marginRow,
       h('label', { class: 'pd-row', hidden: !(part || src.hasSelection !== undefined) }, ref.selectionOnly, ' Selection only'), ref.selPage),
     ref.titleSet,
     fieldset('Film',
@@ -287,6 +311,9 @@ export function openExport(host) {
       return;
     }
     const o = opts(), check = o.page === 'check';
+    ref.marginRow.hidden = o.page === 'sheet';
+    ref.marginPreset.value = settings.marginPreset;
+    for (const [k, v] of Object.entries(shownMargins())) if (Number(ref.marginInputs[k].value) !== v || ref.marginInputs[k].value === '') ref.marginInputs[k].value = v;
     if (!part) { ref.sheetSizeGripper.disabled = !check; ref.sheetSizeGripper.title = check ? '' : 'Check print only'; }
     srcFull.date = today();
     plan = planPdf(srcFull, o);
@@ -297,7 +324,7 @@ export function openExport(host) {
     // a part's page is the part plus a border all round: say the part's own size and the border, not the page's
     ref.sheetLbl.textContent = cut ? `${Number((W - 2 * PART_BORDER).toFixed(1))} × ${Number((Hh - 2 * PART_BORDER).toFixed(1))} + ${PART_BORDER} mm border` : `${Number(W.toFixed(1))} × ${Number(Hh.toFixed(1))}`;
     ref.sheetLbl.title = cut ? 'The part plus a 10 mm border' : '';
-    const [tw, th] = PAPERS[settings.tilePaper], a = tileGrid(W, Hh, tw, th), b = tileGrid(W, Hh, th, tw);
+    const [tw, th] = PAPERS[settings.tilePaper], mg = marginsOf({ page: 'tile', margins: o.margins }), a = tileGrid(W, Hh, tw, th, mg), b = tileGrid(W, Hh, th, tw, mg);
     const g = b.cols * b.rows < a.cols * a.rows ? b : a;
     ref.tileLbl.textContent = `${g.cols} × ${g.rows} tiles`;
     ref.checkLbl.textContent = (cut ? 'not 1:1 · scale ' : 'scale ') + scaleText(plan.pages[0].scale || 1);

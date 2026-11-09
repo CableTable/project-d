@@ -4063,9 +4063,10 @@ try {
     assert.deepEqual(await dialog.locator('legend').allTextContents(), ['Page', 'Title block', 'Film', 'Pages', 'Marks']);
     const labels = (await dialog.locator('.pd-left .pd-set:not([hidden]) label').allTextContents()).map((x) => x.replace(/\s+/g, ' ').trim());
     assert.deepEqual(labels.slice(0, 3), ['Sheet size, 1:1 1000 × 700', 'Tile 1:1 on A3A4 pages 3 × 3 tiles'.replace('3 × 3', '4 × 2'), 'Check print, fit to A4A3 scale 1 : 3.97'.replace('3.97', labels[2].match(/1 : [\d.]+/)[0].slice(4))]);
-    assert.deepEqual(labels.slice(3, 6), ['Selection only', 'Cut to selection', 'Sheet page'], 'TODO 214b: the tick and its two radios (the radios hidden until ticked)');
-    assert.deepEqual(labels.slice(6, 12), ['Mirror (emulsion down)', 'Negative', 'All colours print black', 'One page per print colour (layer)', 'Crop marks', 'Registration marks'].slice(0, 3).concat(['One page per print colour (layer)', 'Crop marks', 'Registration marks']));
-    assert.equal(labels[12], 'Job strip: file, date, colour');
+    assert.deepEqual(labels.slice(3, 8), ['Margins (mm) StandardOffice printer (5 mm)Custom', 'Top', 'Right', 'Bottom', 'Left'], 'TODO 217: the Margins row (hidden on the 1:1 sheet page)');
+    assert.deepEqual(labels.slice(8, 11), ['Selection only', 'Cut to selection', 'Sheet page'], 'TODO 214b: the tick and its two radios (the radios hidden until ticked)');
+    assert.deepEqual(labels.slice(11, 17), ['Mirror (emulsion down)', 'Negative', 'All colours print black', 'One page per print colour (layer)', 'Crop marks', 'Registration marks'].slice(0, 3).concat(['One page per print colour (layer)', 'Crop marks', 'Registration marks']));
+    assert.equal(labels[17], 'Job strip: file, date, colour');
     assert.deepEqual(await dialog.locator('.pd-footer button').allTextContents(), ['Cancel', 'Print…', 'Save PDF']);
     assert.equal(await t('pdf-foot').textContent(), 'sample-copy layout.pdf');
     const note = await t('pdf-pages-note').textContent();
@@ -4779,6 +4780,86 @@ try {
       await q('pdf-open').click();
       assert.match(await q('cmd-prompt').textContent(), /Nothing to export/);
       assert.equal(await q('pdf-dialog').count(), 0);
+    } finally { await ctx.close(); }
+  });
+
+  await step('TODO 217: PDF / Print margins per side', async () => {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const p = await ctx.newPage(), q = (id) => panelControl(p, p.getByTestId(id));
+    p.on('pageerror', (e) => errors.push(String(e)));
+    const open = async () => { await q('pdf-open').click(); await q('pdf-dialog').waitFor(); };
+    const fields = async () => Promise.all(['top', 'right', 'bottom', 'left'].map((k) => q('pdf-margin-' + k).inputValue()));
+    const scale = async () => { const m = (await q('pdf-scale').textContent()).match(/([\d.]+) : ([\d.]+)/); return m[1] / m[2]; };
+    const shape = async (name) => {                                   // light, dark, 1024 px
+      for (const theme of ['light', 'dark']) {
+        await p.evaluate((theme) => { document.documentElement.dataset.theme = theme; return new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))); }, theme);
+        await p.screenshot({ path: `${shotDir}/todo217-${name}-${theme}.png` });
+      }
+      await p.evaluate(() => { document.documentElement.dataset.theme = 'light'; });
+      await p.setViewportSize({ width: 1024, height: 768 });
+      await p.screenshot({ path: `${shotDir}/todo217-${name}-1024.png` });
+      assert.ok(await q('pdf-margins').isVisible() && await q('pdf-go').isVisible(), 'margins row and Save PDF fit at 1024 px');
+      await p.setViewportSize({ width: 1440, height: 900 });
+    };
+    const rowOn = async (tab) => {                                    // the row on a tab: hidden on the 1:1 sheet, there on tile and check print
+      await open();
+      await q('pdf-page-sheet').check();
+      assert.equal(await q('pdf-margins').isVisible(), false, tab + ': the 1:1 sheet page has no margins');
+      await q('pdf-page-check').check();
+      assert.equal(await q('pdf-margins').isVisible(), true, tab + ': check print shows the row');
+      assert.equal(await q('pdf-margin-preset').inputValue(), 'standard');
+      assert.deepEqual(await fields(), ['10', '10', '10', '10'], tab + ': Standard check print is 10 mm');
+      const std = await scale(), shot = await q('pdf-preview').evaluate((c) => c.toDataURL());
+      await q('pdf-margin-preset').selectOption('office');
+      assert.deepEqual(await fields(), ['5', '5', '5', '5'], tab + ': Office printer fills 5 mm');
+      assert.ok(await scale() > std, tab + ': the check print scale grows');
+      assert.notEqual(await q('pdf-preview').evaluate((c) => c.toDataURL()), shot, tab + ': the preview repaints');
+      await q('pdf-page-tile').check();
+      assert.equal(await q('pdf-margins').isVisible(), true, tab + ': tile shows the row');
+      assert.deepEqual(await fields(), ['5', '5', '5', '5']);
+      await q('pdf-margin-preset').selectOption('standard');
+      assert.deepEqual(await fields(), ['8', '8', '8', '8'], tab + ': Standard tile is 8 mm');
+      await q('pdf-page-check').check();
+      assert.deepEqual(await fields(), ['10', '10', '10', '10'], tab + ': Standard follows the page type');
+      await q('pdf-page-sheet').check();
+      await p.keyboard.press('Escape');
+    };
+    try {
+      await p.goto(URL_);
+      for (const name of ['a217.dxf', 'b217.dxf']) {
+        const raw = newDoc(4);
+        addEntities(raw, dxfPoly([[0, 0], [180, 0], [180, 100], [0, 100]], { closed: true }), dxfText(5, 5, 3, name));
+        await q('picker').setInputFiles({ name, mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(raw)) });
+        await p.waitForFunction((name) => document.querySelector('.dtab.on .tname').textContent === name, name);
+      }
+      const lay = newLayout('Margins layout');
+      const part = newDoc(4); addEntities(part, dxfPoly([[0, 0], [60, 0], [60, 40], [0, 40]], { closed: true }));
+      lay.parts.a = makePart('a', 'Plate', part); lay.placed = [{ partId: 'a', x: 100, y: 100, rot: 0 }];
+      await q('picker').setInputFiles({ name: 'lay217.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
+      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'lay217.dxf');
+      await rowOn('layout');
+      await p.locator('.dtab', { hasText: 'a217.dxf' }).click();
+      await rowOn('drawing');
+      // editing a field picks Custom and the value is used; the choice is kept for the session
+      await open();
+      await q('pdf-page-check').check();
+      const std = await scale();
+      await q('pdf-margin-left').fill('40');
+      assert.equal(await q('pdf-margin-preset').inputValue(), 'custom', 'a field edit picks Custom');
+      assert.deepEqual(await fields(), ['10', '10', '10', '40']);
+      assert.ok(await scale() < std, 'a wider left margin shrinks the check print');
+      await q('pdf-margin-preset').selectOption('office');
+      await q('pdf-margin-top').fill('7');
+      assert.equal(await q('pdf-margin-preset').inputValue(), 'custom');
+      assert.deepEqual(await fields(), ['7', '5', '5', '5']);
+      await shape('drawing');
+      await q('pdf-close').click(); await open();
+      assert.equal(await q('pdf-margin-preset').inputValue(), 'custom', 'kept for the session');
+      assert.deepEqual(await fields(), ['7', '5', '5', '5']);
+      await q('pdf-margin-preset').selectOption('standard'); await q('pdf-close').click();
+      // Compare
+      await p.locator('[data-menu=File]').click(); await p.getByRole('menuitem', { name: 'Compare drawings…', exact: true }).click();
+      await rowOn('compare');
     } finally { await ctx.close(); }
   });
 
