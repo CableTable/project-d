@@ -9232,14 +9232,22 @@ try {
     await page.locator('[data-menu=Edit]').click();
     assert.equal(await page.getByRole('menuitem', { name: 'Copy', exact: true }).isDisabled(), true);
     await page.keyboard.press('Escape');
-    await page.keyboard.press('Control+v');
+    await page.keyboard.press('Control+Shift+v');
     let lay = layoutFromRaw(await savedDoc());
     assert.deepEqual(lay.placed.slice(2), original.placed, 'same-layout paste overlaps at the same coordinates and keeps the ids');
     await page.keyboard.press('Control+z');
     assert.deepEqual(layoutFromRaw(await savedDoc()).placed, original.placed);
+    await page.keyboard.press('Control+v'); await click(400, 300);
+    lay = layoutFromRaw(await savedDoc());
+    assert.equal(lay.placed.length, 4);
+    const boxes = lay.placed.slice(2).map((p) => placedBox(lay.parts[p.partId], p));
+    assert.ok(Math.abs(Math.min(...boxes.map((b) => b[0])) - 400) < 1, 'follow paste lands its left edge at the click');
+    assert.ok(Math.abs(Math.max(...boxes.map((b) => b[3])) - 300) < 1, 'follow paste lands its top edge at the click');
+    await page.keyboard.press('Control+z');
+    assert.deepEqual(layoutFromRaw(await savedDoc()).placed, original.placed);
     await typeCmd('newlayout'); await page.keyboard.press('Escape');
     await closeTabs(/144 source/);
-    await menuItem('Edit', 'Paste');
+    await menuItem('Edit', 'Paste in place');
     lay = layoutFromRaw(await savedDoc());
     assert.deepEqual(lay.placed, original.placed, 'two placements link to the same library ids on another layout');
     assert.deepEqual(Object.keys(lay.parts).sort(), ['144-a', '144-b']);
@@ -13087,7 +13095,7 @@ try {
     await click(175, 100); assert.deepEqual(await picked162b(1), [100]);        // part A
     await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Delete'); await frames();
     await click(175, 400); assert.deepEqual(await picked162b(1), [100]);        // part D: copied and pasted, so the list is as long as at Start again
-    await page.keyboard.press('Control+c'); await page.keyboard.press('Control+v'); await frames();
+    await page.keyboard.press('Control+c'); await page.keyboard.press('Control+Shift+v'); await frames();
     await click(325, 200); assert.deepEqual(await picked162b(1), [275]);        // part C
     await menuItem('Edit', 'Undo history…'); await t('hist-row').nth(0).click();
     await t('hist-dialog').waitFor({ state: 'detached' }); await frames();
@@ -17873,7 +17881,7 @@ try {
       await click(35, 37.5);
     }
     await page.keyboard.press('Control+c');
-    await t('new-layout').click(); await page.keyboard.press('Control+v'); await typeCmd('nu');
+    await t('new-layout').click(); await page.keyboard.press('Control+Shift+v'); await typeCmd('nu');
     assert.equal(await t('nudge-input').inputValue(), '2.5');
     await t('nudge-input').fill('3'); await t('nudge-input').press('Enter');
     assert.equal(await t('nudge-step').inputValue(), '3.0');
@@ -17899,7 +17907,7 @@ try {
     addEntities(locked, dxfLine(20, 20, 60, 20), dxfLine(60, 20, 60, 60, { layer: 'Cut' }), dxfLine(60, 60, 20, 60), dxfLine(20, 60, 20, 20));
     await openGrips(writeDxf(locked), 'nudge-locked.dxf'); const lockedBefore = await savedDoc();
     await t('ptab-objects').click(); await page.locator('.or.layer[data-layer=Cut] [data-act=lock]').click();
-    await t('ptab-drawing').click(); await page.locator('[data-outline="1"]').click(); await waitSel('4 selected');
+    await t('ptab-drawing').click(); await t('outlines').locator('[data-outline="1"]').click(); await waitSel('4 selected');
     await page.keyboard.press('ArrowRight'); assert.match(await prompt(), /Layer Cut is locked/);
     assert.deepEqual((await savedDoc()).entities, lockedBefore.entities);
     const inches = newDoc(1); addEntities(inches, dxfLine(1, 1, 3, 2));
@@ -20347,7 +20355,7 @@ try {
     await page.keyboard.press('Escape');
     await typeCmd('d'); await typeCmd('100,150'); await typeCmd('400,150'); await typeCmd('200,120');
     await page.keyboard.press('Escape');
-    await page.keyboard.press('Control+v');
+    await page.keyboard.press('Control+Shift+v');
     const labelsOf = (src) => textsIn(src).map((q) => q.label).sort();
     text = await save();
     assert.deepEqual(labelsOf(text), ['200.00', '200.00', '300.00'], 'each dimension has its own block');
