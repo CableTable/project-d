@@ -13109,16 +13109,24 @@ try {
       // Undo of a paste removes its selected objects: no dangling selection or grips; the grip edit before it still gives its grips back.
       await page.keyboard.press('Control+a'); await gripWhen(3);
       await page.keyboard.press('Control+c'); await page.keyboard.press('Escape'); await gripWhen(0);
-      // Compare (211c, Q13): a paste is always a new snapshot, which has no tab to edit, so it shows no grips; Undo takes the snapshot away.
-      // grips / snapshots after: paste, Undo, Redo, Esc, Undo, Undo (null = not checked: Redo of a drawing paste leaves no selection today, a layout's does)
-      const grid = { Drawing: { grips: [3, 0, null, 0, 0, 3] }, Layout: { grips: [3, 0, null, 0, 0, 3] }, Compare: { grips: [0, 0, 0, 0, 0, 3], items: [1, 0, 1, 1, 0, 0] } }[kind];
+      // Compare (211c, Q13): the new snapshot has no editable source tab, so it shows no grips.
+      // grips / snapshots after: paste, Undo, Redo, Esc, Undo, Undo; Redo of a paste leaves no selection in either Drawing or Layout.
+      const grid = { Drawing: { grips: [3, 0, 0, 0, 0, 3] }, Layout: { grips: [3, 0, 0, 0, 0, 3] }, Compare: { grips: [0, 0, 0, 0, 0, 3], items: [1, 0, 1, 1, 0, 0] } }[kind];
       const items0 = kind === 'Compare' ? await t('cmp-item').count() : 0;
       await page.keyboard.press('Control+Shift+v');
       for (const [i, key] of [null, 'Control+z', 'Control+y', 'Escape', 'Control+z', 'Control+z'].entries()) {
         if (key) await page.keyboard.press(key);
+        if (grid.items) await page.waitForFunction((n) => document.querySelectorAll('[data-testid=cmp-item]').length === n, items0 + grid.items[i]);
         await frames(); await frames();
-        if (grid.grips[i] !== null) await gripWhen(grid.grips[i]);
-        if (grid.items) assert.equal(await t('cmp-item').count(), items0 + grid.items[i], `${kind} after ${key || 'paste'}: snapshots`);
+        await gripWhen(grid.grips[i]);
+      }
+      if (kind === 'Compare') {
+        const immediate = await page.evaluate(() => {
+          document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'V', ctrlKey: true, shiftKey: true, bubbles: true }));
+          return { snapshots: document.querySelectorAll('[data-testid=cmp-item]').length, grips: document.querySelectorAll('[data-testid=grip], [data-testid=grip-hot]').length };
+        });
+        assert.deepEqual(immediate, { snapshots: items0 + 1, grips: 0 }, 'Compare paste drops the selected linked source\'s grips before the queued paint');
+        await frames(); await gripWhen(0);
       }
       console.log(`188 ${kind}: Undo / Redo keep grips; removed objects leave selection; Esc clears grips`);
     }

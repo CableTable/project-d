@@ -5984,6 +5984,7 @@ function dropLinePoint(d) {
 /** d.hist.undo / redo: a step made by a grip edit (`grip`) hands back the opposite step with the selection too; every other step as before. */
 function stepHist(d, dir, snapshot = d.lay ? laySnap(d.lay) : snapshotOf(d)) {
   const cur = { ...snapshot, ...(!d.lay && { sel: [...(d.sel || [])] }) }, st = (d.lay ? layHist(d) : d.hist)[dir](cur);
+  if (d.lay && dir === 'undo' && layHist(d).labels().future[0]?.startsWith('Paste ')) cur.lsel = [];       // Redo of a paste leaves no selection, as on a drawing.
   if (st?.grip) { cur.grip = true; if (d.lay) cur.lsel = st.lsel; else cur.sel = st.sel; }
   else { delete cur.grip; if (!d.lay) delete cur.sel; }
   return st;
@@ -11486,6 +11487,7 @@ function cmpAdd(d, source, offset = null) {
     c.items = items;
     if (curDoc() === d) setTool('select');
     c.selected = c.items.at(-1).id; c.res = null; c.stale = false;
+    if (offset) ui.grips.replaceChildren();       // A pasted snapshot has no editable source: drop old grips before the queued paint.
     cmpMoved(d, !offset); note('Added snapshot: ' + source.name);
   } catch (err) { note(err.message); }
 }
