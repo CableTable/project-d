@@ -6,8 +6,8 @@ const DECIMAL = new RegExp(`^[+-]?${NUM}$`);
 const MARKS = new RegExp(`^([+-]?)(${NUM})\\s*'\\s*(?:-?\\s*(${NUM})\\s*")?$`);
 const INCH = new RegExp(`^([+-]?${NUM})\\s*"$`);
 
-/** A whole length token, or null. Only mm keeps decimal-comma input. */
-export function parse(text, unit = 'mm') {
+/** A point's length token, or null; overflow reaches the point's finite check. */
+export function parseCoordinate(text, unit = 'mm') {
   let s = String(text ?? '').trim();
   if (!UNITS.includes(unit)) return null;
   if (unit === 'mm') s = s.replace(',', '.');
@@ -20,6 +20,12 @@ export function parse(text, unit = 'mm') {
     if (!DECIMAL.test(s)) return null;
     value = +s * (mm ? 1 : FACTOR[unit]);
   }
+  return value;
+}
+
+/** A finite length token, or null. Only mm keeps decimal-comma input. */
+export function parse(text, unit = 'mm') {
+  const value = parseCoordinate(text, unit);
   return Number.isFinite(value) ? value : null;
 }
 
@@ -34,7 +40,7 @@ export function format(mm, unit = 'mm') {
 }
 
 export const defaultUnit = (insunits) => +insunits === 1 ? 'inch' : +insunits === 2 ? 'ft' : 'mm';
-export const sidecarPath = (path) => String(path).replace(/([^\\/])\.[^./\\]+$/, '$1') + '.pdunits.json';
+export const sidecarPath = (path) => String(path) + '.pdunits.json';
 export const isSidecar = (name) => /\.pdunits\.json$/i.test(name);
 export const encode = (unit) => JSON.stringify({ kind: 'Project D drawing unit', unit });
 export function decode(text) {

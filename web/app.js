@@ -3460,19 +3460,22 @@ async function save(forceAs) {
       name = ask || !path ? want : dxfName(d.name);
       download(name, text);
     }
-    await unitsSave(d, path, name);
+    let unitError = '';
+    try { await unitsSave(d, path, name); }
+    catch (err) { unitError = err.message || String(err); d.unitsDirty = true; }
     d.unitsName = d.pdf?.name || name;
     d.name = name; d.path = path; d.dirty = false; d.saved = true;
     if (d.fromDwg) { d.fromDwg = false; d.openPath = null; }              // the tab is now the .dxf it just wrote
     d.guideFile = G.fileKey(path, name); rememberGuides(d);
     const balloonsSaved = d.lay || await balSave(d) !== false;
-    d.dirty = !balloonsSaved;
-    if (balloonsSaved) dropCopy(d);
+    d.dirty = !!unitError || !balloonsSaved;
+    if (!d.dirty) dropCopy(d);
     if (path) rememberRecent(path);
     if (d.lay) d.lay.name = name;
     if (bad.length) d.acceptedLoss = true;
     renderTabs();
     const saveNote = saveReportNote({ tables, skipped });
+    if (unitError) { note('Saved; unit not saved: ' + unitError + (!balloonsSaved ? '. ' + state.msg : '')); return; }
     if (!balloonsSaved) { note('Saved ' + name + saveNote + '. ' + state.msg); return; }
     const dir = path ? path.slice(0, Math.max(path.lastIndexOf('\\'), path.lastIndexOf('/'))) : '';
     note('Saved ' + name + (dir ? ' to ' + dir : '') + saveNote + (d.bg ? '. The background picture is not saved in the DXF' : ''));

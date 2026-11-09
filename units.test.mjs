@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { parse, format, defaultUnit, sidecarPath, isSidecar, encode, decode, UNITS } from './web/units.js';
-import { parseInput, createTool, toolType } from './web/draw.js';
+import { parseInput, typedPoint, createTool, toolType } from './web/draw.js';
 import { parseMm, parseAngle } from './web/place.js';
 import { typedLength } from './web/linked-dimensions.js';
 import { COMMANDS } from './web/cmdbar.js';
@@ -36,6 +36,19 @@ test('TODO 222a: every printed form reads back, including negative and carrying 
     const text = format(n, u), back = parse(text, u);
     assert.notEqual(back, null, text); assert.equal(format(back, u), text);
     near(n, back, (u === 'mm' ? .005 : u === 'inch' ? .0127 : u === 'ft' ? .1524 : .127) + 1e-8);
+  }
+});
+
+test('TODO 222a: overflowing point tokens reach the finite check; scalar lengths stay refused', () => {
+  const huge = '9'.repeat(310);
+  for (const unit of UNITS) {
+    for (const text of [huge + ',0', '@0,-' + huge, huge + 'mm,0', huge + "',0", '@' + huge + '<30']) {
+      const input = parseInput(text, unit);
+      assert.ok(['xy', 'polar'].includes(input.kind), text);
+      assert.equal(typedPoint(input, [0, 0]), null, text);
+    }
+    assert.equal(parse(huge, unit), null);
+    assert.equal(parseInput(huge + 'abc,0', unit).kind, 'bad');
   }
 });
 
@@ -78,8 +91,8 @@ test('TODO 222a: command names and aliases reserve length marks', () => {
 test('TODO 222a: defaults and validated sidecars', () => {
   assert.equal(defaultUnit('1'), 'inch'); assert.equal(defaultUnit(2), 'ft');
   for (const n of [0, 4, 6, undefined]) assert.equal(defaultUnit(n), 'mm');
-  assert.equal(sidecarPath('C:\\jobs.v2\\a.b.DXF'), 'C:\\jobs.v2\\a.b.pdunits.json');
-  assert.equal(sidecarPath('C:/jobs/a.dwg'), 'C:/jobs/a.pdunits.json');
+  assert.equal(sidecarPath('C:\\jobs.v2\\a.b.DXF'), 'C:\\jobs.v2\\a.b.DXF.pdunits.json');
+  for (const ext of ['dxf', 'dwg', 'pdf']) assert.equal(sidecarPath('C:/jobs/a.' + ext), 'C:/jobs/a.' + ext + '.pdunits.json');
   assert.equal(sidecarPath('C:/jobs/.dxf'), 'C:/jobs/.dxf.pdunits.json');
   assert.equal(isSidecar('a.PDUNITS.JSON'), true);
   for (const u of UNITS) assert.equal(decode(encode(u)), u);

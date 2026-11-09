@@ -175,14 +175,31 @@ try {
         if (!(await q('cmd-input').isVisible())) await q('cmd-echo').click();
         await q('cmd-input').fill(text); await q('cmd-input').press('Enter');
       };
-      const pick = async (unit) => { await q('drawing-unit').click(); await p.locator(`[data-unit="${unit}"]`).click(); assert.equal(await q('drawing-unit').textContent(), unit); };
+      const pick = async (unit) => {
+        await q('drawing-unit').click(); await p.locator(`[data-unit="${unit}"]`).click();
+        await p.waitForFunction((unit) => document.querySelector('[data-testid=drawing-unit]').textContent === unit, unit);
+      };
+      const saveCommand = async () => {
+        await p.evaluate(() => {
+          window.unitSaveFinished = false;
+          const prompt = document.querySelector('[data-testid=cmd-prompt]');
+          const observer = new MutationObserver(() => {
+            if (!prompt.textContent.startsWith('Saved')) return;
+            window.unitSaveFinished = true; observer.disconnect();
+          });
+          observer.observe(prompt, { childList: true, characterData: true, subtree: true });
+        });
+        await command('save'); await p.waitForFunction(() => window.unitSaveFinished);
+      };
       const saveFiles = async (withSide = true) => {
         const files = [], collect = (d) => files.push((async () => ({ name: d.suggestedFilename(), text: readFileSync(await d.path(), 'utf8') }))());
         p.on('download', collect);
-        const done = p.waitForEvent('download', (d) => d.suggestedFilename().endsWith(withSide ? '.pdunits.json' : '.dxf'));
-        await command('save'); await done;
-        await p.waitForFunction(() => document.querySelector('[data-testid=cmd-prompt]').textContent.startsWith('Saved '));
-        p.off('download', collect); return Promise.all(files);
+        const done = ['.dxf', ...(withSide ? ['.pdunits.json'] : [])].map((ext) => p.waitForEvent('download', (d) => d.suggestedFilename().endsWith(ext)));
+        await saveCommand(); await Promise.all(done);
+        p.off('download', collect);
+        const saved = await Promise.all(files);
+        assert.equal(saved.length, withSide ? 2 : 1, 'the header default writes no unit sidecar');
+        return saved;
       };
       const drawing = (files) => readDxf(files.find((f) => f.name.endsWith('.dxf')).text);
       await command('units'); await q('units-dialog').waitFor(); await p.keyboard.press('Escape');
@@ -214,6 +231,7 @@ try {
       await p.waitForFunction(() => document.querySelector('[data-testid=drawing-unit]').textContent === 'ft');
       const feetSaved = drawing(await saveFiles(false)); assert.equal(+feetSaved.header.$INSUNITS, 2); assert.deepEqual(feetSaved.entities.map(lineEnds), raw.entities.map(lineEnds));
       await pick('ft-in'); const kept = await saveFiles(), side = kept.find((f) => f.name.endsWith('.pdunits.json')), dxf = kept.find((f) => f.name.endsWith('.dxf'));
+      assert.equal(side.name, dxf.name + '.pdunits.json');
       await p.reload(); await q('count').waitFor({ state: 'attached' });
       await q('picker').setInputFiles([{ name: dxf.name, mimeType: 'application/dxf', buffer: Buffer.from(dxf.text) }, { name: side.name, mimeType: 'application/json', buffer: Buffer.from(side.text) }]);
       await p.waitForFunction(() => document.querySelector('[data-testid=drawing-unit]').textContent === 'ft-in');
@@ -225,9 +243,11 @@ try {
       }, { dxf, side });
       await p.waitForFunction(() => document.querySelector('[data-testid=drawing-unit]').textContent === 'ft-in');
       await command('newlayout'); await pick('ft');
-      await p.locator('.dtab').filter({ hasText: dxf.name }).first().click(); assert.equal(await q('drawing-unit').textContent(), 'ft-in');
+      await p.locator('.dtab').filter({ hasText: dxf.name }).first().click();
+      await p.waitForFunction(() => document.querySelector('[data-testid=drawing-unit]').textContent === 'ft-in');
       await command('compare'); await pick('inch');
-      await p.locator('.dtab').filter({ hasText: dxf.name }).first().click(); assert.equal(await q('drawing-unit').textContent(), 'inch', 'Compare changes its selected open source drawing');
+      await p.locator('.dtab').filter({ hasText: dxf.name }).first().click();
+      await p.waitForFunction(() => document.querySelector('[data-testid=drawing-unit]').textContent === 'inch');
       const sheet = new Page(100, 80); sheet.rect(10, 10, 40, 30); sheet.stroke();
       await q('picker').setInputFiles({ name: 'unit-sheet.pdf', mimeType: 'application/pdf', buffer: Buffer.from(writePdf([sheet, sheet])) });
       await p.waitForFunction(() => document.querySelector('.dtab.on').textContent.includes('unit-sheet'));
@@ -235,19 +255,22 @@ try {
       await p.locator('[data-sheet="2"]').click();
       await p.waitForFunction(() => document.querySelector('[data-testid=sheet-chip]').textContent.includes('Sheet 2'));
       assert.equal(await q('drawing-unit').textContent(), 'ft-in', 'PDF sheets share their drawing unit');
-      const pdfSide = (await saveFiles()).find((f) => f.name === 'unit-sheet.pdunits.json'); assert.ok(pdfSide, 'the PDF setting is saved beside its source PDF');
+      const pdfSide = (await saveFiles()).find((f) => f.name === 'unit-sheet.pdf.pdunits.json'); assert.ok(pdfSide, 'the PDF setting is saved beside its source PDF');
       await p.reload(); await q('count').waitFor({ state: 'attached' });
       await q('picker').setInputFiles([{ name: 'unit-sheet.pdf', mimeType: 'application/pdf', buffer: Buffer.from(writePdf([sheet, sheet])) }, { name: pdfSide.name, mimeType: 'application/json', buffer: Buffer.from(pdfSide.text) }]);
       await p.waitForFunction(() => document.querySelector('[data-testid=drawing-unit]').textContent === 'ft-in');
       const installDisk = async (files, open = 'E:/units/native-feet.dxf') => p.evaluate(({ files, open }) => {
-        window.unitFiles = files; window.unitOpen = open; window.unitRemoved = [];
+        window.unitFiles = files; window.unitOpen = open; window.unitRemoved = []; window.unitSaveCalls = 0;
         window.__TAURI__ = {
           core: { invoke: async (name) => { if (name !== 'grant_balloon_sidecar') throw new Error(name); } },
-          dialog: { open: async () => window.unitOpen, save: async () => 'E:/units/native-feet-edited.dxf' },
+          dialog: { open: async () => window.unitOpen, save: async () => { window.unitSaveCalls++; return 'E:/units/native-feet-edited.dxf'; } },
           fs: {
             readFile: async (path) => new TextEncoder().encode(window.unitFiles[path]),
             readTextFile: async (path) => window.unitFiles[path], exists: async (path) => Object.hasOwn(window.unitFiles, path),
-            writeTextFile: async (path, text) => { window.unitFiles[path] = text; },
+            writeTextFile: async (path, text) => {
+              if (window.unitWriteFail && path.endsWith('.pdunits.json')) throw new Error('unit disk full');
+              window.unitFiles[path] = text;
+            },
             remove: async (path) => { delete window.unitFiles[path]; window.unitRemoved.push(path); },
           },
         };
@@ -255,13 +278,19 @@ try {
       await p.reload(); await q('count').waitFor({ state: 'attached' });
       await installDisk({ 'E:/units/native-feet.dxf': writeDxf(raw) });
       await command('open'); await p.waitForFunction(() => document.querySelector('[data-testid=drawing-unit]').textContent === 'ft');
-      await pick('ft-in'); await command('save');
-      const nativeSide = 'E:/units/native-feet-edited.pdunits.json';
+      await pick('ft-in'); await p.evaluate(() => { window.unitWriteFail = true; }); await saveCommand();
+      assert.equal(await q('cmd-prompt').textContent(), 'Saved; unit not saved: unit disk full');
+      assert.equal(await p.locator('.dtab.on .tname').textContent(), 'native-feet-edited.dxf', 'the DXF save updates the tab despite a sidecar failure');
+      assert.equal(await p.locator('.dtab.on .dot').count(), 1, 'the failed unit remains unsaved');
+      const nativeSide = 'E:/units/native-feet-edited.dxf.pdunits.json';
+      assert.equal(await p.evaluate((path) => Object.hasOwn(window.unitFiles, path), nativeSide), false);
+      await p.evaluate(() => { window.unitWriteFail = false; }); await saveCommand();
+      assert.equal(await p.evaluate(() => window.unitSaveCalls), 1, 'retry saves to the completed DXF path without another Save As');
       await p.waitForFunction((path) => !!window.unitFiles[path], nativeSide);
       const native = readDxf(await p.evaluate(() => window.unitFiles['E:/units/native-feet-edited.dxf']));
       assert.equal(+native.header.$INSUNITS, 2); assert.deepEqual(native.entities.map(lineEnds), raw.entities.map(lineEnds));
-      await pick('ft'); await command('save'); await p.waitForFunction((path) => window.unitRemoved.includes(path), nativeSide);
-      await pick('ft-in'); await command('save'); await p.waitForFunction((path) => !!window.unitFiles[path], nativeSide);
+      await pick('ft'); await saveCommand(); await p.waitForFunction((path) => window.unitRemoved.includes(path), nativeSide);
+      await pick('ft-in'); await saveCommand(); await p.waitForFunction((path) => !!window.unitFiles[path], nativeSide);
       const disk = await p.evaluate(() => window.unitFiles);
       await p.reload(); await q('count').waitFor({ state: 'attached' }); await installDisk(disk, 'E:/units/native-feet-edited.dxf');
       await command('open'); await p.waitForFunction(() => document.querySelector('[data-testid=drawing-unit]').textContent === 'ft-in');
@@ -24414,14 +24443,15 @@ try {
     await typeCmd('@20.1,30.2'); await typeCmd('@3,4'); await t('meas-keep').click();
     const exact = await savedDoc(), kept = Object.entries(exact.blocks).map(([n, b]) => readDim(n, b)).find(Boolean);
     near70(kept.params.a.slice(0, 2), [20.1, 30.2]); near70(kept.params.b.slice(0, 2), [23.1, 34.2]);
-    for (const tool of ['move', 'copy', 'rotate', 'scale', 'measure', 'dimension', 'leader', 'text', 'mirror']) {
+    for (const suffix of ['', 'mm']) for (const tool of ['move', 'copy', 'rotate', 'scale', 'measure', 'dimension', 'leader', 'text', 'mirror']) {
       await open70([dxfLine(1, 1, 3, 1)], 1);
       await t('tog-ortho').click(); await page.keyboard.press('Control+a'); await typeCmd(tool);
-      await typeCmd('@25.4,25.4');
+      const length = (n) => (suffix ? n * 25.4 : n) + suffix;
+      await typeCmd(`@${length(1)},${length(1)}`);
       if (tool === 'text') { await typeNote('Inches'); }
-      else if (tool === 'rotate' || tool === 'mirror') { await typeCmd('@25.4<90'); if (tool === 'mirror') await typeCmd('n'); }
-      else if (tool === 'scale') await typeCmd('@50.8<0');
-      else { await typeCmd('@25.4,50.8'); if (tool === 'dimension') await typeCmd('@0,25.4'); if (tool === 'leader') { await typeCmd('@25.4<0'); await typeNote('Inches'); } }
+      else if (tool === 'rotate' || tool === 'mirror') { await typeCmd(`@${length(1)}<90`); if (tool === 'mirror') await typeCmd('n'); }
+      else if (tool === 'scale') await typeCmd(`@${length(2)}<0`);
+      else { await typeCmd(`@${length(1)},${length(2)}`); if (tool === 'dimension') await typeCmd(`@${length(0)},${length(1)}`); if (tool === 'leader') { await typeCmd(`@${length(1)}<0`); await typeNote('Inches'); } }
       if (tool === 'measure') { assert.match(await prompt(), /ΔX 25\.4\s+ΔY 50\.8/); continue; }
       const doc = await savedDoc();
       if (tool === 'text') near70([fieldOf(doc.entities.at(-1), 10), fieldOf(doc.entities.at(-1), 20)], [1, 1]);

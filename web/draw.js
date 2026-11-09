@@ -93,7 +93,7 @@ export function dynamicInputPlacement(a, b, { w, h }, boxes, kind = 'segment') {
 
 // ---------------------------------------------------------------- typed input
 
-import { parse as parseLength } from './units.js';
+import { parse as parseLength, parseCoordinate } from './units.js';
 const NUM = '[-+]?(?:\\d+\\.?\\d*|\\.\\d+)';
 const RE_PT = /^([@#]?)\s*([^,]+),\s*([^,]+)$/;
 const RE_POLAR = new RegExp(`^([@#]?)\\s*(.+)\\s*<\\s*(${NUM})$`);
@@ -108,13 +108,13 @@ export function parseInput(text, unit = 'mm') {
   if (!t) return { kind: 'enter' };
   let m = RE_PT.exec(t);
   if (m) {
-    const x = parseLength(m[2], unit), y = parseLength(m[3], unit);
+    const x = parseCoordinate(m[2], unit), y = parseCoordinate(m[3], unit);
     return x !== null && y !== null ? { kind: 'xy', rel: m[1] === '@', abs: m[1] === '#', x, y } : { kind: 'bad' };
   }
   if (t.includes(',')) return { kind: 'bad' };
   m = RE_POLAR.exec(t);
   if (m) {
-    const len = parseLength(m[2], unit);
+    const len = parseCoordinate(m[2], unit);
     return len !== null && Number.isFinite(+m[3]) ? { kind: 'polar', rel: m[1] === '@', abs: m[1] === '#', len, ang: +m[3] } : { kind: 'bad' };
   }
   const v = parseLength(t, unit);
