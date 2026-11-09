@@ -4435,11 +4435,11 @@ try {
     const raw = newDoc(4);
     addEntities(raw, dxfText(20, 20, 8, 'SELECTED214'), dxfText(200, 100, 8, 'OTHER214'), dxfText(400, 200, 8, 'HIDDEN214'));
     const open = async () => { await q('pdf-open').click(); await q('pdf-dialog').waitFor(); };
-    const texts = async (id, selected) => {
-      await p.waitForFunction(([id, selected]) => {
+    const texts = async (id, selected, first = true) => {
+      await p.waitForFunction(([id, selected, first]) => {
         const a = window.__pdfTexts[id] || [];
-        return a.includes('SELECTED214') && a.includes('OTHER214') === !selected && !a.includes('HIDDEN214');
-      }, [id, selected]).catch(async (e) => { throw new Error(`${id}, selected=${selected}: ${JSON.stringify(await p.evaluate(() => window.__pdfTexts))}; ${e.message}`); });
+        return a.includes('SELECTED214') === first && a.includes('OTHER214') === !selected && !a.includes('HIDDEN214');
+      }, [id, selected, first]).catch(async (e) => { throw new Error(`${id}, selected=${selected}: ${JSON.stringify(await p.evaluate(() => window.__pdfTexts))}; ${e.message}`); });
     };
     const clear = () => p.evaluate(() => { window.__pdfTexts = {}; });
     const printed = async (selected) => {
@@ -4488,6 +4488,7 @@ try {
       await texts('pdf-preview', true);
       assert.notEqual(await q('pdf-sheet-size').textContent(), allSize, 'page cut follows selection');
       await q('pdf-page-check').check();
+      await p.waitForFunction(() => document.querySelector('[data-testid=pdf-title-scale]').value.startsWith('NOT 1:1'));
       assert.match(await q('pdf-title-scale').inputValue(), /^NOT 1:1/);
       assert.equal(await q('pdf-title-footnote').inputValue(), 'Fitted to one page: not 1:1, not to be used as film');
       await q('pdf-fullscreen').click(); await texts('pdf-full-canvas', true);
@@ -4511,12 +4512,14 @@ try {
       await p.locator('.coords').click(); await p.keyboard.press('Delete');
       await clear();
       await open(); assert.equal(await q('pdf-selection-only').isDisabled(), true);
+      await texts('pdf-preview', false, false);
       assert.equal((await p.evaluate(() => window.__pdfTexts['pdf-preview'])).includes('SELECTED214'), false, 'source deletion reaches next export');
       await q('pdf-close').click();
       await p.locator('.coords').click(); await p.keyboard.press('Control+z');
       await clear(); await open(); await texts('pdf-preview', false); await q('pdf-close').click();
       await p.locator('.or.obj[data-e="2"] .onm').click();
       await open(); await q('pdf-selection-only').check();
+      await p.waitForFunction(() => document.querySelector('[data-testid=pdf-preview-label]').textContent === 'Preview · nothing to export');
       assert.equal(await q('pdf-go').isDisabled(), true, 'a hidden-only selection has nothing to export');
       assert.equal(await q('pdf-print').isDisabled(), true);
       assert.equal(await q('pdf-fullscreen').isDisabled(), true);
@@ -4527,6 +4530,28 @@ try {
       await q('picker').setInputFiles({ name: 'selection-layout214.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
       await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'selection-layout214.dxf');
       await open(); assert.equal(await q('pdf-selection-only').count(), 1, 'a layout tab has the tick too (TODO 214b)');
+      await q('pdf-close').click();
+      const line = newDoc(4); addEntities(line, dxfLine(20, 20, 100, 20));
+      await q('picker').setInputFiles({ name: 'line214d.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(line)) });
+      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'line214d.dxf');
+      await p.locator('.coords').click(); await p.keyboard.press('Control+a');
+      await open(); await q('pdf-selection-only').check(); await q('pdf-page-sheet').check(); await q('pdf-mirror').uncheck();
+      await p.waitForFunction(() => document.querySelector('[data-testid=pdf-sheet-size]').textContent === '80 × 0 + 10 mm border');
+      assert.equal(await q('pdf-print').isDisabled(), false, 'one selected horizontal line exports');
+      await q('pdf-print').click(); await q('pdf-dialog').waitFor({ state: 'detached' });
+      assert.match(await p.evaluate(() => window.__printed), /90 10 l/);
+      const sheet = new Page(100, 80); sheet.rect(10, 10, 50, 40); sheet.stroke();
+      await q('picker').setInputFiles({ name: 'sheet214d.pdf', mimeType: 'application/pdf', buffer: Buffer.from(writePdf([sheet, new Page(100, 80)])) });
+      await q('bal-sheets').waitFor();
+      await p.locator('[data-sheet="2"]').click();
+      await p.waitForFunction(() => document.querySelector('[data-testid=sheet-chip]').textContent === 'Sheet 2 / 2');
+      await open();
+      assert.equal(await q('pdf-selection-only').locator('..').isVisible(), false, 'a PDF-sheet tab has no Selection only row');
+      for (const theme of ['light', 'dark']) {
+        await p.evaluate((theme) => { document.documentElement.dataset.theme = theme; return new Promise((r) => requestAnimationFrame(r)); }, theme);
+        await p.screenshot({ path: `${shotDir}/todo214d-pdf-sheet-${theme}.png` });
+        assert.ok(readFileSync(`${shotDir}/todo214d-pdf-sheet-${theme}.png`).length > 1000);
+      }
     } finally { await ctx.close(); }
   });
 
@@ -4589,6 +4614,7 @@ try {
       assert.match(cutSize, /border$/);
       assert.notEqual(cutSize, allSize, 'page cut to the selection');
       await q('pdf-page-check').check();
+      await p.waitForFunction(() => document.querySelector('[data-testid=pdf-title-scale]').value.startsWith('NOT 1:1'));
       assert.match(await q('pdf-title-scale').inputValue(), /^NOT 1:1/);
       assert.equal(await q('pdf-title-footnote').inputValue(), 'Fitted to one page: not 1:1, not to be used as film');
       await q('pdf-page-sheet').check();
@@ -4597,6 +4623,7 @@ try {
       await texts('pdf-preview', true);
       assert.equal(await q('pdf-sheet-size').textContent(), allSize, 'Sheet page keeps the sheet size');
       await q('pdf-page-check').check();
+      await p.waitForFunction(() => document.querySelector('[data-testid=pdf-title-scale]').value.startsWith('Scale '));
       assert.match(await q('pdf-title-scale').inputValue(), /^Scale /);
       await q('pdf-fullscreen').click(); await texts('pdf-full-canvas', true); await p.keyboard.press('Escape');
       await clear(); await q('pdf-sel-cut').check();
@@ -4692,23 +4719,32 @@ try {
       assert.equal(await q('pdf-selection-only').isChecked(), false);
       await texts('pdf-preview', true); await p.keyboard.press('Escape');
       assert.equal(await q('pdf-dialog').count(), 0);
-      await q('cmp-name-2').click(); await open();
+      await q('cmp-name-2').click();
+      await p.locator('[data-menu=View]').click(); await p.getByRole('menuitemcheckbox', { name: /^Theme: dark\b/ }).click();
+      await open();
       assert.equal(await q('pdf-selection-only').isDisabled(), false);
       await q('pdf-mirror').uncheck(); await q('pdf-black').uncheck();
       await q('pdf-page-check').check();
+      await p.waitForFunction(() => document.querySelector('[data-testid=pdf-title-scale]').value.startsWith('NOT 1:1'));
       assert.equal(await q('pdf-title-file').inputValue(), 'Compare first214c.dxf vs second214c');
       assert.match(await q('pdf-title-scale').inputValue(), /^NOT 1:1/);
       await q('pdf-page-sheet').check();
-      assert.equal(await q('pdf-sheet-size').textContent(), '50 × 30 + 10 mm border');
       await texts('pdf-preview', true);
+      assert.equal(await q('pdf-sheet-size').textContent(), '50 × 30 + 10 mm border');
       const both = await printed(true);
+      const { COLOURS } = await import('./web/compare.js'), { num } = await import('./web/pdf-write.js');
+      for (const colour of COLOURS.slice(0, 2)) {
+        const rgb = (css) => css.slice(1).match(/../g).map((c) => num(parseInt(c, 16) / 255, 3)).join(' ');
+        assert.ok(both.includes(rgb(colour.css) + ' RG'), 'dark-theme Compare PDF uses light ink colours');
+        assert.equal(both.includes(rgb(colour.dark) + ' RG'), false, 'screen tints stay out of the PDF');
+      }
       assert.match(both, /15 15 Tm \(FIRST214C\) Tj/);
       assert.match(both, /25 25 Tm \(SECOND214C\) Tj/);
       await open(); await q('pdf-selection-only').check();
       assert.equal(await q('pdf-sel-cut').isVisible(), false, 'Compare has no selection page radios');
       assert.equal(await q('pdf-sel-sheet').isVisible(), false);
-      assert.equal(await q('pdf-sheet-size').textContent(), '40 × 20 + 10 mm border');
       await texts('pdf-preview', true, false);
+      assert.equal(await q('pdf-sheet-size').textContent(), '40 × 20 + 10 mm border');
       await q('pdf-fullscreen').click(); await texts('pdf-full-canvas', true, false);
       await q('pdf-selection-only').evaluate((el) => { el.checked = false; el.dispatchEvent(new Event('change')); });
       await texts('pdf-preview', true); await texts('pdf-full-canvas', true);

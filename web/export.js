@@ -189,7 +189,7 @@ export function openExport(host) {
       radio('sheet', 'pdf-page-sheet', part ? 'Page cut to the part, 1:1 ' : 'Sheet size, 1:1 ', ref.sheetLbl),
       radio('tile', 'pdf-page-tile', 'Tile 1:1 on ', ref.tilePaper, ' pages ', ref.tileLbl),
       radio('check', 'pdf-page-check', part ? 'Scaled to fit one ' : 'Check print, fit to ', ref.checkPaper, part ? ' page ' : ' ', ref.checkLbl),
-      h('label', { class: 'pd-row' }, ref.selectionOnly, ' Selection only'), ref.selPage),
+      h('label', { class: 'pd-row', hidden: !(part || src.hasSelection !== undefined) }, ref.selectionOnly, ' Selection only'), ref.selPage),
     ref.titleSet,
     fieldset('Film',
       check('mirror', 'Mirror (emulsion down)', 'pdf-mirror'),

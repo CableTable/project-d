@@ -263,6 +263,18 @@ test('part: the source is the drawing\'s box plus a 10 mm border, its corner at 
   assert.ok(without.sheetH <= full.sheetH);
 });
 
+test('TODO 214d: part source pads a single horizontal or vertical line, but rejects a point', async () => {
+  const W = await import('./web/dxf-write.js');
+  for (const [x, y] of [[80, 0], [0, 80], [0, 0]]) {
+    const raw = W.newDoc(4); W.addEntities(raw, W.line(20, 20, 20 + x, 20 + y));
+    const src = X.partSource({ fl: D.flatten(raw), factor: 1 });
+    if (!x && !y) { assert.equal(src, null); continue; }
+    assert.ok(src, 'a single line exports');
+    assert.ok(src.sheetH > 0);
+    assert.deepEqual([src.sheetW, src.sheetH, src.origin], [x + 20, y + 20, [10, 10]]);
+  }
+});
+
 test('part, page cut to the part at 1:1: the MediaBox is the part plus the border, one page, no film options needed', () => {
   const s = partSrc(), plan = X.planPdf(s, { page: 'sheet', separate: false, mirror: false, crop: false, reg: false, strip: false, black: true });
   assert.equal(plan.count, 1);

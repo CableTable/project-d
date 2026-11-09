@@ -118,7 +118,7 @@ export function partSource(src, border = PART_BORDER) {
     const b = it.b.map((v) => v * src.factor);
     box = box ? [Math.min(box[0], b[0]), Math.min(box[1], b[1]), Math.max(box[2], b[2]), Math.max(box[3], b[3])] : b;
   }
-  if (!box || !(box[2] > box[0]) || !(box[3] > box[1])) return null;
+  if (!box || (!(box[2] > box[0]) && !(box[3] > box[1]))) return null;
   return { ...src, part: true, sheetW: box[2] - box[0] + 2 * border, sheetH: box[3] - box[1] + 2 * border, origin: [box[0] - border, box[1] - border] };
 }
 

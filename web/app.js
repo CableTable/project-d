@@ -3245,7 +3245,7 @@ function exportSource(selectionOnly = false, cut = true) {
   if (!d) return null;
   const path = d.path || d.openPath;
   if (d.cmp) {
-    const selected = cmpSelected(d.cmp), src = compareSource(selectionOnly ? (selected ? [selected] : []) : d.cmp.items, cmpCss);
+    const selected = cmpSelected(d.cmp), src = compareSource(selectionOnly ? (selected ? [selected] : []) : d.cmp.items, (id) => (C.COLOURS.find((k) => k.id === id) || C.COLOURS[0]).css);
     return src && { ...src, hasSelection: !!selected };
   }
   if (d.lay) {                                                     // a layout: the sheet as the page, the placed parts as artwork (its Sheet and Marks layers are not artwork)
