@@ -391,6 +391,8 @@ select.fld { font-family: var(--sans); }
 .pd-title-fields .wide { grid-column: 1 / -1; }
 .pd-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .pd-row .fld { width: 70px; }
+.pd-sub { display: flex; flex-direction: column; gap: 6px; padding-left: 22px; }
+.pd-sub[hidden] { display: none; }
 .pd-right { flex: 1; min-width: 0; background: var(--canvas); padding: 18px; display: flex; flex-direction: column; gap: 12px; }
 .pd-prev { flex: 1; min-height: 0; position: relative; }
 .pd-prev canvas { position: absolute; inset: 0; }

@@ -3239,15 +3239,20 @@ function shownLayout(d) {
   return { ...d.lay, s: { ...d.lay.s, gridPart: hid.has(d.lay.s.gridPart) ? null : d.lay.s.gridPart }, placed: d.lay.placed.filter((p) => !hid.has(p.partId)) };
 }
 /** What the PDF is made from: the active tab's drawing (a layout's Sheet and Marks layers are not artwork), or null (nothing open yet). */
-function exportSource(selectionOnly = false) {
+function exportSource(selectionOnly = false, cut = true) {
   const d = curDoc();
   if (!d) return null;
   const path = d.path || d.openPath;
   if (d.lay) {                                                     // a layout: the sheet as the page, the placed parts as artwork (its Sheet and Marks layers are not artwork)
     const lay = shownLayout(d);
     if (!LD.placedAll(lay).length) return null;
-    const { gripTop, gripRight, gripBottom, gripLeft } = lay.s;
-    return { name: d.name, path, fl: flatten(LD.layoutRaw(lay)), factor: 1, off: new Set(), sheetW: d.lay.s.sheetW, sheetH: d.lay.s.sheetH, grippers: { gripTop, gripRight, gripBottom, gripLeft }, hide: ['Sheet', 'Marks'] };
+    const { gripTop, gripRight, gripBottom, gripLeft } = lay.s, hasSelection = !!selectedPlaced();
+    const sheet = (l) => ({ name: d.name, path, fl: flatten(LD.layoutRaw(l)), factor: 1, off: new Set(), sheetW: d.lay.s.sheetW, sheetH: d.lay.s.sheetH, grippers: { gripTop, gripRight, gripBottom, gripLeft }, hide: ['Sheet', 'Marks'], hasSelection });
+    if (!selectionOnly) return sheet(lay);
+    const picked = selIdxs().map((i) => placedNow[i]).filter((p) => !(d.hiddenParts && d.hiddenParts.has(p.partId)));       // the selected parts only (a grid copy is placed loose, in the same place); hidden ones stay out
+    if (!picked.length) return null;
+    const one = sheet({ ...lay, s: { ...lay.s, gridPart: null }, placed: picked });
+    return cut ? partSource(one) : one;                            // cut: the Part PDF's page (selection's box + border, its title block text); else the sheet page, parts where they are
   }
   const hid = hidIdx(d);
   let fl = hid && hid.size ? { ...d.fl, items: d.fl.items.filter((it) => !hid.has(it.e)) } : d.fl;       // objects hidden one by one are left out too: what you see is what prints
@@ -3260,7 +3265,7 @@ function exportSource(selectionOnly = false) {
 }
 function exportPdf() {
   const d = curDoc();
-  openExport({ source: (selectionOnly) => { const src = exportSource(selectionOnly); return src && { ...src, titleBlock: d.titleBlock }; }, sheet: () => ({ w: state.sheetW, h: state.sheetH }), readDrawing, note,
+  openExport({ source: (selectionOnly, cut) => { const src = exportSource(selectionOnly, cut); return src && { ...src, titleBlock: d.titleBlock }; }, sheet: () => ({ w: state.sheetW, h: state.sheetH }), readDrawing, note,
     setTitleBlock: (value) => { d.titleBlock = value; d.dirty = true; renderTabs(); } });
 }
 

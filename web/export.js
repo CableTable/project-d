@@ -92,7 +92,7 @@ export function openExport(host) {
   if (!src) { host.note('Nothing to export: open a drawing first'); return; }
   const date = today();
   const part = !!src.part, settings = part ? partSettings : layoutSettings;        // Part: the drawing and its dimensions alone, three ways
-  let selectionOnly = false, srcFull = { ...src, date, name: baseName(src.name) };
+  let selectionOnly = false, selCut = true, srcFull = { ...src, date, name: baseName(src.name) };
   let titleBlock = cleanTitleBlock(src.titleBlock);
   const t = window.__TAURI__;
   const inApp = !!(t && t.dialog && t.dialog.save && t.fs && t.fs.writeFile);
@@ -168,21 +168,28 @@ export function openExport(host) {
     h('div', { class: 'pd-row' }, ref.titleReset, h('span', { class: 'lbl' }, 'Restore automatic text · empty hides the field')));
 
   ref.selectionOnly = h('input', { type: 'checkbox', checked: selectionOnly, disabled: !src.hasSelection, 'data-testid': 'pdf-selection-only' });
-  ref.selectionOnly.addEventListener('change', () => {
-    selectionOnly = ref.selectionOnly.checked;
-    const next = host.source(selectionOnly), wasFull = !!full;
+  const reread = () => {                                            // the source again (ticked or not, cut or sheet page), both previews repainted
+    ref.selPage.hidden = !selectionOnly || part;                    // Cut / Sheet page: a layout tab's choice (a drawing tab is always cut)
+    const next = host.source(selectionOnly, selCut), wasFull = !!full;
     if (full) full(false);
     srcFull = next && { ...next, date, name: baseName(next.name) };
     settings.pageIdx = 0;
     refresh();
     if (wasFull && plan) openFull();
-  });
+  };
+  ref.selectionOnly.addEventListener('change', () => { selectionOnly = ref.selectionOnly.checked; reread(); });
+  const selRadio = (cut, text, testid) => {
+    const i = h('input', { type: 'radio', name: 'pdf-sel-page', checked: selCut === cut, 'data-testid': testid });
+    i.addEventListener('change', () => { if (i.checked) { selCut = cut; reread(); } });
+    return h('label', { class: 'pd-row' }, i, ' ' + text);
+  };
+  ref.selPage = h('div', { class: 'pd-sub', hidden: true }, selRadio(true, 'Cut to selection', 'pdf-sel-cut'), selRadio(false, 'Sheet page', 'pdf-sel-sheet'));
   const left = h('div', { class: 'pd-left' },
     fieldset('Page',
       radio('sheet', 'pdf-page-sheet', part ? 'Page cut to the part, 1:1 ' : 'Sheet size, 1:1 ', ref.sheetLbl),
       radio('tile', 'pdf-page-tile', 'Tile 1:1 on ', ref.tilePaper, ' pages ', ref.tileLbl),
       radio('check', 'pdf-page-check', part ? 'Scaled to fit one ' : 'Check print, fit to ', ref.checkPaper, part ? ' page ' : ' ', ref.checkLbl),
-      ...(part ? [h('label', { class: 'pd-row' }, ref.selectionOnly, ' Selection only')] : [])),
+      h('label', { class: 'pd-row' }, ref.selectionOnly, ' Selection only'), ref.selPage),
     ref.titleSet,
     fieldset('Film',
       check('mirror', 'Mirror (emulsion down)', 'pdf-mirror'),
@@ -286,16 +293,17 @@ export function openExport(host) {
     if (settings.pageIdx >= plan.count) settings.pageIdx = plan.count - 1;
     if (settings.pageIdx < 0) settings.pageIdx = 0;
     const W = srcFull.sheetW, Hh = srcFull.sheetH;
+    const cut = !!srcFull.part;                                     // a layout's selection cut to its box is a part's page too
     // a part's page is the part plus a border all round: say the part's own size and the border, not the page's
-    ref.sheetLbl.textContent = part ? `${Number((W - 2 * PART_BORDER).toFixed(1))} × ${Number((Hh - 2 * PART_BORDER).toFixed(1))} + ${PART_BORDER} mm border` : `${Number(W.toFixed(1))} × ${Number(Hh.toFixed(1))}`;
-    ref.sheetLbl.title = part ? 'The part plus a 10 mm border' : '';
+    ref.sheetLbl.textContent = cut ? `${Number((W - 2 * PART_BORDER).toFixed(1))} × ${Number((Hh - 2 * PART_BORDER).toFixed(1))} + ${PART_BORDER} mm border` : `${Number(W.toFixed(1))} × ${Number(Hh.toFixed(1))}`;
+    ref.sheetLbl.title = cut ? 'The part plus a 10 mm border' : '';
     const [tw, th] = PAPERS[settings.tilePaper], a = tileGrid(W, Hh, tw, th), b = tileGrid(W, Hh, th, tw);
     const g = b.cols * b.rows < a.cols * a.rows ? b : a;
     ref.tileLbl.textContent = `${g.cols} × ${g.rows} tiles`;
-    ref.checkLbl.textContent = (part ? 'not 1:1 · scale ' : 'scale ') + scaleText(plan.pages[0].scale || 1);
+    ref.checkLbl.textContent = (cut ? 'not 1:1 · scale ' : 'scale ') + scaleText(plan.pages[0].scale || 1);
     ref.checkLbl.hidden = !check;                                   // the scale belongs to the Scaled / Check print option only
     for (const k of ['mirror', 'negative']) { ref[k].disabled = check; ref[k].checked = !check && settings[k]; }
-    ref.filmNote.textContent = check ? (part ? 'Mirror and negative are for film, not a scaled print' : 'Mirror and negative are for film, not a check print') : '';
+    ref.filmNote.textContent = check ? (cut ? 'Mirror and negative are for film, not a scaled print' : 'Mirror and negative are for film, not a check print') : '';
     const names = [...new Set(plan.pages.map((p) => p.layer || 'All layers'))];
     const shownNames = names.length > 5 ? [...names.slice(0, 5), `+${names.length - 5} more`] : names;
     ref.pagesNote.textContent = `${shownNames.join(' · ')} = ${plan.count} ${plan.count === 1 ? 'page' : 'pages'}`;
