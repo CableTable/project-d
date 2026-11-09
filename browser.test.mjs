@@ -8859,6 +8859,120 @@ try {
   // ---- Next sessions 1: the drawing tools (draw.js): Line, Polyline, Rectangle, Rounded rectangle, Circle, Ellipse, Arc ----
   const fieldOf = (e, code) => +e.r.v[e.r.c.indexOf(code)];
   const savedDoc = async () => readDxf((await downloaded(() => page.keyboard.press('Control+s'))).text);
+  await step('TODO 211c: Compare follow paste', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    try {
+      const p = await context.newPage(), q = (id) => p.getByTestId(id);
+      p.on('pageerror', (e) => errors.push(String(e)));
+      await p.goto(URL_); await q('count').waitFor({ state: 'attached' });
+      const command = async (word) => {
+        if (!await q('cmd-input').isVisible()) await q('cmd-echo').click();
+        await q('cmd-input').fill(word); await q('cmd-input').press('Enter');
+      };
+      const open = async (raw, name) => {
+        await q('picker').setInputFiles({ name, mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(raw)) });
+        await p.waitForFunction((n) => document.querySelector('.dtab.on .tname').textContent === n, name);
+      };
+      const key = async (word) => { await p.evaluate(() => document.activeElement?.blur()); await p.keyboard.press(word); };
+      const atPoint = (x, y) => p.evaluate(([x, y]) => {
+        const sheet = document.querySelector('rect.sheet'), b = sheet.getBoundingClientRect(), sc = b.width / +sheet.getAttribute('width');
+        return { x: b.x + x * sc, y: b.y + (+sheet.getAttribute('height') - y) * sc };
+      }, [x, y]);
+      const move = async (x, y) => { const a = await atPoint(x, y); await p.mouse.move(a.x, a.y); };
+      const click = async (x, y) => { const a = await atPoint(x, y); await p.mouse.click(a.x, a.y); };
+      const offset = async (want) => {
+        const actual = /X (-?[\d.]+), Y (-?[\d.]+)/.exec(await q('cmp-hint').textContent()).slice(1).map(Number);
+        actual.forEach((v, i) => assert.ok(Math.abs(v - want[i]) < .02, `offset ${actual} vs ${want}`));
+      };
+      const count = async (n) => assert.equal(await q('cmp-item').count(), n);
+      const noGhost = () => p.waitForFunction(() => +document.querySelector('[data-testid=drawing]').dataset.preview === 0);
+      const follow = async () => {
+        await move(70, 110); await key('Control+v');
+        await p.waitForFunction(() => /follows the cursor, click to place/.test(document.querySelector('[data-testid=cmd-prompt]').textContent));
+        await move(140.2, 140.2);
+        await p.waitForFunction(() => +document.querySelector('[data-testid=drawing]').dataset.preview > 0).catch(async (err) => {
+          throw new Error(`${err.message}; prompt ${await q('cmd-prompt').textContent()}; preview ${await q('drawing').getAttribute('data-preview')}; errors ${errors.join('; ')}`);
+        });
+        await count(1); await offset([0, 0]);
+      };
+      const undo = async () => { await key('Control+z'); await noGhost(); await count(1); await offset([0, 0]); };
+      const source = newDoc(1); addEntities(source, dxfLine(1, 2, 3, 4));
+      const layout = newLayout('211c source');
+      const plate = newDoc(4); addEntities(plate, dxfPoly([[0, 0], [40, 0], [40, 30], [0, 30]], true));
+      layout.parts.a = makePart('a', '211c plate', plate);
+      layout.placed = [{ partId: 'a', x: 30, y: 40, rot: 90 }, { partId: 'a', x: 100, y: 60, rot: 0 }];
+      const target = newDoc(4); addEntities(target, dxfLine(0, 0, 220, 220), dxfLine(140, 140, 180, 140));
+      await open(target, '211c target.dxf');
+      for (const kind of ['drawing', 'layout']) {
+        const name = `211c ${kind}.dxf`;
+        await open(kind === 'drawing' ? source : layoutRaw(layout), name);
+        await p.locator('.coords').click(); await key('Control+a'); await key('Control+c');
+        await command('compare');
+        while (await q('cmp-remove').count()) await q('cmp-remove').first().click();
+        const [fc] = await Promise.all([p.waitForEvent('filechooser'), q('cmp-add-file').click()]);
+        await fc.setFiles({ name: '211c snapshot.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(target)) });
+        await q('cmp-name-1').waitFor();
+        await p.locator('[data-testid=canvas]').getByRole('button', { name: 'Fit', exact: true }).click();
+        if (await q('tog-snap').getAttribute('aria-pressed') !== 'true') await q('tog-snap').click();
+        if (await q('tog-ortho').getAttribute('aria-pressed') === 'true') await q('tog-ortho').click();
+        const boxes = layout.placed.map((pl) => placedBox(layout.parts[pl.partId], pl));
+        const anchor = kind === 'drawing' ? [25.4, 101.6] : [Math.min(...boxes.map((b) => b[0])), Math.max(...boxes.map((b) => b[3]))];
+        for (const end of ['click', 'Esc', 'in place']) {
+          if (end === 'in place') await key('Control+Shift+v');
+          else await follow();
+          if (end === 'Esc') { await key('Escape'); await noGhost(); await count(1); await offset([0, 0]); await undo(); continue; }
+          if (end === 'click') {
+            for (const theme of ['light', 'dark']) {
+              await p.locator('[data-menu=View]').click(); await p.getByRole('menuitemcheckbox', { name: new RegExp(`Theme: ${theme}\\b`) }).click();
+              await move(140.2, 140.2); await p.screenshot({ path: `${shotDir}/todo211c-${kind}-follow-${theme}.png` });
+            }
+            await click(140.2, 140.2);
+          }
+          await noGhost(); await count(2); await offset(end === 'in place' ? [0, 0] : [140 - anchor[0], 140 - anchor[1]]);
+          await p.locator('[data-menu=Edit]').click(); await p.getByRole('menuitem', { name: 'Undo history…', exact: true }).click();
+          assert.equal(await p.locator('[data-testid=hist-row][aria-current=step] > span:last-child').textContent(), 'Paste');
+          await key('Escape'); await undo();
+          assert.equal(await q('cmp-lineup-bl').getAttribute('aria-pressed'), 'true', 'Undo restores automatic line-up');
+        }
+        for (const end of [() => key('Control+z'), () => p.locator('[data-tool=measure]').click(), () => key('Control+Tab')]) {
+          await follow(); await end(); await noGhost();
+          await p.locator('.dtab', { hasText: /^Compare/ }).click(); await p.locator('[data-tool=select]').click();
+          await count(1); await offset([0, 0]);
+        }
+        for (const start of [async () => {
+          await p.locator('[data-ribbon-tab=Home]').click();
+          const paste = p.locator('.ribbon-body').getByRole('button', { name: 'Paste', exact: true });
+          assert.equal(await paste.isEnabled(), true); await paste.click();
+        }, () => command('paste')]) {
+          await start(); await move(120, 120); await count(1); await key('Escape'); await noGhost(); await offset([0, 0]);
+        }
+        await command('pasteorig'); await count(2); await offset([0, 0]); await undo();
+        await p.locator('[data-menu=Edit]').click();
+        assert.equal(await p.getByRole('menuitem', { name: 'Paste', exact: true }).isEnabled(), true);
+        const inPlace = p.getByRole('menuitem', { name: 'Paste in place', exact: true });
+        assert.equal(await inPlace.isEnabled(), true); await inPlace.click(); await count(2); await offset([0, 0]); await undo();
+        await follow(); await move(110, 100); await key('Control+v'); await p.keyboard.down('Shift');
+        await move(120, 125); await click(120, 125); await p.keyboard.up('Shift');
+        await count(2); await offset([110 - anchor[0], 125 - anchor[1]]); await undo();
+        await q('cmp-remove').first().click();
+        await q('cmp-add-tab').click(); await p.getByRole('menuitem', { name: /^211c target(?:-edited)*\.dxf$/ }).click();
+        await follow(); await click(140.2, 140.2); await count(2); await offset([140 - anchor[0], 140 - anchor[1]]); await undo();
+        await p.locator('.dtab', { hasText: /^211c target/ }).click();
+        await p.waitForTimeout(110);
+        const [dl] = await Promise.all([p.waitForEvent('download'), key('Control+s')]);
+        assert.deepEqual(readDxf(readFileSync(await dl.path(), 'latin1')).entities, readDxf(writeDxf(target)).entities, 'linked drawing receives no pasted objects');
+        await p.locator('.dtab', { hasText: name }).click(); await p.locator('.coords').click();
+        await key('Control+a'); await key('Delete');
+        assert.match(await q('sel-count').textContent(), /0 selected/, 'source remains editable');
+        await command('compare'); await follow(); await key('Escape'); await noGhost(); await count(1); await offset([0, 0]);
+      }
+      for (let i = 0; i < 4; i++) await command('pasteorig');
+      await count(5); await offset([0, 0]);
+      for (const paste of ['paste', 'pasteorig']) { await command(paste); await count(5); await offset([0, 0]); assert.equal(await q('cmd-prompt').textContent(), 'Compare holds five drawings; remove one first'); }
+      await key('Control+z'); await count(4); await offset([0, 0]);
+      for (const kind of ['drawing', 'layout']) for (const theme of ['light', 'dark']) assert.ok(readFileSync(`${shotDir}/todo211c-${kind}-follow-${theme}.png`).length > 1000);
+    } finally { await context.close(); }
+  });
   await step('TODO 211b: layout follow paste clipboard x click Shift-click Esc; bounds, alignment, one Undo, library only on click and cancel', async () => {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     try {

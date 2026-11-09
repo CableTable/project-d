@@ -69,7 +69,7 @@ import { layoutSnap, placedSnap, layoutCandidates, layoutReference, partIndex, t
 import * as LD from './layoutdoc.js';
 import { isDimPart } from './layoutdim.js';
 import { dropPart } from './dropin.js';
-import { copySnapshot, copyPlacedSnapshot, pasteSnapshot, partFromSnapshot } from './clipboard.js';
+import { copySnapshot, copyPlacedSnapshot, drawingFromPlaced, pasteSnapshot, partFromSnapshot } from './clipboard.js';
 import * as PL from './place.js';
 import * as A from './arrange.js';
 import * as G from './guides.js';
@@ -445,8 +445,8 @@ function buildMenus() {
       ['Redo', () => undoCurrent(true), 'Ctrl+Y', () => !!historyOf(curDoc())?.canRedo],
       ['Copy', copySelection, 'Ctrl+C', () => curLay() ? !!selItems().length : !!editable()?.sel.size],
       ['Cut', cutSelection, null, () => !!editable()?.sel.size],
-      ['Paste', pasteSelection, 'Ctrl+V', () => !!clipboard && (!!curDoc()?.lay || !!editable())],
-      ['Paste in place', pasteInPlace, 'Ctrl+Shift+V', () => !!clipboard && (!!curDoc()?.lay || !!editable())],
+      ['Paste', pasteSelection, 'Ctrl+V', () => !!clipboard && (!!cmpDoc() || !!curDoc()?.lay || !!editable())],
+      ['Paste in place', pasteInPlace, 'Ctrl+Shift+V', () => !!clipboard && (!!cmpDoc() || !!curDoc()?.lay || !!editable())],
       ['Undo history…', showHistory, null, () => !!historyOf(curDoc())],
       ['Select all', selectAll, 'Ctrl+A', () => !!editable() || !!curLay()],
       ['Delete', () => (curLay() ? deletePlaced() : deleteSelection()), 'Del', () => { const d = editable(); return d ? d.sel.size > 0 : !!selectedPlaced(); }]],
@@ -743,7 +743,7 @@ function ribbonContents(kind) {
       onkeydown: (e) => { if (e.key === 'Enter') e.target.blur(); } })),
       btn('Show differences', EYE, () => { cmpDoc().cmp.show = !cmpDoc().cmp.show; update(); }, { small: true, pressed: () => cmpDoc().cmp.show }),
       btn('Compare', '<rect x="3" y="6" width="12" height="13"/><rect x="9" y="5" width="12" height="13" stroke-dasharray="2 2"/>', () => cmpRun(cmpDoc()), { enabled: () => cmpDoc().cmp.items.filter((x) => x.checked).length >= 2 }))];
-  const groups = [group('Clipboard', btn('Paste', paste, pasteSelection, { enabled: () => !!clipboard && (!!editable() || !!curLay()) }),
+  const groups = [group('Clipboard', btn('Paste', paste, pasteSelection, { enabled: () => !!clipboard && (!!cmpDoc() || !!editable() || !!curLay()) }),
     stack(btn('Cut', TOOLS.find((t) => t.id === 'trim').svg, cutSelection, { small: true, enabled: () => !!editable()?.sel.size }),
       btn('Copy', copy, copySelection, { small: true, enabled: () => curLay() ? !!selItems().length : !!editable()?.sel.size }),
       btn('Select all', '<rect x="4" y="4" width="16" height="16" stroke-dasharray="3 2"/><path d="M8 12l3 3 5-6"/>', selectAll, { small: true, enabled: () => !!editable() || !!curLay() })))];
@@ -4609,11 +4609,15 @@ function paintOverlay(gesture = false) {
     const L2 = state.setlen || state.meas || state.dim || state.ldr || ((modLive() || layModLive()) && ['move', 'copy', 'stretch', 'rotate', 'scale', 'lengthen', 'align'].includes(state.mod.kind) ? { pts: state.mod.ref && state.mod.ref.step !== 'new' ? state.mod.ref.pts : state.mod.p1 ? [state.mod.p1] : [], hover: state.mod.cur }
       : (modLive() || layModLive()) && state.mod.kind === 'array' && state.mod.type === 'polar' ? { pts: state.mod.center ? [state.mod.center] : [], hover: state.mod.stage === 'center' ? state.mod.cur : null } : null);
     const hv = L2 && (typedAt() || L2.hover);                       // typed cursor fields: the rubber line goes to the typed point
-    const dragSnap = d?.lay && (state.paste?.to || (pdrag?.moved && state.snap && !pdrag.skipSnap && pdrag.to));
+    const dragSnap = (d?.lay || d?.cmp) && (state.paste?.to || (pdrag?.moved && state.snap && !pdrag.skipSnap && pdrag.to));
     const marks = dragSnap?.[2] ? [[dragSnap[0], dragSnap[1], dragSnap[2], true]] : L2 && d ? [...L2.pts.map((q) => [q[0], q[1], q[2], false]), ...(L2.pts.length < 2 && hv ? [[hv[0], hv[1], hv[2], true]] : [])] : null;
     if (d?.cmp) {
-      cmpPaint(c, d.cmp, base, marks);
-      if (marks && state.tool === 'measure') {
+      const paste = state.paste?.d === d && state.paste;
+      c.dataset.preview = 0;
+      cmpPaint(c, d.cmp, base, paste ? null : marks);
+      if (paste?.from) c.dataset.preview = paintDrawing(c, { ...base, ox: base.ox - paste.dx, oy: base.oy + paste.dy, keep: true, fl: paste.preview, off: paste.source.off, factor: paste.source.factor,
+        tint: `color-mix(in srgb, ${cssVar('--selection', '#4f46e5')} 50%, transparent)`, previewBounds: (box) => { canvasPreviewBounds = unionBox(canvasPreviewBounds, box); } });
+      if (marks && (state.tool === 'measure' || paste)) {
         const k = base.scale * dpr, T = [k, 0, 0, -k, -base.ox * k, (base.sheetH - base.oy) * k];
         drawMarks(c.getContext('2d'), marks, T, dpr, cssVar('--selection', '#4f46e5'), cssVar('--snap-mark', '#00c000'));
         canvasPreviewBounds = unionBox(canvasPreviewBounds, overlayBox({ marks }, T, dpr));
@@ -5434,7 +5438,7 @@ const dimTarget = () => { const d = curDoc(); if (d?.lay) { d.factor = 1; return
 const pointTarget = () => state.tool === 'measure' ? measureTarget() : state.tool === 'dimension' ? dimTarget() : editable();
 const drawBox = (fl) => fl.boxes[spaceOf(fl) ? 'paper' : 'model'];
 const fmtSize = (v) => String(+Number(v).toFixed(2));
-const snapshotOf = (d) => ({ attmode: d.raw?.header.$ATTMODE, guides: d.guideState && structuredClone(d.guideState.s.guides), groups: d.raw?.groups, entities: d.raw?.entities, blocks: d.raw?.blocks, layers: d.raw?.layers, ltypes: d.raw?.ltypes, mm: d.bg ? d.bg.mm : null, pos: d.bg ? [d.bg.x, d.bg.y] : null, bl: d.balloons });
+const snapshotOf = (d) => ({ cmp: d.cmp && structuredClone(d.cmp), attmode: d.raw?.header.$ATTMODE, guides: d.guideState && structuredClone(d.guideState.s.guides), groups: d.raw?.groups, entities: d.raw?.entities, blocks: d.raw?.blocks, layers: d.raw?.layers, ltypes: d.raw?.ltypes, mm: d.bg ? d.bg.mm : null, pos: d.bg ? [d.bg.x, d.bg.y] : null, bl: d.balloons });
 function copySelection() {
   const lay = curLay();
   if (lay) {
@@ -5459,12 +5463,24 @@ function cutSelection() {
 function pasteSelection() { return pasteClipboard(false); }
 function pasteInPlace() { return pasteClipboard(true); }
 async function pasteClipboard(inPlace) {
-  const d = editable() || curDoc();
+  const d = cmpDoc() || editable() || curDoc();
   if (!clipboard) { note('Nothing to paste: copy drawing objects first'); return; }
-  if (!d?.lay && !editable()) { note('Paste: open a drawing or layout first'); return; }
+  if (!d?.cmp && !d?.lay && !editable()) { note('Paste: open a drawing or layout first'); return; }
   try {
     if (!inPlace) setTool('select');
     state.paste = null;
+    if (d.cmp) {
+      if (d.cmp.items.length >= CMP.MAX_ITEMS) { note('Compare holds five drawings; remove one first'); return; }
+      const source = { ...structuredClone(clipboard.placed ? drawingFromPlaced(clipboard) : clipboard), name: clipboard.name || 'Layout paste', off: new Set() };
+      source.fl = flatten(source.raw);
+      const item = CMP.addItem(d.cmp.items, source).at(-1), box = item.box;
+      if (inPlace) { cmpAddPart(d, source, [0, 0]); return; }
+      state.paste = { d, source, preview: source.fl, box, anchor: [box[0], box[3]], from: null };
+      note('Paste: follows the cursor, click to place');
+      renderEdit();
+      if (snapPointer) pasteMove(snapPointer);
+      return;
+    }
     if (d.lay) {
       let parts, placed, part;
       if (clipboard.placed) ({ parts, placed } = structuredClone(clipboard));
@@ -5536,7 +5552,7 @@ function cancelPaste() {
 }
 function pasteMove(e) {
   const g = state.paste;
-  if (g.d.lay ? g.d !== curDoc() : g.d !== editable() || g.raw !== g.d.raw.entities) { cancelPaste(); return false; }
+  if (g.d.lay || g.d.cmp ? g.d !== curDoc() : g.d !== editable() || g.raw !== g.d.raw.entities) { cancelPaste(); return false; }
   const p = snapPoint(g.d, toDrawing(g.d, e.clientX, e.clientY), -1, [], g.from);
   if (!g.from) g.from = p.slice(0, 2);
   g.straight = !!(e.shiftKey || state.ortho);
@@ -5546,13 +5562,18 @@ function pasteMove(e) {
     const sn = p[2] ? { dx, dy, hit: null } : snapPlacedDrag({ ...g, box: g.box.map((v, i) => v + g.from[i % 2] - g.anchor[i % 2]) }, dx, dy);
     g.dx = g.from[0] - g.anchor[0] + sn.dx; g.dy = g.from[1] - g.anchor[1] + sn.dy; g.snapped = sn.hit;
   }
+  if (g.d.cmp) {
+    const hit = snapGuideBox(g.box.map((v, i) => v + (i % 2 ? g.dy : g.dx)));
+    g.dx += hit.dx; g.dy += hit.dy;
+  }
   paintOverlay(); return true;
 }
 async function placePaste() {
   const g = state.paste;
   state.paste = null; trackClear(); drawAlignmentGuides();
   try {
-    if (g.d.lay) await finishLayoutPaste(g);
+    if (g.d.cmp) cmpAddPart(g.d, g.source, [g.dx, g.dy]);
+    else if (g.d.lay) await finishLayoutPaste(g);
     else finishPaste(g.d, { ...g.r, ...Ed.moveEntities({ ...g.d.raw, ...g.r }, g.sel, g.dx, g.dy) }, g.sel);
   }
   catch (err) { note(`Paste: ${err.message}`); }
@@ -5905,6 +5926,7 @@ function restore(d, st, drawn) {
   const before = snapshotOf(d), header = d.raw?.header;
   const groupsChanged = 'groups' in st && st.groups !== d.raw?.groups;
   if (st.guides) { guideTarget(d).s.guides = structuredClone(st.guides); rememberGuides(d); }
+  if (d.cmp && st.cmp) { Object.assign(d.cmp, st.cmp); showDoc(); return; }
   const attributesChanged = d.raw && 'attmode' in st && st.attmode !== d.raw.header.$ATTMODE;
   if (!d.raw || !groupsChanged && !attributesChanged && st.entities === d.raw.entities && st.blocks === d.raw.blocks && st.layers === d.raw.layers && st.ltypes === d.raw.ltypes && st.bl === d.balloons && st.mm === (d.bg ? d.bg.mm : null) && JSON.stringify(st.pos) === JSON.stringify(d.bg ? [d.bg.x, d.bg.y] : null)) { update(); return; }
   if (attributesChanged) d.raw.header = { ...d.raw.header, $ATTMODE: st.attmode };
@@ -11451,22 +11473,28 @@ function cmpRun(d) { cmpCalc(d.cmp); update(); }
 /** A move or setting change marks the last result out of date, without calculating. */
 function cmpMoved(d, refit = false) { const c = d.cmp; c.items = CMP.lineUpItems(c.items, c.mode); if (c.res) c.stale = true; update(refit && view.fitted); }
 
-function cmpAdd(d, source) {
+function cmpAdd(d, source, offset = null) {
   try {
     const c = d.cmp;
     if (state.docs.includes(source)) { source.tabId ||= uid(); cmpRefresh(source); c.sources.set(source.tabId, cmpSourceState(source)); }
-    c.items = CMP.addItem(c.items, source);
+    const items = CMP.addItem(c.items, source);
+    if (offset) {
+      d.hist ||= Ed.createHistory();
+      pushHistory(d, snapshotOf(d), 'Paste');
+      c.mode = 'manual'; items.at(-1).offset = offset;
+    }
+    c.items = items;
     if (curDoc() === d) setTool('select');
     c.selected = c.items.at(-1).id; c.res = null; c.stale = false;
-    cmpMoved(d, true); note('Added snapshot: ' + source.name);
+    cmpMoved(d, !offset); note('Added snapshot: ' + source.name);
   } catch (err) { note(err.message); }
 }
 
 /** A library part into Compare: Add from library and a drop on the Compare tab both come here. */
-function cmpAddPart(d, rec) {
+function cmpAddPart(d, rec, offset = null) {
   if (d.cmp.items.length >= CMP.MAX_ITEMS) { note('Compare holds five drawings; remove one first'); return; }
-  const source = libPart(rec);
-  if (source) cmpAdd(d, { ...source, part: true }); else note(rec.name + ': this part could not be read');
+  const source = rec.raw ? rec : libPart(rec);
+  if (source) cmpAdd(d, { ...source, part: true }, offset); else note(rec.name + ': this part could not be read');
 }
 
 /** Reuse the app's picker menu: the chosen source is copied only when added. */
