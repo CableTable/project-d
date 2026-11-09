@@ -393,6 +393,9 @@ select.fld { font-family: var(--sans); }
 .pd-row .fld { width: 70px; }
 .pd-sub { display: flex; flex-direction: column; gap: 6px; padding-left: 22px; }
 .pd-sub[hidden] { display: none; }
+.pd-margin-link { align-self: flex-start; }
+.pd-margin-link[aria-pressed='true'] { border-color: var(--accent); background: var(--sel); color: var(--accenttext); }
+.pd-margin-error { color: light-dark(#b42318, #ff8b85); }
 .pd-right { flex: 1; min-width: 0; background: var(--canvas); padding: 18px; display: flex; flex-direction: column; gap: 12px; }
 .pd-prev { flex: 1; min-height: 0; position: relative; }
 .pd-prev canvas { position: absolute; inset: 0; }

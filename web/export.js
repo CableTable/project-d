@@ -1,19 +1,33 @@
 // export.js — the "PDF / Print" dialog (mock-up "PDF export"): This layout (page, film, pages, marks, live preview) and
 // A folder at once. The pages themselves are planned and drawn by pdf-export.js (pure); this file is the UI, saving and
-// printing. Page/film settings last the session; title block settings belong to the document. File text goes in via h().
+// printing. Margins last on this PC; other page/film settings last the session; title blocks belong to the document. File text goes in via h().
 import { h, fill, icon } from './dom.js';
 import { fitBase, zoomAt, panBy, paintView, FIT } from './pdf-view.js';
 import { baseName, saveDefault, withExt } from './savepath.js';
 import { planPdf, freePdfName, DEFAULT_OPTIONS, tileGrid, scaleText, titleBlockTexts, cleanTitleBlock, readTitleBlock, PAPERS, PART_BORDER, marginsOf, OFFICE_MARGINS, MARGIN_MAX } from './pdf-export.js';
 import { batchPdfSource } from './pdf-source.js';
 
+/** Shared by PDF dialogs: the drawing/layout and Part settings keep their existing split, even without storage. */
+export function rememberPdfSettings(part, value) {
+  try {
+    const key = 'pd-pdf-' + (part ? 'part' : 'drawing');
+    if (value !== undefined) localStorage.setItem(key, JSON.stringify(value));
+    const saved = JSON.parse(localStorage.getItem(key));
+    return saved && typeof saved === 'object' && !Array.isArray(saved) ? saved : {};
+  } catch { return {}; }
+}
+const savedLayout = rememberPdfSettings(false), savedPart = rememberPdfSettings(true);
 const layoutSettings = {
-  ...DEFAULT_OPTIONS, tab: 'one', pageIdx: 0, marginPreset: 'standard', margins: { ...OFFICE_MARGINS },
+  ...DEFAULT_OPTIONS, tab: 'one', pageIdx: 0,
+  marginPreset: ['standard', 'office', 'custom'].includes(savedLayout.marginPreset) ? savedLayout.marginPreset : 'standard',
+  margins: marginsOf({ margins: savedLayout.margins || OFFICE_MARGINS }),
   batch: { folder: '', dxf: true, dwg: true, cdr: true, sub: false, mode: 'same', saveTo: 'same', saveDir: null, all: [], busy: false },
 };
 
 /** The Part screen's own settings: one page, as drawn (no mirror, no marks, no separations), fitted to A4 unless changed. */
-const partSettings = { ...DEFAULT_OPTIONS, mirror: false, separate: false, crop: false, reg: false, strip: false, tab: 'one', pageIdx: 0, marginPreset: 'standard', margins: { ...OFFICE_MARGINS }, batch: layoutSettings.batch };
+const partSettings = { ...DEFAULT_OPTIONS, mirror: false, separate: false, crop: false, reg: false, strip: false, tab: 'one', pageIdx: 0,
+  marginPreset: ['standard', 'office', 'custom'].includes(savedPart.marginPreset) ? savedPart.marginPreset : 'standard',
+  margins: marginsOf({ margins: savedPart.margins || OFFICE_MARGINS }), batch: layoutSettings.batch };
 
 const joinPath = (dir, name) => String(dir).replace(/[\\/]+$/, '') + (String(dir).includes('\\') ? '\\' : '/') + name;
 const today = () => { const d = new Date(); return [d.getDate(), d.getMonth() + 1].map((n) => String(n).padStart(2, '0')).join('-') + '-' + d.getFullYear(); };
@@ -31,7 +45,7 @@ function downloadBytes(name, bytes) {
 // ---------------------------------------------------------------- the preview: the page's own drawing commands on a canvas
 
 /** Replays a pdf-write Page on a canvas: mm, y up, black as the film colour, white paper. `view` { s, ox, oy } (px per mm, page top-left) replaces the fit. */
-export function paintPage(canvas, page, box, colours, view) {
+export function paintPage(canvas, page, box, colours, view, margins) {
   const dpr = window.devicePixelRatio || 1, W = Math.max(1, box.width), Hh = Math.max(1, box.height);
   canvas.width = Math.round(W * dpr); canvas.height = Math.round(Hh * dpr);
   canvas.style.width = W + 'px'; canvas.style.height = Hh + 'px';
@@ -78,6 +92,11 @@ export function paintPage(canvas, page, box, colours, view) {
     }
   }
   c.restore();
+  if (margins) {
+    c.save(); c.strokeStyle = colours.line; c.lineWidth = 1 / k; c.setLineDash([3 / k, 3 / k]);
+    c.strokeRect(margins.left, margins.bottom, page.w - margins.left - margins.right, page.h - margins.top - margins.bottom);
+    c.restore();
+  }
 }
 
 // ---------------------------------------------------------------- the dialog
@@ -187,26 +206,36 @@ export function openExport(host) {
   ref.selPage = h('div', { class: 'pd-sub', hidden: true }, selRadio(true, 'Cut to selection', 'pdf-sel-cut'), selRadio(false, 'Sheet page', 'pdf-sel-sheet'));
   // ---- Margins (tiled and check print pages): a preset, or four numbers; editing a number picks Custom
   const shownMargins = () => marginsOf({ page: settings.page, margins: settings.marginPreset === 'standard' ? undefined : settings.margins });
-  ref.marginPreset = sel([['standard', 'Standard'], ['office', 'Office printer (5 mm)'], ['custom', 'Custom']], settings.marginPreset, (v) => {
-    if (v === 'office') settings.margins = { ...OFFICE_MARGINS };
-    else if (v === 'custom') settings.margins = { ...shownMargins() };
-    settings.marginPreset = v; refresh();
-  }, { 'data-testid': 'pdf-margin-preset', 'aria-label': 'Margins preset' });
+  const rememberMargins = () => { rememberPdfSettings(part, { marginPreset: settings.marginPreset, margins: settings.margins }); refresh(); };
+  ref.marginPreset = sel([['standard', 'Standard'], ['custom', 'Custom']], settings.marginPreset, (v) => {
+    if (v === 'custom') settings.margins = { ...shownMargins() };
+    settings.marginPreset = v; rememberMargins();
+  }, { style: 'width:100px', 'data-testid': 'pdf-margin-preset', 'aria-label': 'Margins preset' });
+  ref.marginOffice = h('button', { class: 'btn sm', type: 'button', 'data-testid': 'pdf-margin-office', onclick: () => {
+    settings.margins = { ...OFFICE_MARGINS }; settings.marginPreset = 'office'; rememberMargins();
+  } }, 'Office printer, 5 mm');
+  ref.marginLink = h('button', { class: 'btn sm pd-margin-link', type: 'button', 'aria-pressed': 'false', 'data-testid': 'pdf-margin-link', onclick: () => {
+    ref.marginLink.setAttribute('aria-pressed', String(ref.marginLink.getAttribute('aria-pressed') !== 'true'));
+  } }, 'Same on all sides');
   ref.marginInputs = {};
   const marginField = (key, text) => {
     const i = h('input', { class: 'fld', type: 'number', min: 0, max: MARGIN_MAX, step: 0.5, style: 'width:64px', 'data-testid': 'pdf-margin-' + key });
     i.addEventListener('input', () => {
       const v = Number(i.value);
       if (i.value === '' || !Number.isFinite(v)) return;
-      settings.margins = { ...shownMargins(), [key]: Math.min(MARGIN_MAX, Math.max(0, v)) };
-      settings.marginPreset = 'custom'; refresh();
+      const value = Math.min(MARGIN_MAX, Math.max(0, v));
+      settings.margins = ref.marginLink.getAttribute('aria-pressed') === 'true'
+        ? Object.fromEntries(Object.keys(ref.marginInputs).map((k) => [k, value])) : { ...shownMargins(), [key]: value };
+      settings.marginPreset = 'custom'; rememberMargins();
     });
     ref.marginInputs[key] = i;
-    return h('label', { class: 'lbl' }, text + ' ', i);
+    return h('label', { class: 'lbl', style: 'display:flex;align-items:center;justify-content:space-between;gap:6px' }, text, i);
   };
+  ref.marginError = h('div', { class: 'pd-margin-error', role: 'alert', hidden: true, 'data-testid': 'pdf-margin-error' });
   ref.marginRow = h('div', { class: 'pd-sub', 'data-testid': 'pdf-margins' },
-    h('label', { class: 'lbl' }, 'Margins (mm) ', ref.marginPreset),
-    h('div', { style: 'display:grid;grid-template-columns:1fr 1fr;gap:6px 12px;margin-top:6px' }, marginField('top', 'Top'), marginField('right', 'Right'), marginField('bottom', 'Bottom'), marginField('left', 'Left')));
+    h('div', { class: 'pd-row' }, h('label', { class: 'lbl' }, 'Margins (mm) ', ref.marginPreset), ref.marginOffice),
+    ref.marginLink,
+    h('div', { style: 'display:grid;grid-template-columns:1fr 1fr;gap:6px 12px' }, marginField('top', 'Top'), marginField('right', 'Right'), marginField('bottom', 'Bottom'), marginField('left', 'Left')), ref.marginError);
   const left = h('div', { class: 'pd-left' },
     fieldset('Page',
       radio('sheet', 'pdf-page-sheet', part ? 'Page cut to the part, 1:1 ' : 'Sheet size, 1:1 ', ref.sheetLbl),
@@ -311,12 +340,24 @@ export function openExport(host) {
       return;
     }
     const o = opts(), check = o.page === 'check';
-    ref.marginRow.hidden = o.page === 'sheet';
-    ref.marginPreset.value = settings.marginPreset;
+    const sheet = o.page === 'sheet';
+    ref.marginRow.style.opacity = sheet ? '0.5' : '';
+    for (const input of [ref.marginPreset, ref.marginOffice, ref.marginLink, ...Object.values(ref.marginInputs)]) input.disabled = sheet;
+    ref.marginPreset.value = settings.marginPreset === 'office' ? 'custom' : settings.marginPreset;
     for (const [k, v] of Object.entries(shownMargins())) if (Number(ref.marginInputs[k].value) !== v || ref.marginInputs[k].value === '') ref.marginInputs[k].value = v;
     if (!part) { ref.sheetSizeGripper.disabled = !check; ref.sheetSizeGripper.title = check ? '' : 'Check print only'; }
     srcFull.date = today();
-    plan = planPdf(srcFull, o);
+    ref.marginError.hidden = true;
+    try { plan = planPdf(srcFull, o); }
+    catch (err) {
+      if (!(err instanceof RangeError)) throw err;
+      plan = null; ref.print.disabled = true; ref.go.disabled = true; ref.fullBtn.disabled = true;
+      ref.marginError.textContent = err.message; ref.marginError.hidden = false;
+      ref.canvas.getContext('2d').clearRect(0, 0, ref.canvas.width, ref.canvas.height);
+      ref.preLabel.textContent = 'Preview · no printable area'; ref.checkLbl.textContent = ''; ref.tileLbl.textContent = '';
+      fill(ref.pageBtns, []);
+      return;
+    }
     if (settings.pageIdx >= plan.count) settings.pageIdx = plan.count - 1;
     if (settings.pageIdx < 0) settings.pageIdx = 0;
     const W = srcFull.sheetW, Hh = srcFull.sheetH;
@@ -362,7 +403,7 @@ export function openExport(host) {
     if (!plan || settings.tab !== 'one') return;
     const r = ref.prevBox.getBoundingClientRect();
     if (r.width < 10 || r.height < 10) return;
-    paintPage(ref.canvas, plan.build(settings.pageIdx), r, colours());
+    paintPage(ref.canvas, plan.build(settings.pageIdx), r, colours(), undefined, settings.page === 'sheet' ? null : shownMargins());
   }
 
   // ---- the full-screen preview: an overlay above the dialog; the same paintPage at the overlay's size, wheel zoom (1×–32×), drag pan
@@ -388,7 +429,7 @@ export function openExport(host) {
       const r = stage.getBoundingClientRect();
       if (r.width < 10 || r.height < 10) return;
       const pg = pageAt(settings.pageIdx);
-      paintPage(canvas, pg, r, colours(), paintView(fitBase(r.width, r.height, pg.w, pg.h), view));
+      paintPage(canvas, pg, r, colours(), paintView(fitBase(r.width, r.height, pg.w, pg.h), view), settings.page === 'sheet' ? null : shownMargins());
     };
     function show() {                                                // labels now, the repaint in one animation frame
       const p = plan.pages[settings.pageIdx];

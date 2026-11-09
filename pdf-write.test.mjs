@@ -201,7 +201,7 @@ test('margins per side (TODO 217): Standard is today\'s 8 / 10 mm, Office printe
   const office = X.OFFICE_MARGINS;
   assert.deepEqual(X.marginsOf({ page: 'tile' }), { top: 8, right: 8, bottom: 8, left: 8 });
   assert.deepEqual(X.marginsOf({ page: 'check' }), { top: 10, right: 10, bottom: 10, left: 10 });
-  assert.deepEqual(X.marginsOf({ page: 'check', margins: { top: 'x', left: -4, right: 99 } }), { top: 10, right: 50, bottom: 10, left: 0 });   // junk → Standard's side, clamped to 0 – 50
+  assert.deepEqual(X.marginsOf({ page: 'check', margins: { top: 'x', left: -4, right: 99 } }), { top: 10, right: 99, bottom: 10, left: 0 });   // junk → Standard's side; large margins reach printable-area validation
   // Standard gives today's tile count and check scale
   assert.deepEqual(X.tileGrid(1000, 700, 420, 297, X.marginsOf({ page: 'tile' })), X.tileGrid(1000, 700, 420, 297));
   const src = srcOf('sample.dxf');
@@ -223,6 +223,30 @@ test('margins per side (TODO 217): Standard is today\'s 8 / 10 mm, Office printe
   assert.ok(text(lop.bytes()).length > 0);
   // the 1:1 sheet page has no margin
   assert.deepEqual(X.planPdf(src, { page: 'sheet', separate: false, margins: { top: 40, right: 40, bottom: 40, left: 40 } }).pages.map((p) => [p.w, p.h]), X.planPdf(src, { page: 'sheet', separate: false }).pages.map((p) => [p.w, p.h]));
+});
+
+test('TODO 217: custom tile labels follow the bottom margin; Standard and sheet output stay unchanged', () => {
+  const src = srcOf('sample.dxf');
+  for (const bottom of [0, 2, 5, 20]) {
+    const plan = X.planPdf(src, { page: 'tile', margins: { ...X.OFFICE_MARGINS, bottom } });
+    for (let i = 0; i < plan.count; i++) {
+      const label = plan.build(i).cmds.find((c) => c[0] === 'T' && c[2].startsWith('Tile '));
+      assert.equal(label[1][5], Math.max(1.5, bottom / 2));
+    }
+  }
+  const std = X.planPdf(src, { page: 'tile' }).build(0).cmds.find((c) => c[0] === 'T' && c[2].startsWith('Tile '));
+  assert.equal(std[1][5], 2.6);
+  assert.deepEqual(X.planPdf(src, { page: 'sheet', margins: X.OFFICE_MARGINS }).bytes(), X.planPdf(src, { page: 'sheet' }).bytes());
+});
+
+test('TODO 217: no printable area or room for tile overlap is refused; a valid orientation still works', () => {
+  const src = srcOf('sample.dxf');
+  for (const page of ['tile', 'check']) {
+    const paper = page === 'tile' ? { tilePaper: 'A4' } : { checkPaper: 'A4' };
+    assert.throws(() => X.planPdf(src, { page, ...paper, margins: { top: 150, right: 150, bottom: 150, left: 150 } }), /no printable area/);
+  }
+  assert.throws(() => X.planPdf(src, { page: 'tile', tilePaper: 'A4', margins: { top: 0, bottom: 0, left: 145, right: 145 } }), /no printable area/);
+  assert.ok(X.planPdf(src, { page: 'check', margins: { top: 100, bottom: 100, left: 0, right: 0 } }).pages[0].scale > 0);
 });
 
 test('text: escaping, WinAnsi, widths', () => {

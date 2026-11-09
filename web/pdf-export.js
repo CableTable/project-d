@@ -20,9 +20,9 @@ const sides = (v) => ({ top: v, right: v, bottom: v, left: v });
 /** Page margins (mm, per side): the unprinted edge of a tile (its label goes there) and the check print's page edge. Standard is the old fixed 8 / 10 mm. */
 export const STANDARD_MARGINS = { tile: sides(8), check: sides(10) };
 export const OFFICE_MARGINS = sides(5);                              // an office printer's usual unprintable edge
-export const MARGIN_MAX = 50;
+export const MARGIN_MAX = 100000;
 
-/** The margins a plan uses: the options' own (each side a number 0 – 50, else Standard's) or the Standard ones for the page type. */
+/** The margins a plan uses: finite nonnegative mm (up to the sheet-size limit), else Standard's side. */
 export function marginsOf(o) {
   const std = STANDARD_MARGINS[o.page === 'check' ? 'check' : 'tile'];
   if (!o.margins) return std;
@@ -88,7 +88,10 @@ export async function freePdfName(base, taken) {
 /** Tiles of a sheet w × h on a paper pw × ph: the printable size and how many across and down. */
 export function tileGrid(w, h, pw, ph, m = STANDARD_MARGINS.tile) {
   const tw = pw - m.left - m.right, th = ph - m.top - m.bottom;
-  const count = (len, t) => (len <= t + 1e-9 ? 1 : Math.ceil((len - TILE.overlap) / (t - TILE.overlap) - 1e-9));
+  const count = (len, t) => {
+    if (t <= 0 || (t <= TILE.overlap && len > t + 1e-9)) return Infinity;
+    return len <= t + 1e-9 ? 1 : Math.ceil((len - TILE.overlap) / (t - TILE.overlap) - 1e-9);
+  };
   return { tw, th, cols: count(w, tw), rows: count(h, th) };
 }
 
@@ -162,6 +165,7 @@ export function planPdf(src, opts) {
     const [lw, lh] = PAPERS[o.tilePaper] || PAPERS.A3;
     const a = tileGrid(W, H, lw, lh, mg), b = tileGrid(W, H, lh, lw, mg);
     const [pw, ph, g] = b.cols * b.rows < a.cols * a.rows ? [lh, lw, b] : [lw, lh, a];
+    if (!Number.isFinite(g.cols * g.rows)) throw new RangeError('Margins leave no printable area for the tiles and overlap. Reduce the margins.');
     geos = [];
     const stepX = g.tw - TILE.overlap, stepY = g.th - TILE.overlap;
     for (let r = 0; r < g.rows; r++) for (let c = 0; c < g.cols; c++) {
@@ -171,6 +175,7 @@ export function planPdf(src, opts) {
     const [lw, lh] = PAPERS[o.checkPaper] || PAPERS.A4;
     const a = checkFit(W, H, lw, lh, o.titleBlock.enabled, mg), b = checkFit(W, H, lh, lw, o.titleBlock.enabled, mg);
     const land = b.s > a.s * 1.0001 ? [lh, lw, b] : [lw, lh, a];
+    if (!(land[2].s > 0)) throw new RangeError('Margins leave no printable area. Reduce the margins.');
     geos = [{ w: land[0], h: land[1], scale: land[2] }];
   } else geos = [{ w: W, h: H }];
   const pages = [];
@@ -435,7 +440,8 @@ function drawPage(src, o, plan, p, artBox) {
     const label = `Tile ${tile.n}/${tile.of} · column ${tile.col} of ${tile.cols}, row ${tile.row} of ${tile.rows} · overlap ${TILE.overlap} mm` +
       (o.strip ? ` · ${job}` : ` · ${colour}`);
     page.fillColor(markInk);
-    page.text([2.8, 0, 0, 2.8, mg.left, 2.6], fitText(label, 2.8, p.w - mg.left - mg.right));
+    // Preserve Standard's bytes; custom labels follow the available bottom margin.
+    page.text([2.8, 0, 0, 2.8, mg.left, o.margins ? Math.max(1.5, mg.bottom / 2) : 2.6], fitText(label, 2.8, p.w - mg.left - mg.right));
   } else if (check && o.titleBlock.enabled) {
     const x0 = mg.left, x1 = p.w - mg.right, y0 = mg.bottom, y1 = mg.bottom + CHECK.block, half = (x1 - x0) / 2;
     page.lineWidth(0.25); page.rect(x0, y0, x1 - x0, CHECK.block); page.stroke();

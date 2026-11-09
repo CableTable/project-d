@@ -359,6 +359,10 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Job strip**: The job information strip added through the PDF dialog's Marks options. Where: `DECISIONS.md`, PDF export dialog.
 
+**Margins**: The unprinted page edges in PDF / Print, typed in mm for Top, Right, Bottom and Left. Standard keeps 8 mm on tiles and 10 mm on check prints; Office printer sets 5 mm. Disabled on a 1:1 sheet / cut page. Where: `web/export.js`; `DECISIONS.md`, PDF margins correction (TODO 217).
+
+**Same on all sides**: The PDF / Print margins toggle that makes typing any one side set all four sides. Where: `web/export.js`; `DECISIONS.md`, PDF margins correction (TODO 217).
+
 **Mirror**: Flips the film page, including strip text, so it reads from the emulsion side, while tile labels remain unmirrored. Where: `DECISIONS.md`, PDF Mirror. Avoid: Mirror X or Y of one placed part.
 
 **Negative**: Produces a black page with white artwork and marks. Where: `DECISIONS.md`, PDF colour pages.
