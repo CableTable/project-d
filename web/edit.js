@@ -15,7 +15,7 @@
 //   createHistory()              → undo / redo of { entities, blocks } states
 import { mapply, mscale, pickIndex, pickAt, piecesNear, flatten } from './drawing.js';
 import { rotateRecord } from './rotate.js';
-import { format as formatLength } from './units.js';
+import { format as formatLength, parse as parseLength } from './units.js';
 import { spaceOf, itemVisible } from './doc.js';
 import { line, insert, entity, addLayer, arc, lwpoly } from './dxf-write.js';
 import { DEFAULT_TYPES, perpFoot, preferSnap, tangentPoints, orderCandidates } from './snap.js';
@@ -971,11 +971,11 @@ export const DIM_BLOCK = /^PD_DIM_/;
 export const LDR_BLOCK = /^PD_LDR_/;
 export const DIM_LAYER = 'Dimensions';
 /** Decimal places in a dimension's text ("300.00" → 2; "R25.00", "7.87\"" and "45.00°" too). */
-const placesOf = (t) => { const m = /\.(\d+)["°]?$/.exec(String(t)); return m ? m[1].length : 0; };
+const placesOf = (t) => { const m = /\.(\d+)["'°]?$/.exec(String(t)); return m ? m[1].length : 0; };
 /** A dimension's value with exactly dp decimals (0–4), no "-0". */
 export const dimText = (v, dp = 2) => { const s = Number(v).toFixed(dp); return /^-0(\.0*)?$/.test(s) ? s.slice(1) : s; };
-/** The text of a dimension: its prefix (R, Ø), the number with dp decimals, in inches (then ended by ") when units is 'inch'. */
-export const dimLabel = (mm, dp = 2, units = 'mm', prefix = '') => prefix + (units === 'inch' ? dimText(mm / 25.4, dp) + '"' : dimText(mm, dp));
+/** The text of a dimension: its prefix (R, Ø) and length in its resolved style unit, with dp decimals. */
+export const dimLabel = (mm, dp = 2, units = 'mm', prefix = '') => prefix + (units === 'ft' || units === 'ft-in' ? formatLength(mm, units, undefined, dp) : units === 'inch' ? dimText(mm / 25.4, dp) + '"' : dimText(mm, dp));
 const unesc = (s) => String(s).replace(/\\U\+([0-9A-Fa-f]{4})/g, (_, h) => String.fromCharCode(parseInt(h, 16)));     // a saved file writes Ø and ° as \U+00D8
 const MCODE = /\\[ACFHQTWacfhqtwp][^;]*;|\\[LlOoKkP~{}\\]|[{}]/g;      // MTEXT codes with and without parameters (\p takes parameters, \P is a line break)
 const NUM = String.raw`\d*\.?\d+`, LEN = String.raw`[+-]?${NUM}(?:\s*(?:"|mm\b))?`;
@@ -995,6 +995,8 @@ export function relabel(ents, s, target = null, unread = null, native = {}) {
     if (!t.trim() || t.includes('<>') || s === 1 && !target) return t;
     const bare = t.replace(MCODE, ' '), signed = follows && /^\s*[+-]/.test(bare);      // a code is a gap, never a join; a signed text before another text is a tolerance
     if (ANGLE.test(bare)) return t;
+    const feet = /^((?:R|[∅Ø⌀]|%%[cC])?)([+-]?\d*\.?\d+'(?:-\d*\.?\d+")?)$/.exec(unesc(t));
+    if (!target && !unread && feet && !native.angle) return dimLabel(parseLength(feet[2]) * s, placesOf(feet[2]), feet[2].endsWith('"') ? 'ft-in' : 'ft', feet[1]);
     const plain = PLAIN.test(bare), words = !plain && native.words && !/\d\s*(?:'|(?:ft|feet|foot|in|inch|inches|yd|[ckµu]?m)\b)/i.test(bare)
       && (bare.replace(/\\U\+[0-9A-Fa-f]{4}/g, '').match(/\d*\.?\d+/g) || []).length === 1;
     if (native.angle || !plain && !words || unread && !lead && /^\s*[+-]/.test(bare)) { unread?.(t); return t; }      // Scale (no unread list) still scales lone tolerances
@@ -1511,7 +1513,8 @@ export const dimTag = (name) => (/^PD_DIM_([RDAHV]?)\d+$/.exec(name) || [, ''])[
 function lookOf(ents) {
   const tx = ents.find((e) => e.type === 'TEXT'), sd = ents.find((e) => e.type === 'SOLID'), g = (e, c) => +fieldOf(e.r, c);
   const th = tx ? g(tx, 40) : NaN;
-  const look = { textH: th > 0 ? th : null, units: measuredText(ents).endsWith('"') ? 'inch' : 'mm', pos: tx && g(tx, 73) === 2 ? 'centre' : 'above' };
+  const label = measuredText(ents), units = /'-.*"$/.test(label) ? 'ft-in' : label.endsWith("'") ? 'ft' : label.endsWith('"') ? 'inch' : 'mm';
+  const look = { textH: th > 0 ? th : null, units, pos: tx && g(tx, 73) === 2 ? 'centre' : 'above' };
   const override = readOverride(ents);
   if (override) look.override = override;
   if (sd) look.arrow = Math.hypot((g(sd, 11) + g(sd, 12)) / 2 - g(sd, 10), (g(sd, 21) + g(sd, 22)) / 2 - g(sd, 20));

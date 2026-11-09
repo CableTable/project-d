@@ -840,6 +840,7 @@ button.cswatch, button.ribbon-swatch { padding: 0; cursor: pointer; }
 .ds-form { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 14px; }
 .ds-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .ds-grid .mode { align-self: flex-start; }
+.ds-units { grid-column: 1 / -1; }
 .ds-side { width: 250px; flex-shrink: 0; display: flex; flex-direction: column; gap: 8px; }
 .ds-t { font-size: 11px; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); }
 .ds-prev { display: block; width: 100%; background: var(--sheet); border: 1px solid var(--line); border-radius: var(--r); }

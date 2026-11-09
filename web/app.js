@@ -6230,7 +6230,7 @@ function dimPrompt() {
   return D.obj ? 'Specify dimension line location:' : 'Select arc or circle:';
 }
 /** The look a new dimension gets: the current dimension style, { textH, arrow, gap, pos, units } in drawing units. */
-const dimNew = (d) => DM.lookOf(curDimStyle(), d.factor);
+const dimNew = (d) => DM.lookOf(curDimStyle(), d.factor, DU.displayUnit(d));
 /** The dimension as it is with the pointer at `at` (drawing units): { kind, params } for Ed.dimGeom, or null while there is not enough picked. */
 function dimDraft(at) {
   const D = state.dim, type = state.dimType;
@@ -6456,7 +6456,7 @@ function applyDimStyleToSelected() {
 }
 /** The dialog's live preview: a 60 mm dimension under a 60 × 15 mm plate drawn in the style, on a 260 × 150 box (3.33 px per mm). */
 function dsPreview(style) {
-  const sc = 200 / 60, P = (x, y) => [30 + x * sc, 80 - y * sc], g = Ed.dimGeom('aligned', { a: [0, 0], b: [60, 0], offset: -12, ...DM.lookOf(style, 1) }, 1, style.dp);
+  const sc = 200 / 60, P = (x, y) => [30 + x * sc, 80 - y * sc], g = Ed.dimGeom('aligned', { a: [0, 0], b: [60, 0], offset: -12, ...DM.lookOf(style, 1, drawingUnit()) }, 1, style.dp);
   const pt = (q) => P(q[0], q[1]).map((v) => +v.toFixed(2)).join(' '), t = g.text, tp = P(t.x, t.y), e = g.ext[1], y0 = P(0, 0)[1], y1 = P(e[0], e[1])[1];
   return [
     s('rect', { class: 'ds-part', x: 30, y: 30, width: 200, height: 50 }),
@@ -6482,7 +6482,7 @@ function showDimStyle() {
     const bs = items.map(([v, text]) => h('button', { class: 'seg', type: 'button', 'data-testid': `${tid}-${v}`, onclick: () => { set(v); paint(); } }, text));
     return { box: h('div', { class: 'mode', role: 'group', 'aria-label': label }, bs), sync: () => bs.forEach((b, i) => { b.classList.toggle('on', items[i][0] === get()); b.setAttribute('aria-pressed', String(items[i][0] === get())); }) };
   };
-  const uSeg = segs('ds-units', 'Units', [['mm', 'mm'], ['inch', 'inch']], () => units, (v) => { units = v; });
+  const uSeg = segs('ds-units', 'Units', [['follow', 'Follow'], ['mm', 'mm'], ['inch', 'inch'], ['ft', 'ft'], ['ft-in', 'ft-in']], () => units, (v) => { units = v; });
   const pSeg = segs('ds-pos', 'Text position', [['above', 'Above'], ['centre', 'Centred']], () => pos, (v) => { pos = v; });
   const load = (st) => { iArrow.value = fix2(st.arrow); iText.value = fix2(st.textH); iGap.value = fix2(st.gap); iDp.value = String(st.dp); units = st.units; pos = st.pos; };
   const read = () => DM.checkStyle({ arrow: iArrow.value, textH: iText.value, gap: iGap.value, dp: iDp.value, units, pos });
@@ -6527,7 +6527,7 @@ function showDimStyle() {
     h('div', { class: 'ds-body' },
       h('div', { class: 'ds-form' }, h('div', { class: 'field' }, 'Preset', h('div', { class: 'row' }, sel, saveBtn, delBtn)),
         h('div', { class: 'ds-grid' }, lab('Arrow size (mm)', iArrow), lab('Text height (mm)', iText), lab('Decimals', iDp), lab('Gap (mm)', iGap),
-          h('div', { class: 'field' }, 'Units', uSeg.box), h('div', { class: 'field' }, 'Text position', pSeg.box)), err),
+          h('div', { class: 'field ds-units' }, 'Units', uSeg.box), h('div', { class: 'field' }, 'Text position', pSeg.box)), err),
       h('div', { class: 'ds-side' }, h('span', { class: 'ds-t' }, 'Live preview'), svg, cap, h('span', { class: 'lbl' }, 'Redraws as you type.'))),
     h('div', { class: 'ds-foot' }, h('span', { class: 'lbl' }, 'OK applies to new dimensions and to any selected.'),
       h('button', { class: 'btn', type: 'button', 'data-testid': 'ds-cancel', onclick: finish }, 'Cancel'), h('button', { class: 'btn primary', type: 'button', 'data-testid': 'ds-ok', onclick: ok }, 'OK')));

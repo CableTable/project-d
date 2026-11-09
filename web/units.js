@@ -1,6 +1,7 @@
 // Drawing-unit lengths in mm. No DOM; file coordinates never change with this setting.
 export const UNITS = ['mm', 'inch', 'ft', 'ft-in'];
 const FACTOR = { mm: 1, inch: 25.4, ft: 304.8, 'ft-in': 304.8 };
+export const lengthFactor = (unit) => FACTOR[unit] || 1;
 const NUM = '(?:\\d+\\.?\\d*|\\.\\d+)';
 const DECIMAL = new RegExp(`^[+-]?${NUM}$`);
 const MARKS = new RegExp(`^([+-]?)(${NUM})\\s*'\\s*(?:-?\\s*(${NUM})\\s*")?$`);
@@ -30,11 +31,11 @@ export function parse(text, unit = 'mm') {
 }
 
 /** The drawing's printed length; rounded forms parse back to the printed precision. */
-export function format(mm, unit = 'mm', mmFormat) {
-  if (unit === 'inch' || unit === 'ft') return (+(mm / FACTOR[unit]).toFixed(3) || 0).toLocaleString('en-US', { useGrouping: false, minimumFractionDigits: 3, maximumFractionDigits: 3 }) + (unit === 'inch' ? '"' : "'");
+export function format(mm, unit = 'mm', mmFormat, dp = unit === 'ft-in' ? 2 : 3) {
+  if (unit === 'inch' || unit === 'ft') return (+(mm / FACTOR[unit]).toFixed(dp) || 0).toLocaleString('en-US', { useGrouping: false, minimumFractionDigits: dp, maximumFractionDigits: dp }) + (unit === 'inch' ? '"' : "'");
   if (unit === 'ft-in') {
-    const inches = Math.round(Math.abs(mm) / 25.4 * 100) / 100;
-    return (mm < 0 && inches ? '-' : '') + Math.floor(inches / 12).toLocaleString('en-US', { useGrouping: false }) + "'-" + +(inches % 12).toFixed(2) + '"';
+    const inches = Math.round(Math.abs(mm) / 25.4 * 10 ** dp) / 10 ** dp;
+    return (mm < 0 && inches ? '-' : '') + Math.floor(inches / 12).toLocaleString('en-US', { useGrouping: false }) + "'-" + +(inches % 12).toFixed(dp) + '"';
   }
   return mmFormat ? mmFormat(mm) : (+mm.toFixed(2) || 0).toLocaleString('en-US', { useGrouping: false, maximumFractionDigits: 2 });
 }

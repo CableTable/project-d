@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict';
 import * as E from './web/edit.js';
 import * as DM from './web/dims.js';
+import * as U from './web/units.js';
 import { readDxf } from './web/drawing.js';
 import { newDoc, writeDxf, circle, arc, line } from './web/dxf-write.js';
 
@@ -199,6 +200,45 @@ test('styles: a typed field is checked (a number in its range, a comma is a poin
   assert.deepEqual(Object.keys(p.presets).sort(), ['Bad', 'Inch jobs', 'Standard']); assert.equal(p.cur, 'Inch jobs'); assert.deepEqual(p.presets.Bad, DM.STANDARD);
   assert.equal(DM.loadPresets({ cur: 'Gone', presets: {} }).cur, 'Standard'); assert.equal(DM.loadPresets('junk').cur, 'Standard'); assert.deepEqual(DM.loadPresets(null).presets, { Standard: DM.STANDARD });
   assert.equal(DM.loadPresets({ presets: { constructor: DM.STANDARD } }).cur, 'Standard', 'a name like constructor is only a name');
+});
+
+test('TODO 222c: Follow resolves at placement; only the old Standard mm preset migrates', () => {
+  assert.equal(DM.STANDARD.units, 'follow');
+  const stored = DM.loadPresets({ cur: 'Metric', presets: { Standard: { ...DM.STANDARD, units: 'mm' }, Metric: { ...DM.STANDARD, units: 'mm' } } });
+  assert.equal(stored.presets.Standard.units, 'follow'); assert.equal(stored.presets.Metric.units, 'mm'); assert.equal(stored.cur, 'Metric');
+  stored.presets.Standard.units = 'mm';
+  assert.equal(DM.loadPresets(JSON.parse(JSON.stringify(stored))).presets.Standard.units, 'mm', 'an explicit mm choice after migration survives reload');
+  assert.equal(DM.loadPresets({ presets: { Standard: { ...DM.STANDARD, units: 'inch' } } }).presets.Standard.units, 'inch');
+  for (const unit of U.UNITS) {
+    assert.equal(DM.checkStyle({ ...DM.STANDARD, units: unit }).style.units, unit);
+    assert.equal(DM.lookOf(DM.STANDARD, 1, unit).units, unit);
+    assert.equal(DM.resolveUnit({ ...DM.STANDARD, units: 'mm' }, unit), 'mm');
+  }
+  const params = { a: [0, 0], b: [1066.8, 0], offset: 20 };
+  const placed = E.buildDim('aligned', { ...params, ...DM.lookOf(DM.STANDARD, 1, 'ft-in') }, 1, 'PD_DIM_1');
+  assert.equal(txt(placed.block), `3'-6"`);
+  assert.equal(read(placed).params.units, 'ft-in');
+  assert.equal(txt(E.buildDim('aligned', { ...params, ...DM.lookOf(DM.STANDARD, 1, 'mm') }, 1, 'PD_DIM_2').block), '1066.80');
+  assert.equal(txt(placed.block), `3'-6"`, 'later resolution leaves the placed block alone');
+});
+
+test('TODO 222c: feet and decimal feet-inches use style precision, carry inches, round trip and keep prefixes', () => {
+  for (const [mm, dp, ft, ftIn] of [[1600.2, 3, "5.250'", `5'-3"`], [1606.55, 2, "5.27'", `5'-3.25"`], [-1606.55, 4, "-5.2708'", `-5'-3.25"`], [304.799, 2, "1.00'", `1'-0"`], [-0.001, 2, "0.00'", `0'-0"`]]) {
+    assert.equal(E.dimLabel(mm, dp, 'ft'), ft); assert.equal(E.dimLabel(mm, dp, 'ft-in'), ftIn);
+    assert.equal(E.dimLabel(mm, dp, 'ft-in', 'R'), 'R' + ftIn);
+    near(U.parse(ftIn), Math.round(mm / 25.4 * 10 ** dp) / 10 ** dp * 25.4);
+  }
+  for (const unit of U.UNITS) for (const dp of [0, 1, 2, 3, 4]) {
+    if (unit === 'mm' || unit === 'inch') assert.equal(E.dimLabel(1066.8, dp, unit), E.dimText(1066.8 / U.lengthFactor(unit), dp) + (unit === 'inch' ? '"' : ''));
+    const dim = E.buildDim('aligned', { a: [0, 0], b: [1066.8, 0], offset: 20, units: unit }, 1, 'PD_DIM_1', dp);
+    assert.equal(read(dim).params.units, unit, unit + ' survives Save / reopen');
+  }
+  const feet = E.buildDim('aligned', { a: [0, 0], b: [1066.8, 0], offset: 20, units: 'ft' }, 1, 'PD_DIM_1', 2);
+  const raw = { entities: [feet.insert], blocks: { PD_DIM_1: reopen(feet) }, layers: {} };
+  assert.equal(E.dimOfEntity(raw, 0).dp, 2);
+  assert.equal(txt(E.scaleAbout(raw, 2, 0, 0, 0).blocks.PD_DIM_1), "7.00'");
+  const feetIn = E.buildDim('radius', { c: [0, 0], r: 1606.55, p: [1800, 0], units: 'ft-in' }, 1, 'PD_DIM_R1', 2);
+  assert.equal(txt(E.scaleAbout({ entities: [feetIn.insert], blocks: { PD_DIM_R1: reopen(feetIn) }, layers: {} }, 2, 0, 0, 0).blocks.PD_DIM_R1), `R10'-6.5"`);
 });
 
 console.log(n + ' dims tests passed');

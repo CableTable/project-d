@@ -27,6 +27,22 @@ const grip = (raw, id, to) => followDimensions(raw, {
 });
 const label = (raw, e = 1) => { const r = raw.blocks[E.dimOfEntity(raw, e).name].entities.find((e) => e.type === 'TEXT').r; return r.v[r.c.indexOf(1)]; };
 
+test('TODO 222c: all dimension units drive lengths with marks and follow later source edits', () => {
+  for (const [units, shown] of [['mm', '1066.800'], ['inch', '42.000"'], ['ft', "3.500'"], ['ft-in', `3'-6"`]]) for (const factor of [1, 25.4, 304.8]) {
+    const raw = drawing(W.line(0, 0, 1066.8 / factor, 0), { a: [0, 0], b: [1066.8 / factor, 0], units }, 'aligned', factor);
+    assert.equal(label(raw), shown);
+    assert.deepEqual(dimensionEntry(raw, 1, `3'6"`, 'mm'), { unchanged: true });
+    const entry = dimensionEntry(raw, 1, "4'", 'mm');
+    const driven = driveLine(raw, 1, entry.n, factor);
+    close(E.lineOf(driven.line)[2], 1219.2 / factor);
+    const next = { ...raw, entities: [driven.line, raw.entities[1]], blocks: { ...raw.blocks, [driven.built.name]: driven.built.block } };
+    assert.equal(model(next).params.units, units);
+    const followed = followDimensions(next, { entities: [dragGrip(next.entities[0], 'b', [1524 / factor, 0]).ent, next.entities[1]], blocks: next.blocks }, factor);
+    assert.equal(label(followed), E.dimLabel(1524, model(next).dp, units));
+    close(E.lineOf(raw.entities[0])[2], 1066.8 / factor);
+  }
+});
+
 test('rectangle corner: aligned dimension value and position follow, one Undo / Redo restores both', () => {
   const raw = drawing(W.lwpoly([[20, 20], [120, 20], [120, 80], [20, 80]], { closed: true }), { a: [120, 20], b: [120, 80] });
   const before = structuredClone(raw), next = grip(raw, 'v2', [150, 100]), p = model(next).params;

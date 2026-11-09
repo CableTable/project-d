@@ -165,6 +165,67 @@ try {
   const shotDir = shard ? join(shotRoot, `shard-${shard.index}-of-${shard.count}`) : shotRoot;
   if (shard || process.argv.includes('--shots')) process.env.SHOTS_DIR = shotDir; // Older screenshot steps read the environment directly.
   mkdirSync(shotDir, { recursive: true });
+  await step('TODO 222c: dimensions in the drawing unit', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
+    try {
+      const p = await context.newPage(), q = (id) => p.getByTestId(id);
+      p.on('pageerror', (e) => errors.push(String(e)));
+      await p.goto(URL_ + '?autosave=86400000'); await q('count').waitFor({ state: 'attached' });
+      const command = async (text) => {
+        if (!(await q('cmd-input').isVisible())) await q('cmd-echo').click();
+        await q('cmd-input').fill(text); await q('cmd-input').press('Enter');
+      };
+      const pick = async (unit) => {
+        await q('drawing-unit').click(); await p.locator(`[data-unit="${unit}"]`).click();
+      };
+      const saved = async () => {
+        const download = p.waitForEvent('download', (d) => d.suggestedFilename().endsWith('.dxf'));
+        await command('save'); return readDxf(readFileSync(await (await download).path(), 'utf8'));
+      };
+      const labels = (doc) => Object.entries(doc.blocks).filter(([name]) => /^PD_DIM_/.test(name)).map(([, b]) => {
+        const text = b.entities.find((e) => e.type === 'TEXT'); return text.r.v[text.r.c.indexOf(1)];
+      });
+      const place = async (y) => {
+        await command('d'); await command('0mm,100mm'); await command('1066.8mm,100mm'); await command(`0mm,${y}mm`);
+        await p.keyboard.press('Escape'); await p.keyboard.press('Escape');
+      };
+      const raw = newDoc(4); addEntities(raw, dxfLine(0, 100, 1066.8, 100));
+      await q('picker').setInputFiles({ name: 'dimension-units.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(raw)) });
+      await p.waitForFunction(() => document.querySelector('.dtab.on').textContent.includes('dimension-units.dxf'));
+      await pick('ft-in'); await command('dimstyle');
+      assert.equal(await q('ds-units-follow').getAttribute('aria-pressed'), 'true');
+      assert.deepEqual(await q('dimstyle-dialog').getByRole('group', { name: 'Units', exact: true }).getByRole('button').allTextContents(), ['Follow', 'mm', 'inch', 'ft', 'ft-in']);
+      await q('ds-units-ft').click(); await p.keyboard.press('Escape');
+      await command('dimstyle'); assert.equal(await q('ds-units-follow').getAttribute('aria-pressed'), 'true', 'Esc cancels the style edit');
+      await q('ds-text').fill('20'); await q('ds-arrow').fill('10'); await q('ds-gap').fill('4'); await q('ds-ok').click();
+      await command('d'); await command('0mm,100mm'); await p.keyboard.press('Escape'); await p.keyboard.press('Escape');
+      assert.deepEqual(labels(await saved()), [], 'Esc mid-dimension makes no block');
+      await place(20);
+      assert.deepEqual(labels(await saved()), [`3'-6"`]);
+      await p.keyboard.press('Control+z'); assert.deepEqual(labels(await saved()), []);
+      await p.keyboard.press('Control+y'); assert.deepEqual(labels(await saved()), [`3'-6"`]);
+      for (const theme of ['light', 'dark']) {
+        await p.locator('[data-menu=View]').click();
+        await p.getByRole('menuitemcheckbox', { name: new RegExp('Theme: ' + theme + '\\b') }).click();
+        for (const surface of ['dimension', 'dialog']) {
+          if (surface === 'dialog') await command('dimstyle');
+          const path = `${shotDir}/todo222c-${surface}-${theme}.png`;
+          await p.screenshot({ path }); assert.ok(readFileSync(path).length > 0);
+          if (surface === 'dialog') await q('ds-cancel').click();
+        }
+      }
+      await pick('mm'); assert.deepEqual(labels(await saved()), [`3'-6"`], 'switching leaves placed text alone');
+      await place(-100); assert.deepEqual(labels(await saved()), [`3'-6"`, '1066.80']);
+      await command('dimstyle'); await q('ds-units-ft').click(); await q('ds-ok').click();
+      await place(-220); assert.deepEqual(labels(await saved()), [`3'-6"`, '1066.80', "3.50'"]);
+      await command('selectall'); await command('dimstyle'); await q('ds-units-follow').click(); await q('ds-ok').click();
+      assert.deepEqual(labels(await saved()), ['1066.80', '1066.80', '1066.80'], 'Restyle selected resolves Follow now');
+      await p.keyboard.press('Control+z');
+      const back = await saved(); assert.deepEqual(labels(back), [`3'-6"`, '1066.80', "3.50'"]);
+      assert.deepEqual(lineEnds(back.entities.find((e) => e.type === 'LINE')), lineEnds(raw.entities[0]), 'drawing units and styles leave source geometry unchanged');
+      console.log('TODO 222c: Follow, placed text, mm, ft, Restyle, Esc, Undo and four light/dark screenshots passed');
+    } finally { await context.close(); }
+  });
   await step('TODO 222b: lengths in the drawing unit', async () => {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
     try {
@@ -16036,11 +16097,11 @@ try {
   };
   const dimLook = async (name) => (await dimBlocks())[name].params;
   const styleStore = () => page.evaluate(() => JSON.parse(localStorage.getItem('pd-dimstyles') || 'null'));
-  await step('dimension styles: the new Format menu opens the dialog with the Standard style (arrow 2.50, text 3.50, Decimals 0.00, gap 0.80, mm, Above), a live preview and a caption', async () => {
+  await step('dimension styles: the new Format menu opens the dialog with the Standard style (arrow 2.50, text 3.50, Decimals 0.00, gap 0.80, Follow, Above), a live preview and a caption', async () => {
     await openGrips(dimDoc(), 'styles.dxf');
     assert.deepEqual(await page.locator('.menubar .menu').allTextContents(), ['File', 'Edit', 'View', 'Draw', 'Modify', 'Format', 'Layout', 'Tools', 'Help']);
     await openStyle();
-    assert.deepEqual(await styleFields(), { arrow: '2.50', text: '3.50', dp: '2', gap: '0.80', units: 'ds-units-mm', pos: 'ds-pos-above' });
+    assert.deepEqual(await styleFields(), { arrow: '2.50', text: '3.50', dp: '2', gap: '0.80', units: 'ds-units-follow', pos: 'ds-pos-above' });
     assert.equal(await t('ds-preset').inputValue(), 'Standard'); assert.deepEqual(await t('ds-preset').locator('option').allTextContents(), ['Standard']);
     assert.equal(await t('ds-delete').isDisabled(), true, 'Standard cannot be deleted');
     assert.equal(await t('ds-caption').textContent(), 'arrow 2.50 · text 3.50 · gap 0.80 mm');
@@ -16055,7 +16116,7 @@ try {
     await page.screenshot({ path: shotDir + '/s13-dimstyle-light.png' });
     await page.keyboard.press('Escape'); assert.equal(await t('dimstyle-dialog').count(), 0, 'Esc cancels');
     await openStyle();
-    assert.deepEqual(await styleFields(), { arrow: '2.50', text: '3.50', dp: '2', gap: '0.80', units: 'ds-units-mm', pos: 'ds-pos-above' }, 'Cancel threw the changes away');
+    assert.deepEqual(await styleFields(), { arrow: '2.50', text: '3.50', dp: '2', gap: '0.80', units: 'ds-units-follow', pos: 'ds-pos-above' }, 'Cancel threw the changes away');
     await t('ds-cancel').click();
     await typeCmd('dimstyle'); await t('dimstyle-dialog').waitFor(); await page.keyboard.press('Escape');
   });
@@ -16069,9 +16130,9 @@ try {
     assert.deepEqual(await t('ds-preset').locator('option').allTextContents(), ['Standard', 'Plate drawings']);
     assert.equal(await t('ds-delete').isDisabled(), false);
     await t('ds-preset').selectOption('Standard');
-    assert.deepEqual(await styleFields(), { arrow: '2.50', text: '3.50', dp: '2', gap: '0.80', units: 'ds-units-mm', pos: 'ds-pos-above' }, 'picking a preset loads it');
+    assert.deepEqual(await styleFields(), { arrow: '2.50', text: '3.50', dp: '2', gap: '0.80', units: 'ds-units-follow', pos: 'ds-pos-above' }, 'picking a preset loads it');
     await t('ds-preset').selectOption('Plate drawings');
-    assert.deepEqual(await styleFields(), { arrow: '3.00', text: '5.00', dp: '2', gap: '1.50', units: 'ds-units-mm', pos: 'ds-pos-centre' });
+    assert.deepEqual(await styleFields(), { arrow: '3.00', text: '5.00', dp: '2', gap: '1.50', units: 'ds-units-follow', pos: 'ds-pos-centre' });
     await t('ds-save').click(); await t('name-input').fill('Inch jobs'); await t('name-ok').click();
     await t('ds-delete').click();
     assert.deepEqual(await t('ds-preset').locator('option').allTextContents(), ['Standard', 'Plate drawings'], 'Delete removed Inch jobs');
@@ -16097,7 +16158,7 @@ try {
     p = await dimLook('PD_DIM_R1'); assert.ok(Math.abs(p.textH - 5) < 1e-5 && Math.abs(p.arrow - 3) < 1e-5, 'a radius takes the text height and arrow');
     await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click();
     await page.keyboard.press('Escape');
-  }, { needs: ['dimension styles: the new Format menu opens the dialog with the Standard style (arrow 2.50, text 3.50, Decimals 0.00, gap 0.80, mm, Above), a live preview and a caption', 'dimension styles: Save as preset… (a taken name refused), pick, Delete; presets are remembered on this PC and survive a reload of the page'] });
+  }, { needs: ['dimension styles: the new Format menu opens the dialog with the Standard style (arrow 2.50, text 3.50, Decimals 0.00, gap 0.80, Follow, Above), a live preview and a caption', 'dimension styles: Save as preset… (a taken name refused), pick, Delete; presets are remembered on this PC and survive a reload of the page'] });
   await step('dimension styles: OK also restyles the selected dimensions (one undo step "Dimension style"); inch and Decimals 0.000 change the text; Cancel leaves them', async () => {
     await click(145, 113.3); await waitSel('1 selected');                    // the first dimension's line, off its centred text
     assert.equal(await t('dim-height').inputValue(), '5');
