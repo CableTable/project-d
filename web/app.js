@@ -36,6 +36,7 @@ import { writeDxf, writeDxfWithReport, saveReportNote, unwritable, addLayer, new
 import * as SH from './shaping.js';
 import { explodeSelection } from './explode.js';
 import { breakApart } from './breakapart.js';
+import { combine, combinedLabel } from './combine.js';
 import { cutterDoc } from './dxf-cutter.js';
 import * as DR from './draw.js';
 import * as DI from './dynamic-input.js';
@@ -482,6 +483,7 @@ function buildMenus() {
   menus.Modify.push(['Burst', burstSelected]);
   menus.Modify.push(['Explode', explodeSelected, 'X']);
   menus.Modify.push(['Break Apart', breakApartSelected, 'Ctrl+K', null, 'Separate a group or block into outlines (Ctrl+K)']);
+  menus.Modify.push(['Combine', combineSelected, 'Ctrl+L', () => !curLay(), 'Make the selected outlines one object (Ctrl+L)']);
   // Shaping (TODO 122): the dropdown has no sub-menus, so its items sit together after a separator, each named Shaping: …
   menus.Modify.push(...Object.entries(SH.OPS).map(([op, o], i) => ['Shaping: ' + o.label, () => shapeSelection(op), null, null, SHAPING_TITLE[op], i === 0]));
   const modifyItems = menus.Modify;
@@ -731,7 +733,8 @@ function ribbonContents(kind) {
       stack(ribbonTool('copy', true), ribbonTool('stretch', true), ribbonTool('scale', true)), stack(ribbonTool('offset', true)),
       stack(ribbonTool('fillet', true), ribbonTool('extend', true), ribbonTool('trim', true)), stack(ribbonTool('array', true)), ribbonTool('break'), ribbonTool('join'), ribbonTool('reverse'), ribbonTool('lengthen')),
     group('Convert', convert('Explode', explodeSelected, '<path d="M12 4v4M12 16v4M4 12h4M16 12h4M6.5 6.5l2.5 2.5M15 15l2.5 2.5M17.5 6.5L15 9M9 15l-2.5 2.5"/>', false, undefined, true),
-      convert('Break Apart', breakApartSelected, '<rect x="3" y="4" width="8" height="8"/><rect x="13" y="12" width="8" height="8"/>'), ribbonTool('contour'), convert('Text to outlines', textToOutlines, outlinesIcon, false, undefined, true)),
+      convert('Break Apart', breakApartSelected, '<rect x="3" y="4" width="8" height="8"/><rect x="13" y="12" width="8" height="8"/>'),
+      convert('Combine', combineSelected, '<rect x="3" y="4" width="11" height="11"/><rect x="10" y="10" width="11" height="10"/>'), ribbonTool('contour'), convert('Text to outlines', textToOutlines, outlinesIcon, false, undefined, true)),
     shaping()];
   if (ribbon.tab === 'Annotate') return [
     group('Text', ribbonTool('text')),
@@ -4191,6 +4194,7 @@ const DO = {
   explode: () => explodeSelected(),
   burst: () => burstSelected(),
   breakapart: () => breakApartSelected(),
+  combine: () => combineSelected(),
   simplify: () => shapeSelection('simplify'), frontminus: () => shapeSelection('frontminus'), backminus: () => shapeSelection('backminus'), boundary: () => shapeSelection('boundary'),
   rotate: () => {
     if (!curLay()) { setTool('rotate'); return; }
@@ -5318,6 +5322,20 @@ function breakApartSelected() {
   restore(d, { ...r, groups: spliceGroups(d.raw.groups, d.raw.entities.length, [...d.sel][0], r.selected.size) });
   setSel(d, r.selected);
   note(`Break Apart: ${r.selected.size} outlines are separate, still selected. Ctrl+Z restores the block`);
+}
+
+/** Combine (218a): the picked outlines become one object (a block "Combined n") that takes the LAST picked one's colour, width, linetype and layer; one Undo step. */
+function combineSelected() {
+  if (curLay()) { note('Combine: works on drawing tabs for now; open a drawing'); return; }
+  const d = editable();
+  if (!d) { note('Combine: open a drawing first'); return; }
+  const r = combine(d.raw, d.sel, d.locked);
+  if (r.error) { note('Combine: ' + r.error); return; }
+  const last = d.raw.entities[[...d.sel].at(-1)];
+  pushHistory(d, { ...snapshotOf(d), sel: [...d.sel] }, 'Combine');
+  restore(d, r);
+  setSel(d, r.selected);
+  note(`Combine: ${r.count} outlines are one object (${r.name}) with the colour, width and layer of the last one picked (${last.layer})` + (r.filled ? '; the fill has even-odd holes' : '') + '. Ctrl+Z separates them');
 }
 
 /** Explode on a layout (156b4): a step-and-repeat grid becomes separate placed parts, a placed part its loose objects, a dimension its lines, arrows and text; one level, one undo step. */
@@ -10751,7 +10769,7 @@ function renderPropsPanel(d) {
   const pe = propEnts(d), ents = pe.map((x) => x[1]), all = propEnts(d, true).map((x) => x[1]), sm = PR.summarize(ents), none = !ents.length;
   const group = !lay && wholeDrawingGroup(d.raw.groups, d.sel);
   ui.propEmpty.hidden = !none; ui.propBody.hidden = !all.length; ui.propChip.hidden = none && !group;
-  ui.propChip.textContent = group ? drawingSelectionName(d) : sm.chip;
+  ui.propChip.textContent = group ? drawingSelectionName(d) : ents.length === 1 && combinedLabel(d.raw.blocks, ents[0]) || sm.chip;
   ui.propCommon.hidden = none; ui.propGeo.hidden = none;
   ui.propSimilar.hidden = ui.propMatch.hidden = none;
   ui.propQuick.hidden = false;

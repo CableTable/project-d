@@ -22443,6 +22443,103 @@ try {
     await menuItem('View', 'Theme: light'); await closeTabs(/./);
   });
 
+  await step('TODO 218a: Combine via Ctrl+L and COMBINE makes one object, last pick colour, even-odd holes, Break Apart back, Undo, save/reopen', async () => {
+    await closeTabs(/./);
+    const doc = newDoc();
+    addLayer(doc, 'Cut', { aci: 3 }); addLayer(doc, 'Holes', { aci: 2 }); addLayer(doc, 'Top', { aci: 1 });
+    addEntities(doc, dxfPoly([[20, 20], [120, 20], [120, 100], [20, 100]], { closed: true, layer: 'Cut' }), dxfCircle(50, 60, 15, { layer: 'Holes' }),
+      dxfPoly([[100, 50], [150, 50], [150, 80], [100, 80]], { closed: true, layer: 'Top', fill: 'aci:1' }), dxfText(200, 40, 6, 'NOTE', { layer: 'Cut' }));
+    const open = async (text, name) => {
+      await t('picker').setInputFiles({ name, mimeType: 'text/plain', buffer: Buffer.from(text, 'latin1') });
+      await page.waitForFunction((n) => document.querySelector('.tabs .dtab.on .tname').textContent === n, name);
+    };
+    const key = async (k) => { await page.locator('[data-testid=cmd-input]').evaluate((e) => e.blur()); await page.keyboard.press(k); };
+    const box = async (x0, y0, x1, y1) => {
+      const a = await at(x0, y0), b = await at(x1, y1);
+      await page.mouse.move(a.x, a.y); await page.mouse.down(); await page.mouse.move(b.x, b.y, { steps: 4 }); await page.mouse.up();
+    };
+    const red = async (x, y) => {
+      await page.mouse.move(2, 2); await page.waitForTimeout(100);
+      return t('drawing').evaluate((c, pt) => {
+        const b = c.getBoundingClientRect(), [r, g, bl, a] = c.getContext('2d').getImageData(Math.round((pt.x - b.x) * c.width / b.width), Math.round((pt.y - b.y) * c.height / b.height), 1, 1).data;
+        return r > 245 && g < 10 && bl < 10 && a > 245;
+      }, await at(x, y));
+    };
+    const shoot = async (name) => { for (const th of ['light', 'dark']) { await menuItem('View', 'Theme: ' + th); await page.waitForTimeout(150); await page.screenshot({ path: `${shotDir}/${name}-${th}.png` }); } };
+    await open(writeDxf(doc), 'combine.dxf');
+    await page.keyboard.press('Escape');
+
+    // a box pick: the last in the selection (the topmost in draw order) decides; the menu and the ribbon list Combine beside Break Apart
+    await box(10, 10, 160, 110); await waitSel('3 selected');
+    for (const th of ['light', 'dark']) {
+      await menuItem('View', 'Theme: ' + th); await page.locator('[data-menu=Modify]').click();
+      const item = page.getByRole('menuitem', { name: 'Combine', exact: true });
+      assert.equal(await item.locator('.hint').textContent(), 'Ctrl+L');
+      assert.match(await item.getAttribute('title'), /Ctrl\+L/);
+      const labels = await page.locator('.dropdown button').evaluateAll((es) => es.map((e) => e.firstChild.textContent));
+      assert.equal(labels.indexOf('Combine'), labels.indexOf('Break Apart') + 1);
+      await page.screenshot({ path: `${shotDir}/combine-menu-${th}.png` });
+      await page.locator('[data-menu=Modify]').click();
+    }
+    await page.locator('[data-ribbon-tab=Modify]').click();
+    assert.equal(await t('ribbon').getByRole('button', { name: 'Combine', exact: true }).isEnabled(), true);
+    const wide = page.viewportSize(); await page.setViewportSize({ width: 1024, height: 768 });
+    await menuItem('View', 'Theme: light'); await page.screenshot({ path: `${shotDir}/combine-ribbon-1024-light.png` });
+    await menuItem('View', 'Theme: dark'); await page.screenshot({ path: `${shotDir}/combine-ribbon-1024-dark.png` });
+    await page.setViewportSize(wide);
+    await key('Control+l');
+    await said(/^Combine: 3 outlines are one object \(Combined 1\) with the colour, width and layer of the last one picked \(Top\); the fill has even-odd holes/);
+    assert.equal(await entCount(), 2); await waitSel('1 selected');
+    assert.equal(await t('prop-chip').textContent(), 'Combined (3 outlines)');
+    assert.equal((await histLabels()).at(-1), 'Combine');
+    await page.keyboard.press('Escape');
+    assert.equal(await red(30, 30), true, 'the big square is filled'); assert.equal(await red(50, 60), false, 'the circle inside is a hole');
+    assert.equal(await red(110, 65), false, 'the crossing overlap is a hole'); assert.equal(await red(140, 65), true, 'the crossing square outside the big one is filled');
+    await shoot('combine-result');
+    let saved = await savedDoc();
+    assert.deepEqual(saved.entities.map((e) => [e.type, e.layer, e.aci]), [['INSERT', 'Top', 256], ['TEXT', 'Cut', 256]], 'one INSERT with the last pick\'s layer');
+    const inside = saved.blocks['Combined 1'].entities;
+    assert.deepEqual(inside.map((e) => e.type), ['HATCH', 'LWPOLYLINE', 'CIRCLE', 'LWPOLYLINE'], 'one HATCH and the three outlines');
+    assert.ok(inside.slice(1).every((e) => e.layer === '0'), 'members on layer 0');
+
+    // Undo gives the three outlines back, selected; COMBINE typed does the same; Break Apart (Ctrl+K) puts a fill on every closed outline
+    await page.keyboard.press('Control+z'); assert.equal(await entCount(), 4); await waitSel('3 selected');
+    await typeCmd('COMBINE'); await said(/^Combine: 3 outlines are one object/); await waitSel('1 selected');
+    await key('Control+k'); await said(/^Break Apart: 3 outlines are separate/);
+    assert.equal(await entCount(), 4); await waitSel('3 selected');
+    saved = await savedDoc();
+    assert.deepEqual(saved.entities.map((e) => [e.type, e.layer, e.fill || null]), [['LWPOLYLINE', 'Top', 'aci:1'], ['CIRCLE', 'Top', 'aci:1'], ['LWPOLYLINE', 'Top', 'aci:1'], ['TEXT', 'Cut', null]]);
+    await page.keyboard.press('Control+z'); assert.equal(await entCount(), 2); await waitSel('1 selected');
+    await page.keyboard.press('Control+z'); assert.equal(await entCount(), 4); await waitSel('3 selected');
+
+    // click by click: the circle first, then the big square; the square (the lowest in draw order) is the last pick and gives its layer
+    await page.keyboard.press('Escape'); await click(65, 60); await click(20, 60, { shift: true }); await waitSel('2 selected');
+    await menuItem('Modify', 'Combine'); await said(/^Combine: 2 outlines are one object \(Combined 1\) .*last one picked \(Cut\)\. Ctrl\+Z/);
+    saved = await savedDoc();
+    assert.deepEqual(saved.entities.map((e) => [e.type, e.layer]), [['INSERT', 'Cut'], ['LWPOLYLINE', 'Top'], ['TEXT', 'Cut']]);
+    await page.keyboard.press('Control+z'); assert.equal(await entCount(), 4);
+
+    // refusals: text, one object; no Undo step
+    const before = await histLabels();
+    await page.keyboard.press('Escape'); await click(20, 60); await click(205, 43, { shift: true }); await waitSel('2 selected');
+    await key('Control+l'); await said(/^Combine: a text cannot be combined \(outlines only\)/);
+    await page.keyboard.press('Escape'); await click(20, 60); await waitSel('1 selected');
+    await key('Control+l'); await said(/^Combine: select at least 2 outlines first/);
+    assert.equal(await entCount(), 4); assert.deepEqual(await histLabels(), before, 'no Undo step for a refusal');
+
+    // save and reopen: still one Combined object, still with its holes; Break Apart works on the reopened file
+    await page.keyboard.press('Escape'); await box(10, 10, 160, 110); await waitSel('3 selected'); await key('Control+l'); await waitSel('1 selected');
+    const text = (await downloaded(() => page.keyboard.press('Control+s'))).text;
+    await open(text, 'combine-reopened.dxf');
+    await click(20, 60); await waitSel('1 selected');
+    assert.equal(await t('prop-chip').textContent(), 'Combined (3 outlines)');
+    await page.keyboard.press('Escape');
+    assert.equal(await red(50, 60), false, 'the hole is still there'); assert.equal(await red(110, 65), false); assert.equal(await red(30, 30), true);
+    await shoot('combine-reopened');
+    await click(20, 60); await key('Control+k'); await said(/^Break Apart: 3 outlines are separate/);
+    await menuItem('View', 'Theme: light'); await closeTabs(/./);
+  });
+
   await step('TODO 122a: Shaping (Modify menu, WELD / SHAPETRIM / INTERSECT): two squares, each operation gives the exact area in one undo step; Trim cuts the last picked one and keeps the cutter; open outlines and too few outlines say so', async () => {
     const theme = async (name) => { await menuItem('View', 'Theme: ' + name); await page.waitForTimeout(150); };
     await closeTabs(/./);
