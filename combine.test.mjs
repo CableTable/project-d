@@ -7,6 +7,7 @@ import { readDxf, flatten } from './web/drawing.js';
 import { containsFill } from './web/fill.js';
 import { COMMANDS } from './web/cmdbar.js';
 import { bindings } from './web/shortcuts.js';
+import * as LD from './web/layoutdoc.js';
 
 // a big square (0..100), a circle inside it, a square crossing its right edge, a loose line; all on different layers
 function fixture(fill) {
@@ -137,4 +138,60 @@ test('Combine is a command with Ctrl+L, its own key wins over the new default', 
   assert.ok(COMMANDS.some((c) => c.name === 'combine' && c.key === 'Ctrl+L'));
   assert.equal(bindings({ line: { key: 'Ctrl+L' } }).combine.key, '');
   assert.equal(bindings({}).combine.key, 'Ctrl+L');
+});
+
+// ---- 218b: layouts ----
+function layoutOf() {       // a (big square, g1), b (circle inside it, g1), c (crossing square), d (a line): loose layout objects
+  const lay = LD.newLayout('Objs'), layers = LD.layersOf(lay);
+  const mk = (id, ent, extra) => { const o = LD.objectPart(id, id, ent, layers); lay.parts[id] = o; lay.placed.push({ ...LD.objectPlacement(o), ...extra }); };
+  mk('a', rect(0, 0, 100, 100), { g: 'g1' }); mk('b', circle(30, 30, 10), { g: 'g1', lock: false }); mk('c', { ...rect(90, 40, 40, 20), fill: 'aci:1' }, {}); mk('d', line(300, 0, 310, 0), {});
+  return lay;
+}
+const combineOn = (lay, picks, newId = () => 'n1') => {
+  const v = LD.objectDoc(lay), r = combine(v.raw, new Set(picks.map((i) => i)), new Set(), LD.dimensionNames(lay).taken);
+  if (!r.error) LD.objectCommit(lay, v, r.entities, newId, r.heir, { ...v.raw.blocks, ...r.blocks });
+  return { v, r };
+};
+
+test('layout Combine: the result is one block object "Combined n" in the heir\'s (last pick\'s) slot and group; its block comes with it (it was lost before)', () => {
+  const lay = layoutOf(), { r } = combineOn(lay, [0, 2, 1]);       // the circle (in g1) is picked last
+  assert.equal(r.error, undefined);
+  assert.equal(r.heir.type, 'CIRCLE');
+  assert.equal(lay.placed.length, 2);
+  assert.equal(lay.placed[0].partId, 'n1', 'in the heir\'s slot'); assert.equal(lay.placed[1].partId, 'd');
+  const part = lay.parts[lay.placed[0].partId];
+  assert.equal(part.name, 'Combined 1', 'named "Combined n" like Line 1 (not the heir\'s name)');
+  assert.deepEqual(Object.keys(part.raw.blocks), ['Combined 1'], 'the new block is in the part');
+  assert.equal(lay.placed[0].g, 'g1', 'the heir\'s group');
+  assert.deepEqual(Object.keys(lay.parts).sort(), ['d', 'n1'], 'the members\' parts are gone');
+  const v2 = LD.objectDoc(lay);
+  assert.deepEqual(v2.raw.entities.map((e) => e.type), ['INSERT', 'LINE']);
+  assert.equal(combinedLabel(v2.raw.blocks, v2.raw.entities[0]), 'Combined (3 outlines)');
+});
+
+test('layout Combine: the number is picked against every part\'s blocks; the file keeps the Combined object (and its even-odd fill) on reopen', () => {
+  const lay = layoutOf(), other = LD.objectPart('x', 'x', insert('Combined 1', 500, 0), LD.layersOf(lay), {}, { 'Combined 1': { base: [0, 0], xref: false, entities: [rect(0, 0, 5, 5)] } });
+  lay.parts.x = other; lay.placed.push(LD.objectPlacement(other));       // another object already owns the block name "Combined 1"
+  const { r } = combineOn(lay, [0, 1, 2]);
+  assert.equal(r.name, 'Combined 2');
+  assert.equal(r.filled, true);
+  const back = LD.layoutFromRaw(readDxf(writeDxf(LD.layoutRaw(lay))));
+  const v = LD.objectDoc(back), ins = v.raw.entities.filter((e) => e.type === 'INSERT');
+  assert.equal(ins.length, 2, 'both block objects are still there: ' + v.raw.entities.map((e) => e.type));
+  assert.ok(ins.some((e) => combinedLabel(v.raw.blocks, e) === 'Combined (3 outlines)'));
+  assert.equal(flatten(v.raw).items.filter((it) => it.fill).length, 1, 'one fill over the three');
+  const sheet = flatten(LD.layoutRaw(back)).items.filter((it) => it.fill);       // what a layout's PDF / print draws (even-odd)
+  assert.equal(sheet.length, 1);
+  assert.ok(containsFill(sheet[0].ops, [10, 10]), 'in the big square'); assert.ok(!containsFill(sheet[0].ops, [30, 30]), 'nested circle: hole'); assert.ok(!containsFill(sheet[0].ops, [95, 50]), 'crossing overlap: hole');
+});
+
+test('layout Break Apart of a Combined object: its outlines come back in its slot and group, the part and block go, the fill is per closed member', () => {
+  const lay = layoutOf(); combineOn(lay, [0, 2, 1]);
+  const v = LD.objectDoc(lay), ent = v.raw.entities[0], r = breakApart(v.raw, new Set([0]));
+  assert.equal(r.error, undefined);
+  LD.objectCommit(lay, v, r.entities, (() => { let n = 0; return () => 'p' + n++; })(), ent, r.blocks);
+  assert.equal(lay.placed.length, 4);
+  assert.deepEqual(lay.placed.map((p) => p.g || null), ['g1', 'g1', 'g1', null], 'the pieces stay in the group');
+  assert.ok(!Object.values(lay.parts).some((p) => /^Combined/.test(p.name)), 'no Combined part is left');
+  assert.deepEqual(LD.objectDoc(lay).raw.entities.map((e) => e.type), ['LWPOLYLINE', 'CIRCLE', 'LWPOLYLINE', 'LINE']);
 });

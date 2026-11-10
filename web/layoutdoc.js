@@ -169,7 +169,7 @@ export function objectSelection(lay, placed, selected, skip = () => false) {
 }
 const OBJ_NAMES = { LINE: 'Line', ARC: 'Arc', CIRCLE: 'Circle', LWPOLYLINE: 'Polyline', POLYLINE: 'Polyline', ELLIPSE: 'Ellipse', SPLINE: 'Spline', SOLID: 'Solid', MTEXT: 'Text' };
 /** What a command left of objectDoc(lay) (`entities`): objects whose entity is gone are removed (and their part, if nothing else is placed from it), each new entity becomes an object. */
-export function objectCommit(lay, view, entities, newId, heir) {       // heir: the entity of `view` whose group, lock and place a joined result takes
+export function objectCommit(lay, view, entities, newId, heir, blocks = view.raw.blocks) {       // heir: the entity of `view` whose group, lock and place a joined result takes; blocks: where a new INSERT's blocks are (the command's result)
   const have = new Set(entities), gone = new Set(), layers = layersOf(lay);
   for (const [e, i] of view.at) if (!have.has(e)) gone.add(i);
   const oneAt = gone.has(view.at.get(heir)) ? view.at.get(heir) : gone.size === 1 ? [...gone][0] : -1, one = lay.placed[oneAt];       // split pieces inherit the source member's group and lock, as a single replacement does
@@ -178,16 +178,20 @@ export function objectCommit(lay, view, entities, newId, heir) {       // heir: 
   lay.placed = lay.placed.filter((_, i) => !gone.has(i));
   const used = new Set(lay.placed.map((p) => p.partId));
   for (const [id, part] of Object.entries(lay.parts)) if (part.obj && !used.has(id)) delete lay.parts[id];
-  const names = new Set(Object.values(lay.parts).map((p) => p.name));
+  const names = new Set(Object.values(lay.parts).map((p) => p.name)), back = view.back?.get(oneAt);       // back: the part's own block names, as objectReplace
   for (const e of entities) {
     if (view.at.has(e)) continue;
     e.ps = false;
-    const part = objectPart(newId(), one && oneName && !names.has(oneName) ? oneName : nextName(OBJ_NAMES[e.type] || 'Object', names), e, layers, {}, e.type === 'INSERT' ? blocksUsed(view.raw.blocks, [e]) : {}), pl = part && objectPlacement(part);
+    const own = {};       // a new block object keeps its blocks, under the part's own names
+    if (e.type === 'INSERT') for (const [n, b] of Object.entries(blocksUsed(blocks, [e]))) own[back?.get(n) ?? n] = back ? { ...b, entities: b.entities.map((x) => retarget(x, back)) } : b;
+    const kept = back ? retarget(e, back) : e, combined = e.type === 'INSERT' && /^combined /i.test(String(e.r.v[e.r.c.indexOf(2)]).trim());
+    const reuse = one && oneName && !names.has(oneName) && !combined && !/^combined/i.test(oneName);       // a Combined result and the pieces of one get names of their own
+    const part = objectPart(newId(), reuse ? oneName : nextName(combined ? 'Combined' : OBJ_NAMES[e.type] || 'Object', names), kept, layers, {}, own), pl = part && objectPlacement(part);
     if (!part) continue;
     if (one) Object.assign(pl, one.g ? { g: one.g } : {}, one.lock ? { lock: true } : {});
     names.add(part.name); lay.parts[part.id] = part;
     if (one) lay.placed.splice(slot++, 0, pl); else lay.placed.push(pl);
-    bakedCache.set(part, new Map([[bakeKey(pl), e]]));
+    bakedCache.set(part, new Map([[bakeKey(pl), kept]]));
   }
 }
 

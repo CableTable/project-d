@@ -29,8 +29,9 @@ export const partsOf = (block) => ({ hatch: block.entities.find((x) => x.type ==
 
 const reset = (e) => ({ ...e, layer: '0', aci: 0, tc: null, lw: -2, lt: 'BYBLOCK', fill: undefined });     // ByBlock in everything: the INSERT's look shows
 
-/** → { entities, blocks, selected, name, count, filled } or { error }. `selection`: entity indexes in pick order; the last one decides the look. */
-export function combine(raw, selection, locked = new Set()) {
+/** → { entities, blocks, selected, name, count, filled, heir (the last pick) } or { error }. `selection`: entity indexes in pick order; the last one decides the look.
+ * `reserved`: more block names (lower case) the new "Combined n" must not take (a layout's other parts' blocks). */
+export function combine(raw, selection, locked = new Set(), reserved = new Set()) {
   const picked = [...selection];
   if (picked.length < 2) return { error: 'select at least 2 outlines first' };
   const ents = picked.map((i) => raw.entities[i]), last = ents.at(-1), flattened = new Set(), members = [];
@@ -51,7 +52,7 @@ export function combine(raw, selection, locked = new Set()) {
     catch (err) { return { error: err.message }; }       // the explode transform refuses (a tilted insert, a degenerate scale): so does Combine
     flattened.add(name);
   }
-  const taken = new Set(Object.keys(raw.blocks).map((n) => n.toLowerCase()));
+  const taken = new Set([...Object.keys(raw.blocks).map((n) => n.toLowerCase()), ...reserved]);
   let n = 1; while (taken.has((PREFIX + n).toLowerCase())) n++;
   const name = PREFIX + n, closed = members.filter(closedOutline);
   const hatch = key && closed.length ? fillHatch({ ...closed[0], fill: key, layer: '0' }, closed.slice(1)) : null;
@@ -61,5 +62,5 @@ export function combine(raw, selection, locked = new Set()) {
   const blocks = { ...raw.blocks, [name]: { base: [0, 0], xref: false, entities: hatch ? [hatch, ...members] : members } };
   const used = usedBlocks(blocks, entities);
   for (const f of flattened) if (!used.has(f)) delete blocks[f];       // a Combined object nothing uses any more goes with it
-  return { entities, blocks, selected: new Set([entities.indexOf(made)]), name, count: members.length, filled: !!hatch };
+  return { entities, blocks, selected: new Set([entities.indexOf(made)]), name, count: members.length, filled: !!hatch, heir: last };
 }

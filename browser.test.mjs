@@ -22542,6 +22542,116 @@ try {
     await menuItem('View', 'Theme: light'); await closeTabs(/./);
   });
 
+  await step('TODO 218b: Combine on a layout and in Compare, refusals, Break Apart back, Undo, PDF holes', async () => {
+    await closeTabs(/./);
+    const lay = newLayout('Combine 218b'), raw = newDoc(4);
+    lay.layers = newDoc(4).layers;
+    addEntities(raw, dxfPoly([[0, 0], [100, 0], [100, 60], [0, 60]], { closed: true }));
+    lay.parts.part = makePart('part', 'Plate', raw, 1); lay.placed.push({ partId: 'part', x: 650, y: 350, rot: 0 });
+    for (const [id, e, extra] of [['a', dxfPoly([[100, 400], [300, 400], [300, 550], [100, 550]], { closed: true })], ['b', dxfCircle(150, 475, 25)],
+      ['c', dxfPoly([[250, 450], [350, 450], [350, 500], [250, 500]], { closed: true, fill: 'aci:1' })], ['d', dxfLine(400, 200, 500, 200)], ['e', dxfLine(400, 100, 500, 100), { lock: true }],
+      ['f1', dxfLine(400, 300, 500, 300), { g: 'g9' }], ['f2', dxfLine(400, 320, 500, 320), { g: 'g9' }]]) {
+      lay.parts[id] = objectPart(id, id, e, lay.layers); lay.placed.push({ ...objectPlacement(lay.parts[id]), ...extra });
+    }
+    const name = 'combine218b.dxf';
+    await t('picker').setInputFiles({ name, mimeType: 'text/plain', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
+    await page.waitForFunction((n) => document.querySelector('.tabs .dtab.on .tname').textContent === n, name);
+    await page.locator('[data-tool=select]').click();
+    const key = async (k) => { await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press(k); };
+    const readout = async (re) => { try { await page.waitForFunction((s) => new RegExp(s).test(document.querySelector('[data-testid=sel-readout]')?.textContent || ''), re.source, { timeout: 5000 }); } catch (e) { throw new Error('readout ' + re + ' != ' + (await page.locator('[data-testid=sel-readout]').allTextContents())); } };
+    const labels = async () => {
+      await menuItem('Edit', 'Undo history…'); await t('hist-dialog').waitFor();
+      const rows = await page.locator('[data-testid=hist-row]:not(.later) > span:last-child').allTextContents();
+      await page.keyboard.press('Escape'); await t('hist-dialog').waitFor({ state: 'detached' });
+      return rows.slice(1);
+    };
+    const one = () => page.waitForFunction(() => document.querySelectorAll('[data-group=tools] .sel-box').length === 1);
+    const red = async (x, y) => {
+      await page.mouse.move(2, 2); await page.waitForTimeout(100);
+      return t('drawing').evaluate((c, pt) => {
+        const b = c.getBoundingClientRect(), [r, g, bl, a] = c.getContext('2d').getImageData(Math.round((pt.x - b.x) * c.width / b.width), Math.round((pt.y - b.y) * c.height / b.height), 1, 1).data;
+        return r > 245 && g < 10 && bl < 10 && a > 245;
+      }, await at(x, y));
+    };
+    const shoot = async (nm) => { for (const th of ['light', 'dark']) { await menuItem('View', 'Theme: ' + th); await page.waitForTimeout(150); await page.screenshot({ path: `${shotDir}/${nm}-${th}.png` }); } await menuItem('View', 'Theme: light'); };
+    const pickRing = async () => { await page.keyboard.press('Escape'); await click(175, 475); await click(100, 475, { shift: true }); await click(350, 475, { shift: true }); await readout(/^3 parts/); };
+    const n0 = await nParts(), l0 = (await labels()).length;
+    assert.equal(n0, 8, 'the plate and seven objects');
+    assert.equal(await red(325, 475), true, 'the loose filled square is red'); assert.equal(await red(120, 420), false, 'the big square is not');
+
+    // refusals: a placed part, a locked object, one object: a status-line reason, nothing changes, no Undo step
+    await click(100, 475); await page.locator('[data-group=parts] .part-hit:not(.ob)').first().click({ force: true, modifiers: ['Shift'] }); await readout(/^2 parts/);
+    await key('Control+l'); await said(/^Combine works on loose layout outlines; open the part as a drawing to combine there/);
+    await page.keyboard.press('Escape'); await click(450, 200); await click(450, 100, { shift: true }); await readout(/^2 parts/);
+    await key('Control+l'); await said(/^Combine: a locked or hidden object is in the pick/);
+    await page.keyboard.press('Escape'); await click(100, 475); await one();
+    await key('Control+l'); await said(/^Combine: select at least 2 outlines first/);
+    assert.equal(await nParts(), n0); assert.equal((await labels()).length, l0, 'no Undo step for a refusal');
+
+    // Combine: the circle first, the big square, the filled crossing square last (it decides the look and the fill)
+    await pickRing();
+    await key('Control+l');
+    await said(/^Combine: 3 outlines are one object \(Combined 1\) with the colour, width and layer of the last one picked \(0\); the fill has even-odd holes/);
+    assert.equal(await nParts(), n0 - 2); assert.equal((await labels()).at(-1), 'Combine'); assert.equal((await labels()).length, l0 + 1, 'one Undo step');
+    await one();
+    await page.waitForFunction(() => document.querySelector('[data-testid=prop-chip]')?.textContent === 'Combined (3 outlines)');
+    await page.keyboard.press('Escape');
+    assert.equal(await red(120, 420), true, 'the big square is filled'); assert.equal(await red(150, 475), false, 'the circle inside is a hole');
+    assert.equal(await red(275, 475), false, 'the crossing overlap is a hole'); assert.equal(await red(325, 475), true, 'the crossing square outside the big one is filled');
+    await shoot('combine-layout-result');
+    await click(100, 475); await one();
+    const wide = page.viewportSize(); await page.setViewportSize({ width: 1024, height: 768 });       // the Modify menu on a layout (a layout has no Modify ribbon tab): Combine and Break Apart are enabled
+    for (const th of ['light', 'dark']) {
+      await menuItem('View', 'Theme: ' + th); await page.locator('[data-menu=Modify]').click();
+      for (const b of ['Combine', 'Break Apart']) assert.equal(await page.getByRole('menuitem', { name: b, exact: true }).isEnabled(), true, b + ' is enabled on a layout');
+      await page.screenshot({ path: `${shotDir}/combine-layout-menu-1024-${th}.png` }); await page.locator('[data-menu=Modify]').click();
+    }
+    await menuItem('View', 'Theme: light'); await page.setViewportSize(wide); await page.keyboard.press('Escape');
+
+    // Undo and Redo; Break Apart (Ctrl+K) gives the outlines back in one step; Undo brings the Combined object back
+    await key('Control+z'); assert.equal(await nParts(), n0); await readout(/^3 parts/);
+    await key('Control+y'); assert.equal(await nParts(), n0 - 2);
+    await click(100, 475); await key('Control+k'); await said(/^Break Apart: the Combined object is separate outlines, still selected/);
+    assert.equal(await nParts(), n0); assert.equal((await labels()).at(-1), 'Break Apart'); await readout(/^3 parts/);
+    assert.equal(await red(120, 420), true, 'each closed outline is filled again, on its own');
+    await key('Control+z'); assert.equal(await nParts(), n0 - 2); assert.equal((await labels()).at(-1), 'Combine');
+
+    // a group and the Combined object picked together: each splits by its own rule, one Undo
+    await page.keyboard.press('Escape'); await click(450, 300); await click(100, 475, { shift: true }); await readout(/^3 parts/);
+    await key('Control+k'); await said(/^Break Apart: the Combined object is separate outlines/);
+    assert.equal(await nParts(), n0); assert.equal((await labels()).length, l0 + 2, 'one step for both');
+    await page.keyboard.press('Escape'); await click(450, 300); await one();
+    await key('Control+z'); assert.equal(await nParts(), n0 - 2); await page.keyboard.press('Escape'); await click(450, 300); await readout(/^2 parts|Group/);
+
+    // save and reopen: still one Combined object with its holes; Break Apart works on the reopened layout
+    const text = (await downloaded(() => page.keyboard.press('Control+s'))).text;
+    await closeTabs(/./);
+    await t('picker').setInputFiles({ name: 'combine218b-reopened.dxf', mimeType: 'text/plain', buffer: Buffer.from(text, 'latin1') });
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'combine218b-reopened.dxf');
+    assert.equal(await nParts(), n0 - 2);
+    assert.equal(await red(150, 475), false, 'the hole is still there'); assert.equal(await red(275, 475), false); assert.equal(await red(120, 420), true);
+    await click(100, 475); await page.waitForFunction(() => document.querySelector('[data-testid=prop-chip]')?.textContent === 'Combined (3 outlines)');
+    await shoot('combine-layout-reopened');
+    await key('Control+k'); await said(/^Break Apart: the Combined object is separate outlines/); assert.equal(await nParts(), n0);
+    await closeTabs(/./);
+
+    // Compare: the picked snapshot's drawing is combined and Compare shows it at once; a hidden snapshot gives the note
+    const doc = newDoc();
+    addEntities(doc, dxfPoly([[20, 20], [120, 20], [120, 100], [20, 100]], { closed: true }), dxfCircle(50, 60, 15), dxfPoly([[100, 50], [150, 50], [150, 80], [100, 80]], { closed: true, fill: 'aci:1' }));
+    await t('picker').setInputFiles({ name: 'cmp218b.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(doc)) });
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'cmp218b.dxf');
+    await page.keyboard.press('Escape'); await typeCmd('compare');
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'Compare');
+    await t('cmp-eye').first().click(); await key('Control+l'); await said(/^Show .* to edit$/);
+    await t('cmp-eye').first().click();
+    await key('Control+a'); await key('Control+l'); await said(/^Combine: 3 outlines are one object \(Combined 1\)/);
+    await shoot('combine-compare');
+    await page.locator('.dtab').filter({ has: page.locator('.tname', { hasText: /^cmp218b.dxf$/ }) }).click();
+    assert.equal(await entCount(), 1, 'the snapshot\'s drawing holds one Combined object');
+    assert.deepEqual(errors, []);
+    await closeTabs(/./);
+  });
+
   await step('TODO 122a: Shaping (Modify menu, WELD / SHAPETRIM / INTERSECT): two squares, each operation gives the exact area in one undo step; Trim cuts the last picked one and keeps the cutter; open outlines and too few outlines say so', async () => {
     const theme = async (name) => { await menuItem('View', 'Theme: ' + name); await page.waitForTimeout(150); };
     await closeTabs(/./);

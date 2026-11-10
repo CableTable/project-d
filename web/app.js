@@ -483,7 +483,7 @@ function buildMenus() {
   menus.Modify.push(['Burst', burstSelected]);
   menus.Modify.push(['Explode', explodeSelected, 'X']);
   menus.Modify.push(['Break Apart', breakApartSelected, 'Ctrl+K', null, 'Separate a group or block into outlines (Ctrl+K)']);
-  menus.Modify.push(['Combine', combineSelected, 'Ctrl+L', () => !curLay(), 'Make the selected outlines one object (Ctrl+L)']);
+  menus.Modify.push(['Combine', combineSelected, 'Ctrl+L', null, 'Make the selected outlines one object (Ctrl+L)']);
   // Shaping (TODO 122): the dropdown has no sub-menus, so its items sit together after a separator, each named Shaping: …
   menus.Modify.push(...Object.entries(SH.OPS).map(([op, o], i) => ['Shaping: ' + o.label, () => shapeSelection(op), null, null, SHAPING_TITLE[op], i === 0]));
   const modifyItems = menus.Modify;
@@ -4222,7 +4222,7 @@ function runCommand(cmd) {
   if (!cmd) return;
   const n = cmd.name, label = n[0].toUpperCase() + n.slice(1), lay = curLay();
   if (cmd.where === 'layout' && !lay) { note(`${label} is on a layout tab: New layout, or Add to layout`); return; }
-  if (cmd.where === 'draw' && lay && cmd.cat !== 'Draw' && n !== 'textoutlines' && n !== 'explode' && n !== 'dimension' && !DIM_OF[n] && !LAY_MODS.includes(TOOL_OF[n] || n)) { note(`${label} works on a drawing tab: open a drawing first`); return; }
+  if (cmd.where === 'draw' && lay && cmd.cat !== 'Draw' && n !== 'textoutlines' && n !== 'combine' && n !== 'explode' && n !== 'dimension' && !DIM_OF[n] && !LAY_MODS.includes(TOOL_OF[n] || n)) { note(`${label} works on a drawing tab: open a drawing first`); return; }
   if (DIM_OF[n]) { if (cmpDoc() && !cmpEdit()) return; if (dimTarget()) setDimType(DIM_OF[n]); else note('Dimensions work on a drawing tab or a layout: open one first'); }
   else if (DO[n]) DO[n]();
   else setTool(TOOL_OF[n] || n);
@@ -5306,8 +5306,39 @@ async function textToOutlines() {
   note(`${count} → ${r.ents.length} outline${r.ents.length === 1 ? '' : 's'}` + (substitutions.length ? '. Fonts: ' + substitutions.map(({ asked, shown }) => `${asked} → ${shown}`).join(', ') : '') + (subs.length ? `. Font file not found, used the fallback font (${subs.join(', ')})` : '') + missing + notes + '. Ctrl+Z takes them back');
 }
 
+const objEntity = (v, i) => v.raw.entities.find((e) => v.at.get(e) === i);       // the entity of layObjDoc `v` for lay.placed[i]
+const isCombinedObj = (x) => x.p.src === 'loose' && !!x.part.obj && x.part.raw.entities[0].type === 'INSERT' && !!combinedLabel(x.part.raw.blocks, x.part.raw.entities[0]);
+/** A picked layout object Combine / Break Apart cannot take: locked, hidden, or on a hidden / frozen / locked layer (they are not in the objects' drawing the way a pick is). */
+const layObjOff = (x) => { const l = LD.layersOf(curLay())[x.part.raw.entities[0].layer]; return !!(x.p.lock || state.hidden.parts || partHid(x.p) || l?.off || l?.frozen || l?.flags & 4); };
+/** Break Apart on a layout (218b): each picked Combined object becomes its outlines (the group / lock / slot stay), a whole group picked with them is ungrouped; one Undo step. */
+function layBreakCombined(d, targets, rest) {
+  const lay = d.lay, marks = targets.map((x) => lay.placed[x.p.i]);       // by placement: every split moves the indexes
+  if (targets.some(layObjOff) || rest.some((x) => x.p.lock)) { note('Break Apart: a locked or hidden object is in the pick; unlock or show it first'); return; }
+  const v0 = layObjDoc(d);
+  for (const pl of marks) {       // every split answers before anything changes
+    const e = objEntity(v0, lay.placed.indexOf(pl)), r = e ? breakApart(v0.raw, new Set([v0.raw.entities.indexOf(e)])) : { error: 'the object cannot be separated' };
+    if (r.error) { note('Break Apart: ' + r.error); return; }
+  }
+  const had = new Set(Object.keys(lay.parts));
+  pushLay(d, null, '', 'Break Apart');
+  for (const x of rest) { const { g, ...p } = lay.placed[x.p.i]; lay.placed[x.p.i] = p; }
+  const kept = new Set(rest.map((x) => lay.placed[x.p.i]));
+  for (const pl of marks) {
+    const v = layObjDoc(d), e = objEntity(v, lay.placed.indexOf(pl)), r = breakApart(v.raw, new Set([v.raw.entities.indexOf(e)]));
+    LD.objectCommit(lay, v, r.entities, () => 'o' + uid(), e, r.blocks);
+  }
+  tidyGroups(lay); touch(d); update();
+  selectMany(placedNow.flatMap((p, k) => (p.src === 'loose' && (!had.has(p.partId) || kept.has(lay.placed[p.i])) ? [k] : []))); update();
+  note(`Break Apart: ${targets.length === 1 ? 'the Combined object is' : targets.length + ' Combined objects are'} separate outlines, still selected. Ctrl+Z restores ${targets.length === 1 ? 'it' : 'them'}`);
+}
 function breakApartSelected() {
   if (curLay()) {
+    const items = selItems(), combined = items.filter(isCombinedObj);
+    if (combined.length && !wholeGroup()) {
+      const rest = items.filter((x) => !combined.includes(x));
+      if (rest.length && !A.isWholeGroup(rest.map((x) => ({ g: x.p.g })), groupSize)) { note('Break Apart: select Combined objects, or one group, or both'); return; }
+      layBreakCombined(curDoc(), combined, rest); return;
+    }
     if (!wholeGroup()) { note('Break Apart: select one group first'); return; }
     if (selItems().some((x) => x.p.lock)) { note('Break Apart: the group is locked; Unlock it first'); return; }
     const r = editFlags('Break Apart', (pl) => { const { g, ...rest } = pl; return rest; });
@@ -5315,7 +5346,7 @@ function breakApartSelected() {
     return;
   }
   const d = editable();
-  if (!d) { note('Break Apart: open a drawing or layout first'); return; }
+  if (!d) { if (!cmpDoc() || cmpEdit()) note('Break Apart: open a drawing or layout first'); return; }
   const r = breakApart(d.raw, d.sel, d.locked);
   if (r.error) { note('Break Apart: ' + r.error); return; }
   pushHistory(d, { ...snapshotOf(d), sel: [...d.sel] }, 'Break Apart');
@@ -5326,9 +5357,9 @@ function breakApartSelected() {
 
 /** Combine (218a): the picked outlines become one object (a block "Combined n") that takes the LAST picked one's colour, width, linetype and layer; one Undo step. */
 function combineSelected() {
-  if (curLay()) { note('Combine: works on drawing tabs for now; open a drawing'); return; }
+  if (curLay()) { layCombine(); return; }
   const d = editable();
-  if (!d) { note('Combine: open a drawing first'); return; }
+  if (!d) { if (!cmpDoc() || cmpEdit()) note('Combine: open a drawing first'); return; }      // in Compare, cmpEdit() says why a part or hidden snapshot cannot
   const r = combine(d.raw, d.sel, d.locked);
   if (r.error) { note('Combine: ' + r.error); return; }
   const last = d.raw.entities[[...d.sel].at(-1)];
@@ -5336,6 +5367,24 @@ function combineSelected() {
   restore(d, r);
   setSel(d, r.selected);
   note(`Combine: ${r.count} outlines are one object (${r.name}) with the colour, width and layer of the last one picked (${last.layer})` + (r.filled ? '; the fill has even-odd holes' : '') + '. Ctrl+Z separates them');
+}
+
+/** Combine on a layout (218b): its loose outlines become one object (a block "Combined n", the last pick's look, group and slot). A part, a step-and-repeat copy or a locked / hidden object in the pick is refused
+ * here, before the objects' drawing is built (it leaves them out without a word); no Undo step. */
+function layCombine() {
+  const d = curDoc(), items = selItems();
+  if (items.length < 2) { note('Combine: select at least 2 outlines first'); return; }
+  if (items.some((x) => x.p.src !== 'loose' || !x.part.obj)) { note('Combine works on loose layout outlines; open the part as a drawing to combine there'); return; }
+  if (items.some(layObjOff)) { note('Combine: a locked or hidden object is in the pick; unlock or show it first'); return; }
+  const v = layObjDoc(d), sel = new Set(items.map((x) => v.raw.entities.indexOf(objEntity(v, x.p.i))));       // in pick order: the last one decides
+  if (sel.has(-1)) { note('Combine: an object in the pick cannot be combined'); return; }
+  const r = combine(v.raw, sel, new Set(), LD.dimensionNames(d.lay).taken);
+  if (r.error) { note('Combine: ' + r.error); return; }
+  const had = new Set(Object.keys(d.lay.parts));
+  if (!commit(v, { entities: r.entities, blocks: r.blocks, heir: r.heir }, 'Combine')) return;
+  tidyGroups(d.lay); update();       // a group the pick left with one member is none
+  selectMany(placedNow.flatMap((p, k) => (p.src === 'loose' && !had.has(p.partId) ? [k] : []))); update();
+  note(`Combine: ${r.count} outlines are one object (${r.name}) with the colour, width and layer of the last one picked (${r.heir.layer})` + (r.filled ? '; the fill has even-odd holes' : '') + '. Ctrl+Z separates them');
 }
 
 /** Explode on a layout (156b4): a step-and-repeat grid becomes separate placed parts, a placed part its loose objects, a dimension its lines, arrows and text; one level, one undo step. */
@@ -6010,7 +6059,7 @@ function commit(d, next, label, keepSel) {       // keepSel (a grip edit's objec
 function layObjCommit(v, next, label, keepSel) {
   const d = v.vlay;
   pushLay(d, keepSel ? { ...laySnap(d.lay), grip: true } : null, '', label);
-  LD.objectCommit(d.lay, v, next.entities, () => 'o' + uid(), next.heir);
+  LD.objectCommit(d.lay, v, next.entities, () => 'o' + uid(), next.heir, { ...v.raw.blocks, ...next.blocks });       // next.blocks: a new block object (Combine) brings its block
   touch(d); update();       // the layout itself: a run ended by a tab change commits after state.doc moved on
 }
 /** A grip edit of layout objects (each [entity of layObjDoc `v`, what it becomes]): the same objects, in one undo step. False (and nothing changed) when nothing is left of one. */
