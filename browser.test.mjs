@@ -22490,6 +22490,7 @@ try {
     await key('Control+l');
     await said(/^Combine: 3 outlines are one object \(Combined 1\) with the colour, width and layer of the last one picked \(Top\); the fill has even-odd holes/);
     assert.equal(await entCount(), 2); await waitSel('1 selected');
+    await page.waitForFunction(() => document.querySelector('[data-testid=prop-chip]')?.textContent === 'Combined (3 outlines)');
     assert.equal(await t('prop-chip').textContent(), 'Combined (3 outlines)');
     assert.equal((await histLabels()).at(-1), 'Combine');
     await page.keyboard.press('Escape');
@@ -22532,6 +22533,7 @@ try {
     const text = (await downloaded(() => page.keyboard.press('Control+s'))).text;
     await open(text, 'combine-reopened.dxf');
     await click(20, 60); await waitSel('1 selected');
+    await page.waitForFunction(() => document.querySelector('[data-testid=prop-chip]')?.textContent === 'Combined (3 outlines)');
     assert.equal(await t('prop-chip').textContent(), 'Combined (3 outlines)');
     await page.keyboard.press('Escape');
     assert.equal(await red(50, 60), false, 'the hole is still there'); assert.equal(await red(110, 65), false); assert.equal(await red(30, 30), true);

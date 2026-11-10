@@ -4,6 +4,7 @@
 import { ACI, keyRgb, pack420 } from './colour.js';
 import { flatten, hatchOps, polyOps, arcSweep, opsBox } from './drawing.js';
 import { withColour, effectiveColour } from './props.js';
+import { isCombined } from './combine.js';
 
 const TAU = Math.PI * 2;
 const val = (r, code, d = 0) => { const k = r.c.indexOf(code); return k < 0 ? d : Number(r.v[k]) || 0; };
@@ -218,7 +219,7 @@ export const hatchKey = (h) => h.tc != null ? 'tc:' + h.tc : h.aci >= 1 && h.aci
 export function linkFills(doc) {
   for (const [name, list] of [[null, doc], ...Object.entries(doc.blocks || {})]) {
     const ents = list.entities;
-    if (!ents?.some((e) => e.type === 'HATCH') || name?.startsWith('Combined ')) continue;       // a Combined object keeps its one HATCH over all its members (combine.js)
+    if (!ents?.some((e) => e.type === 'HATCH') || isCombined(name, list)) continue;       // a Combined object keeps its one HATCH over all its members (combine.js)
     const gone = new Set(), candidates = new Map();
     ents.forEach((h, i) => {
       const o = ents[i + 1], loops = o && !o.fill && !h.hidden && h.layer === o.layer && !!h.ps === !!o.ps && closedOutline(o) && solidLoops(h);

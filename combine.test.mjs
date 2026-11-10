@@ -95,6 +95,16 @@ test('a fill is ONE even-odd HATCH over every closed member: a nested circle and
   assert.equal(writeDxf(back).split('\n').filter((l) => l.trim() === 'HATCH').length, 1, 'one HATCH written');
 });
 
+test('an own block "Combined x" holding text is no Combined object: saved and reopened, its fill is linked', () => {
+  const raw = newDoc();
+  addBlock(raw, 'Combined x', [rect(0, 0, 10, 10, { fill: 'aci:1' }), text(1, 1, 2, 'hi')]);
+  addEntities(raw, insert('Combined x', 0, 0));
+  const back = readDxf(writeDxf(raw)), types = back.blocks['Combined x'].entities.map((e) => e.type);
+  assert.ok(!types.includes('HATCH'), 'HATCH folded into the outline: ' + types);
+  assert.equal(back.blocks['Combined x'].entities.find((e) => e.type === 'LWPOLYLINE').fill, 'aci:1');
+  assert.equal(fills(back).length, 1);
+});
+
 test('Break Apart on a Combined object drops the HATCH and every closed member comes back filled; other copies keep theirs', () => {
   const raw = fixture(); raw.entities[2].fill = 'aci:1';
   const f = combine(raw, new Set([0, 1, 2])), doc = { ...raw, entities: [...f.entities, insert('Combined 1', 500, 0, { layer: 'Cut' })], blocks: f.blocks };
