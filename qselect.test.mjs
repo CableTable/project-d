@@ -81,3 +81,13 @@ test('Exclude complements type and property together within the scope; hidden, f
   assert.deepEqual(select({ property: 'unknown' }), []);
   assert.deepEqual(select({ operator: 'all' }, [entity('POINT', [[10, 0], [20, 0]])]), [0]);
 });
+
+test('TODO 222b: an mm drawing parses a number value as Number() did; only inch / ft / ft-in take marks', () => {
+  const len = (value, unit) => select({ type: 'LINE', property: 'length', operator: 'eq', value, unit });
+  assert.deepEqual(len('5e1', 'mm'), [0, 1]);       // 1e3-style input still works in mm
+  assert.deepEqual(len('5e1'), [0, 1]);
+  assert.deepEqual(len('50,0', 'mm'), []);          // decimal comma is not a number in mm (it was not before the drawing unit)
+  assert.deepEqual(len('50', 'mm'), [0, 1]);
+  assert.deepEqual(len(`0'-1.97"`, 'ft-in'), [0, 1]);       // 50 mm = 1.9685"
+  assert.deepEqual(len('1.969"', 'inch'), [0, 1]);
+});

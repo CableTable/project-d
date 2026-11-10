@@ -25,6 +25,11 @@
     },
     "fs:allow-read-dir",
     "fs:allow-exists",
+    {
+      "identifier": "fs:allow-remove",
+      "allow": [{ "path": "**/*.pdunits.json" }, { "path": "**\\*.pdunits.json" }],
+      "deny": [{ "path": "C:/Windows/Fonts" }, { "path": "C:/Windows/Fonts/**" }]
+    },
     "fs:allow-stat",
     {
       "identifier": "fs:scope",

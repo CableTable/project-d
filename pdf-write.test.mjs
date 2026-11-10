@@ -197,6 +197,58 @@ test('check print: fitted to the paper at a stated scale, with a title block', (
   assert.ok(tall.h > tall.w);
 });
 
+test('margins per side (TODO 217): Standard is today\'s 8 / 10 mm, Office printer 5 mm grows the printable area by 3 mm / 5 mm a side', () => {
+  const office = X.OFFICE_MARGINS;
+  assert.deepEqual(X.marginsOf({ page: 'tile' }), { top: 8, right: 8, bottom: 8, left: 8 });
+  assert.deepEqual(X.marginsOf({ page: 'check' }), { top: 10, right: 10, bottom: 10, left: 10 });
+  assert.deepEqual(X.marginsOf({ page: 'check', margins: { top: 'x', left: -4, right: 99 } }), { top: 10, right: 99, bottom: 10, left: 0 });   // junk → Standard's side; large margins reach printable-area validation
+  // Standard gives today's tile count and check scale
+  assert.deepEqual(X.tileGrid(1000, 700, 420, 297, X.marginsOf({ page: 'tile' })), X.tileGrid(1000, 700, 420, 297));
+  const src = srcOf('sample.dxf');
+  assert.equal(X.planPdf(src, { page: 'tile', tilePaper: 'A3', separate: false, margins: undefined }).count, 8);
+  near(X.planPdf(src, { page: 'check', separate: false }).pages[0].scale, X.checkFit(1000, 700, 297, 210).s);
+  // Office printer: the tile is 3 mm bigger a side, the check print is bigger
+  const t = X.tileGrid(1000, 700, 420, 297, office);
+  assert.deepEqual([t.tw, t.th], [410, 287]);
+  const plan = X.planPdf(src, { page: 'tile', tilePaper: 'A3', separate: false, margins: office });
+  assert.equal(plan.pages[0]._geo.tile.tw, 287);                           // the portrait page (fewer tiles) is picked: 297 − 10
+  assert.ok(plan.pages[0]._geo.tile.th > 400);
+  const std = X.checkFit(1000, 700, 297, 210), off = X.checkFit(1000, 700, 297, 210, true, office);
+  assert.ok(off.s > std.s);
+  near(off.s, Math.min((297 - 10) / 1000, (210 - 10 - 22) / 700));
+  assert.ok(X.planPdf(src, { page: 'check', separate: false, margins: office }).pages[0].scale > std.s);
+  // each side on its own: a 20 mm left margin moves the art 20 − 8 = 12 mm right and narrows the tile by 12
+  const lop = X.planPdf(src, { page: 'tile', tilePaper: 'A3', separate: false, margins: { top: 8, right: 8, bottom: 8, left: 20 } });
+  assert.equal(lop.pages[0]._geo.tile.tw, X.planPdf(src, { page: 'tile', tilePaper: 'A3', separate: false }).pages[0]._geo.tile.tw - 12);
+  assert.ok(text(lop.bytes()).length > 0);
+  // the 1:1 sheet page has no margin
+  assert.deepEqual(X.planPdf(src, { page: 'sheet', separate: false, margins: { top: 40, right: 40, bottom: 40, left: 40 } }).pages.map((p) => [p.w, p.h]), X.planPdf(src, { page: 'sheet', separate: false }).pages.map((p) => [p.w, p.h]));
+});
+
+test('TODO 217: custom tile labels follow the bottom margin; Standard and sheet output stay unchanged', () => {
+  const src = srcOf('sample.dxf');
+  for (const bottom of [0, 2, 5, 20]) {
+    const plan = X.planPdf(src, { page: 'tile', margins: { ...X.OFFICE_MARGINS, bottom } });
+    for (let i = 0; i < plan.count; i++) {
+      const label = plan.build(i).cmds.find((c) => c[0] === 'T' && c[2].startsWith('Tile '));
+      assert.equal(label[1][5], Math.max(1.5, bottom / 2));
+    }
+  }
+  const std = X.planPdf(src, { page: 'tile' }).build(0).cmds.find((c) => c[0] === 'T' && c[2].startsWith('Tile '));
+  assert.equal(std[1][5], 2.6);
+  assert.deepEqual(X.planPdf(src, { page: 'sheet', margins: X.OFFICE_MARGINS }).bytes(), X.planPdf(src, { page: 'sheet' }).bytes());
+});
+
+test('TODO 217: no printable area or room for tile overlap is refused; a valid orientation still works', () => {
+  const src = srcOf('sample.dxf');
+  for (const page of ['tile', 'check']) {
+    const paper = page === 'tile' ? { tilePaper: 'A4' } : { checkPaper: 'A4' };
+    assert.throws(() => X.planPdf(src, { page, ...paper, margins: { top: 150, right: 150, bottom: 150, left: 150 } }), /no printable area/);
+  }
+  assert.throws(() => X.planPdf(src, { page: 'tile', tilePaper: 'A4', margins: { top: 0, bottom: 0, left: 145, right: 145 } }), /no printable area/);
+  assert.ok(X.planPdf(src, { page: 'check', margins: { top: 100, bottom: 100, left: 0, right: 0 } }).pages[0].scale > 0);
+});
+
 test('text: escaping, WinAnsi, widths', () => {
   assert.equal(P.pdfString(P.winAnsi('a (b) c\\d')), '(a \\(b\\) c\\\\d)');
   assert.equal(P.pdfString(P.winAnsi('Ø12 ± 0.1° é')), '(\\330' + '12 \\261 0.1\\260 \\351)');
@@ -263,6 +315,18 @@ test('part: the source is the drawing\'s box plus a 10 mm border, its corner at 
   assert.ok(without.sheetH <= full.sheetH);
 });
 
+test('TODO 214d: part source pads a single horizontal or vertical line, but rejects a point', async () => {
+  const W = await import('./web/dxf-write.js');
+  for (const [x, y] of [[80, 0], [0, 80], [0, 0]]) {
+    const raw = W.newDoc(4); W.addEntities(raw, W.line(20, 20, 20 + x, 20 + y));
+    const src = X.partSource({ fl: D.flatten(raw), factor: 1 });
+    if (!x && !y) { assert.equal(src, null); continue; }
+    assert.ok(src, 'a single line exports');
+    assert.ok(src.sheetH > 0);
+    assert.deepEqual([src.sheetW, src.sheetH, src.origin], [x + 20, y + 20, [10, 10]]);
+  }
+});
+
 test('part, page cut to the part at 1:1: the MediaBox is the part plus the border, one page, no film options needed', () => {
   const s = partSrc(), plan = X.planPdf(s, { page: 'sheet', separate: false, mirror: false, crop: false, reg: false, strip: false, black: true });
   assert.equal(plan.count, 1);
@@ -322,4 +386,68 @@ test('freePdfName: never a name that is taken (in this run or on disk)', async (
   const onDisk = new Set(['bracket.pdf', 'bracket (2).pdf']);
   assert.equal(await X.freePdfName('bracket', async (n) => onDisk.has(n)), 'bracket (3).pdf');
   assert.equal(await X.freePdfName('other', async (n) => onDisk.has(n)), 'other.pdf');
+});
+
+test('TODO 215a: scale text parses as 1:50 or 2%, nothing else; A2 and A1 exist', () => {
+  assert.deepEqual(Object.keys(X.PAPERS), ['A4', 'A3', 'A2', 'A1', 'A0']);
+  assert.deepEqual(X.PAPERS.A2, [594, 420]); assert.deepEqual(X.PAPERS.A1, [841, 594]);
+  for (const [t, s] of [['1:50', 0.02], [' 1 : 50 ', 0.02], ['2:1', 2], ['2%', 0.02], ['50 %', 0.5], ['0.5%', 0.005], ['1:1000', 0.001], ['1000:1', 1000], ['100000%', 1000], ['.5:1', 0.5]]) near(X.parseScale(t), s, 1e-12, t);
+  for (const t of ['', 'abc', '0', '0%', '0:1', '1:0', '-1:5', '1:-5', '-5%', '1:1001', '1001:1', '0.09%', '100001%', '50', '1:2:3', '1/50', null, undefined, '1e2%']) assert.equal(X.parseScale(t), null, String(t));
+  assert.equal(X.percentText(0.02), '2%'); assert.equal(X.scaleText(0.02), '1 : 50'); assert.equal(X.percentText(1 / 3), '33.33%');
+});
+
+test('TODO 215a: custom scale is one check-style page when the sheet fits, with "scale 1 : n" and Subject; Standard check print is untouched', () => {
+  const src = srcOf('sample.dxf'), s = X.checkFit(1000, 700, 297, 210).s;
+  const plan = X.planPdf(src, { page: 'custom', customPaper: 'A3', scale: 0.25, separate: false });
+  assert.equal(plan.count, 1); assert.equal(plan.pages[0].tile, null); near(plan.pages[0].scale, 0.25);
+  const t = text(plan.bytes());
+  near(mediaBoxes(t)[0][0] / P.MM, 420); near(mediaBoxes(t)[0][1] / P.MM, 297);
+  assert.ok(t.includes('/Subject (Scale 1 : 4)'));
+  assert.ok(content(t, 0).includes('Scale 1 : 4') && content(t, 0).includes('Check print: not to be used as film'));
+  // at the scale a check print would pick, A4 custom is that check print, byte for byte (Mirror / Negative do not apply)
+  const check = X.planPdf(src, { page: 'check', checkPaper: 'A4', separate: false }).bytes();
+  assert.deepEqual(X.planPdf(src, { page: 'custom', customPaper: 'A4', scale: s, separate: false, mirror: true, negative: true }).bytes(), check);
+  assert.notDeepEqual(X.planPdf(src, { page: 'custom', customPaper: 'A4', scale: s * 1.01, separate: false }).bytes(), check);
+  // title block off: the page's free area grows by the block
+  assert.equal(X.planPdf(src, { page: 'custom', customPaper: 'A4', scale: 0.26, separate: false, titleBlock: { enabled: false } }).pages[0].tile, null);
+  assert.ok(X.planPdf(src, { page: 'custom', customPaper: 'A4', scale: 0.26, separate: false }).pages[0].tile);
+  // a part's page takes it too
+  assert.equal(X.planPdf(partSrc(), { page: 'custom', customPaper: 'A4', scale: 1, separate: false }).count, 1);
+});
+
+test('TODO 215a: custom scale too big for the paper tiles it at that scale; every tile says "scale 1 : n"; 217 margins apply', () => {
+  const src = srcOf('sample.dxf');
+  const plan = X.planPdf(src, { page: 'custom', customPaper: 'A3', scale: 0.5, separate: false });
+  const a = X.tileGrid(500, 350, 420, 297), b = X.tileGrid(500, 350, 297, 420), n = Math.min(a.cols * a.rows, b.cols * b.rows);
+  assert.equal(plan.count, n); assert.ok(n > 1);
+  plan.pages.forEach((p, i) => { assert.ok(p.tile); near(p.scale, 0.5); assert.ok(content(text(plan.bytes()), i).includes(`Tile ${i + 1}/${n}`) && content(text(plan.bytes()), i).includes('scale 1 : 2')); });
+  const g = plan.pages[0]._geo.tile, h = plan.pages[1]._geo.tile;
+  near(g.cols > 1 ? g.x0 + g.tw - h.x0 : h.y0 + h.th - g.y0, X.TILE.overlap);    // adjacent tiles overlap by 10 mm (page mm, at the scale)
+  near(g.y0 + g.th, 350);                                                       // the first row is the scaled sheet's top
+  // margins: 20 mm all round shrinks the printable area of a tile by 40 mm
+  const big = X.planPdf(src, { page: 'custom', customPaper: 'A3', scale: 0.5, separate: false, margins: { top: 20, right: 20, bottom: 20, left: 20 } });
+  assert.equal(big.pages[0]._geo.tile.tw, big.pages[0].w - 40); assert.equal(big.pages[0]._geo.tile.th, big.pages[0].h - 40);
+  assert.equal(X.planPdf(src, { page: 'custom', customPaper: 'A3', scale: 0.5, separate: false, mirror: true, negative: true }).bytes().length, plan.bytes().length);
+  // enlarging works too, on every paper, and no NaN anywhere
+  for (const paper of Object.keys(X.PAPERS)) for (const sc of [0.001, 0.02, 1, 2, 10]) {
+    let pl;
+    try { pl = X.planPdf(src, { page: 'custom', customPaper: paper, scale: sc, separate: false, crop: true, reg: true }); } catch (e) { assert.ok(e instanceof X.PageCapError); continue; }
+    if (pl.count > 1) assert.ok(pl.pages.every((p) => p.tile));
+    assert.ok(!/NaN|Infinity/.test(text(pl.bytes())), `${paper} ${sc}`);
+  }
+});
+
+test('TODO 215a (F7): custom scale never plans more than 60 pages, or an invalid scale', () => {
+  const src = srcOf('sample.dxf');
+  const big = () => X.planPdf(src, { page: 'custom', customPaper: 'A4', scale: 5, separate: false });
+  assert.throws(big, (e) => e instanceof X.PageCapError && e instanceof RangeError && e.pages > 60 && e.message === `Too many pages (${e.pages}): pick a bigger paper or a smaller scale`);
+  assert.throws(() => X.planPdf(src, { page: 'custom', customPaper: 'A4', scale: 1000, separate: false }), X.PageCapError);   // millions of tiles: counted, not generated
+  for (const scale of [0, -1, NaN, Infinity, 2000, 0.0005, undefined, '1:50']) assert.throws(() => X.planPdf(src, { page: 'custom', scale }), /Scale must be/);
+  // the invariant over a sweep: a plan is either refused with the cap error or has at most 60 pages (separations included)
+  let ok = 0, refused = 0;
+  for (const separate of [false, true]) for (const customPaper of Object.keys(X.PAPERS)) for (let sc = 0.05; sc < 6; sc += 0.1) {
+    try { const pl = X.planPdf(src, { page: 'custom', customPaper, scale: sc, separate }); assert.ok(pl.count <= X.PAGE_CAP); ok++; }
+    catch (e) { assert.ok(e instanceof X.PageCapError && e.pages > X.PAGE_CAP, `${customPaper} ${sc}: ${e.message}`); refused++; }
+  }
+  assert.ok(ok > 20 && refused > 20, `${ok} ok, ${refused} refused`);
 });

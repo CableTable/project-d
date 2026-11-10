@@ -40,6 +40,20 @@ test('colour and line type: keys, labels, setting them (a colour clears a true c
   assert.equal(P.withLayer(e, 'Cut').layer, 'Cut');
 });
 
+test('recent widths: valid custom numbers only, unique, newest five; ribbon labels and Custom last', () => {
+  assert.deepEqual(P.recentWidths(null), []);
+  assert.deepEqual(P.recentWidths([.37, .37, .1, .05, 0, -1, 328, Infinity, '0.63', null, .63], .42), [.42, .37, .63]);
+  let recent = [];
+  for (const value of [.31, .32, .33, .34, .35, .36, .34]) recent = P.recentWidths(recent, value);
+  assert.deepEqual(recent, [.34, .36, .35, .33, .32]);
+  assert.deepEqual(P.recentWidths(recent, .5), recent);
+  const options = P.widthOptions(.37, recent);
+  assert.deepEqual(options.slice(7, 9), [[null, ''], ['0.34', '0.34 mm']]);
+  assert.deepEqual(options.slice(-2), [['0.37', '0.37 mm'], ['custom', 'Custom…']]);
+  assert.equal(P.widthOptions(.34, recent).filter(([v]) => v === '0.34').length, 1);
+  assert.deepEqual(P.widthOptions('', []).at(-1), ['custom', 'Custom…']);
+});
+
 test('a line: length (editable), angle, ends; a new length moves the end along the line; varies when lengths differ', () => {
   const l = line(10, 10, 10, 60);
   assert.deepEqual(P.fieldsOf([l], 1).map((x) => [x.key, x.editable]), [['length', true], ['angle', false], ['startX', false], ['startY', false], ['endX', false], ['endY', false]]);

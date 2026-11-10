@@ -364,14 +364,29 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
 - [ ] 209. **Fix rounds after 2 failed ones run on Opus high** (tool ticket, his rule 2026-11-07 ~08:30 IST via Rook S39b): `rook.mjs build` / `knight` with `--fix` count the item's earlier fix rounds (the `--regrilled` / 3rd-fix count it already keeps); more than 2 -> `buildArgs` uses `--model claude-opus-5-5 --effort high` (King or Bishop account; Knight -> King instead). Add a WORKFLOW Rook-card line. Unit test for the count -> model pick.
 - [x] 210. **Text edit box follows pan / zoom** (bug, ticket T59, grilled by Bishop-support, `support/tickets.md`).
 - [x] 220. **Bishop-support on the new rules; fresh session at 120k context** (built: rook-kit `a0ae276`, Knight, review ship 2 Lows, npm test 239/0; not live yet: hq.json `support` field + `hq-install` + first `support-next` wait his OK) (tool ticket, KIT, his call 2026-11-08, grill `runs40/grill-220.md`): prompt to `rook-kit/hq/support-prompt.md` (all projects, cwd rook-hq, half size, facts via Haiku Explore, no self id rewrite); Stop hook under `BISHOP_SUPPORT=1` at >= 120k asks for `support/handover.md` then `rook.mjs support-next` (new uuid, start file rewritten with `--session-id`, new window).
-- [ ] 211. **Ctrl+V paste follows the cursor, lands on click; Ctrl+Shift+V = in place** (M, T60).
-- [ ] 212. **Snap preview toggle in Select mode** (S, T61).
-- [ ] 213. **Ribbon Line width: Custom… and last 5 custom widths** (S, T62).
-- [ ] 214. **PDF / Print: Selection only** (M, T63).
-- [ ] 215. **PDF / Print: custom scale, also in the preview bar** (M, T64).
+- [x] 211. **Ctrl+V paste follows the cursor, lands on click; Ctrl+Shift+V = in place** (M, T60).
+- [x] 212. **Snap preview toggle in Select mode** (S, T61).
+- [x] 213. **Ribbon Line width: Custom… and last 5 custom widths** (S, T62).
+- [x] 214. **PDF / Print: Selection only** (M, T63; done S41: 214a `4999cfb` drawing tab, 214b `1c5dd60` layout, 214c `b71ad5e` Compare; suite-b71ad5e green; Lows in runs41/lows.txt).
+- [ ] 215. **PDF / Print: custom scale, also in the preview bar** (M, T64; grill `runs41/grill-215.md`):
+  - [x] 215a. The dialog: Custom scale page, paper A4-A0, tiles (built: `1adbf7e`, King, review ship).
+  - [ ] 215b. The full-screen bar: Scale box beside Fit, "View 100%" relabel, margin fields.
 - [ ] 216. **Print… to the printer (Windows print dialog)** (M, T65).
 - [ ] 217. **PDF / Print: custom margins per side, Office printer 5 mm** (S, T66).
 - [ ] 218. **Combine (Ctrl+L) / Break Apart** (M, T67).
+- [x] 222. **Work in feet and feet-inches: a drawing unit per drawing** (built: `ff6c016`..`29ab4b1`, King + Knight, reviews ship after 2 fix rounds; open Lows: `linked-dimensions.test.mjs:31,50` base fails on TypeError not the label, `browser.test.mjs:279` re-reads after the wait; 15 `parseMm` fields (Pivot, Nudge, guides, Distance) still mm-only) (L, T70; grill `runs41/grill-222.md`): 222a core (parse / format, saved with the drawing, `units` command + status bar chooser, typed input), 222b display (rulers, Properties, status bar, Measure, areas, all tabs), 222c dimensions (ft / ft-in + Follow drawing unit).
+- [x] 221. **Support sessions start on effort medium** (built: rook-kit `96e6878`, King, review ship, npm test 255/0; start file updates on next `support-next`) (S, tool ticket, KIT, T68): `rook-kit/rook.mjs:151` support flags `--effort high` -> `medium` (+ `rook.test.mjs:26`), `rook-hq/support-prompt.md:15`, regenerate `support/start-bishop-support.cmd`; check WORKFLOW.md effort mentions.
+- [x] 223. **Sonnet + Opus advisor for Rook, builds, board, acad** (his call 2026-11-09; 2-build trial dropped; see 225).
+- [x] 224. **Rook start clears the account** (built: rook-kit `49ad1ee` on `king/224`, King, npm test 258/0, base FAIL quoted; review ship, picked `5742a96`) (S, tool ticket, KIT): `hq/start-rook.ps1` removes `CLAUDE_CONFIG_DIR` before the launch.
+- [x] 225. **Sonnet + Opus advisor beyond builds** (built: rook-kit `b80d895`, King, review ship, picked `cc44a1c`; grill `runs41/grill-225.md`).
+- [x] 225b. **Bishop-support gets the advisor** (built: rook-kit `d522140`, King, review ship, picked `b0b7a75`, npm test 257/0).
+- [x] 226. **Block big file reads for Rook** (built: rook-kit `c51ef2b` on `king/226`, picked `02eb859`, npm test 260/0, real `claude -p` denial quoted; held Low: PDF read with `pages` could be denied; unchecked: fires inside Explore subagents, live after Rook restart) (M, tool ticket, KIT; grill `runs41/grill-226.md`, source `runs41/research-x-claude-setups.md` #1): PreToolUse hook via `--settings` in `start-rook.ps1`, denies a Read over 350 lines without offset / limit.
+- [x] 227. **Per-turn overhead audit** (done S41o: about 4.5k tokens always-on; cut candidates sent to him, none applied) (S, report only; grill `runs41/grill-226.md`, source `runs41/research-x-claude-setups.md` #2): list what loads each Rook turn with sizes, cuts go to him.
+- [ ] 228. **Opus flag for fix rounds** (S, tool ticket, KIT; retro41 #3): `rook-launch.mjs:171` hard-codes Sonnet; add an `opus` option for round 3+ (his rule 2026-11-07), tests `project.test.mjs:67`, `rook-launch.test.mjs:627/647`. Same as 209.
+- [ ] 229. **King's allow list gaps** (S, tool ticket, KIT; retro41king #1, #4): add `node tools/unit.mjs`, `node test.mjs`, `rook.mjs result` and builder `git stash`.
+- [ ] 230. **Brief templates not Project D-only** (S, tool ticket, KIT; retro41king #2, #5): `{unit}` slot in `build.txt` / `fix.txt`; fix brief: reproduce a shard red in the same run order.
+- [ ] 231. **Suite lock blocks commits** (S, tool ticket, KIT; retro41rook #1): `rook.mjs suite` writes a lock, pre-commit refuses while it exists.
+- [ ] 232. **Old red needs CI proof** (S, tool ticket, KIT; retro41 #1, #2, #4): builder.md and review.txt say a red is old only if red at the PR's last green sha; Knight reds get a King base-check; a count-limit test on unwaited browser reads.
 - [x] 219. **One setup for all projects** (done S40i: R `8d51cbd` and B `e7630c6` main pushed, CI + deploy green, runs 42498263214 / 42498341093; L, his call 2026-11-07, grill `runs39/grill-global-setup.md`; no D feature builds until done). Tickets, King, `--tool`:
   - [x] 219a. Project values from `rook.config.json` (no Project D literals in `tools/`, briefs, agents, retro skill, hooks).
   - [x] 219b. `--project <D|R|B|P|WF>` on `rook.mjs`; `rook-hq/projects.json`; runs and handovers in `rook-hq/runs<N>`.

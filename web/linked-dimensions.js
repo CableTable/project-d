@@ -3,6 +3,7 @@ import { flatten, pickIndex, mapply, mscale } from './drawing.js';
 import { dimOfEntity, buildDim, replaceDimension, lineOf, dimLabel, DIM_LAYER } from './edit.js';
 import { overrideText, measuredText } from './dimension-text.js';
 import { dragGrip, gripsOf } from './grips.js';
+import { parse as parseLength, lengthFactor } from './units.js';
 
 const DEG = Math.PI / 180;
 /** Per entity (its index in `entities`): its vertices, arcs ({ c, r }) and straight pieces ([x1, y1, x2, y2]), in drawing order. */
@@ -154,10 +155,10 @@ export function followDimensions(raw, next, factor = 1) {
   return result;
 }
 
-/** TODO 76a: a typed length ("150", "150,5", "7.5\"" for an inch dimension) → the number, or null when the text is anything else. A sign is read, so "-5" can be refused. */
-export function typedLength(text, units = 'mm') {
-  const m = /^(-?(?:\d+[.,]?\d*|[.,]\d+))(")?$/.exec(String(text).trim());
-  return !m || (m[2] && units !== 'inch') ? null : parseFloat(m[1].replace(',', '.'));
+/** A typed drawing-unit length → the dimension style's number, or null. Marks work in every style; signs let the caller refuse negative lengths. */
+export function typedLength(text, units = 'mm', drawingUnit = units) {
+  const mm = parseLength(text, drawingUnit);
+  return mm === null ? null : mm / lengthFactor(units);
 }
 
 /** The one LINE whose two ends are the two points of an aligned or h / v dimension at entity `e` (our own PD_DIM only; none, or stacked duplicates → null).
@@ -211,22 +212,22 @@ function dimensionLine(raw, e) {
 }
 
 /** Plain number entry: existing overrides stay text; the shown value is no change even without a LINE. */
-export function dimensionEntry(raw, e, typed) {
-  const dim = dimOfEntity(raw, e), n = dim && !overrideText(dim.params.override) ? typedLength(typed, dim.params.units) : null;
+export function dimensionEntry(raw, e, typed, drawingUnit) {
+  const dim = dimOfEntity(raw, e), n = dim && !overrideText(dim.params.override) ? typedLength(typed, dim.params.units, drawingUnit) : null;
   if (n == null) return null;
   const link = dimensionLine(raw, e);
   if (link.reason === 'kind') return link;
   const shown = measuredText(raw.blocks[dim.name].entities);
-  if (link.reason ? n === typedLength(shown, dim.params.units) : dimLabel(n * (dim.params.units === 'inch' ? 25.4 : 1), dim.dp, dim.params.units) === shown) return { unchanged: true };
+  if (link.reason ? n === typedLength(shown, dim.params.units) : dimLabel(n * lengthFactor(dim.params.units), dim.dp, dim.params.units) === shown) return { unchanged: true };
   return link.reason ? link : { n, link };
 }
 
-/** The LINE at `e` with the end at the dimension's second point moved until the dimension reads `shown`: along the line for aligned, only the measured local coordinate for h / v (shown units: inches for an inch dimension, times the factor otherwise).
+/** The LINE at `e` with the end at the dimension's second point moved until the dimension reads `shown`: along the line for aligned, only the measured local coordinate for h / v (shown is in the dimension's unit).
  * → { i, line (the new entity), built (the dimension rebuilt from it) } or null (no single LINE, shown not above 0, or no change). */
 export function driveLine(raw, e, shown, factor = 1) {
   const hit = linkedLine(raw, e);
   if (!hit || hit.zeroExtent) return null;
-  const len = shown * (hit.dim.params.units === 'inch' ? 25.4 : 1) / (factor || 1), { A, B } = hit, d = hit.rect ? 0 : Math.hypot(B[0] - A[0], B[1] - A[1]);
+  const len = shown * lengthFactor(hit.dim.params.units) / (factor || 1), { A, B } = hit, d = hit.rect ? 0 : Math.hypot(B[0] - A[0], B[1] - A[1]);
   if (!(len > 0) || !Number.isFinite(len)) return null;
   let to, grip;
   if (hit.rect) {       // the moving side goes by the existing edge drag; the dimension's point on it goes the same way

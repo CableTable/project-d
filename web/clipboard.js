@@ -18,7 +18,7 @@ export function copyPlacedSnapshot(parts, placed) {
   return structuredClone({ parts: Object.fromEntries(placed.map((p) => [p.partId, parts[p.partId]])), placed });
 }
 
-function drawingFromPlaced(snapshot) {
+export function drawingFromPlaced(snapshot) {
   const { doc } = buildLayoutDoc({ ...snapshot, sheetW: 0, sheetH: 0 });
   // Inserts go to layer 0 so exploding keeps layer-0 geometry on 0 instead of the layout's "Parts" layer.
   doc.entities = doc.entities.slice(1).map((e) => ({ ...e, layer: '0' }));

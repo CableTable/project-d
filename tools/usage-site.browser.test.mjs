@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { chromium } from 'playwright';
 
 // What the agent's parseTodo (kit/usage-agent.mjs) makes of a small TODO.md: written out, so this test reads no kit file.
-const todoFixture = {"sections":[{"title":"Whole TODO","items":[{"num":66,"title":"More Modify tools","size":"L","done":false,"text":"(L): Move, copy and rotate.","substeps":[{"num":"66a","done":true,"text":"Move objects with one undo."},{"num":"66b","done":false,"text":"Copy objects; <img src=x onerror=alert(1)> is plain text."},{"num":"66c","done":false,"text":"Rotate about a chosen pivot."}]},{"num":95,"title":"<img src=x>","size":"M","done":false,"text":"(M): Open item (a built, b next)."},{"num":98,"title":"Finished","size":"S","done":true,"text":"(S): Built.","substeps":[{"num":"98a","done":true,"text":"First fix."},{"num":"98b","done":true,"text":"Second fix."}]}]}]};
+const todoFixture = {"sections":[{"title":"Whole TODO","items":[{"num":66,"title":"More Modify tools","size":"L","done":false,"text":"(L): Move, copy and rotate.","substeps":[{"num":"66a","done":true,"text":"Move objects with one undo."},{"num":"66b","done":false,"text":"Copy objects; <img src=x onerror=alert(1)> is plain text."},{"num":"66c","done":false,"text":"Rotate about a chosen pivot."}]},{"num":95,"title":"<img src=x>","size":"M","done":false,"text":"(M): Open item (a built, b next)."},{"num":98,"title":"Finished","size":"S","done":true,"text":"(S): Built.","substeps":[{"num":"98a","done":true,"text":"First fix."},{"num":"98b","done":true,"text":"Second fix."}]}]},{"title":"Shipped","items":[{"num":70,"title":"Old win","size":"S","done":true,"text":"(S): Built."}]},{"title":"Planned","items":[{"num":71,"title":"Next up","size":"S","done":false,"text":"(S): Not started."}]}]};
 
 const authModule = `
 export const getAuth = () => ({currentUser: {uid: 'owner'}});
@@ -116,6 +116,8 @@ test('Usage site: remembered TODO sub-steps, tabs, tickets, forecasts and safe r
           tickets: { rows: [
             { id: 'T14', status: 'building', size: 'M', type: 'ask', tags: ['feature', 'usage-page', 'mod'], title: '<img src=x onerror=alert(1)>', todo: '95', updated: '2026-10-21', note: '<script>plain note</script>\nSecond line.' },
             { id: 'T17', status: 'checked in exe', size: 'S', type: 'bug', tags: ['bug', 'usage-page'], title: 'Refresh error', todo: '98', updated: '2026-10-21', note: 'Keep last good readings.' },
+            { id: 'T20', status: 'Done 2026-11-01', size: 'S', type: 'ask', tags: ['feature'], title: 'Closed feature', todo: '99', updated: '2026-11-01', note: '' },
+            { id: 'T21', status: 'open', size: 'S', type: 'bug', tags: ['bug'], title: 'Open bug', todo: '', updated: '2026-11-02', note: '' },
           ] },
           status: { lastUpdate: Date.now() - 60_000, lastError: '', lastErrorAt: 0 },
         };
@@ -137,6 +139,8 @@ test('Usage site: remembered TODO sub-steps, tabs, tickets, forecasts and safe r
       await page.goto('http://usage.test/');
       await page.locator('#agents h3').last().waitFor();
       assert.deepEqual(await page.locator('#agents h3').allTextContents(), ['Rook', 'Bishop', 'King', 'Knight']);
+      assert.equal(await page.title(), 'Usage');
+      assert.equal(await page.locator('#top').textContent(), 'Usage');
       const knight = page.locator('#agents .ud-card').filter({has: page.getByRole('heading', {name: 'Knight', exact: true})});
       assert.equal(await knight.locator('.ud-agent p').textContent(), 'Builder');
       // King: its own card with both windows, a forecast line, and its own colour (not Bishop's or Knight's).
@@ -303,29 +307,76 @@ test('Usage site: remembered TODO sub-steps, tabs, tickets, forecasts and safe r
         await page.waitForFunction(() => JSON.parse(localStorage.getItem('usage-todo-open'))?.length === 0);
         await page.reload(); await substeps.waitFor();
         assert.equal(await substeps.evaluate((e) => e.open), false);
-        const completed = page.locator('#todo-sections > .ud-card > details');
-        await completed.locator(':scope > summary').click();
-        assert.equal(await completed.locator(':scope > ul > li').count(), 1);
-        assert.equal(await completed.locator('.ud-substeps summary').textContent(), '2 of 2 done');
-        await completed.locator('.ud-substeps summary').click();
-        assert.equal(await completed.locator('.ud-substeps li').first().isVisible(), true);
-        await completed.locator('.ud-substeps summary').click();
+        // TODO Open / Closed: Open is the default, shows not-done items and no folded done list; Closed shows done items only.
+        const titles = (n) => page.locator('#todo-sections > .ud-card').nth(n).locator(':scope > ul > li > .ud-todo-head strong').allTextContents();
+        const empty = (n) => page.locator('#todo-sections > .ud-card').nth(n).locator(':scope > p').textContent();
+        const todoPressed = (id) => page.locator(id).getAttribute('aria-pressed');
+        assert.equal(await todoPressed('#todo-open'), 'true');
+        assert.equal(await todoPressed('#todo-closed'), 'false');
+        assert.equal(await page.locator('#todo-sections > .ud-card > details').count(), 0);
+        assert.deepEqual(await titles(0), ['More Modify tools', '<img src=x>']); // Section with both kinds.
+        assert.equal(await empty(1), 'No open items.'); // Section with only done items.
+        assert.deepEqual(await titles(2), ['Next up']);
+        await page.locator('#todo-closed').click();
+        assert.equal(await todoPressed('#todo-open'), 'false');
+        assert.equal(await todoPressed('#todo-closed'), 'true');
+        assert.deepEqual(await titles(0), ['Finished']);
+        assert.deepEqual(await titles(1), ['Old win']);
+        assert.equal(await empty(2), 'No closed items.');
+        const finished = page.locator('#todo-sections > .ud-card').first().locator('.ud-substeps');
+        assert.equal(await finished.locator('summary').textContent(), '2 of 2 done');
+        await finished.locator('summary').click();
+        assert.equal(await finished.locator('li').first().isVisible(), true);
+        await page.waitForFunction(() => JSON.parse(localStorage.getItem('usage-todo-open'))?.length === 1);
+        await page.locator('#todo-open').click();
+        await page.locator('#todo-closed').click();
+        assert.equal(await finished.evaluate((e) => e.open), true); // Remembered across redraws.
+        await noOverflow();
+        await page.screenshot({ path: `${shotDir}/todo-closed-${device}-${colorScheme}.png`, fullPage: true });
+        await finished.locator('summary').click();
         await page.waitForFunction(() => JSON.parse(localStorage.getItem('usage-todo-open'))?.length === 0);
+        await page.locator('#todo-open').click();
         assert.equal(await page.locator('#todo-sections > .ud-card > ul > li').nth(1).locator('details').count(), 0);
       };
       await checkSubsteps('phone');
 
-      // Ticket tags filter, All restores, tapping a ticket opens its plain-text note.
+      // Ticket Open / Closed buttons + Tag dropdown (AND), All tags restores, tapping a ticket opens its plain-text note.
       await page.locator('[data-tab=tickets]').click();
-      assert.equal(await page.locator('.ticket').count(), 2);
-      await page.getByRole('button', { name: 'bug', exact: true }).click();
-      assert.deepEqual(await page.locator('.ticket').getAttribute('data-id'), 'T17');
-      await page.getByRole('button', { name: 'All', exact: true }).click();
+      const ticketIds = () => page.locator('.ticket').evaluateAll((rows) => rows.map((r) => r.dataset.id));
+      const tagSelect = page.getByLabel('Tag', { exact: true });
+      const pressed = (name) => page.getByRole('button', { name, exact: true }).getAttribute('aria-pressed');
+      assert.equal(await pressed('Open'), 'true');
+      assert.equal(await pressed('Closed'), 'false');
+      assert.deepEqual(await ticketIds(), ['T14', 'T21']);
+      assert.deepEqual(await tagSelect.locator('option').allTextContents(), ['All tags', 'bug', 'feature', 'mod', 'usage-page']);
+      await tagSelect.selectOption('bug');
+      assert.deepEqual(await ticketIds(), ['T21']);
+      await page.getByRole('button', { name: 'Closed', exact: true }).click();
+      assert.equal(await pressed('Open'), 'false');
+      assert.equal(await pressed('Closed'), 'true');
+      assert.deepEqual(await ticketIds(), ['T17']);
+      await tagSelect.selectOption('mod');
+      assert.deepEqual(await ticketIds(), []);
+      assert.equal(await page.locator('#ticket-list').textContent(), 'No tickets');
+      await tagSelect.selectOption('');
+      assert.deepEqual(await ticketIds(), ['T17', 'T20']);
+      assert.equal(await page.locator('.ticket[data-id=T17] .ud-chip').getAttribute('class'), 'ud-chip ok');
+      assert.equal(await page.locator('.ticket[data-id=T20] .ud-chip').getAttribute('class'), 'ud-chip ok'); // "Done 2026-11-01" is green too.
+      await page.getByRole('button', { name: 'Open', exact: true }).click();
+      assert.deepEqual(await ticketIds(), ['T14', 'T21']);
+      // A ticket with no tags stays listed under All tags and does not throw when a tag is picked.
+      await page.evaluate(() => window.__emit('tickets', { rows: [...window.__docs.tickets.rows, { id: 'T22', status: 'open', size: 'S', type: 'bug', title: 'No tags', todo: '', updated: '2026-11-03', note: '' }] }));
+      assert.deepEqual(await ticketIds(), ['T14', 'T21', 'T22']);
+      await tagSelect.selectOption('bug');
+      assert.deepEqual(await ticketIds(), ['T21']);
+      await tagSelect.selectOption('');
+      await page.evaluate(() => window.__emit('tickets', window.__docs.tickets));
+      assert.deepEqual(await ticketIds(), ['T14', 'T21']);
       await page.locator('.ticket[data-id=T14] summary').click();
       assert.equal(await page.locator('.ticket[data-id=T14] .ticket-note').textContent(), '<script>plain note</script>\nSecond line.');
-      assert.equal(await page.locator('.ticket[data-id=T17] .ud-chip').getAttribute('class'), 'ud-chip ok');
       assert.equal(await page.locator('#dashboard img, #dashboard script').count(), 0);
       await noOverflow();
+      await page.screenshot({ path: `${shotDir}/tickets-filter-phone-${colorScheme}.png`, fullPage: true });
       await page.reload();
       await page.locator('.ticket').first().waitFor();
       assert.equal(await page.locator('[data-tab=tickets]').getAttribute('aria-pressed'), 'true');

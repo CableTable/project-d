@@ -1,9 +1,10 @@
 import { h } from './dom.js';
-import { objectTypes, propertiesOf, operatorsOf, valuesOf, quickSelect } from './qselect.js';
+import { objectTypes, propertiesOf, operatorsOf, valuesOf, quickSelect, numberValue } from './qselect.js';
+import { fieldUnit } from './props.js';
 
 let exclude = false;
 
-export function openQuickSelect({ entities, layers, scope, selection, factor, dp, onApply }) {
+export function openQuickSelect({ entities, layers, scope, selection, factor, dp, unit = 'mm', onApply }) {
   if (document.querySelector('[data-testid=qselect-dialog]')) return;
   const previous = document.activeElement;
   const finish = () => { dialog.close(); dialog.remove(); if (previous?.isConnected) previous.focus(); };
@@ -22,19 +23,20 @@ export function openQuickSelect({ entities, layers, scope, selection, factor, dp
   const check = () => {
     const p = prop(), all = operator.value === 'all';
     list.disabled = input.disabled = all;
-    ok.disabled = !type.value || !p || (!all && (p.kind === 'list' ? !list.options.length : !input.value.trim() || (p.kind === 'number' && !Number.isFinite(Number(input.value)))));
+    ok.disabled = !type.value || !p || (!all && (p.kind === 'list' ? !list.options.length : !input.value.trim() || (p.kind === 'number' && numberValue(input.value, p, unit) == null)));
   };
   const operators = () => { options(operator, operatorsOf(prop().kind)); check(); };
   const values = () => {
     const p = prop();
     list.hidden = p.kind !== 'list'; input.hidden = p.kind === 'list'; input.value = '';
     input.inputMode = p.kind === 'number' ? 'decimal' : 'text';
+    input.placeholder = p.kind === 'number' ? fieldUnit(p, unit) || '' : '';
     options(list, p.kind === 'list' ? valuesOf(ents().filter((e) => type.value === 'Multiple' || e.type === type.value), layers, p.key) : []);
     operators();
   };
   const properties = () => {
     props = propertiesOf(ents(), type.value, factor, dp);
-    options(property, props.map((p) => [p.key, p.label])); values();
+    options(property, props.map((p) => [p.key, p.label + (unit !== 'mm' && ['mm', 'mm²'].includes(p.unit) ? ' (' + fieldUnit(p, unit) + ')' : '')])); values();
   };
   const types = () => { options(type, objectTypes(ents())); properties(); };
   applyTo.addEventListener('change', types); type.addEventListener('change', properties);
@@ -43,7 +45,7 @@ export function openQuickSelect({ entities, layers, scope, selection, factor, dp
     if (ok.disabled) return;
     exclude = omit.checked;
     const result = quickSelect(entities, layers, { scope: indices(), type: type.value, property: property.value, operator: operator.value,
-      value: prop().kind === 'list' ? list.value : input.value, exclude, factor, dp });
+      value: prop().kind === 'list' ? list.value : input.value, exclude, factor, dp, unit });
     const add = append.checked; finish(); onApply(result, add);
   } }, 'OK');
   const row = (label, control) => h('label', { class: 'qs-row' }, h('span', null, label), control);

@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="light dark">
-<title>Project D usage</title>
+<title>Usage</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&amp;display=swap">
@@ -15,7 +15,7 @@
 
 <div class="ud">
   <header class="ud-head">
-    <h1 id="top">Project D</h1>
+    <h1 id="top">Usage</h1>
     <p id="rook-stuck" role="status" hidden></p>
     <nav class="page-tabs" aria-label="Page" hidden>
       <button type="button" data-tab="usage" aria-pressed="true" aria-controls="usage">Usage</button>
@@ -93,11 +93,20 @@
   </section>
   </div>
   <section class="ud-sec" id="todo" data-page hidden>
-    <h2>TODO</h2><div class="ud-sec" id="todo-sections"></div>
+    <h2>TODO</h2>
+    <div class="tag-filters" role="group" aria-label="Filter TODO items">
+      <button type="button" id="todo-open" aria-pressed="true">Open</button>
+      <button type="button" id="todo-closed" aria-pressed="false">Closed</button>
+    </div>
+    <div class="ud-sec" id="todo-sections"></div>
   </section>
   <section class="ud-sec" id="tickets" data-page hidden>
     <h2>Tickets</h2>
-    <div class="tag-filters" id="ticket-tags" role="group" aria-label="Filter tickets by tag"></div>
+    <div class="tag-filters" id="ticket-tags" role="group" aria-label="Filter tickets">
+      <button type="button" id="ticket-open" aria-pressed="true">Open</button>
+      <button type="button" id="ticket-closed" aria-pressed="false">Closed</button>
+      <label for="ticket-tag">Tag</label><select id="ticket-tag"></select>
+    </div>
     <div id="ticket-list" class="ud-sec"></div>
   </section>
 </main>

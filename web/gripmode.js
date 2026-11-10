@@ -11,6 +11,7 @@ import { rotateEntities, rotationAngle } from './rotate.js';
 import { scaleEntities, scaleDistance } from './scale.js';
 import { mirrorEntity } from './modify.js';
 import { n2 } from './draw.js';
+import { format as formatLength } from './units.js';
 import { copy as copyGroups } from './groups.js';
 
 export const MODES = ['STRETCH', 'MOVE', 'ROTATE', 'SCALE', 'MIRROR'];
@@ -33,11 +34,11 @@ export const cycle = (i) => (i + 1) % MODES.length;
 export const valueAt = (mode, base, p) => (mode === 'ROTATE' ? rotationAngle(base, p) : mode === 'SCALE' ? scaleDistance(base, p) : [p[0], p[1]]);
 
 /** The readout beside the pointer; factor: mm per unit. */
-export function readout(mode, base, v, factor = 1) {
+export function readout(mode, base, v, factor = 1, unit = 'mm') {
   if (mode === 'ROTATE') return `Rotate ${n2(v)}°`;
   if (mode === 'SCALE') return `Scale ×${+v.toPrecision(6)}`;
   if (mode === 'MIRROR') return `Mirror line ${n2(rotationAngle(base, v))}°`;
-  return `Move ΔX ${n2((v[0] - base[0]) * factor)} ΔY ${n2((v[1] - base[1]) * factor)}`;
+  return `Move ΔX ${formatLength((v[0] - base[0]) * factor, unit, n2)} ΔY ${formatLength((v[1] - base[1]) * factor, unit, n2)}`;
 }
 
 function mirror(raw, sel, p1, p2, copy) {

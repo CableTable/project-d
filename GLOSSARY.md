@@ -128,7 +128,11 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Keep only this**: Deletes everything except the selected outline or geometry from the drawing. Where: `DECISIONS.md`, Outline. Avoid: Extract part.
 
-**In-app clipboard**: The session-only snapshot of selected drawing objects or placed parts taken with Ctrl+C. Ctrl+V pastes at the same coordinates and true size. Drawing objects pasted on a layout become a new Parts library part; copied placed parts keep their library links on a layout and become plain drawing objects on a drawing tab or PDF sheet, with rotation and mirrors applied. It remembers drawing source names at Ctrl+C, survives source edits and closing the source tab, and is separate from the system clipboard. Where: `web/clipboard.js`; `DECISIONS.md`, Copy and paste inside the app first, Ctrl+C on layout tabs.
+**In-app clipboard**: The session-only snapshot of selected drawing objects or placed parts taken with Ctrl+C. On drawing and PDF sheet tabs, Ctrl+V starts follow paste; Ctrl+Shift+V pastes in place at true size. Layout paste still uses the same coordinates. Drawing objects pasted on a layout become a new Parts library part; copied placed parts keep their library links on a layout and become plain drawing objects on a drawing tab or PDF sheet, with rotation and mirrors applied. It remembers drawing source names at Ctrl+C, survives source edits and closing the source tab, and is separate from the system clipboard. Where: `web/clipboard.js`; `DECISIONS.md`, Copy and paste inside the app first, Ctrl+C on layout tabs.
+
+**Follow paste**: Ctrl+V, Paste or `paste` on a drawing or PDF sheet tab shows a see-through clipboard preview with the scaled box's top-left at the cursor. SNAP applies; Shift / ORTHO keeps movement straight from the first cursor position. One click places and selects it in one Undo step. Esc, Undo, a tab or sheet switch, or a tool change cancels; Ctrl+V restarts. Where: `web/app.js`; `DECISIONS.md`, 211a.
+
+**Paste in place**: Ctrl+Shift+V, Edit > Paste in place or `pasteorig` pastes the clipboard at its copied coordinates and true size, selected, in one Undo step. Where: `web/app.js`, `web/clipboard.js`; `DECISIONS.md`, 211a.
 
 **Layout object**: A line, arc, text or other drawing object drawn straight onto a layout sheet, not part of any part, such as a setup line, note or frame. Where: `DECISIONS.md`, Tools on Layouts. Avoid: Loose part (a placed part outside the step and repeat grid).
 
@@ -194,6 +198,8 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 **Trace**: Converts a background bitmap's coloured regions into closed vector polylines at the picture's position and size, with Outline mode built and Centreline still planned. Where: `DECISIONS.md`, Trace a bitmap. Avoid: DXF TRACE; Contour; OCR.
 
 **Unit fix**: Multiplies or divides the whole drawing or background by 25.4 about 0,0 to correct an inch/mm size mistake without changing the unit header. Where: `DECISIONS.md`, Unit fix. Avoid: Changing display units.
+
+**Drawing unit**: The unit a drawing shows and reads lengths in (mm, inch, ft or ft-in), chosen per drawing and saved with it; it only changes how lengths show and are typed, never the geometry. Where: `DECISIONS.md`, Drawing unit (TODO 222). Avoid: Unit fix (that rescales the geometry), display units.
 
 **Work area**: The background used to view and edit a drawing, independently set to Follow app, Light or Dark from the status bar or View menu. Its drawing colours and feedback adapt to the background, on Drawings, Layouts (sheet paper included) and Compare alike; PDF / Print keeps its appearance. Where: `web/workarea.js`, `DECISIONS.md`, Work area (TODO 96).
 
@@ -304,6 +310,7 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 **POLYLINE**: The older DXF polyline form with separate VERTEX records, distinct from LWPOLYLINE and sometimes carrying mesh data. Where: `web/drawing.js`, `web/dxf-write.js`.
 
 **Snap**: Places a picked point on supported drawing features such as endpoints, midpoints, centres or the nearest point on a line. Where: `DECISIONS.md`, Snap. Avoid: Grid fit.
+**Snap preview**: The chip beside SNAP that shows the nearest ticked snap marker and its type name while hovering in Select mode, with SNAP on and no drag. Off by default and remembered on this PC; clicks and selection stay unchanged. Where: `DECISIONS.md`, TODO 212.
 **Nearest snap**: The lowest-priority snap: the closest point on a line, arc, circle, ellipse, polyline or spline under the pointer, drawn as an hourglass; ends, middles and centres win when they are in reach. Where: `DECISIONS.md`, Nearest snap. Avoid: On-line snap.
 
 **Snap types**: The tick list beside SNAP, also opened by `OSNAP` / `OS`: end, middle, centre (AutoCAD Center), geometric centre, point (AutoCAD Node), quadrant, intersection, extension, insertion, perpendicular, tangent, nearest, apparent intersection and parallel. All default on; ticks are remembered on this PC, outside drawing files. Where: `TODO.md`, items 68 and 155k; `web/snap.js`.
@@ -352,11 +359,17 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Job strip**: The job information strip added through the PDF dialog's Marks options. Where: `DECISIONS.md`, PDF export dialog.
 
+**Margins**: The unprinted page edges in PDF / Print, typed in mm for Top, Right, Bottom and Left. Standard keeps 8 mm on tiles and 10 mm on check prints; Office printer sets 5 mm. Disabled on a 1:1 sheet / cut page. Where: `web/export.js`; `DECISIONS.md`, PDF margins correction (TODO 217).
+
+**Same on all sides**: The PDF / Print margins toggle that makes typing any one side set all four sides. Where: `web/export.js`; `DECISIONS.md`, PDF margins correction (TODO 217).
+
 **Mirror**: Flips the film page, including strip text, so it reads from the emulsion side, while tile labels remain unmirrored. Where: `DECISIONS.md`, PDF Mirror. Avoid: Mirror X or Y of one placed part.
 
 **Negative**: Produces a black page with white artwork and marks. Where: `DECISIONS.md`, PDF colour pages.
 
 **Registration marks**: Common marks repeated on the colour pages so the printed colours can be aligned. Where: `DECISIONS.md`, PDF colour pages and Marks default. Avoid: Crop marks.
+
+**Selection only**: The PDF / Print tick that exports only selected drawing objects, with hidden objects still excluded. Off on each open, disabled without a selection. On a layout tab it exports the selected placed parts, cut to their box (default) or on the sheet page. On Compare it exports the selected visible drawing, cut to its box with no selection page radios. The page keeps the drawing's existing cut and title block rules. Where: `web/export.js`; `DECISIONS.md`, PDF (TODO 214a–c).
 
 **Tile**: One overlapping A4 or A3 page of a larger 1:1 output, used to assemble the full-size drawing. Where: `DECISIONS.md`, PDF page rules. Avoid: A repeat-grid copy.
 

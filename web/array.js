@@ -2,6 +2,7 @@
 // The result is plain copies (the shared copy-many routine), not a linked array object. Rectangular and Polar
 // each have their own config and placements; the typed-line parser and withField are shared.
 import { copyMany } from './edit.js';
+import { parse as parseLength } from './units.js';
 
 export const MAX_ITEMS = 10000;       // array items x selection size: more is nearly always a typo, and would freeze the drawing
 
@@ -72,10 +73,12 @@ const optionOf = (w, mode) => w === 'x' ? 'exit' : OPTIONS[mode].find(([name, n]
 const FIELDS = { count: ['cols', 'rows'], columns: ['cols', 'dx'], rows: ['rows', 'dy'], spacing: ['dx', 'dy'], items: ['items'], fill: ['fill'], rotate: ['rotate'] };
 
 /** "col 2 r 3", "s 40 -25", "cou" (Polar: "i 8 f 180", "rot n"): option words, each with the numbers after it (Yes / No after ROTate). → [{ opt, args }] or null when it is not such a line */
-export function parseLine(text, mode = 'rect') {
+export function parseLine(text, mode = 'rect', unit = 'mm') {
   const steps = [];
   for (const tok of String(text).trim().toLowerCase().split(/[\s,]+/).filter(Boolean)) {
-    if (Number.isFinite(Number(tok))) { if (!steps.length) return null; steps.at(-1).args.push(Number(tok)); continue; }
+    const step = steps.at(-1), key = step && FIELDS[step.opt]?.[step.args.length];
+    const value = key === 'dx' || key === 'dy' ? parseLength(tok, unit) : Number(tok);
+    if (value !== null && Number.isFinite(value)) { if (!steps.length) return null; step.args.push(value); continue; }
     if (steps.at(-1)?.opt === 'rotate' && !steps.at(-1).args.length && yesNo(tok) !== null) { steps.at(-1).args.push(+yesNo(tok)); continue; }
     const opt = optionOf(tok, mode);
     if (!opt) return null;

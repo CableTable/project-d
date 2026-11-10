@@ -4,6 +4,7 @@
 // layers, so what the preview shows is what is printed. Units are mm, y up, 0,0 at the sheet's bottom-left.
 //   page 'sheet'  the page is the sheet, 1:1             'tile'   1:1 on A3 / A4 pages with an overlap and a label on each
 //   page 'check'  the sheet fitted to A4 / A3 with a title block (a paper check, not film)
+//   page 'custom' the sheet at a typed scale on A4-A0 (not film): one page with the check title block when it fits, else tiles labelled with the scale
 //   mirror (x flipped, emulsion down), negative (black page, white art), black (every colour prints black),
 //   separate (one page per layer / print colour), crop / reg marks on every page, strip (file, date, colour).
 import { Page, writePdf, winAnsi, textWidthEm } from './pdf-write.js';
@@ -12,12 +13,40 @@ import { shownItems, itemVisible } from './doc.js';
 import { markGeometry, EDGES, gripOf } from './layout.js';
 import { addBlock, text as dxfText } from './dxf-write.js';
 
-export const PAPERS = { A4: [297, 210], A3: [420, 297], A0: [1189, 841] };   // landscape, mm
+export const PAPERS = { A4: [297, 210], A3: [420, 297], A2: [594, 420], A1: [841, 594], A0: [1189, 841] };   // landscape, mm
+export const PAGE_CAP = 60;                                          // a custom-scale PDF may not run to more pages than this (the dialog's page-button limit)
+export const SCALE_RANGE = [1 / 1000, 1000];                         // page mm per sheet mm: 1 : 1000 to 1000 : 1
+
+/** "1:50", "1 : 50", "2:1" (page : sheet) or "2%" → the scale as page mm per sheet mm; null for anything else, zero, or beyond 1 : 1000 / 1000 : 1. */
+export function parseScale(text) {
+  const num = '(\\d+(?:\\.\\d+)?|\\.\\d+)', t = String(text ?? '').trim();
+  let m = t.match(new RegExp(`^${num}\\s*%$`)), s;
+  if (m) s = Number(m[1]) / 100;
+  else if ((m = t.match(new RegExp(`^${num}\\s*:\\s*${num}$`)))) s = Number(m[1]) / Number(m[2]);
+  return s >= SCALE_RANGE[0] && s <= SCALE_RANGE[1] ? s : null;
+}
+
+/** More pages than PAGE_CAP: `pages` is how many it would have been. */
+export class PageCapError extends RangeError {
+  constructor(pages) { super(`Too many pages (${pages}): pick a bigger paper or a smaller scale`); this.pages = pages; }
+}
 export const PART_BORDER = 10;                                       // round a part on its own page, mm
-export const TILE = { margin: 8, overlap: 10 };                      // unprinted edge (label goes there) and overlap, mm
-export const CHECK = { margin: 10, block: 22 };                      // page edge and the title block's height, mm
+export const TILE = { overlap: 10 };                                // tile overlap, mm
+export const CHECK = { block: 22 };                                  // the check print's title block height, mm
+const sides = (v) => ({ top: v, right: v, bottom: v, left: v });
+/** Page margins (mm, per side): the unprinted edge of a tile (its label goes there) and the check print's page edge. Standard is the old fixed 8 / 10 mm. */
+export const STANDARD_MARGINS = { tile: sides(8), check: sides(10) };
+export const OFFICE_MARGINS = sides(5);                              // an office printer's usual unprintable edge
+export const MARGIN_MAX = 100000;
+
+/** The margins a plan uses: finite nonnegative mm (up to the sheet-size limit), else Standard's side. */
+export function marginsOf(o) {
+  const std = STANDARD_MARGINS[o.page === 'check' ? 'check' : 'tile'];
+  if (!o.margins) return std;
+  return Object.fromEntries(Object.keys(std).map((k) => { const v = Number(o.margins[k]); return [k, Number.isFinite(v) ? Math.min(MARGIN_MAX, Math.max(0, v)) : std[k]]; }));
+}
 export const DEFAULT_OPTIONS = {
-  page: 'sheet', tilePaper: 'A3', checkPaper: 'A4',
+  page: 'sheet', tilePaper: 'A3', checkPaper: 'A4', customPaper: 'A3', scale: 0.5,
   mirror: true, negative: false, black: true, separate: true, crop: false, reg: false, strip: true,
   sheetSizeGripper: false,
   titleBlock: { enabled: true },
@@ -74,24 +103,30 @@ export async function freePdfName(base, taken) {
 }
 
 /** Tiles of a sheet w × h on a paper pw × ph: the printable size and how many across and down. */
-export function tileGrid(w, h, pw, ph) {
-  const tw = pw - 2 * TILE.margin, th = ph - 2 * TILE.margin;
-  const count = (len, t) => (len <= t + 1e-9 ? 1 : Math.ceil((len - TILE.overlap) / (t - TILE.overlap) - 1e-9));
+export function tileGrid(w, h, pw, ph, m = STANDARD_MARGINS.tile) {
+  const tw = pw - m.left - m.right, th = ph - m.top - m.bottom;
+  const count = (len, t) => {
+    if (t <= 0 || (t <= TILE.overlap && len > t + 1e-9)) return Infinity;
+    return len <= t + 1e-9 ? 1 : Math.ceil((len - TILE.overlap) / (t - TILE.overlap) - 1e-9);
+  };
   return { tw, th, cols: count(w, tw), rows: count(h, th) };
 }
 
 /** The scale a sheet w × h gets on a check-print page pw × ph, and where it sits (page mm). */
-export function checkFit(w, h, pw, ph, titleBlock = true) {
+export function checkFit(w, h, pw, ph, titleBlock = true, m = STANDARD_MARGINS.check) {
   const block = titleBlock ? CHECK.block : 0;
-  const aw = pw - 2 * CHECK.margin, ah = ph - 2 * CHECK.margin - block;
+  const aw = pw - m.left - m.right, ah = ph - m.top - m.bottom - block;
   const s = Math.min(aw / w, ah / h);
-  return { s, ox: CHECK.margin + (aw - w * s) / 2, oy: CHECK.margin + block + (ah - h * s) / 2 };
+  return { s, ox: m.left + (aw - w * s) / 2, oy: m.bottom + block + (ah - h * s) / 2 };
 }
 
 /** "1 : 3.37" for a scale s (page mm per sheet mm); "2 : 1" when enlarged. */
 export function scaleText(s) {
   return s >= 1 ? `${trimNum(s)} : 1` : `1 : ${trimNum(1 / s)}`;
 }
+
+/** "25.19%" for a scale s: the other form of scaleText. */
+export const percentText = (s) => trimNum(s * 100) + '%';
 
 /** Automatic facts stay live until that individual field is typed. The caller supplies today's date. */
 export function titleBlockTexts(src, p, value) {
@@ -118,7 +153,7 @@ export function partSource(src, border = PART_BORDER) {
     const b = it.b.map((v) => v * src.factor);
     box = box ? [Math.min(box[0], b[0]), Math.min(box[1], b[1]), Math.max(box[2], b[2]), Math.max(box[3], b[3])] : b;
   }
-  if (!box || !(box[2] > box[0]) || !(box[3] > box[1])) return null;
+  if (!box || (!(box[2] > box[0]) && !(box[3] > box[1]))) return null;
   return { ...src, part: true, sheetW: box[2] - box[0] + 2 * border, sheetH: box[3] - box[1] + 2 * border, origin: [box[0] - border, box[1] - border] };
 }
 
@@ -144,20 +179,40 @@ export function planPdf(src, opts) {
     if (by.size) groups = [...by.keys()].sort((a, b) => a - b).map((index) => ({ index, name: fl.layers[index].name, items: by.get(index) }));
   }
   // what every page is laid out on
+  const mg = marginsOf(o);
   let geos;
-  if (o.page === 'tile') {
-    const [lw, lh] = PAPERS[o.tilePaper] || PAPERS.A3;
-    const a = tileGrid(W, H, lw, lh), b = tileGrid(W, H, lh, lw);
+  /** The tiles of a sheet w × h (page mm) in the better paper orientation; extra goes on every page's geometry; perTile (pages per tile) turns on the page cap. */
+  const tiled = (w, h, [lw, lh], m, extra, perTile = 0) => {
+    const a = tileGrid(w, h, lw, lh, m), b = tileGrid(w, h, lh, lw, m);
     const [pw, ph, g] = b.cols * b.rows < a.cols * a.rows ? [lh, lw, b] : [lw, lh, a];
-    geos = [];
-    const stepX = g.tw - TILE.overlap, stepY = g.th - TILE.overlap;
+    if (!Number.isFinite(g.cols * g.rows)) throw new RangeError('Margins leave no printable area for the tiles and overlap. Reduce the margins.');
+    if (perTile && g.cols * g.rows * perTile > PAGE_CAP) throw new PageCapError(g.cols * g.rows * perTile);
+    const out = [], stepX = g.tw - TILE.overlap, stepY = g.th - TILE.overlap;
     for (let r = 0; r < g.rows; r++) for (let c = 0; c < g.cols; c++) {
-      geos.push({ w: pw, h: ph, tile: { col: c + 1, row: r + 1, cols: g.cols, rows: g.rows, n: r * g.cols + c + 1, of: g.cols * g.rows, x0: c * stepX, y0: H - r * stepY - g.th, tw: g.tw, th: g.th } });
+      out.push({ w: pw, h: ph, ...extra, tile: { col: c + 1, row: r + 1, cols: g.cols, rows: g.rows, n: r * g.cols + c + 1, of: g.cols * g.rows, x0: c * stepX, y0: h - r * stepY - g.th, tw: g.tw, th: g.th } });
     }
+    return out;
+  };
+  if (o.page === 'tile') {
+    geos = tiled(W, H, PAPERS[o.tilePaper] || PAPERS.A3, mg);
+  } else if (o.page === 'custom') {
+    const s = o.scale, [lw, lh] = PAPERS[o.customPaper] || PAPERS.A3;
+    if (!(s >= SCALE_RANGE[0] && s <= SCALE_RANGE[1])) throw new RangeError('Scale must be between 1 : 1000 and 1000 : 1');
+    const cm = marginsOf({ ...o, page: 'check' }), block = o.titleBlock.enabled ? CHECK.block : 0;
+    const place = (pw, ph) => {                                       // the sheet at s, centred in the page's printable area above the title block
+      const aw = pw - cm.left - cm.right, ah = ph - cm.top - cm.bottom - block;
+      return { w: pw, h: ph, mg: cm, scale: { s, ox: cm.left + (aw - W * s) / 2, oy: cm.bottom + block + (ah - H * s) / 2 }, ok: W * s <= aw + 1e-9 && H * s <= ah + 1e-9 };
+    };
+    const one = [place(lw, lh), place(lh, lw)].find((p) => p.ok);
+    if (one) {
+      if (groups.length > PAGE_CAP) throw new PageCapError(groups.length);
+      geos = [one];
+    } else geos = tiled(W * s, H * s, [lw, lh], mg, { scale: { s }, mg }, groups.length);     // mg: marginsOf's tile side for a custom page
   } else if (o.page === 'check') {
     const [lw, lh] = PAPERS[o.checkPaper] || PAPERS.A4;
-    const a = checkFit(W, H, lw, lh, o.titleBlock.enabled), b = checkFit(W, H, lh, lw, o.titleBlock.enabled);
+    const a = checkFit(W, H, lw, lh, o.titleBlock.enabled, mg), b = checkFit(W, H, lh, lw, o.titleBlock.enabled, mg);
     const land = b.s > a.s * 1.0001 ? [lh, lw, b] : [lw, lh, a];
+    if (!(land[2].s > 0)) throw new RangeError('Margins leave no printable area. Reduce the margins.');
     geos = [{ w: land[0], h: land[1], scale: land[2] }];
   } else geos = [{ w: W, h: H }];
   const pages = [];
@@ -173,7 +228,7 @@ export function planPdf(src, opts) {
   const plan = {
     options: o, pages, count: pages.length, box,
     build: (i) => drawPage(src, o, plan, pages[i], box),
-    bytes: () => writePdf(pages.map((_, i) => plan.build(i)), { title: src.name || 'Project D', subject: o.page === 'check' ? 'Scale ' + scaleText(pages[0].scale) : 'Scale 1 : 1' }),
+    bytes: () => writePdf(pages.map((_, i) => plan.build(i)), { title: src.name || 'Project D', subject: o.page === 'check' || o.page === 'custom' ? 'Scale ' + scaleText(pages[0].scale) : 'Scale 1 : 1' }),
   };
   return plan;
 }
@@ -353,8 +408,9 @@ function drawSheetSize(page, src, M) {
 
 function drawPage(src, o, plan, p, artBox) {
   const { fl, factor: F, sheetW: W, sheetH: H } = src, org = src.origin || [0, 0];
-  const g = p._g, geo = p._geo, check = o.page === 'check', tile = geo.tile;
-  const neg = o.negative && !check, mirror = o.mirror && !check;
+  const g = p._g, geo = p._geo, custom = o.page === 'custom', tile = geo.tile, mg = geo.mg || marginsOf(o);
+  const check = o.page === 'check' || (custom && !tile), scaled = o.page === 'check' || custom;      // a custom page is a check page when it is one page; check and custom are never film
+  const neg = o.negative && !scaled, mirror = o.mirror && !scaled;
   const bg = neg ? BLACK : WHITE, markInk = neg ? WHITE : BLACK;
   const inkOf = (css, exact) => (neg ? WHITE : o.black ? BLACK : exact ? rgbOf(css) : printInk(css));
   const page = new Page(p.w, p.h);
@@ -362,7 +418,7 @@ function drawPage(src, o, plan, p, artBox) {
   const flip = mirror ? [-1, 0, 0, 1, W, 0] : [1, 0, 0, 1, 0, 0];
   let B = [1, 0, 0, 1, 0, 0];                                                        // the page-level matrix, for labels
   let M0 = flip;
-  if (tile) { M0 = mmul([1, 0, 0, 1, TILE.margin - tile.x0, TILE.margin - tile.y0], flip); }
+  if (tile) { M0 = custom ? [geo.scale.s, 0, 0, geo.scale.s, mg.left - tile.x0, mg.bottom - tile.y0] : mmul([1, 0, 0, 1, mg.left - tile.x0, mg.bottom - tile.y0], flip); }
   if (check) { const f = geo.scale; M0 = [f.s, 0, 0, f.s, f.ox, f.oy]; }
   if (!tile && !check && mirror) B = flip;                                           // a sheet-size page is mirrored whole
   const ws = mscale(M0);
@@ -371,7 +427,7 @@ function drawPage(src, o, plan, p, artBox) {
   const sheetNotes = check && !src.part && o.sheetSizeGripper;
 
   if (neg) { page.fillColor(BLACK); page.rect(0, 0, p.w, p.h); page.fill(); }
-  if (tile) { page.save(); page.rect(TILE.margin, TILE.margin, tile.tw, tile.th); page.clip(); }
+  if (tile) { page.save(); page.rect(mg.left, mg.bottom, tile.tw, tile.th); page.clip(); }
 
   if (check) {                                                                       // sheet outline and optional bands; only artwork is clipped to the sheet
     page.strokeColor([0.35, 0.35, 0.35]); page.lineWidth(0.2); page.dash([]);
@@ -418,13 +474,14 @@ function drawPage(src, o, plan, p, artBox) {
   const colour = colourName(g), job = `${src.name || 'drawing'} · ${src.date || ''} · ${colour} · ${p.n}/${p.of}`;
   page.fillColor(markInk); page.strokeColor(markInk);
   if (tile) {
-    page.lineWidth(0.1); page.dash([2, 2]); page.rect(TILE.margin, TILE.margin, tile.tw, tile.th); page.stroke(); page.dash([]);
+    page.lineWidth(0.1); page.dash([2, 2]); page.rect(mg.left, mg.bottom, tile.tw, tile.th); page.stroke(); page.dash([]);
     const label = `Tile ${tile.n}/${tile.of} · column ${tile.col} of ${tile.cols}, row ${tile.row} of ${tile.rows} · overlap ${TILE.overlap} mm` +
-      (o.strip ? ` · ${job}` : ` · ${colour}`);
+      (custom ? ` · scale ${scaleText(geo.scale.s)}` : '') + (o.strip ? ` · ${job}` : ` · ${colour}`);
     page.fillColor(markInk);
-    page.text([2.8, 0, 0, 2.8, TILE.margin, 2.6], fitText(label, 2.8, p.w - 2 * TILE.margin));
+    // Preserve Standard's bytes; custom labels follow the available bottom margin.
+    page.text([2.8, 0, 0, 2.8, mg.left, o.margins ? Math.max(1.5, mg.bottom / 2) : 2.6], fitText(label, 2.8, p.w - mg.left - mg.right));
   } else if (check && o.titleBlock.enabled) {
-    const m = CHECK.margin, x0 = m, x1 = p.w - m, y0 = m, y1 = m + CHECK.block, half = (x1 - x0) / 2;
+    const x0 = mg.left, x1 = p.w - mg.right, y0 = mg.bottom, y1 = mg.bottom + CHECK.block, half = (x1 - x0) / 2;
     page.lineWidth(0.25); page.rect(x0, y0, x1 - x0, CHECK.block); page.stroke();
     const texts = titleBlockTexts(src, p, o.titleBlock);
     page.text([5, 0, 0, 5, x0 + 3, y1 - 8], fitText(texts.file, 5, half - 6));

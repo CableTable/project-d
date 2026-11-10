@@ -22,9 +22,12 @@ const STEPS = [0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 50
  * Where the ruler's marks go: from `lo` to `hi` mm, with `scale` pixels to the mm. A numbered mark about every `minPx` pixels
  * (1, 2, 5, 10 … mm), small marks between (a fifth of the step, a quarter for 2s). → { major, minor, ticks: [{ v, major }] }.
  */
-export function rulerTicks(lo, hi, scale, minPx = 64) {
-  const major = STEPS.find((s) => s * scale >= minPx) || STEPS[STEPS.length - 1];
-  const minor = major / (String(major)[0] === '2' ? 4 : 5), ticks = [];
+export function rulerTicks(lo, hi, scale, minPx = 64, unit = 'mm') {
+  const factor = unit === 'inch' ? 25.4 : unit === 'ft' || unit === 'ft-in' ? 304.8 : 1;
+  const whole = unit === 'inch' || unit === 'ft-in';
+  const step = STEPS.find((s) => (!whole || s >= 1) && s * factor * scale >= minPx) || STEPS[STEPS.length - 1];
+  const major = step * factor;
+  const minor = (unit === 'ft-in' ? step / 12 : unit === 'inch' ? Math.max(1, Math.floor(step / 5)) : step / (String(step)[0] === '2' ? 4 : 5)) * factor, ticks = [];
   if (!(hi > lo) || !(scale > 0)) return { major, minor, ticks };
   const k0 = Math.ceil(lo / minor - 1e-9), k1 = Math.floor(hi / minor + 1e-9);
   for (let k = k0; k <= k1 && ticks.length < 4000; k++) {

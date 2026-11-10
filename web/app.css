@@ -391,6 +391,11 @@ select.fld { font-family: var(--sans); }
 .pd-title-fields .wide { grid-column: 1 / -1; }
 .pd-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .pd-row .fld { width: 70px; }
+.pd-sub { display: flex; flex-direction: column; gap: 6px; padding-left: 22px; }
+.pd-sub[hidden] { display: none; }
+.pd-margin-link { align-self: flex-start; }
+.pd-margin-link[aria-pressed='true'] { border-color: var(--accent); background: var(--sel); color: var(--accenttext); }
+.pd-margin-error { color: light-dark(#b42318, #ff8b85); }
 .pd-right { flex: 1; min-width: 0; background: var(--canvas); padding: 18px; display: flex; flex-direction: column; gap: 12px; }
 .pd-prev { flex: 1; min-height: 0; position: relative; }
 .pd-prev canvas { position: absolute; inset: 0; }
@@ -601,6 +606,8 @@ select.fld { font-family: var(--sans); }
 .ruler.top { left: 0; top: 0; right: 0; height: 22px; border-bottom: 1px solid var(--line); cursor: s-resize; }
 .ruler.left { left: 0; top: 0; bottom: 0; width: 22px; border-right: 1px solid var(--line); cursor: e-resize; }
 .ruler.corner { left: 0; top: 0; width: 22px; height: 22px; background: var(--app); border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); z-index: 6; display: flex; align-items: center; justify-content: center; font: 500 9px var(--mono); cursor: default; }
+.ruler.corner[data-unit="inch"] { font-size: 8px; }
+.ruler.corner[data-unit="ft-in"] { font-size: 7px; }
 .canvas .ruler.top svg { width: calc(100% - 22px); height: 22px; margin-left: 22px; pointer-events: none; }
 .canvas .ruler.left svg { width: 22px; height: calc(100% - 22px); margin-top: 22px; pointer-events: none; }
 .ruler path { stroke: var(--muted); stroke-width: 1; fill: none; }
@@ -833,6 +840,7 @@ button.cswatch, button.ribbon-swatch { padding: 0; cursor: pointer; }
 .ds-form { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 14px; }
 .ds-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .ds-grid .mode { align-self: flex-start; }
+.ds-units { grid-column: 1 / -1; }
 .ds-side { width: 250px; flex-shrink: 0; display: flex; flex-direction: column; gap: 8px; }
 .ds-t { font-size: 11px; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); }
 .ds-prev { display: block; width: 100%; background: var(--sheet); border: 1px solid var(--line); border-radius: var(--r); }
@@ -1051,8 +1059,8 @@ kbd { font: 500 11px var(--mono); padding: 1px 5px; border: 1px solid var(--line
 .cb-echo-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .status .cb-hint { margin-left: 8px; margin-right: 6px; white-space: nowrap; }
 @media (max-width: 1280px) { .status .cb-hint, .status .cb-echo-text { display: none; } }       /* narrow: the echo is its icon only */
-@media (max-width: 1200px) { .status { gap: 2px; } .status .lbl + .lbl, .status .tool-chip { margin-left: 6px; } .status .tog { padding: 0 4px; } }       /* narrow: tighten toggle padding and gaps so the non-wrapping readouts and sheet chip fit with wider CI fonts */
-@media (max-width: 1100px) { .status .cb-echo { display: none; } .status .coords { min-width: 160px; } }       /* Leave room for DYN and the PDF sheet chip with wider fonts; typing still opens the bar. */
+@media (max-width: 1400px) { .status { gap: 2px; } .status .lbl + .lbl, .status .tool-chip { margin-left: 6px; } .status .tool-chip { padding: 1px 4px; } .status .tog { padding: 0 4px; } }       /* narrow: leave room for Snap preview and the PDF sheet chip with wider fonts */
+@media (max-width: 1100px) { .status { gap: 1px; padding: 0 4px; } .status .lbl + .lbl, .status .tool-chip { margin-left: 0; } .status .tog { padding: 0 3px; } .status .cb-echo { display: none; } .status .coords { min-width: 160px; } }       /* Leave room for Snap preview, DYN and the PDF sheet chip; typing still opens the bar. */
 
 /* TODO 34: R12 Shortcuts, using the same tokens as the mock-up. */
 .sc-back { background: color-mix(in srgb, var(--canvas) 75%, transparent); }

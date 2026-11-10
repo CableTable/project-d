@@ -359,7 +359,7 @@ test('TODO 97a fix 3: a fillet of a grouped line with a circle adds no arc to th
   const a = W.line(0, 0, 20, 0), c = W.circle(10, 6, 3), d = W.line(0, 30, 20, 30);
   const doc = { ...W.newDoc(), entities: [a, c, d], groups: [make(0, 2)] };
   const run = runInNewContext(appFunction('filletDo') + '\nfilletDo;', {
-    state: { mod: { ent: a, p0: [3, 0], trim: true, stage: '' }, filR: 2 }, filletEntities, remapGroups: remap, GR, mmText: String,
+    state: { mod: { ent: a, p0: [3, 0], trim: true, stage: '' }, filR: 2 }, filletEntities, remapGroups: remap, GR, drawingLength: String, lengthSuffix: () => ' mm',
     note() {}, paintOverlay() {}, ui: { cmdUI: { message() {} } },
     filletCommit: (dd, entities, groups) => { Object.assign(dd.raw, { entities, groups }); return true; },
   });

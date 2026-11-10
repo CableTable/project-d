@@ -13,9 +13,16 @@
 import { lwVertices, hasGrips } from './grips.js';
 import { sweepOf } from './draw.js';
 import * as TX from './text.js';
+import * as DU from './units.js';
 import { rgbHex, keyRgb } from './colour.js';
 
 const DEG = Math.PI / 180;
+export const fieldUnit = (field, unit) => field.unit === 'mm' ? unit : field.unit === 'mm²' ? DU.formatArea(0, unit).split(' ')[1] : field.unit;
+export function fieldText(field, unit = 'mm') {
+  const fixed = (v) => Number(v).toFixed(2);
+  return field.unit === 'mm' ? DU.format(field.value, unit, fixed) : field.unit === 'mm²' ? DU.formatArea(field.value, unit).split(' ')[0] : field.key === 'vertices' ? String(field.value) : fixed(field.value);
+}
+export const parseField = (key, text, unit = 'mm') => key === 'textAngle' ? DU.parse(text) : DU.parse(text, unit);
 const num = (v) => { const n = parseFloat(v); return Number.isFinite(n) ? n : 0; };
 const at = (r, code, which = 0) => { let n = -1; for (let k = 0; k < r.c.length; k++) if (r.c[k] === code && ++n === which) return k; return -1; };
 const get = (r, code) => { const k = at(r, code); return k < 0 ? null : num(r.v[k]); };
@@ -70,6 +77,17 @@ export const withColour = (ent, key) => {
 export const withLineType = (ent, key) => ({ ...ent, lt: key === 'BYLAYER' ? null : key });
 
 export const WIDTHS = ['ByLayer', 'Hairline', 0.10, 0.25, 0.50, 1.00, 2.00];
+/** Valid typed widths, newest first; presets have their own entries. */
+export function recentWidths(list, value) {
+  return [...new Set([value, ...(Array.isArray(list) ? list : [])].filter((w) => typeof w === 'number' && Number.isFinite(w) && w > 0 && w <= 327.67 && w !== .05 && !WIDTHS.includes(w)))].slice(0, 5);
+}
+/** A null option is a separator; keep an unlisted current value before Custom…. */
+export function widthOptions(current, recent) {
+  const options = WIDTHS.map((w) => [String(w), typeof w === 'number' ? w.toFixed(2) + ' mm' : w]);
+  if (recent.length) options.push([null, ''], ...recent.map((w) => [String(w), w + ' mm']));
+  if (current !== '' && !options.some(([value]) => value === String(current))) options.push([String(current), typeof current === 'number' ? current + ' mm' : current]);
+  return [...options, ['custom', 'Custom…']];
+}
 /** Outline setting in mm; null for a polyline with varying vertex widths. */
 export function widthKey(ent, factor = 1) {
   if (ent.type === 'LWPOLYLINE' || ent.type === 'POLYLINE') {

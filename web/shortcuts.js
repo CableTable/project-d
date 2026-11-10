@@ -7,6 +7,7 @@ export const RESERVED = {
   'Ctrl+Shift+S': 'Reserved for Save As.',
   'Ctrl+Z': 'Reserved for Undo.', 'Ctrl+Y': 'Reserved for Redo.', 'Ctrl+Shift+Z': 'Reserved for Redo.',
   'Ctrl+C': 'Reserved for Copy inside the app.', 'Ctrl+V': 'Reserved for Paste inside the app.',
+  'Ctrl+Shift+V': 'Reserved for Paste in place inside the app.',
   Esc: 'Reserved for cancel / close / clear selection.', Delete: 'Reserved for deleting the selection.',
   'Ctrl+D': 'Reserved for Duplicate in a layout.',
   F2: 'Reserved for command history.', F10: 'Reserved for polar tracking.', F11: 'Reserved for object snap tracking.',
@@ -55,7 +56,7 @@ export function bindings(overrides = {}) {
       key: typeof o?.key === 'string' && !fixedKey(c.name) ? normalizeKey(o.key) ?? o.key : c.key }];
   }));
   // Discard older own keys now owned by the clipboard or fixed view toggles.
-  for (const c of COMMANDS) if (bound[c.name].key !== c.key && ['Ctrl+C', 'Ctrl+V', 'F3', 'F7', 'F8', 'F9', 'F12'].includes(bound[c.name].key)) bound[c.name].key = '';
+  for (const c of COMMANDS) if (bound[c.name].key !== c.key && ['Ctrl+C', 'Ctrl+V', 'Ctrl+Shift+V', 'F3', 'F7', 'F8', 'F9', 'F12'].includes(bound[c.name].key)) bound[c.name].key = '';
   // Existing own keys win over the newly added tab defaults on upgrade.
   for (const name of ['closetab', 'nexttab', 'previoustab']) {
     if (!Object.hasOwn(overrides?.[name] || {}, 'key') && COMMANDS.some((c) => c.name !== name && typeof overrides?.[c.name]?.key === 'string' && bound[c.name].key === bound[name].key)) bound[name].key = '';
