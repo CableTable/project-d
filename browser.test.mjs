@@ -20487,18 +20487,21 @@ try {
       ['dxf', true, 'C:/jobs/renamed.dxf', true],
       ['picture', false, 'C:/jobs/source.pdf', false],
       ['dxfbg', false, 'C:/jobs/source.dxf', true],
+      ['dxfbg', true, 'C:/jobs/source.dxf', true],                      // a DXF saved under a new name, then given a PDF background
+      ['dwgbg', false, 'C:/jobs/source.dwg', true],                     // a DWG tab (path null, openPath set) with a PDF background
     ]) {
       const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
       const p = await context.newPage();
       p.on('pageerror', (e) => errors.push(String(e)));
       try {
         await p.addInitScript(({ kind, vector, drawing, picture }) => {
-          window.__picked = `C:/jobs/source.${kind === 'dxf' || kind === 'dxfbg' ? 'dxf' : 'pdf'}`;
+          window.__picked = `C:/jobs/source.${kind === 'dxf' || kind === 'dxfbg' ? 'dxf' : kind === 'dwgbg' ? 'dwg' : 'pdf'}`;
           window.__readPicture = kind === 'picture'; window.__sidecars = 0;
-          window.__TAURI__ = { dialog: { open: async () => window.__picked, save: async () => 'C:/jobs/renamed.dxf', ask: async () => true },
+          window.__TAURI__ = { core: { invoke: async () => new Uint8Array(drawing).buffer },   // dwg_to_dxf: the DXF's bytes
+            dialog: { open: async () => window.__picked, save: async () => 'C:/jobs/renamed.dxf', ask: async () => true },
             fs: { exists: async () => false, writeTextFile: async () => {},
               readTextFile: async () => { window.__sidecars++; throw new Error('no sidecar'); },
-              readFile: async () => new Uint8Array(kind === 'dxf' || kind === 'dxfbg' ? drawing : window.__readPicture ? picture : vector) } };
+              readFile: async () => new Uint8Array(kind === 'dxf' || kind === 'dxfbg' || kind === 'dwgbg' ? drawing : window.__readPicture ? picture : vector) } };
         }, { kind, vector, drawing, picture });
         await p.goto(URL_ + '?autosave=86400000');
         await p.getByTestId('open').click();
@@ -20507,7 +20510,7 @@ try {
           await p.keyboard.press('Control+Shift+s');
           await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'renamed.dxf');
         }
-        if (kind === 'dxfbg') {                                         // a PDF background on the DXF tab: the DXF is still open
+        if (kind === 'dxfbg' || kind === 'dwgbg') {                     // a PDF background on the DXF tab: the DXF is still open
           await p.getByTestId('bg-picker').setInputFiles('fixtures/text-only.pdf');
           await p.waitForFunction(() => /^Background text-only\.pdf/.test(document.querySelector('[data-testid=cmd-prompt]').textContent));
         }
