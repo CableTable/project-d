@@ -6271,8 +6271,9 @@ function measurePoint(d, p, shift = false, typed = false) {
 function keepMeasure() {
   const d = editable(), M = state.meas;
   if (!d || !M || M.pts.length !== 2) return;
-  const override = measureOverride(M.pts[0], M.pts[1], d.factor, state.dp);
-  const dim = Ed.makeDimension(M.pts[0], M.pts[1], d.factor, d.raw.blocks, state.dp, { ...dimNew(d), override });
+  const item = cmpEditingItem(d), [a, b] = item ? M.pts.map((p) => CMP.drawingPoint(item, p.slice(0, 2))) : M.pts;
+  const override = measureOverride(a, b, d.factor, state.dp);
+  const dim = Ed.makeDimension(a, b, d.factor, d.raw.blocks, state.dp, { ...dimNew(d), override });
   if (!dim) return;
   if (!commit(d, Ed.addDimension(d.raw, dim), 'Add dimension')) return;
   note(`Dimension kept: ${measuredText(dim.block.entities)} mm${override.slice(2)}, on the layer ${Ed.DIM_LAYER}. Select it to delete it`);
@@ -7302,7 +7303,7 @@ function measTagPlace() {
   const M = state.tool === 'measure' && state.meas, d = M && M.pts.length === 2 && measureTarget(), t = ui.measTag;
   t.hidden = !d;
   if (!d) return;
-  ui.keepMeas.hidden = !!cmpDoc() || !editable();
+  ui.keepMeas.hidden = !editable();
   ui.measText.textContent = Ed.formatMeasure(M.result, drawingUnit());
   const f = d.lay ? 1 : d.factor, [a, b] = M.pts.map((p) => [(p[0] * f - view.ox) * view.scale, (state.sheetH - p[1] * f - view.oy) * view.scale]);
   const r = canvasSize(), size = [t.offsetWidth, t.offsetHeight], at = DR.dynamicInputPlacement(a, b, r, { length: size, angle: size }, 'tag');

@@ -6171,7 +6171,7 @@ try {
       await p.locator('[data-menu=File]').click(); await p.getByRole('menuitem', { name: 'Compare drawings…', exact: true }).click();
       await q('cmp-item').first().waitFor(); assert.equal(await q('cmp-item').count(), 2);
       assert.match(await measure([40.05, 40.05], [70.05, 80.05]), /50(?:\.0+)? mm.*ΔX 30(?:\.0+)?\s+ΔY 40(?:\.0+)?/, 'two snapshots, including inch conversion');
-      assert.equal(await q('meas-keep').isVisible(), false, 'Compare measures do not create dimensions');
+      assert.equal(await q('meas-keep').isVisible(), true, 'Compare can keep a measure in its selected open source');
       await p.keyboard.press('Escape'); assert.match(await q('cmd-prompt').textContent(), /Measure cleared/);
       await q('guide-position').fill('55'); await q('guide-add-v').click();
       assert.match(await measure([40, 40], [55.15, 40]), /15(?:\.0+)? mm.*ΔX 15(?:\.0+)?\s+ΔY 0/, 'Compare point snaps to guide');
@@ -7016,6 +7016,70 @@ try {
     await page.locator('.tabs .dtab.on .x').click();
     await page.locator('.tabs .dtab', { hasText: 'sample-copy.dxf' }).click();
     await page.locator('[data-tool=step]').click();
+  });
+
+  await step('TODO 245: Compare Measure Keep uses the moved source drawing points', async () => {
+    for (const [unit, factor] of [[4, 1], [1, 25.4]]) {
+      const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+      try {
+        const p = await context.newPage(), q = (id) => panelControl(p, p.getByTestId(id));
+        p.on('pageerror', (e) => errors.push(String(e)));
+        const command = async (text) => {
+          if (!await q('cmd-input').isVisible()) await q('cmd-echo').click();
+          await q('cmd-input').fill(text); await q('cmd-input').press('Enter');
+        };
+        const open = async (name, raw) => {
+          await q('picker').setInputFiles({ name, mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(raw)) });
+          await p.waitForFunction((name) => document.querySelector('.dtab.on .tname').textContent === name, name);
+        };
+        const tab = (name) => p.locator('.dtab').filter({ has: p.locator('.tname', { hasText: name }) });
+        const save = async () => {
+          const [dl] = await Promise.all([p.waitForEvent('download'), p.keyboard.press('Control+s')]);
+          return readDxf(readFileSync(await dl.path(), 'utf8'));
+        };
+        const a = [20, 30], b = [60, 50], offset = [20, -10];
+        const source = newDoc(unit); addEntities(source, dxfLine(...a, ...b));
+        const ref = newDoc(4); addEntities(ref, dxfLine(...a.map((v) => v * factor), ...b.map((v) => v * factor)));
+        await p.goto(URL_ + '?autosave=86400000');
+        await open('reference-245.dxf', ref); await open('source-245.dxf', source);
+        await tab('reference-245.dxf').click(); await command('compare');
+        await q('cmp-name-2').click();
+        assert.equal(await q('cmp-name-2').textContent(), 'source-245.dxf');
+        await q('cmp-lineup-manual').click();
+        await command('nudge'); await q('nudge-input').fill('10'); await q('nudge-input').press('Enter');
+        await p.keyboard.press('ArrowRight'); await p.keyboard.press('ArrowRight'); await p.keyboard.press('ArrowDown');
+        assert.match(await q('cmp-hint').textContent(), /moved X 20.00, Y -10.00/);
+        for (const keep of ['Enter', 'Keep']) {
+          await p.getByRole('button', { name: 'Fit', exact: true }).click();
+          await command('measure');
+          for (const pt of [a, b]) {
+            const at = await p.evaluate(([x, y]) => {
+              const s = document.querySelector('rect.sheet'), r = s.getBoundingClientRect(), k = r.width / +s.getAttribute('width');
+              return { x: r.x + x * k, y: r.y + (+s.getAttribute('height') - y) * k };
+            }, pt.map((v, i) => v * factor + offset[i]));
+            await p.mouse.click(at.x, at.y);
+          }
+          if (keep === 'Enter') await p.keyboard.press('Enter');
+          else await q('meas-keep').click();
+          if (unit === 4) {
+            const theme = keep === 'Enter' ? 'light' : 'dark';
+            await p.locator('[data-menu=View]').click();
+            await p.getByRole('menuitemcheckbox', { name: new RegExp('Theme: ' + theme) }).click();
+            const path = `${shotDir}/todo245-compare-${theme}.png`;
+            await p.screenshot({ path }); assert.ok(readFileSync(path).length > 0);
+          }
+          await tab('source-245').click();
+          const doc = await save(), dims = doc.entities.filter((e) => e.type === 'INSERT' && e.layer === 'Dimensions');
+          assert.equal(dims.length, keep === 'Enter' ? 1 : 2);
+          const params = dimParams(doc.blocks[dims.at(-1).r.v[dims.at(-1).r.c.indexOf(2)]]);
+          for (const [key, expected] of [['a', a], ['b', b]]) {
+            params[key].forEach((v, i) => assert.ok(Math.abs(v - expected[i]) < 1e-6,
+              `${keep}, factor ${factor}: source ${key}[${i}] expected ${expected[i]}, got ${v}`));
+          }
+          await tab('Compare').click();
+        }
+      } finally { await context.close(); }
+    }
   });
 
   await step('TODO 194: measure keep shows dx dy', async () => {
