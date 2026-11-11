@@ -3582,8 +3582,9 @@ function exportCutter() {
   if (document.querySelector('.cutdlg')) return;
   const raw = d.lay ? LD.layoutRaw(d.lay) : d.raw;
   const factor = d.lay ? 1 : d.factor;
+  const cutOpt = { dropLayers: d.lay ? ['Sheet', 'Marks'] : [] };       // a layout's sheet border and crop / reg marks are not cut lines (TODO 244)
   let made;
-  try { made = { tol: 0.01, res: cutterDoc(raw, 0.01 / factor) }; } catch (err) { note(err.message); return; }       // the count of what is left out does not depend on the tolerance
+  try { made = { tol: 0.01, res: cutterDoc(raw, 0.01 / factor, cutOpt) }; } catch (err) { note(err.message); return; }       // the count of what is left out does not depend on the tolerance
   const want = baseName(dxfName(d.openPath ? d.openPath.split(/[\\/]/).pop() : d.name)) + '-cutter.dxf';
   const { left, other } = made.res;
   const leftText = left ? `${left} text / fill ${left === 1 ? 'object' : 'objects'} left out` : 'No text or fills to leave out';
@@ -3603,7 +3604,7 @@ function exportCutter() {
     finish();
     const t = window.__TAURI__;
     try {
-      if (made.tol !== tol) made = { tol, res: cutterDoc(raw, tol / factor) };
+      if (made.tol !== tol) made = { tol, res: cutterDoc(raw, tol / factor, cutOpt) };
       const text = writeDxf(made.res.doc, { escapeUnicode: true });
       let name = want, dir = '';
       if (t && t.dialog && t.dialog.save && t.fs && t.fs.writeTextFile) {

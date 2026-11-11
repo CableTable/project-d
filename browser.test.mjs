@@ -20538,6 +20538,24 @@ try {
     await closeTabs(/./);
   });
 
+  await step('TODO 244: Export for cutter on a layout tab leaves out the sheet border and the crop / reg marks, keeps the parts', async () => {
+    await closeTabs(/./);
+    const d = newDoc(4); addEntities(d, [dxfPoly([[0, 0], [100, 0], [100, 60], [0, 60]], { closed: true }), dxfCircle(50, 30, 15)]);
+    await t('picker').setInputFiles({ name: 'cut-244.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(d)) });
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'cut-244.dxf');
+    await t('add-to-layout').click();
+    await page.waitForFunction(() => /layout/.test(document.querySelector('.tabs .dtab.on .tname').textContent));
+    await layoutTab();
+    for (const key of ['crop', 'reg']) await panelControl(page, page.locator(`[data-key=${key}]`)).check();
+    const saved = readDxf((await downloaded(() => page.keyboard.press('Control+s'))).text);
+    assert.ok(saved.entities.some((e) => e.layer === 'Sheet') && saved.entities.some((e) => e.layer === 'Marks'), 'the layout itself has a sheet and marks');
+    await menuItem('File', 'Export for cutter…'); await t('cutter-dialog').waitFor();
+    const back = readDxf((await downloaded(() => t('cutter-go').click())).text);
+    assert.deepEqual(back.entities.filter((e) => ['Sheet', 'Marks'].includes(e.layer)), [], 'no Sheet or Marks entity in the cutter file');
+    assert.ok(back.entities.length > 0 && back.entities.every((e) => ['LINE', 'ARC', 'LWPOLYLINE'].includes(e.type)), 'the parts are still cut');
+    await closeTabs(/./);
+  });
+
   await step('TODO 54 Wireframe: menu, chip and F9; fills, pictures, selection, snaps, persistence, all tabs; PDF and DXF unchanged', async () => {
     const c = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
     const p = await c.newPage(), q = (id) => panelControl(p, p.locator(`[data-testid=${id}]`));

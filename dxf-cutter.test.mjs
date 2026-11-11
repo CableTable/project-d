@@ -157,3 +157,19 @@ test('TODO 184: INSERT arrays nested 4 deep ending in an empty block end in a Dr
   assert.throws(() => cutterDoc(d, 0.01), D.DrawingError);
   assert.ok(Date.now() - t0 < 15000);
 });
+
+test('TODO 244: dropLayers leaves out top-level Sheet and Marks objects only, never what is inside a block', () => {
+  const layout = () => {
+    const d = W.newDoc(); W.addBlock(d, 'P', [W.line(0, 0, 9, 9, { layer: 'Sheet' }), W.rect(0, 0, 5, 5, { layer: 'Cut' })]);
+    W.addEntities(d, W.rect(0, 0, 300, 200, { layer: 'Sheet' }), W.insert('P', 10, 10, { layer: 'Parts' }), W.line(0, 5, 5, 5, { layer: 'Marks' }),
+      W.circle(20, 20, 3, { layer: 'Marks' }), W.line(0, 0, 1, 1, { layer: 'Cut' }));
+    return d;
+  };
+  const drawing = () => docOf(W.rect(0, 0, 300, 200, { layer: 'Sheet' }), W.line(0, 5, 5, 5, { layer: 'Marks' }));
+  const count = (r) => { const n = { Sheet: 0, Marks: 0, Cut: 0 }; for (const e of r.doc.entities) n[e.layer]++; return n; };   // the circle is 2 arcs
+  for (const [name, doc, opt, want] of [
+    ['layout: sheet and marks dropped, the Sheet line inside the part kept', layout(), { dropLayers: ['Sheet', 'Marks'] }, { Sheet: 1, Marks: 0, Cut: 2 }],
+    ['layout without the option keeps everything', layout(), undefined, { Sheet: 2, Marks: 3, Cut: 2 }],
+    ['drawing with a Sheet layer keeps it (no option)', drawing(), undefined, { Sheet: 1, Marks: 1, Cut: 0 }],
+  ]) assert.deepEqual(count(cutterDoc(doc, 0.01, opt)), want, name);
+});
