@@ -9431,7 +9431,7 @@ function textAdd(d, m) {
 }
 /** Changes the text at entity e to model m (it keeps its layer and colour), as one undo step with this label; the text stays selected. */
 function textReplace(d, e, m, label) {
-  const old = d.raw.entities[e], ent = TX.encode(m, { layer: old.layer, lt: old.lt, aci: old.aci, tc: old.tc, lw: old.lw, lts: old.lts, hidden: old.hidden, ps: old.ps });
+  const ent = TX.reencode(d.raw.entities[e], m);
   view.fitted = false;
   if (!commit(d, { entities: d.raw.entities.map((x, i) => (i === e ? ent : x)), blocks: d.raw.blocks }, label)) return false;
   setSel(d, new Set([e]));

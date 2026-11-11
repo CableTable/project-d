@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import * as TX from './web/text.js';
 import { readDxf, flatten, fontOfStyle } from './web/drawing.js';
-import { newDoc, addEntities, writeDxf } from './web/dxf-write.js';
+import { newDoc, addEntities, writeDxf, entity } from './web/dxf-write.js';
 
 let n = 0;
 function test(name, fn) { fn(); n++; console.log('ok', name); }
@@ -58,6 +58,74 @@ test('decode: an MTEXT attached at the middle or bottom, and text with codes, co
   assert.equal(TX.decode({ type: 'TEXT', r: { c: [10, 20, 40, 1], v: ['0', '0', '0', 'x'] } }), null, 'no height: not a text');
   const font = TX.decode({ type: 'MTEXT', r: { c: [10, 20, 40, 1], v: ['0', '0', '5', '{\\fArial|b1|i0;Hello}'] } });
   assert.equal(font.bold, true); assert.deepEqual(font.lines, ['Hello']);
+});
+
+test('TODO 246: text edits replace only the changed DXF codes (TEXT / MTEXT property grid)', () => {
+  const shared = [[5, 'AB'], [330, 'CD'], [210, '0.0'], [220, '0.0'], [230, '1.0'], [39, '0.2']];
+  const fixtures = [
+    entity('TEXT', [[10, 10], [20, 20], [30, 3], [11, 12], [21, 24], [31, 3], [40, 5], [50, 15], [7, 'ROMANS'], [72, 1], [73, 2], [1, 'Hello %%d'], [41, '0.80'], [51, 12], ...shared], { layer: 'Notes', aci: 1 }),
+    entity('MTEXT', [[10, 10], [20, 20], [30, 3], [40, 5], [50, 15], [11, 0], [21, 1], [31, 0], [7, 'ROMANS'], [71, 5], [3, '{\\H1.5x;Hello}'], [3, '\\P'], [1, '{\\C1;world}'], [41, '80.00'], [44, '1.20'], ...shared], { layer: 'Notes', aci: 1 }),
+  ];
+  const pairs = (e, codes, include = true) => e.r.c.flatMap((c, i) => codes.includes(c) === include ? [[c, e.r.v[i]]] : []);
+  const cases = [
+    ['height', { h: 9 }, [40]], ['angle', { angle: 30 }, [50, 11, 21]],
+    ['font', { font: 'Mono', styleName: 'Mono' }, [7]], ['align', { ha: 2 }, [72, 71, 10, 20, 11, 21]],
+    ['bold', { bold: true }, [1, 3]], ['lines', { lines: ['Changed', 'second'] }, [1, 3]],
+  ];
+  for (const old of fixtures) for (const [name, patch, changed] of cases) {
+    const before = structuredClone(old), m = { ...TX.decode(old), ...patch }, next = TX.reencode(old, m), label = `${old.type} ${name}`;
+    const converted = next.type !== old.type;
+    assert.deepEqual(old, before, `${label}: source unchanged`);
+    assert.equal(next.type, converted ? 'MTEXT' : old.type, label);
+    assert.deepEqual(pairs(next, shared.map(([c]) => c)), pairs(old, shared.map(([c]) => c)), `${label}: shared codes`);
+    assert.equal(next.layer, old.layer); assert.equal(next.aci, old.aci);
+    if (converted) {
+      assert.equal(val(next, 41), undefined); assert.equal(val(next, 51), undefined); assert.equal(val(next, 73), undefined);
+    } else {
+      const touched = old.type === 'TEXT' && name === 'angle' ? [50] : changed;
+      assert.deepEqual(pairs(next, touched, false), pairs(old, touched, false), `${label}: untouched codes`);
+    }
+    const decoded = TX.decode(next);
+    for (const key of Object.keys(patch)) {
+      if (typeof patch[key] === 'number') near(decoded[key], patch[key]); else assert.deepEqual(decoded[key], patch[key], `${label}: ${key}`);
+    }
+    if (name === 'height') assert.equal(val(next, 40), '9');
+    if (name === 'font') assert.equal(val(next, 7), 'Mono');
+    if (name === 'angle') {
+      assert.equal(val(next, 50), '30');
+      if (old.type === 'MTEXT') { near(+val(next, 11), Math.cos(Math.PI / 6)); near(+val(next, 21), 0.5); }
+    }
+    if (name === 'align') { assert.equal(val(next, old.type === 'TEXT' ? 72 : 71), old.type === 'TEXT' ? '2' : '3'); near(decoded.x, m.x); near(decoded.y, m.y); }
+    if (name === 'lines' || name === 'bold') {
+      assert.deepEqual(pairs(next, [1, 3]), pairs(TX.encode(m), [1, 3]), `${label}: new plain string`);
+    } else assert.deepEqual(pairs(next, [1, 3]), pairs(old, [1, 3]), `${label}: raw string`);
+  }
+  for (const old of fixtures) {
+    assert.deepEqual(TX.reencode(old, TX.decode(old)), old, 'no-op preserves every code');
+    const m = TX.decode(old), moved = TX.reencode(old, { ...m, x: m.x + 8, y: m.y - 4 });
+    const point = old.type === 'TEXT' ? [11, 21] : [10, 20];
+    assert.deepEqual(pairs(moved, point, false), pairs(old, point, false));
+    near(+val(moved, point[0]), +val(old, point[0]) + 8); near(+val(moved, point[1]), +val(old, point[1]) - 4);
+    const scaled = TX.reencode(old, { ...m, h: m.h * 2, x: m.x + 8, y: m.y - 4 }), anchor = TX.decode(scaled);
+    assert.deepEqual(pairs(scaled, [...point, 40], false), pairs(old, [...point, 40], false));
+    near(anchor.x, m.x + 8); near(anchor.y, m.y - 4); near(anchor.h, m.h * 2);
+    const zero = TX.reencode(old, { ...m, angle: 0 });
+    near(TX.decode(zero).angle, 0);
+    if (old.type === 'TEXT') {
+      const left = TX.reencode(old, { ...m, ha: 0 });
+      assert.equal(val(left, 72), '0'); near(TX.decode(left).x, m.x); near(TX.decode(left).y, m.y);
+    }
+  }
+  const single = entity('MTEXT', [[10, 0], [20, 10], [40, 5], [1, '\\H2;Hello'], ...shared]);
+  for (const patch of [{ h: 8 }, { angle: 30 }, { font: 'Mono', styleName: 'Mono' }, { ha: 2 }]) {
+    const next = TX.reencode(single, { ...TX.decode(single), ...patch });
+    assert.equal(next.type, 'MTEXT'); assert.equal(val(next, 1), val(single, 1));
+  }
+  for (const old of [single, TX.reencode(single, { ...TX.decode(single), bold: true })]) {
+    const next = TX.reencode(old, { ...TX.decode(old), lines: ['new'], bold: false });
+    assert.equal(next.type, 'TEXT'); assert.equal(val(next, 1), 'new');
+    assert.deepEqual(pairs(next, shared.map(([c]) => c)), pairs(old, shared.map(([c]) => c)));
+  }
 });
 
 test('fontOfStyle: the three fonts', () => {

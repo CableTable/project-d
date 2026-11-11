@@ -7,6 +7,7 @@
 //   decode(entity)               → the model of a TEXT or MTEXT entity (dxf-write.js shape), or null for anything else
 //   encode(model, o)             → the entity it saves as: one line without bold is a TEXT, two or more lines or bold an MTEXT (bold as a
 //                                  font code); o: { layer, aci, tc, lt, lw } (the entity's common properties)
+//   reencode(old, model)        → edits only changed properties on a copy, preserving the old entity's other codes
 //   textBox(model, w100, pad)    → { corners: [BL, BR, TR, TL], w, hgt } the box round the text (w100(line): the line's width in a 100 px font)
 //   scaleByCorner(model, box, i, p) → { h, x, y }: the text scaled about the corner opposite corner i so that corner follows p
 import { entity, text as textEnt } from './dxf-write.js';
@@ -48,6 +49,49 @@ export function decode(e) {
 }
 
 const esc = (s) => s.replace(/\\/g, '\\\\').replace(/\{/g, '\\{').replace(/\}/g, '\\}');
+/** Edit a copy of the old record, preserving every code outside the changed properties. */
+export function reencode(old, m) {
+  const was = decode(old), strings = m.bold !== was.bold || m.lines.length !== was.lines.length || m.lines.some((line, i) => line !== was.lines[i]);
+  if (strings && kindOf(m) !== old.type) {
+    const next = encode(m, old);
+    for (let i = 0; i < old.r.c.length; i++) {
+      const code = old.r.c[i];
+      if (code === 5 || code === 330 || code === 39 || (code >= 210 && code <= 230)) { next.r.c.push(code); next.r.v.push(old.r.v[i]); }
+    }
+    return next;
+  }
+  const r = { ...old.r, c: old.r.c.slice(), v: old.r.v.slice() }, next = { ...old, r };
+  const put = (code, value) => {
+    const i = r.c.indexOf(code);
+    if (i < 0) { r.c.push(code); r.v.push(String(value)); } else r.v[i] = String(value);
+  };
+  if (m.h !== was.h) put(40, m.h);
+  if (m.angle !== was.angle) {
+    put(50, m.angle);
+    if (old.type === 'MTEXT' && (r.c.includes(11) || r.c.includes(21))) { put(11, Math.cos(m.angle * DEG)); put(21, Math.sin(m.angle * DEG)); }
+  }
+  if (m.font !== was.font || m.styleName !== was.styleName) put(7, m.styleName || m.font);
+  if (m.ha !== was.ha) {
+    if (old.type === 'TEXT') {
+      put(72, m.ha); put(10, m.x); put(20, m.y);
+      if (m.ha) { put(11, m.x); put(21, m.y); }
+    } else {
+      put(71, 1 + m.ha); put(10, m.x - Math.sin(m.angle * DEG) * m.h); put(20, m.y + Math.cos(m.angle * DEG) * m.h);
+    }
+  } else if (m.x !== was.x || m.y !== was.y) {
+    const anchor = decode(next), aligned = old.type === 'TEXT' && m.ha !== 0 && r.c.includes(11), x = aligned ? 11 : 10, y = aligned ? 21 : 20;
+    put(x, num(first(r, x)) + m.x - anchor.x); put(y, num(first(r, y)) + m.y - anchor.y);
+  }
+  if (strings) {
+    // shortcut: edited lines / bold use plain text until the editor supports inline formatting.
+    const text = encode(m).r;
+    const pairs = r.c.flatMap((code, i) => code === 1 || code === 3 ? [] : [[code, r.v[i]]]);
+    for (let i = 0; i < text.c.length; i++) if (text.c[i] === 1 || text.c[i] === 3) pairs.push([text.c[i], text.v[i]]);
+    r.c = pairs.map(([code]) => code); r.v = pairs.map(([, value]) => value);
+  }
+  return next;
+}
+
 /** The entity a model saves as. One line, not bold: TEXT (code 72 and the alignment point for centre / right). Otherwise MTEXT, attached at the top. */
 export function encode(m, o = {}) {
   const lines = m.lines.length ? m.lines : [''], style = m.styleName || m.font || 'Standard';
