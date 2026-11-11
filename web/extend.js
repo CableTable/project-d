@@ -82,7 +82,9 @@ export function rayHit(from, end, shapes) {
   if (len < 1e-9) return null;
   const segs = shapes.flatMap((sh) => pathOf(sh).segs.map((s) => ({ ...s, sh }))).filter((s) => dist(s.a, s.b) >= 1e-9);
   // a ray long enough to pass every boundary: the farthest a segment can reach from `end`
-  const reach = 1 + Math.max(0, ...segs.map((s) => { const g = geo(s); return dist(end, s.a) + (g.line ? g.len : 2 * g.r); }));
+  let reach = 0;                                                     // a plain loop: spreading 100k+ segments into Math.max overflows the stack
+  for (const s of segs) { const g = geo(s); reach = Math.max(reach, dist(end, s.a) + (g.line ? g.len : 2 * g.r)); }
+  reach += 1;
   const u = [(end[0] - from[0]) / len, (end[1] - from[1]) / len], ray = { a: end, b: [end[0] + u[0] * reach, end[1] + u[1] * reach], bulge: 0 };
   let best = null, bd = Infinity;
   const min = 1e-9 * (1 + len);

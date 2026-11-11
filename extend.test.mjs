@@ -17,6 +17,13 @@ test('rayHit: the nearest boundary ahead wins; boundaries behind or beside are i
   assert.equal(rayHit([0, 0], [0, 10], edges), null);
 });
 
+test('rayHit: 300000 boundary segments give the same hit as the near ones alone, no stack overflow (TODO 250)', () => {
+  const near = [line(20, -5, 20, 5), line(30, -5, 30, 5)].map(S);
+  const far = Array.from({ length: 300000 }, (_, i) => line(1000 + i, 50, 1000 + i, 60)).map(S);
+  close(rayHit([0, 0], [10, 0], [...near, ...far]), rayHit([0, 0], [10, 0], near));
+  close(rayHit([0, 0], [10, 0], [...near, ...far]), [20, 0]);
+});
+
 test('rayHit: circles, arcs and bulged polylines', () => {
   close(rayHit([0, 0], [10, 0], [S(circle(30, 0, 5))]), [25, 0]);
   close(rayHit([30, 0], [31, 0], [S(circle(30, 0, 5))]), [35, 0]);                         // from inside: the far side
