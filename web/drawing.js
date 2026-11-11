@@ -453,11 +453,13 @@ export function flatten(doc, hidden = new Set()) {
           const cx = num(f[10]), cy = num(f[20]), mx = num(f[11]), my = num(f[21]), ratio = num(f[40], 1);
           let nz = 1; for (let k = 0; k < r.c.length; k++) if (r.c[k] === 230) nz = num(r.v[k], 1);
           const nx = nz < 0 ? my * ratio : -my * ratio, ny = nz < 0 ? -mx * ratio : mx * ratio;
-          const t0 = num(f[41], 0); let t1 = num(f[42], TAU); if (t1 <= t0) t1 += TAU;
+          let t0 = num(f[41], 0), t1 = num(f[42], TAU);
+          const turns = Math.trunc(t0 / TAU) * TAU; t0 -= turns; t1 -= turns;     // one turn, so t0 + PI below always advances at huge angles
+          if (t1 <= t0) t1 += TAU;
           t1 = Math.min(t1, t0 + TAU);
           const steps = Math.max(8, Math.ceil(96 * (t1 - t0) / TAU)), ts = Array.from({ length: steps + 1 }, (_, i) => t0 + (t1 - t0) * i / steps);
           // Include exact extrema so the selection index cannot discard a box touching the curve between samples.
-          for (const phase of [Math.atan2(nx, mx), Math.atan2(ny, my)]) for (let t = phase + Math.ceil((t0 - phase) / Math.PI) * Math.PI; t < t1; t += Math.PI) ts.push(t);
+          for (const phase of [Math.atan2(nx, mx), Math.atan2(ny, my)]) for (let t = phase + Math.ceil((t0 - phase) / Math.PI) * Math.PI, n = 0; t < t1 && n < 3; t += Math.PI, n++) ts.push(t);
           const pts = ts.sort((a, b) => a - b).map((t) => [cx + mx * Math.cos(t) + nx * Math.sin(t), cy + my * Math.cos(t) + ny * Math.sin(t)]);
           const full = t1 - t0 > TAU - 1e-6;
           const quads = [];                                                // the 4 axis ends (inside a partial ellipse's sweep): quadrant snaps, as before it was flattened

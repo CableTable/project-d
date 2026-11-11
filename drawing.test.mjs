@@ -277,6 +277,10 @@ test('TODO 233: ellipse entity and hatch sweeps stay bounded at one turn', () =>
       } else assert.deepEqual(item.ops, full.ops, `${label}: full ellipse`);
     }
   }
+  // t0 so large that t0 + PI == t0: the extrema loop used to never advance
+  const huge = lay(dxf([g([0, 'ELLIPSE'], [10, 10], [20, 20], [11, 10], [21, 0], [40, .5], [41, 4e16], [42, 40000000000000008])])).items[0];
+  const hugePoints = Math.floor(huge.ops.length / 3);
+  assert.ok(hugePoints > 0 && hugePoints <= 101 && huge.ops.every(Number.isFinite), `huge: ${hugePoints} points`);
 });
 
 test('TODO 184: a block of 8 DIMENSIONs that name itself ends in a DrawingError, fast', () => {
