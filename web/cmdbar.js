@@ -46,6 +46,7 @@ const TABLE = [
   ['explode', 'Edit', 'Split polylines, blocks or dimensions into their members', ['x'], ''],
   ['burst', 'Edit', 'Explode blocks and keep attribute values as visible text', [], ''],
   ['breakapart', 'Edit', 'Separate a group or block into outlines', [], '', 'Ctrl+K'],
+  ['combine', 'Edit', 'Make the selected outlines one object (like CorelDRAW Combine)', ['com'], 'draw', 'Ctrl+L'],
   ['shapetrim', 'Edit', 'Shaping: cut the other outlines out of the last picked one', ['strim'], 'draw'],
   ['intersect', 'Edit', 'Shaping: keep the area the selected outlines share', ['int'], 'draw'],
   ['simplify', 'Edit', 'Shaping: remove the parts covered by outlines in front', [], 'draw'],

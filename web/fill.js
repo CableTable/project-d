@@ -4,6 +4,7 @@
 import { ACI, keyRgb, pack420 } from './colour.js';
 import { flatten, hatchOps, polyOps, arcSweep, opsBox } from './drawing.js';
 import { withColour, effectiveColour } from './props.js';
+import { isCombined } from './combine.js';
 
 const TAU = Math.PI * 2;
 const val = (r, code, d = 0) => { const k = r.c.indexOf(code); return k < 0 ? d : Number(r.v[k]) || 0; };
@@ -209,16 +210,16 @@ function solidLoops(h) {
     return ops ? opsPoly(ops) : [];
   });
 }
-const hatchKey = (h) => h.tc != null ? 'tc:' + h.tc : h.aci >= 1 && h.aci <= 255 ? 'aci:' + h.aci : h.aci === 0 ? 'byblock' : 'bylayer';
+export const hatchKey = (h) => h.tc != null ? 'tc:' + h.tc : h.aci >= 1 && h.aci <= 255 ? 'aci:' + h.aci : h.aci === 0 ? 'byblock' : 'bylayer';
 
 /**
  * A visible solid HATCH that sits right before a closed outline on the same layer and in the same space (as dxf-write.js saves a fill)
  * and matches its boundary becomes that outline's fill (the HATCH is dropped); any other HATCH stays. Changes `doc` in place.
  */
 export function linkFills(doc) {
-  for (const list of [doc, ...Object.values(doc.blocks || {})]) {
+  for (const [name, list] of [[null, doc], ...Object.entries(doc.blocks || {})]) {
     const ents = list.entities;
-    if (!ents?.some((e) => e.type === 'HATCH')) continue;
+    if (!ents?.some((e) => e.type === 'HATCH') || isCombined(name, list)) continue;       // a Combined object keeps its one HATCH over all its members (combine.js)
     const gone = new Set(), candidates = new Map();
     ents.forEach((h, i) => {
       const o = ents[i + 1], loops = o && !o.fill && !h.hidden && h.layer === o.layer && !!h.ps === !!o.ps && closedOutline(o) && solidLoops(h);

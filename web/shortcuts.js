@@ -58,7 +58,7 @@ export function bindings(overrides = {}) {
   // Discard older own keys now owned by the clipboard or fixed view toggles.
   for (const c of COMMANDS) if (bound[c.name].key !== c.key && ['Ctrl+C', 'Ctrl+V', 'Ctrl+Shift+V', 'F3', 'F7', 'F8', 'F9', 'F12'].includes(bound[c.name].key)) bound[c.name].key = '';
   // Existing own keys win over the newly added tab defaults on upgrade.
-  for (const name of ['closetab', 'nexttab', 'previoustab']) {
+  for (const name of ['closetab', 'nexttab', 'previoustab', 'combine']) {
     if (!Object.hasOwn(overrides?.[name] || {}, 'key') && COMMANDS.some((c) => c.name !== name && typeof overrides?.[c.name]?.key === 'string' && bound[c.name].key === bound[name].key)) bound[name].key = '';
   }
   return bound;
