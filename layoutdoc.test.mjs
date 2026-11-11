@@ -855,8 +855,8 @@ test('TODO 235: damaged layout settings open with defaults, never throw', () => 
   const cases = [
     ['s null', (m) => { m.s = null; }, (l) => { assert.deepEqual(l.s, { ...LD.cleanSettings({}), attmode: l.s.attmode }); assert.deepEqual(Object.keys(l.parts).sort(), ['a', 'b']); }],
     ['s string', (m) => { m.s = 'x'; }, (l) => assert.equal(l.s.sheetW, LD.DEFAULTS.sheetW)],
-    ['parts null', (m) => { m.parts = null; }, (l) => assert.equal(l, null)],       // readMeta wants an array: not one of ours
-    ['parts object', (m) => { m.parts = {}; }, (l) => assert.equal(l, null)],
+    ['parts null', (m) => { m.parts = null; }, (l) => { assert.deepEqual(l.parts, {}); assert.equal(l.s.rows, sample().s.rows); }],       // the layout stays, with no parts
+    ['parts object', (m) => { m.parts = {}; }, (l) => { assert.deepEqual(l.parts, {}); assert.deepEqual(l.placed, []); }],
     ['block without entities', (m, raw) => { delete raw.blocks[m.parts[0].block].entities; }, (l) => assert.deepEqual(Object.keys(l.parts), ['b'])],
     ['rows 1e9', (m) => { m.s.rows = 1e9; }, (l) => assert.equal(l.s.rows, 200)],
     ['cols 1e9', (m) => { m.s.cols = 1e9; }, (l) => assert.equal(l.s.cols, 200)],

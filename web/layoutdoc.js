@@ -554,7 +554,7 @@ export function readMeta(raw) {
   try {
     const b64 = blk.entities.filter((e) => e.type === 'TEXT' && e.r).map((e) => String(e.r.v[e.r.c.indexOf(1)] ?? '').trim()).join('');
     const m = dec(b64);
-    return m && m.v === 1 && Array.isArray(m.parts) ? m : null;
+    return m && m.v === 1 ? m : null;
   } catch { return null; }
 }
 
@@ -567,7 +567,8 @@ function layoutFromMeta(raw, name) {
   if (!m) return null;
   const lay = { name: name || m.name || 'Layout', s: cleanSettings(m.s), parts: {}, placed: [] };
   lay.s.attmode = [0, 1, 2].includes(+raw.header.$ATTMODE) ? +raw.header.$ATTMODE : 1;
-  for (const pm of m.parts) {
+  const parts = Array.isArray(m.parts) ? m.parts : [];                   // a damaged parts list keeps the layout with no parts
+  for (const pm of parts) {
     const blk = raw.blocks[pm.block];
     if (!blk || !Array.isArray(blk.entities) || typeof pm.id !== 'string') continue;
     const ents = blk.entities.map((e) => ({ ...e, ps: false }));
@@ -578,7 +579,7 @@ function layoutFromMeta(raw, name) {
     .map((p) => ({ ...placement1(p.partId, +p.x, +p.y, num(p.rot, 0), p.mirrorX, p.mirrorY), ...(typeof p.g === 'string' && p.g ? { g: p.g } : {}), ...(p.lock === true ? { lock: true } : {}), ...(num(p.sc, 1, 1e-6) !== 1 ? { sc: num(p.sc, 1, 1e-6) } : {}),
       ...(typeof p.cid === 'string' && p.cid ? { cid: p.cid } : {}), ...(typeof p.ct === 'string' && p.ct ? { ct: p.ct } : {}) }));   // cid: a part that has a contour; ct: the contour of the part with that cid (layoutcontour.js)
   if (lay.s.gridPart && !lay.parts[lay.s.gridPart]) lay.s.gridPart = null;
-  for (const pm of m.parts) if (pm.obj === true && lay.parts[pm.id]) lay.parts[pm.id].obj = true;       // an object kept as a block
+  for (const pm of parts) if (pm.obj === true && lay.parts[pm.id]) lay.parts[pm.id].obj = true;       // an object kept as a block
   readObjects(lay, raw, Array.isArray(m.ob) ? m.ob : [], m.obCount);
   return lay;
 }
