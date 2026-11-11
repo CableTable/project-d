@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { cleanTitleBlock, titleBlockTexts, checkFit, planPdf, readTitleBlock, withTitleBlock } from './web/pdf-export.js';
+import { winAnsi } from './web/pdf-write.js';
 import { newDoc, addEntities, line, writeDxf } from './web/dxf-write.js';
 import { readDxf, flatten } from './web/drawing.js';
 import { newLayout, layoutRaw, layoutFromRaw } from './web/layoutdoc.js';
@@ -39,6 +40,15 @@ test('title block off releases exactly 22 mm; output has no labels, properties r
   assert.equal(hidden.build(0).cmds.some((c) => c[0] === 'T'), false);
   assert.match(Buffer.from(hidden.bytes()).toString('latin1'), /\/Subject \(Scale [\d.]+ : [\d.]+\)/);
   assert.ok(hidden.pages[0].scale > plan.pages[0].scale);
+});
+
+test('TODO 253d: typed title-block text is converted to WinAnsi once: – “ ” € print as their own bytes, not ?', () => {
+  const raw = addEntities(newDoc(), line(0, 0, 100, 200)), source = { ...src, fl: flatten(raw), factor: 1, off: new Set() };
+  for (const field of ['date', 'footnote', 'file']) for (const typed of ['11–12 Nov “x” €5', 'Ref ‘A’ … •']) {
+    const texts = planPdf(source, { page: 'check', separate: false, titleBlock: { [field]: typed } }).build(0).cmds.filter((c) => c[0] === 'T').map((c) => c[2]);
+    assert.ok(texts.includes(winAnsi(typed)), `${field}: ${typed}`);
+    assert.ok(!texts.some((t) => t.includes('?')), `${field}: no ? in ${JSON.stringify(texts)}`);
+  }
 });
 
 test('title settings round-trip in drawings and layouts without changing their artwork', () => {

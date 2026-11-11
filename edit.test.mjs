@@ -197,6 +197,16 @@ test('Move reuses an unshared native dimension block; copy and nested references
   near(+field(nested.blocks[field(movedOuter.entities[0], 2)].entities[0], 10), 7);
 });
 
+test('TODO 253d: Scale moves a hatch pattern\'s base point about the anchor, like its boundary; the spacing scales by the factor', () => {
+  const hatch = W.entity('HATCH', [[10, 0], [20, 0], [91, 1], [92, 1], [93, 1], [72, 1], [10, 10], [20, 5], [11, 14], [21, 5], [75, 0], [78, 1], [41, 1], [43, 1], [44, 2], [45, 3], [46, 4], [98, 1], [10, 12], [20, 6]]);
+  for (const [s, ax, ay, base] of [[2, 10, 5, [-8, -1]], [0.5, 0, 0, [0.5, 1]], [3, 1, 2, [1, 2]]]) {
+    const out = E.scaleAbout({ ...W.newDoc(4), entities: [structuredClone(hatch)] }, s, ax, ay).entities[0], f = (c) => +out.r.v[out.r.c.indexOf(c)];
+    near(f(43), base[0], `43 about (${ax},${ay}) x${s}`); near(f(44), base[1], `44 about (${ax},${ay}) x${s}`);
+    near(f(45), 3 * s); near(f(46), 4 * s); near(f(41), s);
+    near(out.r.v[out.r.c.indexOf(10, out.r.c.indexOf(93))] * 1, ax + (10 - ax) * s, 'the boundary scales about the anchor too');
+  }
+});
+
 test('Move keeps hatch ellipse axes and pattern spacing, multileader directions and wipeout vectors', () => {
   const hatch = W.entity('HATCH', [[10, 0], [20, 0], [91, 1], [92, 1], [93, 1], [72, 3], [10, 5], [20, 6], [11, 3], [21, 4], [40, .5], [75, 0], [78, 1], [43, 1], [44, 2], [45, 3], [46, 4], [98, 1], [10, 5], [20, 6]]);
   const ml = W.entity('MULTILEADER', [[300, 'CONTEXT_DATA{'], [10, 30], [20, 20], [304, 'NOTE'], [12, 31], [22, 22], [13, 1], [23, 0], [302, 'LEADER{'], [10, 30], [20, 20], [11, 1], [21, 0], [304, 'LEADER_LINE{'], [10, 10], [20, 5], [305, '}'], [303, '}'], [301, '}']]);

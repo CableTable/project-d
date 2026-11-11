@@ -236,6 +236,15 @@ test('the file\'s bytes: UTF-8, an old code page, and a binary DXF said plainly'
   assert.throws(() => D.readDxf(''), D.DrawingError);
 });
 
+test('TODO 253d: DXF code pages 932, 936 and 950 decode as shift_jis, gbk and big5; an emoji code reads back as one character', () => {
+  for (const [cp, bytes, want] of [[932, [0x93, 0xfa, 0x96, 0x7b], '日本'], [936, [0xd6, 0xd0, 0xce, 0xc4], '中文'], [950, [0xa4, 0xa4, 0xa4, 0xe5], '中文'], [949, [0xc7, 0xd1], '한']]) {
+    const head = new TextEncoder().encode(`  9\r\n$DWGCODEPAGE\r\n  3\r\nANSI_${cp}\r\n  0\r\nENDSEC\r\n  1\r\n`);
+    assert.equal(D.decodeDxf(Uint8Array.from([...head, ...bytes])).endsWith(want), true, 'ANSI_' + cp);
+  }
+  const raw = D.readDxf(dxf([g([0, 'TEXT'], [8, '0'], [10, 0], [20, 0], [40, 1], [1, 'Q\\U+1F600 \\U+00E9'])]));
+  assert.equal(raw.entities[0].r.v[raw.entities[0].r.c.indexOf(1)], 'Q\u{1F600} é');
+});
+
 test('arc helpers: a sweep, a box over the extremes', () => {
   assert.deepEqual(D.arcSweep(0, Math.PI / 2, 0), [0, Math.PI / 2]);
   const [s, sw] = D.arcSweep(0, -Math.PI / 2, 1);

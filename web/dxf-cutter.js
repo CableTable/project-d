@@ -7,7 +7,7 @@
 //   Blocks (INSERT) are exploded first. A circle becomes two arcs. An ellipse or spline, and any arc that a stretched block makes
 //   elliptical, becomes a polyline whose vertices are at most `tol` (drawing units, > 0) from the true curve. Polyline widths are dropped.
 
-import { mmul, mapply, nurbsAt, nurbsOk, MAX_VISITS, DrawingError } from './drawing.js';
+import { mmul, mapply, nurbsAt, nurbsOk, MAX_VISITS, DrawingError, ownBlock } from './drawing.js';
 import { line, arc, lwpoly } from './dxf-write.js';
 
 const TAU = Math.PI * 2, DEG = Math.PI / 180, FLIP = [-1, 0, 0, 1, 0, 0], MAX_DEPTH = 14;
@@ -166,7 +166,7 @@ export function cutterDoc(doc, tol) {
           break;
         }
         case 'INSERT': {
-          const blk = (doc.blocks || {})[(f[2] || '').trim()];
+          const blk = ownBlock(doc.blocks, (f[2] || '').trim());
           if (!blk || blk.xref || depth >= 10) { count.other++; break; }
           const at = [num(f[10]), num(f[20])], rot = num(f[50]) * DEG, sx = num(f[41], 1) || 1, sy = num(f[42], 1) || 1;
           const cols = Math.min(Math.max(num(f[70], 1), 1), 100), rows = Math.min(Math.max(num(f[71], 1), 1), 100);

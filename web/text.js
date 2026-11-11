@@ -74,7 +74,12 @@ export function reencode(old, m) {
   if (m.ha !== was.ha) {
     if (old.type === 'TEXT') {
       put(72, m.ha); put(10, m.x); put(20, m.y);
-      if (m.ha) { put(11, m.x); put(21, m.y); }
+      if (m.ha || num(first(r, 73))) { put(11, m.x); put(21, m.y); }       // a vertical choice (Top-Left) keeps 73 and its alignment point
+      else {                                                              // plain Left: no vertical, no alignment point
+        put(73, 0);
+        const keep = r.c.map((code) => ![11, 21, 31].includes(code));
+        r.v = r.v.filter((_, i) => keep[i]); r.c = r.c.filter((_, i) => keep[i]);
+      }
     } else {
       put(71, 1 + m.ha); put(10, m.x - Math.sin(m.angle * DEG) * m.h); put(20, m.y + Math.cos(m.angle * DEG) * m.h);
     }

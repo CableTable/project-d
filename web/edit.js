@@ -953,7 +953,9 @@ function scaleHatch(r, s, a) {
       else if (c === 11 || c === 21) v[k] = text(n * s);            // an ellipse edge's major axis
       else if (c === 40 && edge === 2) v[k] = text(n * s);          // an arc edge's radius
     } else if (st === 'pat') {
-      if ([41, 43, 44, 45, 46, 47, 49].includes(c)) v[k] = text(n * s);
+      if (c === 43) v[k] = text(a[0] + (n - a[0]) * s);            // the pattern's base point is a position, as moveHatch has it
+      else if (c === 44) v[k] = text(a[1] + (n - a[1]) * s);
+      else if ([41, 45, 46, 47, 49].includes(c)) v[k] = text(n * s);
     } else if (st === 'seed') {
       if (c === 10) v[k] = text(a[0] + (n - a[0]) * s); else if (c === 20) v[k] = text(a[1] + (n - a[1]) * s);
     }

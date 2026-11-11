@@ -320,6 +320,15 @@ test('Mirror: text keeps reading the same way (only its place moves); a whole el
   assert.equal(get(e.ent.r, 21), 2);
 });
 
+test('TODO 253d: a mirrored Aligned or Fit text swaps its two points so it still reads left to right; other justifications keep their points', () => {
+  const mk = (h, extra = []) => { const t = text(0, 0, 4, 'ABC'); for (const [c, v] of [[72, h], [10, 0], [20, 0], [11, 10], [21, 0], ...extra]) { const k = t.r.c.indexOf(c); if (k < 0) { t.r.c.push(c); t.r.v.push(String(v)); } else t.r.v[k] = String(v); } return t; };
+  for (const [h, want] of [[3, [30, 0, 40, 0]], [5, [30, 0, 40, 0]], [1, [40, 0, 30, 0]], [0, [40, 0, 30, 0]]]) {
+    const t = mk(h), m = M.mirrorEntity(t, [20, 0], [20, 1]).ent;
+    assert.deepEqual([10, 20, 11, 21].map((c) => +get(m.r, c)), want, '72 = ' + h);
+    assert.ok(+get(m.r, 11) !== +get(m.r, 10), 'distinct points');
+  }
+});
+
 const value = (e, c) => e.r.v[e.r.c.indexOf(c)];
 const roundTrip = (raw) => readDxf(writeDxf(raw));
 const reflected = (p, a, b) => M.mirrorShape({ t: 'line', a: p, b: p }, a, b).a;

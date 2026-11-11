@@ -21,6 +21,25 @@ test('one line saves as TEXT with the board\'s group codes (8 layer, 10/20 point
   assert.equal(val(TX.encode(model({ angle: 30 })), 50), '30');
 });
 
+test('TODO 253d: a TEXT set back to plain Left writes 73 = 0 and drops 11/21/31; a Left with a vertical choice keeps its 73', () => {
+  const mk = (pairs) => entity('TEXT', [[10, 5], [20, 6], [40, 3], [1, 'AB'], ...pairs]);
+  // [old codes, old ha, vertical 73 kept, 11/21/31 kept]
+  for (const [pairs, was, v73, align] of [
+    [[[72, 1], [11, 5], [21, 6], [31, 0], [73, 0]], 1, '0', false],             // Centre → Left
+    [[[72, 2], [11, 5], [21, 6], [31, 0]], 2, '0', false],                      // Right, no 73 → Left writes 73 = 0
+    [[[72, 1], [11, 5], [21, 6], [31, 0], [73, 3]], 1, '3', true],              // Top-Centre → Top-Left
+    [[[72, 2], [11, 5], [21, 6], [31, 0], [73, 2]], 2, '2', true],              // Middle-Right → Middle-Left
+  ]) {
+    const old = mk(pairs), m = TX.decode(old);
+    assert.equal(m.ha, was);
+    const next = TX.reencode(old, { ...m, ha: 0, x: 8, y: 9 });
+    assert.equal(val(next, 72), '0'); assert.equal(val(next, 73), v73, JSON.stringify(pairs));
+    assert.deepEqual([10, 20].map((c) => val(next, c)), ['8', '9']);
+    if (!align) assert.deepEqual([11, 21, 31].filter((c) => next.r.c.includes(c)), []);
+    else assert.deepEqual([val(next, 11), val(next, 21)], ['8', '9']);
+  }
+});
+
 test('two or more lines, or bold, save as MTEXT (bold as a font code); the first line stays where it was', () => {
   const two = TX.encode(model({ lines: ['MATERIAL: ACRYLIC 3 MM', 'FINISH: GLOSS'] }), { layer: 'Notes' });
   assert.equal(two.type, 'MTEXT');

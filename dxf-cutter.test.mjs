@@ -77,6 +77,16 @@ test('mm dialog tolerance converted to drawing units keeps an inch ellipse withi
   }
 });
 
+test('TODO 253d: an INSERT named like an Object.prototype member is no block (counted as other, no throw); a block of that name still explodes', () => {
+  for (const name of ['constructor', 'toString', '__proto__', 'hasOwnProperty']) {
+    const d = docOf(W.insert(name, 0, 0), W.line(0, 0, 5, 0));
+    let r; assert.doesNotThrow(() => { r = cutterDoc(d, 0.01); }, name);
+    assert.deepEqual([types(r), r.other], [['LINE'], 1], name);
+  }
+  const d = W.newDoc(); W.addBlock(d, 'constructor', [W.line(0, 0, 1, 0)]); W.addEntities(d, [W.insert('constructor', 0, 0)]);
+  assert.deepEqual(types(cutterDoc(d, 0.01)), ['LINE']);
+});
+
 test('a block reference is exploded, with its rotation, scale and mirror', () => {
   const d = W.newDoc();
   W.addBlock(d, 'B', [W.line(1, 0, 2, 0, { layer: '0' }), W.circle(0, 0, 1), W.arc(0, 0, 1, 0, 90), W.text(0, 0, 1, 'hi')]);
