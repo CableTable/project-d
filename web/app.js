@@ -3469,6 +3469,8 @@ async function save(forceAs) {
         }
       }
       if (d.openPath && pathKey(path) === pathKey(d.openPath)) { note('Pick another name: that is the opened file, and Save never writes over it'); return; }
+      const key = pathKey(path);
+      if (state.docs.some((o) => o !== d && [o.path, o.openPath].some((p) => p && pathKey(p) === key))) { note(`Pick another name: ${path.split(/[\\/]/).pop()} is open in another tab`); return; }
       await t.fs.writeTextFile(path, text);
       name = path.split(/[\\/]/).pop();
     } else {

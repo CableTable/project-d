@@ -20026,6 +20026,46 @@ try {
     }
   });
 
+  await step('TODO 236: Save As refuses a file that is open in another tab', async () => {
+    await closeTabs(/./);
+    await page.evaluate((bytes) => {
+      window.__log = { wrote: [] }; window.__next = null; window.__open = null;
+      window.__TAURI__ = {
+        dialog: { open: async () => window.__open, save: async () => window.__next, ask: async () => true },
+        fs: { readFile: async () => new Uint8Array(bytes), exists: async () => false, writeFile: async () => {}, writeTextFile: async (p) => { window.__log.wrote.push(p); } },
+      };
+    }, [...readFileSync('fixtures/overlay.dxf')]);
+    const wrote = () => page.evaluate(() => window.__log.wrote);
+    const refused = (file) => page.waitForFunction((f) => document.querySelector('[data-testid=cmd-prompt]').textContent.includes(`Pick another name: ${f} is open in another tab`), file);
+    const openFile = async (p) => {
+      await page.evaluate((p) => { window.__open = p; }, p);
+      await menuItem('File', 'Open…');
+      await page.waitForFunction((f) => document.querySelector('[data-testid=cmd-prompt]').textContent.startsWith('Opened ' + f), p.split('\\').pop());
+    };
+    try {
+      await openFile('C:\\work\\x1.dxf');
+      await openFile('C:\\work\\x2.dxf');
+      await page.evaluate(() => { window.__next = 'c:/WORK/x1.dxf'; });          // (a) tab 2's Save As picks tab 1's file (case and slashes differ)
+      await menuItem('File', 'Save As…');
+      await refused('x1.dxf');
+      assert.deepEqual(await wrote(), [], 'Save As over tab 1 writes nothing');
+      await page.locator('.tabs .dtab').nth(0).click();                           // (c) a plain Save of tab 1 still writes
+      await page.evaluate(() => { window.__next = 'C:\\work\\x1-edited.dxf'; });
+      await page.keyboard.press('Control+s');
+      await page.waitForFunction(() => window.__log.wrote.length === 1);
+      await page.keyboard.press('Control+s');
+      await page.waitForFunction(() => window.__log.wrote.length === 2);
+      assert.deepEqual(await wrote(), ['C:\\work\\x1-edited.dxf', 'C:\\work\\x1-edited.dxf']);
+      await openFile('C:\\work\\x1.dxf');                                         // (b) x1 opened again as tab 3: its first Save picks tab 1's x1-edited
+      await page.keyboard.press('Control+s');
+      await refused('x1-edited.dxf');
+      assert.equal((await wrote()).length, 2, 'tab 3 wrote nothing');
+    } finally {
+      await closeTabs(/./);
+      await page.evaluate(() => { delete window.__TAURI__; delete window.__log; delete window.__next; delete window.__open; localStorage.removeItem('pd-recent'); });
+    }
+  });
+
   await step('TODO 82: exact balloon sidecar grants: missing is silent, open/save need no second dialog, real write errors stay dirty', async () => {
     await closeTabs(/./);
     await page.evaluate(async (bytes) => {
