@@ -23,7 +23,9 @@ const fromRecord = (r) => entity(r.type, r.c.map((c, i) => [c, r.v[i]]), {
 function vertices(e) {
   if (e.type === 'LWPOLYLINE') return lwVertices(e.r).map((p) => [p.x, p.y, p.b]);
   if (val(e, 70) & (16 | 64)) throw new Error('polygon meshes stay intact');
-  return (e.kids || []).filter((r) => r.type === 'VERTEX').map((r) => [get(r, 10) ?? 0, get(r, 20) ?? 0, get(r, 42) ?? 0]);
+  const all = (e.kids || []).filter((r) => r.type === 'VERTEX');
+  const fit = all.filter((r) => !(get(r, 70) & 16));
+  return (fit.length ? fit : all).map((r) => [get(r, 10) ?? 0, get(r, 20) ?? 0, get(r, 42) ?? 0]);
 }
 
 /** LINEs and anticlockwise ARCs, including the last-to-first segment of a closed polyline. */
