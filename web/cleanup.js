@@ -121,7 +121,6 @@ export function checkIndex(raw) {
 export function hairline(raw, offenders, locked = new Set()) {
   const selected = new Set(offenders), blocks = { ...raw.blocks }, copies = new Map();
   const names = new Set(Object.keys(blocks).map((n) => n.toLowerCase()));
-  let serial = 1;
   function fix(ent, inherited = '0') {
     const layer = ent.layer === '0' ? inherited : ent.layer;
     if (locked.has(layer)) return ent;
@@ -131,8 +130,11 @@ export function hairline(raw, offenders, locked = new Set()) {
     if (!source) return next;
     const key = JSON.stringify([name, layer]);
     if (!copies.has(key)) {
-      let fresh;
-      do { fresh = 'PD_HAIRLINE_' + serial++; } while (names.has(fresh.toLowerCase()));
+      // the copy keeps the kind in its name (edit.js:1250): dimTag, DIM_BLOCK, LDR_BLOCK and native dimensions find it by name
+      const prefix = ent.type === 'DIMENSION' ? '*D' : /^PD_(DIM_[RDAHV]?|LDR_)(?=\d+$)/.exec(name)?.[0] || 'PD_HAIRLINE_';
+      let n = 1;
+      while (names.has((prefix + n).toLowerCase())) n++;
+      const fresh = prefix + n;
       names.add(fresh.toLowerCase()); copies.set(key, fresh);
       blocks[fresh] = { ...source, entities: source.entities.map((e) => fix(e, layer)) };
     }
