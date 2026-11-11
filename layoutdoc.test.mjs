@@ -845,4 +845,30 @@ test('TODO 171 review: a changed INSERT sent through objectCommit stays a placed
   assert.deepEqual(lay.parts.n1.raw.blocks, {}, 'a line gets no blocks');
 });
 
+test('TODO 235: damaged layout settings open with defaults, never throw', () => {
+  const open = (edit) => {
+    const raw = LD.layoutRaw(sample()), meta = LD.readMeta(raw), ent = raw.blocks[LD.LAYOUT_BLOCK].entities;
+    edit(meta, raw);
+    ent[0].r.v[ent[0].r.c.indexOf(1)] = btoa(JSON.stringify(meta)); ent.length = 1;
+    return LD.layoutFromRaw(raw, 'Damaged');
+  };
+  const cases = [
+    ['s null', (m) => { m.s = null; }, (l) => { assert.deepEqual(l.s, { ...LD.cleanSettings({}), attmode: l.s.attmode }); assert.deepEqual(Object.keys(l.parts).sort(), ['a', 'b']); }],
+    ['s string', (m) => { m.s = 'x'; }, (l) => assert.equal(l.s.sheetW, LD.DEFAULTS.sheetW)],
+    ['parts null', (m) => { m.parts = null; }, (l) => assert.equal(l, null)],       // readMeta wants an array: not one of ours
+    ['parts object', (m) => { m.parts = {}; }, (l) => assert.equal(l, null)],
+    ['block without entities', (m, raw) => { delete raw.blocks[m.parts[0].block].entities; }, (l) => assert.deepEqual(Object.keys(l.parts), ['b'])],
+    ['rows 1e9', (m) => { m.s.rows = 1e9; }, (l) => assert.equal(l.s.rows, 200)],
+    ['cols 1e9', (m) => { m.s.cols = 1e9; }, (l) => assert.equal(l.s.cols, 200)],
+    ['cols -5', (m) => { m.s.cols = -5; }, (l) => assert.equal(l.s.cols, 1)],
+    ['good file', () => {}, (l) => { assert.deepEqual(l.s, sample().s); assert.deepEqual(Object.keys(l.parts).sort(), ['a', 'b']); }],
+  ];
+  for (const [what, edit, check] of cases) {
+    let lay;
+    assert.doesNotThrow(() => { lay = open(edit); }, what);
+    check(lay);
+  }
+  assert.equal(LD.layoutFromRaw({ header: {}, blocks: { [LD.LAYOUT_BLOCK]: {} } }), null, 'anything else that throws: not a layout');
+});
+
 console.log(n + ' tests passed');

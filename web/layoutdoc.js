@@ -511,15 +511,17 @@ export function layoutRaw(lay) {
 
 const num = (v, d, min = -Infinity) => (Number.isFinite(+v) && v !== '' && v !== null && +v >= min ? +v : d);
 const gaps = (list) => (Array.isArray(list) ? list.filter((e) => e && e.after >= 1 && e.mm > 0).map((e) => ({ after: Math.floor(e.after), mm: +e.mm })) : []);
+const MAX_GRID = 200;       // rows / cols read from a file: well above any real sheet, bounded memory
 /** Settings read from a file: anything missing or odd falls back to the default. */
-export function cleanSettings(s = {}) {
+export function cleanSettings(s) {
   const d = DEFAULTS;
+  if (!s || typeof s !== 'object') s = {};
   return {
     sheetW: num(s.sheetW, d.sheetW, 1), sheetH: num(s.sheetH, d.sheetH, 1),
     gripTop: num(s.gripTop, 0, 0), gripRight: num(s.gripRight, 0, 0), gripBottom: num(s.gripBottom, 0, 0), gripLeft: num(s.gripLeft, 0, 0),
     crop: s.crop === true, reg: s.reg === true, gapX: num(s.gapX, d.gapX, 0), gapY: num(s.gapY, d.gapY, 0),
     rotate: ['best', '0', '90'].includes(String(s.rotate)) ? String(s.rotate) : '0', align: s.align === 'topleft' ? 'topleft' : 'centre',
-    fit: s.fit !== false, rows: Math.max(1, Math.floor(num(s.rows, 1))), cols: Math.max(1, Math.floor(num(s.cols, 1))),
+    fit: s.fit !== false, rows: Math.min(MAX_GRID, Math.max(1, Math.floor(num(s.rows, 1)))), cols: Math.min(MAX_GRID, Math.max(1, Math.floor(num(s.cols, 1)))),
     extraRows: gaps(s.extraRows), extraCols: gaps(s.extraCols), gridPart: typeof s.gridPart === 'string' ? s.gridPart : null,
     guides: cleanGuides(s.guides), guidesShow: s.guidesShow !== false, guidesLock: s.guidesLock === true,
     attmode: [0, 1, 2].includes(s.attmode) ? s.attmode : 1,
@@ -558,13 +560,16 @@ export function readMeta(raw) {
 
 /** The layout a document holds (what layoutRaw wrote, possibly saved by another app and back), or null if it is not one of ours. */
 export function layoutFromRaw(raw, name) {
+  try { return layoutFromMeta(raw, name); } catch { return null; }       // a damaged file opens as a plain drawing
+}
+function layoutFromMeta(raw, name) {
   const m = readMeta(raw);
   if (!m) return null;
   const lay = { name: name || m.name || 'Layout', s: cleanSettings(m.s), parts: {}, placed: [] };
   lay.s.attmode = [0, 1, 2].includes(+raw.header.$ATTMODE) ? +raw.header.$ATTMODE : 1;
   for (const pm of m.parts) {
     const blk = raw.blocks[pm.block];
-    if (!blk || typeof pm.id !== 'string') continue;
+    if (!blk || !Array.isArray(blk.entities) || typeof pm.id !== 'string') continue;
     const ents = blk.entities.map((e) => ({ ...e, ps: false }));
     const part = makePart(pm.id, String(pm.name || pm.block), { header: { ...raw.header }, layers: raw.layers, ltypes: raw.ltypes, blocks: blocksUsed(raw.blocks, ents), entities: ents }, num(pm.factor, 1, 1e-9), String(pm.src || ''));
     if (part) lay.parts[pm.id] = part;
