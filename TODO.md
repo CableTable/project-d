@@ -403,7 +403,7 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
 - [ ] 247. **Scale misplaces moved dimensions** (S, bug; fr s4 #1): `web/edit.js:1084-1087` `scaleAbout` scales the block contents but not a moved INSERT's code 10; bites Scale (`app.js:6113`) and units scale (`:6132`, x25.4).
 - [ ] 248. **Saved layout loses a dimension block** (S, bug; fr s5 #1): `web/layoutdoc.js:494`, `:500` merge dimension blocks into one list, two `*D1` blocks keep one.
 - [ ] 249. **Explode spline-fit POLYLINE wrong** (S, bug; fr s6 #1): `web/explode.js:26` `vertices()` keeps frame vertices (flag 16) with the fit vertices.
-- [ ] 250. **Extend crashes on big drawings** (S, bug; fr s6 #2): `web/extend.js:85` `Math.max(0, ...segs.map(...))` spreads every segment into one call (stack overflow); use a loop.
+- [x] 250. **Extend crashes on big drawings** (done 2026-11-11 `577255f`, King build, Knight review ship, no findings; suite pending) (S, bug; fr s6 #2): `web/extend.js:85` `Math.max(0, ...segs.map(...))` spreads every segment into one call (stack overflow); use a loop.
 - [ ] 251. **Hairline breaks Project D dimensions** (S, bug; fr s7a #1): `web/cleanup.js:130-139` `hairline` copies `PD_DIM_n` blocks to `PD_HAIRLINE_n`, so `DIM_BLOCK` (`edit.js:969`) stops matching; skip or keep the `PD_DIM_` name.
 - [ ] 252. **MTEXT loses formatting on edit** (S, bug; fr s7b #1): `web/props.js:220-225` with `web/text.js:52-70`: Text height / Angle in Properties wipes inline codes and wrap width (41); same root as 246.
 - [ ] 253. **Full review Lows** (31, held; `runs42/fr-findings-all.md`): build after 244-252, grouped by file.
