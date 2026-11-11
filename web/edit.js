@@ -1081,10 +1081,10 @@ export function relabelDims(raw, factor, dp, kept = false) {       // kept: only
 export function scaleAbout(raw, s, ax, ay, space = 0, selection = null) {
   const skipped = {}, blocks = { ...raw.blocks }, doneBlocks = new Set();
   const one = (e) => {
-    if (e.type === 'INSERT' && (DIM_BLOCK.test(fieldOf(e.r, 2)) || LDR_BLOCK.test(fieldOf(e.r, 2)))) {         // a kept dimension or leader: its block is scaled (a dimension's value re-labelled); the insert stays put
+    if (e.type === 'INSERT' && (DIM_BLOCK.test(fieldOf(e.r, 2)) || LDR_BLOCK.test(fieldOf(e.r, 2)))) {         // block points scale about the anchor; the INSERT offset scales about the origin
       const nm = fieldOf(e.r, 2), b = raw.blocks[nm];
       if (b && !doneBlocks.has(nm)) { doneBlocks.add(nm); blocks[nm] = { ...b, entities: DIM_BLOCK.test(nm) ? relabel(b.entities.map(one), s) : b.entities.map(one) }; }
-      return e;
+      return { ...e, r: scaleRecord(e.type, e.r, s, [0, 0], true) };
     }
     const a = e.flip && OCS.has(e.type) ? [-ax, ay] : [ax, ay];
     const r = scaleRecord(e.type, e.r, s, a);

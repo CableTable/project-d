@@ -5,6 +5,7 @@ const fs = await import('node:fs');
 const D = await import('./web/drawing.js');
 const W = await import('./web/dxf-write.js');
 const E = await import('./web/edit.js');
+const LD = await import('./web/leader.js');
 const { ink } = await import('./web/render.js');
 const { unitFactor, drawingBoxMm } = await import('./web/doc.js');
 const SNAP = await import('./web/snap.js');
@@ -784,6 +785,37 @@ test('scaling re-labels a kept dimension with its new length and scales its draw
   assert.equal(ins.r.c.includes(41), false, 'not scaled through the insert');
   assert.equal(dim.block.entities[3].r.v[dim.block.entities[3].r.c.indexOf(1)], '36.06', 'the original is untouched');
   assert.deepEqual(r.skipped, {});
+});
+
+test('TODO 247: scaling moved dimensions and leaders scales every flattened world point', () => {
+  const points = (raw) => {
+    const fl = D.flatten(raw);
+    return fl.items.flatMap((it) => {
+      const ops = it.k === 't' ? [0, it.x, it.y] : it.ops, pts = [];
+      for (let i = 0; i < ops.length; i += ops[i] === 9 ? 1 : 3) {
+        assert.ok([0, 1, 9].includes(ops[i]), 'line, arrow or text point');
+        if (ops[i] !== 9) pts.push(D.mapply(fl.mats[it.m], ops[i + 1], ops[i + 2]));
+      }
+      return pts;
+    });
+  };
+  for (const annotation of [
+    E.buildDimension({ a: [0, 0], b: [100, 0], offset: 20, textH: 2.5 }, 1, 'PD_DIM_1'),
+    LD.build({ pts: [[0, 0], [20, 30], [50, 30]], lines: ['note'], textH: 3, arrow: 2 }, 'PD_LDR_1')
+  ]) {
+    let raw = W.newDoc(4);
+    raw = { ...raw, ...E.addDimension(raw, annotation) };
+    raw = { ...raw, ...E.moveEntities(raw, new Set([0]), 30, -20) };
+    const original = structuredClone(raw), before = points(raw);
+    assert.ok(before.length > 0);
+    for (const [s, ax, ay] of [[2, 10, 10], [25.4, 0, 0]]) {
+      const scaled = E.scaleAbout(raw, s, ax, ay), after = points({ ...raw, ...scaled });
+      assert.deepEqual(scaled.skipped, {});
+      assert.equal(after.length, before.length);
+      before.forEach((p, i) => p.forEach((v, j) => near(after[i][j], [ax, ay][j] + s * (v - [ax, ay][j]), `${annotation.name} scale ${s} point ${i} axis ${j}`)));
+      assert.deepEqual(raw, original, 'the undo snapshot is unchanged');
+    }
+  }
 });
 
 test('dimension decimals: fixed places, 0 to 4; relabelDims re-labels every kept dimension from its own line', () => {
