@@ -110,11 +110,11 @@ function mergePart(doc, part, origin) {
 
 /**
  * The layout document of several different parts. o: { parts: { id: part }, placed: [placed part], sheetW, sheetH,
- * marks (markGeometry's result, sheet mm y down; none = no marks), keep: [part ids] written as blocks even if nothing is placed }.
+ * marks (markGeometry's result, sheet mm y down; none = no marks), keep: [part ids] written as blocks even if nothing is placed, sheet: draw the sheet rectangle (default true) }.
  * A part is { name, w, h } (drawn as a rounded rectangle) or partFromDrawing's result (its entities are copied into its block).
  * One block per part used, one INSERT per placed part (rotation, and a negative scale for a mirror). → { doc, blockOf: { id: block name } }
  */
-export function buildLayoutDoc({ parts, placed, sheetW, sheetH, marks, keep = [] }) {
+export function buildLayoutDoc({ parts, placed, sheetW, sheetH, marks, keep = [], sheet = true }) {
   const doc = newDoc(4);
   doc.blocks = Object.create(null);       // a part's block named `__proto__` is a key here, not the prototype
   doc.header.$MEASUREMENT = '1';
@@ -139,7 +139,7 @@ export function buildLayoutDoc({ parts, placed, sheetW, sheetH, marks, keep = []
     const f = parts[p.partId].factor || 1, k = p.sc || 1, sx = (p.mirrorX ? -1 : 1) * f * k, sy = (p.mirrorY ? -1 : 1) * f * k;
     return insert(blockOf[p.partId], p.x, p.y, { layer: LAYERS.parts, rot: p.rot || 0, ...(sx !== 1 || sy !== 1 ? { sx, sy } : {}) });
   });
-  addEntities(doc, rect(0, 0, sheetW, sheetH, { layer: LAYERS.sheet }), ins);
+  addEntities(doc, sheet ? rect(0, 0, sheetW, sheetH, { layer: LAYERS.sheet }) : [], ins);
   if (marks) {
     const seg = ([x1, y1, x2, y2]) => line(x1, sheetH - y1, x2, sheetH - y2, { layer: LAYERS.marks });
     addEntities(doc, marks.crop.map(seg), marks.reg.flatMap((m) => [circle(m.cx, sheetH - m.cy, m.r, { layer: LAYERS.marks }), ...m.cross.map(seg)]));

@@ -490,15 +490,15 @@ function metaEntities(lay, blockOf, ids, ob = []) {
   return out;
 }
 
-/** The layout as a DXF document (writeDxf's shape): everything a CAD app shows, plus the hidden PD_LAYOUT block. */
-export function layoutRaw(lay) {
+/** The layout as a DXF document (writeDxf's shape), plus the hidden PD_LAYOUT block. sheet: false omits its own rectangle and marks for cutter export. */
+export function layoutRaw(lay, { sheet = true } = {}) {
   const all = placedAll(lay), baked = [], kept = [], ob = [], dimBlocks = {};
   for (const p of all) {
     const part = lay.parts[p.partId], ents = part.obj && bakeObject(part, p);
     if (ents) { baked.push(...ents); if (isDimPart(part) || part.raw.entities[0].type === 'DIMENSION') Object.assign(dimBlocks, part.raw.blocks); for (const _ of ents) ob.push(p.g || p.lock ? { ...(p.g ? { g: p.g } : {}), ...(p.lock ? { lock: true } : {}) } : 0); } else kept.push(p);               // an object Explode cannot carry stays a block (and comes back as an object)
   }
   const ids = [...new Set([...usedIds(lay), ...kept.filter((p) => lay.parts[p.partId].obj).map((p) => p.partId)])];
-  const { doc, blockOf } = buildLayoutDoc({ parts: lay.parts, placed: kept, sheetW: lay.s.sheetW, sheetH: lay.s.sheetH, marks: marksOf(lay, all.filter((p) => !lay.parts[p.partId].obj)), keep: ids });
+  const { doc, blockOf } = buildLayoutDoc({ parts: lay.parts, placed: kept, sheetW: lay.s.sheetW, sheetH: lay.s.sheetH, marks: sheet ? marksOf(lay, all.filter((p) => !lay.parts[p.partId].obj)) : null, keep: ids, sheet });
   for (const [name, def] of Object.entries(layersOf(lay))) if (!(name in doc.layers)) doc.layers[name] = structuredClone(def);
   addEntities(doc, baked);
   for (const [n, b] of Object.entries(dimBlocks)) addBlock(doc, n, b.entities, b.base);

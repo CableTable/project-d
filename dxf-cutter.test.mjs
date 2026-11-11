@@ -4,6 +4,8 @@ const assert = (await import('node:assert/strict')).default;
 const D = await import('./web/drawing.js');
 const W = await import('./web/dxf-write.js');
 const { cutterDoc } = await import('./web/dxf-cutter.js');
+const LD = await import('./web/layoutdoc.js');
+const { readFileSync } = await import('node:fs');
 
 const docOf = (...ents) => { const d = W.newDoc(); W.addEntities(d, ents); return d; };
 const types = (r) => r.doc.entities.map((e) => e.type);
@@ -158,18 +160,35 @@ test('TODO 184: INSERT arrays nested 4 deep ending in an empty block end in a Dr
   assert.ok(Date.now() - t0 < 15000);
 });
 
-test('TODO 244: dropLayers leaves out top-level Sheet and Marks objects only, never what is inside a block', () => {
-  const layout = () => {
-    const d = W.newDoc(); W.addBlock(d, 'P', [W.line(0, 0, 9, 9, { layer: 'Sheet' }), W.rect(0, 0, 5, 5, { layer: 'Cut' })]);
-    W.addEntities(d, W.rect(0, 0, 300, 200, { layer: 'Sheet' }), W.insert('P', 10, 10, { layer: 'Parts' }), W.line(0, 5, 5, 5, { layer: 'Marks' }),
-      W.circle(20, 20, 3, { layer: 'Marks' }), W.line(0, 0, 1, 1, { layer: 'Cut' }));
-    return d;
-  };
-  const drawing = () => docOf(W.rect(0, 0, 300, 200, { layer: 'Sheet' }), W.line(0, 5, 5, 5, { layer: 'Marks' }));
-  const count = (r) => { const n = { Sheet: 0, Marks: 0, Cut: 0 }; for (const e of r.doc.entities) n[e.layer]++; return n; };   // the circle is 2 arcs
-  for (const [name, doc, opt, want] of [
-    ['layout: sheet and marks dropped, the Sheet line inside the part kept', layout(), { dropLayers: ['Sheet', 'Marks'] }, { Sheet: 1, Marks: 0, Cut: 2 }],
-    ['layout without the option keeps everything', layout(), undefined, { Sheet: 2, Marks: 3, Cut: 2 }],
-    ['drawing with a Sheet layer keeps it (no option)', drawing(), undefined, { Sheet: 1, Marks: 1, Cut: 0 }],
-  ]) assert.deepEqual(count(cutterDoc(doc, 0.01, opt)), want, name);
+test('TODO 244: cutter export omits only the layout\'s own sheet rectangle and marks', async (t) => {
+  // Exercise the app's actual preparation so the old layer-name filter fails the loose-line rows too.
+  const app = readFileSync(new URL('./web/app.js', import.meta.url), 'utf8').split('function exportCutter() {')[1];
+  const prepare = new Function('d', 'LD', 'cutterDoc', app.slice(app.indexOf('  const raw ='), app.indexOf('  const want =')) + 'return made.res;');
+  const lay = LD.newLayout('Cutter');
+  lay.s.crop = true; lay.s.reg = true;
+  const part = docOf(W.line(0, 0, 9, 9, { layer: 'Sheet' }), W.rect(0, 0, 5, 5, { layer: 'Cut' }));
+  lay.parts.p = LD.makePart('p', 'P', part, 1);
+  lay.placed.push({ partId: 'p', x: 100, y: 100 });
+  for (const layer of ['Marks', 'Sheet', '0']) {
+    const id = 'loose' + layer, obj = LD.objectPart(id, id, W.line(30, 40, 50, 60, { layer }), LD.layersOf(lay));
+    lay.parts[id] = obj; lay.placed.push(LD.objectPlacement(obj));
+  }
+  const loose = (layer) => (e) => e.type === 'LINE' && e.layer === layer && f(e, 10) === 30 && f(e, 20) === 40;
+  const rows = [
+    ['loose line on Marks kept', loose('Marks'), 1],
+    ['loose line on Sheet kept', loose('Sheet'), 1],
+    ['loose line on 0 kept', loose('0'), 1],
+    ['layout\'s own sheet rectangle left out', (e) => e.type === 'LWPOLYLINE' && e.layer === 'Sheet', 0],
+    ['layout\'s own marks left out', (e) => e.layer === 'Marks' && !loose('Marks')(e), 0],
+    ['Sheet line inside placed block P kept', (e) => e.type === 'LINE' && e.layer === 'Sheet' && f(e, 10) === 100, 1],
+  ];
+  const saved = LD.layoutRaw(lay), result = prepare({ lay }, LD, cutterDoc);
+  assert.ok(saved.blocks.P, 'the placed part is in block P');
+  assert.ok(saved.entities.some(rows[3][1]) && saved.entities.some(rows[4][1]), 'ordinary layout output still has its sheet and marks');
+  assert.equal(result.left, 0); assert.equal(result.other, 0);
+  for (const [name, select, want] of rows) await t.test(name, () => {
+    assert.equal(result.doc.entities.filter(select).length, want);
+  });
+  const drawing = docOf(W.rect(0, 0, 300, 200, { layer: 'Sheet' }), W.line(0, 5, 5, 5, { layer: 'Marks' }));
+  assert.deepEqual(prepare({ raw: drawing, factor: 1 }, LD, cutterDoc), cutterDoc(drawing, .01), 'drawing export unchanged');
 });

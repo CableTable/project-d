@@ -1,7 +1,6 @@
 // dxf-cutter.js — the cutter-safe copy of a drawing (TODO 52, mock-up R14 option B), pure: tests in dxf-cutter.test.mjs.
 //
-//   cutterDoc(doc, tol, { dropLayers }) → { doc, left, other }
-//     dropLayers: layer names whose top-level objects are left out entirely (not counted), before blocks are exploded (TODO 244).
+//   cutterDoc(doc, tol) → { doc, left, other }
 //     doc:   a document in writeDxf's shape holding LINE, ARC and LWPOLYLINE only (the header, layers and line types are kept).
 //     left:  how many text / fill objects were left out (TEXT, MTEXT, attributes, HATCH, SOLID, TRACE, DIMENSION, leaders, WIPEOUT).
 //     other: how many other objects had no place in it (POINT, 3DFACE, meshes, xrefs, a block missing from the file).
@@ -51,7 +50,7 @@ function similar(m) {
 }
 const mirrored = (m) => m[0] * m[3] - m[1] * m[2] < 0;
 
-export function cutterDoc(doc, tol, { dropLayers = [] } = {}) {
+export function cutterDoc(doc, tol) {
   if (!(tol > 0) || !Number.isFinite(tol)) throw new RangeError('The curve tolerance must be a number above 0');
   const out = [], count = { left: 0, other: 0 };
   let visits = 0;
@@ -188,7 +187,6 @@ export function cutterDoc(doc, tol, { dropLayers = [] } = {}) {
       }
     }
   }
-  const gone = new Set(dropLayers);                                          // top level only: an entity inside a block is never dropped
-  walk(gone.size ? (doc.entities || []).filter((e) => !gone.has(e.layer)) : doc.entities, [1, 0, 0, 1, 0, 0], { layer: null, aci: null, tc: null, ps: false }, 0);
+  walk(doc.entities, [1, 0, 0, 1, 0, 0], { layer: null, aci: null, tc: null, ps: false }, 0);
   return { doc: { header: doc.header, layers: doc.layers, ltypes: doc.ltypes || {}, blocks: {}, entities: out }, left: count.left, other: count.other };
 }
