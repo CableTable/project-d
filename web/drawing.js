@@ -454,6 +454,7 @@ export function flatten(doc, hidden = new Set()) {
           let nz = 1; for (let k = 0; k < r.c.length; k++) if (r.c[k] === 230) nz = num(r.v[k], 1);
           const nx = nz < 0 ? my * ratio : -my * ratio, ny = nz < 0 ? -mx * ratio : mx * ratio;
           const t0 = num(f[41], 0); let t1 = num(f[42], TAU); if (t1 <= t0) t1 += TAU;
+          t1 = Math.min(t1, t0 + TAU);
           const steps = Math.max(8, Math.ceil(96 * (t1 - t0) / TAU)), ts = Array.from({ length: steps + 1 }, (_, i) => t0 + (t1 - t0) * i / steps);
           // Include exact extrema so the selection index cannot discard a box touching the curve between samples.
           for (const phase of [Math.atan2(nx, mx), Math.atan2(ny, my)]) for (let t = phase + Math.ceil((t0 - phase) / Math.PI) * Math.PI; t < t1; t += Math.PI) ts.push(t);
@@ -708,7 +709,7 @@ function textItem(base, p, h, rot, lines, ha, va, wf, fl, put, more) {
 function hatch(e, base, put) {
   const c = e.r.c, v = e.r.v, n = c.length;
   let k = 0, solid = false;
-  const take = (code) => (c[k] === code ? num(v[k++]) : undefined);
+  const take = (code, d) => (c[k] === code ? num(v[k++], d) : undefined);
   while (k < n && c[k] !== 91) { if (c[k] === 70) solid = num(v[k]) === 1; k++; }
   if (k >= n) return;
   const loops = num(v[k++]), ops = [];
@@ -736,9 +737,10 @@ function hatch(e, base, put) {
           to(cx + rad * Math.cos(a0), cy + rad * Math.sin(a0)); ops.push(2, cx, cy, rad, a0, a1, ccw ? 0 : 1);
         } else if (et === 3) {
           const cx = take(10), cy = take(20), mx = take(11), my = take(21), ratio = take(40) || 1;
-          const s = (take(50) || 0) * DEG, en = (take(51) || 0) * DEG, ccw = take(73) !== 0;
+          const s = (take(50) || 0) * DEG, en = (take(51, 360) ?? 360) * DEG, ccw = take(73) !== 0;
           let t0 = ccw ? s : -s, t1 = ccw ? en : -en;
           if (ccw && t1 <= t0) t1 += TAU; if (!ccw && t1 >= t0) t1 -= TAU;
+          t1 = Math.max(t0 - TAU, Math.min(t1, t0 + TAU));
           const steps = Math.max(8, Math.ceil(64 * Math.abs(t1 - t0) / TAU));
           for (let j = 0; j <= steps; j++) { const t = t0 + (t1 - t0) * j / steps; to(cx + mx * Math.cos(t) - my * ratio * Math.sin(t), cy + my * Math.cos(t) + mx * ratio * Math.sin(t)); }
         } else if (et === 4) {

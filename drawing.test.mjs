@@ -2,6 +2,7 @@
 const { test } = await import('node:test');
 const assert = (await import('node:assert/strict')).default;
 const fs = await import('node:fs');
+const { createHash } = await import('node:crypto');
 const D = await import('./web/drawing.js');
 const G = await import('./web/geom.js');
 const W = await import('./web/dxf-write.js');
@@ -255,6 +256,27 @@ test('an ellipse snaps to its centre and its 4 quadrant points; a partial one on
   assert.deepEqual(pts(ell(2 * Math.PI)).sort(), ['centre 10,20', 'quadrant 0,20', 'quadrant 10,15', 'quadrant 10,25', 'quadrant 20,20']);
   const part = pts(ell(Math.PI / 2 + 0.1));
   assert.ok(part.includes('quadrant 10,25') && !part.includes('quadrant 0,20') && !part.includes('quadrant 10,15'), part.join(' | '));
+});
+
+test('TODO 233: ellipse entity and hatch sweeps stay bounded at one turn', () => {
+  const tau = 2 * Math.PI;
+  const cases = [['span 1e9', 0, 1e9], ['span TAU', 0, tau], ['half', 0, Math.PI], ['NaN end', 0, NaN], ['Infinity end', 0, Infinity], ['NaN start', NaN, tau], ['Infinity start', Infinity, tau]];
+  const halfHashes = { entity: 'ed7921e0f20791ccddd30b60c8ecfd7d148fcbf3be35ae4ff204988fc2451e93', ccw: '75346ca2c8f910e5723f362c003a08356a3f184b5dba53c084b9ad6da4403787', cw: '18027befe7d0b49bb2cf6532d8ffaec8c8c902c795c050ec63ab85e1a4fc9b3e' }; // captured before the fix
+  for (const kind of ['entity', 'ccw', 'cw']) {
+    const ellipse = (start, end) => lay(dxf([kind === 'entity'
+      ? g([0, 'ELLIPSE'], [10, 10], [20, 20], [11, 10], [21, 0], [40, .5], [41, start], [42, end])
+      : g([0, 'HATCH'], [70, 1], [91, 1], [92, 0], [93, 1], [72, 3], [10, 10], [20, 20], [11, 10], [21, 0], [40, .5], [50, start * 180 / Math.PI], [51, end * 180 / Math.PI], [73, kind === 'ccw' ? 1 : 0], [97, 0])])).items[0];
+    const full = ellipse(0, tau);
+    for (const [name, start, end] of cases) {
+      const item = ellipse(start, end), label = `${kind}: ${name}`, points = Math.floor(item.ops.length / 3);
+      assert.ok(points > 0 && points <= (kind === 'entity' ? 101 : 65), `${label}: ${points} points`);
+      assert.ok(item.ops.every(Number.isFinite), label);
+      if (name === 'half') {
+        assert.equal(points, kind === 'entity' ? 51 : 33, label);
+        assert.equal(createHash('sha256').update(JSON.stringify(item.ops)).digest('hex'), halfHashes[kind], `${label}: unchanged`);
+      } else assert.deepEqual(item.ops, full.ops, `${label}: full ellipse`);
+    }
+  }
 });
 
 test('TODO 184: a block of 8 DIMENSIONs that name itself ends in a DrawingError, fast', () => {
