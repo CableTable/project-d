@@ -127,7 +127,7 @@ test('a refreshed snapshot keeps its hidden layers by name when the layer number
     const next = { ...hidden, ...L.refreshGeometry(hidden, source) };
     assert.equal(next.off.size, 0, `a ${why} hidden layer does not hide the layer reusing its number`);
     assert.equal(next.polys.length, 2, why + ': both current layers are visible');
-    assert.deepEqual(source, before, 'refresh leaves the source unchanged');
+    assert.deepEqual(structuredClone(source), before, 'refresh leaves the source unchanged');
     assert.deepEqual([...hidden.off], [...item.fl.layers.keys()].filter((i) => item.fl.layers[i].name === 'B'), 'the old snapshot keeps its own hidden list');
   }
 });

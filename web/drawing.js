@@ -52,7 +52,7 @@ export function readDxf(text) {
     C.push(c); V.push(raw[i + 1].replace(/\\U\+([0-9A-Fa-f]{4})/g, (_, h) => String.fromCharCode(parseInt(h, 16))));   // the writer encodes it again
   }
   if (!C.length) throw new DrawingError('This drawing is empty.');
-  const doc = { header: {}, layers: {}, ltypes: {}, blocks: {}, entities: [], groups: [] };
+  const doc = { header: {}, layers: Object.create(null), ltypes: Object.create(null), blocks: Object.create(null), entities: [], groups: [] };   // no prototype: a block named "constructor" must not be found
   let objects = [];
   for (let i = 0; i < C.length; i++) {
     if (!(C[i] === 0 && V[i].trim() === 'SECTION' && C[i + 1] === 2)) continue;

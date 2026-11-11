@@ -155,7 +155,7 @@ test('BURST keeps all values as visible TEXT on the insert layer, with TEXT vert
   const saved = readDxf(writeDxf({ ...loaded, ...r }));
   assert.ok(saved.entities.slice(1).every((e) => !e.r.v.includes('AcDbAttribute') && e.r.v.includes('AcDbText')));
   assert.deepEqual(flatten(saved).items.filter((it) => it.k === 't').map((it) => it.lines[0]), ['Shown', 'Hidden', 'Invisible']);
-  assert.deepEqual(loaded, before);
+  assert.deepEqual(structuredClone(loaded), before);
   assert.equal(explodeSelection(loaded, new Set([0]), new Set(['Cut']), true).skipped, 1);
   assert.equal(resolve('BURST', 'draw').name, 'burst'); assert.equal(resolve('BURST', 'layout').name, 'burst');
   loaded.entities[0].kids[0].v[loaded.entities[0].kids[0].c.indexOf(1)] = 'Edited source value';

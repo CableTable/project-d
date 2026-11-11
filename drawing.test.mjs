@@ -297,3 +297,16 @@ test('TODO 184: a block of 8 DIMENSIONs that name itself ends in a DrawingError,
   assert.throws(() => lay(dxf([dim], { blocks })), (e) => e instanceof D.DrawingError && /Too many nested blocks/.test(e.message));
   assert.ok(Date.now() - t0 < 15000, 'took ' + (Date.now() - t0) + ' ms');
 });
+
+test('TODO 234: an INSERT named like an Object.prototype member is skipped when no such block exists, drawn when it does', () => {
+  for (const name of ['constructor', 'toString', 'valueOf', '__proto__']) {
+    const ins = g([0, 'INSERT'], [8, '0'], [2, name], [10, 0], [20, 0]);
+    const missing = lay(dxf([ins]));
+    assert.equal(missing.items.length, 0, name + ': nothing drawn');
+    assert.deepEqual(missing.left, { INSERT: 1 }, name + ': said, not hidden');
+    const blocks = g([0, 'BLOCK'], [8, '0'], [2, name], [70, 0], [10, 0], [20, 0]) + '\n' + g([0, 'LINE'], [8, '0'], [10, 0], [20, 0], [11, 5], [21, 5]) + '\n' + g([0, 'ENDBLK'], [8, '0']);
+    const real = lay(dxf([ins], { blocks }));
+    assert.equal(real.items.length, 1, name + ': its block is drawn');
+    assert.deepEqual(real.left, {}, name + ': nothing left out');
+  }
+});

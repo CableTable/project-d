@@ -106,7 +106,7 @@ test('Move and copy translate flipped polylines in world coordinates, including 
       const moved = { ...raw, ...next, entities: [next.entities.at(-1)] };
       const b = drawingBoxMm(D.flatten(moved), 1);
       a.forEach((v, k) => near(b[k], v + (k % 2 ? -3 : 7), `${source.type}, dimension=${inDim}, ${edit.name}`));
-      assert.deepEqual(raw, before, 'the undo snapshot stays intact');
+      assert.deepEqual(structuredClone(raw), before, 'the undo snapshot stays intact');
       if (edit === E.copyEntities) assert.deepEqual(drawingBoxMm(D.flatten({ ...raw, ...next, entities: [next.entities[0]] }), 1), a);
     }
   }
@@ -144,7 +144,7 @@ test('Move translates fixture entity types, hatches, native dimensions and table
       if (a && b && !e.ps) for (let k = 0; k < 4; k++) near(b[k], a[k] + (k % 2 ? -3 : 7), `${name}: ${e.type} bound ${k}`);
       for (let j = 0; j < raw.entities.length; j++) if (j !== i) assert.equal(next.entities[j], raw.entities[j]);
     }
-    assert.deepEqual(raw, before, 'original records and shared blocks are intact');
+    assert.deepEqual(structuredClone(raw), before, 'original records and shared blocks are intact');
   }
 });
 
@@ -1086,7 +1086,7 @@ test('TODO 104: remove micro arcs / lines, close both outlines, keep a lone piec
   assert.ok(E.findGaps(E.makeIndex(oldRaw, D.flatten(oldRaw)), .01).length > 0, 'fixture reproduces the blocked join');
   const r = E.joinTinyGaps(raw, ed, .01), next = { ...raw, entities: r.entities, blocks: r.blocks };
   const ed2 = E.makeIndex(next, D.flatten(next));
-  assert.deepEqual(raw, before, 'the original geometry is intact for Undo');
+  assert.deepEqual(structuredClone(raw), before, 'the original geometry is intact for Undo');
   assert.equal(r.removed, 2);
   assert.equal(r.joined, 2);
   assert.deepEqual(r.skipped, {});

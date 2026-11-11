@@ -128,7 +128,7 @@ test('TODO 141: a table saves as a named block with the same contents, placement
   assert.deepEqual(sigs(back.blocks.PD_TABLE_1.entities), sigs(doc.blocks['*T1'].entities));
   assert.ok(!report.text.includes('*T1'), 'no unused anonymous table block');
   assert.deepEqual(D.flatten(back).boxes.model, D.flatten(doc).boxes.model);
-  assert.deepEqual(doc, before, 'the open document stays an ACAD_TABLE');
+  assert.deepEqual(structuredClone(doc), before, 'the open document stays an ACAD_TABLE');
 });
 
 test('TODO 141: a table found only inside a block saves as a named block too', () => {
@@ -144,7 +144,7 @@ test('TODO 141: a table found only inside a block saves as a named block too', (
   assert.deepEqual(sigs(back.blocks.PD_TABLE_1.entities), sigs(doc.blocks['*T1'].entities));
   assert.ok(!report.text.includes('*T1'));
   assert.deepEqual(D.flatten(back).boxes.model, D.flatten(doc).boxes.model);
-  assert.deepEqual(doc, before);
+  assert.deepEqual(structuredClone(doc), before);
 });
 
 test('TODO 141: a table without its drawn block is dropped and reported as ACAD_TABLE x1', () => {

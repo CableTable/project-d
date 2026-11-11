@@ -105,7 +105,7 @@ test('TODO 97a: hand-written AutoCAD-style GROUP reads names, flags and entity i
   assert.equal(back.groups[0].name, 'Parallel lines');
   assert.equal(back.groups[0].unnamed, false);
   assert.equal(back.groups[0].description, 'Two parallel lines');
-  assert.deepEqual(doc, before, 'save leaves the source alone');
+  assert.deepEqual(structuredClone(doc), before, 'save leaves the source alone');
   const disabled = readDxf(fixture.replace('71\n1\n340', '71\n0\n340'));
   assert.equal(disabled.groups[0].selectable, false);
   assert.equal(readDxf(W.writeDxf(disabled)).groups[0].selectable, false);

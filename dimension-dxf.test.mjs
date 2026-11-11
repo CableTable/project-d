@@ -34,7 +34,7 @@ test('save drops unused PD_DIM_ styles after deleting a dimension, retaining use
   const before = structuredClone(deleted), saved = nativeDimensionOverrides(deleted);
   assert.deepEqual(Object.keys(saved.dimstyles).sort(), ['PD_DIM_NESTED', 'PD_DIM_USED', 'Standard', 'Unrelated']);
   assert.equal(readDxf(W.writeDxf(saved)).dimstyles.PD_DIM_1, undefined, 'unused style is absent from the saved file');
-  assert.deepEqual(deleted, before, 'saving leaves the working document intact');
+  assert.deepEqual(structuredClone(deleted), before, 'saving leaves the working document intact');
 });
 
 test('save keeps a PD_DIM_ style that a LEADER names', () => {
