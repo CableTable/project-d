@@ -1505,10 +1505,14 @@ export const buildDimension = (params, factor, name, dp = 2) => buildDim('aligne
 /** First free name: PD_DIM_n aligned, H / V linear, R radius, D diameter or A angle. */
 export function freeName(blocks, kind = 'aligned', axis = null) {
   const tag = kind === 'linear' ? { h: 'H', v: 'V' }[axis] || '' : { radius: 'R', diameter: 'D', angle: 'A' }[kind] || '';
+  return freeNameWithPrefix(blocks, 'PD_DIM_' + tag);
+}
+/** First free numbered block name, ignoring case as in the block table. */
+export function freeNameWithPrefix(blocks, prefix) {
   const taken = new Set((blocks instanceof Set ? [...blocks] : Object.keys(blocks)).map((n) => n.toLowerCase()));
   let n = 1;
-  while (taken.has(('PD_DIM_' + tag + n).toLowerCase())) n++;
-  return 'PD_DIM_' + tag + n;
+  while (taken.has((prefix + n).toLowerCase())) n++;
+  return prefix + n;
 }
 /** The tag letter ('' | H | V | R | D | A) of a PD_DIM block name. */
 export const dimTag = (name) => (/^PD_DIM_([RDAHV]?)\d+$/.exec(name) || [, ''])[1];

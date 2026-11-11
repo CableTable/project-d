@@ -18,7 +18,7 @@ import { explodeInsert, explodeDimension, explodeSelection } from './explode.js'
 import { unitFactor, startHidden } from './doc.js';
 import { stepRepeat, markGeometry, MAX_LINE } from './layout.js';
 import { buildLayoutDoc, gridPlacements, placedBox, partFromDrawing, placement1 } from './apply.js';
-import { keepOnly, newLayerName, DIM_LAYER, DIM_BLOCK, dimTag } from './edit.js';
+import { keepOnly, newLayerName, DIM_LAYER, DIM_BLOCK, dimTag, freeNameWithPrefix } from './edit.js';
 import { followDimensions } from './linked-dimensions.js';
 import { isDimPart, dimName, isSettled, bakeBlock, turnedTag, freeBlockName } from './layoutdim.js';
 import { cleanGuides } from './guides.js';
@@ -492,16 +492,31 @@ function metaEntities(lay, blockOf, ids, ob = []) {
 
 /** The layout as a DXF document (writeDxf's shape), plus the hidden PD_LAYOUT block. sheet: false omits its own rectangle and marks for cutter export. */
 export function layoutRaw(lay, { sheet = true } = {}) {
-  const all = placedAll(lay), baked = [], kept = [], ob = [], dimBlocks = {};
+  const all = placedAll(lay), baked = [], kept = [], ob = [];
   for (const p of all) {
     const part = lay.parts[p.partId], ents = part.obj && bakeObject(part, p);
-    if (ents) { baked.push(...ents); if (isDimPart(part) || part.raw.entities[0].type === 'DIMENSION') Object.assign(dimBlocks, part.raw.blocks); for (const _ of ents) ob.push(p.g || p.lock ? { ...(p.g ? { g: p.g } : {}), ...(p.lock ? { lock: true } : {}) } : 0); } else kept.push(p);               // an object Explode cannot carry stays a block (and comes back as an object)
+    if (ents) { baked.push({ part, ents }); for (const _ of ents) ob.push(p.g || p.lock ? { ...(p.g ? { g: p.g } : {}), ...(p.lock ? { lock: true } : {}) } : 0); } else kept.push(p);               // an object Explode cannot carry stays a block (and comes back as an object)
   }
   const ids = [...new Set([...usedIds(lay), ...kept.filter((p) => lay.parts[p.partId].obj).map((p) => p.partId)])];
   const { doc, blockOf } = buildLayoutDoc({ parts: lay.parts, placed: kept, sheetW: lay.s.sheetW, sheetH: lay.s.sheetH, marks: sheet ? marksOf(lay, all.filter((p) => !lay.parts[p.partId].obj)) : null, keep: ids, sheet });
   for (const [name, def] of Object.entries(layersOf(lay))) if (!(name in doc.layers)) doc.layers[name] = structuredClone(def);
-  addEntities(doc, baked);
-  for (const [n, b] of Object.entries(dimBlocks)) addBlock(doc, n, b.entities, b.base);
+  const dimNames = new Map(), taken = new Set(Object.keys(doc.blocks).map((n) => n.toLowerCase())), entities = [];
+  for (const { part, ents } of baked) {
+    if (isDimPart(part) || part.raw.entities[0].type === 'DIMENSION') {
+      const e = ents[0], name = String(e.r.v[e.r.c.indexOf(2)] || '').trim(), block = ownBlock(part.raw.blocks, name);
+      if (!dimNames.has(part.id)) {
+        for (const [n, b] of Object.entries(part.raw.blocks)) if (n !== name && !taken.has(n.toLowerCase())) {
+          addBlock(doc, n, b.entities, b.base); taken.add(n.toLowerCase());
+        }
+        const prefix = e.type === 'DIMENSION' ? '*D' : name.startsWith('PD_LDR_') ? 'PD_LDR_' : /^PD_DIM_[RDAHV]?/.exec(name)[0];
+        const own = block && taken.has(name.toLowerCase()) ? freeNameWithPrefix(taken, prefix) : name;
+        dimNames.set(part.id, own);
+        if (block) { addBlock(doc, own, block.entities, block.base); taken.add(own.toLowerCase()); }
+      }
+      entities.push(retarget(e, new Map([[name, dimNames.get(part.id)]])));
+    } else entities.push(...ents);
+  }
+  addEntities(doc, entities);
   addBlock(doc, LAYOUT_BLOCK, metaEntities(lay, blockOf, ids, ob));
   doc.header.$ATTMODE = String(lay.s.attmode);
   return doc;

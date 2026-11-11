@@ -845,6 +845,46 @@ test('TODO 171 review: a changed INSERT sent through objectCommit stays a placed
   assert.deepEqual({ ...lay.parts.n1.raw.blocks }, {}, 'a line gets no blocks');
 });
 
+test('TODO 248', () => {
+  for (const [name, type, shared, occupied] of [
+    ['*D1', 'DIMENSION', false],
+    ['PD_DIM_1', 'INSERT', false],
+    ['PD_DIM_H1', 'INSERT', false],
+    ['PD_DIM_H1', 'INSERT', true],
+    ['PD_DIM_H1', 'INSERT', true, true],
+  ]) {
+    const lay = LD.newLayout(name);
+    for (const [id, len, y] of [['a', 10, 0], ['b', 25, 40]].slice(0, shared ? 1 : 2)) {
+      const raw = newDoc(4);
+      addBlock(raw, name, [line(0, y, len, y)]);
+      const ent = type === 'DIMENSION' ? entity(type, [[2, name], [70, 0]]) : insert(name, 0, 0);
+      lay.parts[id] = LD.objectPart(id, id, ent, raw.layers, raw.header, raw.blocks);
+    }
+    lay.placed = ['a', shared ? 'a' : 'b'].map((id) => LD.objectPlacement(lay.parts[id]));
+    if (occupied) {
+      const raw = newDoc(4);
+      for (const n of ['pd_dim_h1', 'PD_DIM_H2']) addBlock(raw, n, [line(0, 0, 1, 1)]);
+      addEntities(raw, line(0, 100, 1, 101));
+      lay.parts.source = LD.makePart('source', 'Reserved', raw, 1);
+      lay.placed.push(LD.objectPlacement(lay.parts.source));
+    }
+    const before = structuredClone(lay.parts), raw = LD.layoutRaw(lay);
+    const names = raw.entities.filter((e) => e.type === type && e.layer !== 'Parts').map((e) => e.r.v[e.r.c.indexOf(2)]);
+    const count = shared ? 1 : 2;
+    assert.equal(Object.keys(raw.blocks).filter((n) => n !== LD.LAYOUT_BLOCK).length, count + (occupied ? 3 : 0), name + ': one block per distinct dimension');
+    assert.equal(new Set(names).size, count, name + ': references keep distinct dimensions');
+    assert.equal(names.length, 2);
+    assert.equal(names[0], occupied ? 'PD_DIM_H3' : name, name + ': first free name ignores case and skips taken numbers');
+    assert.equal(names[1], shared ? names[0] : name.replace(/1$/, '2'));
+    assert.ok(names.every((n) => raw.blocks[n]), name + ': every reference has a block');
+    assert.deepEqual(lay.parts, before, name + ': saving leaves source entities untouched');
+    const back = LD.layoutFromRaw(readDxf(writeDxf(raw)));
+    assert.equal(back.placed.filter((p) => back.parts[p.partId].obj).length, 2);
+    const geometry = (l) => l.placed.filter((p) => l.parts[p.partId].obj).map((p) => l.parts[p.partId].fl.items.map((it) => [it.k, it.b]));
+    assert.deepEqual(geometry(back), geometry(lay), name + ': reopened dimensions keep their geometry');
+  }
+});
+
 test('TODO 235: damaged layout settings open with defaults, never throw', () => {
   const open = (edit) => {
     const raw = LD.layoutRaw(sample()), meta = LD.readMeta(raw), ent = raw.blocks[LD.LAYOUT_BLOCK].entities;
