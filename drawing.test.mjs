@@ -2,9 +2,14 @@
 const { test } = await import('node:test');
 const assert = (await import('node:assert/strict')).default;
 const fs = await import('node:fs');
+const { createHash } = await import('node:crypto');
 const D = await import('./web/drawing.js');
 const G = await import('./web/geom.js');
 const W = await import('./web/dxf-write.js');
+const E = await import('./web/edit.js');
+const S = await import('./web/scale.js');
+const R = await import('./web/rotate.js');
+const X = await import('./web/explode.js');
 const { paintDrawing } = await import('./web/render.js');
 const { planPdf } = await import('./web/pdf-export.js');
 
@@ -231,6 +236,13 @@ test('the file\'s bytes: UTF-8, an old code page, and a binary DXF said plainly'
   assert.throws(() => D.readDxf(''), D.DrawingError);
 });
 
+test('TODO 253d: DXF code pages 932, 936 and 950 decode as shift_jis, gbk and big5', () => {
+  for (const [cp, bytes, want] of [[932, [0x93, 0xfa, 0x96, 0x7b], '日本'], [936, [0xd6, 0xd0, 0xce, 0xc4], '中文'], [950, [0xa4, 0xa4, 0xa4, 0xe5], '中文'], [949, [0xc7, 0xd1], '한']]) {
+    const head = new TextEncoder().encode(`  9\r\n$DWGCODEPAGE\r\n  3\r\nANSI_${cp}\r\n  0\r\nENDSEC\r\n  1\r\n`);
+    assert.equal(D.decodeDxf(Uint8Array.from([...head, ...bytes])).endsWith(want), true, 'ANSI_' + cp);
+  }
+});
+
 test('arc helpers: a sweep, a box over the extremes', () => {
   assert.deepEqual(D.arcSweep(0, Math.PI / 2, 0), [0, Math.PI / 2]);
   const [s, sw] = D.arcSweep(0, -Math.PI / 2, 1);
@@ -257,9 +269,71 @@ test('an ellipse snaps to its centre and its 4 quadrant points; a partial one on
   assert.ok(part.includes('quadrant 10,25') && !part.includes('quadrant 0,20') && !part.includes('quadrant 10,15'), part.join(' | '));
 });
 
+test('TODO 233: ellipse entity and hatch sweeps stay bounded at one turn', () => {
+  const tau = 2 * Math.PI;
+  const cases = [['span 1e9', 0, 1e9], ['span TAU', 0, tau], ['half', 0, Math.PI], ['NaN end', 0, NaN], ['Infinity end', 0, Infinity], ['NaN start', NaN, tau], ['Infinity start', Infinity, tau]];
+  const halfHashes = { entity: 'ed7921e0f20791ccddd30b60c8ecfd7d148fcbf3be35ae4ff204988fc2451e93', ccw: '75346ca2c8f910e5723f362c003a08356a3f184b5dba53c084b9ad6da4403787', cw: '18027befe7d0b49bb2cf6532d8ffaec8c8c902c795c050ec63ab85e1a4fc9b3e' }; // captured before the fix
+  for (const kind of ['entity', 'ccw', 'cw']) {
+    const ellipse = (start, end) => lay(dxf([kind === 'entity'
+      ? g([0, 'ELLIPSE'], [10, 10], [20, 20], [11, 10], [21, 0], [40, .5], [41, start], [42, end])
+      : g([0, 'HATCH'], [70, 1], [91, 1], [92, 0], [93, 1], [72, 3], [10, 10], [20, 20], [11, 10], [21, 0], [40, .5], [50, start * 180 / Math.PI], [51, end * 180 / Math.PI], [73, kind === 'ccw' ? 1 : 0], [97, 0])])).items[0];
+    const full = ellipse(0, tau);
+    for (const [name, start, end] of cases) {
+      const item = ellipse(start, end), label = `${kind}: ${name}`, points = Math.floor(item.ops.length / 3);
+      assert.ok(points > 0 && points <= (kind === 'entity' ? 101 : 65), `${label}: ${points} points`);
+      assert.ok(item.ops.every(Number.isFinite), label);
+      if (name === 'half') {
+        assert.equal(points, kind === 'entity' ? 51 : 33, label);
+        assert.equal(createHash('sha256').update(JSON.stringify(item.ops)).digest('hex'), halfHashes[kind], `${label}: unchanged`);
+      } else assert.deepEqual(item.ops, full.ops, `${label}: full ellipse`);
+    }
+    // huge angles: the remainder must stay bounded (quadrant loop / sampling used to hang or collapse to 2 points)
+    for (const [name, start, end] of [['1.7e34 both', 1.7058823529411766e34, 1.7058823529411766e34], ['4e16 to +8', 4e16, 40000000000000008]]) {
+      const item = ellipse(start, end), label = `${kind}: ${name}`, points = Math.floor(item.ops.length / 3);
+      assert.ok(points > 0 && points <= (kind === 'entity' ? 101 : 65), `${label}: ${points} points`);
+      assert.ok(item.ops.every(Number.isFinite), label);
+      const distinct = new Set(); for (let i = 0; i < item.ops.length; i += 3) distinct.add(item.ops[i + 1] + ',' + item.ops[i + 2]);
+      assert.ok(distinct.size > 2, `${label}: ${distinct.size} distinct points`);
+    }
+  }
+  // t0 so large that t0 + PI == t0: the extrema loop used to never advance
+  const huge = lay(dxf([g([0, 'ELLIPSE'], [10, 10], [20, 20], [11, 10], [21, 0], [40, .5], [41, 4e16], [42, 40000000000000008])])).items[0];
+  const hugePoints = Math.floor(huge.ops.length / 3);
+  assert.ok(hugePoints > 0 && hugePoints <= 101 && huge.ops.every(Number.isFinite), `huge: ${hugePoints} points`);
+});
+
 test('TODO 184: a block of 8 DIMENSIONs that name itself ends in a DrawingError, fast', () => {
   const dim = g([0, 'DIMENSION'], [8, '0'], [2, 'A']), blocks = g([0, 'BLOCK'], [8, '0'], [2, 'A'], [70, 0], [10, 0], [20, 0]) + '\n' + Array(8).fill(dim).join('\n') + '\n' + g([0, 'ENDBLK'], [8, '0']);       // nothing drawn, so the item limit never stops it
   const t0 = Date.now();
   assert.throws(() => lay(dxf([dim], { blocks })), (e) => e instanceof D.DrawingError && /Too many nested blocks/.test(e.message));
   assert.ok(Date.now() - t0 < 15000, 'took ' + (Date.now() - t0) + ' ms');
+});
+
+test('TODO 234: an INSERT named like an Object.prototype member is skipped when no such block exists, drawn when it does', () => {
+  for (const name of ['constructor', 'toString', 'valueOf', '__proto__']) {
+    const ins = g([0, 'INSERT'], [8, '0'], [2, name], [10, 0], [20, 0]);
+    const blocks = g([0, 'BLOCK'], [8, '0'], [2, name], [70, 0], [10, 0], [20, 0]) + '\n' + g([0, 'LINE'], [8, '0'], [10, 0], [20, 0], [11, 5], [21, 5]) + '\n' + g([0, 'ENDBLK'], [8, '0']);
+    // as parsed, after an edit (removeEntities rebuilds blocks as a plain object), and after a structured clone
+    const forms = { parsed: (d) => d, 'removeEntities': (d) => ({ ...d, ...E.removeEntities(d, new Set()) }), structuredClone };
+    for (const [form, make] of Object.entries(forms)) {
+      const missing = D.flatten(make(D.readDxf(dxf([ins]))));
+      assert.equal(missing.items.length, 0, `${name} ${form}: nothing drawn`);
+      assert.deepEqual(missing.left, { INSERT: 1 }, `${name} ${form}: said, not hidden`);
+      const real = D.flatten(make(D.readDxf(dxf([ins], { blocks }))));
+      assert.equal(real.items.length, 1, `${name} ${form}: its block is drawn`);
+      assert.deepEqual(real.left, {}, `${name} ${form}: nothing left out`);
+      // fix 2: Scale, Rotate and Explode read the block by its own key only, with the block missing and real
+      const dim = g([0, 'DIMENSION'], [8, '0'], [2, name], [70, 0], [10, 0], [20, 0], [13, 0], [23, 0], [14, 5], [24, 5]);       // a DIMENSION names its block the same way
+      for (const [which, text] of [['missing', dxf([ins, dim])], ['real', dxf([ins, dim], { blocks })]]) {
+        const doc = make(D.readDxf(text)), all = new Set([0, 1]);
+        assert.doesNotThrow(() => S.scaleEntities(doc, all, [0, 0], 2), `${name} ${form} ${which}: Scale`);
+        assert.doesNotThrow(() => R.rotateEntities(doc, all, [0, 0], 30), `${name} ${form} ${which}: Rotate`);
+        assert.doesNotThrow(() => X.explodeSelection(doc, all), `${name} ${form} ${which}: Explode`);
+        assert.doesNotThrow(() => E.scaleAbout(doc, 2, 0, 0), `${name} ${form} ${which}: Scale about`);
+      }
+      const back = D.readDxf(W.writeDxf(make(D.readDxf(dxf([ins], { blocks })))));       // save, reopen
+      assert.ok(Object.hasOwn(back.blocks, name), `${name} ${form}: the block survives a save`);
+      assert.equal(D.flatten(back).items.length, 1, `${name} ${form}: and is drawn after reopening`);
+    }
+  }
 });

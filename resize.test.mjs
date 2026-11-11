@@ -44,7 +44,7 @@ test('flipped OCS LWPOLYLINE and POLYLINE resize in drawing coordinates and roun
     const next = resizeAbout(raw, 2, .5, 5, 7);
     assert.deepEqual(flatten({ ...raw, ...next }).boxes.model, [5, 7, 45, 17]);
     assert.deepEqual(flatten(readDxf(writeDxf({ ...raw, ...next }))).boxes.model, [5, 7, 45, 17]);
-    assert.deepEqual(raw, before);
+    assert.deepEqual(structuredClone(raw), before);
   }
 });
 

@@ -12,13 +12,13 @@
 // a negative scale), marks on "Marks" — what any CAD app shows. The settings and the placed parts also travel in a block named
 // PD_LAYOUT that nothing inserts: a few TEXT entities, each holding up to 200 characters of base64 of a JSON text. Other CAD
 // apps ignore (or at most list) an unused block; our reader (drawing.js readDxf) keeps it, and layoutFromRaw() reads it back.
-import { readDxf, flatten } from './drawing.js';
+import { readDxf, flatten, ownBlock } from './drawing.js';
 import { writeDxf, text as dxfText, addBlock, addEntities, newDoc, insert } from './dxf-write.js';
 import { explodeInsert, explodeDimension, explodeSelection } from './explode.js';
 import { unitFactor, startHidden } from './doc.js';
-import { stepRepeat, markGeometry } from './layout.js';
+import { stepRepeat, markGeometry, MAX_LINE } from './layout.js';
 import { buildLayoutDoc, gridPlacements, placedBox, partFromDrawing, placement1 } from './apply.js';
-import { keepOnly, newLayerName, DIM_LAYER, DIM_BLOCK, dimTag } from './edit.js';
+import { keepOnly, newLayerName, DIM_LAYER, DIM_BLOCK, dimTag, freeNameWithPrefix } from './edit.js';
 import { followDimensions } from './linked-dimensions.js';
 import { isDimPart, dimName, isSettled, bakeBlock, turnedTag, freeBlockName } from './layoutdim.js';
 import { cleanGuides } from './guides.js';
@@ -70,7 +70,7 @@ export function layersOf(lay) {
 export function objectPart(id, name, ent, layers, header = {}, blocks = {}) {
   const raw = { header: { ...header }, layers, ltypes: {}, blocks, entities: [{ ...ent, ps: false }] };
   let drawing = raw;
-  if (ent.type === 'DIMENSION' && !blocks[String(ent.r.v[ent.r.c.indexOf(2)] || '').trim()]) {
+  if (ent.type === 'DIMENSION' && !ownBlock(blocks, String(ent.r.v[ent.r.c.indexOf(2)] || '').trim())) {
     try { drawing = { ...raw, entities: explodeDimension(ent, raw) }; } catch { return null; }
   }
   const fl = flatten(drawing), shown = flatten({ ...drawing, header: { ...drawing.header, $ATTMODE: '1' }, layers: { ...layers, ...(layers[ent.layer] && { [ent.layer]: { ...layers[ent.layer], off: false, frozen: false } }) } });       // the box includes off-layer objects and ignores the attribute display mode (invisible attributes stay out)
@@ -110,7 +110,7 @@ function bakedEntity(part, p) {
 export const objectSig = (lay, skip) => lay.placed.map((p) => { const part = lay.parts[p.partId]; return part && part.obj && !skip(p.partId) ? `${p.partId}|${bakeKey(p)}${p.lock ? 'L' : ''}` : '-'; }).join(';') + '#' + lay.s.attmode;
 /** The layout's objects as a drawing: { raw, fl, off, at (entity → its index in lay.placed), lockedEnts }. An object Explode cannot carry is left out. */
 export function objectDoc(lay, skip = () => false) {
-  const entities = [], at = new Map(), lockedEnts = new Set(), blocks = {}, back = new Map();       // back: placed index → { name in this drawing → the part's own block name }
+  const entities = [], at = new Map(), lockedEnts = new Set(), blocks = Object.create(null), back = new Map();       // back: placed index → { name in this drawing → the part's own block name }
   lay.placed.forEach((p, i) => {
     const part = lay.parts[p.partId];
     let ent = part && part.obj && !skip(p.partId) ? bakedEntity(part, p) : null;
@@ -182,7 +182,7 @@ export function objectCommit(lay, view, entities, newId, heir, blocks = view.raw
   for (const e of entities) {
     if (view.at.has(e)) continue;
     e.ps = false;
-    const own = {};       // a new block object keeps its blocks, under the part's own names
+    const own = Object.create(null);       // a new block object keeps its blocks, under the part's own names
     if (e.type === 'INSERT') for (const [n, b] of Object.entries(blocksUsed(blocks, [e]))) own[back?.get(n) ?? n] = back ? { ...b, entities: b.entities.map((x) => retarget(x, back)) } : b;
     const kept = back ? retarget(e, back) : e, combined = e.type === 'INSERT' && /^combined /i.test(String(e.r.v[e.r.c.indexOf(2)]).trim());
     const reuse = one && oneName && !names.has(oneName) && !combined && !/^combined/i.test(oneName);       // a Combined result and the pieces of one get names of their own
@@ -249,7 +249,7 @@ export function explodePlaced(lay, idxs, newId, burst = false) {
 export function objectReplace(lay, view, ent, next, newId) {
   const i = view.at.get(ent), old = lay.placed[i], was = lay.parts[old.partId], shared = lay.placed.some((p, k) => k !== i && p.partId === old.partId);
   next.ps = false;
-  const back = view.back?.get(i), blocks = {};       // a block object keeps its blocks, from the view, under the part's own names
+  const back = view.back?.get(i), blocks = Object.create(null);       // a block object keeps its blocks, from the view, under the part's own names
   if (next.type === 'INSERT') for (const [n, b] of Object.entries(blocksUsed(view.raw.blocks, [next]))) blocks[back?.get(n) ?? n] = back ? { ...b, entities: b.entities.map((e) => retarget(e, back)) } : b;
   const kept = retarget(next, back || new Map());
   const part = objectPart(newId(), shared ? nextName(OBJ_NAMES[next.type] || 'Object', new Set(Object.values(lay.parts).map((p) => p.name))) : was.name, kept, layersOf(lay), {}, blocks);
@@ -490,18 +490,33 @@ function metaEntities(lay, blockOf, ids, ob = []) {
   return out;
 }
 
-/** The layout as a DXF document (writeDxf's shape): everything a CAD app shows, plus the hidden PD_LAYOUT block. */
-export function layoutRaw(lay) {
-  const all = placedAll(lay), baked = [], kept = [], ob = [], dimBlocks = {};
+/** The layout as a DXF document (writeDxf's shape), plus the hidden PD_LAYOUT block. sheet: false omits its own rectangle and marks for cutter export. */
+export function layoutRaw(lay, { sheet = true } = {}) {
+  const all = placedAll(lay), baked = [], kept = [], ob = [];
   for (const p of all) {
     const part = lay.parts[p.partId], ents = part.obj && bakeObject(part, p);
-    if (ents) { baked.push(...ents); if (isDimPart(part) || part.raw.entities[0].type === 'DIMENSION') Object.assign(dimBlocks, part.raw.blocks); for (const _ of ents) ob.push(p.g || p.lock ? { ...(p.g ? { g: p.g } : {}), ...(p.lock ? { lock: true } : {}) } : 0); } else kept.push(p);               // an object Explode cannot carry stays a block (and comes back as an object)
+    if (ents) { baked.push({ part, ents }); for (const _ of ents) ob.push(p.g || p.lock ? { ...(p.g ? { g: p.g } : {}), ...(p.lock ? { lock: true } : {}) } : 0); } else kept.push(p);               // an object Explode cannot carry stays a block (and comes back as an object)
   }
   const ids = [...new Set([...usedIds(lay), ...kept.filter((p) => lay.parts[p.partId].obj).map((p) => p.partId)])];
-  const { doc, blockOf } = buildLayoutDoc({ parts: lay.parts, placed: kept, sheetW: lay.s.sheetW, sheetH: lay.s.sheetH, marks: marksOf(lay, all.filter((p) => !lay.parts[p.partId].obj)), keep: ids });
+  const { doc, blockOf } = buildLayoutDoc({ parts: lay.parts, placed: kept, sheetW: lay.s.sheetW, sheetH: lay.s.sheetH, marks: sheet ? marksOf(lay, all.filter((p) => !lay.parts[p.partId].obj)) : null, keep: ids, sheet });
   for (const [name, def] of Object.entries(layersOf(lay))) if (!(name in doc.layers)) doc.layers[name] = structuredClone(def);
-  addEntities(doc, baked);
-  for (const [n, b] of Object.entries(dimBlocks)) addBlock(doc, n, b.entities, b.base);
+  const dimNames = new Map(), taken = new Set(Object.keys(doc.blocks).map((n) => n.toLowerCase())), entities = [];
+  for (const { part, ents } of baked) {
+    if (isDimPart(part) || part.raw.entities[0].type === 'DIMENSION') {
+      const e = ents[0], name = String(e.r.v[e.r.c.indexOf(2)] || '').trim(), block = ownBlock(part.raw.blocks, name);
+      if (!dimNames.has(part.id)) {
+        for (const [n, b] of Object.entries(part.raw.blocks)) if (n !== name && !taken.has(n.toLowerCase())) {
+          addBlock(doc, n, b.entities, b.base); taken.add(n.toLowerCase());
+        }
+        const prefix = e.type === 'DIMENSION' ? '*D' : name.startsWith('PD_LDR_') ? 'PD_LDR_' : /^PD_DIM_[RDAHV]?/.exec(name)[0];
+        const own = block && taken.has(name.toLowerCase()) ? freeNameWithPrefix(taken, prefix) : name;
+        dimNames.set(part.id, own);
+        if (block) { addBlock(doc, own, block.entities, block.base); taken.add(own.toLowerCase()); }
+      }
+      entities.push(retarget(e, new Map([[name, dimNames.get(part.id)]])));
+    } else entities.push(...ents);
+  }
+  addEntities(doc, entities);
   addBlock(doc, LAYOUT_BLOCK, metaEntities(lay, blockOf, ids, ob));
   doc.header.$ATTMODE = String(lay.s.attmode);
   return doc;
@@ -512,14 +527,15 @@ export function layoutRaw(lay) {
 const num = (v, d, min = -Infinity) => (Number.isFinite(+v) && v !== '' && v !== null && +v >= min ? +v : d);
 const gaps = (list) => (Array.isArray(list) ? list.filter((e) => e && e.after >= 1 && e.mm > 0).map((e) => ({ after: Math.floor(e.after), mm: +e.mm })) : []);
 /** Settings read from a file: anything missing or odd falls back to the default. */
-export function cleanSettings(s = {}) {
+export function cleanSettings(s) {
   const d = DEFAULTS;
+  if (!s || typeof s !== 'object') s = {};
   return {
     sheetW: num(s.sheetW, d.sheetW, 1), sheetH: num(s.sheetH, d.sheetH, 1),
     gripTop: num(s.gripTop, 0, 0), gripRight: num(s.gripRight, 0, 0), gripBottom: num(s.gripBottom, 0, 0), gripLeft: num(s.gripLeft, 0, 0),
     crop: s.crop === true, reg: s.reg === true, gapX: num(s.gapX, d.gapX, 0), gapY: num(s.gapY, d.gapY, 0),
     rotate: ['best', '0', '90'].includes(String(s.rotate)) ? String(s.rotate) : '0', align: s.align === 'topleft' ? 'topleft' : 'centre',
-    fit: s.fit !== false, rows: Math.max(1, Math.floor(num(s.rows, 1))), cols: Math.max(1, Math.floor(num(s.cols, 1))),
+    fit: s.fit !== false, rows: Math.min(MAX_LINE, Math.max(1, Math.floor(num(s.rows, 1)))), cols: Math.min(MAX_LINE, Math.max(1, Math.floor(num(s.cols, 1)))),     // rows / cols per line: the step-and-repeat limit, so a saved Fit result reads back as saved
     extraRows: gaps(s.extraRows), extraCols: gaps(s.extraCols), gridPart: typeof s.gridPart === 'string' ? s.gridPart : null,
     guides: cleanGuides(s.guides), guidesShow: s.guidesShow !== false, guidesLock: s.guidesLock === true,
     attmode: [0, 1, 2].includes(s.attmode) ? s.attmode : 1,
@@ -536,11 +552,11 @@ const retarget = (e, names) => {
 };
 /** The blocks a list of entities uses, and the blocks those use, as { name: block }. */
 export function blocksUsed(blocks, ents) {
-  const out = {}, todo = refs(ents);
+  const out = Object.create(null), todo = refs(ents);
   while (todo.length) {
-    const n = todo.pop();
-    if (out[n] || !blocks[n]) continue;
-    out[n] = blocks[n]; todo.push(...refs(blocks[n].entities || []));
+    const n = todo.pop(), b = ownBlock(blocks, n);
+    if (out[n] || !b) continue;
+    out[n] = b; todo.push(...refs(b.entities || []));
   }
   return out;
 }
@@ -552,19 +568,23 @@ export function readMeta(raw) {
   try {
     const b64 = blk.entities.filter((e) => e.type === 'TEXT' && e.r).map((e) => String(e.r.v[e.r.c.indexOf(1)] ?? '').trim()).join('');
     const m = dec(b64);
-    return m && m.v === 1 && Array.isArray(m.parts) ? m : null;
+    return m && m.v === 1 ? m : null;
   } catch { return null; }
 }
 
 /** The layout a document holds (what layoutRaw wrote, possibly saved by another app and back), or null if it is not one of ours. */
 export function layoutFromRaw(raw, name) {
+  try { return layoutFromMeta(raw, name); } catch { return null; }       // a damaged file opens as a plain drawing
+}
+function layoutFromMeta(raw, name) {
   const m = readMeta(raw);
   if (!m) return null;
   const lay = { name: name || m.name || 'Layout', s: cleanSettings(m.s), parts: {}, placed: [] };
   lay.s.attmode = [0, 1, 2].includes(+raw.header.$ATTMODE) ? +raw.header.$ATTMODE : 1;
-  for (const pm of m.parts) {
-    const blk = raw.blocks[pm.block];
-    if (!blk || typeof pm.id !== 'string') continue;
+  const parts = Array.isArray(m.parts) ? m.parts.filter(Boolean) : [];   // a damaged parts list keeps the layout with no parts; a null entry is skipped
+  for (const pm of parts) {
+    const blk = ownBlock(raw.blocks, pm.block);
+    if (!blk || !Array.isArray(blk.entities) || typeof pm.id !== 'string') continue;
     const ents = blk.entities.map((e) => ({ ...e, ps: false }));
     const part = makePart(pm.id, String(pm.name || pm.block), { header: { ...raw.header }, layers: raw.layers, ltypes: raw.ltypes, blocks: blocksUsed(raw.blocks, ents), entities: ents }, num(pm.factor, 1, 1e-9), String(pm.src || ''));
     if (part) lay.parts[pm.id] = part;
@@ -573,7 +593,7 @@ export function layoutFromRaw(raw, name) {
     .map((p) => ({ ...placement1(p.partId, +p.x, +p.y, num(p.rot, 0), p.mirrorX, p.mirrorY), ...(typeof p.g === 'string' && p.g ? { g: p.g } : {}), ...(p.lock === true ? { lock: true } : {}), ...(num(p.sc, 1, 1e-6) !== 1 ? { sc: num(p.sc, 1, 1e-6) } : {}),
       ...(typeof p.cid === 'string' && p.cid ? { cid: p.cid } : {}), ...(typeof p.ct === 'string' && p.ct ? { ct: p.ct } : {}) }));   // cid: a part that has a contour; ct: the contour of the part with that cid (layoutcontour.js)
   if (lay.s.gridPart && !lay.parts[lay.s.gridPart]) lay.s.gridPart = null;
-  for (const pm of m.parts) if (pm.obj === true && lay.parts[pm.id]) lay.parts[pm.id].obj = true;       // an object kept as a block
+  for (const pm of parts) if (pm.obj === true && lay.parts[pm.id]) lay.parts[pm.id].obj = true;       // an object kept as a block
   readObjects(lay, raw, Array.isArray(m.ob) ? m.ob : [], m.obCount);
   return lay;
 }

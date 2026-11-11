@@ -220,9 +220,8 @@ export function setField(ent, key, value, factor = 1) {
   if (ent.type === 'TEXT' || ent.type === 'MTEXT') {
     const m = TX.decode(ent);
     if (!m) return null;
-    const keep = { layer: ent.layer, lt: ent.lt, aci: ent.aci, tc: ent.tc, lw: ent.lw, lts: ent.lts, hidden: ent.hidden, ps: ent.ps };
-    if (key === 'textH' && value > 0) return TX.encode({ ...m, h: u }, keep);
-    if (key === 'textAngle') return TX.encode({ ...m, angle: value }, keep);
+    if (key === 'textH' && value > 0) return TX.reencode(ent, { ...m, h: u });
+    if (key === 'textAngle') return TX.reencode(ent, { ...m, angle: value });
   }
   return null;
 }

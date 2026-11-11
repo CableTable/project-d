@@ -73,12 +73,12 @@ export const gridPlacements = (L, sheetH, partId) => placements(L, sheetH).map((
 
 /** Blocks named in `map` renamed where the entities refer to them (INSERT and DIMENSION carry the name in group 2). */
 function renameRefs(ents, map0) {
-  const map = Object.fromEntries(Object.entries(map0).map(([k, v]) => [k.toLowerCase(), v]));   // block names ignore case
+  const map = new Map(Object.entries(map0).map(([k, v]) => [k.toLowerCase(), v]));   // block names ignore case; a Map: `constructor` is no key
   return ents.map((e) => {
     if (!e.r || (e.type !== 'INSERT' && e.type !== 'DIMENSION')) return e;
     const k = e.r.c.indexOf(2), nm = k < 0 ? null : String(e.r.v[k]).trim();
-    if (nm == null || !map[nm.toLowerCase()]) return e;
-    const v = e.r.v.slice(); v[k] = map[nm.toLowerCase()];
+    if (nm == null || !map.get(nm.toLowerCase())) return e;
+    const v = e.r.v.slice(); v[k] = map.get(nm.toLowerCase());
     return { ...e, r: { ...e.r, v } };
   });
 }
@@ -95,7 +95,7 @@ function mergePart(doc, part, origin) {
   for (const [n, l] of Object.entries(raw.ltypes || {})) if (!has(doc.ltypes, n)) doc.ltypes[n] = structuredClone(l);
   for (const [n, s] of Object.entries(raw.styles || {})) if (!has(doc.styles ||= {}, n)) doc.styles[n] = structuredClone(s);
   for (const [n, s] of Object.entries(raw.dimstyles || {})) if (!has(doc.dimstyles ||= {}, n)) doc.dimstyles[n] = structuredClone(s);
-  const map = {}, copied = [];
+  const map = Object.create(null), copied = [];       // no prototype: a block named `__proto__` is a key
   for (const [n, b] of Object.entries(raw.blocks || {})) {
     if (!has(doc.blocks, n)) { doc.blocks[n] = structuredClone(b); origin.set(n, b); copied.push(n); continue; }
     if (origin.get(n) === b) continue;                               // the same block of the same drawing
@@ -110,12 +110,13 @@ function mergePart(doc, part, origin) {
 
 /**
  * The layout document of several different parts. o: { parts: { id: part }, placed: [placed part], sheetW, sheetH,
- * marks (markGeometry's result, sheet mm y down; none = no marks), keep: [part ids] written as blocks even if nothing is placed }.
+ * marks (markGeometry's result, sheet mm y down; none = no marks), keep: [part ids] written as blocks even if nothing is placed, sheet: draw the sheet rectangle (default true) }.
  * A part is { name, w, h } (drawn as a rounded rectangle) or partFromDrawing's result (its entities are copied into its block).
  * One block per part used, one INSERT per placed part (rotation, and a negative scale for a mirror). → { doc, blockOf: { id: block name } }
  */
-export function buildLayoutDoc({ parts, placed, sheetW, sheetH, marks, keep = [] }) {
+export function buildLayoutDoc({ parts, placed, sheetW, sheetH, marks, keep = [], sheet = true }) {
   const doc = newDoc(4);
+  doc.blocks = Object.create(null);       // a part's block named `__proto__` is a key here, not the prototype
   doc.header.$MEASUREMENT = '1';
   addLayer(doc, LAYERS.parts, { aci: 5 });
   addLayer(doc, LAYERS.sheet, { aci: 8 });
@@ -138,7 +139,7 @@ export function buildLayoutDoc({ parts, placed, sheetW, sheetH, marks, keep = []
     const f = parts[p.partId].factor || 1, k = p.sc || 1, sx = (p.mirrorX ? -1 : 1) * f * k, sy = (p.mirrorY ? -1 : 1) * f * k;
     return insert(blockOf[p.partId], p.x, p.y, { layer: LAYERS.parts, rot: p.rot || 0, ...(sx !== 1 || sy !== 1 ? { sx, sy } : {}) });
   });
-  addEntities(doc, rect(0, 0, sheetW, sheetH, { layer: LAYERS.sheet }), ins);
+  addEntities(doc, sheet ? rect(0, 0, sheetW, sheetH, { layer: LAYERS.sheet }) : [], ins);
   if (marks) {
     const seg = ([x1, y1, x2, y2]) => line(x1, sheetH - y1, x2, sheetH - y2, { layer: LAYERS.marks });
     addEntities(doc, marks.crop.map(seg), marks.reg.flatMap((m) => [circle(m.cx, sheetH - m.cy, m.r, { layer: LAYERS.marks }), ...m.cross.map(seg)]));

@@ -44,6 +44,34 @@ test('closed lightweight and legacy polylines include the closing segment, inclu
   assert.equal(explodePolyline(lwpoly([[0, 0], [10, 0]], { closed: true })).length, 2);
 });
 
+test('TODO 249: spline-fit POLYLINE drops frame vertices, keeps frame-only and plain vertices, also inside INSERT', () => {
+  const frame = [[0, 0, 16], [10, 0, 16], [10, 10, 24]];
+  const fit = [[1, 2, 8], [6, 4, 8], [9, 8, 8]], spline = [...frame, ...fit];
+  const lines = [['LINE', 1, 2, 6, 4], ['LINE', 6, 4, 9, 8]];
+  for (const [name, flags, verts, inInsert, expected] of [
+    ['open spline', 4, spline, false, lines],
+    ['closed spline', 5, spline, false, [...lines, ['LINE', 9, 8, 1, 2]]],
+    ['frame-only spline', 4, frame, false, [['LINE', 0, 0, 10, 0], ['LINE', 10, 0, 10, 10]]],
+    ['plain with curve-fit vertex', 0, [[1, 2], [6, 4, 1], [9, 8]], false, lines],
+    ['spline in INSERT', 4, spline, true, [['LINE', 10, 20, 15, 22], ['LINE', 15, 22, 18, 26]]],
+    ['bulged fit vertices', 4, [...frame, [0, 0, 8, 1], [10, 0, 8]], false, [['ARC', 5, 0, 5, 180, 0]]],
+  ]) {
+    let source = entity('POLYLINE', [[70, flags]]);
+    source.kids = verts.map(([x, y, flag, bulge]) => entity('VERTEX', [
+      [10, x], [20, y], ...(flag == null ? [] : [[70, flag]]), [42, bulge ?? 0],
+    ]).r);
+    if (inInsert) {
+      const members = result(blockDoc([source])).entities;
+      assert.equal(members.length, 1, name);
+      source = members[0];
+      assert.equal(source.type, 'LWPOLYLINE', name);
+      assert.equal(get(source.r, 90), fit.length, name);
+    }
+    assert.deepEqual(explodePolyline(source).map((e) => [e.type, ...numbers(e,
+      e.type === 'ARC' ? [10, 20, 40, 50, 51] : [10, 20, 11, 21])]), expected, name);
+  }
+});
+
 test('insert applies base point, translation, rotation and non-uniform mirrored scale', () => {
   const doc = blockDoc([line(2, 3, 4, 5)], { sx: -2, sy: 3, rot: 90 }), before = structuredClone(doc);
   const pieces = result(doc).entities;
@@ -155,7 +183,7 @@ test('BURST keeps all values as visible TEXT on the insert layer, with TEXT vert
   const saved = readDxf(writeDxf({ ...loaded, ...r }));
   assert.ok(saved.entities.slice(1).every((e) => !e.r.v.includes('AcDbAttribute') && e.r.v.includes('AcDbText')));
   assert.deepEqual(flatten(saved).items.filter((it) => it.k === 't').map((it) => it.lines[0]), ['Shown', 'Hidden', 'Invisible']);
-  assert.deepEqual(loaded, before);
+  assert.deepEqual(structuredClone(loaded), before);
   assert.equal(explodeSelection(loaded, new Set([0]), new Set(['Cut']), true).skipped, 1);
   assert.equal(resolve('BURST', 'draw').name, 'burst'); assert.equal(resolve('BURST', 'layout').name, 'burst');
   loaded.entities[0].kids[0].v[loaded.entities[0].kids[0].c.indexOf(1)] = 'Edited source value';

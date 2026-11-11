@@ -128,7 +128,7 @@ test('TODO 141: a table saves as a named block with the same contents, placement
   assert.deepEqual(sigs(back.blocks.PD_TABLE_1.entities), sigs(doc.blocks['*T1'].entities));
   assert.ok(!report.text.includes('*T1'), 'no unused anonymous table block');
   assert.deepEqual(D.flatten(back).boxes.model, D.flatten(doc).boxes.model);
-  assert.deepEqual(doc, before, 'the open document stays an ACAD_TABLE');
+  assert.deepEqual(structuredClone(doc), before, 'the open document stays an ACAD_TABLE');
 });
 
 test('TODO 141: a table found only inside a block saves as a named block too', () => {
@@ -144,7 +144,7 @@ test('TODO 141: a table found only inside a block saves as a named block too', (
   assert.deepEqual(sigs(back.blocks.PD_TABLE_1.entities), sigs(doc.blocks['*T1'].entities));
   assert.ok(!report.text.includes('*T1'));
   assert.deepEqual(D.flatten(back).boxes.model, D.flatten(doc).boxes.model);
-  assert.deepEqual(doc, before);
+  assert.deepEqual(structuredClone(doc), before);
 });
 
 test('TODO 141: a table without its drawn block is dropped and reported as ACAD_TABLE x1', () => {
@@ -274,6 +274,15 @@ test('missing layers and line types get a table entry; a unicode switch writes \
   const t = W.writeDxf(doc, { escapeUnicode: true });
   assert.ok(t.includes('\\U+00D8 \\U+00E9') && !/[^\u0000-\u007f]/.test(t));
   assert.equal(D.plainText(D.readDxf(t).entities[1].r.v[D.readDxf(t).entities[1].r.c.indexOf(1)])[0], 'Ø é');
+});
+
+test('TODO 253d fix: escape Unicode writes surrogate pairs as two codes, and every character reads back equal', () => {
+  for (const str of ['\u{1F600}', '\u{20BB7}!', '\u{10348}x', 'ὠ' + '0']) {
+    const doc = W.addEntities(W.newDoc(), W.text(0, 0, 1, str)), t = W.writeDxf(doc, { escapeUnicode: true });
+    assert.ok(!/[^\u0000-\u007f]/.test(t), str);
+    const e = D.readDxf(t).entities[0].r;
+    assert.equal(e.v[e.c.indexOf(1)], str);
+  }
 });
 
 test('a DXF without subclass markers (R12 style) gets them', () => {

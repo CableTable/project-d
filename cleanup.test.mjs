@@ -1,10 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { removeDuplicates, preflight, hairline } from './web/cleanup.js';
-import { newDoc, addEntities, addLayer, line, arc, circle, lwpoly, text, writeDxf, insert } from './web/dxf-write.js';
+import { newDoc, addEntities, addLayer, line, arc, circle, lwpoly, text, writeDxf, insert, entity } from './web/dxf-write.js';
 import { readDxf } from './web/drawing.js';
 import { shapeOf } from './web/grips.js';
-import { joinGaps, findGaps } from './web/edit.js';
+import { joinGaps, findGaps, DIM_BLOCK, LDR_BLOCK, dimTag } from './web/edit.js';
 import { checkIndex } from './web/cleanup.js';
 import { withWidth } from './web/props.js';
 
@@ -147,6 +147,21 @@ test('Hairline fixes nested explicit/constant widths, skips locks, and leaves ot
   const original = structuredClone(d), fixed = { ...d, ...hairline(d, [0, 2], new Set(['Locked'])) };
   assert.deepEqual(rows(fixed).wide.offenders, [1, 2]);
   assert.equal(fixed.entities[1], d.entities[1]); assert.deepEqual(d, original);
+});
+test('TODO 251: Hairline copies keep the dimension / leader / native dimension kind in the block name', () => {
+  const names = ['PD_DIM_3', 'PD_DIM_H2', 'PD_LDR_1', '*D1', 'DOOR'];
+  const d = doc(...names.map((n) => n === '*D1' ? entity('DIMENSION', [[2, n]]) : insert(n, 0, 0)));
+  for (const n of names) d.blocks[n] = { base: [0, 0], entities: [line(0, 0, 5, 0, { lw: 50 })] };
+  const original = structuredClone(d), r = hairline(d, names.map((_, i) => i));
+  const got = r.entities.map((e) => e.r.v[e.r.c.indexOf(2)]);
+  assert.match(got[0], DIM_BLOCK); assert.equal(dimTag(got[0]), dimTag('PD_DIM_3'));
+  assert.match(got[1], DIM_BLOCK); assert.equal(dimTag(got[1]), 'H');
+  assert.match(got[2], LDR_BLOCK);
+  assert.match(got[3], /^\*D\d+$/);
+  assert.equal(got[4], 'PD_HAIRLINE_1');
+  for (const g of got) { assert.ok(!names.includes(g)); assert.ok(r.blocks[g]); }
+  assert.deepEqual(d, original);
+  for (const n of names) assert.deepEqual(r.blocks[n], d.blocks[n]);
 });
 test('Cut names on block members are checked in world coordinates; closed block loops stay clear', () => {
   const d = doc(insert('Paths', 10, 10));

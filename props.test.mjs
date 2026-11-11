@@ -1,7 +1,7 @@
 // props.js — the Properties section's model.   node props.test.mjs
 import assert from 'node:assert/strict';
 import * as P from './web/props.js';
-import { newDoc, addEntities, writeDxf, line, circle, arc, lwpoly, rect, text, ellipse } from './web/dxf-write.js';
+import { newDoc, addEntities, writeDxf, line, circle, arc, lwpoly, rect, text, ellipse, entity } from './web/dxf-write.js';
 import { readDxf } from './web/drawing.js';
 
 let n = 0;
@@ -110,6 +110,23 @@ test('text: height and angle edit; the text and its layer stay', () => {
   near(field([u], 'textH').value, 9); assert.equal(u.layer, 'Notes'); assert.equal(u.aci, 1);
   near(field([reopen(P.setField(t, 'textAngle', 30))], 'textAngle').value, 30);
   assert.equal(P.setField(t, 'textH', 0), null);
+});
+
+test('TODO 252: Properties Text height / Angle keep MTEXT formatting and unrelated codes', () => {
+  const old = entity('MTEXT', [[10, 10], [20, 20], [40, 5], [11, 0], [21, 1], [3, '\\H1.5x;Hello'], [1, '\\P\\C1;world'], [41, '80.00'], [44, '1.20'], [5, 'AB'], [330, 'CD'], [210, 0], [220, 0], [230, 1]]);
+  for (const [key, value, changed] of [['textH', 18, [40]], ['textAngle', 30, [50, 11, 21]]]) {
+    const before = structuredClone(old), next = P.setField(old, key, value, 2);
+    const untouched = (e) => e.r.c.flatMap((c, i) => changed.includes(c) ? [] : [[c, e.r.v[i]]]);
+    assert.equal(next.type, 'MTEXT'); assert.deepEqual(old, before);
+    assert.deepEqual(untouched(next), untouched(old));
+    near(field([next], key, 2).value, value);
+    const back = reopen(next);
+    near(field([back], key, 2).value, value, 1e-4);
+    for (const code of [1, 3, 41, 44]) {
+      const actual = back.r.v[back.r.c.indexOf(code)], expected = old.r.v[old.r.c.indexOf(code)];
+      if (code === 41 || code === 44) near(+actual, +expected); else assert.equal(actual, expected);
+    }
+  }
 });
 
 test('other kinds have no geometry fields; a mirrored shape has none', () => {

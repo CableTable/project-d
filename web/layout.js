@@ -92,7 +92,8 @@ export function gridCellNote(L) {
  * Returns the footprint (partW/partH already swapped when rotated) and the top-left of each copy, plus
  * rowGaps / colGaps: [{ after, at, size }] the strip between two rows / columns (sheet mm, with its extra).
  */
-const MAX_LINE = 500, MAX_COUNT = 20000;
+export const MAX_LINE = 500;
+const MAX_COUNT = 20000;
 export function stepRepeat(o) {
   const { partW, partH, rotate = 'best', align = 'centre' } = o;
   const gapX = Math.max(0, o.gapX || 0), gapY = Math.max(0, o.gapY || 0);

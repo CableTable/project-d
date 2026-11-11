@@ -36,7 +36,7 @@ export function decodeDxf(bytes) {
   try { return new TextDecoder('utf-8', { fatal: true }).decode(u8); } catch {
     const head = new TextDecoder('latin1').decode(u8.subarray(0, 40000));
     const cp = /\$DWGCODEPAGE\s*\r?\n\s*3\s*\r?\n\s*ANSI_(\d+)/i.exec(head);
-    try { return new TextDecoder('windows-' + (cp ? cp[1] : '1252')).decode(u8); } catch { return new TextDecoder('windows-1252').decode(u8); }
+    try { return new TextDecoder(({ 932: 'shift_jis', 936: 'gbk', 950: 'big5' })[cp && cp[1]] || 'windows-' + (cp ? cp[1] : '1252')).decode(u8); } catch { return new TextDecoder('windows-1252').decode(u8); }
   }
 }
 
@@ -52,7 +52,7 @@ export function readDxf(text) {
     C.push(c); V.push(raw[i + 1].replace(/\\U\+([0-9A-Fa-f]{4})/g, (_, h) => String.fromCharCode(parseInt(h, 16))));   // the writer encodes it again
   }
   if (!C.length) throw new DrawingError('This drawing is empty.');
-  const doc = { header: {}, layers: {}, ltypes: {}, blocks: {}, entities: [], groups: [] };
+  const doc = { header: {}, layers: Object.create(null), ltypes: Object.create(null), blocks: Object.create(null), entities: [], groups: [] };   // no prototype: a block named "constructor" must not be found
   let objects = [];
   for (let i = 0; i < C.length; i++) {
     if (!(C[i] === 0 && V[i].trim() === 'SECTION' && C[i + 1] === 2)) continue;
@@ -148,6 +148,8 @@ function firsts(r) {
   return f;
 }
 const num = (v, d = 0) => { const n = v == null ? NaN : +v; return Number.isFinite(n) ? n : d; };
+// Shift a sweep t0..t1 by whole turns so |t0| < TAU, keeping the sweep t1 - t0 (a bounded remainder: huge angles would otherwise lose it).
+const oneTurn = (t0, t1) => { if (!(Math.abs(t0) >= TAU)) return [t0, t1]; const r = t0 % TAU; return [r, r + (t1 - t0)]; };
 
 function tables(doc, recs) {
   const styleOf = {};                                   // STYLE handle → name, for the text of a complex line type
@@ -236,6 +238,7 @@ export const IDENT = [1, 0, 0, 1, 0, 0];
 export const mmul = (m, n) => [m[0] * n[0] + m[2] * n[1], m[1] * n[0] + m[3] * n[1], m[0] * n[2] + m[2] * n[3], m[1] * n[2] + m[3] * n[3],
   m[0] * n[4] + m[2] * n[5] + m[4], m[1] * n[4] + m[3] * n[5] + m[5]];
 export const mapply = (m, x, y) => [m[0] * x + m[2] * y + m[4], m[1] * x + m[3] * y + m[5]];
+export const ownBlock = (blocks, name) => blocks && Object.hasOwn(blocks, name) ? blocks[name] : undefined;     // a name like `constructor` is no block, even in a plain-object copy
 export const mscale = (m) => Math.sqrt(Math.abs(m[0] * m[3] - m[1] * m[2]));
 const FLIP = [-1, 0, 0, 1, 0, 0];
 
@@ -453,10 +456,13 @@ export function flatten(doc, hidden = new Set()) {
           const cx = num(f[10]), cy = num(f[20]), mx = num(f[11]), my = num(f[21]), ratio = num(f[40], 1);
           let nz = 1; for (let k = 0; k < r.c.length; k++) if (r.c[k] === 230) nz = num(r.v[k], 1);
           const nx = nz < 0 ? my * ratio : -my * ratio, ny = nz < 0 ? -mx * ratio : mx * ratio;
-          const t0 = num(f[41], 0); let t1 = num(f[42], TAU); if (t1 <= t0) t1 += TAU;
+          let t0 = num(f[41], 0), t1 = num(f[42], TAU);
+          [t0, t1] = oneTurn(t0, t1);     // so t0 + PI below always advances and the quadrant loop stays short at huge angles
+          if (t1 <= t0) t1 += TAU;
+          t1 = Math.min(t1, t0 + TAU);
           const steps = Math.max(8, Math.ceil(96 * (t1 - t0) / TAU)), ts = Array.from({ length: steps + 1 }, (_, i) => t0 + (t1 - t0) * i / steps);
           // Include exact extrema so the selection index cannot discard a box touching the curve between samples.
-          for (const phase of [Math.atan2(nx, mx), Math.atan2(ny, my)]) for (let t = phase + Math.ceil((t0 - phase) / Math.PI) * Math.PI; t < t1; t += Math.PI) ts.push(t);
+          for (const phase of [Math.atan2(nx, mx), Math.atan2(ny, my)]) for (let t = phase + Math.ceil((t0 - phase) / Math.PI) * Math.PI, n = 0; t < t1 && n < 3; t += Math.PI, n++) ts.push(t);
           const pts = ts.sort((a, b) => a - b).map((t) => [cx + mx * Math.cos(t) + nx * Math.sin(t), cy + my * Math.cos(t) + ny * Math.sin(t)]);
           const full = t1 - t0 > TAU - 1e-6;
           const quads = [];                                                // the 4 axis ends (inside a partial ellipse's sweep): quadrant snaps, as before it was flattened
@@ -495,7 +501,7 @@ export function flatten(doc, hidden = new Set()) {
           break;
         }
         case 'INSERT': case 'ACAD_TABLE': {
-          const blk = doc.blocks[(f[2] || '').trim()];
+          const bn = (f[2] || '').trim(), blk = Object.hasOwn(doc.blocks, bn) ? doc.blocks[bn] : undefined;
           if (!blk || blk.xref) { skip(blk ? 'XREF' : 'INSERT'); }
           else if (depth < 10) {
             const at = [num(f[10]), num(f[20])];
@@ -527,7 +533,7 @@ export function flatten(doc, hidden = new Set()) {
           break;
         }
         case 'DIMENSION': {
-          const blk = doc.blocks[(f[2] || '').trim()];
+          const bn = (f[2] || '').trim(), blk = Object.hasOwn(doc.blocks, bn) ? doc.blocks[bn] : undefined;
           if (blk && depth < 10) walk(blk.entities, { m, ...inner(lt) }, depth + 1);
           break;
         }
@@ -708,7 +714,7 @@ function textItem(base, p, h, rot, lines, ha, va, wf, fl, put, more) {
 function hatch(e, base, put) {
   const c = e.r.c, v = e.r.v, n = c.length;
   let k = 0, solid = false;
-  const take = (code) => (c[k] === code ? num(v[k++]) : undefined);
+  const take = (code, d) => (c[k] === code ? num(v[k++], d) : undefined);
   while (k < n && c[k] !== 91) { if (c[k] === 70) solid = num(v[k]) === 1; k++; }
   if (k >= n) return;
   const loops = num(v[k++]), ops = [];
@@ -736,9 +742,11 @@ function hatch(e, base, put) {
           to(cx + rad * Math.cos(a0), cy + rad * Math.sin(a0)); ops.push(2, cx, cy, rad, a0, a1, ccw ? 0 : 1);
         } else if (et === 3) {
           const cx = take(10), cy = take(20), mx = take(11), my = take(21), ratio = take(40) || 1;
-          const s = (take(50) || 0) * DEG, en = (take(51) || 0) * DEG, ccw = take(73) !== 0;
+          const s = (take(50) || 0) * DEG, en = (take(51, 360) ?? 360) * DEG, ccw = take(73) !== 0;
           let t0 = ccw ? s : -s, t1 = ccw ? en : -en;
+          [t0, t1] = oneTurn(t0, t1);
           if (ccw && t1 <= t0) t1 += TAU; if (!ccw && t1 >= t0) t1 -= TAU;
+          t1 = Math.max(t0 - TAU, Math.min(t1, t0 + TAU));
           const steps = Math.max(8, Math.ceil(64 * Math.abs(t1 - t0) / TAU));
           for (let j = 0; j <= steps; j++) { const t = t0 + (t1 - t0) * j / steps; to(cx + mx * Math.cos(t) - my * ratio * Math.sin(t), cy + my * Math.cos(t) + mx * ratio * Math.sin(t)); }
         } else if (et === 4) {

@@ -380,7 +380,7 @@ test('TODO 109a: layouts keep metadata at factor 1 and drop it otherwise; invali
   assert.ok(readMeta(back(doc, { units: 'mm', scale: 1 })));
   assert.equal(readMeta(back(doc, { units: 'in', scale: 1 })), null);
   assert.equal(readMeta(back(doc, { scale: 2 })), null);
-  assert.deepEqual(doc, before);
+  assert.deepEqual(structuredClone(doc), before);       // a clone has no null-prototype blocks map
   for (const opts of [{ scale: 0 }, { scale: -1 }, { scale: Infinity }, { scale: NaN }, { scale: '2' }, { precision: -1 },
     { precision: 9 }, { precision: 1.5 }, { precision: '2' }, { units: 'ft' }, { units: 'unitless' }]) assert.throws(() => W.writeDxf(doc, opts));
 });

@@ -471,7 +471,6 @@ select.fld { font-family: var(--sans); }
 .card .row .btn { width: 22px; height: 22px; padding: 0; font-size: 0; justify-content: center; }
 .card .row .btn::before { content: '+'; font-size: 14px; }
 .docker-pane:has(.stepbox.docker-folded) > .stepfoot { display: none; }
-.chip { font-size: 11px; padding: 2px 7px; border-radius: 9px; background: var(--sel); color: var(--accenttext); font-weight: 600; }
 .outbox .btn { align-self: flex-start; }
 .outlist { display: flex; flex-direction: column; gap: 2px; max-height: 104px; overflow-y: auto; }
 .orow { display: flex; align-items: center; gap: 8px; padding: 4px 8px; border: 1px solid var(--line); border-radius: var(--r); background: var(--field); color: var(--text); cursor: pointer; text-align: left; }

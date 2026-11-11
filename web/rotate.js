@@ -1,4 +1,5 @@
 // Drawing-unit rotation, counter-clockwise degrees. No DOM.
+import { ownBlock } from './drawing.js';
 import { SPEC, OCS, moveEntities, copyEntities } from './edit.js';
 import { turnBetween } from './place.js';
 
@@ -34,7 +35,7 @@ export function rotateEntities(raw, selection, pivot, degrees, copy = false) {
   const one = (e) => {
     const r = rotateRecord(e.type, e.r, pivot, degrees, e.flip);
     if (e.type === 'DIMENSION') {
-      const name = field(r, 2), b = blocks[name];
+      const name = field(r, 2), b = ownBlock(blocks, name);
       if (b && !b.xref && !done.has(name)) {
         done.add(name);
         const entities = b.entities.map(one);

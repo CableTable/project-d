@@ -417,9 +417,9 @@ test('TODO 76c: aligned, h, v and a rotated INSERT drive after writeDxf -> read'
     point(E.lineOf(next.entities[0]), [0, 0, ...end]);
     assert.equal(label(next), '150.000'); assert.equal(model(next).kind, kind); assert.equal(model(next).params.axis, axis);
     assert.deepEqual(next.entities[2], before.entities[2], 'unrelated LINE stays');
-    assert.deepEqual(back, before, 'input and Undo snapshot stay');
+    assert.deepEqual(structuredClone(back), before, 'input and Undo snapshot stay');
     const history = E.createHistory(); history.push(back, 'Dimension length');
-    assert.deepEqual(history.undo(next), before); assert.equal(history.canUndo, false);
+    assert.deepEqual(structuredClone(history.undo(next)), before); assert.equal(history.canUndo, false);
   }
 });
 
@@ -440,7 +440,7 @@ test('TODO 76c: a deleted or separately moved LINE after reopen makes a literal 
       assert.equal(readOverride(next.blocks[dim.name].entities), typed); assert.equal(label(next, e), typed);
       assert.deepEqual(next.entities, before.entities, 'all geometry stays');
       const history = E.createHistory(); history.push(back, 'Dimension text');
-      assert.deepEqual(history.undo(next), before); assert.equal(history.canUndo, false);
+      assert.deepEqual(structuredClone(history.undo(next)), before); assert.equal(history.canUndo, false);
     }
     assert.equal(dimensionEntry(back, e, '150 TYP'), null, 'ordinary text keeps its ordinary status');
   }
@@ -466,7 +466,7 @@ test('TODO 76c: retyping the shown number on an unlinked dim in shown units make
     const before = structuredClone(raw);
     assert.deepEqual(dimensionEntry(raw, 0, shown), { unchanged: true });
     assert.equal(readOverride(raw.blocks[E.dimOfEntity(raw, 0).name].entities), '');
-    assert.deepEqual(raw, before);
+    assert.deepEqual(structuredClone(raw), before);
   }
 });
 

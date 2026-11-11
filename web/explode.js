@@ -1,5 +1,5 @@
 // Explode, pure: one level of polylines or block members, in drawing units.
-import { bulgeArc, mmul, mapply } from './drawing.js';
+import { bulgeArc, mmul, mapply, ownBlock as own } from './drawing.js';
 import { lwVertices, get } from './grips.js';
 import { entity, line, arc, circle, ellipse, lwpoly, insert, mtext } from './dxf-write.js';
 import { DIM_BLOCK, usedBlocks, dimGeom, dimBlock, dimOffsetAt, angleBetween, dimText, freeName } from './edit.js';
@@ -23,7 +23,9 @@ const fromRecord = (r) => entity(r.type, r.c.map((c, i) => [c, r.v[i]]), {
 function vertices(e) {
   if (e.type === 'LWPOLYLINE') return lwVertices(e.r).map((p) => [p.x, p.y, p.b]);
   if (val(e, 70) & (16 | 64)) throw new Error('polygon meshes stay intact');
-  return (e.kids || []).filter((r) => r.type === 'VERTEX').map((r) => [get(r, 10) ?? 0, get(r, 20) ?? 0, get(r, 42) ?? 0]);
+  const all = (e.kids || []).filter((r) => r.type === 'VERTEX');
+  const fit = all.filter((r) => !(get(r, 70) & 16));
+  return (fit.length ? fit : all).map((r) => [get(r, 10) ?? 0, get(r, 20) ?? 0, get(r, 42) ?? 0]);
 }
 
 /** LINEs and anticlockwise ARCs, including the last-to-first segment of a closed polyline. */
@@ -100,14 +102,14 @@ export function explodeInsert(e, raw, burst = false) {
     if (!m.every(Number.isFinite) || Math.abs(det(m)) < 1e-15) throw new Error('invalid block scale');
     const p = (c) => mapply(m, val(e, c), val(e, c + 10));
     if (e.type === 'DIMENSION') {                       // its block is in sheet coordinates: carried as one INSERT of a copy of that block under a plain name (no longer a dimension; a *D name would reopen as a part)
-      const block = blocks[field(e, 2)];
+      const block = own(blocks, field(e, 2));
       if (!block || block.xref) throw new Error('missing block or external reference');
       const copy = freshName();
       blocks[copy] = block;
       return transform(insert(copy, block.base?.[0] || 0, block.base?.[1] || 0, e), m, depth);
     }
     if (e.type === 'INSERT') {
-      const name = field(e, 2), block = blocks[name];
+      const name = field(e, 2), block = own(blocks, name);
       if (!block || block.xref) throw new Error('missing block or external reference');
       const combined = mmul(m, placement(e)), at = p(10);
       if (orthogonal(combined) && val(e, 70, 1) === 1 && val(e, 71, 1) === 1) {
@@ -173,7 +175,7 @@ export function explodeInsert(e, raw, burst = false) {
     return [entity(e.type, pairs, e)];
   }
   function members(e, parent, depth, inherit = true, values = false) {
-    const block = blocks[field(e, 2)];
+    const block = own(blocks, field(e, 2));
     if (!block || block.xref) throw new Error('missing block or external reference');
     const out = [], cols = val(e, 70, 1), rows = val(e, 71, 1);
     if (![cols, rows].every((n) => Number.isInteger(n) && n > 0 && n <= 100)) throw new Error('invalid block array');
@@ -199,7 +201,7 @@ export function explodeInsert(e, raw, burst = false) {
 }
 
 /** Is this entity the INSERT of a PD_DIM block that `blocks` holds? */
-export const isDimInsert = (e, blocks) => e.type === 'INSERT' && DIM_BLOCK.test(field(e, 2) || '') && !!blocks[field(e, 2)];
+export const isDimInsert = (e, blocks) => e.type === 'INSERT' && DIM_BLOCK.test(field(e, 2) || '') && !!own(blocks, field(e, 2));
 
 /** Native dimension definition points when its anonymous graphics block is missing. */
 function nativeGeometry(e, raw) {
@@ -237,8 +239,8 @@ function nativeGeometry(e, raw) {
 
 /** A dimension as plain pieces: its lines, arcs and SOLID arrowheads, and its text as one MTEXT (the TEXT already shows the override with `<>` filled in). No PD_DIM_TEXT attdef is left. */
 export function explodeDimension(e, raw) {
-  const native = e.type === 'DIMENSION', generated = native && !raw.blocks[field(e, 2)] ? nativeGeometry(e, raw) : null;
-  const name = generated ? freeName(raw.blocks) : field(e, 2), block = generated?.block || raw.blocks[name];
+  const native = e.type === 'DIMENSION', generated = native && !own(raw.blocks, field(e, 2)) ? nativeGeometry(e, raw) : null;
+  const name = generated ? freeName(raw.blocks) : field(e, 2), block = generated?.block || own(raw.blocks, name);
   if (!block || block.xref) throw new Error('missing block or external reference');
   const att = textRecord(block.entities), layer = /^defpoints$/i.test(e.layer) ? '0' : e.layer;
   let keep = block.entities.filter((c) => c !== att && c.type !== 'POINT');

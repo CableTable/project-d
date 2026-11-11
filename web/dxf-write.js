@@ -14,7 +14,7 @@
 // Source handles, owners and reactors are not kept: the writer makes its own, including GROUP membership.
 // Extension dictionaries and xdata are not kept.
 
-import { flatten } from './drawing.js';
+import { flatten, ownBlock } from './drawing.js';
 import { nearestAci, unpack420 } from './colour.js';
 import { fillHatch, fillHoles } from './fill.js';
 import { remap } from './groups.js';
@@ -147,7 +147,7 @@ function prepareSave(doc, includeFills = true) {
   const findTables = (list) => {
     for (const e of list || []) {
       if (e.type !== 'ACAD_TABLE') continue;
-      const name = field(e, 2), block = sourceBlocks[name];
+      const name = field(e, 2), block = ownBlock(sourceBlocks, name);
       if (!block || block.xref || renamed.has(name)) continue;
       while (taken.has(`pd_table_${next}`)) next++;
       const normal = `PD_TABLE_${next++}`;
@@ -179,7 +179,7 @@ function prepareSave(doc, includeFills = true) {
     }
     return result;
   };
-  const indexes = doc.groups?.length ? new Map() : null, entities = saved(doc.entities, indexes), blocks = {};
+  const indexes = doc.groups?.length ? new Map() : null, entities = saved(doc.entities, indexes), blocks = Object.create(null);
   for (const [name, b] of Object.entries(sourceBlocks)) {
     if (b.xref) add('XREF');
     blocks[renamed.get(name) || name] = { ...b, entities: b.xref ? [] : saved(b.entities) };

@@ -5,6 +5,7 @@ const fs = await import('node:fs');
 const D = await import('./web/drawing.js');
 const W = await import('./web/dxf-write.js');
 const E = await import('./web/edit.js');
+const LD = await import('./web/leader.js');
 const { ink } = await import('./web/render.js');
 const { unitFactor, drawingBoxMm } = await import('./web/doc.js');
 const SNAP = await import('./web/snap.js');
@@ -105,7 +106,7 @@ test('Move and copy translate flipped polylines in world coordinates, including 
       const moved = { ...raw, ...next, entities: [next.entities.at(-1)] };
       const b = drawingBoxMm(D.flatten(moved), 1);
       a.forEach((v, k) => near(b[k], v + (k % 2 ? -3 : 7), `${source.type}, dimension=${inDim}, ${edit.name}`));
-      assert.deepEqual(raw, before, 'the undo snapshot stays intact');
+      assert.deepEqual(structuredClone(raw), before, 'the undo snapshot stays intact');
       if (edit === E.copyEntities) assert.deepEqual(drawingBoxMm(D.flatten({ ...raw, ...next, entities: [next.entities[0]] }), 1), a);
     }
   }
@@ -143,7 +144,7 @@ test('Move translates fixture entity types, hatches, native dimensions and table
       if (a && b && !e.ps) for (let k = 0; k < 4; k++) near(b[k], a[k] + (k % 2 ? -3 : 7), `${name}: ${e.type} bound ${k}`);
       for (let j = 0; j < raw.entities.length; j++) if (j !== i) assert.equal(next.entities[j], raw.entities[j]);
     }
-    assert.deepEqual(raw, before, 'original records and shared blocks are intact');
+    assert.deepEqual(structuredClone(raw), before, 'original records and shared blocks are intact');
   }
 });
 
@@ -194,6 +195,16 @@ test('Move reuses an unshared native dimension block; copy and nested references
   assert.equal(nested.blocks['*D1'], raw.blocks['*D1'], 'cloning Outer must also isolate its nested dimension');
   const movedOuter = nested.blocks[field(nested.entities[0], 2)];
   near(+field(nested.blocks[field(movedOuter.entities[0], 2)].entities[0], 10), 7);
+});
+
+test('TODO 253d: Scale moves a hatch pattern\'s base point about the anchor, like its boundary; the spacing scales by the factor', () => {
+  const hatch = W.entity('HATCH', [[10, 0], [20, 0], [91, 1], [92, 1], [93, 1], [72, 1], [10, 10], [20, 5], [11, 14], [21, 5], [75, 0], [78, 1], [41, 1], [43, 1], [44, 2], [45, 3], [46, 4], [98, 1], [10, 12], [20, 6]]);
+  for (const [s, ax, ay, base] of [[2, 10, 5, [-8, -1]], [0.5, 0, 0, [0.5, 1]], [3, 1, 2, [1, 2]]]) {
+    const out = E.scaleAbout({ ...W.newDoc(4), entities: [structuredClone(hatch)] }, s, ax, ay).entities[0], f = (c) => +out.r.v[out.r.c.indexOf(c)];
+    near(f(43), base[0], `43 about (${ax},${ay}) x${s}`); near(f(44), base[1], `44 about (${ax},${ay}) x${s}`);
+    near(f(45), 3 * s); near(f(46), 4 * s); near(f(41), s);
+    near(out.r.v[out.r.c.indexOf(10, out.r.c.indexOf(93))] * 1, ax + (10 - ax) * s, 'the boundary scales about the anchor too');
+  }
 });
 
 test('Move keeps hatch ellipse axes and pattern spacing, multileader directions and wipeout vectors', () => {
@@ -786,6 +797,37 @@ test('scaling re-labels a kept dimension with its new length and scales its draw
   assert.deepEqual(r.skipped, {});
 });
 
+test('TODO 247: scaling moved dimensions and leaders scales every flattened world point', () => {
+  const points = (raw) => {
+    const fl = D.flatten(raw);
+    return fl.items.flatMap((it) => {
+      const ops = it.k === 't' ? [0, it.x, it.y] : it.ops, pts = [];
+      for (let i = 0; i < ops.length; i += ops[i] === 9 ? 1 : 3) {
+        assert.ok([0, 1, 9].includes(ops[i]), 'line, arrow or text point');
+        if (ops[i] !== 9) pts.push(D.mapply(fl.mats[it.m], ops[i + 1], ops[i + 2]));
+      }
+      return pts;
+    });
+  };
+  for (const annotation of [
+    E.buildDimension({ a: [0, 0], b: [100, 0], offset: 20, textH: 2.5 }, 1, 'PD_DIM_1'),
+    LD.build({ pts: [[0, 0], [20, 30], [50, 30]], lines: ['note'], textH: 3, arrow: 2 }, 'PD_LDR_1')
+  ]) {
+    let raw = W.newDoc(4);
+    raw = { ...raw, ...E.addDimension(raw, annotation) };
+    raw = { ...raw, ...E.moveEntities(raw, new Set([0]), 30, -20) };
+    const original = structuredClone(raw), before = points(raw);
+    assert.ok(before.length > 0);
+    for (const [s, ax, ay] of [[2, 10, 10], [25.4, 0, 0]]) {
+      const scaled = E.scaleAbout(raw, s, ax, ay), after = points({ ...raw, ...scaled });
+      assert.deepEqual(scaled.skipped, {});
+      assert.equal(after.length, before.length);
+      before.forEach((p, i) => p.forEach((v, j) => near(after[i][j], [ax, ay][j] + s * (v - [ax, ay][j]), `${annotation.name} scale ${s} point ${i} axis ${j}`)));
+      assert.deepEqual(raw, original, 'the undo snapshot is unchanged');
+    }
+  }
+});
+
 test('dimension decimals: fixed places, 0 to 4; relabelDims re-labels every kept dimension from its own line', () => {
   assert.equal(E.dimText(300.0002018326812, 2), '300.00'); assert.equal(E.dimText(300.0002018326812, 0), '300');
   assert.equal(E.dimText(12.34567, 3), '12.346'); assert.equal(E.dimText(-0.0001, 2), '0.00');
@@ -1054,7 +1096,7 @@ test('TODO 104: remove micro arcs / lines, close both outlines, keep a lone piec
   assert.ok(E.findGaps(E.makeIndex(oldRaw, D.flatten(oldRaw)), .01).length > 0, 'fixture reproduces the blocked join');
   const r = E.joinTinyGaps(raw, ed, .01), next = { ...raw, entities: r.entities, blocks: r.blocks };
   const ed2 = E.makeIndex(next, D.flatten(next));
-  assert.deepEqual(raw, before, 'the original geometry is intact for Undo');
+  assert.deepEqual(structuredClone(raw), before, 'the original geometry is intact for Undo');
   assert.equal(r.removed, 2);
   assert.equal(r.joined, 2);
   assert.deepEqual(r.skipped, {});

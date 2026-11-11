@@ -275,8 +275,10 @@ function circle(page, M, cx, cy, r) {
 }
 
 /** Text at (x, y) in page mm with the page-level matrix B (the mirror, or none). ha: 0 left, 1 centre, 2 right. */
-function textAt(page, B, str, x, y, size, ha = 0) {
-  const coded = winAnsi(str), w = textWidthEm(coded) * size;
+function textAt(page, B, str, x, y, size, ha = 0) { codedAt(page, B, winAnsi(str), x, y, size, ha); }
+/** As textAt, for text already in WinAnsi (fitText's result): converting it again turns the 0x80-0x9F characters into "?". */
+function codedAt(page, B, coded, x, y, size, ha = 0) {
+  const w = textWidthEm(coded) * size;
   page.text(mmul(B, [size, 0, 0, size, x - w * ha / 2, y]), coded);
 }
 
@@ -487,8 +489,8 @@ function drawPage(src, o, plan, p, artBox) {
     page.text([5, 0, 0, 5, x0 + 3, y1 - 8], fitText(texts.file, 5, half - 6));
     page.text([3.2, 0, 0, 3.2, x0 + 3, y1 - 14], fitText(texts.size, 3.2, half - 6));
     page.text([3, 0, 0, 3, x0 + 3, y0 + 3.5], fitText(texts.footnote, 3, half - 6));
-    textAt(page, [1, 0, 0, 1, 0, 0], fitText(texts.scale, 5, half - 6), x1 - 3, y1 - 8, 5, 2);
-    textAt(page, [1, 0, 0, 1, 0, 0], fitText(texts.date, 3.2, half - 6), x1 - 3, y1 - 14, 3.2, 2);
+    codedAt(page, [1, 0, 0, 1, 0, 0], fitText(texts.scale, 5, half - 6), x1 - 3, y1 - 8, 5, 2);
+    codedAt(page, [1, 0, 0, 1, 0, 0], fitText(texts.date, 3.2, half - 6), x1 - 3, y1 - 14, 3.2, 2);
   } else if (!check && o.strip) {
     const size = Math.min(6, Math.max(2.5, Math.min(W, H) / 150));
     textAt(page, B, job, W - Math.min(10, W / 20), Math.min(6, H / 20), size, 2);

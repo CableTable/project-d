@@ -214,4 +214,4 @@ export async function renderPdfPage(bytes, { page = 1, dpi = 150 } = {}) {
 }
 
 /** Does the file look like a PDF? */
-export const isPdf = (bytes) => { const u = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes); return u.length > 4 && u[0] === 0x25 && u[1] === 0x50 && u[2] === 0x44 && u[3] === 0x46; };
+export const isPdf = (bytes) => { const u = ArrayBuffer.isView(bytes) ? new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength) : new Uint8Array(bytes); return u.length > 4 && u[0] === 0x25 && u[1] === 0x50 && u[2] === 0x44 && u[3] === 0x46; };

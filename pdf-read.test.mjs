@@ -115,6 +115,20 @@ test('a PDF is told by its first bytes', () => {
   assert.equal(R.isPdf(new Uint8Array([0x30, 0x0a])), false);
 });
 
+test('TODO 253b: PDF sniff reads only the view bytes', () => {
+  const bytes = new TextEncoder().encode('xx%PDF-1.7tail');
+  for (const [input, expected] of [
+    [new DataView(bytes.buffer, 2, 8), true],
+    [bytes.subarray(2, 10), true],
+    [new Uint8ClampedArray(bytes.buffer, 2, 8), true],
+    [bytes.subarray(2, 5), false],
+    [new DataView(bytes.buffer, 2, 3), false],
+    [bytes.subarray(3), false],
+    [bytes.buffer, false],
+    [bytes.slice(2).buffer, true],
+  ]) assert.equal(R.isPdf(input), expected, `${input.constructor.name}, offset ${input.byteOffset}, length ${input.byteLength}`);
+});
+
 
 test('a page with /Rotate: drawn as it is shown (a portrait page turned 90° is landscape), text turns with it', async () => {
   const OPS = pdfjs.OPS, view = [0, 0, 100, 200];

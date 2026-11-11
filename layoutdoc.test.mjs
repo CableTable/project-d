@@ -758,7 +758,7 @@ test('TODO 182 review: repeat placements reuse one copy, a grip edit on a rename
     assert.equal(R(now.w), R(widthBefore), label + ': width kept');
     assert.deepEqual(Object.keys(now.raw.blocks).sort(), own, label + ': the part keeps its own block names');
     assert.equal(nameOf(now.raw.entities[0]), 'X', label);
-    assert.deepEqual(now.raw.blocks, blocksBefore, label + ': block contents unchanged');
+    assert.deepEqual({ ...now.raw.blocks }, blocksBefore, label + ': block contents unchanged');
     const again = LD.objectDoc(lay);
     assert.deepEqual(again.raw.entities.map(nameOf), ['X', 'X_2'], label + ': renamed again for the view');
     assert.equal(R(LD.layoutFromRaw(readDxf(writeDxf(LD.layoutRaw(lay)))).placed.length), 2, label + ': saves');
@@ -842,7 +842,78 @@ test('TODO 171 review: a changed INSERT sent through objectCommit stays a placed
   const lay = LD.newLayout('L'), o = LD.objectPart('o1', 'Line 1', line(0, 0, 100, 0), LD.layersOf(lay));
   lay.parts.o1 = o; lay.placed.push(LD.objectPlacement(o));
   LD.objectCommit(lay, LD.objectDoc(lay), [line(0, 0, 40, 0)], () => 'n1');
-  assert.deepEqual(lay.parts.n1.raw.blocks, {}, 'a line gets no blocks');
+  assert.deepEqual({ ...lay.parts.n1.raw.blocks }, {}, 'a line gets no blocks');
+});
+
+test('TODO 248', () => {
+  for (const [name, type, shared, occupied] of [
+    ['*D1', 'DIMENSION', false],
+    ['PD_DIM_1', 'INSERT', false],
+    ['PD_DIM_H1', 'INSERT', false],
+    ['PD_DIM_H1', 'INSERT', true],
+    ['PD_DIM_H1', 'INSERT', true, true],
+  ]) {
+    const lay = LD.newLayout(name);
+    for (const [id, len, y] of [['a', 10, 0], ['b', 25, 40]].slice(0, shared ? 1 : 2)) {
+      const raw = newDoc(4);
+      addBlock(raw, name, [line(0, y, len, y)]);
+      const ent = type === 'DIMENSION' ? entity(type, [[2, name], [70, 0]]) : insert(name, 0, 0);
+      lay.parts[id] = LD.objectPart(id, id, ent, raw.layers, raw.header, raw.blocks);
+    }
+    lay.placed = ['a', shared ? 'a' : 'b'].map((id) => LD.objectPlacement(lay.parts[id]));
+    if (occupied) {
+      const raw = newDoc(4);
+      for (const n of ['pd_dim_h1', 'PD_DIM_H2']) addBlock(raw, n, [line(0, 0, 1, 1)]);
+      addEntities(raw, line(0, 100, 1, 101));
+      lay.parts.source = LD.makePart('source', 'Reserved', raw, 1);
+      lay.placed.push(LD.objectPlacement(lay.parts.source));
+    }
+    const before = structuredClone(lay.parts), raw = LD.layoutRaw(lay);
+    const names = raw.entities.filter((e) => e.type === type && e.layer !== 'Parts').map((e) => e.r.v[e.r.c.indexOf(2)]);
+    const count = shared ? 1 : 2;
+    assert.equal(Object.keys(raw.blocks).filter((n) => n !== LD.LAYOUT_BLOCK).length, count + (occupied ? 3 : 0), name + ': one block per distinct dimension');
+    assert.equal(new Set(names).size, count, name + ': references keep distinct dimensions');
+    assert.equal(names.length, 2);
+    assert.equal(names[0], occupied ? 'PD_DIM_H3' : name, name + ': first free name ignores case and skips taken numbers');
+    assert.equal(names[1], shared ? names[0] : name.replace(/1$/, '2'));
+    assert.ok(names.every((n) => raw.blocks[n]), name + ': every reference has a block');
+    assert.deepEqual(lay.parts, before, name + ': saving leaves source entities untouched');
+    const back = LD.layoutFromRaw(readDxf(writeDxf(raw)));
+    assert.equal(back.placed.filter((p) => back.parts[p.partId].obj).length, 2);
+    const geometry = (l) => l.placed.filter((p) => l.parts[p.partId].obj).map((p) => l.parts[p.partId].fl.items.map((it) => [it.k, it.b]));
+    assert.deepEqual(geometry(back), geometry(lay), name + ': reopened dimensions keep their geometry');
+  }
+});
+
+test('TODO 235: damaged layout settings open with defaults, never throw', () => {
+  const open = (edit) => {
+    const raw = LD.layoutRaw(sample()), meta = LD.readMeta(raw), ent = raw.blocks[LD.LAYOUT_BLOCK].entities;
+    edit(meta, raw);
+    ent[0].r.v[ent[0].r.c.indexOf(1)] = btoa(JSON.stringify(meta)); ent.length = 1;
+    return LD.layoutFromRaw(raw, 'Damaged');
+  };
+  const cases = [
+    ['s null', (m) => { m.s = null; }, (l) => { assert.deepEqual(l.s, { ...LD.cleanSettings({}), attmode: l.s.attmode }); assert.deepEqual(Object.keys(l.parts).sort(), ['a', 'b']); }],
+    ['s string', (m) => { m.s = 'x'; }, (l) => assert.equal(l.s.sheetW, LD.DEFAULTS.sheetW)],
+    ['parts null', (m) => { m.parts = null; }, (l) => { assert.deepEqual(l.parts, {}); assert.equal(l.s.rows, sample().s.rows); }],       // the layout stays, with no parts
+    ['parts object', (m) => { m.parts = {}; }, (l) => { assert.deepEqual(l.parts, {}); assert.deepEqual(l.placed, []); }],
+    ['block without entities', (m, raw) => { delete raw.blocks[m.parts[0].block].entities; }, (l) => assert.deepEqual(Object.keys(l.parts), ['b'])],
+    ['rows 357', (m) => { m.s.rows = 357; }, (l) => assert.equal(l.s.rows, 357)],       // Fit to sheet can give this; it must read back as saved
+    ['rows 500', (m) => { m.s.rows = 500; }, (l) => assert.equal(l.s.rows, 500)],
+    ['rows 501', (m) => { m.s.rows = 501; }, (l) => assert.equal(l.s.rows, 500)],
+    ['rows 1e9', (m) => { m.s.rows = 1e9; }, (l) => assert.equal(l.s.rows, 500)],
+    ['cols 1e9', (m) => { m.s.cols = 1e9; }, (l) => assert.equal(l.s.cols, 500)],
+    ['null part', (m) => { m.parts.unshift(null); }, (l) => { assert.deepEqual(Object.keys(l.parts).sort(), ['a', 'b']); assert.equal(l.s.rows, sample().s.rows); }],
+    ['no raw.header', (m, raw) => { delete raw.header; }, (l) => assert.equal(l, null)],       // good metadata, the outer catch: a plain drawing
+    ['cols -5', (m) => { m.s.cols = -5; }, (l) => assert.equal(l.s.cols, 1)],
+    ['good file', () => {}, (l) => { assert.deepEqual(l.s, sample().s); assert.deepEqual(Object.keys(l.parts).sort(), ['a', 'b']); }],
+  ];
+  for (const [what, edit, check] of cases) {
+    let lay;
+    assert.doesNotThrow(() => { lay = open(edit); }, what);
+    check(lay);
+  }
+  assert.equal(LD.layoutFromRaw({ header: {}, blocks: { [LD.LAYOUT_BLOCK]: {} } }), null, 'anything else that throws: not a layout');
 });
 
 console.log(n + ' tests passed');
