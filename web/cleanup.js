@@ -1,5 +1,5 @@
 // Cleanup and preflight (TODO 49/50): pure; entity indexes always refer to the input document.
-import { flatten, strokeWidth, mscale, mapply } from './drawing.js';
+import { flatten, strokeWidth, mscale, mapply, ownBlock } from './drawing.js';
 import { makeIndex, findGaps, chainAt, pathEnds } from './edit.js';
 import { shapeOf, get, withValues } from './grips.js';
 import { canModify, pathOf, geo, subSeg, shapeOfPiece, rebuilt } from './modify.js';
@@ -127,7 +127,7 @@ export function hairline(raw, offenders, locked = new Set()) {
     if (locked.has(layer)) return ent;
     let next = withWidth(ent, 'Hairline');
     if (ent.type !== 'INSERT' && ent.type !== 'DIMENSION') return next;
-    const idx = ent.r.c.indexOf(2), name = ent.r.v[idx]?.trim(), source = raw.blocks[name];
+    const idx = ent.r.c.indexOf(2), name = ent.r.v[idx]?.trim(), source = ownBlock(raw.blocks, name);
     if (!source) return next;
     const key = JSON.stringify([name, layer]);
     if (!copies.has(key)) {

@@ -1,4 +1,5 @@
 // Uniform drawing-object scaling; widths and direction vectors keep their meaning. No DOM.
+import { ownBlock } from './drawing.js';
 import { SPEC, OCS, copyEntities, relabel, DIM_BLOCK, LDR_BLOCK } from './edit.js';
 
 const field = (r, code) => r.v[r.c.indexOf(code)];
@@ -24,13 +25,13 @@ export function scaleEntities(raw, selection, base, factor, copy = false) {
     let r = scaleRecord(e.type, e.r, anchor, factor, e.flip);
     let name = field(r, 2);
     const kept = e.type === 'INSERT' && (DIM_BLOCK.test(name) || LDR_BLOCK.test(name));
-    if (e.type === 'ACAD_TABLE' && blocks[name]) {
+    if (e.type === 'ACAD_TABLE' && ownBlock(blocks, name)) {
       let n = 1; while (blocks['*T' + n]) n++;
       const own = '*T' + n;
       blocks = { ...blocks, [own]: blocks[name] };
       r = { ...r, v: r.v.map((v, i) => r.c[i] === 2 ? own : v) }; name = own;
     }
-    const b = blocks[name];
+    const b = ownBlock(blocks, name);
     if ((e.type === 'DIMENSION' || e.type === 'ACAD_TABLE' || kept) && b && !b.xref && !done.has(name)) {
       done.add(name);
       const local = e.type !== 'DIMENSION';

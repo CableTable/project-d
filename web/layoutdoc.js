@@ -12,7 +12,7 @@
 // a negative scale), marks on "Marks" — what any CAD app shows. The settings and the placed parts also travel in a block named
 // PD_LAYOUT that nothing inserts: a few TEXT entities, each holding up to 200 characters of base64 of a JSON text. Other CAD
 // apps ignore (or at most list) an unused block; our reader (drawing.js readDxf) keeps it, and layoutFromRaw() reads it back.
-import { readDxf, flatten } from './drawing.js';
+import { readDxf, flatten, ownBlock } from './drawing.js';
 import { writeDxf, text as dxfText, addBlock, addEntities, newDoc, insert } from './dxf-write.js';
 import { explodeInsert, explodeDimension, explodeSelection } from './explode.js';
 import { unitFactor, startHidden } from './doc.js';
@@ -70,7 +70,7 @@ export function layersOf(lay) {
 export function objectPart(id, name, ent, layers, header = {}, blocks = {}) {
   const raw = { header: { ...header }, layers, ltypes: {}, blocks, entities: [{ ...ent, ps: false }] };
   let drawing = raw;
-  if (ent.type === 'DIMENSION' && !blocks[String(ent.r.v[ent.r.c.indexOf(2)] || '').trim()]) {
+  if (ent.type === 'DIMENSION' && !ownBlock(blocks, String(ent.r.v[ent.r.c.indexOf(2)] || '').trim())) {
     try { drawing = { ...raw, entities: explodeDimension(ent, raw) }; } catch { return null; }
   }
   const fl = flatten(drawing), shown = flatten({ ...drawing, header: { ...drawing.header, $ATTMODE: '1' }, layers: { ...layers, ...(layers[ent.layer] && { [ent.layer]: { ...layers[ent.layer], off: false, frozen: false } }) } });       // the box includes off-layer objects and ignores the attribute display mode (invisible attributes stay out)
@@ -110,7 +110,7 @@ function bakedEntity(part, p) {
 export const objectSig = (lay, skip) => lay.placed.map((p) => { const part = lay.parts[p.partId]; return part && part.obj && !skip(p.partId) ? `${p.partId}|${bakeKey(p)}${p.lock ? 'L' : ''}` : '-'; }).join(';') + '#' + lay.s.attmode;
 /** The layout's objects as a drawing: { raw, fl, off, at (entity → its index in lay.placed), lockedEnts }. An object Explode cannot carry is left out. */
 export function objectDoc(lay, skip = () => false) {
-  const entities = [], at = new Map(), lockedEnts = new Set(), blocks = {}, back = new Map();       // back: placed index → { name in this drawing → the part's own block name }
+  const entities = [], at = new Map(), lockedEnts = new Set(), blocks = Object.create(null), back = new Map();       // back: placed index → { name in this drawing → the part's own block name }
   lay.placed.forEach((p, i) => {
     const part = lay.parts[p.partId];
     let ent = part && part.obj && !skip(p.partId) ? bakedEntity(part, p) : null;
@@ -182,7 +182,7 @@ export function objectCommit(lay, view, entities, newId, heir, blocks = view.raw
   for (const e of entities) {
     if (view.at.has(e)) continue;
     e.ps = false;
-    const own = {};       // a new block object keeps its blocks, under the part's own names
+    const own = Object.create(null);       // a new block object keeps its blocks, under the part's own names
     if (e.type === 'INSERT') for (const [n, b] of Object.entries(blocksUsed(blocks, [e]))) own[back?.get(n) ?? n] = back ? { ...b, entities: b.entities.map((x) => retarget(x, back)) } : b;
     const kept = back ? retarget(e, back) : e, combined = e.type === 'INSERT' && /^combined /i.test(String(e.r.v[e.r.c.indexOf(2)]).trim());
     const reuse = one && oneName && !names.has(oneName) && !combined && !/^combined/i.test(oneName);       // a Combined result and the pieces of one get names of their own
@@ -249,7 +249,7 @@ export function explodePlaced(lay, idxs, newId, burst = false) {
 export function objectReplace(lay, view, ent, next, newId) {
   const i = view.at.get(ent), old = lay.placed[i], was = lay.parts[old.partId], shared = lay.placed.some((p, k) => k !== i && p.partId === old.partId);
   next.ps = false;
-  const back = view.back?.get(i), blocks = {};       // a block object keeps its blocks, from the view, under the part's own names
+  const back = view.back?.get(i), blocks = Object.create(null);       // a block object keeps its blocks, from the view, under the part's own names
   if (next.type === 'INSERT') for (const [n, b] of Object.entries(blocksUsed(view.raw.blocks, [next]))) blocks[back?.get(n) ?? n] = back ? { ...b, entities: b.entities.map((e) => retarget(e, back)) } : b;
   const kept = retarget(next, back || new Map());
   const part = objectPart(newId(), shared ? nextName(OBJ_NAMES[next.type] || 'Object', new Set(Object.values(lay.parts).map((p) => p.name))) : was.name, kept, layersOf(lay), {}, blocks);
@@ -538,11 +538,11 @@ const retarget = (e, names) => {
 };
 /** The blocks a list of entities uses, and the blocks those use, as { name: block }. */
 export function blocksUsed(blocks, ents) {
-  const out = {}, todo = refs(ents);
+  const out = Object.create(null), todo = refs(ents);
   while (todo.length) {
-    const n = todo.pop();
-    if (out[n] || !blocks[n]) continue;
-    out[n] = blocks[n]; todo.push(...refs(blocks[n].entities || []));
+    const n = todo.pop(), b = ownBlock(blocks, n);
+    if (out[n] || !b) continue;
+    out[n] = b; todo.push(...refs(b.entities || []));
   }
   return out;
 }
@@ -569,7 +569,7 @@ function layoutFromMeta(raw, name) {
   lay.s.attmode = [0, 1, 2].includes(+raw.header.$ATTMODE) ? +raw.header.$ATTMODE : 1;
   const parts = Array.isArray(m.parts) ? m.parts : [];                   // a damaged parts list keeps the layout with no parts
   for (const pm of parts) {
-    const blk = raw.blocks[pm.block];
+    const blk = ownBlock(raw.blocks, pm.block);
     if (!blk || !Array.isArray(blk.entities) || typeof pm.id !== 'string') continue;
     const ents = blk.entities.map((e) => ({ ...e, ps: false }));
     const part = makePart(pm.id, String(pm.name || pm.block), { header: { ...raw.header }, layers: raw.layers, ltypes: raw.ltypes, blocks: blocksUsed(raw.blocks, ents), entities: ents }, num(pm.factor, 1, 1e-9), String(pm.src || ''));

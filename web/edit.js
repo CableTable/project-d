@@ -13,7 +13,7 @@
 //   removeEntities / keepOnly    → { entities, blocks } without (or with only) some entities; unused blocks go too
 //   scaleAbout(raw, s, ax, ay)   → { entities, blocks, skipped } scaled uniformly about (ax, ay)
 //   createHistory()              → undo / redo of { entities, blocks } states
-import { mapply, mscale, pickIndex, pickAt, piecesNear, flatten } from './drawing.js';
+import { mapply, mscale, pickIndex, pickAt, piecesNear, flatten, ownBlock } from './drawing.js';
 import { rotateRecord } from './rotate.js';
 import { format as formatLength, parse as parseLength } from './units.js';
 import { spaceOf, itemVisible } from './doc.js';
@@ -1082,7 +1082,7 @@ export function scaleAbout(raw, s, ax, ay, space = 0, selection = null) {
   const skipped = {}, blocks = { ...raw.blocks }, doneBlocks = new Set();
   const one = (e) => {
     if (e.type === 'INSERT' && (DIM_BLOCK.test(fieldOf(e.r, 2)) || LDR_BLOCK.test(fieldOf(e.r, 2)))) {         // block points scale about the anchor; the INSERT offset scales about the origin
-      const nm = fieldOf(e.r, 2), b = raw.blocks[nm];
+      const nm = fieldOf(e.r, 2), b = ownBlock(raw.blocks, nm);
       if (b && !doneBlocks.has(nm)) { doneBlocks.add(nm); blocks[nm] = { ...b, entities: DIM_BLOCK.test(nm) ? relabel(b.entities.map(one), s) : b.entities.map(one) }; }
       return { ...e, r: scaleRecord(e.type, e.r, s, [0, 0], true) };
     }
@@ -1092,7 +1092,7 @@ export function scaleAbout(raw, s, ax, ay, space = 0, selection = null) {
     let kids = e.kids;
     if (kids) kids = kids.map((kid) => scaleRecord(kid.type, kid, s, a) || kid);
     if (e.type === 'DIMENSION') {
-      const nm = fieldOf(e.r, 2), b = raw.blocks[nm];
+      const nm = fieldOf(e.r, 2), b = ownBlock(raw.blocks, nm);
       if (b && !b.xref && !doneBlocks.has(nm)) { doneBlocks.add(nm); blocks[nm] = { ...b, entities: b.entities.map(one) }; }
     }
     return { ...e, r: { ...e.r, c: r.c, v: r.v }, kids };
@@ -1149,7 +1149,7 @@ export function moveEntities(raw, selection, dx, dy) {
     const x = e.flip && OCS.has(e.type) ? -dx : dx;
     let r = moveRecord(e.type, e.r, x, dy);
     if (e.type === 'DIMENSION') {
-      const name = fieldOf(e.r, 2), b = raw.blocks[name];
+      const name = fieldOf(e.r, 2), b = ownBlock(raw.blocks, name);
       if (b && !b.xref) {
         if (!blockRefs) {
           blockRefs = new Map();
@@ -1243,7 +1243,7 @@ export function copyMany(raw, selection, placements, pivot = [0, 0]) {
     };
     const one = (e, dims = new Map()) => {
       let r = record(e.type, e.r, e.flip);
-      const name = fieldOf(e.r, 2), block = raw.blocks[name];
+      const name = fieldOf(e.r, 2), block = ownBlock(raw.blocks, name);
       if (block && !block.xref && (e.type === 'DIMENSION' || e.type === 'INSERT' && (DIM_BLOCK.test(name) || LDR_BLOCK.test(name)))) {
         let own = dims.get(name);
         if (!own) {
@@ -1576,7 +1576,7 @@ export function makeDimension(a, b, factor, blocks = {}, dp = 2, look = {}) {
 export function dimOfEntity(raw, e) {
   const ent = raw.entities[e];
   if (!ent || ent.type !== 'INSERT') return null;
-  const name = fieldOf(ent.r, 2), block = raw.blocks[name], m = readDim(name, block);
+  const name = fieldOf(ent.r, 2), block = ownBlock(raw.blocks, name), m = readDim(name, block);
   if (!m) return null;
   const label = measuredText(block.entities);
   return { name, ...m, dp: label ? readDp(label, m.params.units) : 2 };

@@ -1,6 +1,7 @@
 // Combine (Ctrl+L), like CorelDRAW's: the picked outlines become ONE object, an INSERT of a new block "Combined <n>" that holds them
 // unchanged (TODO 218a, DECISIONS "Combine"). The INSERT takes the last pick's colour, width, linetype and layer; the members are on layer 0 /
 // ByBlock so it shows. A fill is one even-odd HATCH inside the block over every closed member. Pure: no DOM; combine.test.mjs.
+import { ownBlock } from './drawing.js';
 import { insert } from './dxf-write.js';
 import { explodeInsert } from './explode.js';
 import { usedBlocks } from './edit.js';
@@ -18,7 +19,7 @@ export const isCombined = (name, block) => !!block && !block.xref && name?.start
 /** "Combined (k outlines)" for the Properties chip, or null when `ent` is not a Combined object. */
 export function combinedLabel(blocks, ent) {
   if (ent.type !== 'INSERT') return null;
-  const name = blockNameOf(ent), b = blocks[name];
+  const name = blockNameOf(ent), b = ownBlock(blocks, name);
   if (!isCombined(name, b) || ent.kids?.length) return null;
   const k = b.entities.filter((x) => x.type !== 'HATCH').length;
   return `Combined (${k} outline${k === 1 ? '' : 's'})`;
@@ -37,7 +38,7 @@ export function combine(raw, selection, locked = new Set(), reserved = new Set()
   const ents = picked.map((i) => raw.entities[i]), last = ents.at(-1), flattened = new Set(), members = [];
   for (const e of ents) {
     const name = e.type === 'INSERT' ? blockNameOf(e) : null;
-    if (!OUTLINES.has(e.type) && !(name && isCombined(name, raw.blocks[name]) && !e.kids?.length)) return { error: `a ${typeName(e).toLowerCase()} cannot be combined (outlines only)` };
+    if (!OUTLINES.has(e.type) && !(name && isCombined(name, ownBlock(raw.blocks, name)) && !e.kids?.length)) return { error: `a ${typeName(e).toLowerCase()} cannot be combined (outlines only)` };
     if (locked.has(e.layer)) return { error: `layer ${e.layer} is locked` };
     if (!!e.ps !== !!last.ps) return { error: 'the objects are in different spaces' };
   }
@@ -46,9 +47,9 @@ export function combine(raw, selection, locked = new Set(), reserved = new Set()
   for (const i of [...picked].sort((a, b) => a - b)) {
     const e = raw.entities[i], name = e.type === 'INSERT' ? blockNameOf(e) : null;
     if (!name) { members.push(reset(e)); continue; }
-    const { hatch, outlines } = partsOf(raw.blocks[name]);
+    const { hatch, outlines } = partsOf(ownBlock(raw.blocks, name));
     if (e === last) key = hatch ? hatchKey(hatch) : null;
-    try { members.push(...explodeInsert(e, { ...raw, blocks: { ...raw.blocks, [name]: { ...raw.blocks[name], entities: outlines } } }).entities.map(reset)); }
+    try { members.push(...explodeInsert(e, { ...raw, blocks: { ...raw.blocks, [name]: { ...ownBlock(raw.blocks, name), entities: outlines } } }).entities.map(reset)); }
     catch (err) { return { error: err.message }; }       // the explode transform refuses (a tilted insert, a degenerate scale): so does Combine
     flattened.add(name);
   }

@@ -7,6 +7,9 @@ const D = await import('./web/drawing.js');
 const G = await import('./web/geom.js');
 const W = await import('./web/dxf-write.js');
 const E = await import('./web/edit.js');
+const S = await import('./web/scale.js');
+const R = await import('./web/rotate.js');
+const X = await import('./web/explode.js');
 const { paintDrawing } = await import('./web/render.js');
 const { planPdf } = await import('./web/pdf-export.js');
 
@@ -312,6 +315,18 @@ test('TODO 234: an INSERT named like an Object.prototype member is skipped when 
       const real = D.flatten(make(D.readDxf(dxf([ins], { blocks }))));
       assert.equal(real.items.length, 1, `${name} ${form}: its block is drawn`);
       assert.deepEqual(real.left, {}, `${name} ${form}: nothing left out`);
+      // fix 2: Scale, Rotate and Explode read the block by its own key only, with the block missing and real
+      const dim = g([0, 'DIMENSION'], [8, '0'], [2, name], [70, 0], [10, 0], [20, 0], [13, 0], [23, 0], [14, 5], [24, 5]);       // a DIMENSION names its block the same way
+      for (const [which, text] of [['missing', dxf([ins, dim])], ['real', dxf([ins, dim], { blocks })]]) {
+        const doc = make(D.readDxf(text)), all = new Set([0, 1]);
+        assert.doesNotThrow(() => S.scaleEntities(doc, all, [0, 0], 2), `${name} ${form} ${which}: Scale`);
+        assert.doesNotThrow(() => R.rotateEntities(doc, all, [0, 0], 30), `${name} ${form} ${which}: Rotate`);
+        assert.doesNotThrow(() => X.explodeSelection(doc, all), `${name} ${form} ${which}: Explode`);
+        assert.doesNotThrow(() => E.scaleAbout(doc, 2, 0, 0), `${name} ${form} ${which}: Scale about`);
+      }
+      const back = D.readDxf(W.writeDxf(make(D.readDxf(dxf([ins], { blocks })))));       // save, reopen
+      assert.ok(Object.hasOwn(back.blocks, name), `${name} ${form}: the block survives a save`);
+      assert.equal(D.flatten(back).items.length, 1, `${name} ${form}: and is drawn after reopening`);
     }
   }
 });

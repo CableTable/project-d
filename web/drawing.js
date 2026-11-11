@@ -238,6 +238,7 @@ export const IDENT = [1, 0, 0, 1, 0, 0];
 export const mmul = (m, n) => [m[0] * n[0] + m[2] * n[1], m[1] * n[0] + m[3] * n[1], m[0] * n[2] + m[2] * n[3], m[1] * n[2] + m[3] * n[3],
   m[0] * n[4] + m[2] * n[5] + m[4], m[1] * n[4] + m[3] * n[5] + m[5]];
 export const mapply = (m, x, y) => [m[0] * x + m[2] * y + m[4], m[1] * x + m[3] * y + m[5]];
+export const ownBlock = (blocks, name) => blocks && Object.hasOwn(blocks, name) ? blocks[name] : undefined;     // a name like `constructor` is no block, even in a plain-object copy
 export const mscale = (m) => Math.sqrt(Math.abs(m[0] * m[3] - m[1] * m[2]));
 const FLIP = [-1, 0, 0, 1, 0, 0];
 

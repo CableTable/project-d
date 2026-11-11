@@ -73,12 +73,12 @@ export const gridPlacements = (L, sheetH, partId) => placements(L, sheetH).map((
 
 /** Blocks named in `map` renamed where the entities refer to them (INSERT and DIMENSION carry the name in group 2). */
 function renameRefs(ents, map0) {
-  const map = Object.fromEntries(Object.entries(map0).map(([k, v]) => [k.toLowerCase(), v]));   // block names ignore case
+  const map = new Map(Object.entries(map0).map(([k, v]) => [k.toLowerCase(), v]));   // block names ignore case; a Map: `constructor` is no key
   return ents.map((e) => {
     if (!e.r || (e.type !== 'INSERT' && e.type !== 'DIMENSION')) return e;
     const k = e.r.c.indexOf(2), nm = k < 0 ? null : String(e.r.v[k]).trim();
-    if (nm == null || !map[nm.toLowerCase()]) return e;
-    const v = e.r.v.slice(); v[k] = map[nm.toLowerCase()];
+    if (nm == null || !map.get(nm.toLowerCase())) return e;
+    const v = e.r.v.slice(); v[k] = map.get(nm.toLowerCase());
     return { ...e, r: { ...e.r, v } };
   });
 }
@@ -95,7 +95,7 @@ function mergePart(doc, part, origin) {
   for (const [n, l] of Object.entries(raw.ltypes || {})) if (!has(doc.ltypes, n)) doc.ltypes[n] = structuredClone(l);
   for (const [n, s] of Object.entries(raw.styles || {})) if (!has(doc.styles ||= {}, n)) doc.styles[n] = structuredClone(s);
   for (const [n, s] of Object.entries(raw.dimstyles || {})) if (!has(doc.dimstyles ||= {}, n)) doc.dimstyles[n] = structuredClone(s);
-  const map = {}, copied = [];
+  const map = Object.create(null), copied = [];       // no prototype: a block named `__proto__` is a key
   for (const [n, b] of Object.entries(raw.blocks || {})) {
     if (!has(doc.blocks, n)) { doc.blocks[n] = structuredClone(b); origin.set(n, b); copied.push(n); continue; }
     if (origin.get(n) === b) continue;                               // the same block of the same drawing
@@ -116,6 +116,7 @@ function mergePart(doc, part, origin) {
  */
 export function buildLayoutDoc({ parts, placed, sheetW, sheetH, marks, keep = [] }) {
   const doc = newDoc(4);
+  doc.blocks = Object.create(null);       // a part's block named `__proto__` is a key here, not the prototype
   doc.header.$MEASUREMENT = '1';
   addLayer(doc, LAYERS.parts, { aci: 5 });
   addLayer(doc, LAYERS.sheet, { aci: 8 });

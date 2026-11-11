@@ -8,6 +8,7 @@
 //   trimEntity(ent, edges, pick)       → { ents, removed } | { error }  the kept pieces and the piece under `pick` that goes
 //   mirrorEntity(ent, p1, p2, blocks)  → { ent, blocks? } | { skip }    reflection; dimensions and leaders return private blocks
 //   mirrorShape(sh, p1, p2) / offsetShape(sh, d, at) / trimShape(sh, edgeShapes, pick) are the same on shapes.
+import { ownBlock } from './drawing.js';
 import { shapeOf, hasGrips, num, at as atCode, get, withValues } from './grips.js';
 import { toEntity } from './draw.js';
 import { LDR_BLOCK } from './edit.js';
@@ -265,7 +266,7 @@ export function mirrorEntity(ent, p1, p2, blocks = {}, depth = 0) {
   if (ent.type === 'INSERT' || ent.type === 'DIMENSION') {
     const name = field(r, 2), dim = ent.type === 'DIMENSION' || /^PD_DIM_/.test(name);
     if (ent.type === 'INSERT' && LDR_BLOCK.test(name)) {
-      const block = blocks[name], model = !block?.xref && L.read(name, block);
+      const block = ownBlock(blocks, name), model = !block?.xref && L.read(name, block);
       if (!model) return { skip: 'the leader has no block geometry' };
       const angle = (get(r, 50) ?? 0) / DEG, c = Math.cos(angle), s = Math.sin(angle);
       model.pts = model.pts.map(([x, y]) => {
@@ -279,7 +280,7 @@ export function mirrorEntity(ent, p1, p2, blocks = {}, depth = 0) {
     let mirrored = mirrorRecord(ent, p1, p2);
     mirrored.kids = ent.kids?.map((kid) => mirrorRecord({ type: kid.type, r: kid, flip: (get(kid, 230) ?? 1) < 0 }, p1, p2).r);
     if (!dim) return { ent: mirrored };
-    const block = blocks[name];
+    const block = ownBlock(blocks, name);
     if (!block || block.xref) return { skip: 'the dimension has no block geometry' };
     const prefix = ent.type === 'DIMENSION' ? '*D' : /^PD_DIM_[RDAHV]?/.exec(name)[0];
     let n = 1;

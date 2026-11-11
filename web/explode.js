@@ -1,5 +1,5 @@
 // Explode, pure: one level of polylines or block members, in drawing units.
-import { bulgeArc, mmul, mapply } from './drawing.js';
+import { bulgeArc, mmul, mapply, ownBlock as own } from './drawing.js';
 import { lwVertices, get } from './grips.js';
 import { entity, line, arc, circle, ellipse, lwpoly, insert, mtext } from './dxf-write.js';
 import { DIM_BLOCK, usedBlocks, dimGeom, dimBlock, dimOffsetAt, angleBetween, dimText, freeName } from './edit.js';
@@ -10,7 +10,6 @@ const DEG = Math.PI / 180, TAU = 2 * Math.PI, ID = [1, 0, 0, 1, 0, 0];
 const val = (e, c, fallback = 0) => get(e.r, c) ?? fallback;
 const field = (e, c) => e.r.v[e.r.c.indexOf(c)]?.trim();
 const angle = (r) => ((r / DEG % 360) + 360) % 360;
-const own = (blocks, name) => Object.hasOwn(blocks, name) ? blocks[name] : undefined;     // a name like `constructor` is no block, even in a plain-object copy
 const det = (m) => m[0] * m[3] - m[1] * m[2];
 const vector = (m, x, y) => [m[0] * x + m[2] * y, m[1] * x + m[3] * y];
 const similar = (m) => Math.abs(m[0] ** 2 + m[1] ** 2 - m[2] ** 2 - m[3] ** 2) < 1e-10 * Math.max(...m.slice(0, 4).map((v) => v * v)) && orthogonal(m);

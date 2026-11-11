@@ -758,7 +758,7 @@ test('TODO 182 review: repeat placements reuse one copy, a grip edit on a rename
     assert.equal(R(now.w), R(widthBefore), label + ': width kept');
     assert.deepEqual(Object.keys(now.raw.blocks).sort(), own, label + ': the part keeps its own block names');
     assert.equal(nameOf(now.raw.entities[0]), 'X', label);
-    assert.deepEqual(now.raw.blocks, blocksBefore, label + ': block contents unchanged');
+    assert.deepEqual({ ...now.raw.blocks }, blocksBefore, label + ': block contents unchanged');
     const again = LD.objectDoc(lay);
     assert.deepEqual(again.raw.entities.map(nameOf), ['X', 'X_2'], label + ': renamed again for the view');
     assert.equal(R(LD.layoutFromRaw(readDxf(writeDxf(LD.layoutRaw(lay)))).placed.length), 2, label + ': saves');
@@ -842,7 +842,7 @@ test('TODO 171 review: a changed INSERT sent through objectCommit stays a placed
   const lay = LD.newLayout('L'), o = LD.objectPart('o1', 'Line 1', line(0, 0, 100, 0), LD.layersOf(lay));
   lay.parts.o1 = o; lay.placed.push(LD.objectPlacement(o));
   LD.objectCommit(lay, LD.objectDoc(lay), [line(0, 0, 40, 0)], () => 'n1');
-  assert.deepEqual(lay.parts.n1.raw.blocks, {}, 'a line gets no blocks');
+  assert.deepEqual({ ...lay.parts.n1.raw.blocks }, {}, 'a line gets no blocks');
 });
 
 test('TODO 235: damaged layout settings open with defaults, never throw', () => {

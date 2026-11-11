@@ -10,6 +10,7 @@
 //   read(name, block)         → the model, or null; ofEntity(raw, e) → { name, model } for the INSERT at index e, or null
 //   freeName(blocks)          → PD_LDR_1, 2 …
 //   replace(raw, name, m)     → { entities, blocks } with that block rebuilt (the INSERT stays)
+import { ownBlock } from './drawing.js';
 import { arrowHead, DIM_LAYER, LDR_BLOCK } from './edit.js';
 import { line, insert, entity } from './dxf-write.js';
 import * as TX from './text.js';
@@ -50,7 +51,7 @@ export function read(name, block) {
 export function ofEntity(raw, e) {
   const ent = raw.entities[e];
   if (!ent || ent.type !== 'INSERT') return null;
-  const name = String(ent.r.v[ent.r.c.indexOf(2)] || '').trim(), model = read(name, raw.blocks[name]);
+  const name = String(ent.r.v[ent.r.c.indexOf(2)] || '').trim(), model = read(name, ownBlock(raw.blocks, name));
   return model ? { name, model } : null;
 }
 

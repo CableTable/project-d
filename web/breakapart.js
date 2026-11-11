@@ -1,4 +1,5 @@
 // Break Apart preserves outlines; only the enclosing block is removed.
+import { ownBlock } from './drawing.js';
 import { explodeInsert } from './explode.js';
 import { isCombined, partsOf, OUTLINES } from './combine.js';
 import { closedOutline, hatchKey } from './fill.js';
@@ -8,7 +9,7 @@ export function breakApart(raw, selection, locked = new Set()) {
   const i = [...selection][0], e = raw.entities[i];
   if (e.type !== 'INSERT') return { error: `${e.type} is already a separate outline or is not a group or block` };
   if (locked.has(e.layer)) return { error: 'the block is on a locked layer' };
-  const name = e.r.v[e.r.c.indexOf(2)]?.trim(), block = raw.blocks[name];
+  const name = e.r.v[e.r.c.indexOf(2)]?.trim(), block = ownBlock(raw.blocks, name);
   if (!block || block.xref) return { error: 'missing block or external reference' };
   const combined = isCombined(name, block), { hatch, outlines } = combined ? partsOf(block) : { hatch: null, outlines: block.entities };
   if (e.kids?.length || !block.entities.length || outlines.some((x) => !OUTLINES.has(x.type))) {

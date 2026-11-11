@@ -1,4 +1,5 @@
 // PD dimensions draw resolved TEXT; an invisible constant attribute keeps the group 1 override and measured label for rebuilds.
+import { ownBlock } from './drawing.js';
 import { entity } from './dxf-write.js';
 
 const field = (e, c) => e?.r.v[e.r.c.indexOf(c)] || '';
@@ -55,7 +56,7 @@ export function dimensionEditorOverride(edit) {
 /** Our exported native dimensions use world-coordinate PD blocks; edit them internally as identity INSERTs. */
 export function restoreDimensionInserts(doc) {
   doc.entities = doc.entities.map((e) => {
-    const name = field(e, 2), block = doc.blocks[name];
+    const name = field(e, 2), block = ownBlock(doc.blocks, name);
     if (e.type !== 'DIMENSION' || !/^PD_DIM_/.test(name) || !block || !textRecord(block.entities)) return e;
     const override = overrideText(field(e, 1)), measured = measuredText(block.entities), record = textRecord(block.entities);
     block.entities = block.entities.map((child) => child === record ? overrideRecord(override, measured) : child.type === 'TEXT'
