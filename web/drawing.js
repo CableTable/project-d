@@ -148,6 +148,8 @@ function firsts(r) {
   return f;
 }
 const num = (v, d = 0) => { const n = v == null ? NaN : +v; return Number.isFinite(n) ? n : d; };
+// Shift a sweep t0..t1 by whole turns so |t0| < TAU, keeping the sweep t1 - t0 (a bounded remainder: huge angles would otherwise lose it).
+const oneTurn = (t0, t1) => { if (!(Math.abs(t0) >= TAU)) return [t0, t1]; const r = t0 % TAU; return [r, r + (t1 - t0)]; };
 
 function tables(doc, recs) {
   const styleOf = {};                                   // STYLE handle → name, for the text of a complex line type
@@ -454,7 +456,7 @@ export function flatten(doc, hidden = new Set()) {
           let nz = 1; for (let k = 0; k < r.c.length; k++) if (r.c[k] === 230) nz = num(r.v[k], 1);
           const nx = nz < 0 ? my * ratio : -my * ratio, ny = nz < 0 ? -mx * ratio : mx * ratio;
           let t0 = num(f[41], 0), t1 = num(f[42], TAU);
-          const turns = Math.trunc(t0 / TAU) * TAU; t0 -= turns; t1 -= turns;     // one turn, so t0 + PI below always advances at huge angles
+          [t0, t1] = oneTurn(t0, t1);     // so t0 + PI below always advances and the quadrant loop stays short at huge angles
           if (t1 <= t0) t1 += TAU;
           t1 = Math.min(t1, t0 + TAU);
           const steps = Math.max(8, Math.ceil(96 * (t1 - t0) / TAU)), ts = Array.from({ length: steps + 1 }, (_, i) => t0 + (t1 - t0) * i / steps);
@@ -741,6 +743,7 @@ function hatch(e, base, put) {
           const cx = take(10), cy = take(20), mx = take(11), my = take(21), ratio = take(40) || 1;
           const s = (take(50) || 0) * DEG, en = (take(51, 360) ?? 360) * DEG, ccw = take(73) !== 0;
           let t0 = ccw ? s : -s, t1 = ccw ? en : -en;
+          [t0, t1] = oneTurn(t0, t1);
           if (ccw && t1 <= t0) t1 += TAU; if (!ccw && t1 >= t0) t1 -= TAU;
           t1 = Math.max(t0 - TAU, Math.min(t1, t0 + TAU));
           const steps = Math.max(8, Math.ceil(64 * Math.abs(t1 - t0) / TAU));

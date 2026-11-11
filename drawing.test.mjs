@@ -276,6 +276,14 @@ test('TODO 233: ellipse entity and hatch sweeps stay bounded at one turn', () =>
         assert.equal(createHash('sha256').update(JSON.stringify(item.ops)).digest('hex'), halfHashes[kind], `${label}: unchanged`);
       } else assert.deepEqual(item.ops, full.ops, `${label}: full ellipse`);
     }
+    // huge angles: the remainder must stay bounded (quadrant loop / sampling used to hang or collapse to 2 points)
+    for (const [name, start, end] of [['1.7e34 both', 1.7058823529411766e34, 1.7058823529411766e34], ['4e16 to +8', 4e16, 40000000000000008]]) {
+      const item = ellipse(start, end), label = `${kind}: ${name}`, points = Math.floor(item.ops.length / 3);
+      assert.ok(points > 0 && points <= (kind === 'entity' ? 101 : 65), `${label}: ${points} points`);
+      assert.ok(item.ops.every(Number.isFinite), label);
+      const distinct = new Set(); for (let i = 0; i < item.ops.length; i += 3) distinct.add(item.ops[i + 1] + ',' + item.ops[i + 2]);
+      assert.ok(distinct.size > 2, `${label}: ${distinct.size} distinct points`);
+    }
   }
   // t0 so large that t0 + PI == t0: the extrema loop used to never advance
   const huge = lay(dxf([g([0, 'ELLIPSE'], [10, 10], [20, 20], [11, 10], [21, 0], [40, .5], [41, 4e16], [42, 40000000000000008])])).items[0];
