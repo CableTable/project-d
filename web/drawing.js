@@ -49,7 +49,7 @@ export function readDxf(text) {
       if (!raw[i].trim()) { i -= 1; continue; }                // a stray blank line
       throw new DrawingError('Couldn\'t read this drawing.');
     }
-    C.push(c); V.push(raw[i + 1].replace(/\\U\+(1F[0-9A-Fa-f]{3}|[0-9A-Fa-f]{4})/g, (_, h) => String.fromCodePoint(parseInt(h, 16))));   // the writer encodes it again; shortcut: only 1Fxxx (emoji) is read as a 5-digit code, as 4 digits + hex text is the AutoCAD form
+    C.push(c); V.push(raw[i + 1].replace(/\\U\+([0-9A-Fa-f]{4})/g, (_, h) => String.fromCharCode(parseInt(h, 16))));   // the writer encodes it again
   }
   if (!C.length) throw new DrawingError('This drawing is empty.');
   const doc = { header: {}, layers: Object.create(null), ltypes: Object.create(null), blocks: Object.create(null), entities: [], groups: [] };   // no prototype: a block named "constructor" must not be found

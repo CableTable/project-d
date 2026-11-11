@@ -260,8 +260,8 @@ export function mirrorEntity(ent, p1, p2, blocks = {}, depth = 0) {
     const q = reflect([num(r.v[x]), num(r.v[y])], p1, p2);
     const x2 = atCode(r, 11), y2 = atCode(r, 21);
     if (ent.type === 'TEXT' && x2 >= 0 && y2 >= 0) {
-      const q2 = reflect([num(r.v[x2]), num(r.v[y2])], p1, p2), fit = [3, 5].includes(get(r, 72));
-      edits.push([x, (fit ? q2 : q)[0]], [y, (fit ? q2 : q)[1]], [x2, (fit ? q : q2)[0]], [y2, (fit ? q : q2)[1]]);   // Aligned / Fit: swap, so the baseline still runs left to right
+      const q2 = reflect([num(r.v[x2]), num(r.v[y2])], p1, p2), fit = [3, 5].includes(get(r, 72)) && q2[0] < q[0];
+      edits.push([x, (fit ? q2 : q)[0]], [y, (fit ? q2 : q)[1]], [x2, (fit ? q : q2)[0]], [y2, (fit ? q : q2)[1]]);   // Aligned / Fit: swap only when the mirrored baseline runs leftward, so it still reads left to right
     } else edits.push([x, q[0]], [y, q[1]]);
     return { ent: withValues(ent, edits) };
   }

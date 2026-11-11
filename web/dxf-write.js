@@ -38,7 +38,7 @@ export function fmt(n, precision = 6) {
 const intText = (v) => { const n = parseInt(v, 10); return Number.isFinite(n) ? String(n) : String(v).trim(); };
 const line1 = (s, esc) => {
   s = String(s).replace(/[\r\n]+/g, ' ');
-  return esc ? s.replace(/[^\u0000-\u007f]/gu, (ch) => '\\U+' + ch.codePointAt(0).toString(16).toUpperCase().padStart(4, '0')) : s;
+  return esc ? s.replace(/[^\u0000-\u007f]/g, (ch) => '\\U+' + ch.charCodeAt(0).toString(16).toUpperCase().padStart(4, '0')) : s;
 };
 
 const isDouble = (c) => (c >= 10 && c <= 59) || (c >= 110 && c <= 149) || (c >= 210 && c <= 239) || (c >= 460 && c <= 469) || (c >= 1010 && c <= 1059);

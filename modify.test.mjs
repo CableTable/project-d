@@ -329,6 +329,19 @@ test('TODO 253d: a mirrored Aligned or Fit text swaps its two points so it still
   }
 });
 
+test('TODO 253d fix: a mirrored Aligned or Fit text swaps only when its baseline would run leftward', () => {
+  for (const [name, p1, p2] of [['x = 20', [20, 0], [20, 1]], ['y = 5', [0, 5], [1, 5]], ['y = x', [0, 0], [1, 1]]]) {
+    for (const h of [3, 5]) {
+      const t = text(0, 0, 4, 'ABC');
+      for (const [c, v] of [[72, h], [10, 0], [20, 0], [11, 10], [21, 0]]) { const k = t.r.c.indexOf(c); if (k < 0) { t.r.c.push(c); t.r.v.push(String(v)); } else t.r.v[k] = String(v); }
+      const m = M.mirrorEntity(t, p1, p2).ent, [x1, y1, x2, y2] = [10, 20, 11, 21].map((c) => +get(m.r, c));
+      assert.ok(x2 >= x1 - 1e-9, `${name}, 72 = ${h}: reads left to right`);
+      assert.ok(Math.hypot(x2 - x1, y2 - y1) > 9.99, 'length kept');
+      if (name === 'y = 5') assert.deepEqual([x1, y1, x2, y2], [0, 10, 10, 10], 'a horizontal mirror keeps the order');
+    }
+  }
+});
+
 const value = (e, c) => e.r.v[e.r.c.indexOf(c)];
 const roundTrip = (raw) => readDxf(writeDxf(raw));
 const reflected = (p, a, b) => M.mirrorShape({ t: 'line', a: p, b: p }, a, b).a;

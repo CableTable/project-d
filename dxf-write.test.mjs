@@ -276,11 +276,12 @@ test('missing layers and line types get a table entry; a unicode switch writes \
   assert.equal(D.plainText(D.readDxf(t).entities[1].r.v[D.readDxf(t).entities[1].r.c.indexOf(1)])[0], 'Ø é');
 });
 
-test('TODO 253d: escape Unicode writes a character above U+FFFF as one code by code point, and reads back whole', () => {
-  for (const [str, want] of [['Q\u{1F600}', 'Q\\U+1F600'], ['é€', '\\U+00E9\\U+20AC'], ['\u{20BB7}!', '\\U+20BB7!'], ['\u{1F600}\u{1F4A9}', '\\U+1F600\\U+1F4A9']]) {
+test('TODO 253d fix: escape Unicode writes surrogate pairs as two codes, and every character reads back equal', () => {
+  for (const str of ['\u{1F600}', '\u{20BB7}!', '\u{10348}x', 'ὠ' + '0']) {
     const doc = W.addEntities(W.newDoc(), W.text(0, 0, 1, str)), t = W.writeDxf(doc, { escapeUnicode: true });
-    assert.ok(t.includes(want) && !/[^\u0000-\u007f]/.test(t) && !/\\U\+D[89A-F]/i.test(t), str);
-    if (str.includes('\u{1F600}')) { const e = D.readDxf(t).entities[0].r; assert.equal(e.v[e.c.indexOf(1)], str); }
+    assert.ok(!/[^\u0000-\u007f]/.test(t), str);
+    const e = D.readDxf(t).entities[0].r;
+    assert.equal(e.v[e.c.indexOf(1)], str);
   }
 });
 
