@@ -16,7 +16,7 @@ import { readDxf, flatten, ownBlock } from './drawing.js';
 import { writeDxf, text as dxfText, addBlock, addEntities, newDoc, insert } from './dxf-write.js';
 import { explodeInsert, explodeDimension, explodeSelection } from './explode.js';
 import { unitFactor, startHidden } from './doc.js';
-import { stepRepeat, markGeometry } from './layout.js';
+import { stepRepeat, markGeometry, MAX_LINE } from './layout.js';
 import { buildLayoutDoc, gridPlacements, placedBox, partFromDrawing, placement1 } from './apply.js';
 import { keepOnly, newLayerName, DIM_LAYER, DIM_BLOCK, dimTag } from './edit.js';
 import { followDimensions } from './linked-dimensions.js';
@@ -511,7 +511,6 @@ export function layoutRaw(lay, { sheet = true } = {}) {
 
 const num = (v, d, min = -Infinity) => (Number.isFinite(+v) && v !== '' && v !== null && +v >= min ? +v : d);
 const gaps = (list) => (Array.isArray(list) ? list.filter((e) => e && e.after >= 1 && e.mm > 0).map((e) => ({ after: Math.floor(e.after), mm: +e.mm })) : []);
-const MAX_GRID = 200;       // rows / cols read from a file: well above any real sheet, bounded memory
 /** Settings read from a file: anything missing or odd falls back to the default. */
 export function cleanSettings(s) {
   const d = DEFAULTS;
@@ -521,7 +520,7 @@ export function cleanSettings(s) {
     gripTop: num(s.gripTop, 0, 0), gripRight: num(s.gripRight, 0, 0), gripBottom: num(s.gripBottom, 0, 0), gripLeft: num(s.gripLeft, 0, 0),
     crop: s.crop === true, reg: s.reg === true, gapX: num(s.gapX, d.gapX, 0), gapY: num(s.gapY, d.gapY, 0),
     rotate: ['best', '0', '90'].includes(String(s.rotate)) ? String(s.rotate) : '0', align: s.align === 'topleft' ? 'topleft' : 'centre',
-    fit: s.fit !== false, rows: Math.min(MAX_GRID, Math.max(1, Math.floor(num(s.rows, 1)))), cols: Math.min(MAX_GRID, Math.max(1, Math.floor(num(s.cols, 1)))),
+    fit: s.fit !== false, rows: Math.min(MAX_LINE, Math.max(1, Math.floor(num(s.rows, 1)))), cols: Math.min(MAX_LINE, Math.max(1, Math.floor(num(s.cols, 1)))),     // rows / cols per line: the step-and-repeat limit, so a saved Fit result reads back as saved
     extraRows: gaps(s.extraRows), extraCols: gaps(s.extraCols), gridPart: typeof s.gridPart === 'string' ? s.gridPart : null,
     guides: cleanGuides(s.guides), guidesShow: s.guidesShow !== false, guidesLock: s.guidesLock === true,
     attmode: [0, 1, 2].includes(s.attmode) ? s.attmode : 1,
@@ -567,7 +566,7 @@ function layoutFromMeta(raw, name) {
   if (!m) return null;
   const lay = { name: name || m.name || 'Layout', s: cleanSettings(m.s), parts: {}, placed: [] };
   lay.s.attmode = [0, 1, 2].includes(+raw.header.$ATTMODE) ? +raw.header.$ATTMODE : 1;
-  const parts = Array.isArray(m.parts) ? m.parts : [];                   // a damaged parts list keeps the layout with no parts
+  const parts = Array.isArray(m.parts) ? m.parts.filter(Boolean) : [];   // a damaged parts list keeps the layout with no parts; a null entry is skipped
   for (const pm of parts) {
     const blk = ownBlock(raw.blocks, pm.block);
     if (!blk || !Array.isArray(blk.entities) || typeof pm.id !== 'string') continue;

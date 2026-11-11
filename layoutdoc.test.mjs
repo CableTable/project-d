@@ -858,8 +858,13 @@ test('TODO 235: damaged layout settings open with defaults, never throw', () => 
     ['parts null', (m) => { m.parts = null; }, (l) => { assert.deepEqual(l.parts, {}); assert.equal(l.s.rows, sample().s.rows); }],       // the layout stays, with no parts
     ['parts object', (m) => { m.parts = {}; }, (l) => { assert.deepEqual(l.parts, {}); assert.deepEqual(l.placed, []); }],
     ['block without entities', (m, raw) => { delete raw.blocks[m.parts[0].block].entities; }, (l) => assert.deepEqual(Object.keys(l.parts), ['b'])],
-    ['rows 1e9', (m) => { m.s.rows = 1e9; }, (l) => assert.equal(l.s.rows, 200)],
-    ['cols 1e9', (m) => { m.s.cols = 1e9; }, (l) => assert.equal(l.s.cols, 200)],
+    ['rows 357', (m) => { m.s.rows = 357; }, (l) => assert.equal(l.s.rows, 357)],       // Fit to sheet can give this; it must read back as saved
+    ['rows 500', (m) => { m.s.rows = 500; }, (l) => assert.equal(l.s.rows, 500)],
+    ['rows 501', (m) => { m.s.rows = 501; }, (l) => assert.equal(l.s.rows, 500)],
+    ['rows 1e9', (m) => { m.s.rows = 1e9; }, (l) => assert.equal(l.s.rows, 500)],
+    ['cols 1e9', (m) => { m.s.cols = 1e9; }, (l) => assert.equal(l.s.cols, 500)],
+    ['null part', (m) => { m.parts.unshift(null); }, (l) => { assert.deepEqual(Object.keys(l.parts).sort(), ['a', 'b']); assert.equal(l.s.rows, sample().s.rows); }],
+    ['no raw.header', (m, raw) => { delete raw.header; }, (l) => assert.equal(l, null)],       // good metadata, the outer catch: a plain drawing
     ['cols -5', (m) => { m.s.cols = -5; }, (l) => assert.equal(l.s.cols, 1)],
     ['good file', () => {}, (l) => { assert.deepEqual(l.s, sample().s); assert.deepEqual(Object.keys(l.parts).sort(), ['a', 'b']); }],
   ];
