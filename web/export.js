@@ -283,7 +283,7 @@ export function openExport(host) {
 
   // ---- A folder at once
   const B = settings.batch;
-  ref.folder = h('input', { class: 'fld', value: B.folder, placeholder: inApp ? 'Choose a folder with Browse…' : 'Choose a folder with Browse…', 'aria-label': 'Folder', 'data-testid': 'pdf-folder' });
+  ref.folder = h('input', { class: 'fld', value: B.folder, placeholder: 'Choose a folder with Browse…', 'aria-label': 'Folder', 'data-testid': 'pdf-folder' });
   ref.folder.addEventListener('change', async () => { B.folder = ref.folder.value.trim(); if (inApp && B.folder) await scanFolder(B.folder); });
   ref.dirInput = h('input', { type: 'file', hidden: true, multiple: true, accept: '.dxf,.dwg,.cdr', 'data-testid': 'pdf-dirpicker' });
   ref.dirInput.addEventListener('change', () => fromFiles([...ref.dirInput.files]));

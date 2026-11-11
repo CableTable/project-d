@@ -200,8 +200,6 @@ const DIM_TYPES = [
   ['angle', 'Angle', 'DAN', '<path d="M3 16h14M3 16L13 5M9 16a6 6 0 0 0-1.4-3.8"/>', 'DIMANGULAR'],
 ];
 const dimTypeRow = (type) => DIM_TYPES.find((x) => x[0] === type) || DIM_TYPES[0];
-const MOD_ALIAS = { mv: 'move', move: 'move', co: 'copy', copy: 'copy', str: 'stretch', stretch: 'stretch', o: 'offset', offset: 'offset', tr: 'trim', trim: 'trim', mi: 'mirror', mirror: 'mirror' };       // typed in the command line
-const DIM_ALIAS = { dli: 'linear', dra: 'radius', ddi: 'diameter', dan: 'angle' };       // typed in the command line (D is Aligned)
 
 const EYE = '<path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>';
 const EYE_OFF = '<path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/><path d="M4 4l16 16"/>';
@@ -394,7 +392,6 @@ function numField(label, key, opts = {}) {
     const why = refusal();
     flagInvalid(input, why && input.value.trim() !== '');
     if (why) { if (input.value.trim() !== '') note(why); return; }       // an empty field is only half typed: said when it is left
-    if (input.value.trim() === '' || !Number.isFinite(v) || v < (opts.min ?? 0)) return;
     const sized = key === 'sheetW' || key === 'sheetH';
     pushLay(curDoc(), null, sized ? 'sheetsize' : 'set:' + key, sized ? 'Sheet size' : label);
     state[key] = opts.int ? Math.floor(v) : v;
@@ -1190,7 +1187,6 @@ async function openPdf(name, buf, path = null) {
   await balLoad(doc, path, name);
 }
 /** Asks a yes / no question (the native dialog in the app, confirm() in a browser). */
-/** Asks a yes / no question (the native dialog in the app, confirm() in a browser). */
 async function confirmAsk(text, okLabel, kind = 'info', cancelLabel = 'No') {
   const t = window.__TAURI__;
   if (t && t.dialog && t.dialog.ask) { try { return await t.dialog.ask(text, { title: 'Project D', kind, okLabel, cancelLabel }); } catch { return false; } }
@@ -1851,7 +1847,6 @@ function buildPlacedPanel() {
         h('button', { class: 'btn sm', type: 'button', 'data-testid': 'dup-one', title: 'One copy, 10 mm right and up (Ctrl+D). Drag it where it should go', onclick: duplicateOne }, 'Copy once'))),
     sec('Nudge', 'sec-nudge', h('div', { class: 'row between' }, labelled('Step (mm)', nudge, 'field'), h('span', { class: 'lbl' }, 'Arrow keys move the part by this step.'))),
   ];
-  ui.secTitle = ui.placedSecs[0].querySelector('h2');
   return h('div', { class: 'contents' }, ui.placedSecs);
 }
 
@@ -3329,7 +3324,6 @@ function dropCopy(d) {
   r.hasCopy = false;
   return RC.removeCopy(r.rid).catch(() => {});
 }
-/** Deletes the copies of these tabs and waits for it (the window may close right after). */
 /** The window is closing: no new autosave round, and a copy still being written finishes first, so it is deleted too (up to 2 s). */
 let dropping = false;
 const dropCopiesNow = async (docs) => {
