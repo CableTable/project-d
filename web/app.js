@@ -961,7 +961,7 @@ function askSaveChanges(dirty) {
 /** May the window close? Asks when a tab has unsaved changes; Save goes through the usual Save for each (a cancelled Save dialog keeps the window open). */
 async function mayClose() {
   textCommit();
-  if (state.docs.some((d) => d.pdf?.busy)) return false;
+  if (state.docs.some((d) => d.pdf?.busy)) { note('Wait for the PDF to finish, then close'); return false; }
   const dirty = dirtyDocs();
   if (!dirty.length) { await dropCopiesNow(state.docs); return true; }
   if (closeAsk || closing) return false;                             // already asking, or saving after a Save
@@ -992,7 +992,8 @@ function guardClose() {
 }
 
 async function closeTab(d) {
-  if (d.pdf?.busy || closeAsk || closing) return;
+  if (d.pdf?.busy) { note('Wait for the PDF to finish, then close'); return; }
+  if (closeAsk || closing) return;
   if (d.pdf?.pages > 1 && PS.hasChanges(d)) {
     const answer = await askSaveChanges([d]);
     if (answer === 'cancel') return;
@@ -1136,13 +1137,13 @@ async function dwgBytes(name, path, buf) {
 /** Opens a file's bytes as a new tab (path: where it lives on disk, in the app). */
 async function openBytes(name, buf, path = null) {
   // the same file already open (in the app, where files have paths): show its tab, never a second copy
-  const same = path ? state.docs.findIndex((d) => (d.fromDwg ? d.openPath : d.path) && pathKey(d.fromDwg ? d.openPath : d.path) === pathKey(path)) : -1;
+  const same = path ? state.docs.findIndex((d) => !d.pdf?.picture && [d.path, d.openPath].some((p) => p && pathKey(p) === pathKey(path))) : -1;
   if (same >= 0) {
     state.doc = same; showDoc(); rememberRecent(path);
     note(`${name} is already open: here is its tab` + (state.docs[same].dirty ? ' (with unsaved changes)' : ''));
     return;
   }
-  if (/\.pdf$/i.test(name) || (!/\.dxf$/i.test(name) && buf.byteLength && isPdf(buf instanceof ArrayBuffer ? buf : buf.buffer))) { await openPdf(name, buf, path); return; }
+  if (/\.pdf$/i.test(name) || (!/\.dxf$/i.test(name) && buf.byteLength && isPdf(buf))) { await openPdf(name, buf, path); return; }
   const dwg = /\.dwg$/i.test(name);
   if (!dwg && !/\.dxf$/i.test(name)) { note(name + ': Opens DXF or PDF; pictures go in as a background (Background…)'); return; }
   if (dwg && !(buf = await dwgBytes(name, path, buf))) return;
@@ -1226,7 +1227,9 @@ async function openPath(path, recent = false) {
     }
     await openBytes(name, await t.fs.readFile(path), path);
   } catch (err) {
-    if (recent) { forgetRecent(path); note(name + ': not found (moved or deleted), so it is off Recent files'); }
+    let missing = false;
+    if (recent) { try { missing = await t.fs.exists?.(path) === false; } catch { /* an existence check can also be denied */ } }
+    if (missing) { forgetRecent(path); note(name + ': not found (moved or deleted), so it is off Recent files'); }
     else note('Open failed: ' + (err && err.message ? err.message : err));
   }
 }
@@ -3547,18 +3550,23 @@ function exportDxf() {
     } catch (e) { note('Export failed: ' + (e?.message || e)); }
   };
   const row = (label, input) => h('label', { class: 'qs-row' }, h('span', null, label), input);
+  const cancel = h('button', { class: 'btn', type: 'button', 'data-testid': 'export-dxf-cancel', onclick: finish }, 'Cancel');
+  const close = h('button', { class: 'btn sm', type: 'button', 'aria-label': 'Close', onclick: finish }, '×');
   const dlg = h('div', { class: 'pop-dialog export-dxf-dialog', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Export DXF', 'data-testid': 'export-dxf-dialog' },
-    h('div', { class: 'row between' }, h('strong', null, 'Export DXF'), h('button', { class: 'btn sm', type: 'button', 'aria-label': 'Close', onclick: finish }, '×')),
+    h('div', { class: 'row between' }, h('strong', null, 'Export DXF'), close),
     h('span', { class: 'lbl' }, 'Write a DXF copy with export settings.'),
     row('File name', name), row('Units', units), row('Scale', scale), row('Precision', precision),
     h('span', { class: 'lbl' }, 'Scale is applied about 0,0. Precision sets decimal places for coordinates and lengths.'), err,
     h('div', { class: 'row' }, h('span', { class: 'lbl', style: 'flex:1' }, 'Next: native file picker'),
-      h('button', { class: 'btn', type: 'button', 'data-testid': 'export-dxf-cancel', onclick: finish }, 'Cancel'),
+      cancel,
       h('button', { class: 'btn primary', type: 'button', 'data-testid': 'export-dxf-go', onclick: go }, 'Export')));
   const back = h('div', { class: 'pop-back' }, dlg);
   const onKey = (e) => {
     if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish(); }
-    else if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); go(); }
+    else if (e.key === 'Enter' && dlg.contains(document.activeElement)) {
+      e.preventDefault(); e.stopPropagation();
+      if ([cancel, close].includes(document.activeElement)) finish(); else go();
+    }
   };
   back.addEventListener('pointerdown', (e) => { if (e.target === back) finish(); });
   document.addEventListener('keydown', onKey, true);
@@ -5207,7 +5215,11 @@ async function importBackgroundPdf(name, bytes, newTab = false, path = null) {
   const keep = bytes.slice(0);                                      // pdf.js takes the buffer it is given: a copy stays for the other sheets
   try {
     const probe = await renderPdfPage(bytes.slice(0), { page: 1, dpi: 20 });
-    if (probe.pages > 1) { const a = window.prompt(`${name} has ${probe.pages} pages. Which page?`, '1'); page = Math.min(probe.pages, Math.max(1, parseInt(a, 10) || 1)); }
+    if (probe.pages > 1) {
+      const a = window.prompt(`${name} has ${probe.pages} pages. Which page?`, '1');
+      if (a === null) { note(''); return; }
+      page = Math.min(probe.pages, Math.max(1, parseInt(a, 10) || 1));
+    }
     const r = await renderPdfPage(bytes, { page, dpi: 150 });
     placeBackground(name, await createImageBitmap(r.canvas), r.mmPerPx, `page ${page} of ${r.pages}, true size from the PDF`, newTab, { path, pdf: { name, bytes: keep, pages: r.pages, page, picture: true } });
   } catch (err) { note(name + ': could not draw this PDF (' + (err && err.message ? err.message : err) + ')'); }

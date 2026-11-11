@@ -8117,7 +8117,7 @@ try {
   await step('Recent files (TODO 33): in the app the File menu lists them; one that is gone comes off the list', async () => {
     const bytes = [...readFileSync('fixtures/outline.dxf')];
     await page.evaluate((b) => {                                     // a stand-in for the app's file API: only readFile
-      window.__TAURI__ = { fs: { readFile: async (p) => { if (/gone/.test(p)) throw new Error('not found'); return new Uint8Array(b); } } };
+      window.__TAURI__ = { fs: { exists: async (p) => !/gone/.test(p), readFile: async (p) => { if (/gone/.test(p)) throw new Error('not found'); return new Uint8Array(b); } } };
       localStorage.setItem('pd-recent', JSON.stringify(['C:\\work\\outline.dxf', 'C:\\work\\gone.dxf']));
     }, bytes);
     const fileMenu = page.locator('[data-menu=File]');
@@ -20407,6 +20407,180 @@ try {
       await p.reload(); await p.waitForSelector('[data-testid=count]', { state: 'attached' }); await open();
       assert.equal(await alias('Contour').inputValue(), 'ct'); assert.equal(await key('Contour').textContent(), 'Press keys…');
     } finally { await scCtx.close(); }
+  });
+
+  await step('TODO 253b: Export DXF Enter respects dialog focus and Cancel / Close', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const p = await context.newPage();
+    p.on('pageerror', (e) => errors.push(String(e)));
+    try {
+      await p.goto(URL_ + '?autosave=86400000');
+      await p.getByTestId('picker').setInputFiles('fixtures/outline.dxf');
+      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'outline.dxf');
+      await p.evaluate(() => {
+        window.__saveCalls = 0;
+        window.__TAURI__ = { dialog: { save: async () => { window.__saveCalls++; return null; } }, fs: { writeTextFile: async () => {} } };
+      });
+      for (const [focus, closes, saves] of [
+        ['export-dxf-cancel', true, 0], ['Close', true, 0],
+        ['outside', false, 0], ['export-dxf-name', true, 1],
+        ['export-dxf-scale', true, 1], ['export-dxf-precision', true, 1],
+        ['export-dxf-units', true, 1], ['export-dxf-go', true, 1],
+      ]) {
+        await p.locator('[data-menu=File]').click();
+        await p.getByRole('menuitem', { name: 'Export DXF…', exact: true }).click();
+        const dialog = p.getByTestId('export-dxf-dialog'); await dialog.waitFor();
+        const before = await p.evaluate(() => window.__saveCalls);
+        if (focus === 'outside') await p.evaluate(() => document.activeElement.blur());
+        else await (focus === 'Close' ? dialog.getByRole('button', { name: 'Close', exact: true }) : p.getByTestId(focus)).focus();
+        await p.keyboard.press('Enter');
+        assert.equal(await dialog.count(), closes ? 0 : 1, focus);
+        assert.equal(await p.evaluate(() => window.__saveCalls), before + saves, focus + ': native picker calls');
+        if (!closes) await p.keyboard.press('Escape');
+      }
+    } finally { await context.close(); }
+  });
+
+  await step('TODO 253b: PDF page prompt Cancel imports nothing; invalid input falls back to page 1', async () => {
+    const pdf = [...writePdf([new Page(80, 50), new Page(120, 90)])];
+    for (const [answer, expected] of [[null, null], ['', 1], ['bad', 1], ['0', 1], ['-3', 1], ['2', 2], ['99', 2]]) {
+      const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+      const p = await context.newPage();
+      p.on('pageerror', (e) => errors.push(String(e)));
+      try {
+        await p.addInitScript(({ answer, pdf }) => {
+          window.__pagePrompts = [];
+          window.prompt = (message, value) => { window.__pagePrompts.push([message, value]); return answer; };
+          window.__TAURI__ = { dialog: { open: async () => 'C:/jobs/pages.pdf', ask: async () => true },
+            fs: { readFile: async () => new Uint8Array(pdf) } };
+        }, { answer, pdf });
+        await p.goto(URL_ + '?autosave=86400000');
+        await p.getByTestId('count').waitFor({ state: 'attached' });
+        const before = await p.locator('.dtab .tname').allTextContents();
+        await p.getByTestId('open').click();
+        await p.waitForFunction(() => window.__pagePrompts.length && !document.querySelector('[data-testid=cmd-prompt]').textContent.startsWith('Reading '));
+        assert.deepEqual(await p.evaluate(() => window.__pagePrompts), [['pages.pdf has 2 pages. Which page?', '1']]);
+        if (expected === null) {
+          assert.deepEqual(await p.locator('.dtab .tname').allTextContents(), before);
+          assert.equal(await p.getByTestId('cmd-prompt').textContent(), '');
+          assert.equal(await p.getByTestId('bg-name').textContent(), '');
+        } else {
+          assert.match(await p.getByTestId('cmd-prompt').textContent(), new RegExp(`page ${expected} of 2, true size from the PDF`));
+          assert.equal(await panelControl(p, p.getByTestId('bg-name')).textContent(), 'pages.pdf');
+        }
+      } finally { await context.close(); }
+    }
+  });
+
+  await step('TODO 253b: reopening matches both drawing paths and skips PDF backgrounds', async () => {
+    const vector = [...readFileSync('fixtures/vector.pdf')], drawing = [...readFileSync('fixtures/outline.dxf')];
+    const picture = [...readFileSync('fixtures/text-only.pdf')];
+    for (const [kind, saved, reopen, duplicate] of [
+      ['pdf', false, 'C:/jobs/source.pdf', true],
+      ['pdf', true, 'C:/jobs/source.pdf', true],
+      ['pdf', true, 'C:/jobs/renamed.dxf', true],
+      ['dxf', true, 'C:/jobs/source.dxf', true],
+      ['dxf', true, 'C:/jobs/renamed.dxf', true],
+      ['picture', false, 'C:/jobs/source.pdf', false],
+    ]) {
+      const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+      const p = await context.newPage();
+      p.on('pageerror', (e) => errors.push(String(e)));
+      try {
+        await p.addInitScript(({ kind, vector, drawing, picture }) => {
+          window.__picked = `C:/jobs/source.${kind === 'dxf' ? 'dxf' : 'pdf'}`;
+          window.__readPicture = kind === 'picture'; window.__sidecars = 0;
+          window.__TAURI__ = { dialog: { open: async () => window.__picked, save: async () => 'C:/jobs/renamed.dxf', ask: async () => true },
+            fs: { exists: async () => false, writeTextFile: async () => {},
+              readTextFile: async () => { window.__sidecars++; throw new Error('no sidecar'); },
+              readFile: async () => new Uint8Array(kind === 'dxf' ? drawing : window.__readPicture ? picture : vector) } };
+        }, { kind, vector, drawing, picture });
+        await p.goto(URL_ + '?autosave=86400000');
+        await p.getByTestId('open').click();
+        await p.waitForFunction(() => /Opened |Background /.test(document.querySelector('[data-testid=cmd-prompt]').textContent));
+        if (saved) {
+          await p.keyboard.press('Control+Shift+s');
+          await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'renamed.dxf');
+        }
+        const sourceName = await p.locator('.dtab.on .tname').textContent();
+        await p.getByTestId('picker').setInputFiles({ name: 'other.dxf', mimeType: 'application/dxf', buffer: Buffer.from(drawing) });
+        await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'other.dxf');
+        const count = await p.locator('.dtab').count(), sidecars = await p.evaluate(() => window.__sidecars);
+        await p.evaluate((path) => { window.__picked = path.replaceAll('/', '\\').toUpperCase(); window.__readPicture = false; }, reopen);
+        await p.getByTestId('open').click();
+        await p.waitForFunction(() => /already open|Opened /.test(document.querySelector('[data-testid=cmd-prompt]').textContent));
+        assert.equal(await p.locator('.dtab').count(), count + (duplicate ? 0 : 1), `${kind}, ${reopen}`);
+        if (duplicate) {
+          assert.match(await p.getByTestId('cmd-prompt').textContent(), /already open/);
+          assert.equal(await p.locator('.dtab.on .tname').textContent(), sourceName);
+          assert.equal(await p.evaluate(() => window.__sidecars), sidecars, 'no second sidecar read');
+        } else assert.match(await p.getByTestId('cmd-prompt').textContent(), /as a drawing/);
+      } finally { await context.close(); }
+    }
+  });
+
+  await step('TODO 253b: Recent errors forget only a confirmed missing file', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const p = await context.newPage();
+    p.on('pageerror', (e) => errors.push(String(e)));
+    try {
+      await p.goto(URL_ + '?autosave=86400000');
+      for (const [exists, message, forget] of [
+        ['true', 'file is locked', false], ['missing', 'scope denied', false],
+        ['throws', 'read denied', false], ['false', 'not found', true],
+        ['true', 'other failure', false], ['false', 'plain error', true],
+      ]) {
+        await p.evaluate(({ exists, message }) => {
+          localStorage.setItem('pd-recent', JSON.stringify(['C:/jobs/recent.dxf']));
+          window.__TAURI__ = { fs: { readFile: async () => { if (message === 'plain error') throw message; throw new Error(message); } } };
+          if (exists !== 'missing') window.__TAURI__.fs.exists = async () => { if (exists === 'throws') throw new Error('exists denied'); return exists === 'true'; };
+        }, { exists, message });
+        await p.locator('[data-menu=File]').click();
+        await p.getByRole('menuitem').filter({ hasText: '1  recent.dxf' }).click();
+        const expected = forget ? 'recent.dxf: not found (moved or deleted), so it is off Recent files' : 'Open failed: ' + message;
+        await p.waitForFunction((expected) => document.querySelector('[data-testid=cmd-prompt]').textContent === expected, expected);
+        assert.deepEqual(await p.evaluate(() => JSON.parse(localStorage.getItem('pd-recent'))), forget ? [] : ['C:/jobs/recent.dxf'], exists);
+      }
+    } finally { await context.close(); }
+  });
+
+  await step('TODO 253b: busy PDF window and tab close explain why they stay open', async () => {
+    for (const close of ['window', 'tab']) {
+      const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+      const p = await context.newPage();
+      p.on('pageerror', (e) => errors.push(String(e)));
+      let release;
+      try {
+        await p.addInitScript(() => {
+          window.__destroyed = 0;
+          window.__TAURI__ = { window: { getCurrentWindow: () => ({ onCloseRequested: (fn) => { window.__onClose = fn; }, destroy: async () => { window.__destroyed++; } }) } };
+        });
+        await p.goto(URL_ + '?autosave=86400000');
+        await p.getByTestId('picker').setInputFiles('fixtures/three-sheets.pdf');
+        await p.getByTestId('bal-sheets').waitFor();
+        const count = await p.locator('.dtab').count();
+        const held = new Promise((resolve) => { release = resolve; });
+        let requested;
+        const workerRequested = new Promise((resolve) => { requested = resolve; });
+        await p.route('**/pdf.worker.min.mjs', async (route) => { requested(); await held; await route.continue(); });
+        await p.locator('[data-sheet="2"]').click();
+        await workerRequested;
+        if (close === 'window') await p.evaluate(() => window.__onClose({ preventDefault() {} }));
+        else await p.locator('.dtab.on .x').click();
+        assert.equal(await p.getByTestId('cmd-prompt').textContent(), 'Wait for the PDF to finish, then close', close);
+        assert.equal(await p.locator('.dtab').count(), count);
+        assert.equal(await p.evaluate(() => window.__destroyed), 0);
+        release();
+        await p.waitForFunction(() => document.querySelector('[data-testid=sheet-chip]').textContent === 'Sheet 2 / 3');
+        if (close === 'window') {
+          await p.evaluate(() => window.__onClose({ preventDefault() {} }));
+          assert.equal(await p.evaluate(() => window.__destroyed), 1, 'window closes after reading finishes');
+        } else {
+          await p.locator('.dtab.on .x').click();
+          assert.equal(await p.locator('.dtab.on .tname').textContent(), 'Drawing 1', 'tab closes after reading finishes');
+        }
+      } finally { release?.(); await context.close(); }
+    }
   });
 
   await step('TODO 109a: File → Export DXF… writes a copy in inches, scaled, with 2 decimals; the drawing stays unchanged', async () => {
