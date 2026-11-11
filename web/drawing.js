@@ -500,7 +500,7 @@ export function flatten(doc, hidden = new Set()) {
           break;
         }
         case 'INSERT': case 'ACAD_TABLE': {
-          const blk = doc.blocks[(f[2] || '').trim()];
+          const bn = (f[2] || '').trim(), blk = Object.hasOwn(doc.blocks, bn) ? doc.blocks[bn] : undefined;
           if (!blk || blk.xref) { skip(blk ? 'XREF' : 'INSERT'); }
           else if (depth < 10) {
             const at = [num(f[10]), num(f[20])];
@@ -532,7 +532,7 @@ export function flatten(doc, hidden = new Set()) {
           break;
         }
         case 'DIMENSION': {
-          const blk = doc.blocks[(f[2] || '').trim()];
+          const bn = (f[2] || '').trim(), blk = Object.hasOwn(doc.blocks, bn) ? doc.blocks[bn] : undefined;
           if (blk && depth < 10) walk(blk.entities, { m, ...inner(lt) }, depth + 1);
           break;
         }

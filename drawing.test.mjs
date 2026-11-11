@@ -6,6 +6,7 @@ const { createHash } = await import('node:crypto');
 const D = await import('./web/drawing.js');
 const G = await import('./web/geom.js');
 const W = await import('./web/dxf-write.js');
+const E = await import('./web/edit.js');
 const { paintDrawing } = await import('./web/render.js');
 const { planPdf } = await import('./web/pdf-export.js');
 
@@ -301,12 +302,16 @@ test('TODO 184: a block of 8 DIMENSIONs that name itself ends in a DrawingError,
 test('TODO 234: an INSERT named like an Object.prototype member is skipped when no such block exists, drawn when it does', () => {
   for (const name of ['constructor', 'toString', 'valueOf', '__proto__']) {
     const ins = g([0, 'INSERT'], [8, '0'], [2, name], [10, 0], [20, 0]);
-    const missing = lay(dxf([ins]));
-    assert.equal(missing.items.length, 0, name + ': nothing drawn');
-    assert.deepEqual(missing.left, { INSERT: 1 }, name + ': said, not hidden');
     const blocks = g([0, 'BLOCK'], [8, '0'], [2, name], [70, 0], [10, 0], [20, 0]) + '\n' + g([0, 'LINE'], [8, '0'], [10, 0], [20, 0], [11, 5], [21, 5]) + '\n' + g([0, 'ENDBLK'], [8, '0']);
-    const real = lay(dxf([ins], { blocks }));
-    assert.equal(real.items.length, 1, name + ': its block is drawn');
-    assert.deepEqual(real.left, {}, name + ': nothing left out');
+    // as parsed, after an edit (removeEntities rebuilds blocks as a plain object), and after a structured clone
+    const forms = { parsed: (d) => d, 'removeEntities': (d) => ({ ...d, ...E.removeEntities(d, new Set()) }), structuredClone };
+    for (const [form, make] of Object.entries(forms)) {
+      const missing = D.flatten(make(D.readDxf(dxf([ins]))));
+      assert.equal(missing.items.length, 0, `${name} ${form}: nothing drawn`);
+      assert.deepEqual(missing.left, { INSERT: 1 }, `${name} ${form}: said, not hidden`);
+      const real = D.flatten(make(D.readDxf(dxf([ins], { blocks }))));
+      assert.equal(real.items.length, 1, `${name} ${form}: its block is drawn`);
+      assert.deepEqual(real.left, {}, `${name} ${form}: nothing left out`);
+    }
   }
 });
