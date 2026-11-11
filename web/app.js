@@ -1137,7 +1137,7 @@ async function dwgBytes(name, path, buf) {
 /** Opens a file's bytes as a new tab (path: where it lives on disk, in the app). */
 async function openBytes(name, buf, path = null) {
   // the same file already open (in the app, where files have paths): show its tab, never a second copy
-  const same = path ? state.docs.findIndex((d) => !d.pdf?.picture && [d.path, d.openPath].some((p) => p && pathKey(p) === pathKey(path))) : -1;
+  const same = path ? state.docs.findIndex((d) => [d.path, !d.pdf?.picture && d.openPath].some((p) => p && pathKey(p) === pathKey(path))) : -1;
   if (same >= 0) {
     state.doc = same; showDoc(); rememberRecent(path);
     note(`${name} is already open: here is its tab` + (state.docs[same].dirty ? ' (with unsaved changes)' : ''));

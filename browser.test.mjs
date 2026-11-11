@@ -20458,14 +20458,18 @@ try {
         await p.getByTestId('count').waitFor({ state: 'attached' });
         const before = await p.locator('.dtab .tname').allTextContents();
         await p.getByTestId('open').click();
-        await p.waitForFunction(() => window.__pagePrompts.length && !document.querySelector('[data-testid=cmd-prompt]').textContent.startsWith('Reading '));
+        // the expected note text (empty after Cancel), wrapped so the empty string is truthy
+        const shown = await (await p.waitForFunction((expected) => {
+          const s = document.querySelector('[data-testid=cmd-prompt]').textContent;
+          return window.__pagePrompts.length && (expected === null ? s === '' : s.includes(`page ${expected} of 2, true size from the PDF`)) && { s };
+        }, expected)).jsonValue();
         assert.deepEqual(await p.evaluate(() => window.__pagePrompts), [['pages.pdf has 2 pages. Which page?', '1']]);
         if (expected === null) {
           assert.deepEqual(await p.locator('.dtab .tname').allTextContents(), before);
-          assert.equal(await p.getByTestId('cmd-prompt').textContent(), '');
+          assert.equal(shown.s, '');
           assert.equal(await p.getByTestId('bg-name').textContent(), '');
         } else {
-          assert.match(await p.getByTestId('cmd-prompt').textContent(), new RegExp(`page ${expected} of 2, true size from the PDF`));
+          assert.match(shown.s, new RegExp(`page ${expected} of 2, true size from the PDF`));
           assert.equal(await panelControl(p, p.getByTestId('bg-name')).textContent(), 'pages.pdf');
         }
       } finally { await context.close(); }
@@ -20482,18 +20486,19 @@ try {
       ['dxf', true, 'C:/jobs/source.dxf', true],
       ['dxf', true, 'C:/jobs/renamed.dxf', true],
       ['picture', false, 'C:/jobs/source.pdf', false],
+      ['dxfbg', false, 'C:/jobs/source.dxf', true],
     ]) {
       const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
       const p = await context.newPage();
       p.on('pageerror', (e) => errors.push(String(e)));
       try {
         await p.addInitScript(({ kind, vector, drawing, picture }) => {
-          window.__picked = `C:/jobs/source.${kind === 'dxf' ? 'dxf' : 'pdf'}`;
+          window.__picked = `C:/jobs/source.${kind === 'dxf' || kind === 'dxfbg' ? 'dxf' : 'pdf'}`;
           window.__readPicture = kind === 'picture'; window.__sidecars = 0;
           window.__TAURI__ = { dialog: { open: async () => window.__picked, save: async () => 'C:/jobs/renamed.dxf', ask: async () => true },
             fs: { exists: async () => false, writeTextFile: async () => {},
               readTextFile: async () => { window.__sidecars++; throw new Error('no sidecar'); },
-              readFile: async () => new Uint8Array(kind === 'dxf' ? drawing : window.__readPicture ? picture : vector) } };
+              readFile: async () => new Uint8Array(kind === 'dxf' || kind === 'dxfbg' ? drawing : window.__readPicture ? picture : vector) } };
         }, { kind, vector, drawing, picture });
         await p.goto(URL_ + '?autosave=86400000');
         await p.getByTestId('open').click();
@@ -20502,19 +20507,23 @@ try {
           await p.keyboard.press('Control+Shift+s');
           await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'renamed.dxf');
         }
+        if (kind === 'dxfbg') {                                         // a PDF background on the DXF tab: the DXF is still open
+          await p.getByTestId('bg-picker').setInputFiles('fixtures/text-only.pdf');
+          await p.waitForFunction(() => /^Background text-only\.pdf/.test(document.querySelector('[data-testid=cmd-prompt]').textContent));
+        }
         const sourceName = await p.locator('.dtab.on .tname').textContent();
         await p.getByTestId('picker').setInputFiles({ name: 'other.dxf', mimeType: 'application/dxf', buffer: Buffer.from(drawing) });
         await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'other.dxf');
         const count = await p.locator('.dtab').count(), sidecars = await p.evaluate(() => window.__sidecars);
         await p.evaluate((path) => { window.__picked = path.replaceAll('/', '\\').toUpperCase(); window.__readPicture = false; }, reopen);
         await p.getByTestId('open').click();
-        await p.waitForFunction(() => /already open|Opened /.test(document.querySelector('[data-testid=cmd-prompt]').textContent));
+        const shown = await (await p.waitForFunction(() => { const s = document.querySelector('[data-testid=cmd-prompt]').textContent; return /already open|Opened /.test(s) && s; })).jsonValue();
         assert.equal(await p.locator('.dtab').count(), count + (duplicate ? 0 : 1), `${kind}, ${reopen}`);
         if (duplicate) {
-          assert.match(await p.getByTestId('cmd-prompt').textContent(), /already open/);
+          assert.match(shown, /already open/);
           assert.equal(await p.locator('.dtab.on .tname').textContent(), sourceName);
           assert.equal(await p.evaluate(() => window.__sidecars), sidecars, 'no second sidecar read');
-        } else assert.match(await p.getByTestId('cmd-prompt').textContent(), /as a drawing/);
+        } else assert.match(shown, /as a drawing/);
       } finally { await context.close(); }
     }
   });
@@ -20567,7 +20576,8 @@ try {
         await workerRequested;
         if (close === 'window') await p.evaluate(() => window.__onClose({ preventDefault() {} }));
         else await p.locator('.dtab.on .x').click();
-        assert.equal(await p.getByTestId('cmd-prompt').textContent(), 'Wait for the PDF to finish, then close', close);
+        const shown = await (await p.waitForFunction(() => { const s = document.querySelector('[data-testid=cmd-prompt]').textContent; return s === 'Wait for the PDF to finish, then close' && s; })).jsonValue();
+        assert.equal(shown, 'Wait for the PDF to finish, then close', close);
         assert.equal(await p.locator('.dtab').count(), count);
         assert.equal(await p.evaluate(() => window.__destroyed), 0);
         release();
