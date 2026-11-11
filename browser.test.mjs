@@ -20483,11 +20483,11 @@ try {
       ['pdf', false, 'C:/jobs/source.pdf', true],
       ['pdf', true, 'C:/jobs/source.pdf', true],
       ['pdf', true, 'C:/jobs/renamed.dxf', true],
-      ['dxf', true, 'C:/jobs/source.dxf', true],
+      ['dxf', false, 'C:/jobs/source.dxf', true],                       // a DXF saved under a new name: source.dxf then opens a new tab (TODO 236)
       ['dxf', true, 'C:/jobs/renamed.dxf', true],
       ['picture', false, 'C:/jobs/source.pdf', false],
       ['dxfbg', false, 'C:/jobs/source.dxf', true],
-      ['dxfbg', true, 'C:/jobs/source.dxf', true],                      // a DXF saved under a new name, then given a PDF background
+      ['dxfbg', true, 'C:/jobs/renamed.dxf', true],                     // a DXF saved under a new name, then given a PDF background
       ['dwgbg', false, 'C:/jobs/source.dwg', true],                     // a DWG tab (path null, openPath set) with a PDF background
     ]) {
       const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });

@@ -1136,8 +1136,9 @@ async function dwgBytes(name, path, buf) {
 }
 /** Opens a file's bytes as a new tab (path: where it lives on disk, in the app). */
 async function openBytes(name, buf, path = null) {
-  // the same file already open (in the app, where files have paths): show its tab, never a second copy
-  const same = path ? state.docs.findIndex((d) => [d.path, !d.bgTab && d.openPath].some((p) => p && pathKey(p) === pathKey(path))) : -1;
+  // the same file already open (in the app, where files have paths): show its tab, never a second copy.
+  // Path only: a DXF saved under a new name no longer is its opened file; a DWG / PDF tab has no path of its own, so its source counts
+  const same = path ? state.docs.findIndex((d) => [d.path, (d.fromDwg || d.fromPdf) && d.openPath].some((p) => p && pathKey(p) === pathKey(path))) : -1;
   if (same >= 0) {
     state.doc = same; showDoc(); rememberRecent(path);
     note(`${name} is already open: here is its tab` + (state.docs[same].dirty ? ' (with unsaved changes)' : ''));
@@ -5229,7 +5230,7 @@ function placeBackground(name, bitmap, mm, how, newTab = false, src = null) {
   const bg = { name, bitmap, w: bitmap.width, h: bitmap.height, mm, x: 0, y: 0, visible: true };
   if (!d || !d.raw) {
     const raw = { header: {}, layers: {}, ltypes: {}, blocks: {}, entities: [] };
-    d = { name, path: null, openPath: src && src.path, bgTab: true, dirty: false, ...tabFields(raw, flatten(raw)) };
+    d = { name, path: null, openPath: src && src.path, dirty: false, ...tabFields(raw, flatten(raw)) };
     d.bg = bg;
     addTab(d);
     balLoad(d, src && src.path, name);
