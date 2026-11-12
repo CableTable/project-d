@@ -337,3 +337,43 @@ test('TODO 234: an INSERT named like an Object.prototype member is skipped when 
     }
   }
 });
+
+test('spline cache: cached flatten equals cold flatten after edits and undo', async () => {
+  const { offsetEntity } = await import('./web/modify.js');
+  const { stretchEntities } = await import('./web/stretch.js');
+  const knots = [0, 0, 0, 0, 1, 2, 3, 4, 4, 4, 4];
+  const nurbsSpline = (x, closed) => [[0, 'SPLINE'], [8, '0'], [70, closed ? 1 : 0], [71, 3], [72, knots.length], [73, 7], ...knots.map((k) => [40, k]),
+    ...[0, 1, 2, 3, 4, 5, 6].flatMap((i) => [[10, x + 10 * i], [20, (i % 3) * 7]])];
+  const fitSpline = [[0, 'SPLINE'], [8, '0'], [70, 1], [71, 3], [74, 5], [11, 0], [21, 40], [11, 10], [21, 40], [11, 10], [21, 50], [11, 0], [21, 40], [11, 0], [21, 40]];   // closed, repeats its first fit point twice: one trim per flatten, never two
+  const blocks = [g([0, 'BLOCK'], [8, '0'], [2, 'S'], [70, 0], [10, 0], [20, 0], [30, 0], [3, 'S']), g(...nurbsSpline(0, false)), g([0, 'ENDBLK'])].join('\n');
+  const ins = (x) => g([0, 'INSERT'], [8, '0'], [2, 'S'], [10, x], [20, 100], [30, 0]);
+  const text = dxf([nurbsSpline(0, true), nurbsSpline(100, false), fitSpline].map((p) => g(...p)).concat(ins(0), ins(200)), { blocks });
+  const raw0 = D.readDxf(text);
+  const history = [raw0];
+  const check = (raw, what) => {
+    const warm = D.flatten(raw);
+    D.clearSplineCache();
+    assert.deepEqual(warm.items, D.flatten(raw).items, what);
+    assert.ok(warm.items.filter((it) => it.spl).length >= 3, what + ': splines drawn');
+  };
+  check(raw0, 'open');
+  check(raw0, 'again (a cached closed fit spline keeps its points)');
+  const next = (entities, blocks2) => { const raw = { ...history.at(-1), entities, ...(blocks2 ? { blocks: blocks2 } : {}) }; history.push(raw); return raw; };
+  const moved = E.moveEntities(raw0, new Set([0, 2]), 5, -3);
+  check(next(moved.entities, moved.blocks), 'after move');
+  const grip = stretchEntities(history.at(-1), [{ x0: 4, y0: -4, x1: 6, y1: -2 }], 4, 9);     // a box round the first control point of the moved spline 0
+  assert.ok(grip.stretched + grip.moved > 0, 'the grip edit changed something');
+  check(next(history.at(-1).entities.map((e, i) => grip.next.get(i) ?? e), grip.blocks), 'after grip edit');
+  const off = offsetEntity(history.at(-1).entities[1], 3, [150, 5]);
+  assert.ok(off.ent, 'offset made a spline');
+  check(next([...history.at(-1).entities, off.ent]), 'after offset');
+  check(history[2], 'undo');
+  check(history[1], 'undo again');
+  check(history[3], 'redo');
+  // the cache is hit: a record edited in place (nothing in the app does that) still draws its old points until the cache is cleared
+  const before = D.flatten(raw0).items.map((it) => it.ops.slice());
+  raw0.entities[0].r.v[raw0.entities[0].r.c.indexOf(10)] = '999';
+  assert.deepEqual(D.flatten(raw0).items.map((it) => it.ops), before, 'an unchanged record is not flattened again');
+  D.clearSplineCache();
+  assert.notDeepEqual(D.flatten(raw0).items.map((it) => it.ops), before, 'clearSplineCache flattens it again');
+});

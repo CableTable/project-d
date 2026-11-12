@@ -4,7 +4,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
-import { browserArgs, expandNeeds, shardSelector } from './tools/browser-shards.mjs';
+import { browserArgs, pickSteps, shardSelector } from './tools/browser-shards.mjs';
 const RUNNING_PROMPT = /Specify|Next point|Click inside|Select destination|Type the text|Esc (?:ends|cancels)[).:\s]*$/; // the command-bar prompt of a command still running (runStep fails a step that leaves one on); D's own copy, so no test reads a kit file
 import { chromium } from 'playwright';
 import { dimParams, readDim, dimGeom, GAP_MARK_CAP, addDimension, buildDim, dimOfEntity, lineOf as lineEnds } from './web/edit.js';
@@ -15865,6 +15865,8 @@ try {
   };
   const dimBlocks = async () => { const doc = await savedDoc(); return Object.fromEntries(Object.entries(doc.blocks).filter(([k]) => /^PD_DIM_/.test(k)).map(([k, b]) => [k, readDim(k, b)])); };
   const histLine = async () => (await t('cmd-hist').textContent()).trim();
+  // The dimension / leader rows sit in the Drawing scale fold, closed on a fresh page; isVisible does not open it, an earlier step that did (Picture PDF's ×25.4) is not always in the shard.
+  const drawingFoldOpen = async () => { await t('ptab-drawing').click(); const b = t('drawing-panel').locator('.section-toggle'); if (await b.getAttribute('aria-expanded') === 'false') await b.click(); };
   const flyoutItems = () => page.locator('.ctxmenu .mi').evaluateAll((a) => a.map((b) => [...b.children].map((c) => c.textContent).join(' ')));
   await step('dimension types: the button\'s corner triangle opens the flyout (Aligned D, Linear DLI, Radius DRA, Diameter DDI, Angle DAN); picking Linear puts the button on it and asks for the first extension line origin', async () => {
     await openGrips(dimDoc(), 'dims.dxf');
@@ -15960,6 +15962,7 @@ try {
     await page.locator('[data-tool=select]').click();
     await page.keyboard.press('Escape');
     await click(190, 150 + 0.1); await waitSel('1 selected');                          // the radius dimension's landing line, from (190,150) to its text
+    await drawingFoldOpen();
     assert.equal(await t('dim-row').isVisible(), true);
     const h0 = Number(await t('dim-height').inputValue());
     assert.equal(h0, 3.5, 'the Standard style text height');
@@ -16345,6 +16348,7 @@ try {
   await step('leader: a selected leader shows a grip at each point (drag one: the note follows the end), the Leader section (note, text height, arrow size, style), double-click edits the note, Delete', async () => {
     await page.locator('[data-tool=select]').click(); await page.keyboard.press('Escape');
     await click(80, 125); await waitSel('1 selected');                                // the first leader's line, half way
+    await drawingFoldOpen();
     assert.equal(await t('ldr-row').isVisible(), true); assert.equal(await t('dim-row').isVisible(), false);
     assert.equal(await t('ldr-note').inputValue(), 'DEBURR'); assert.equal(await t('ldr-height').inputValue(), '3.5'); assert.equal(await t('ldr-arrow').inputValue(), '2.5');
     assert.equal(await t('ldr-style').textContent(), 'Style: Standard. Note lands left.');
@@ -16390,6 +16394,7 @@ try {
     await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'leaders2.dxf');
     await page.locator('[data-tool=select]').click();
     await click(80, 125); await waitSel('1 selected');
+    await drawingFoldOpen();
     assert.equal(await t('ldr-row').isVisible(), true, 'the reopened leader is a leader'); assert.equal(await t('ldr-note').inputValue(), 'DEBURR ALL'); assert.equal(await t('ldr-height').inputValue(), '3.5');
     await page.keyboard.press('Escape');
     await menuItem('View', 'Theme: dark'); await page.waitForTimeout(150);
@@ -24648,6 +24653,27 @@ try {
     await closeTabs(/big/);
   });
 
+  await step('lag harness: spline fixture counts', async () => {
+    const { splineDoc } = await import('./tools/gen-big-dxf.mjs');
+    assert.equal(typeof splineDoc, 'function', 'P6 provides the generated spline fixture');
+    const { interact } = await import('./tools/perf-interact.mjs');
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    try {
+      const p = await ctx.newPage();
+      await p.goto(URL_ + '?autosave=86400000');
+      await p.waitForSelector('[data-testid=count]', { state: 'attached' });
+      const results = await interact(p, Buffer.from(writeDxf(splineDoc(900))), 'lag-spline.dxf');
+      const budgets = { open: [822680, 2], 'Measure hover': [16453720, 40], 'Line hover': [16453720, 40],
+        'select click': [411797, 1], Delete: [410883, 1], 'Ctrl+Z': [411340, 1], wheel: [411340, 1], pan: [411340, 1] };
+      assert.deepEqual(results.map((r) => r.action), Object.keys(budgets));
+      for (const r of results) {
+        const [lineTo, paints] = budgets[r.action];
+        assert.ok(r.lineTo <= lineTo, `${r.action}: lineTo ${r.lineTo} exceeds ${lineTo}`);
+        assert.ok(r.paints <= paints, `${r.action}: full paints ${r.paints} exceeds ${paints}`);
+      }
+    } finally { await ctx.close(); }
+  });
+
   const shiftRight = async (x, y) => {
     const p = await at(x, y);
     await page.keyboard.down('Shift');
@@ -28495,7 +28521,8 @@ try {
     await closeTabs(/./); assert.deepEqual(errors, []);
   });
 
-  for (const entry of expandNeeds(steps, only || '.*').filter(({ name }) => selectStep(name))) await runStep(page, entry, shotDir);
+  const picked = pickSteps(steps, only, selectStep);
+  for (const entry of picked) await runStep(page, entry, shotDir);
 } catch (e) {
   failed++;
   console.log('FAIL', e.stack || e);

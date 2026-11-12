@@ -4682,6 +4682,7 @@ function paintOverlay(gesture = false) {
       return;
     }
     snap = null; c.dataset.snap = '';
+    c.dataset.paints = (+c.dataset.paints || 0) + 1;
     const t0 = performance.now();
     const d = curDoc();
     // Artwork and layout sheet paper follow the same Work area.

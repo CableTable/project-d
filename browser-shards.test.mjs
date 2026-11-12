@@ -5,7 +5,7 @@ import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { browserArgs, expandNeeds, shardSelector } from './tools/browser-shards.mjs';
+import { browserArgs, expandNeeds, pickSteps, shardSelector } from './tools/browser-shards.mjs';
 
 test('four contiguous shards balance time, cover every step once, and include new steps', () => {
   const timings = { a: 8, b: 1, c: 1, d: 10, e: 5, f: 5, g: 10, 'no console errors': 0 };
@@ -73,6 +73,15 @@ test('name filters expand transitive and shared needs once, in file order', () =
   assert.throws(() => expandNeeds([{ name: 'a', needs: ['b'] }, { name: 'b' }], 'a'), /must precede/);
   assert.throws(() => expandNeeds([{ name: 'a', needs: ['a'] }], 'a'), /must precede/);
   assert.throws(() => expandNeeds([{ name: 'a' }, { name: 'a' }], 'a'), /Duplicate/);
+});
+
+test('a filter matching no step throws; a match, or no filter, picks steps', () => {
+  const steps = [{ name: 'one' }, { name: 'two' }];
+  const all = () => true;
+  assert.throws(() => pickSteps(steps, 'one,two', all), /filter one,two matches no step/);
+  assert.throws(() => pickSteps(steps, 'one', (name) => name !== 'one'), /matches no step/);
+  assert.deepEqual(pickSteps(steps, 'one|two', all), steps);
+  assert.deepEqual(pickSteps(steps, undefined, all), steps);
 });
 
 test('local runner launches four children together, prefixes failures and counts crashed children', () => {

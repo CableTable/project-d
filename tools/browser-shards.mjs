@@ -73,3 +73,10 @@ export function expandNeeds(steps, only) {
   steps.forEach((step, index) => { if (filter.test(step.name)) include(index); });
   return steps.filter((_, index) => selected.has(index));
 }
+
+// A filter that picks nothing (e.g. step titles joined with commas) must fail, not pass with 0 steps run.
+export function pickSteps(steps, only, select) {
+  const picked = expandNeeds(steps, only || '.*').filter(({ name }) => select(name));
+  if (only && !picked.length) throw new Error(`filter ${only} matches no step`);
+  return picked;
+}
