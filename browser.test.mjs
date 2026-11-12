@@ -15865,6 +15865,8 @@ try {
   };
   const dimBlocks = async () => { const doc = await savedDoc(); return Object.fromEntries(Object.entries(doc.blocks).filter(([k]) => /^PD_DIM_/.test(k)).map(([k, b]) => [k, readDim(k, b)])); };
   const histLine = async () => (await t('cmd-hist').textContent()).trim();
+  // The dimension / leader rows sit in the Drawing scale fold, closed on a fresh page; isVisible does not open it, an earlier step that did (Picture PDF's ×25.4) is not always in the shard.
+  const drawingFoldOpen = async () => { await t('ptab-drawing').click(); const b = t('drawing-panel').locator('.section-toggle'); if (await b.getAttribute('aria-expanded') === 'false') await b.click(); };
   const flyoutItems = () => page.locator('.ctxmenu .mi').evaluateAll((a) => a.map((b) => [...b.children].map((c) => c.textContent).join(' ')));
   await step('dimension types: the button\'s corner triangle opens the flyout (Aligned D, Linear DLI, Radius DRA, Diameter DDI, Angle DAN); picking Linear puts the button on it and asks for the first extension line origin', async () => {
     await openGrips(dimDoc(), 'dims.dxf');
@@ -15960,6 +15962,7 @@ try {
     await page.locator('[data-tool=select]').click();
     await page.keyboard.press('Escape');
     await click(190, 150 + 0.1); await waitSel('1 selected');                          // the radius dimension's landing line, from (190,150) to its text
+    await drawingFoldOpen();
     assert.equal(await t('dim-row').isVisible(), true);
     const h0 = Number(await t('dim-height').inputValue());
     assert.equal(h0, 3.5, 'the Standard style text height');
@@ -16345,6 +16348,7 @@ try {
   await step('leader: a selected leader shows a grip at each point (drag one: the note follows the end), the Leader section (note, text height, arrow size, style), double-click edits the note, Delete', async () => {
     await page.locator('[data-tool=select]').click(); await page.keyboard.press('Escape');
     await click(80, 125); await waitSel('1 selected');                                // the first leader's line, half way
+    await drawingFoldOpen();
     assert.equal(await t('ldr-row').isVisible(), true); assert.equal(await t('dim-row').isVisible(), false);
     assert.equal(await t('ldr-note').inputValue(), 'DEBURR'); assert.equal(await t('ldr-height').inputValue(), '3.5'); assert.equal(await t('ldr-arrow').inputValue(), '2.5');
     assert.equal(await t('ldr-style').textContent(), 'Style: Standard. Note lands left.');
@@ -16390,6 +16394,7 @@ try {
     await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'leaders2.dxf');
     await page.locator('[data-tool=select]').click();
     await click(80, 125); await waitSel('1 selected');
+    await drawingFoldOpen();
     assert.equal(await t('ldr-row').isVisible(), true, 'the reopened leader is a leader'); assert.equal(await t('ldr-note').inputValue(), 'DEBURR ALL'); assert.equal(await t('ldr-height').inputValue(), '3.5');
     await page.keyboard.press('Escape');
     await menuItem('View', 'Theme: dark'); await page.waitForTimeout(150);
