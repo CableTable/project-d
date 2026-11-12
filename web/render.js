@@ -5,7 +5,7 @@ import { placement, shownItems, itemVisible, spaceOf } from './doc.js';
 import { paintMode } from './wireframe.js';
 import { viewOrigin } from './view-origin.js';
 import { drawingPreviewBox, overlayBox } from './preview.js';
-import { outsideView, subPixel, skipPoint } from './perf.js';
+import { outsideView, subPixel, skipPoint, maxScale } from './perf.js';
 import { SNAP_NAME } from './snap.js';
 
 const SHEETS = { light: { bg: '#ffffff', fg: '#1b1d22' }, dark: { bg: '#000000', fg: '#e8e8ec' } };
@@ -144,7 +144,7 @@ function paintItems(c, fl, off, T, k, vr, dpr, col, sheetBg, hide, factor, wiref
     if (it.k !== 'n' && subPixel(b, pad, k)) continue;       // under half a pixel
     if (!itemVisible(it, off)) continue;
     if (hide && hide.has(it.e)) continue;                                  // an entity being dragged by a grip is drawn by the overlay
-    if (it.m !== cur) { flush(); cur = it.m; const M = mats[cur], V = mmul(T, M); origin = viewOrigin(V); c.setTransform(...V.slice(0, 4), ...mapply(V, ...origin)); kk = k * mscale(M) || k; pxPerUnit = Math.max(Math.hypot(V[0], V[1]), Math.hypot(V[2], V[3])); }
+    if (it.m !== cur) { flush(); cur = it.m; const M = mats[cur], V = mmul(T, M); origin = viewOrigin(V); c.setTransform(...V.slice(0, 4), ...mapply(V, ...origin)); kk = k * mscale(M) || k; pxPerUnit = maxScale(V); }
     drawn++;
     const mode = wireframe && it.attachedFill ? null : paintMode(it, wireframe);
     if (mode === 'stroke') {
@@ -179,7 +179,7 @@ function highlight(c, items, mats, T, k, dpr, accent, wireframe) {
   c.strokeStyle = accent; c.fillStyle = accent; c.setLineDash([]);
   let cur = -1, kk = k, pxPerUnit = 0, origin = [0, 0];
   for (const it of items) {
-    if (it.m !== cur) { cur = it.m; const M = mats[cur], V = mmul(T, M); origin = viewOrigin(V); c.setTransform(...V.slice(0, 4), ...mapply(V, ...origin)); kk = k * mscale(M) || k; pxPerUnit = Math.max(Math.hypot(V[0], V[1]), Math.hypot(V[2], V[3])); }
+    if (it.m !== cur) { cur = it.m; const M = mats[cur], V = mmul(T, M); origin = viewOrigin(V); c.setTransform(...V.slice(0, 4), ...mapply(V, ...origin)); kk = k * mscale(M) || k; pxPerUnit = maxScale(V); }
     c.lineWidth = 2.6 * dpr / kk;
     c.beginPath();
     if (it.k === 'p' || (wireframe && it.ops)) { trace(c, it.ops, origin, pxPerUnit); if (it.fill && !wireframe) c.fill('evenodd'); else c.stroke(); } else c.strokeRect(it.b[0] - origin[0], it.b[1] - origin[1], it.b[2] - it.b[0], it.b[3] - it.b[1]);

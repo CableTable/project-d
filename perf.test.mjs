@@ -44,6 +44,20 @@ test('skipPoint keeps run ends and stays within half a pixel', () => {
       scale, dpr, w: 200, h: 200, slots, hl: highlight ? [it] : [], wireframe });
     return calls;
   };
+  const shearOps = Array.from({ length: 11 }, (_, i) => [i ? 1 : 0, i * .1, i * .1]).flat();
+  for (const highlight of [false, true]) {
+    const matrix = [1, .2, 1, .2, 0, 0];
+    const full = paint(shearOps, { matrix, dpx: [6, 4] }), kept = paint(shearOps, { matrix, highlight });
+    let last = kept[0], skipped = 0;
+    for (const p of full.slice(1)) {
+      if (kept.some((q) => q[1] === p[1] && q[2] === p[2])) last = p;
+      else {
+        skipped++;
+        assert.ok(Math.hypot(p[1] - last[1], p[2] - last[2]) < .5, 'every skipped point under shear stays within half a device pixel of the last drawn point');
+      }
+    }
+    assert.ok(skipped > 0, 'sheared paths still skip sub-pixel points');
+  }
   const tiny = [0, 0, 0, 1, .1, 0, 1, .2, 0];
   for (const tail of [[], [0, .21, 0, 1, .3, 0, 1, .4, 0], [2, 1, 0, 1, 0, 1, 0, 1, 1.1, 0, 1, 1.2, 0], [3, 1, .1, 0, 1, .2, 0]]) {
     const full = paint([...tiny, ...tail], { dpx: [6, 4] }), kept = paint([...tiny, ...tail]);

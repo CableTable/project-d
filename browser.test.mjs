@@ -24695,7 +24695,7 @@ try {
           assert.ok(readFileSync(path).length > 1000, 'required screenshot exists');
         }
       }
-      for (const r of results) if (r.paints) assert.ok(r.lineTo / r.paints < pieces * .15, `${r.action}: ${r.lineTo / r.paints} lineTo per full paint must be under 15% of ${pieces} pieces`);
+      for (const r of results) if (r.paints) assert.ok(r.lineTo / r.paints < pieces * .16, `${r.action}: ${r.lineTo / r.paints} lineTo per full paint must be under 16% of ${pieces} pieces`);
     } finally { await ctx.close(); }
   });
 
