@@ -24648,6 +24648,27 @@ try {
     await closeTabs(/big/);
   });
 
+  await step('lag harness: spline fixture counts', async () => {
+    const { splineDoc } = await import('./tools/gen-big-dxf.mjs');
+    assert.equal(typeof splineDoc, 'function', 'P6 provides the generated spline fixture');
+    const { interact } = await import('./tools/perf-interact.mjs');
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    try {
+      const p = await ctx.newPage();
+      await p.goto(URL_ + '?autosave=86400000');
+      await p.waitForSelector('[data-testid=count]', { state: 'attached' });
+      const results = await interact(p, Buffer.from(writeDxf(splineDoc(900))), 'lag-spline.dxf');
+      const budgets = { open: [822680, 2], 'Measure hover': [16453720, 40], 'Line hover': [16453720, 40],
+        'select click': [411797, 1], Delete: [410883, 1], 'Ctrl+Z': [411340, 1], wheel: [411340, 1], pan: [411340, 1] };
+      assert.deepEqual(results.map((r) => r.action), Object.keys(budgets));
+      for (const r of results) {
+        const [lineTo, paints] = budgets[r.action];
+        assert.ok(r.lineTo <= lineTo, `${r.action}: lineTo ${r.lineTo} exceeds ${lineTo}`);
+        assert.ok(r.paints <= paints, `${r.action}: full paints ${r.paints} exceeds ${paints}`);
+      }
+    } finally { await ctx.close(); }
+  });
+
   const shiftRight = async (x, y) => {
     const p = await at(x, y);
     await page.keyboard.down('Shift');
