@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import * as L from './web/compare-list.js';
 import * as C from './web/compare.js';
 import { flatten, readDxf } from './web/drawing.js';
+import { makeIndex } from './web/edit.js';
 import { newDoc, addEntities, addLayer, writeDxf, rect, circle, line } from './web/dxf-write.js';
 
 function source(name, entities, factor = 1) {
@@ -130,4 +131,20 @@ test('a refreshed snapshot keeps its hidden layers by name when the layer number
     assert.deepEqual(structuredClone(source), before, 'refresh leaves the source unchanged');
     assert.deepEqual([...hidden.off], [...item.fl.layers.keys()].filter((i) => item.fl.layers[i].name === 'B'), 'the old snapshot keeps its own hidden list');
   }
+});
+
+test('P13 lag counter: addItem builds the pick index once (today\'s number, an upper bound; the Compare start fix tightens it to 0)', () => {
+  // makeIndex is imported by compare-list.js, so count what it allocates and nothing else does: its visibility mask, one Uint8Array per shown item.
+  const src = plate('count.dxf'), n = src.fl.items.length, Native = globalThis.Uint8Array;
+  let made = 0;
+  const Counting = class extends Native { constructor(...a) { super(...a); if (a[0] === n) made++; } };
+  const count = (fn) => {
+    made = 0; globalThis.Uint8Array = Counting;
+    try { fn(); } finally { globalThis.Uint8Array = Native; }
+    return made;
+  };
+  assert.equal(count(() => makeIndex(src.raw, src.fl)), 1, 'the counter sees one makeIndex');
+  const calls = count(() => L.addItem([], src));
+  assert.ok(calls <= 1, `addItem built the index ${calls} times, today's bound is 1`);
+  console.log(`P13: makeIndex calls in addItem ${calls}, bound 1`);
 });

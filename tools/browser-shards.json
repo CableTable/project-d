@@ -355,6 +355,7 @@
   "T22b: rectangle edge drag snaps, updates selection and panel W / H, Shift keeps proportions, one Undo": 6.45,
   "big file (TODO 55): 20k entities open, views cull what is off screen, pan / zoom stay smooth, the full picture returns when the view settles": 2.25,
   "lag harness: spline fixture counts": 45,
+  "lag harness: layout and Compare counts": 70,
   "TODO 72: Shift+right-click while a tool is on opens Enter / Cancel / Close / Undo last point and the snap types; plain right-click still finishes": 4.52,
   "fix72: Shift+right-click Cancel keeps a pending polyline and returns to Select; one Undo removes it": 4.55,
   "TODO 72: the menu in Move, Measure and Dimension has Cancel and the snap types; a snap row ticks the type and the Snap types list follows": 3.36,

@@ -1197,3 +1197,29 @@ test('gapMarks requires Show; 50 rings are allowed, 51 keeps the count and draws
   assert.deepEqual(E.gapMarks([], true), []);
   assert.equal(gaps.length, 51, 'the count is never truncated');
 });
+
+test('P13 lag counter: areaPerimeter point-in-loop tests on 300 loops stay at today\'s number (upper bound; the fix ticket tightens it)', () => {
+  // inside() is private and reads two points per polygon step by array destructuring: count those on 2-element arrays (no hook in web/).
+  const insideCalls = (rects) => {
+    const doc = W.newDoc(4); W.addEntities(doc, rects);
+    const raw = D.readDxf(W.writeDxf(doc)), ed = E.makeIndex(raw, D.flatten(raw)), ents = new Set(ed.shown);
+    const loops = E.outlineLoops(ed, ents).loops, pts = loops[0].pts.length, iter = Array.prototype[Symbol.iterator];
+    assert.ok(loops.every((l) => l.pts.length === pts), 'every loop has the same vertex count, so steps / pts = calls');
+    let steps = 0, r;
+    Array.prototype[Symbol.iterator] = function () { if (this.length === 2) steps++; return iter.call(this); };
+    try { r = E.areaPerimeter(ed, ents); } finally { Array.prototype[Symbol.iterator] = iter; }
+    return { calls: steps / 2 / pts, r };
+  };
+  const side = (i) => W.rect(-i, -i, 2 * i, 2 * i);
+  assert.equal(insideCalls([side(1), side(2), side(3)]).calls, 3, 'the counter sees the 3 tests (each loop against each bigger one) of three nested loops');
+  const N = 300, bound = N * (N - 1) / 2;
+  const nested = insideCalls(Array.from({ length: N }, (_, k) => side(k + 1)));
+  assert.equal(nested.r.loops, N);
+  let want = 0; for (let k = 1; k <= N; k++) want += (N - k) % 2 ? -4 * k * k : 4 * k * k;      // loop k sits inside the N - k bigger ones: odd = a hole
+  near(nested.r.area, want, 'nested area');
+  assert.ok(nested.calls <= bound, `nested loops: ${nested.calls} inside tests, today's bound ${bound}`);
+  const apart = insideCalls(Array.from({ length: N }, (_, k) => W.rect((k + 1) ** 2, 0, k + 1, k + 1)));      // 300 loops of different sizes side by side
+  assert.equal(apart.r.holes, 0);
+  assert.ok(apart.calls <= bound, `loops side by side: ${apart.calls} inside tests, today's bound ${bound}`);
+  console.log(`P13: inside tests, nested ${nested.calls}, side by side ${apart.calls}, bound ${bound}`);
+});
