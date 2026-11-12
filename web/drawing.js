@@ -377,6 +377,11 @@ const charW = 0.8;                        // a guess at a character's width, in 
 
 // ---------------------------------------------------------------- flatten: what to draw
 
+// A SPLINE's flattened points by its record object (e.r): they depend on nothing else, and every edit builds a new record (P4a: none edits one in place).
+let splinePoints = new WeakMap();
+/** Empties the spline points cache (tests only). */
+export const clearSplineCache = () => { splinePoints = new WeakMap(); };
+
 export function flatten(doc, hidden = new Set()) {
   const H = doc.header, units = UNITS[num(H.$INSUNITS)] || '';
   const ltscale = num(H.$LTSCALE, 1) || 1;
@@ -473,16 +478,22 @@ export function flatten(doc, hidden = new Set()) {
         case 'LWPOLYLINE': lwpoly(e, f, base, path, put); break;
         case 'POLYLINE': polyline(e, f, base, path); break;
         case 'SPLINE': {
-          const cp = [], fit = [], knots = [], w = [];
-          for (let k = 0; k < r.c.length; k++) {
-            const c = r.c[k];
-            if (c === 10) cp.push([num(r.v[k]), r.c[k + 1] === 20 ? num(r.v[k + 1]) : 0]);
-            else if (c === 11) fit.push([num(r.v[k]), r.c[k + 1] === 21 ? num(r.v[k + 1]) : 0]);
-            else if (c === 40) knots.push(num(r.v[k]));
-            else if (c === 41) w.push(num(r.v[k]));
+          let hit = splinePoints.get(r);
+          if (!hit) {
+            const cp = [], fit = [], knots = [], w = [];
+            for (let k = 0; k < r.c.length; k++) {
+              const c = r.c[k];
+              if (c === 10) cp.push([num(r.v[k]), r.c[k + 1] === 20 ? num(r.v[k + 1]) : 0]);
+              else if (c === 11) fit.push([num(r.v[k]), r.c[k + 1] === 21 ? num(r.v[k + 1]) : 0]);
+              else if (c === 40) knots.push(num(r.v[k]));
+              else if (c === 41) w.push(num(r.v[k]));
+            }
+            const p = nurbs(cp, knots, num(f[71], 3), w, fit);
+            splinePoints.set(r, hit = { pts: p, fit: p === fit });
           }
-          const pts = nurbs(cp, knots, num(f[71], 3), w, fit), closed = closedOutline(e);
-          if (closed && pts === fit && pts.length > 2 && Math.hypot(pts[0][0] - pts.at(-1)[0], pts[0][1] - pts.at(-1)[1]) < 1e-9) pts.pop();   // fit points that repeat the first one
+          let pts = hit.pts;
+          const closed = closedOutline(e);
+          if (closed && hit.fit && pts.length > 2 && Math.hypot(pts[0][0] - pts.at(-1)[0], pts[0][1] - pts.at(-1)[1]) < 1e-9) pts = pts.slice(0, -1);   // fit points that repeat the first one (a copy: the cached array stays whole)
           if (pts.length > 1) path(lineOps(pts, closed), { spl: 1 });
           break;
         }
