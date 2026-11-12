@@ -4,7 +4,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
-import { browserArgs, expandNeeds, shardSelector } from './tools/browser-shards.mjs';
+import { browserArgs, pickSteps, shardSelector } from './tools/browser-shards.mjs';
 const RUNNING_PROMPT = /Specify|Next point|Click inside|Select destination|Type the text|Esc (?:ends|cancels)[).:\s]*$/; // the command-bar prompt of a command still running (runStep fails a step that leaves one on); D's own copy, so no test reads a kit file
 import { chromium } from 'playwright';
 import { dimParams, readDim, dimGeom, GAP_MARK_CAP, addDimension, buildDim, dimOfEntity, lineOf as lineEnds } from './web/edit.js';
@@ -28495,7 +28495,8 @@ try {
     await closeTabs(/./); assert.deepEqual(errors, []);
   });
 
-  for (const entry of expandNeeds(steps, only || '.*').filter(({ name }) => selectStep(name))) await runStep(page, entry, shotDir);
+  const picked = pickSteps(steps, only, selectStep);
+  for (const entry of picked) await runStep(page, entry, shotDir);
 } catch (e) {
   failed++;
   console.log('FAIL', e.stack || e);
