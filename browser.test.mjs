@@ -24662,7 +24662,14 @@ try {
       const p = await ctx.newPage();
       await p.goto(URL_ + '?autosave=86400000');
       await p.waitForSelector('[data-testid=count]', { state: 'attached' });
-      const results = await interact(p, Buffer.from(writeDxf(splineDoc(900))), 'lag-spline.dxf');
+      const buffer = Buffer.from(writeDxf(splineDoc(900))), fl = flatten(readDxf(buffer.toString()));
+      let pieces = 0;
+      for (const it of fl.items) for (let i = 0; i < it.ops.length;) {
+        const op = it.ops[i];
+        if (op === 1 || op === 3) pieces++;
+        i += op === 2 ? 7 : op === 3 ? 1 : 3;
+      }
+      const results = await interact(p, buffer, 'lag-spline.dxf');
       const budgets = { open: [822680, 2], 'Measure hover': [16453720, 40], 'Line hover': [16453720, 40],
         'select click': [411797, 1], Delete: [410883, 1], 'Ctrl+Z': [411340, 1], wheel: [411340, 1], pan: [411340, 1] };
       assert.deepEqual(results.map((r) => r.action), Object.keys(budgets));
@@ -24671,6 +24678,24 @@ try {
         assert.ok(r.lineTo <= lineTo, `${r.action}: lineTo ${r.lineTo} exceeds ${lineTo}`);
         assert.ok(r.paints <= paints, `${r.action}: full paints ${r.paints} exceeds ${paints}`);
       }
+      for (const theme of ['light', 'dark']) {
+        await p.locator('[data-menu=View]').click();
+        await p.getByRole('menuitemcheckbox', { name: new RegExp('Theme: ' + theme + '\\b') }).click();
+        await p.locator('[data-testid=canvas]').getByRole('button', { name: 'Fit', exact: true }).click();
+        for (const view of ['fit', 'zoom']) {
+          if (view === 'zoom') {
+            const box = await p.locator('[data-testid=canvas]').boundingBox();
+            await p.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+            for (let i = 0; i < 4; i++) await p.mouse.wheel(0, -200);
+          }
+          await p.waitForTimeout(300);
+          await p.waitForFunction(() => document.querySelector('[data-testid=drawing]').dataset.snap === '');
+          const path = `${shotDir}/p1-${theme}-${view}.png`;
+          await p.screenshot({ path });
+          assert.ok(readFileSync(path).length > 1000, 'required screenshot exists');
+        }
+      }
+      for (const r of results) if (r.paints) assert.ok(r.lineTo / r.paints < pieces * .15, `${r.action}: ${r.lineTo / r.paints} lineTo per full paint must be under 15% of ${pieces} pieces`);
     } finally { await ctx.close(); }
   });
 

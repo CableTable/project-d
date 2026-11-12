@@ -5,7 +5,7 @@ import { placement, shownItems, itemVisible, spaceOf } from './doc.js';
 import { paintMode } from './wireframe.js';
 import { viewOrigin } from './view-origin.js';
 import { drawingPreviewBox, overlayBox } from './preview.js';
-import { outsideView, subPixel } from './perf.js';
+import { outsideView, subPixel, skipPoint } from './perf.js';
 import { SNAP_NAME } from './snap.js';
 
 const SHEETS = { light: { bg: '#ffffff', fg: '#1b1d22' }, dark: { bg: '#000000', fg: '#e8e8ec' } };
@@ -34,11 +34,21 @@ function inkOf(css, dark) {
   return '#' + ch.map((c) => Math.round(c + (255 - c) * 0.45).toString(16).padStart(2, '0')).join('');
 }
 
-function trace(c, ops, origin) {
+function trace(c, ops, origin, pxPerUnit) {
+  let x, y;
   for (let i = 0; i < ops.length;) {
     const op = ops[i];
-    if (op === 0) { c.moveTo(ops[i + 1] - origin[0], ops[i + 2] - origin[1]); i += 3; } else if (op === 1) { c.lineTo(ops[i + 1] - origin[0], ops[i + 2] - origin[1]); i += 3; }
-    else if (op === 2) { c.arc(ops[i + 1] - origin[0], ops[i + 2] - origin[1], ops[i + 3], ops[i + 4], ops[i + 5], ops[i + 6] === 1); i += 7; } else { c.closePath(); i++; }
+    if (op === 0) { x = ops[i + 1]; y = ops[i + 2]; c.moveTo(x - origin[0], y - origin[1]); i += 3; }
+    else if (op === 1) {
+      const nx = ops[i + 1], ny = ops[i + 2];
+      // Keep each run's end before a move, arc, close or the end of ops.
+      if (ops[i + 3] !== 1 || !skipPoint(nx - x, ny - y, pxPerUnit)) {
+        c.lineTo(nx - origin[0], ny - origin[1]); x = nx; y = ny;
+      }
+      i += 3;
+    }
+    else if (op === 2) { c.arc(ops[i + 1] - origin[0], ops[i + 2] - origin[1], ops[i + 3], ops[i + 4], ops[i + 5], ops[i + 6] === 1); x = y = undefined; i += 7; }
+    else { c.closePath(); x = y = undefined; i++; }
   }
 }
 
@@ -125,7 +135,7 @@ function wireStroke(c, dpr) {
 /** The shown items through T (drawing units → canvas pixels), k pixels per unit; vr culls to the view (drawing units), or null. */
 function paintItems(c, fl, off, T, k, vr, dpr, col, sheetBg, hide, factor, wireframe) {
   const mats = fl.mats;
-  let cur = -1, kk = k, open = false, pc = null, pw = 0, pd = null, origin = [0, 0], drawn = 0;
+  let cur = -1, kk = k, pxPerUnit = 0, open = false, pc = null, pw = 0, pd = null, origin = [0, 0], drawn = 0;
   const flush = () => { if (open) { if (wireframe) wireStroke(c, dpr); else c.stroke(); } open = false; };
   for (const it of shownItems(fl)) {
     const b = it.b;
@@ -134,7 +144,7 @@ function paintItems(c, fl, off, T, k, vr, dpr, col, sheetBg, hide, factor, wiref
     if (it.k !== 'n' && subPixel(b, pad, k)) continue;       // under half a pixel
     if (!itemVisible(it, off)) continue;
     if (hide && hide.has(it.e)) continue;                                  // an entity being dragged by a grip is drawn by the overlay
-    if (it.m !== cur) { flush(); cur = it.m; const M = mats[cur], V = mmul(T, M); origin = viewOrigin(V); c.setTransform(...V.slice(0, 4), ...mapply(V, ...origin)); kk = k * mscale(M) || k; }
+    if (it.m !== cur) { flush(); cur = it.m; const M = mats[cur], V = mmul(T, M); origin = viewOrigin(V); c.setTransform(...V.slice(0, 4), ...mapply(V, ...origin)); kk = k * mscale(M) || k; pxPerUnit = Math.max(Math.hypot(V[0], V[1]), Math.hypot(V[2], V[3])); }
     drawn++;
     const mode = wireframe && it.attachedFill ? null : paintMode(it, wireframe);
     if (mode === 'stroke') {
@@ -146,19 +156,19 @@ function paintItems(c, fl, off, T, k, vr, dpr, col, sheetBg, hide, factor, wiref
         c.strokeStyle = css; c.lineWidth = lw; c.setLineDash(dash === it.dpx && dash ? dash.map((x) => x * dpr / kk) : dash || []);
         c.beginPath(); open = true; pc = css; pw = lw; pd = dash;
       }
-      trace(c, it.ops, origin);
+      trace(c, it.ops, origin, dash ? 0 : pxPerUnit);
       continue;
     }
     flush();
-    if (mode === 'fill') { c.beginPath(); trace(c, it.ops, origin); c.globalAlpha = it.a == null ? 1 : it.a; c.fillStyle = col(it.css, it.exact); c.fill('evenodd'); c.globalAlpha = 1; }
-    else if (mode === 'mask') { c.beginPath(); trace(c, it.ops, origin); c.fillStyle = sheetBg; c.fill(); }
+    if (mode === 'fill') { c.beginPath(); trace(c, it.ops, origin, pxPerUnit); c.globalAlpha = it.a == null ? 1 : it.a; c.fillStyle = col(it.css, it.exact); c.fill('evenodd'); c.globalAlpha = 1; }
+    else if (mode === 'mask') { c.beginPath(); trace(c, it.ops, origin, pxPerUnit); c.fillStyle = sheetBg; c.fill(); }
     else if (mode === 'point') {
       const [x, y] = mapply(mmul(T, mats[cur]), it.x, it.y), arm = 3 * dpr;
       c.save(); c.setTransform(1, 0, 0, 1, 0, 0); c.strokeStyle = col(it.css); c.lineWidth = dpr; c.setLineDash([]);
       c.beginPath(); c.moveTo(x - arm, y); c.lineTo(x + arm, y); c.moveTo(x, y - arm); c.lineTo(x, y + arm); c.stroke(); c.restore();
     }
     else if (mode === 'text') drawText(c, it, kk, dpr, col, wireframe, origin);
-    else if (mode === 'hatch') drawHatch(c, it, kk, dpr, col, origin);
+    else if (mode === 'hatch') drawHatch(c, it, kk, dpr, col, origin, pxPerUnit);
   }
   flush();
   return drawn;
@@ -167,12 +177,12 @@ function paintItems(c, fl, off, T, k, vr, dpr, col, sheetBg, hide, factor, wiref
 /** The selection: a thin accent centre line over the object's true-width stroke. */
 function highlight(c, items, mats, T, k, dpr, accent, wireframe) {
   c.strokeStyle = accent; c.fillStyle = accent; c.setLineDash([]);
-  let cur = -1, kk = k, origin = [0, 0];
+  let cur = -1, kk = k, pxPerUnit = 0, origin = [0, 0];
   for (const it of items) {
-    if (it.m !== cur) { cur = it.m; const M = mats[cur], V = mmul(T, M); origin = viewOrigin(V); c.setTransform(...V.slice(0, 4), ...mapply(V, ...origin)); kk = k * mscale(M) || k; }
+    if (it.m !== cur) { cur = it.m; const M = mats[cur], V = mmul(T, M); origin = viewOrigin(V); c.setTransform(...V.slice(0, 4), ...mapply(V, ...origin)); kk = k * mscale(M) || k; pxPerUnit = Math.max(Math.hypot(V[0], V[1]), Math.hypot(V[2], V[3])); }
     c.lineWidth = 2.6 * dpr / kk;
     c.beginPath();
-    if (it.k === 'p' || (wireframe && it.ops)) { trace(c, it.ops, origin); if (it.fill && !wireframe) c.fill('evenodd'); else c.stroke(); } else c.strokeRect(it.b[0] - origin[0], it.b[1] - origin[1], it.b[2] - it.b[0], it.b[3] - it.b[1]);
+    if (it.k === 'p' || (wireframe && it.ops)) { trace(c, it.ops, origin, pxPerUnit); if (it.fill && !wireframe) c.fill('evenodd'); else c.stroke(); } else c.strokeRect(it.b[0] - origin[0], it.b[1] - origin[1], it.b[2] - it.b[0], it.b[3] - it.b[1]);
   }
 }
 
@@ -280,13 +290,13 @@ function wrapped(c, it, U) {
 }
 
 /** A patterned hatch: its families of lines, clipped to its boundary; too fine to see, a tint. */
-function drawHatch(c, it, kk, dpr, colOf, origin) {
+function drawHatch(c, it, kk, dpr, colOf, origin, pxPerUnit) {
   const lb = it.lb || (it.lb = opsBox(it.ops));
   if (!lb) return;
   const col = colOf(it.css), corners = [[lb[0], lb[1]], [lb[2], lb[1]], [lb[2], lb[3]], [lb[0], lb[3]]];
   let tint = !it.fam.length;
   c.save();
-  c.beginPath(); trace(c, it.ops, origin); c.clip('evenodd');
+  c.beginPath(); trace(c, it.ops, origin, pxPerUnit); c.clip('evenodd');
   c.strokeStyle = col; c.lineWidth = dpr / kk;
   for (const f of it.fam) {
     const dx = Math.cos(f.a), dy = Math.sin(f.a), nx = -dy, ny = dx, sp = f.ox * nx + f.oy * ny;
