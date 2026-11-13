@@ -61,9 +61,10 @@ function trace(c, ops, origin, pxPerUnit) {
 export function paintDrawing(canvas, o) {
   const { fl, off, factor, sheetH, ox, oy, scale, w, h, dpr, dark } = o;
   const c = canvas.getContext('2d');
+  const over = o.part === 'over';                      // part 'base' stops after the drawing itself, part 'over' paints only the rest on a base kept on the canvas (TODO 258 / 259)
   c.setTransform(1, 0, 0, 1, 0, 0);
-  if (!o.keep) c.clearRect(0, 0, canvas.width, canvas.height);
-  if (!o.wireframe && o.bg && o.bg.visible && o.bg.bitmap) {
+  if (!o.keep && !over) c.clearRect(0, 0, canvas.width, canvas.height);
+  if (!over && !o.wireframe && o.bg && o.bg.visible && o.bg.bitmap) {
     const b = o.bg, k = scale * dpr;                                  // the background, dimmed, under the drawing (mm, y up)
     c.setTransform(k, 0, 0, k, 0, 0);
     c.globalAlpha = 0.4;
@@ -97,7 +98,8 @@ export function paintDrawing(canvas, o) {
   const xs = [ox / factor, (ox + w / scale) / factor];
   const ys = [(sheetH - oy - h / scale) / factor, (sheetH - oy) / factor];
   const vr = [Math.min(...xs), ys[0], Math.max(...xs), ys[1]];
-  const drawn = paintItems(c, fl, off, T, k, vr, dpr, col, sheetBg, o.hide, factor, o.wireframe);
+  const drawn = over ? 0 : paintItems(c, fl, off, T, k, vr, dpr, col, sheetBg, o.hide, factor, o.wireframe);
+  if (o.part === 'base') return drawn;
   if (o.hl && o.hl.length) highlight(c, o.hl, fl.mats, T, k, dpr, o.accent || '#4f46e5', o.wireframe);
   if (o.dim) drawDimPreview(c, o.dim, T, dpr, o.dimCol || DIM_LIGHT);
   if (o.marks && o.marks.length) drawMarks(c, o.marks, T, dpr, o.accent || '#4f46e5', o.snapCol);

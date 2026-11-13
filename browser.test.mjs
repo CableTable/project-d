@@ -25371,6 +25371,107 @@ try {
     } finally { await ctx.close(); }
   });
 
+  await step('TODO 258 / 259: drawing tab of 150k entities: Measure moves and a select click do no full paint and no index rebuild, a Stretch finish at most one of each; pixels equal a full paint', async () => {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    try {
+      const p = await ctx.newPage(), drawing = p.getByTestId('drawing'), errors = [];
+      p.on('pageerror', (e) => errors.push(String(e)));
+      await p.route('**/app.js', (route) => {
+        const src = readFileSync('web/app.js', 'utf8'), body = src.replace('d.ed =Ed.makeIndex(', 'd.ed = (window.t258Index = (window.t258Index || 0) + 1, Ed.makeIndex)(');
+        assert.notEqual(body, src, 'the index counter is installed');
+        route.fulfill({ contentType: 'text/javascript', body: body + `
+        window.t258Paint = () => paintOverlay();
+        window.t258Layer = (off) => { const d = curDoc(); if (off) d.off.add(0); else d.off.clear(); paintOverlay(); };` });
+      });
+      const crossDoc = (n) => {                       // lines (entity 1 crosses entity 0, so half of the lines cross), arcs and text, one 10 mm cell each
+        const doc = newDoc(4), cols = Math.ceil(Math.sqrt(n)), ents = [];
+        for (let i = 0; i < n; i++) {
+          const j = i % 6 === 1 ? i - 1 : i, x = (j % cols) * 10, y = Math.floor(j / cols) * 10;
+          ents.push([dxfLine(x, y, x + 8, y + 8), dxfLine(x, y + 8, x + 8, y), dxfLine(x, y + 4, x + 8, y + 4), dxfLine(x + 4, y, x + 4, y + 8), dxfArc(x + 4, y + 4, 3, 0, 270), dxfText(x, y, 2.5, 'T' + i)][i % 6]);
+        }
+        return addEntities(doc, ents);
+      };
+      const frame = () => p.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+      const paints = async () => Number(await drawing.getAttribute('data-paints'));
+      const indexes = () => p.evaluate(() => window.t258Index || 0);
+      const centre = async () => { const b = await p.getByTestId('canvas').boundingBox(); return { x: b.x + b.width / 2, y: b.y + b.height / 2 }; };
+      const typed = async (text) => {
+        const i = p.getByTestId('cmd-input');
+        if (!(await i.isVisible())) { await p.getByTestId('cmd-echo').click(); await i.waitFor({ state: 'visible' }); }
+        await i.fill(text); await i.press('Enter');
+      };
+      const labels = async () => {
+        await p.locator('[data-menu=Edit]').click(); await p.getByRole('menuitem', { name: 'Undo history…' }).click(); await p.getByTestId('hist-dialog').waitFor();
+        const rows = await p.locator('[data-testid=hist-row] > span:last-child').allTextContents();
+        await p.keyboard.press('Escape'); await p.getByTestId('hist-dialog').waitFor({ state: 'detached' });
+        return rows;
+      };
+      const pixels = async (label) => {                         // the kept picture against a forced full paint of the same state
+        await frame();
+        await drawing.evaluate((c) => { window.__A = c.getContext('2d').getImageData(0, 0, c.width, c.height); c.dataset.nokeep = '1'; });
+        const before = await paints();
+        await p.evaluate(() => window.t258Paint()); await frame();
+        assert.ok(await paints() > before, `${label}: nokeep forces a full pass`);
+        const over = await drawing.evaluate((c) => {
+          const a = window.__A, b = c.getContext('2d').getImageData(0, 0, c.width, c.height);
+          delete c.dataset.nokeep; delete window.__A;
+          let n = 0;
+          for (let i = 0; i < a.data.length; i += 4) for (let j = 0; j < 4; j++) if (Math.abs(a.data[i + j] - b.data[i + j]) > 2) { n++; break; }
+          return n;
+        });
+        assert.equal(over, 0, `${label}: kept and full pixels (max channel difference 2)`);
+      };
+      await p.goto(URL_ + '?autosave=86400000'); await p.getByTestId('count').waitFor({ state: 'attached' });
+      await p.getByTestId('picker').setInputFiles({ name: 't258-big.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(crossDoc(150000)), 'latin1') });
+      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 't258-big.dxf', null, { timeout: 120000 });
+      await p.waitForFunction(() => Number(document.querySelector('[data-testid=entities]').textContent.replace(/\D/g, '')) === 150000, null, { timeout: 120000 });
+      await p.getByTestId('canvas').getByRole('button', { name: 'Fit', exact: true }).click(); await frame();
+      await p.waitForFunction(() => window.t258Index >= 1, null, { timeout: 60000 }); await p.waitForTimeout(500); await frame();
+      assert.ok(Number(await drawing.getAttribute('data-drawn')) > 100000, 'the fitted drawing is heavy');
+      const at = await centre();
+      await p.locator('[data-tool=measure]').click(); await p.mouse.move(at.x - 100, at.y - 40); await frame();
+      await p.mouse.click(at.x - 100, at.y - 40); await frame();
+      let paints0 = await paints(), index0 = await indexes();
+      for (let i = 1; i <= 20; i++) { await p.mouse.move(at.x - 100 + i * 5, at.y - 40 + i); await frame(); }
+      assert.equal(await paints(), paints0, '20 Measure moves do no full paint');
+      assert.equal(await indexes(), index0, '20 Measure moves rebuild no index');
+      assert.equal(await drawing.getAttribute('data-keep'), '1', 'Measure hover paints over the kept drawing');
+      await pixels('Measure hover');
+      await p.keyboard.press('Escape'); await p.keyboard.press('Escape'); await p.locator('[data-tool=select]').click();
+      await p.mouse.move(at.x, at.y); await frame();
+      paints0 = await paints(); index0 = await indexes();
+      await p.mouse.click(at.x, at.y); await frame();
+      assert.match(await p.getByTestId('sel-count').textContent(), /[1-9]\d* selected/, 'the click selects something');
+      assert.equal(await paints(), paints0, 'a select click does no full paint');
+      assert.equal(await indexes(), index0, 'a select click rebuilds no index');
+      await pixels('select click');
+      const stale = async (label, act) => { const before = await paints(); await act(); await frame(); assert.equal(await paints(), before + 1, `${label}: exactly one full paint`); await pixels(label); };
+      await stale('layer off', () => p.evaluate(() => window.t258Layer(true)));
+      await stale('layer on', () => p.evaluate(() => window.t258Layer(false)));
+      await stale('wireframe', () => p.keyboard.press('F9'));
+      await stale('wireframe off', () => p.keyboard.press('F9'));
+      for (const theme of ['dark', 'light']) {
+        await stale('theme ' + theme, async () => { await p.locator('[data-menu=View]').click(); await p.getByRole('menuitemcheckbox', { name: new RegExp('Theme: ' + theme + '\\b') }).click(); });
+        const path = `${shotDir}/t258-${theme}.png`; await p.screenshot({ path });
+        assert.ok(readFileSync(path).length > 1000, 'required screenshot exists');
+      }
+      await p.keyboard.press('Escape'); await frame();
+      const steps = (await labels()).length;
+      await typed('stretch');
+      await p.mouse.move(at.x + 40, at.y + 40); await p.mouse.down(); await p.mouse.move(at.x - 40, at.y - 40, { steps: 6 }); await p.mouse.up(); await frame();
+      await p.keyboard.press('Enter'); await frame();
+      await p.mouse.click(at.x, at.y); await frame(); await p.mouse.move(at.x + 30, at.y + 10); await frame();
+      paints0 = await paints(); index0 = await indexes();
+      await p.mouse.click(at.x + 30, at.y + 10); await frame(); await p.waitForTimeout(1500); await frame();
+      assert.equal((await labels()).length, steps + 1, 'the Stretch finish is one undo step');
+      assert.ok(await paints() - paints0 <= 1, `a Stretch finish does at most one full paint, did ${await paints() - paints0}`);
+      assert.ok(await indexes() - index0 <= 1, `a Stretch finish rebuilds the index at most once, did ${await indexes() - index0}`);
+      await pixels('Stretch finish');
+      assert.deepEqual(errors, []);
+      console.log('T258 / T259: 150k drawing, Measure moves and select click 0 full paints and 0 index builds; Stretch finish within 1 + 1; pixels equal a full paint');
+    } finally { await ctx.close(); }
+  });
+
   await step('layout part drag: two full paints, drop repaints in order', async () => {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
     try {

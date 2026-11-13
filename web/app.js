@@ -4663,6 +4663,17 @@ function previewBounds() {
 }
 // A heavy drawing (perf.js heavy) keeps the bitmap of its last full paint: wheel and pan frames move and scale that, and one full paint follows when the view settles (TODO 55)
 let paintFull = true, snap = null, snapCv = null, snapTimer = 0;
+// A drawing tab whose own paint is slow keeps its bitmap (without selection, marks, previews): a hover or a select click paints only those on top (TODO 258 / 259).
+let kept = null, keptCv = null;
+const KEEP_MS = 10;
+/** Everything the drawing's own pass reads, flat (compare with sameBase); null while a grip or drag hides entities one by one. */
+function paintKey(d, base, cw, chh) {
+  const hide = hideNow(d), hid = hidIdx(d);
+  if (hide && hide.size !== (hid ? hid.size : 0)) return null;
+  const ed = state.text.ed?.d === d && state.text.ed.dim ? state.text.ed : null, fl = ed ? ed.dim.fl : d.fl, bg = d.bg;
+  return [d, fl, fl.items.length, hid, d.factor, base.ox, base.oy, base.scale, cw, chh, base.dpr, base.dark, base.wireframe, base.sheetH,
+    bg, bg?.visible, bg?.bitmap, bg?.x, bg?.y, bg?.mm, ...[...d.off || []].sort((a, b) => a - b)];       // d.off is changed in place: its layers are part of the key
+}
 function paintOverlay(gesture = false) {
   if (!gesture) paintFull = true;
   if (paintQueued) return;
@@ -4744,7 +4755,17 @@ function paintOverlay(gesture = false) {
       ui.cmdUI.place();
       return;
     }
-    snap = null;
+    const ekey = d && d.fl && !d.lay && !d.cmp ? paintKey(d, base, cw, chh) : null;
+    if (ekey && kept && c.dataset.nokeep !== '1' && sameBase(kept.key, ekey)) {
+      const g = c.getContext('2d');
+      g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, cw, chh);
+      g.drawImage(keptCv, 0, 0);
+      paintEditable(c, d, base, marks, 'over');
+      c.dataset.keep = '1';
+      ui.cmdUI.place();
+      return;
+    }
+    snap = null; kept = null;
     c.dataset.paints = (+c.dataset.paints || 0) + 1;
     const t0 = performance.now();
     let drawn = 0;
@@ -4762,7 +4783,13 @@ function paintOverlay(gesture = false) {
     } else if (d && d.lay) {                // a layout: each part painted once for all the places it is placed at (its matrix per place)
       paintDrawing(c, { ...base, fl: null, factor: 1 });                                      // clears
       for (const call of calls) drawn += paintDrawing(c, { ...base, keep: true, ...call });
-    } else drawn = paintEditable(c, d, base, marks);
+    } else drawn = paintEditable(c, d, base, marks, undefined, ekey && ((n) => {
+      if (performance.now() - t0 <= KEEP_MS && n <= 15000) return;
+      keptCv = keptCv || document.createElement('canvas');
+      keptCv.width = cw; keptCv.height = chh;
+      keptCv.getContext('2d').drawImage(c, 0, 0);
+      kept = { key: ekey };
+    }));
     c.dataset.drawn = drawn || 0;
     c.dataset.indexed = d && d.ed ? '1' : '0';       // test hook (P3): a paint right after a commit comes before the pick index
     if (heavy(performance.now() - t0, drawn || 0)) {
@@ -4802,17 +4829,21 @@ function layOverlay(c, d, base, marks, lifted) {
   }
 }
 
-function paintEditable(c, d, base, marks) {
+/** part: 'over' paints only what goes on top of the drawing (selection, marks, previews) on a base already on the canvas; afterBase(drawn), when given, is called between the drawing and that rest. */
+function paintEditable(c, d, base, marks, part, afterBase) {
   const ed = state.text.ed?.d === d && state.text.ed.dim ? state.text.ed : null;
   const dragSnap = state.paste?.d === d ? state.paste.to : state.entityDrag?.d === d && state.entityDrag.to;
   if (dragSnap?.[2]) marks = [[dragSnap[0], dragSnap[1], dragSnap[2], true]];
-  const drawn = paintDrawing(c, { ...base, fl: ed ? ed.dim.fl : d && d.fl, off: base.cmpOff || d && d.off, factor: d ? d.factor : 1,
+  const o = { ...base, fl: ed ? ed.dim.fl : d && d.fl, off: base.cmpOff || d && d.off, factor: d ? d.factor : 1,
     bg: d && d.bg, hl: d ? ((state.drawingRotate?.drag?.items || state.entityDrag?.items) ? null : (state.grip && state.grip.d === d && state.grip.next ? d.hl.filter((it) => !gripShown(state.grip).includes(it.e)) : textSel(d) ? d.hl.filter((it) => it.k !== 't') : ed ? d.hl.filter((it) => it.e !== ed.e || it.k !== 't') : d.hl)) : null, hide: hideNow(d), marks: marks || (drawLive() && state.drawHover && state.drawHover[2] ? [[state.drawHover[0] / d.factor, state.drawHover[1] / d.factor, state.drawHover[2], true]] : state.grip && state.grip.d === d && state.grip.to && state.grip.to[2] ? [[state.grip.to[0], state.grip.to[1], state.grip.to[2], true]] : null), dim: previewDim(d), gaps: d && d.ed && editable() ? (d.gapShow ? Ed.gapMarks(gapsOf(d), true) : []) : null,
     contour: d && d.cRes && state.tool === 'contour' ? d.cRes.polys : null,
     contourCol: d && d.cRes ? contourColour(d).replace('var(--text)', workDark() ? '#ededef' : '#18181b') : null, contourDash: contourStyle().dash,
     markCol: cssVar('--mark', '#c2410c'),
     accent: cssVar('--selection', '#4f46e5'), snapCol: cssVar('--snap-mark', '#00c000'),
-    dimCol: cssVar('--dim', '#0f766e'), previewBounds: (box) => { canvasPreviewBounds = unionBox(canvasPreviewBounds, box); } });
+    dimCol: cssVar('--dim', '#0f766e'), previewBounds: (box) => { canvasPreviewBounds = unionBox(canvasPreviewBounds, box); } };
+  let drawn;
+  if (afterBase) { drawn = paintDrawing(c, { ...o, part: 'base' }); afterBase(drawn); paintDrawing(c, { ...o, part: 'over' }); }
+  else drawn = paintDrawing(c, part ? { ...o, part } : o);
   const move = state.drawingRotate?.drag || state.entityDrag || (state.grip?.d === d && state.grip.move) || (modLive() && ['move', 'copy', 'stretch', 'array', 'rotate', 'scale', 'mirror', 'align'].includes(state.mod.kind) ? state.mod.move : null);
   c.dataset.preview = move?.items ? paintDrawing(c, { ...base, ox: base.ox - move.dx * d.factor, oy: base.oy + move.dy * d.factor, keep: true, fl: move.preview, off: d.off, factor: d.factor, slots: (!state.entityDrag && !state.grip && modTypedSlots(d)) || move.slots, tint: cssVar('--selection', '#4f46e5'), previewBounds: (box) => { canvasPreviewBounds = unionBox(canvasPreviewBounds, box); } }) : 0;
   const paste = state.paste;
