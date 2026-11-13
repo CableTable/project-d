@@ -190,6 +190,7 @@ export async function interactCompare(page, buffer, name = 'cmp.dxf') {
     await useTool(page, frame, cx, cy, 'select');
     await run('Compare click', async () => { await page.mouse.click(cx, cy); });
     await run('Compare button', async () => { await page.locator('[data-testid=cmp-run]').dispatchEvent('click'); });
+    await run('Compare button again', async () => { await page.locator('[data-testid=cmp-run]').dispatchEvent('click'); });
     await run('Compare drag', async () => {
       await page.mouse.move(cx, cy); await page.mouse.down();
       for (let i = 1; i <= 20; i++) { await page.mouse.move(cx + i * 4, cy + i * 2); await frame(); }
