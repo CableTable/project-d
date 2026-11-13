@@ -415,7 +415,7 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
 - [ ] 258. **Measure and Line tools lag on a big (8MB) drawing** (bug, M, T76; with 237 / 260).
 - [ ] 259. **Clicks freeze on a big (8MB) drawing: select, finishing Stretch** (bug, M, T78; with 237 / 258).
 - [ ] 260. **Audit where else the app lags on big drawings** (L, T77; after 258 / 259).
-- [ ] 261. **Paste into a blank `+` tab is refused** (bug, S, T80).
+- [x] 261. **Paste into a blank `+` tab is refused** (bug, S, T80; built Knight `d676535`, Bishop ship, 3 Lows held in `runs45/lows.txt`; picked HEAD~1 of the tick, suite pending).
 - [ ] 262. **Layout: "Group of 6" stays selected after Esc or empty click** (bug, S, T82).
 - [ ] 263. **Print: sheet size and gripper labels fall off the page with a small margin** (bug, M, T83).
 - [ ] 264. **"Extreme" snap: lowest / highest / leftmost / rightmost point of a curve** (M, T79).
