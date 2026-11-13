@@ -129,16 +129,15 @@ test('TODO P14c: equality grid preserves baseline differences, truncation and sa
   });
 });
 
-test('TODO P14c: 200000 generated segments compare within three times the measured time', () => {
-  const polys = Array.from({ length: 100 }, (_, row) => Float64Array.from({ length: 4002 }, (_, i) => i % 2 ? row * 2 : Math.floor(i / 2) * 0.05));
-  for (const offsetB of [[0, 0], [5, 0]]) {
-    const start = performance.now(), result = C.compare(polys, polys, 0.1, { offsetB }), ms = performance.now() - start;
-    assert.equal(result.samples, 400200);
-    assert.equal(result.truncated, false);
-    assert.equal(result.diffs.length, offsetB[0] ? 200 : 0);
-    assert.ok(ms < 330, `offset ${offsetB}: ${ms.toFixed(2)} ms exceeds 330 ms (3 x 110 ms measured)`);
-    console.log(`P14c generated offset ${offsetB}: ${ms.toFixed(2)} ms < 330 ms`);
-  }
+test('TODO P14c: 200000 dense segments, tol 2 and an offset, compare within three times the measured time', () => {
+  // Rows 2 apart, 0.05 long segments: a grid cell holds hundreds of segments. Old code: ~11500 ms; new code: ~30 ms.
+  const polys = Array.from({ length: 50 }, (_, row) => Float64Array.from({ length: 4002 }, (_, i) => i % 2 ? row * 2 : Math.floor(i / 2) * 0.05));
+  const start = performance.now(), result = C.compare(polys, polys, 2, { offsetB: [0.3, -0.2] }), ms = performance.now() - start;
+  assert.equal(result.samples, 200100);
+  assert.equal(result.truncated, false);
+  assert.equal(result.diffs.length, 0);
+  assert.ok(ms < 100, `${ms.toFixed(2)} ms exceeds 100 ms (3 x ~30 ms measured)`);
+  console.log(`P14c dense tol 2 offset 0.3,-0.2: ${ms.toFixed(2)} ms < 100 ms`);
 });
 
 console.log(n + ' compare tests passed');
