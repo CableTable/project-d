@@ -346,7 +346,7 @@ export function openExport(host) {
     oneBody.hidden = !one; batchBody.hidden = one;
     const nB = B.all.filter((e) => e.include && e.type === 'dxf' && B[e.type]).length;
     ref.print.disabled = busy || !one;
-    ref.print.title = one ? 'Saves the PDF, then open it to print' : 'Print works on one layout';
+    ref.print.title = one ? 'Print… opens the print dialog' : 'Print works on one layout';
     const badScale = settings.page === 'custom' && !parseScale(settings.scaleText);       // the box holds no valid scale: Save / Print wait (the preview keeps the last good one)
     ref.go.disabled = busy || (!one && (!nB || (badScale && B.mode === 'same')));
     if (!one) {
@@ -555,6 +555,26 @@ export function openExport(host) {
   // ---- saving and printing: This layout
   async function saveOne(print) {
     const bytes = plan.bytes(), name = fileName();
+    if (print) {
+      const url = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }));
+      const frame = h('iframe', { hidden: true, title: 'PDF print' });
+      const cleanup = () => { frame.remove(); URL.revokeObjectURL(url); };
+      let timer;
+      try {
+        await new Promise((resolve, reject) => {
+          timer = setTimeout(() => reject(new Error('PDF print did not load')), 5000);
+          frame.addEventListener('load', () => {
+            clearTimeout(timer);
+            try { frame.contentWindow.print(); resolve(); } catch (err) { reject(err); }
+          }, { once: true });
+          frame.src = url;
+          document.body.append(frame);
+        });
+        setTimeout(cleanup, 60000); // Keep the PDF alive while the print viewer finishes with it.
+        return { printed: true, name, bytes };
+      } catch { cleanup(); } // The existing save/open path remains available without a PDF print viewer.
+      finally { clearTimeout(timer); }
+    }
     if (inApp) {
       let path = await t.dialog.save({ defaultPath: saveDefault(name, src.path), filters: [{ name: 'PDF', extensions: ['pdf'] }] });
       if (!path) return null;
@@ -682,9 +702,9 @@ export function openExport(host) {
     try {
       if (settings.tab === 'batch') { await convertAll(); return; }
       const r = await saveOne(print);
-      if (!r) return;
+      if (!r) { if (print) host.note('Printing was not available. Save cancelled'); return; }
       const pages = plan.count + (plan.count === 1 ? ' page' : ' pages');
-      if (print) host.note(r.path ? `Saved ${r.path} (${pages}). Open it and press Ctrl+P to print` : `${r.name} opened for printing (${pages})`);
+      if (print) host.note(r.printed ? `Print dialog opened for ${r.name} (${pages})` : `Printing was not available. ${r.path ? `Saved ${r.path}` : `${r.name} opened for printing`} (${pages}). Open it and press Ctrl+P to print`);
       else host.note(`Saved ${r.path || r.name} (${pages})`);
       close();
     } catch (err) {

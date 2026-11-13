@@ -4361,6 +4361,124 @@ try {
   const closePdf = async () => { await t('pdf-close').click(); await dialog.waitFor({ state: 'detached' }); };
   let layers = 0;
 
+  // Headless-shell has no PDF viewer: supply its load event and stub only the iframe's print.
+  const stubPdfPrint = async (p, mode = 'ok') => p.evaluate((mode) => {
+    const append = document.body.append, create = URL.createObjectURL, revoke = URL.revokeObjectURL, timeout = window.setTimeout;
+    const state = window.__print216 = { calls: 0, frames: [], revoked: [], cleanups: [], blobs: new Map() };
+    URL.createObjectURL = (blob) => { const url = create.call(URL, blob); state.blobs.set(url, blob); return url; };
+    window.setTimeout = (fn, ms, ...args) => ms === 60000 ? (state.cleanups.push(fn), 0) : timeout(fn, ms, ...args);
+    URL.revokeObjectURL = (url) => { state.revoked.push(url); revoke.call(URL, url); };
+    document.body.append = function (...nodes) {
+      const rest = nodes.filter((n) => n.tagName !== 'IFRAME' || !n.src.startsWith('blob:'));
+      for (const frame of nodes.filter((n) => n.tagName === 'IFRAME' && n.src.startsWith('blob:'))) {
+        const url = frame.src, record = { url, hidden: frame.hidden, type: '', text: '' };
+        state.frames.push(record);
+        let loaded = false;
+        frame.addEventListener('load', (e) => { if (!loaded) e.stopImmediatePropagation(); }, true);
+        frame.src = 'about:blank';
+        append.call(this, frame);
+        Promise.resolve(state.blobs.get(url)).then(async (blob) => {
+          record.type = blob.type; record.text = await blob.text();
+          state.load = () => {
+            frame.contentWindow.print = () => {
+              state.calls++; window.__printed = record.text;
+              if (mode === 'throws') throw new Error('printer unavailable');
+            };
+            loaded = true; frame.dispatchEvent(new Event('load'));
+          };
+          if (mode !== 'held' && mode !== 'timeout') state.load();
+        }).catch((e) => { state.error = String(e); });
+      }
+      append.apply(this, rest);
+    };
+    window.__restorePrint216 = () => {
+      document.body.append = append; URL.createObjectURL = create; URL.revokeObjectURL = revoke; window.setTimeout = timeout;
+      state.cleanups.forEach((fn) => fn());
+    };
+  }, mode);
+
+  await step('TODO 216: Print… prints the planned PDF once on Drawings, Layouts and Compare, no files', async () => {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const p = await ctx.newPage(), q = (id) => panelControl(p, p.getByTestId(id));
+    try {
+      await p.goto(URL_);
+      await p.evaluate(() => {
+        window.__io216 = { saves: 0, writes: 0, opens: 0, downloads: 0 };
+        window.__TAURI__ = { dialog: { save: async () => { window.__io216.saves++; return 'C:/unexpected.pdf'; } }, fs: { writeFile: async () => { window.__io216.writes++; } } };
+        window.open = () => { window.__io216.opens++; };
+        HTMLAnchorElement.prototype.click = () => { window.__io216.downloads++; };
+      });
+      for (const tab of ['Drawings', 'Layouts', 'Compare']) {
+        const raw = newDoc(4); addLayer(raw, 'Second');
+        addEntities(raw, dxfText(10, 10, 3, 'PRINT216'), dxfCircle(40, 30, 10, { layer: 'Second' }));
+        const lay = newLayout('Print216'); lay.parts.p = makePart('p', 'Print216', raw); lay.placed = [{ partId: 'p', x: 100, y: 100, rot: 0 }];
+        await q('picker').setInputFiles({ name: tab + '216.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(tab === 'Layouts' ? layoutRaw(lay) : raw)) });
+        await p.waitForFunction((name) => document.querySelector('.dtab.on .tname').textContent === name, tab + '216.dxf');
+        if (tab === 'Compare') { await p.locator('[data-menu=File]').click(); await p.getByRole('menuitem', { name: 'Compare drawings…', exact: true }).click(); }
+        if (tab === 'Layouts') await p.evaluate(() => { delete window.__TAURI__; }); // browser and app share the print path
+        await stubPdfPrint(p, 'held');
+        await q('pdf-open').click(); await q('pdf-dialog').waitFor();
+        await q('pdf-page-sheet').check();
+        if (await q('pdf-separate').count()) { await q('pdf-separate').check(); await q('pdf-mirror').uncheck(); }
+        const count = await q('pdf-pagebtn').count(); assert.ok(count >= (tab === 'Layouts' ? 2 : 1));
+        assert.match(await q('pdf-print').getAttribute('title'), /opens the print dialog/);
+        for (const theme of ['light', 'dark']) {
+          await p.evaluate((theme) => { document.documentElement.dataset.theme = theme; }, theme);
+          const path = `${shotDir}/todo216-${tab}-${theme}.png`;
+          await p.screenshot({ path }); assert.ok(readFileSync(path).length > 1000);
+        }
+        await q('pdf-print').click();
+        await p.waitForFunction(() => !!window.__print216.load);
+        assert.equal(await p.evaluate(() => window.__print216.calls), 0, 'waits for PDF load');
+        await p.evaluate(() => window.__print216.load());
+        await q('pdf-dialog').waitFor({ state: 'detached' });
+        const result = await p.evaluate(() => window.__print216);
+        assert.equal(result.calls, 1); assert.equal(result.frames.length, 1);
+        assert.equal(result.frames[0].hidden, true); assert.equal(result.frames[0].type, 'application/pdf');
+        assert.match(result.frames[0].text, /^%PDF-/); assert.match(result.frames[0].text, /\(PRINT216\)/);
+        assert.equal(Number(result.frames[0].text.match(/\/Count (\d+)/)[1]), count);
+        assert.deepEqual(await p.evaluate(() => window.__io216), { saves: 0, writes: 0, opens: 0, downloads: 0 });
+        assert.equal(await p.locator('iframe').count(), 1); assert.deepEqual(result.revoked, []);
+        assert.equal(await p.evaluate(() => window.__print216.cleanups.length), 1, 'cleanup scheduled for 60 seconds');
+        await p.evaluate(() => window.__print216.cleanups[0]());
+        assert.equal(await p.locator('iframe').count(), 0);
+        assert.deepEqual(await p.evaluate(() => window.__print216.revoked), [result.frames[0].url]);
+        assert.doesNotMatch(await q('cmd-prompt').textContent(), /Ctrl\+P|Saved/);
+        await p.evaluate(() => window.__restorePrint216());
+      }
+    } finally { await ctx.close(); }
+  });
+
+  await step('TODO 216: throwing print and missing load fall back to save or browser open with one status line', async () => {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const p = await ctx.newPage(), q = (id) => p.getByTestId(id);
+    try {
+      await p.goto(URL_);
+      const raw = newDoc(4); addEntities(raw, dxfCircle(20, 20, 10));
+      await q('picker').setInputFiles({ name: 'fallback216.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(raw)) });
+      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'fallback216.dxf');
+      for (const [mode, app] of [['throws', true], ['timeout', true], ['throws', false]]) {
+        await p.evaluate((app) => {
+          window.__fallback216 = { asked: 0, wrote: [], opened: [] };
+          window.__TAURI__ = app ? { dialog: { save: async () => { window.__fallback216.asked++; return 'C:/prints/fallback216.pdf'; } }, fs: { writeFile: async (path, bytes) => { window.__fallback216.wrote.push({ path, text: new TextDecoder().decode(bytes) }); } } } : undefined;
+          window.open = (url) => { window.__fallback216.opened.push(url); return {}; };
+        }, app);
+        await stubPdfPrint(p, mode);
+        await q('pdf-open').click(); await q('pdf-dialog').waitFor();
+        await q('pdf-print').click(); await q('pdf-dialog').waitFor({ state: 'detached' });
+        const result = await p.evaluate(() => ({ ...window.__fallback216, print: window.__print216 }));
+        assert.equal(result.print.calls, mode === 'throws' ? 1 : 0);
+        assert.equal(result.asked, app ? 1 : 0); assert.equal(result.wrote.length, app ? 1 : 0); assert.equal(result.opened.length, app ? 0 : 1);
+        if (app) assert.equal(result.wrote[0].text, result.print.frames[0].text);
+        else assert.equal(await p.evaluate((url) => window.__print216.blobs.get(url).text(), result.opened[0]), result.print.frames[0].text);
+        assert.match(await q('cmd-prompt').textContent(), /Printing was not available.*Ctrl\+P/);
+        assert.equal(await p.locator('iframe').count(), 0);
+        assert.ok(result.print.revoked.includes(result.print.frames[0].url));
+        await p.evaluate(() => window.__restorePrint216());
+      }
+    } finally { await ctx.close(); }
+  });
+
   await step('PDF / Print: the dialog opens from the tab row button with the mock-up\'s defaults', async () => {
     await openPdf();
     assert.equal(await dialog.getAttribute('aria-label'), 'PDF export');
@@ -4602,41 +4720,42 @@ try {
     } finally { await titleCtx.close(); }
   });
 
-  await step('page buttons pick the preview page; Print… saves and opens the PDF', async () => {
+  await step('page buttons pick the preview page; Print… prints, no Save dialog, nothing written', async () => {
+    if (only) { await pdfLayout(); await openPdf(); await t('pdf-page-tile').check(); layers = await t('pdf-pagebtn').count(); await closePdf(); }
+    await stubPdfPrint(page);
     await openPdf();
     await t('pdf-pagebtn').nth(1).click();
     assert.match(await t('pdf-preview-label').textContent(), new RegExp(`^Preview · page 2 of ${layers} · `));
     assert.equal(await t('pdf-pagebtn').nth(1).evaluate((b) => b.classList.contains('on')), true);
     await t('pdf-print').click();
     await dialog.waitFor({ state: 'detached' });
-    assert.match(await t('cmd-prompt').textContent(), /sample-copy layout\.pdf opened for printing \(\d+ pages\)|opened for printing/);
+    assert.match(await t('cmd-prompt').textContent(), /Print dialog opened.*\(\d+ pages\)/);
+    assert.equal(await page.evaluate(() => window.__print216.calls), 1);
+    await page.evaluate(() => window.__restorePrint216());
   });
 
-  await step('Print… in the app asks where to save (the Save dialog, <name>.pdf), not Downloads; Cancel writes nothing', async () => {
+  await step('Print… in the app prints, no Save dialog, nothing written; Save PDF Cancel writes nothing', async () => {
+    if (only) await pdfLayout();
+    await stubPdfPrint(page);
     await page.evaluate(() => {
       window.__saved = { asked: [], wrote: [] }; window.__pick = 'C:\\prints\\mine';
       window.__TAURI__ = { dialog: { save: async (o) => { window.__saved.asked.push(o.defaultPath); return window.__pick; } }, fs: { exists: async () => false, writeFile: async (p) => { window.__saved.wrote.push(p); } }, path: { downloadDir: async () => { throw new Error('Downloads must not be used'); } } };
     });
     await openPdf();
-    await page.evaluate(() => { window.__pick = null; });
-    await t('pdf-print').click();                                     // Cancel in the dialog
-    await page.waitForFunction(() => window.__saved.asked.length === 1);
-    assert.equal(await dialog.count(), 1, 'the PDF dialog stays open on Cancel');
-    assert.deepEqual(await page.evaluate(() => window.__saved.wrote), []);
-    await page.evaluate(() => { window.__pick = 'C:\\prints\\mine'; });
     await t('pdf-print').click();
     await dialog.waitFor({ state: 'detached' });
     const got = await page.evaluate(() => window.__saved);
-    assert.match(got.asked[0], /\.pdf$/);
-    assert.deepEqual(got.wrote, ['C:\\prints\\mine.pdf']);
-    assert.match(await t('cmd-prompt').textContent(), /Saved C:\\prints\\mine\.pdf/);
+    assert.deepEqual(got, { asked: [], wrote: [] });
+    assert.equal(await page.evaluate(() => window.__print216.calls), 1);
     await page.evaluate(() => { window.__pick = null; });
     await openPdf();
     await t('pdf-go').click();
-    await page.waitForFunction(() => window.__saved.asked.length === 3);
-    assert.equal(await page.evaluate(() => window.__saved.asked.at(-1)), 'sample-copy layout.pdf', 'a tab without a disk path leaves the last folder to the native picker');
+    await page.waitForFunction(() => window.__saved.asked.length === 1);
+    assert.equal(await dialog.count(), 1, 'the PDF dialog stays open on Cancel');
+    assert.deepEqual(await page.evaluate(() => window.__saved.wrote), []);
+    assert.equal(await page.evaluate(() => window.__saved.asked.at(-1)), only ? 'mirror-pdf.pdf' : 'sample-copy layout.pdf', 'a tab without a disk path leaves the last folder to the native picker');
     await t('pdf-cancel').click();
-    await page.evaluate(() => { delete window.__TAURI__; delete window.__saved; });
+    await page.evaluate(() => { window.__restorePrint216(); delete window.__TAURI__; delete window.__saved; });
   });
 
   await step('A folder at once: choose a folder, the list, Convert makes one PDF per .dxf', async () => {
@@ -4791,8 +4910,8 @@ try {
           if (id === 'pdf-preview' || id === 'pdf-full-canvas') (window.__pdfTexts[id] ||= []).push(args[0]);
           return fillText.apply(this, args);
         };
-        window.__TAURI__ = { dialog: { save: async () => 'C:/prints/selection214.pdf' }, fs: { writeFile: async (_path, bytes) => { window.__printed = new TextDecoder().decode(bytes); } } };
       });
+      await stubPdfPrint(p);
       await open();
       assert.equal(await q('pdf-selection-only').isChecked(), false);
       assert.equal(await q('pdf-selection-only').isDisabled(), true);
@@ -4910,8 +5029,8 @@ try {
           if (id === 'pdf-preview' || id === 'pdf-full-canvas') (window.__pdfTexts[id] ||= []).push(args[0]);
           return fillText.apply(this, args);
         };
-        window.__TAURI__ = { dialog: { save: async () => 'C:/prints/selection214b.pdf' }, fs: { writeFile: async (_path, bytes) => { window.__printed = new TextDecoder().decode(bytes); } } };
       });
+      await stubPdfPrint(p);
       await p.keyboard.press('Escape');
       await open();
       assert.equal(await q('pdf-selection-only').isDisabled(), true, 'nothing selected');
@@ -5030,9 +5149,9 @@ try {
           if (id === 'pdf-preview' || id === 'pdf-full-canvas') (window.__pdfTexts[id] ||= []).push(args[0]);
           return fillText.apply(this, args);
         };
-        window.__TAURI__ = { dialog: { save: async () => 'C:/prints/compare214c.pdf' }, fs: { writeFile: async (_path, bytes) => { window.__printed = new TextDecoder().decode(bytes); } } };
         window.__clearCompareSelection();
       });
+      await stubPdfPrint(p);
       await open();
       assert.equal(await q('pdf-selection-only').isDisabled(), true);
       assert.equal(await q('pdf-selection-only').isChecked(), false);
@@ -20230,7 +20349,9 @@ try {
         await page.evaluate(() => { window.__next = null; });
         await suggestion(() => menuItem('File', 'Save As…'), want);
         await openPdf();
+        await stubPdfPrint(page, 'throws');
         await suggestion(() => t('pdf-print').click(), 'C:\\elsewhere\\chosen.pdf');            // after Save As elsewhere the PDF starts where the drawing now lives
+        await page.evaluate(() => window.__restorePrint216());
         await t('pdf-cancel').click();
         await closeTabs(/./);
         await page.evaluate(() => { window.__log.wrote.length = 0; });
