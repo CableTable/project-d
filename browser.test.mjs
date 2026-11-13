@@ -24717,11 +24717,11 @@ try {
     const big = Buffer.from(writeDxf(bigDoc(20000)));
     const lay = await flow((p) => interactLayout(p, big, 'lag-big.dxf', 2));
     assert.deepEqual(Object.keys(lay), ['open', 'Add to layout x 3', 'Layout wheel', 'Layout pan', 'Layout Measure hover', 'Layout Line hover', 'Layout part click', 'Layout part drag', 'Layout undo', 'Layout sheet size', 'Layout Apply']);
-    assert.ok(lay['Layout part click'].lineTo > 20000, `two placed parts paint: lineTo ${lay['Layout part click'].lineTo}`);
+    assert.ok(lay['Layout part click'].lineTo > 30000, `two placed parts paint: lineTo ${lay['Layout part click'].lineTo}`);
     within(lay, { 'Layout wheel': 21, 'Layout pan': 21, 'Layout Measure hover': 42, 'Layout Line hover': 42, 'Layout part click': 2, 'Layout part drag': 24, 'Layout undo': 2 });
     const cmp = await flow((p) => interactCompare(p, Buffer.from(writeDxf(splineDoc(300))), 'lag-spline.dxf'));
     assert.deepEqual(Object.keys(cmp), ['open', 'Compare start', 'Compare wheel', 'Compare pan', 'Compare click', 'Compare button', 'Compare drag']);
-    assert.ok(cmp['Compare start'].lineTo > 32000, `both snapshots paint: lineTo ${cmp['Compare start'].lineTo}`);
+    assert.ok(cmp['Compare start'].lineTo > 48000, `both snapshots paint: lineTo ${cmp['Compare start'].lineTo}`);
     within(cmp, { 'Compare start': 2, 'Compare wheel': 21, 'Compare pan': 21, 'Compare click': 2, 'Compare button': 2, 'Compare drag': 22 });
     const edit = await flow((p) => interactEdit(p, big, 'lag-big.dxf'));
     assert.deepEqual(Object.keys(edit), ['open', 'Ctrl+A', 'box select', 'Move hover', 'Move commit click', 'Trim hover', 'object drag', 'LINE grip drag', 'Delete', 'Ctrl+Z', 'Ctrl+Y']);
