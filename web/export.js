@@ -184,7 +184,7 @@ export function openExport(host) {
   ref.customLbl = h('span', { class: 'lbl mono', 'data-testid': 'pdf-custom-info' });
   ref.scaleError = h('div', { class: 'pd-margin-error', role: 'alert', hidden: true, style: 'padding-left:22px', 'data-testid': 'pdf-scale-error' });
   ref.pagesNote = h('div', { class: 'lbl', style: 'padding-left:22px', 'data-testid': 'pdf-pages-note' });
-  ref.pagesNote2 = h('div', { class: 'lbl', style: 'padding-left:22px' });
+  ref.pagesNote2 = h('div', { class: 'lbl', style: 'padding-left:22px', 'data-testid': 'pdf-label-scale' });
   ref.preLabel = h('div', { class: 'lbl', 'data-testid': 'pdf-preview-label' });
   ref.pageBtns = h('div', { class: 'pd-pagebtns', 'data-testid': 'pdf-page-buttons' });
   ref.canvas = h('canvas', { role: 'img', 'data-testid': 'pdf-preview' });
@@ -414,7 +414,8 @@ export function openExport(host) {
     const names = [...new Set(plan.pages.map((p) => p.layer || 'All layers'))];
     const shownNames = names.length > 5 ? [...names.slice(0, 5), `+${names.length - 5} more`] : names;
     ref.pagesNote.textContent = `${shownNames.join(' · ')} = ${plan.count} ${plan.count === 1 ? 'page' : 'pages'}`;
-    ref.pagesNote2.textContent = '';
+    const plainScale = check && o.sheetSizeGripper ? planPdf(srcFull, { ...o, sheetSizeGripper: false }).pages[0].scale : p0.scale;
+    ref.pagesNote2.textContent = check && p0.scale < plainScale ? `Scale reduced to fit sheet labels: ${scaleText(p0.scale).replaceAll(' ', '')}` : '';
     const p = plan.pages[settings.pageIdx];
     ref.titleSet.hidden = !oneCheck;
     if (oneCheck) {

@@ -4797,6 +4797,73 @@ try {
     await closePdf();
   });
 
+  await step('TODO 263: layout print keeps sheet labels on the preview at small margins', async () => {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const p = await ctx.newPage(), q = (id) => p.getByTestId(id);
+    p.on('pageerror', (e) => errors.push(String(e)));
+    const lay = newLayout('Label fit');
+    Object.assign(lay.s, { sheetW: 520, sheetH: 400, gripTop: 1, gripRight: 1, gripBottom: 1, gripLeft: 1 });
+    lay.parts.p = makePart('p', 'Plate', addEntities(newDoc(4), dxfLine(0, 0, 100, 100)));
+    lay.placed = [{ partId: 'p', x: 100, y: 100, rot: 0 }];
+    try {
+      await p.goto(URL_);
+      await q('picker').setInputFiles({ name: 'labels-263.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
+      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'labels-263.dxf');
+      await p.evaluate(() => {
+        const fillRect = CanvasRenderingContext2D.prototype.fillRect, fillText = CanvasRenderingContext2D.prototype.fillText;
+        CanvasRenderingContext2D.prototype.fillRect = function (x, y, w, h) {
+          if (this.canvas.dataset.testid === 'pdf-preview') {
+            const m = this.getTransform(), a = m.transformPoint({ x, y }), b = m.transformPoint({ x: x + w, y: y + h });
+            window.__labels263 = { page: [a.x, b.y, b.x, a.y], boxes: [] };
+          }
+          return fillRect.call(this, x, y, w, h);
+        };
+        CanvasRenderingContext2D.prototype.fillText = function (text, x, y) {
+          if (this.canvas.dataset.testid === 'pdf-preview' && /^(Gripper |[\d.]+ mm$)/.test(text)) {
+            const m = this.getTransform(), t = this.measureText(text);
+            const points = [-t.actualBoundingBoxLeft, t.actualBoundingBoxRight].flatMap((dx) => [-t.actualBoundingBoxAscent, t.actualBoundingBoxDescent].map((dy) => m.transformPoint({ x: x + dx, y: y + dy })));
+            window.__labels263.boxes.push({ text, box: [Math.min(...points.map((v) => v.x)), Math.min(...points.map((v) => v.y)), Math.max(...points.map((v) => v.x)), Math.max(...points.map((v) => v.y))] });
+          }
+          return fillText.call(this, text, x, y);
+        };
+      });
+      await q('pdf-open').click(); await q('pdf-dialog').waitFor();
+      assert.equal(await q('pdf-tab-one').getAttribute('aria-selected'), 'true');
+      await q('pdf-page-check').check();
+      for (const side of ['top', 'right', 'bottom', 'left']) await q('pdf-margin-' + side).fill('1');
+      const before = await q('pdf-scale-box').inputValue();
+      await q('pdf-sheet-size-gripper').check();
+      assert.match(await q('pdf-label-scale').textContent(), /^Scale reduced to fit sheet labels: 1:[\d.]+$/);
+      assert.notEqual(await q('pdf-scale-box').inputValue(), before);
+      for (const margin of ['1', '0']) {
+        for (const side of ['top', 'right', 'bottom', 'left']) await q('pdf-margin-' + side).fill(margin);
+        const { page: bounds, boxes } = await p.evaluate(() => window.__labels263);
+        assert.equal(boxes.length, 6);
+        for (const { text, box } of boxes) assert.ok(box[0] >= bounds[0] && box[1] >= bounds[1] && box[2] <= bounds[2] && box[3] <= bounds[3], `${text}: ${box} outside preview page ${bounds}`);
+      }
+      for (const theme of ['light', 'dark']) {
+        await p.evaluate((theme) => { document.documentElement.dataset.theme = theme; }, theme);
+        await q('pdf-label-scale').scrollIntoViewIfNeeded();
+        await p.screenshot({ path: `${shotDir}/todo263-label-fit-${theme}.png` });
+        assert.ok(readFileSync(`${shotDir}/todo263-label-fit-${theme}.png`).length > 1000);
+      }
+      await q('pdf-sheet-size-gripper').uncheck();
+      assert.equal(await q('pdf-label-scale').textContent(), '');
+      await q('pdf-page-custom').check(); await q('pdf-custom-paper').selectOption('A4');
+      await q('pdf-scale-box').fill('1:2.5'); await q('pdf-sheet-size-gripper').check();
+      assert.equal(await q('pdf-scale-box').inputValue(), '1:2.5');
+      assert.equal(await q('pdf-label-scale').textContent(), '');
+      await q('pdf-scale-box').fill('47%');
+      assert.equal(await q('pdf-margin-error').textContent(), 'Sheet labels do not fit at 1:2.13');
+      assert.equal(await q('pdf-scale-box').inputValue(), '47%');
+      assert.equal(await q('pdf-go').isDisabled(), true);
+      assert.equal(await q('pdf-print').isDisabled(), true);
+      await q('pdf-sheet-size-gripper').uncheck();
+      assert.equal(await q('pdf-go').isDisabled(), false);
+      await q('pdf-close').click();
+    } finally { await ctx.close(); }
+  });
+
   await step('TODO 202: PDF / Print draws sheet size and gripper on a check print', async () => {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const p = await ctx.newPage(), q = (id) => p.getByTestId(id);
