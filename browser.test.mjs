@@ -12553,6 +12553,7 @@ try {
     await mode('STRETCH');
     assert.match(await t('cmd-hist').textContent(), /take loose objects only here/);
     await press('Escape'); await noHot();
+    await typeCmd('d'); await page.keyboard.press('Escape');
     await closeTabs(/./);
   });
 
@@ -15815,6 +15816,7 @@ try {
   });
   await step('tracking: POLAR in the Dimension tool (Aligned) locks the second point onto the 30° ray; the placed dimension runs at 30°', async () => {
     await blankTab();
+    await typeCmd('d'); await page.keyboard.press('Escape');
     await page.locator('[data-tool=dimension]').click();
     assert.equal(await page.locator('[data-tool=dimension]').getAttribute('title'), 'Dimension (D)', 'Aligned is the type');
     await click(20, 20);
@@ -15870,6 +15872,7 @@ try {
   const flyoutItems = () => page.locator('.ctxmenu .mi').evaluateAll((a) => a.map((b) => [...b.children].map((c) => c.textContent).join(' ')));
   await step('dimension types: the button\'s corner triangle opens the flyout (Aligned D, Linear DLI, Radius DRA, Diameter DDI, Angle DAN); picking Linear puts the button on it and asks for the first extension line origin', async () => {
     await openGrips(dimDoc(), 'dims.dxf');
+    await typeCmd('d'); await page.keyboard.press('Escape');
     assert.equal(await page.locator('[data-tool=dimension]').getAttribute('title'), 'Dimension (D)');
     await t('dim-flyout').click();
     assert.deepEqual(await flyoutItems(), ['Automatic DIM', 'Aligned D', 'Linear DLI', 'Radius DRA', 'Diameter DDI', 'Angle DAN']);
