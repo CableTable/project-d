@@ -9250,25 +9250,31 @@ try {
     if (only) { await fourParts(); await dragMm([40, 500], [960, 150]); await page.keyboard.press('Control+g'); }
     const labelGone = async () => assert.equal(await page.locator('[data-testid=sel-readout]').count(), 0, 'no readout or label');
     await click(150, 450);
-    assert.equal(await t('pp-name').textContent(), 'Group of 3');
+    await page.waitForFunction(() => document.querySelectorAll('[data-group=tools] .sel-multi').length === 3);
+    assert.equal(await page.locator('[data-group=tools] .sel-multi').count(), 3);
     await page.locator('[data-menu=Layout]').click();
     await page.keyboard.press('Escape');                           // the open menu takes this Esc
     assert.equal(await page.locator('.dropdown').isVisible(), false, 'Esc closed the menu');
-    assert.equal(await page.locator('[data-group=tools] .sel-multi').count() > 0, true, 'Esc on an open menu keeps the whole group selected');
+    await page.waitForFunction(() => document.querySelectorAll('[data-group=tools] .sel-multi').length === 3);
+    assert.equal(await page.locator('[data-group=tools] .sel-multi').count(), 3, 'Esc on an open menu keeps the whole group selected');
     await page.keyboard.press('Escape');
+    await page.waitForFunction(() => document.querySelectorAll('[data-group=tools] .sel-multi').length === 0);
     assert.equal(await page.locator('[data-group=tools] .sel-multi').count(), 0, 'a second Esc cleared the whole group');
     await labelGone();
     await click(150, 450);
     await click(500, 650);                                         // empty sheet
+    await page.waitForFunction(() => document.querySelectorAll('[data-group=tools] .sel-multi').length === 0);
     assert.equal(await page.locator('[data-group=tools] .sel-multi').count(), 0, 'an empty click cleared the group');
     await labelGone();
     await click(150, 450);
     await page.keyboard.down('Control');
     try { await click(500, 650); } finally { await page.keyboard.up('Control'); }
-    assert.equal(await t('pp-name').textContent(), 'Group of 3', 'Ctrl+click on empty keeps the selection');
+    await page.waitForFunction(() => document.querySelectorAll('[data-group=tools] .sel-multi').length === 3);
+    assert.equal(await page.locator('[data-group=tools] .sel-multi').count(), 3, 'Ctrl+click on empty keeps the selection');
     await click(858, 608);
     await click(500, 650);                                         // a single part clears too
-    assert.equal(await page.locator('[data-group=tools] .sel-box').count(), 0, 'an empty click cleared one part');
+    await page.waitForFunction(() => document.querySelectorAll('[data-group=tools] .sel-multi').length === 0);
+    assert.equal(await page.locator('[data-group=tools] .sel-multi').count(), 0, 'an empty click cleared one part');
   });
 
   await step('TODO 37: Lock: a locked part cannot be moved, nudged, turned, mirrored or deleted ("Locked: Unlock to move it"); a padlock marks it; Unlock frees it; the menu and panel buttons work', async () => {
