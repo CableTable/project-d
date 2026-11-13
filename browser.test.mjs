@@ -9251,8 +9251,12 @@ try {
     const labelGone = async () => assert.equal(await page.locator('[data-testid=sel-readout]').count(), 0, 'no readout or label');
     await click(150, 450);
     assert.equal(await t('pp-name').textContent(), 'Group of 3');
+    await page.locator('[data-menu=Layout]').click();
+    await page.keyboard.press('Escape');                           // the open menu takes this Esc
+    assert.equal(await page.locator('.dropdown').isVisible(), false, 'Esc closed the menu');
+    assert.equal(await t('pp-name').textContent(), 'Group of 3', 'Esc on an open menu keeps the whole group selected');
     await page.keyboard.press('Escape');
-    assert.equal(await page.locator('[data-group=tools] .sel-multi').count(), 0, 'Esc cleared the whole group');
+    assert.equal(await page.locator('[data-group=tools] .sel-multi').count(), 0, 'a second Esc cleared the whole group');
     await labelGone();
     await click(150, 450);
     await click(500, 650);                                         // empty sheet
@@ -9387,7 +9391,7 @@ try {
     await page.locator('[data-menu=Layout]').click();
     assert.deepEqual(await page.locator('.dropdown button').evaluateAll((bs) => bs.map((b) => [b.firstChild.textContent, b.disabled])).then((r) => r.filter((x) => /Group|Ungroup|Lock|Unlock/.test(x[0]))),
       [['Group', true], ['Ungroup', false], ['Lock', false], ['Unlock', true]]);
-    await page.locator('[data-menu=Layout]').click();             // closes the menu; Esc would also clear a whole group (TODO 262)
+    await page.keyboard.press('Escape');
     await menuItem('Layout', 'Lock');
     await menuItem('Layout', 'Unlock');
     await menuItem('Edit', 'Undo history…'); await t('hist-dialog').waitFor();

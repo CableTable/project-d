@@ -518,7 +518,7 @@ function buildMenus() {
     return b;
   });
   document.addEventListener('click', close);
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !drop.hidden) { close(); e.stopImmediatePropagation(); } });       // an open menu takes the Esc: editKey (registered later) never sees it
   return h('div', { class: 'menubar' }, h('strong', null, 'Project D'), ui.menuBtns, drop);
 }
 
