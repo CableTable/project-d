@@ -25379,9 +25379,41 @@ try {
       await p.route('**/app.js', (route) => {
         const src = readFileSync('web/app.js', 'utf8'), body = src.replace('d.ed =Ed.makeIndex(', 'd.ed = (window.t258Index = (window.t258Index || 0) + 1, Ed.makeIndex)(');
         assert.notEqual(body, src, 'the index counter is installed');
-        route.fulfill({ contentType: 'text/javascript', body: body + `
+        const timed = body.replace('function commit(d, next, label, keepSel) {', `function commit(d, next, label, keepSel) {
+          const start = performance.now(), before = window.t259Misses.length, old = new Set(d.raw.entities.map(e => e.r));
+          const changed = next.entities.filter((e, i) => e.type === 'SPLINE' && e.r !== d.raw.entities[i]?.r).length;
+          try { return t259Commit(d, next, label, keepSel); }
+          finally { window.t259CommitResult = { ms: performance.now() - start, calls: window.t259Misses.length - before, changed,
+            unchangedMisses: window.t259Misses.slice(before).filter(r => old.has(r)).length }; }
+        }
+        function t259Commit(d, next, label, keepSel) {`);
+        assert.notEqual(timed, body, 'the commit timer is installed');
+        route.fulfill({ contentType: 'text/javascript', body: timed + `
+        window.t259Geometry = () => curDoc().fl.items.filter(it => it.spl).map(it => it.ops);
+        window.t259Pick = () => { const d = curDoc(); setSel(d, new Set([d.raw.entities.findIndex(e => e.type === 'SPLINE')])); };
+        window.t259Close = () => closeTab(curDoc());
+        window.t259Ready = () => typeof primeSplines === 'undefined' || window.t259Misses.length >=
+          [curDoc().raw.entities, ...Object.values(curDoc().raw.blocks).map(b => b.entities)].flat().filter(e => e.type === 'SPLINE').length;
         window.t258Paint = () => paintOverlay();
         window.t258Layer = (off) => { const d = curDoc(); if (off) d.off.add(0); else d.off.clear(); paintOverlay(); };` });
+      });
+      await p.route('**/drawing.js', (route) => {
+        const src = readFileSync('web/drawing.js', 'utf8');
+        const body = src.replace('const p = nurbs(cp, knots, num(f[71], 3), w, fit);', 'if (typeof window !== "undefined") window.t259Misses.push(r); const p = nurbs(cp, knots, num(f[71], 3), w, fit);');
+        assert.notEqual(body, src, 'only the SPLINE-path nurbs counter is installed');
+        route.fulfill({ contentType: 'text/javascript', body });
+      });
+      await p.addInitScript(() => {
+        window.t259Misses = []; window.t259Chunks = []; window.t259Pending = [];
+        const idle = window.requestIdleCallback.bind(window);
+        window.requestIdleCallback = (fn, opts) => {
+          const run = (deadline) => {
+            const start = performance.now();
+            try { fn(deadline); } finally { window.t259Chunks.push(performance.now() - start); }
+          };
+          if (window.t259PauseIdle) { window.t259Pending.push(run); return 0; }
+          return idle(run, opts);
+        };
       });
       const crossDoc = (n) => {                       // lines (entity 1 crosses entity 0, so half of the lines cross), arcs and text, one 10 mm cell each
         const doc = newDoc(4), cols = Math.ceil(Math.sqrt(n)), ents = [];
@@ -25467,6 +25499,57 @@ try {
       assert.ok(await paints() - paints0 <= 1, `a Stretch finish does at most one full paint, did ${await paints() - paints0}`);
       assert.ok(await indexes() - index0 <= 1, `a Stretch finish rebuilds the index at most once, did ${await indexes() - index0}`);
       await pixels('Stretch finish');
+      const { splineDoc } = await import('./tools/gen-big-dxf.mjs');
+      const fixtures = [['spline:900', Buffer.from(writeDxf(splineDoc(900)))]];
+      const real = join('..', 'real-dxf', 'real.dxf');
+      if (existsSync(real)) fixtures.push(['real.dxf', readFileSync(real)]);
+      const measurements = [];
+      for (const [name, buffer] of fixtures) {
+        await p.goto(URL_ + '?autosave=86400000'); await p.getByTestId('count').waitFor({ state: 'attached' });
+        const fileName = name.replace(':', '-') + '.dxf';
+        await p.getByTestId('picker').setInputFiles({ name: fileName, mimeType: 'text/plain', buffer });
+        await p.waitForFunction((n) => document.querySelector('.dtab.on .tname').textContent === n, fileName, { timeout: 120000 });
+        await p.waitForFunction(() => window.t258Index >= 1, null, { timeout: 60000 });
+        await p.waitForFunction(() => window.t259Ready(), null, { timeout: 60000 }); await frame();
+        const primed = await p.evaluate(() => window.t259Misses.length);
+        const before = await p.evaluate(() => window.t259Geometry());
+        await p.evaluate(() => window.t259Pick()); await typed('stretch'); await typed('0,0');
+        await typed('@2,1'); await frame();
+        const result = await p.evaluate(() => window.t259CommitResult);
+        assert.equal(result?.changed, 1, name + ': Stretch changes exactly the selected spline');
+        const after = await p.evaluate(() => window.t259Geometry());
+        assert.notDeepEqual(after, before, name + ': stretched geometry differs');
+        const calls = await p.evaluate(() => window.t259Misses.length);
+        await p.keyboard.press('Control+z'); await frame();
+        assert.deepEqual(await p.evaluate(() => window.t259Geometry()), before, name + ': Undo restores geometry');
+        await p.keyboard.press('Control+y'); await frame();
+        assert.deepEqual(await p.evaluate(() => window.t259Geometry()), after, name + ': Redo reapplies geometry');
+        const extra = await p.evaluate((calls) => window.t259Misses.length - calls, calls);
+        const chunks = await p.evaluate(() => window.t259Chunks);
+        measurements.push({ name, ...result, extra, chunks, primed });
+        console.log(`T259b ${name}: ${JSON.stringify({ ...result, extra, primed, chunks: chunks.length, maxChunkMs: Math.max(0, ...chunks) })}`);
+      }
+      for (const r of measurements) {
+        assert.equal(r.calls, r.changed, r.name + ': only stretched splines call nurbs at commit');
+        assert.equal(r.unchangedMisses, 0, r.name + ': unchanged records stay cached');
+        assert.equal(r.extra, 0, r.name + ': Undo / Redo add no SPLINE nurbs calls');
+        assert.ok(r.chunks.length > 1 && r.chunks.every(ms => ms < 50), r.name + ': every priming chunk is under 50 ms');
+      }
+      await p.goto(URL_ + '?autosave=86400000'); await p.getByTestId('count').waitFor({ state: 'attached' });
+      await p.evaluate(() => { window.t259PauseIdle = true; });
+      await p.getByTestId('picker').setInputFiles({ name: 'close-priming.dxf', mimeType: 'text/plain', buffer: fixtures[0][1] });
+      await p.waitForFunction(() => window.t259Pending.length > 0);
+      const partial = await p.evaluate(() => {
+        let checks = 0;
+        window.t259Pending.shift()({ timeRemaining: () => ++checks < 10 ? 10 : 0 });
+        return window.t259Misses.length;
+      });
+      assert.ok(partial > 0 && partial < 900, 'a priming chunk leaves work pending');
+      await p.evaluate(() => window.t259Close());
+      await p.evaluate(() => { for (const run of window.t259Pending.splice(0)) run({ timeRemaining: () => 50 }); });
+      assert.equal(await p.evaluate(() => window.t259Misses.length), partial, 'closed document primes no more splines');
+      assert.equal(await p.evaluate(() => window.t259Pending.length), 0, 'closed document schedules no more priming');
+      console.log('T259b: closing a document cancels its pending priming chunks');
       assert.deepEqual(errors, []);
       console.log('T258 / T259: 150k drawing, Measure moves and select click 0 full paints and 0 index builds; Stretch finish within 1 + 1; pixels equal a full paint');
     } finally { await ctx.close(); }
