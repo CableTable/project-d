@@ -23048,7 +23048,8 @@ try {
     await page.locator('.tabs .dtab[data-kind=drawing]').first().click();
     await t('add-to-layout').click(); await page.waitForFunction(() => document.querySelector('.tabs .dtab.on').dataset.kind === 'layout');
     assert.ok(await nParts() > 2, 'the grid has several copies (a loose part would be 1 + the object)');
-    // the menus enable what works on a layout
+    // the menus enable what works on a layout, with nothing selected (Add to layout selects the new part; Esc on an open menu keeps it)
+    await page.keyboard.press('Escape'); await page.waitForFunction(() => !document.querySelector('[data-group=tools] .sel-box'));
     const enabled = async (menu, name) => { await page.locator(`[data-menu=${menu}]`).click(); const on = !(await page.getByRole('menuitem', { name, exact: true }).isDisabled()); await page.keyboard.press('Escape'); return on; };
     assert.equal(await enabled('Draw', 'Line'), true); assert.equal(await enabled('Draw', 'Arc'), true);
     assert.equal(await enabled('Modify', 'Trim'), true); assert.equal(await enabled('Modify', 'Rotate'), false);
