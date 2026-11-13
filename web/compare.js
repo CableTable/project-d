@@ -95,9 +95,14 @@ function makeGrid(segs, box, c) {
   return { segs, cells, cols, rows, c, x0: box[0], y0: box[1] };
 }
 const MAX_RING = 60;                 // how many cells out a search goes (a very far feature is reported as at least that far)
-/** How far (x, y) is from the nearest segment of the grid (at least (MAX_RING + 1) cells when none is that near); Infinity when the drawing has no segments. */
-function nearest(g, x, y) {
+/** Returns a distance within tol as soon as found; otherwise the nearest distance in the searched rings, or Infinity for an empty drawing. */
+function nearest(g, x, y, tol) {
   if (!g.segs.length) return Infinity;
+  // Adjacent samples usually hit the same segment or the next; distances within tolerance are not reported.
+  for (let k = g.last ?? 0, end = Math.min(k + 8, g.segs.length); k < end; k += 4) {
+    const d = segDist(x, y, g.segs, k);
+    if (d <= tol) { g.last = k; return d; }
+  }
   const ci = Math.floor((x - g.x0) / g.c), cj = Math.floor((y - g.y0) / g.c), maxR = Math.min(MAX_RING, Math.max(g.cols, g.rows) + Math.max(Math.abs(ci), Math.abs(cj)) + 2);
   let best = Infinity;
   for (let r = 0; r <= maxR; r++) {
@@ -107,7 +112,11 @@ function nearest(g, x, y) {
         if (i < 0 || j < 0 || i >= g.cols || j >= g.rows) continue;
         const l = g.cells.get(j * g.cols + i);
         if (!l) continue;
-        for (const k of l) { const d = segDist(x, y, g.segs, k); if (d < best) best = d; }
+        for (const k of l) {
+          const d = segDist(x, y, g.segs, k);
+          if (d <= tol) { g.last = k; return d; }
+          if (d < best) best = d;
+        }
       }
     }
     if (best <= r * g.c) break;
@@ -158,7 +167,7 @@ export function compare(polysA, polysB, tol = DEFAULT_TOL, opts = {}) {
         if (j === n && k + 4 < segs.length && segs[k + 2] === segs[k + 4] && segs[k + 3] === segs[k + 5]) continue;      // the next segment starts here
         const t = j / n, x = segs[k] + (segs[k + 2] - segs[k]) * t, y = segs[k + 1] + (segs[k + 3] - segs[k + 1]) * t;
         out.samples++;
-        const d = nearest(other, x, y);
+        const d = nearest(other, x, y, tol);
         if (d > tol) { far.push([x, y, d, side]); if (far.length >= MAX_FAR) { out.truncated = true; break; } }
       }
     }
