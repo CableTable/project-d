@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-const { combine, isCombined, combinedLabel } = await import('./web/combine.js').catch(() => ({}));       // a missing module is a red test, not a load error (tools/base-check.mjs)
+const { combine, isCombined, combinedLabel, fillCombined = () => null } = await import('./web/combine.js').catch(() => ({}));       // a missing module is a red test, not a load error (tools/base-check.mjs)
 import { breakApart } from './web/breakapart.js';
 import { newDoc, addLayer, addBlock, addEntities, rect, circle, line, text, insert, writeDxf } from './web/dxf-write.js';
 import { readDxf, flatten } from './web/drawing.js';
-import { containsFill } from './web/fill.js';
+import { containsFill, fillHatch, hatchKey } from './web/fill.js';
 import { COMMANDS } from './web/cmdbar.js';
 import { bindings } from './web/shortcuts.js';
 import * as LD from './web/layoutdoc.js';
@@ -18,6 +18,53 @@ function fixture(fill) {
 }
 const fills = (raw) => flatten(raw).items.filter((it) => it.fill);
 const hatchBlock = () => { const raw = fixture(); raw.entities[0].fill = 'aci:1'; return combine(raw, new Set([1, 0])).blocks['Combined 1']; };       // the filled square is the last pick
+
+test('TODO 257: Combined fill is immutable, copy-on-write, even-odd in either order, and per-part on layouts', () => {
+  for (const innerFirst of [false, true]) for (const initial of [null, 'aci:1']) for (const key of ['aci:1', 'aci:5', 'tc:16746496', 'bylayer', 'byblock', null]) {
+    const raw = newDoc(), members = [rect(0, 0, 100, 100), circle(30, 30, 10)];
+    if (innerFirst) members.reverse();
+    addLayer(raw, 'Target', { aci: 3 });
+    addBlock(raw, 'Combined 1', initial ? [fillHatch({ ...members[0], fill: initial }, members.slice(1)), ...members] : members);
+    addBlock(raw, 'combined 2', [line(0, 0, 10, 0)]);
+    addEntities(raw, insert('Combined 1', 0, 0, { layer: 'Target' }), insert('Combined 1', 200, 0));
+    const e = raw.entities[0], before = writeDxf(raw), r = fillCombined(raw, e, key);
+    assert.ok(r, 'Combined INSERT accepted');
+    assert.equal(writeDxf(raw), before, 'source and shared copy untouched');
+    const name = r.entity.r.v[r.entity.r.c.indexOf(2)], h = r.blocks[name].entities.find((x) => x.type === 'HATCH');
+    assert.equal(h ? hatchKey(h) : null, key);
+    if (key === initial) { assert.equal(r.entity, e, 'no-op'); continue; }
+    assert.equal(name, 'Combined 3', 'case-insensitive free name');
+    assert.equal(r.blocks['Combined 1'], raw.blocks['Combined 1']);
+    if (key) {
+      assert.equal(r.blocks[name].entities[0], h);
+      const fl = flatten({ ...raw, entities: [r.entity], blocks: r.blocks }), f = fl.items.find((it) => it.fill);
+      assert.ok(containsFill(f.ops, [10, 10])); assert.ok(!containsFill(f.ops, [30, 30]), 'hole in either member order');
+      if (key === 'bylayer') assert.equal(f.css, '#00ff00');
+      assert.ok(breakApart({ ...raw, blocks: r.blocks, entities: [r.entity] }, new Set([0])).entities.every((x) => x.fill === (key === 'byblock' ? 'bylayer' : key)));
+    }
+    const lay = LD.newLayout('257'), part = LD.objectPart('a', 'Ring', e, raw.layers, raw.header, raw.blocks);
+    lay.layers = raw.layers; lay.parts.a = part; lay.placed.push(LD.objectPlacement(part), { ...LD.objectPlacement(part), x: 200 });
+    const reopened = LD.layoutFromRaw(readDxf(writeDxf(LD.layoutRaw(lay))));
+    assert.equal(LD.layersOf(reopened).Target?.aci, 3, 'reopened block object keeps its own layer colour');
+    const view = LD.objectDoc(lay), next = fillCombined(view.raw, view.raw.entities[0], key, false);
+    assert.equal(next.entity.r.v[next.entity.r.c.indexOf(2)], 'Combined 1', 'layout leaves block copying to objectReplace');
+    view.raw.blocks = next.blocks;
+    assert.ok(LD.objectReplace(lay, view, view.raw.entities[0], next.entity, () => 'b'));
+    assert.equal(lay.parts.a, part, 'other placement retains the original part');
+    assert.equal(lay.placed[0].partId, 'b');
+    const own = lay.parts.b.raw.blocks['Combined 1'].entities.find((x) => x.type === 'HATCH');
+    assert.equal(own ? hatchKey(own) : null, key);
+  }
+  const raw = newDoc(), e = insert('Combined 1', 0, 0);
+  addBlock(raw, 'Combined 1', [line(0, 0, 10, 0)]); addEntities(raw, e);
+  assert.equal(fillCombined(raw, e, 'aci:1'), null, 'open-only Combined skipped');
+  addBlock(raw, 'Combined 1', [rect(0, 0, 10, 10)]);
+  assert.equal(fillCombined(raw, { ...e, kids: [{}] }, 'aci:1'), null, 'attributes disqualify Combined');
+  addBlock(raw, 'Ordinary', [rect(0, 0, 10, 10)]);
+  assert.equal(fillCombined(raw, insert('Ordinary', 0, 0), 'aci:1'), null, 'ordinary block skipped');
+  const r = fillCombined(raw, e, 'aci:1');
+  assert.equal(r.entity.r.v[r.entity.r.c.indexOf(2)], 'Combined 1', 'unshared block keeps its name');
+});
 
 test('Combine: one INSERT of "Combined 1" with the picked outlines unchanged on layer 0 / ByBlock, the last pick\'s look on the INSERT', () => {
   const raw = fixture(), before = writeDxf(raw), r = combine(raw, new Set([0, 1, 2]));

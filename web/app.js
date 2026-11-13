@@ -36,7 +36,7 @@ import { writeDxf, writeDxfWithReport, saveReportNote, unwritable, addLayer, new
 import * as SH from './shaping.js';
 import { explodeSelection } from './explode.js';
 import { breakApart } from './breakapart.js';
-import { combine, combinedLabel } from './combine.js';
+import { combine, combinedLabel, fillCombined, blockNameOf } from './combine.js';
 import { cutterDoc } from './dxf-cutter.js';
 import * as DR from './draw.js';
 import * as DI from './dynamic-input.js';
@@ -11032,19 +11032,34 @@ function selectSimilarMenu(btn) {
 }
 
 function fillTargets(d, targets, key) {
-  const keep = new Set(d.sel);
-  const eligible = targets.filter((i) => FI.closedOutline(d.raw.entities[i]) && !lockedEnt(d, i));
-  const changed = new Set(eligible.filter((i) => (d.raw.entities[i].fill || null) !== key));
+  const keep = new Set(d.sel), changed = new Map();
+  let eligible = 0, blocks = d.raw.blocks;
+  for (const i of targets) {
+    if (lockedEnt(d, i)) continue;
+    const e = d.raw.entities[i], combined = fillCombined(d.vlay ? d.raw : { ...d.raw, blocks }, e, key, !d.vlay);
+    if (combined) {
+      eligible++;
+      if (combined.entity !== e) {
+        changed.set(i, combined.entity);
+        blocks = d.vlay ? { ...blocks, [blockNameOf(e)]: combined.blocks[blockNameOf(e)] } : combined.blocks;
+      }
+    } else if (FI.closedOutline(e)) {
+      eligible++;
+      if ((e.fill || null) !== key) changed.set(i, { ...e, fill: key });
+    }
+  }
   if (changed.size) {
+    const before = d.raw.blocks;
+    if (d.vlay) d.raw.blocks = blocks;       // objectReplace reads the recoloured blocks before copying each part
     const ok = d.vlay
-      ? layGripCommit(d, [...changed].map((i) => [d.raw.entities[i], { ...d.raw.entities[i], fill: key }]), key ? 'Fill colour' : 'No fill')
-      : commit(d, { entities: d.raw.entities.map((e, i) => changed.has(i) ? { ...e, fill: key } : e), blocks: d.raw.blocks }, key ? 'Fill colour' : 'No fill');
-    if (!ok) { renderEdit(); renderRibbon(); return; }       // refused (too nested): the commit showed why
+      ? layGripCommit(d, [...changed].map(([i, next]) => [d.raw.entities[i], next]), key ? 'Fill colour' : 'No fill')
+      : commit(d, { entities: d.raw.entities.map((e, i) => changed.get(i) || e), blocks }, key ? 'Fill colour' : 'No fill');
+    if (!ok) { if (d.vlay) d.raw.blocks = before; renderEdit(); renderRibbon(); return; }       // refused (too nested): the commit showed why
     if (!d.vlay) setSel(d, keep);
     if (key) usedColour(key);
   }
   renderEdit(); renderRibbon();
-  note(`${changed.size} outline${changed.size === 1 ? '' : 's'} ${key ? 'filled' : 'cleared'}` + (eligible.length < targets.length ? '; open shapes or locked outlines skipped' : '') + '. Ctrl+Z takes it back');
+  note(`${changed.size} outline${changed.size === 1 ? '' : 's'} ${key ? 'filled' : 'cleared'}` + (eligible < targets.length ? '; open shapes or locked outlines skipped' : '') + '. Ctrl+Z takes it back');
 }
 function applyFill(key) {
   if (key) currentFill = key;                          // only an actual fill (fillTargets, the Fill tool) joins the recents

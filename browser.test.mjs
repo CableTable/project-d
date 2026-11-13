@@ -26,6 +26,7 @@ import { SNAP_NAME } from './web/snap.js';
 import { Page, writePdf, winAnsi } from './web/pdf-write.js';
 import { tileGrid, PAPERS as PDF_PAPERS } from './web/pdf-export.js';
 import { bigDoc } from './tools/gen-big-dxf.mjs';
+import { fillHatch, hatchKey } from './web/fill.js';
 
 // WCAG relative luminance; opacity composites drawing feedback onto its background.
 function contrastRatio(foreground, background, opacity = 1) {
@@ -23027,6 +23028,129 @@ try {
       assert.deepEqual(await histLabels(), before, 'no Undo step for a plain line');
     }
     await menuItem('View', 'Theme: light'); await closeTabs(/./);
+  });
+
+  await step('TODO 257: right-click Combined fill, shared copies, holes, ByLayer, locks, layout and Compare Undo', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    const p = await context.newPage(), q = (id) => panelControl(p, p.getByTestId(id));
+    p.on('pageerror', (e) => errors.push(String(e)));
+    // Keep a locked object in the selection to exercise fillTargets' own lock guard.
+    await p.route('**/app.js', (route) => route.fulfill({ contentType: 'text/javascript', body: readFileSync('web/app.js', 'utf8') + `
+      window.raw257 = () => propDoc().raw;
+      window.lock257 = () => { propDoc().locked = new Set(['Locked']); };
+      window.byLayer257 = () => applyFill('bylayer');` }));
+    const key = async (k) => { await p.evaluate(() => document.activeElement?.blur()); await p.keyboard.press(k); };
+    const command = async (s) => {
+      if (await q('cmd-input').isVisible()) await q('cmd-input').fill(s);
+      else { await p.locator('.coords').click(); await p.keyboard.type(s); }
+      await p.keyboard.press('Enter');
+    };
+    const open = async (raw, name) => {
+      await q('picker').setInputFiles({ name, mimeType: 'text/plain', buffer: Buffer.from(writeDxf(raw), 'latin1') });
+      await p.waitForFunction((n) => document.querySelector('.tabs .dtab.on .tname').textContent === n, name);
+      await key('Escape');
+    };
+    const at = (x, y) => p.evaluate(([x, y]) => {
+      const svg = document.querySelector('.canvas > svg'), h = +document.querySelector('rect.sheet').getAttribute('height');
+      const pt = new DOMPoint(x, h - y).matrixTransform(svg.getScreenCTM()); return { x: pt.x, y: pt.y };
+    }, [x, y]);
+    const click = async (x, y, shift = false) => {
+      const a = await at(x, y);
+      if (shift) await p.keyboard.down('Shift');
+      try { await p.mouse.click(a.x, a.y); } finally { if (shift) await p.keyboard.up('Shift'); }
+    };
+    const swatch = async (colour) => {
+      // The strip has literal colours only; probe ByLayer through its shared handler.
+      if (colour === 'bylayer') await p.evaluate(() => window.byLayer257());
+      else await p.locator(`[data-swatch-group=standard] [data-colour="${colour}"]`).click({ button: 'right' });
+    };
+    const raw = () => p.evaluate(() => window.raw257());
+    const block = (d, i = 0) => d.blocks[d.entities[i].r.v[d.entities[i].r.c.indexOf(2)]];
+    const colour = (d, i = 0) => { const h = block(d, i).entities.find((e) => e.type === 'HATCH'); return h ? hatchKey(h) : null; };
+    const pixel = async (x, y) => {
+      await p.mouse.move(2, 2); await p.waitForTimeout(100);
+      return q('drawing').evaluate((c, pt) => {
+        const b = c.getBoundingClientRect();
+        return [...c.getContext('2d').getImageData(Math.round((pt.x - b.x) * c.width / b.width), Math.round((pt.y - b.y) * c.height / b.height), 1, 1).data].slice(0, 3);
+      }, await at(x, y));
+    };
+    const green = ([r, g, b]) => r === 0 && g > 100 && b === 0;       // work-area contrast adjusts palette green
+    const shoot = async (name) => {
+      for (const theme of ['light', 'dark']) {
+        await p.locator('[data-menu=View]').click(); await p.getByRole('menuitemcheckbox', { name: new RegExp('Theme: ' + theme + '\\b') }).click();
+        await p.waitForTimeout(150); await p.screenshot({ path: `${shotDir}/257-${name}-${theme}.png` });
+      }
+      await p.locator('[data-menu=View]').click(); await p.getByRole('menuitemcheckbox', { name: /Theme: light\b/ }).click();
+    };
+    const fixture = (filled = true) => {
+      const d = newDoc(4); addLayer(d, 'Target', { aci: 3 }); addLayer(d, 'Locked', { aci: 2 });
+      const members = [dxfCircle(50, 60, 15, { aci: 0 }), dxfPoly([[20, 20], [120, 20], [120, 100], [20, 100]], { closed: true, aci: 0 })];
+      // The hole precedes its enclosing outline, as it can after Combine.
+      addBlock(d, 'Combined 1', filled ? [fillHatch({ ...members[0], fill: 'aci:1' }, members.slice(1)), ...members] : members);
+      addBlock(d, 'Combined 2', [dxfLine(20, 160, 120, 160), dxfLine(20, 180, 120, 180)]);
+      addEntities(d, dxfInsert('Combined 1', 0, 0, { layer: 'Target' }), dxfInsert('Combined 1', 200, 0, { layer: 'Target' }),
+        dxfInsert('Combined 1', 400, 0, { layer: 'Locked' }), dxfInsert('Combined 2', 0, 0));
+      return d;
+    };
+    try {
+      await p.goto(URL_); await q('count').waitFor({ state: 'attached' });
+      await open(fixture(), 'fill257.dxf'); await click(20, 60);
+      await swatch('aci:5');
+      let d = await raw();
+      assert.equal(colour(d), 'aci:5', 'right-click recolours the Combined HATCH');
+      assert.equal(colour(d, 1), 'aci:1', 'the shared drawing copy keeps its fill');
+      assert.notEqual(d.entities[0].r.v[d.entities[0].r.c.indexOf(2)], 'Combined 1', 'copy-on-write gives the selected INSERT a new block');
+      assert.equal(block(d).entities[0].type, 'HATCH');
+      await key('Escape'); assert.deepEqual(await pixel(30, 30), [0, 0, 255]); assert.notDeepEqual(await pixel(50, 60), [0, 0, 255], 'inner-first hole stays empty');
+      await shoot('drawing');
+      await key('Control+z'); assert.equal(colour(await raw()), 'aci:1', 'one Undo restores the old fill');
+      await click(20, 60); await swatch('bylayer'); await key('Escape');
+      assert.ok(green(await pixel(30, 30)), 'ByLayer uses Target green, not layer 0');
+      await key('Control+z'); await click(20, 60); await swatch('aci:5'); await key('Control+k');
+      d = await raw(); assert.ok(d.entities.filter((e) => e.type !== 'INSERT').every((e) => e.fill === 'aci:5'), 'Break Apart keeps the new colour');
+      await key('Control+z');
+      await q('no-fill').click({ button: 'right' });
+      assert.equal(colour(await raw()), null, 'No fill removes the block HATCH');
+      await key('Control+z'); assert.equal(colour(await raw()), 'aci:5');
+
+      await open(fixture(false), 'unfilled257.dxf'); await click(20, 60); await swatch('aci:1');
+      d = await raw(); assert.equal(colour(d), 'aci:1'); assert.equal(block(d).entities[0].type, 'HATCH', 'new fill is first');
+      await key('Escape'); assert.deepEqual(await pixel(30, 30), [255, 0, 0]); assert.notDeepEqual(await pixel(50, 60), [255, 0, 0]);
+      await key('Control+z'); assert.equal(colour(await raw()), null);
+      await key('Escape'); await click(70, 160); await swatch('aci:1');
+      assert.match(await q('cmd-prompt').textContent(), /0 outlines filled; open shapes or locked outlines skipped/);
+      await key('Escape'); await click(20, 60); await click(420, 60, true); await p.evaluate(() => window.lock257());
+      await swatch('aci:5'); d = await raw(); assert.equal(colour(d), 'aci:5'); assert.equal(colour(d, 2), null, 'locked selection member is skipped');
+      assert.match(await q('cmd-prompt').textContent(), /open shapes or locked outlines skipped/);
+
+      const source = fixture(), lay = newLayout('Fill 257'); lay.layers = source.layers;
+      const part = objectPart('ring', 'Combined ring', source.entities[0], source.layers, source.header, source.blocks);
+      lay.parts.ring = part; lay.placed.push(objectPlacement(part), { ...objectPlacement(part), x: 220 });
+      await open(layoutRaw(lay), 'layout257.dxf'); await click(20, 60); await swatch('aci:5');
+      d = await raw(); assert.equal(colour(d), 'aci:5', 'layout HATCH recoloured'); assert.equal(colour(d, 1), 'aci:1', 'shared layout copy keeps its fill');
+      await key('Escape'); assert.deepEqual(await pixel(30, 30), [0, 0, 255]); assert.notDeepEqual(await pixel(50, 60), [0, 0, 255]);
+      await shoot('layout'); await key('Control+z'); assert.equal(colour(await raw()), 'aci:1', 'one layout Undo restores the HATCH');
+      await click(20, 60); await swatch('bylayer'); await key('Escape');
+      assert.ok(green(await pixel(30, 30)), 'layout ByLayer uses Target green');
+      await key('Control+z'); await click(20, 60); await swatch('aci:5'); await key('Control+k');
+      assert.ok((await raw()).entities.filter((e) => e.type !== 'INSERT').every((e) => e.fill === 'aci:5'), 'layout Break Apart keeps the colour');
+      await key('Control+z'); await q('no-fill').click({ button: 'right' }); assert.equal(colour(await raw()), null);
+      await swatch('aci:1'); assert.equal(colour(await raw()), 'aci:1', 'layout creates a missing HATCH');
+      await key('Control+z'); assert.equal(colour(await raw()), null, 'one Undo removes the created layout HATCH');
+      await key('Control+z'); assert.equal(colour(await raw()), 'aci:5');
+
+      await key('Escape'); await click(20, 60); await click(220, 60, true); await swatch('aci:2');
+      d = await raw(); assert.equal(colour(d), 'aci:2'); assert.equal(colour(d, 1), 'aci:2', 'both layout block definitions are recoloured');
+      await key('Control+z'); d = await raw(); assert.equal(colour(d), 'aci:5'); assert.equal(colour(d, 1), 'aci:1', 'one Undo restores both layout fills');
+
+      await open(fixture(), 'compare257.dxf'); await command('compare');
+      await p.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'Compare');
+      await click(20, 60); await swatch('aci:5'); d = await raw(); assert.equal(colour(d), 'aci:5'); assert.equal(colour(d, 1), 'aci:1');
+      await shoot('compare'); await key('Control+z'); assert.equal(colour(await raw()), 'aci:1', 'one Compare Undo restores the source');
+      await p.locator('.dtab').filter({ has: p.locator('.tname', { hasText: /^compare257.dxf$/ }) }).click();
+      assert.equal(colour(await raw()), 'aci:1', 'Compare Undo reached its drawing');
+      assert.deepEqual(errors, []);
+    } finally { await context.close(); }
   });
 
   await step('TODO 218a: Combine via Ctrl+L and COMBINE makes one object, last pick colour, even-odd holes, Break Apart back, Undo, save/reopen', async () => {
