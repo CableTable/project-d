@@ -191,11 +191,24 @@ export async function interactCompare(page, buffer, name = 'cmp.dxf') {
     await run('Compare click', async () => { await page.mouse.click(cx, cy); });
     await run('Compare button', async () => { await page.locator('[data-testid=cmp-run]').dispatchEvent('click'); });
     await run('Compare button again', async () => { await page.locator('[data-testid=cmp-run]').dispatchEvent('click'); });
-    await run('Compare drag', async () => {
+    await run('Compare grip drag', async () => {
       await page.mouse.move(cx, cy); await page.mouse.down();
       for (let i = 1; i <= 20; i++) { await page.mouse.move(cx + i * 4, cy + i * 2); await frame(); }
       await page.mouse.up();
     });
+    const x = cx + 40, y = cy - 30;
+    assert.ok(await page.getByTestId('grip').evaluateAll((grips, { x, y }) => grips.every((g) => {
+      const b = g.getBoundingClientRect();
+      return Math.hypot(x - b.x - b.width / 2, y - b.y - b.height / 2) > 12;
+    }), { x, y }), 'Compare body press is away from every grip');
+    await page.mouse.move(x, y); await frame();
+    const hint = await page.getByTestId('cmp-hint').textContent();
+    await run('Compare drag', async () => {
+      await page.mouse.down();
+      for (let i = 1; i <= 20; i++) { await page.mouse.move(x + i * 4, y + i * 2); await frame(); }
+      await page.mouse.up();
+    });
+    assert.notEqual(await page.getByTestId('cmp-hint').textContent(), hint, 'Compare body drag changes the snapshot offset');
     return results;
   } finally { await stop(); }
 }

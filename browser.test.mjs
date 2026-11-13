@@ -24994,7 +24994,7 @@ try {
     assert.equal(lay['Layout wheel'].snap, '1', 'Layout wheel reuses the kept picture after the burst');
     within(lay, { 'Layout wheel': 1, 'Layout pan': 1, 'Layout Measure hover': 0, 'Layout Line hover': 0, 'Layout part click': 0, 'Layout part drag': 2, 'Layout undo': 2 });
     const cmp = await flow((p) => interactCompare(p, big, 'lag-big.dxf'));
-    assert.deepEqual(Object.keys(cmp), ['open', 'Compare start', 'Compare wheel', 'Compare pan', 'Compare click', 'Compare button', 'Compare button again', 'Compare drag']);
+    assert.deepEqual(Object.keys(cmp), ['open', 'Compare start', 'Compare wheel', 'Compare pan', 'Compare click', 'Compare button', 'Compare button again', 'Compare grip drag', 'Compare drag']);
     assert.ok(cmp['Compare start'].lineTo > 30000, `both snapshots paint: lineTo ${cmp['Compare start'].lineTo}`);
     within(cmp, { 'Compare start': 1, 'Compare wheel': 21, 'Compare pan': 1, 'Compare click': 2, 'Compare button': 2, 'Compare button again': 2, 'Compare drag': 22 });
     assert.ok(cmp['Compare button again'].longTotal < 1500, `Compare button again long tasks ${cmp['Compare button again'].longTotal} ms (the second press reuses the fl-keyed metrics cache; this head 338 ms; the first press measures both items)`);
