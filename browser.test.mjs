@@ -9129,7 +9129,9 @@ try {
     assert.equal(await t('pp-name').textContent(), 'Dial');
     await click(150, 450);
     assert.equal(await t('pp-name').textContent(), 'Group of 3', 'one click on a member selects the group');
-    await click(500, 650);                                         // empty sheet: the group stays selected
+    await click(500, 650);                                         // empty sheet: the selection clears (TODO 262)
+    assert.equal(await page.locator('[data-group=tools] .sel-multi').count(), 0);
+    await click(150, 450);
     assert.equal(await t('pp-name').textContent(), 'Group of 3');
     // it moves as one (a drag on the Dial, a member)
     const before = await selBoxes();
@@ -9173,6 +9175,27 @@ try {
     await click(858, 608);
     await page.keyboard.press('Control+g');
     assert.match(await prompt(), /^Group: select two or more parts first/);
+  });
+
+  await step('TODO 262: layout: Esc on a whole group, a click on empty sheet and a plain click clear the selection and the "Group of N" label; Ctrl+click on empty keeps it', async () => {
+    if (only) { await fourParts(); await dragMm([40, 500], [960, 150]); await page.keyboard.press('Control+g'); }
+    const labelGone = async () => assert.equal(await page.locator('[data-testid=sel-readout]').count(), 0, 'no readout or label');
+    await click(150, 450);
+    assert.equal(await t('pp-name').textContent(), 'Group of 3');
+    await page.keyboard.press('Escape');
+    assert.equal(await page.locator('[data-group=tools] .sel-multi').count(), 0, 'Esc cleared the whole group');
+    await labelGone();
+    await click(150, 450);
+    await click(500, 650);                                         // empty sheet
+    assert.equal(await page.locator('[data-group=tools] .sel-multi').count(), 0, 'an empty click cleared the group');
+    await labelGone();
+    await click(150, 450);
+    await page.keyboard.down('Control');
+    try { await click(500, 650); } finally { await page.keyboard.up('Control'); }
+    assert.equal(await t('pp-name').textContent(), 'Group of 3', 'Ctrl+click on empty keeps the selection');
+    await click(858, 608);
+    await click(500, 650);                                         // a single part clears too
+    assert.equal(await page.locator('[data-group=tools] .sel-box').count(), 0, 'an empty click cleared one part');
   });
 
   await step('TODO 37: Lock: a locked part cannot be moved, nudged, turned, mirrored or deleted ("Locked: Unlock to move it"); a padlock marks it; Unlock frees it; the menu and panel buttons work', async () => {
@@ -21975,6 +21998,7 @@ try {
     await typeCmd('line'); await typeCmd('300,50'); await typeCmd('400,50'); await typeCmd('');   // a horizontal line has no height: still selectable
     assert.equal(await nParts(), n0 + 3);
     await page.locator('[data-tool=select]').click();
+    await page.keyboard.press('Escape');                          // the plate stays selected otherwise and a miss now clears (TODO 262)
     await click(350, 50); await page.waitForFunction(() => document.querySelectorAll('[data-group=tools] .sel-box').length === 1);
     await page.keyboard.press('Delete'); assert.equal(await nParts(), n0 + 2, 'Delete removes the object');
     await undo(); assert.equal(await nParts(), n0 + 3);
@@ -27320,7 +27344,7 @@ try {
     one.parts.b = bracket(); one.placed.push({ partId: 'b', x: 300, y: 200, rot: 90, mirrorX: false, mirrorY: false });
     await open('explode-one.dxf', one);
     assert.equal(await nParts(), 1);
-    await click(310, 220);
+    await click(280, 230);                                         // on the part (turned 90°, it covers x 260-300, y 200-260)
     const p0 = await pos();
     await typeCmd('x');
     assert.match(await prompt(), /Explode: 1 part exploded → 5 objects/);

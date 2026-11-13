@@ -2550,7 +2550,12 @@ function lockSel(on) {
 function layoutBoxSelect(r, e) {
   const lay = curLay();
   if (!lay) return;
-  if (!r.moved) { if (selIdxs().length > 1 && !r.shift) { selectMany(groupIdxs(state.sel), state.sel); update(); note('Selection: just the main part'); } return; }
+  if (!r.moved) {
+    // an empty click with the Select tool clears; Ctrl/Cmd keeps; Stretch / Step / Contour picks stay
+    if ((state.tool === 'select' || state.tool === 'step') && !layModLive()) { if (selIdxs().length && !r.shift && !r.ctrl) { selectMany([]); update(); note('Selection cleared'); } }
+    else if (selIdxs().length > 1 && !r.shift) { selectMany(groupIdxs(state.sel), state.sel); update(); note('Selection: just the main part'); }
+    return;
+  }
   const a = sheetAt(r.x, r.y), b = sheetAt(e.clientX, e.clientY), crossing = e.clientX < r.x;
   const box = [Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[0], b[0]), Math.max(a[1], b[1])];
   const eligible = partSelectable;
@@ -4969,7 +4974,7 @@ function attachCanvasEvents() {
       }
       if (curLay() && (state.tool === 'select' || state.tool === 'step' || state.tool === 'contour' || (layModLive() && state.mod.stage === 'pick'))) {
         if (placedDown(e)) { capture(c, e); }
-        else if (!gh) { lrub = { x: e.clientX, y: e.clientY, shift: e.shiftKey, moved: false }; capture(c, e); }
+        else if (!gh) { lrub = { x: e.clientX, y: e.clientY, shift: e.shiftKey, ctrl: e.ctrlKey || e.metaKey, moved: false }; capture(c, e); }
       } else if (layModLive()) { lmod = { x: e.clientX, y: e.clientY, shift: e.shiftKey, moved: false }; lengthenDown(mdoc(curDoc()), lmod); capture(c, e); }
     }
   });
@@ -10515,7 +10520,7 @@ function editKey(e) {
     else if (curLay() && pdrag) cancelPlacedDrag();
     else if (layModLive()) modEsc(curDoc());
     else if (!state.grip && gripDoc() && hotsOf(gripDoc())) { state.hots = null; note('Hot grips cleared'); paintOverlay(); }
-    else if (curLay() && multiSel() && !state.grip && !state.setlen && state.tool !== 'measure') { selectMany(groupIdxs(state.sel), state.sel); update(); note('Selection: just the main part'); }
+    else if (curLay() && multiSel() && !state.grip && !state.setlen && state.tool !== 'measure') { if (wholeGroup()) { selectMany([]); update(); note('Selection cleared'); } else { selectMany(groupIdxs(state.sel), state.sel); update(); note('Selection: just the main part'); } }
     else if (curLay() && state.mode === 'rotate') { state.mode = 'select'; state.rotCopy = false; update(); note('Rotate done'); }
     else if (state.colourTool) { state.colourTool = null; note('Colour tool ended'); renderEdit(); renderRibbon(); paintOverlay(); }
     else if (state.match) endMatch();
