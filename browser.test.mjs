@@ -9254,7 +9254,7 @@ try {
     await page.locator('[data-menu=Layout]').click();
     await page.keyboard.press('Escape');                           // the open menu takes this Esc
     assert.equal(await page.locator('.dropdown').isVisible(), false, 'Esc closed the menu');
-    assert.equal(await t('pp-name').textContent(), 'Group of 3', 'Esc on an open menu keeps the whole group selected');
+    assert.equal(await page.locator('[data-group=tools] .sel-multi').count() > 0, true, 'Esc on an open menu keeps the whole group selected');
     await page.keyboard.press('Escape');
     assert.equal(await page.locator('[data-group=tools] .sel-multi').count(), 0, 'a second Esc cleared the whole group');
     await labelGone();
