@@ -2,6 +2,7 @@
   "name": "Project D",
   "slug": "project-d",
   "extras": "E:/Project B/Claude/Project D extras",
+  "acad": "E:/Program Files/Autodesk/AutoCad/AutoCAD 2027",
   "main": "E:/Project B/Claude/Project D",
   "support": "E:/Project B/Claude/support",
   "github": "CableTable/project-d",
