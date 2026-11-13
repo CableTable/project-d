@@ -2,7 +2,7 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { createInterface } from 'node:readline';
 
-// A regex (ONLY or the 2nd argument) bypasses shard filtering, so launch that focused run just once.
+// A regex (ONLY or the 2nd argument) bypasses shard filtering, so launch that focused run just once; use browser.test.mjs SHARD=i/N --until=<step> for a step-order replay.
 const args = process.argv.slice(2);
 const at = args.indexOf('--shots');
 const shots = at < 0 ? [] : args.splice(at, 2); // each shard files its pictures under <dir>/shard-N-of-M (browser.test.mjs)

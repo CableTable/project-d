@@ -33,12 +33,14 @@ export function shardSelector(timings, index, count) {
 export function browserArgs(args, env = {}) {
   const positional = [];
   let shots = env.SHOTS_DIR || 'shots';
+  let until;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (arg === '--shots') {
       shots = args[++i];
       if (!shots || shots.startsWith('--') || shots.startsWith('SHARD=')) throw new Error('--shots requires a directory');
-    } else if (arg !== '--update-timings' && !arg.startsWith('SHARD=') && !arg.startsWith('--shard=')) positional.push(arg);
+    } else if (arg.startsWith('--until=')) until = arg.slice('--until='.length);
+    else if (arg !== '--update-timings' && !arg.startsWith('SHARD=') && !arg.startsWith('--shard=')) positional.push(arg);
   }
   const only = env.ONLY || positional[1];
   const value = env.SHARD || args.find((arg) => /^(SHARD|--shard)=/.test(arg))?.split('=')[1];
@@ -49,10 +51,10 @@ export function browserArgs(args, env = {}) {
     shard = { index: +match[1], count: +match[2] };
   }
   const updateTimings = args.includes('--update-timings');
-  if (updateTimings && (only || shard)) throw new Error('--update-timings requires a full, unfiltered run');
+  if (updateTimings && (only || shard || until !== undefined)) throw new Error('--update-timings requires a full, unfiltered run');
   const port = Number(env.TEST_PORT || positional[0] || 5181);
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('Invalid browser test port');
-  return { port, only, shard, updateTimings, shots };
+  return { port, only, shard, updateTimings, shots, until };
 }
 
 // Prerequisites are earlier steps: keep their state changes in the suite's file order.
@@ -75,8 +77,13 @@ export function expandNeeds(steps, only) {
 }
 
 // A filter that picks nothing (e.g. step titles joined with commas) must fail, not pass with 0 steps run.
-export function pickSteps(steps, only, select) {
+export function pickSteps(steps, only, select, until) {
   const picked = expandNeeds(steps, only || '.*').filter(({ name }) => select(name));
   if (only && !picked.length) throw new Error(`filter ${only} matches no step`);
+  if (until !== undefined) {
+    const end = picked.findIndex(({ name }) => name === until);
+    if (end < 0) throw new Error(`--until step not in the selected steps: ${until}`);
+    return picked.slice(0, end + 1);
+  }
   return picked;
 }

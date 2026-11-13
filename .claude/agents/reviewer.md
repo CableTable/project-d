@@ -30,6 +30,7 @@ Proof before done (WORKFLOW): each claim in the report quotes the line of a comm
    A failure reachable only at a hard limit (e.g. `MAX_VISITS`) that leaves the document unchanged and shows a wrong note at worst is Low; a throw or false success stays Medium only if it loses or misstates work.
    A browser step that waits for a value, then reads the same locator again in a separate call, is a finding: return the value from the wait.
    A step that asserts a label right after an action, with no wait for the new value, is a finding.
+   A step that checks a docker-panel row with isVisible() opens its fold first (drawingFoldOpen / propsOnNow); passing only because an earlier step opened it is a Medium.
    A finding about a test quotes the asserted line; no quote means write 'not asserted'.
    A test that runs `node --test` and reads its output must pass `--test-reporter=spec` and remove FORCE_COLOR from the child's env; if not, it is a finding (S39e: red CI on 02f7952).
    A test that spawns node or git passes an env with `GIT_*`, `FORCE_COLOR` and `NODE_TEST_CONTEXT` removed; if not, it is a finding (retro40king: 3 of 13 fix-first reviews).

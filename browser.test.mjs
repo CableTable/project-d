@@ -39,7 +39,7 @@ function contrastRatio(foreground, background, opacity = 1) {
 
 // SHARD=2/4 (env or argument); ONLY=regex / positional regex ignores shards.
 // Refresh committed per-step seconds: node browser.test.mjs 5181 --update-timings
-const { port: PORT, only, shard, updateTimings, shots: shotRoot } = browserArgs(process.argv.slice(2), process.env);
+const { port: PORT, only, shard, updateTimings, shots: shotRoot, until } = browserArgs(process.argv.slice(2), process.env);
 const selectStep = shard
   ? shardSelector(JSON.parse(readFileSync(new URL('./tools/browser-shards.json', import.meta.url), 'utf8')), shard.index, shard.count)
   : () => true;
@@ -28867,16 +28867,21 @@ try {
     await closeTabs(/./); assert.deepEqual(errors, []);
   });
 
-  const picked = pickSteps(steps, only, selectStep);
+  const picked = pickSteps(steps, only, selectStep, until);
   for (const entry of picked) await runStep(page, entry, shotDir);
 } catch (e) {
-  failed++;
-  console.log('FAIL', e.stack || e);
+  if (until !== undefined && e.message.startsWith('--until')) {
+    console.error(e.message);
+    process.exitCode = 1;
+  } else {
+    failed++;
+    console.log('FAIL', e.stack || e);
+  }
 } finally {
   if (browser) await browser.close();
   stop();
 }
-if (failed) { console.log(failed + ' failed'); process.exit(1); }
+if (failed || process.exitCode) { if (failed) console.log(failed + ' failed'); process.exit(1); }
 if (updateTimings) writeFileSync(new URL('./tools/browser-shards.json', import.meta.url), JSON.stringify(timings, null, 2) + '\n');
 console.log('all browser steps passed');
 process.exit(0);
