@@ -24935,7 +24935,8 @@ try {
     assert.deepEqual(Object.keys(cmp), ['open', 'Compare start', 'Compare wheel', 'Compare pan', 'Compare click', 'Compare button', 'Compare button again', 'Compare drag']);
     assert.ok(cmp['Compare start'].lineTo > 30000, `both snapshots paint: lineTo ${cmp['Compare start'].lineTo}`);
     within(cmp, { 'Compare start': 1, 'Compare wheel': 21, 'Compare pan': 1, 'Compare click': 2, 'Compare button': 2, 'Compare button again': 2, 'Compare drag': 22 });
-    assert.ok(cmp['Compare button again'].longTotal < 1500, `Compare button again long tasks ${cmp['Compare button again'].longTotal} ms (the second press reuses the fl-keyed metrics cache; this head 338 ms; the first press measures both items, ~10 s)`);
+    assert.ok(cmp['Compare button again'].longTotal < 1500, `Compare button again long tasks ${cmp['Compare button again'].longTotal} ms (the second press reuses the fl-keyed metrics cache; this head 338 ms; the first press measures both items)`);
+    assert.ok(cmp['Compare button'].longTotal < 3000, `Compare button (the first press) long tasks ${cmp['Compare button'].longTotal} ms (P14a: 4cff4b3 ~10300 ms, outlineLoops scanned every open piece per join)`);
     const edit = await flow((p) => interactEdit(p, big, 'lag-big.dxf'));
     assert.deepEqual(Object.keys(edit), ['open', 'Ctrl+A', 'box select', 'Move hover', 'Move commit click', 'Trim hover', 'object drag', 'LINE grip drag', 'Delete', 'Ctrl+Z', 'Ctrl+Y']);
     within(edit, { 'Ctrl+A': 1 });

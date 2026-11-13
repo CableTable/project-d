@@ -1308,3 +1308,24 @@ test('P13 lag counter: areaPerimeter point-in-loop tests on 300 loops stay at to
   assert.ok(apart.calls <= bound, `loops side by side: ${apart.calls} inside tests, today's bound ${bound}`);
   console.log(`P13: inside tests, nested ${nested.calls}, side by side ${apart.calls}, bound ${bound}`);
 });
+
+test('P14a: joining open pieces through the end grid gives the loops the scan of every piece gave', async () => {
+  // The expected numbers were taken from the scanning outlineLoops on 4cff4b3, the same inputs and tolerance 0.01.
+  const { splineDoc } = await import('./tools/gen-big-dxf.mjs');
+  const measure = (doc) => { const raw = D.readDxf(W.writeDxf(doc)), ed = E.makeIndex(raw, D.flatten(raw)); return E.areaPerimeter(ed, new Set(ed.shown), 1, 0.01); };
+  const spline = measure(splineDoc(900));
+  assert.deepEqual([spline.loops, spline.holes, spline.open], [910, 0, 0]);
+  near(spline.area, 34908.6202508142, 'spline area'); near(spline.perimeter, 20471.507313889517, 'spline perimeter');
+  const doc = W.newDoc(4);       // a plate with a round hole, and a triangle of three lines given in a shuffled direction
+  W.addEntities(doc, [W.rect(0, 0, 30, 20), W.circle(10, 10, 2), W.line(40, 0, 50, 0), W.line(40, 0, 50, 10), W.line(50, 10, 50, 0)]);
+  const plate = measure(doc);
+  assert.deepEqual([plate.loops, plate.holes, plate.open, plate.gaps], [3, 1, 0, 0]);
+  near(plate.area, 637.4336692599301, 'plate area'); near(plate.perimeter, 146.7084962695119, 'plate perimeter');
+  // 1505 open pieces: the scan made 5.8 million Math.hypot calls (the lengths cost 1.27 million of them), the grid 1.27 million.
+  const { bigDoc } = await import('./tools/gen-big-dxf.mjs');
+  const raw = D.readDxf(W.writeDxf(bigDoc(3000))), ed = E.makeIndex(raw, D.flatten(raw)), hypot = Math.hypot;
+  let calls = 0;
+  Math.hypot = (...a) => { calls++; return hypot(...a); };
+  try { E.outlineLoops(ed, new Set(ed.shown), 0.01); } finally { Math.hypot = hypot; }
+  assert.ok(calls < 2500000, `joining 1505 open pieces made ${calls} Math.hypot calls, bound 2500000`);
+});

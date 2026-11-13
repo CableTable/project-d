@@ -91,6 +91,18 @@ export function outlineLoops(ed, ents, tol = 1e-6) {
     if (p.closed || (p.pts.length > 2 && near(p.pts[0], p.pts[p.pts.length - 1]))) { loops.push({ pts: p.pts, ents: p.ents }); p.used = true; }
   }
   const open = pieces.filter((p) => !p.used), gapTol = tol * 10;
+  // The first unused open piece with an end within tol of pt: its ends sit in a grid of tol-sized cells, so only the 9 cells around pt are looked at (the answer of a scan of `open`, in `open` order).
+  const cell = Math.max(tol, 1e-9), cellOf = (v) => Math.floor(v / cell), ends = new Map();
+  open.forEach((q, i) => { for (const p of [q.pts[0], q.pts[q.pts.length - 1]]) { const k = cellOf(p[0]) + ',' + cellOf(p[1]); if (!ends.has(k)) ends.set(k, []); ends.get(k).push(i); } });
+  const nextTo = (pt) => {
+    let best = -1;
+    for (let di = -1; di <= 1; di++) for (let dj = -1; dj <= 1; dj++) for (const i of ends.get((cellOf(pt[0]) + di) + ',' + (cellOf(pt[1]) + dj)) || []) {
+      if (best >= 0 && i >= best) break;
+      const q = open[i];
+      if (!q.used && (near(q.pts[0], pt) || near(q.pts[q.pts.length - 1], pt))) { best = i; break; }
+    }
+    return open[best];
+  };
   let gaps = 0;
   for (const start of open) {                                  // join open pieces end to end until they close
     if (start.used) continue;
@@ -100,14 +112,14 @@ export function outlineLoops(ed, ents, tol = 1e-6) {
     for (;;) {
       if (path.length > 2 && near(path[0], path[path.length - 1])) { closed = true; break; }
       const end = path[path.length - 1];
-      const next = open.find((q) => !q.used && (near(q.pts[0], end) || near(q.pts[q.pts.length - 1], end)));
+      const next = nextTo(end);
       if (!next) break;
       next.used = true; for (const x of next.ents) es.add(x);
       path = path.concat((near(next.pts[0], end) ? next.pts : next.pts.slice().reverse()).slice(1));
     }
     while (!closed) {                                          // stuck: grow it from its other end too
       const head = path[0];
-      const prev = open.find((q) => !q.used && (near(q.pts[0], head) || near(q.pts[q.pts.length - 1], head)));
+      const prev = nextTo(head);
       if (!prev) break;
       prev.used = true; for (const x of prev.ents) es.add(x);
       path = (near(prev.pts[prev.pts.length - 1], head) ? prev.pts : prev.pts.slice().reverse()).slice(0, -1).concat(path);
@@ -151,7 +163,12 @@ export function areaPerimeter(ed, ents, factor = 1, tol = 1e-6) {
   });
   let area = 0, holes = 0;
   loops.forEach((L, i) => {
-    const depth = loops.reduce((n, M, j) => n + (j !== i && a[j] > a[i] && L[0][0] >= boxes[j][0] && L[0][1] >= boxes[j][1] && L[0][0] <= boxes[j][2] && L[0][1] <= boxes[j][3] && inside(L[0], M) ? 1 : 0), 0);
+    const px = L[0][0], py = L[0][1], ai = a[i];     // no destructuring: edit.test.mjs counts inside() by the array iterations of 2-element arrays
+    let depth = 0;
+    for (let j = 0; j < loops.length; j++) {            // a plain loop: 6700 loops make 45 million box checks
+      const b = boxes[j];
+      if (a[j] > ai && px >= b[0] && py >= b[1] && px <= b[2] && py <= b[3] && inside(L[0], loops[j])) depth++;
+    }
     if (depth % 2) { area -= a[i]; holes++; } else area += a[i];
   });
   return { area: area * factor * factor, perimeter: len * factor, loops: loops.length, holes, gaps, open };
