@@ -372,7 +372,7 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
   - [x] 215a. The dialog: Custom scale page, paper A4-A0, tiles (built: `1adbf7e`, King, review ship).
   - [ ] 215b. The full-screen bar: Scale box beside Fit, "View 100%" relabel, margin fields.
 - [ ] 216. **Print… to the printer (Windows print dialog)** (M, T65).
-- [ ] 217. **PDF / Print: custom margins per side, Office printer 5 mm** (S, T66).
+- [x] 217. **PDF / Print: custom margins per side, Office printer 5 mm** (S, T66). Done `757ba10` + `fa7d67f` (Bishop build, 217fix Knight; `runs41/rv-217fix.jsonl` ship as is, Lows: `web/export.js:356` leftover preview on no printable area). Bar margin fields go with 215b. Ticked S45p.
 - [x] 218. **Combine (Ctrl+L) / Break Apart** (M, T67; like CorelDRAW, his rule 2026-11-10; grills `runs42/grill-218.md`, `runs42/grill-218b.md`):
   - [x] 218a. Drawing tabs (built: `c3fe964` + fix `f4c608d`, King, Bishop review ship after 1 fix round; Lows in runs41/lows.txt).
   - [x] 218b. Layouts (loose outlines) and Compare; Break Apart of a layout Combined object (built: `a414366`, picked `f27be6b`, King, Bishop review ship; suite f27be6b green).
