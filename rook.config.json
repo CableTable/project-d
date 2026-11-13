@@ -7,6 +7,7 @@
   "github": "CableTable/project-d",
   "test": "npm test",
   "browserTest": "npm run test:browser",
+  "browserShard": "node browser.test.mjs {port} SHARD={i}/4",
   "docs": { "todo": "TODO.md", "decisions": "DECISIONS.md", "history": "HISTORY.md", "glossary": "GLOSSARY.md", "workflow": "WORKFLOW.md" },
   "folders": {
     "bishop": { "review": "ProjectD-s15fix", "build": "ProjectD-s15fix" },
