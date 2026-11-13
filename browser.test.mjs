@@ -24865,6 +24865,68 @@ try {
     } finally { await ctx.close(); }
   });
 
+  await step('TODO P14b: Compare drag keeps the base; drop and Esc repaint in order', async () => {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    try {
+      const p = await ctx.newPage(), drawing = p.getByTestId('drawing'), errors = [];
+      p.on('pageerror', (e) => errors.push(String(e)));
+      await p.route('**/app.js', (route) => route.fulfill({ contentType: 'text/javascript', body: readFileSync('web/app.js', 'utf8') + '\nwindow.p14bPaint = () => paintOverlay();' }));
+      const frame = () => p.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+      const paints = async () => Number(await drawing.getAttribute('data-paints'));
+      const menu = async (top, name) => { await p.locator(`[data-menu=${top}]`).click(); await p.getByRole('menuitem', { name, exact: true }).click(); };
+      const equalsFull = async (when) => {
+        await drawing.evaluate((c) => { window.__A = c.getContext('2d').getImageData(0, 0, c.width, c.height); c.dataset.nokeep = '1'; });
+        const before = await paints();
+        await p.evaluate(() => window.p14bPaint()); await frame();
+        assert.equal(await paints() - before, 1, 'the comparison forces one full paint');
+        const diff = await drawing.evaluate((c) => {
+          const a = window.__A, b = c.getContext('2d').getImageData(0, 0, c.width, c.height);
+          delete c.dataset.nokeep; delete window.__A;
+          let over2 = 0;
+          for (let i = 0; i < a.data.length; i += 4) for (let j = 0; j < 4; j++) if (Math.abs(a.data[i + j] - b.data[i + j]) > 2) { over2++; break; }
+          return over2;
+        });
+        assert.equal(diff, 0, `${when}: the Compare picture equals a full paint (max channel difference 2)`);
+      };
+      await p.goto(URL_ + '?autosave=86400000'); await p.getByTestId('count').waitFor({ state: 'attached' });
+      const buffer = Buffer.from(writeDxf(bigDoc(20000)));
+      for (const name of ['p14b-a.dxf', 'p14b-b.dxf']) {
+        await p.getByTestId('picker').setInputFiles({ name, mimeType: 'text/plain', buffer });
+        await p.waitForFunction((name) => document.querySelector('.dtab.on .tname').textContent === name, name);
+      }
+      await menu('File', 'Compare drawings…');
+      await panelControl(p, p.getByTestId('cmp-item').first().locator('.cmpname')).click(); // drag the first-painted snapshot over the second
+      await panelControl(p, p.getByTestId('cmp-lineup-manual')).click();
+      for (const theme of ['light', 'dark']) {
+        await p.locator('[data-menu=View]').click();
+        await p.getByRole('menuitemcheckbox', { name: new RegExp('Theme: ' + theme + '\\b') }).click();
+        await p.getByTestId('canvas').getByRole('button', { name: 'Fit', exact: true }).click(); await frame();
+        const box = await p.getByTestId('canvas').boundingBox(), x = box.x + box.width / 2, y = box.y + box.height / 2;
+        for (const end of ['drop', 'Esc']) {
+          const hint = await p.getByTestId('cmp-hint').textContent();
+          await p.mouse.move(x, y); await frame();
+          const before = await paints();
+          await p.mouse.down();
+          for (let i = 1; i <= 20; i++) { await p.mouse.move(x + i * 2, y + i); await frame(); }
+          assert.equal(await drawing.getAttribute('data-keep'), '1', 'Compare drag uses the kept base');
+          const path = `${shotDir}/p14b-${theme}-${end}.png`;
+          await p.screenshot({ path }); assert.ok(readFileSync(path).length > 1000, 'required screenshot exists');
+          const during = await paints();
+          if (end === 'Esc') await p.keyboard.press('Escape');
+          else await p.mouse.up();
+          await frame();
+          assert.equal(await paints() - during, 1, `${end} gives one full paint`);
+          assert.equal(await paints() - before, 2, 'Compare drag gives two full paints (start, end)');
+          if (end === 'Esc') { await p.mouse.move(x + 60, y + 30); await p.mouse.up(); await frame(); assert.equal(await p.getByTestId('cmp-hint').textContent(), hint, 'Esc restores the offset and ends the drag'); }
+          else assert.notEqual(await p.getByTestId('cmp-hint').textContent(), hint, 'drop moves the snapshot');
+          await equalsFull(`${theme} ${end}`);
+          console.log(`P14b: ${theme} ${end}, 2 full paints, picture equals a full paint`);
+        }
+      }
+      assert.deepEqual(errors, []);
+    } finally { await ctx.close(); }
+  });
+
   await step('lag harness: spline fixture counts', async () => {
     const { splineDoc } = await import('./tools/gen-big-dxf.mjs');
     assert.equal(typeof splineDoc, 'function', 'P6 provides the generated spline fixture');
@@ -24937,6 +24999,8 @@ try {
     within(cmp, { 'Compare start': 1, 'Compare wheel': 21, 'Compare pan': 1, 'Compare click': 2, 'Compare button': 2, 'Compare button again': 2, 'Compare drag': 22 });
     assert.ok(cmp['Compare button again'].longTotal < 1500, `Compare button again long tasks ${cmp['Compare button again'].longTotal} ms (the second press reuses the fl-keyed metrics cache; this head 338 ms; the first press measures both items)`);
     assert.ok(cmp['Compare button'].longTotal < 3000, `Compare button (the first press) long tasks ${cmp['Compare button'].longTotal} ms (P14a: 4cff4b3 ~10300 ms, outlineLoops scanned every open piece per join)`);
+    within(cmp, { 'Compare start': 1, 'Compare wheel': 21, 'Compare pan': 1, 'Compare click': 2, 'Compare button': 2, 'Compare button again': 2, 'Compare drag': 2 });
+    assert.ok(cmp['Compare button again'].longTotal < 1500, `Compare button again long tasks ${cmp['Compare button again'].longTotal} ms (the second press reuses the fl-keyed metrics cache; this head 338 ms; the first press measures both items, ~10 s)`);
     const edit = await flow((p) => interactEdit(p, big, 'lag-big.dxf'));
     assert.deepEqual(Object.keys(edit), ['open', 'Ctrl+A', 'box select', 'Move hover', 'Move commit click', 'Trim hover', 'object drag', 'LINE grip drag', 'Delete', 'Ctrl+Z', 'Ctrl+Y']);
     within(edit, { 'Ctrl+A': 1 });

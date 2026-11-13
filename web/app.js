@@ -4709,6 +4709,13 @@ function paintOverlay(gesture = false) {
         for (const slot of call.slots) key.push(...slot);
         key.push(null);
       }
+    } else if (d?.cmp?.dragged) {
+      // shortcut: the snapshot stays on top and is retraced each frame; revisit if a real drag remains heavy.
+      key = [d, d.cmp.dragged, base.ox, base.oy, base.scale, cw, chh, dpr, base.dark, base.wireframe, base.sheetH];
+      for (const sd of d.cmp.items) {
+        if (!sd.visible || sd.id === d.cmp.dragged) continue;
+        key.push(sd.fl, sd.factor, cmpCss(sd.colour), ...sd.offset, ...[...(sd.off || [])].sort((a, b) => a - b), null);
+      }
     }
     c.dataset.snap = ''; c.dataset.keep = '';
     if (!full && snapUsable(snap, want)) {
@@ -4716,6 +4723,7 @@ function paintOverlay(gesture = false) {
       g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, cw, chh);
       g.drawImage(snapCv, dx * dpr, dy * dpr, cw * r, chh * r);
       if (d?.lay) layOverlay(c, d, base, marks, lifted);
+      if (d?.cmp?.dragged) cmpPaint(c, d.cmp, base, marks, true);
       c.dataset.snap = '1';
       snapTimer = setTimeout(() => paintOverlay(), 120);
       ui.cmdUI.place();
@@ -4725,7 +4733,8 @@ function paintOverlay(gesture = false) {
       const g = c.getContext('2d');
       g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, cw, chh);
       g.drawImage(snapCv, 0, 0);
-      layOverlay(c, d, base, marks, lifted);
+      if (d?.lay) layOverlay(c, d, base, marks, lifted);
+      if (d?.cmp?.dragged) cmpPaint(c, d.cmp, base, marks, true);
       c.dataset.keep = '1';
       ui.cmdUI.place();
       return;
@@ -4758,6 +4767,7 @@ function paintOverlay(gesture = false) {
       snap = { ...want, key };
     }
     if (d?.lay) layOverlay(c, d, base, marks, lifted);
+    if (d?.cmp?.dragged) cmpPaint(c, d.cmp, base, marks, true);
     ui.cmdUI.place();
   });
 }
@@ -11908,16 +11918,16 @@ function cmpZoom(d, x) {
   note(`Difference ${x.n}: ${x.mm.toFixed(2)} mm at X ${fmt(x.x)}, Y ${fmt(x.y)}`);
 }
 
-function cmpPaint(canvas, c, base, marks) {
-  paintDrawing(canvas, { ...base, fl: null, factor: 1 });                                      // clears
+function cmpPaint(canvas, c, base, marks, lifted = false) {
+  if (!lifted) paintDrawing(canvas, { ...base, fl: null, factor: 1 });                         // clears
   let drawn = 0;
   for (const sd of c.items) {
-    if (!sd.visible) continue;
+    if (!sd.visible || (sd.id === c.dragged) !== lifted) continue;
     const target = sd.id === c.selected && cmpSourceTab(sd), placed = { ...base, ox: base.ox - sd.offset[0], oy: base.oy + sd.offset[1], keep: true, tint: cmpCss(sd.colour), cmpOff: sd.off };
     if (target) drawn += paintEditable(canvas, target, placed, state.tool === 'measure' ? null : marks);
     else drawn += paintDrawing(canvas, { ...placed, fl: sd.fl, off: sd.off, factor: sd.factor });
   }
-  if (c.moving && c.snap) {                                                                    // the snap: a thin dotted guide through it and the usual marker with its name
+  if (lifted && c.snap) {                                                                    // the snap: a thin dotted guide through it and the usual marker with its name
     const ctx = canvas.getContext('2d'), k = base.scale * base.dpr, T = [k, 0, 0, -k, -base.ox * k, (base.sheetH - base.oy) * k], at = mapply(T, c.snap.x, c.snap.y), accent = cssVar('--selection', '#4f46e5');
     ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.strokeStyle = accent; ctx.lineWidth = base.dpr; ctx.setLineDash([3 * base.dpr, 4 * base.dpr]);
     ctx.beginPath(); ctx.moveTo(0, at[1]); ctx.lineTo(canvas.width, at[1]); ctx.moveTo(at[0], 0); ctx.lineTo(at[0], canvas.height); ctx.stroke();
@@ -11958,7 +11968,7 @@ function cmpDown(e) {
   const source = editable(), p = source && toDrawing(source, e.clientX, e.clientY);
   if (source && (e.target.closest('[data-rot], [data-pivot]') || gripOn(source) && gripAt(source, e.clientX, e.clientY))) return false;
   const target = ref === item ? c.items.find((x) => x !== item && x.checked && x.visible) : ref?.visible ? ref : null;
-  const p0 = sheetAt(e.clientX, e.clientY), m0 = [...item.offset];
+  const p0 = sheetAt(e.clientX, e.clientY), m0 = [...item.offset], mode0 = c.mode;
   const grab = cmpSnap(item, m0, p0), g = grab ? [grab.x, grab.y] : p0;
   c.moving = true;
   let moved = false, manual = false;
@@ -11972,10 +11982,18 @@ function cmpDown(e) {
     if (drop) o = [o[0] + drop.x - q[0], o[1] + drop.y - q[1]];
     const hit = snapGuideBox(item.box.map((v, i) => v + o[i % 2]));
     o = [o[0] + hit.dx, o[1] + hit.dy];
-    moved = true; item.offset = o; paintOverlay();
+    moved = true; c.dragged = item.id; item.offset = o; paintOverlay();
   };
-  const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); window.removeEventListener('pointercancel', up); c.moving = false; c.snap = null; if (moved) { cmpMoved(d); if (manual) note('Line-up set to Manual'); } else if (source) clickSelect(source, p, e.shiftKey); else cmpEdit(); };
+  const up = (ev) => {
+    window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); window.removeEventListener('pointercancel', up); window.removeEventListener('keydown', key, true);
+    c.moving = false; c.dragged = null; c.snap = null;
+    if (ev.key === 'Escape') { item.offset = m0; c.mode = mode0; cmpMoved(d); }
+    else if (moved) { cmpMoved(d); if (manual) note('Line-up set to Manual'); }
+    else if (source) clickSelect(source, p, e.shiftKey); else cmpEdit();
+  };
+  const key = (ev) => { if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); up(ev); } };
   window.addEventListener('pointermove', move); window.addEventListener('pointerup', up); window.addEventListener('pointercancel', up);
+  window.addEventListener('keydown', key, true);
   return true;
 }
 function cmpManual(c) {
