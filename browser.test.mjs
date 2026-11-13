@@ -24821,6 +24821,50 @@ try {
     } finally { await ctx.close(); }
   });
 
+  await step('layout part drag: two full paints, drop repaints in order', async () => {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    try {
+      const p = await ctx.newPage(), drawing = p.getByTestId('drawing'), errors = [];
+      p.on('pageerror', (e) => errors.push(String(e)));
+      await p.route('**/app.js', (route) => route.fulfill({ contentType: 'text/javascript', body: readFileSync('web/app.js', 'utf8') + '\nwindow.p7b2Paint = () => paintOverlay();' }));
+      const frame = () => p.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+      const paints = async () => Number(await drawing.getAttribute('data-paints'));
+      const menu = async (top, name) => { await p.locator(`[data-menu=${top}]`).click(); await p.getByRole('menuitem', { name, exact: true }).click(); };
+      await p.goto(URL_ + '?autosave=86400000'); await p.getByTestId('count').waitFor({ state: 'attached' });
+      await p.getByTestId('picker').setInputFiles({ name: 'p7b2-big.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(bigDoc(20000))) });
+      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'p7b2-big.dxf');
+      await menu('Layout', 'Add to layout');
+      await p.locator('.tabs .dtab').first().click(); await menu('Layout', 'Add to layout');
+      await p.locator('[data-ribbon-tab=Layout]').click();
+      for (const key of ['sheetW', 'sheetH']) { const f = p.locator(`[data-key=${key}]:visible`).first(); await f.fill('3000'); await f.press('Enter'); }
+      await panelControl(p, p.getByTestId('apply')).click();
+      await p.getByTestId('canvas').getByRole('button', { name: 'Fit', exact: true }).click(); await frame();
+      const parts = p.locator('[data-group=parts] [data-i]');
+      assert.ok(await parts.count() >= 2, 'two placed parts: the base stays heavy while one is dragged');
+      const box = await parts.first().boundingBox(), x = box.x + box.width / 2, y = box.y + box.height / 2;
+      await p.mouse.move(x, y); await frame();
+      const before = await paints();
+      await p.mouse.down();
+      for (let i = 1; i <= 20; i++) { await p.mouse.move(x + i * 4, y + i * 2); await frame(); }
+      assert.equal(await drawing.getAttribute('data-keep'), '1', 'a drag move uses the kept base');
+      await p.mouse.up(); await frame();
+      const rose = await paints() - before;
+      assert.ok(rose >= 1 && rose <= 2, `a part drag: at most two full paints (start, drop), got ${rose}`);
+      await drawing.evaluate((c) => { window.__A = c.getContext('2d').getImageData(0, 0, c.width, c.height); c.dataset.nokeep = '1'; });
+      await p.evaluate(() => window.p7b2Paint()); await frame();
+      const diff = await drawing.evaluate((c) => {
+        const a = window.__A, b = c.getContext('2d').getImageData(0, 0, c.width, c.height);
+        delete c.dataset.nokeep; delete window.__A;
+        let over2 = 0;
+        for (let i = 0; i < a.data.length; i += 4) for (let j = 0; j < 4; j++) if (Math.abs(a.data[i + j] - b.data[i + j]) > 2) { over2++; break; }
+        return over2;
+      });
+      assert.equal(diff, 0, 'after the drop the picture equals a full paint (max channel difference 2)');
+      assert.deepEqual(errors, []);
+      console.log(`P7b2: part drag ${rose} full paints, drop picture equals a full paint`);
+    } finally { await ctx.close(); }
+  });
+
   await step('lag harness: spline fixture counts', async () => {
     const { splineDoc } = await import('./tools/gen-big-dxf.mjs');
     assert.equal(typeof splineDoc, 'function', 'P6 provides the generated spline fixture');
@@ -24886,7 +24930,7 @@ try {
     assert.deepEqual(Object.keys(lay), ['open', 'Add to layout x 3', 'Layout wheel', 'Layout pan', 'Layout Measure hover', 'Layout Line hover', 'Layout part click', 'Layout part drag', 'Layout undo', 'Layout sheet size', 'Layout Apply']);
     assert.ok(lay['Layout undo'].lineTo > 30000, `two placed parts paint: lineTo ${lay['Layout undo'].lineTo}`);
     assert.equal(lay['Layout wheel'].snap, '1', 'Layout wheel reuses the kept picture after the burst');
-    within(lay, { 'Layout wheel': 1, 'Layout pan': 1, 'Layout Measure hover': 0, 'Layout Line hover': 0, 'Layout part click': 0, 'Layout part drag': 24, 'Layout undo': 2 });
+    within(lay, { 'Layout wheel': 1, 'Layout pan': 1, 'Layout Measure hover': 0, 'Layout Line hover': 0, 'Layout part click': 0, 'Layout part drag': 2, 'Layout undo': 2 });
     const cmp = await flow((p) => interactCompare(p, big, 'lag-big.dxf'));
     assert.deepEqual(Object.keys(cmp), ['open', 'Compare start', 'Compare wheel', 'Compare pan', 'Compare click', 'Compare button', 'Compare button again', 'Compare drag']);
     assert.ok(cmp['Compare start'].lineTo > 30000, `both snapshots paint: lineTo ${cmp['Compare start'].lineTo}`);

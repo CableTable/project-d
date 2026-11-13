@@ -4681,19 +4681,26 @@ function paintOverlay(gesture = false) {
     const dragSnap = (d?.lay || d?.cmp) && (state.paste?.to || (pdrag?.moved && state.snap && !pdrag.skipSnap && pdrag.to));
     const preview = selectSnapPreview(d);
     const marks = preview?.[2] ? [[preview[0], preview[1], preview[2], true]] : dragSnap?.[2] ? [[dragSnap[0], dragSnap[1], dragSnap[2], true]] : L2 && d ? [...L2.pts.map((q) => [q[0], q[1], q[2], false]), ...(L2.pts.length < 2 && hv ? [[hv[0], hv[1], hv[2], true]] : [])] : null;
-    const calls = [];
+    const calls = [], lifted = [];                                   // lifted: the parts a drag moves, painted by the overlay (R11: on top until the drop)
     let key = null;
     if (d?.lay) {
       if (!state.hidden.parts) {
-        const byPart = new Map(), gripped = new Set(state.grip && state.grip.d.vlay === d ? gripShown(state.grip).map((e) => state.grip.d.at.get(state.grip.ents ? state.grip.ents.get(e) : state.grip.ent)) : []);       // the objects a grip drags are drawn by the overlay only
-        for (const p of placedNow) { if (p.src === 'loose' && gripped.has(p.i)) continue; if (!byPart.has(p.partId)) byPart.set(p.partId, []); byPart.get(p.partId).push(p); }
+        const byPart = new Map(), liftedBy = new Map(), drag = pdrag?.moved && pdrag.idxs, gripped = new Set(state.grip && state.grip.d.vlay === d ? gripShown(state.grip).map((e) => state.grip.d.at.get(state.grip.ents ? state.grip.ents.get(e) : state.grip.ent)) : []);       // the objects a grip drags are drawn by the overlay only
+        for (const p of placedNow) {
+          if (p.src === 'loose' && gripped.has(p.i)) continue;
+          const to = p.src === 'loose' && drag?.includes(p.i) ? liftedBy : byPart;
+          if (!to.has(p.partId)) to.set(p.partId, []);
+          to.get(p.partId).push(p);
+        }
         for (const [id, part] of Object.entries(d.lay.parts)) {
           if (d.hiddenParts && d.hiddenParts.has(id)) continue;                                // hidden in the Objects tab
           const fl = state.text.ed?.dim?.raw === part.raw ? state.text.ed.dim.fl : part.fl;
-          const mine = byPart.get(id) || [], slotsOf = (list) => list.map((p) => placedMat(part, p, state.sheetH));
-          const on = mine.filter((p) => !p.off), outside = mine.filter((p) => p.off);          // a part off the sheet is drawn in the mark colour
-          if (on.length) calls.push({ fl, off: part.off, factor: part.factor || 1, slots: slotsOf(on) });
-          if (outside.length) calls.push({ fl, off: part.off, factor: part.factor || 1, slots: slotsOf(outside), tint: cssVar('--mark', '#c2410c') });
+          const slotsOf = (list) => list.map((p) => placedMat(part, p, state.sheetH));
+          for (const [list, to] of [[byPart.get(id) || [], calls], [liftedBy.get(id) || [], lifted]]) {
+            const on = list.filter((p) => !p.off), outside = list.filter((p) => p.off);          // a part off the sheet is drawn in the mark colour
+            if (on.length) to.push({ fl, off: part.off, factor: part.factor || 1, slots: slotsOf(on) });
+            if (outside.length) to.push({ fl, off: part.off, factor: part.factor || 1, slots: slotsOf(outside), tint: cssVar('--mark', '#c2410c') });
+          }
         }
       }
       key = [d, base.ox, base.oy, base.scale, cw, chh, dpr, base.dark, base.wireframe, base.sheetH, state.hidden.parts];
@@ -4708,7 +4715,7 @@ function paintOverlay(gesture = false) {
       const { dx, dy, r } = snapPlace(snap.view, want.view), g = c.getContext('2d');
       g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, cw, chh);
       g.drawImage(snapCv, dx * dpr, dy * dpr, cw * r, chh * r);
-      if (d?.lay) layOverlay(c, d, base, marks);
+      if (d?.lay) layOverlay(c, d, base, marks, lifted);
       c.dataset.snap = '1';
       snapTimer = setTimeout(() => paintOverlay(), 120);
       ui.cmdUI.place();
@@ -4718,7 +4725,7 @@ function paintOverlay(gesture = false) {
       const g = c.getContext('2d');
       g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, cw, chh);
       g.drawImage(snapCv, 0, 0);
-      layOverlay(c, d, base, marks);
+      layOverlay(c, d, base, marks, lifted);
       c.dataset.keep = '1';
       ui.cmdUI.place();
       return;
@@ -4750,13 +4757,14 @@ function paintOverlay(gesture = false) {
       snapCv.getContext('2d').drawImage(c, 0, 0);
       snap = { ...want, key };
     }
-    if (d?.lay) layOverlay(c, d, base, marks);
+    if (d?.lay) layOverlay(c, d, base, marks, lifted);
     ui.cmdUI.place();
   });
 }
 
-function layOverlay(c, d, base, marks) {
+function layOverlay(c, d, base, marks, lifted) {
   const { dpr } = base;
+  for (const call of lifted) paintDrawing(c, { ...base, keep: true, ...call });
   const gm = state.grip?.d.vlay === d && state.grip.move;                                 // a text, hatch or block a grip moves: its objects' drawing (sheet mm) shifted
   c.dataset.preview = gm?.items ? paintDrawing(c, { ...base, ox: base.ox - gm.dx, oy: base.oy + gm.dy, keep: true, fl: gm.preview, off: state.grip.d.off, factor: 1, tint: cssVar('--selection', '#4f46e5'), previewBounds: (box) => { canvasPreviewBounds = unionBox(canvasPreviewBounds, box); } }) : 0;
   const paste = state.paste;
