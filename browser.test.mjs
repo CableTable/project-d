@@ -5429,7 +5429,7 @@ try {
     const open = async () => { await q('pdf-open').click(); await q('pdf-dialog').waitFor(); await p.waitForFunction(() => { const c = document.querySelector('[data-testid=pdf-preview]'); return c && c.width > 100; }); };
     const inked = (id) => p.waitForFunction((id) => { const c = document.querySelector(`[data-testid=${id}]`), d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let n = 0; for (let i = 0; i < d.length; i += 4) if (d[i] < 200 && d[i + 3] > 200) n++; return n > 200; }, id);      // thin lines are grey: anything darker than the paper
     const pic = (id) => q(id).evaluate((c) => c.toDataURL());
-    const zoom = async () => Number((await q('pdf-full-zoom').textContent()).replace('%', ''));
+    const zoom = async () => Number((await q('pdf-full-zoom').textContent()).replace(/^View |%$/g, ''));
     const focused = () => p.evaluate(() => document.activeElement.dataset.testid);
     const openFull = async () => { await q('pdf-fullscreen').click(); await q('pdf-full').waitFor(); await inked('pdf-full-canvas'); };
     const centre = async () => { const b = await q('pdf-full-canvas').boundingBox(); await p.mouse.move(b.x + b.width / 2, b.y + b.height / 2); return b; };
@@ -5459,24 +5459,24 @@ try {
       await centre();
       const fitPic = await pic('pdf-full-canvas');
       await p.mouse.wheel(0, -600);
-      const z1 = Number((await (await p.waitForFunction(() => { const t = document.querySelector('[data-testid=pdf-full-zoom]').textContent; return t !== '100%' && t; })).jsonValue()).replace('%', ''));
+      const z1 = Number((await (await p.waitForFunction(() => { const t = document.querySelector('[data-testid=pdf-full-zoom]').textContent; return t !== 'View 100%' && t; })).jsonValue()).replace(/^View |%$/g, ''));
       assert.ok(z1 > 200 && z1 <= 3200, 'zoom ' + z1);
       await p.waitForFunction((was) => document.querySelector('[data-testid=pdf-full-canvas]').toDataURL() !== was, fitPic);
       for (let i = 0; i < 12; i++) await p.mouse.wheel(0, -1000);
-      await p.waitForFunction(() => document.querySelector('[data-testid=pdf-full-zoom]').textContent === '3200%');
+      await p.waitForFunction(() => document.querySelector('[data-testid=pdf-full-zoom]').textContent === 'View 3200%');
       const size = await q('pdf-full-canvas').evaluate((c) => ({ w: c.width, h: c.height, dpr: devicePixelRatio, sw: c.parentElement.clientWidth, sh: c.parentElement.clientHeight }));
       assert.deepEqual([size.w, size.h], [Math.round(size.sw * size.dpr), Math.round(size.sh * size.dpr)], 'canvas never oversized');
       for (let i = 0; i < 12; i++) await p.mouse.wheel(0, 1000);
-      await p.waitForFunction(() => document.querySelector('[data-testid=pdf-full-zoom]').textContent === '100%');
+      await p.waitForFunction(() => document.querySelector('[data-testid=pdf-full-zoom]').textContent === 'View 100%');
       // drag pans
       await p.mouse.wheel(0, -500);
-      await p.waitForFunction(() => document.querySelector('[data-testid=pdf-full-zoom]').textContent !== '100%');
+      await p.waitForFunction(() => document.querySelector('[data-testid=pdf-full-zoom]').textContent !== 'View 100%');
       await p.waitForTimeout(100);
       const zoomed = await pic('pdf-full-canvas');
       await p.mouse.down(); await p.mouse.move(cb.x + cb.width / 2 + 80, cb.y + cb.height / 2 + 40, { steps: 4 }); await p.mouse.up();
       await p.waitForFunction((was) => document.querySelector('[data-testid=pdf-full-canvas]').toDataURL() !== was, zoomed);
       await q('pdf-full-fit').click();
-      await p.waitForFunction(() => document.querySelector('[data-testid=pdf-full-zoom]').textContent === '100%');
+      await p.waitForFunction(() => document.querySelector('[data-testid=pdf-full-zoom]').textContent === 'View 100%');
       assert.equal(await zoom(), 100);
       // pages: a page button, Next, Previous, PageUp / PageDown (each waits for the label)
       const onPage = (n) => p.waitForFunction(([n, pages]) => document.querySelector('[data-testid=pdf-full-label]').textContent.startsWith(`Page ${n} of ${pages} · `), [n, pages]);
@@ -5529,7 +5529,7 @@ try {
       await openTab('full-drawing.dxf', writeDxf(raw));
       await open();
       await openFull(); await centre(); await p.mouse.wheel(0, -500);
-      await p.waitForFunction(() => document.querySelector('[data-testid=pdf-full-zoom]').textContent !== '100%');
+      await p.waitForFunction(() => document.querySelector('[data-testid=pdf-full-zoom]').textContent !== 'View 100%');
       await p.keyboard.press('Escape');
       assert.equal(await q('pdf-full').count(), 0);
       assert.equal(await q('pdf-dialog').count(), 1);
@@ -5541,6 +5541,133 @@ try {
       await q('pdf-dialog').waitFor();
       assert.equal(await q('pdf-dialog').count(), 1);
       await q('pdf-close').click();
+    } finally { await ctx.close(); }
+  });
+
+  await step('TODO 215b: PDF / Print full-screen Scale and margins', async () => {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const p = await ctx.newPage(), q = (id) => p.getByTestId(id);
+    p.on('pageerror', (e) => errors.push(String(e)));
+    const raw = newDoc(4); addEntities(raw, dxfPoly([[0, 0], [2000, 0], [2000, 1000], [0, 1000]], { closed: true }));
+    const inked = (id) => p.waitForFunction((id) => { const c = document.querySelector(`[data-testid=${id}]`), d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let n = 0; for (let i = 0; i < d.length; i += 4) if (d[i] < 200 && d[i + 3] > 200) n++; return n > 200; }, id);
+    const blank = (id) => p.waitForFunction((id) => { const c = document.querySelector(`[data-testid=${id}]`); return !c.getContext('2d').getImageData(0, 0, c.width, c.height).data.some((v) => v); }, id);
+    const pages = (n) => p.waitForFunction((n) => document.querySelectorAll('[data-testid=pdf-full-pagebtn]').length === n, n);
+    const typed = async (id, text) => { await q(id).fill(text); };
+    const margins = (expected) => p.waitForFunction((values) => ['top', 'right', 'bottom', 'left'].every((k, i) => document.querySelector('[data-testid=pdf-full-margin-' + k + ']').value === values[i]), expected);
+    const shape = async () => {                                       // light, dark, 1024 px
+      for (const theme of ['light', 'dark']) {
+        await p.evaluate((theme) => { document.documentElement.dataset.theme = theme; return new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))); }, theme);
+        await p.screenshot({ path: `${shotDir}/todo215b-full-bar-${theme}.png` });
+        assert.ok(readFileSync(`${shotDir}/todo215b-full-bar-${theme}.png`).length > 1000);
+      }
+      await p.evaluate(() => { document.documentElement.dataset.theme = 'light'; });
+      await p.setViewportSize({ width: 1024, height: 768 });
+      await p.screenshot({ path: `${shotDir}/todo215b-full-bar-1024.png` });
+      for (const id of ['pdf-full-scale', 'pdf-full-fit', 'pdf-full-close', 'pdf-full-margin-top', 'pdf-full-margin-left', 'pdf-full-margin-link']) {
+        const b = await q(id).boundingBox();
+        assert.ok(b && b.x >= 0 && b.x + b.width <= 1024 && b.y + b.height <= 768, id + ' fits at 1024 px');
+      }
+      await p.setViewportSize({ width: 1440, height: 900 });
+    };
+    try {
+      await p.goto(URL_);
+      await q('picker').setInputFiles({ name: 'c215b.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(raw)) });
+      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'c215b.dxf');
+      await q('pdf-open').click(); await q('pdf-dialog').waitFor();
+      await p.waitForFunction(() => { const c = document.querySelector('[data-testid=pdf-preview]'); return c && c.width > 100; });
+      await q('pdf-page-custom').check();
+      await q('pdf-custom-paper').selectOption('A1');
+      await q('pdf-fullscreen').click(); await q('pdf-full').waitFor(); await inked('pdf-full-canvas');
+      // the view zoom reads as a view; the Scale box shows what the dialog's box holds
+      assert.match(await q('pdf-full-zoom').textContent(), /^View \d+%$/);
+      assert.equal(await q('pdf-full-scale').inputValue(), await q('pdf-scale-box').inputValue(), 'same value as the dialog');
+      // a ratio, then a percent, then a small one: page buttons, label and dialog follow live
+      await typed('pdf-full-scale', '1:1');
+      await pages(6);
+      assert.match(await q('pdf-full-label').textContent(), /^Page 1 of 6 · .*tile 1\/6$/);
+      assert.equal(await q('pdf-full-scale-other').textContent(), '= 100%');
+      assert.match(await q('pdf-preview-label').textContent(), /page 1 of 6 /);
+      assert.equal(await q('pdf-custom-info').textContent(), '3 × 2 tiles');
+      await inked('pdf-full-canvas');
+      await typed('pdf-full-scale', '50%');
+      await p.waitForFunction(() => document.querySelector('[data-testid=pdf-full-scale-other]').textContent === '= 1 : 2');
+      const half = await q('pdf-pagebtn').count();
+      assert.ok(half < 6, 'fewer tiles at 50%: ' + half);
+      await pages(half);
+      assert.equal(await q('pdf-full-scale').evaluate((el) => document.activeElement === el), true, 'typing keeps the focus');
+      await typed('pdf-full-scale', '2%');
+      await pages(1);
+      assert.equal(await q('pdf-full-scale-other').textContent(), '= 1 : 50');
+      assert.match(await q('pdf-title-scale').inputValue(), /scale 1 : 50$/i);
+      // invalid: a red line in the bar, the last good scale stays, Save / Print stay off
+      for (const bad of ['0', 'abc', '1:1001', '']) {
+        await typed('pdf-full-scale', bad);
+        await q('pdf-full-error').waitFor();
+        assert.match(await q('pdf-full-error').textContent(), /Type a scale like 1 : 50/, 'invalid: ' + JSON.stringify(bad));
+        assert.equal(await q('pdf-full-scale').getAttribute('aria-invalid'), 'true');
+        assert.equal(await q('pdf-go').isDisabled(), true, 'Save off for ' + JSON.stringify(bad));
+        assert.equal(await q('pdf-print').isDisabled(), true, 'Print off for ' + JSON.stringify(bad));
+        assert.equal(await q('pdf-full-pagebtn').count(), 1, 'the last good scale stays');
+      }
+      const red = await q('pdf-full-error').evaluate((el) => getComputedStyle(el).color.match(/[\d.]+/g).map(Number));
+      assert.ok(red[0] > red[1] && red[0] > red[2], 'the error line is red');
+      // more than 60 pages: red line, no pages, nothing painted, Save / Print off
+      await typed('pdf-full-scale', '1000:1');
+      await p.waitForFunction(() => /^Too many pages \(\d+\)/.test(document.querySelector('[data-testid=pdf-full-error]').textContent));
+      await pages(0); await blank('pdf-full-canvas');
+      assert.equal(await q('pdf-go').isDisabled(), true); assert.equal(await q('pdf-print').isDisabled(), true);
+      await typed('pdf-full-scale', '1:1');
+      await pages(6); await inked('pdf-full-canvas');
+      assert.equal(await q('pdf-full-error').isVisible(), false);
+      assert.equal(await q('pdf-go').isDisabled(), false);
+      // margins: the dialog's numbers, shared; Same on all sides; Save / Print off with no printable area
+      await typed('pdf-full-scale', '2%');
+      await pages(1);
+      await margins(['10', '10', '10', '10']);
+      const before = await q('pdf-full-canvas').evaluate((c) => c.toDataURL());
+      await typed('pdf-full-margin-top', '15');
+      await p.waitForFunction((was) => document.querySelector('[data-testid=pdf-full-canvas]').toDataURL() !== was, before);
+      await q('pdf-full-margin-link').click();
+      assert.equal(await q('pdf-full-margin-link').getAttribute('aria-pressed'), 'true');
+      await typed('pdf-full-margin-left', '12');
+      await margins(['12', '12', '12', '12']);
+      await shape();
+      await typed('pdf-full-margin-top', '500');                      // A1 is 594 mm tall: no sheet fits between 500 mm margins
+      await p.waitForFunction(() => /no printable area/.test(document.querySelector('[data-testid=pdf-full-error]').textContent));
+      await pages(0); await blank('pdf-full-canvas');
+      assert.equal(await q('pdf-go').isDisabled(), true); assert.equal(await q('pdf-print').isDisabled(), true);
+      await typed('pdf-full-margin-top', '12');
+      await pages(1); await inked('pdf-full-canvas');
+      await q('pdf-full-margin-link').click();
+      await typed('pdf-full-margin-right', '20');
+      await margins(['12', '20', '12', '12']);
+      await p.keyboard.press('Escape');
+      for (const [k, v] of [['top', '12'], ['right', '20'], ['bottom', '12'], ['left', '12']]) assert.equal(await q('pdf-margin-' + k).inputValue(), v, 'dialog ' + k + ' after Close');
+      assert.equal(await q('pdf-margin-preset').inputValue(), 'custom');
+      assert.equal(await q('pdf-scale-box').inputValue(), '2%', 'the dialog shows the same scale after Close');
+      assert.equal(await q('pdf-go').isDisabled(), false);
+      // an oversized margin typed in the bar leaves the dialog without an old preview or title-block scale
+      await q('pdf-fullscreen').click(); await q('pdf-full').waitFor();
+      await q('pdf-full-margin-link').click();
+      await typed('pdf-full-margin-top', '500');
+      await pages(0);
+      await p.keyboard.press('Escape');
+      await blank('pdf-preview');
+      assert.equal(await q('pdf-title-scale').inputValue(), '', 'title-block Scale cleared');
+      assert.equal(await q('pdf-fullscreen').isDisabled(), true);
+      await q('pdf-margin-preset').selectOption('standard');
+      await p.waitForFunction(() => document.querySelector('[data-testid=pdf-margin-error]').hidden);
+      // greyed on the 1:1 sheet page, as in the dialog
+      await q('pdf-page-sheet').check();
+      await q('pdf-fullscreen').click(); await q('pdf-full').waitFor(); await inked('pdf-full-canvas');
+      for (const id of ['top', 'right', 'bottom', 'left', 'link']) assert.equal(await q('pdf-full-margin-' + id).isDisabled(), true, id + ' greyed on 1:1');
+      assert.equal(await q('pdf-full-margins').evaluate((el) => getComputedStyle(el).opacity), '0.5');
+      assert.equal(await q('pdf-full-scale').isDisabled(), false, 'Scale stays usable');
+      await typed('pdf-full-scale', '1:50');                          // typing a scale picks the Custom scale page, as in the dialog
+      await p.waitForFunction(() => !document.querySelector('[data-testid=pdf-full-margin-top]').disabled);
+      assert.equal(await q('pdf-page-custom').isChecked(), true);
+      await p.keyboard.press('Escape');
+      await p.keyboard.press('Escape');
     } finally { await ctx.close(); }
   });
 

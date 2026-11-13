@@ -173,12 +173,13 @@ export function openExport(host) {
   // Custom scale: the box takes 1:50 or 2% and shows the other form; a bad entry keeps the last good scale in the preview and blocks Save / Print. Check print's scale is read out in the same box.
   ref.customPaper = sel(Object.keys(PAPERS).map((k) => [k, k]), settings.customPaper, (v) => { settings.customPaper = v; save({ customPaper: v }); pickPage('custom'); }, { style: 'width:70px', 'data-testid': 'pdf-custom-paper', 'aria-label': 'Custom scale paper size' });
   ref.scaleBox = h('input', { class: 'fld', type: 'text', value: settings.scaleText, style: 'width:90px', 'aria-label': 'Scale', 'data-testid': 'pdf-scale-box' });
-  ref.scaleBox.addEventListener('input', () => {
-    settings.scaleText = ref.scaleBox.value;
-    const s = parseScale(settings.scaleText);
-    if (s) { settings.scale = s; save({ scaleText: settings.scaleText }); }
+  const typeScale = (text) => {                                     // the dialog's box and the full-screen bar's box
+    settings.scaleText = text;
+    const s = parseScale(text);
+    if (s) { settings.scale = s; save({ scaleText: text }); }
     pickPage('custom');
-  });
+  };
+  ref.scaleBox.addEventListener('input', () => typeScale(ref.scaleBox.value));
   ref.scaleOther = h('span', { class: 'lbl mono', 'data-testid': 'pdf-scale-other' });
   ref.customLbl = h('span', { class: 'lbl mono', 'data-testid': 'pdf-custom-info' });
   ref.scaleError = h('div', { class: 'pd-margin-error', role: 'alert', hidden: true, style: 'padding-left:22px', 'data-testid': 'pdf-scale-error' });
@@ -226,7 +227,7 @@ export function openExport(host) {
   ref.selPage = h('div', { class: 'pd-sub', hidden: true }, selRadio(true, 'Cut to selection', 'pdf-sel-cut'), selRadio(false, 'Sheet page', 'pdf-sel-sheet'));
   // ---- Margins (tiled and check print pages): a preset, or four numbers; editing a number picks Custom
   const shownMargins = () => marginsOf({ page: settings.page === 'custom' ? (plan && plan.pages[0].tile ? 'tile' : 'check') : settings.page, margins: settings.marginPreset === 'standard' ? undefined : settings.margins });   // a custom scale page is a check page when it is one page, else tiles
-  const fillMargins = () => { for (const [k, v] of Object.entries(shownMargins())) if (Number(ref.marginInputs[k].value) !== v || ref.marginInputs[k].value === '') ref.marginInputs[k].value = v; };
+  const fillMargins = () => { for (const inputs of [ref.marginInputs, ref.fullMargins]) if (inputs) for (const [k, v] of Object.entries(shownMargins())) if (Number(inputs[k].value) !== v || inputs[k].value === '') inputs[k].value = v; };
   const rememberMargins = () => { save({ marginPreset: settings.marginPreset, margins: settings.margins }); refresh(); };
   ref.marginPreset = sel([['standard', 'Standard'], ['custom', 'Custom']], settings.marginPreset, (v) => {
     if (v === 'custom') settings.margins = { ...shownMargins() };
@@ -239,16 +240,17 @@ export function openExport(host) {
     ref.marginLink.setAttribute('aria-pressed', String(ref.marginLink.getAttribute('aria-pressed') !== 'true'));
   } }, 'Same on all sides');
   ref.marginInputs = {};
+  const editMargin = (key, raw) => {                                // the dialog's field and the full-screen bar's field
+    const v = Number(raw);
+    if (raw === '' || !Number.isFinite(v)) return;
+    const value = Math.min(MARGIN_MAX, Math.max(0, v));
+    settings.margins = ref.marginLink.getAttribute('aria-pressed') === 'true'
+      ? Object.fromEntries(Object.keys(ref.marginInputs).map((k) => [k, value])) : { ...shownMargins(), [key]: value };
+    settings.marginPreset = 'custom'; rememberMargins();
+  };
   const marginField = (key, text) => {
     const i = h('input', { class: 'fld', type: 'number', min: 0, max: MARGIN_MAX, step: 0.5, style: 'width:64px', 'data-testid': 'pdf-margin-' + key });
-    i.addEventListener('input', () => {
-      const v = Number(i.value);
-      if (i.value === '' || !Number.isFinite(v)) return;
-      const value = Math.min(MARGIN_MAX, Math.max(0, v));
-      settings.margins = ref.marginLink.getAttribute('aria-pressed') === 'true'
-        ? Object.fromEntries(Object.keys(ref.marginInputs).map((k) => [k, value])) : { ...shownMargins(), [key]: value };
-      settings.marginPreset = 'custom'; rememberMargins();
-    });
+    i.addEventListener('input', () => editMargin(key, i.value));
     ref.marginInputs[key] = i;
     return h('label', { class: 'lbl', style: 'display:flex;align-items:center;justify-content:space-between;gap:6px' }, text, i);
   };
@@ -335,7 +337,9 @@ export function openExport(host) {
   const fileName = () => baseName(src.name) + '.pdf';
   const pageName = (p) => `${p.n}${p.layer ? ' · ' + p.layer : ''}${p.tile ? ` · tile ${p.tile.n}/${p.tile.of}` : ''}`;
 
-  function refresh() {
+  const clearPreview = () => { const c = ref.canvas.getContext('2d'); c.setTransform(1, 0, 0, 1, 0, 0); c.clearRect(0, 0, ref.canvas.width, ref.canvas.height); };      // paintPage leaves its page transform on the context
+  function refresh() { refreshDialog(); if (ref.fullSync) ref.fullSync(); }      // the full-screen bar follows every change, whether it came from the dialog or the bar
+  function refreshDialog() {
     const one = settings.tab === 'one';
     ref.tabOne.classList.toggle('on', one); ref.tabBatch.classList.toggle('on', !one);
     ref.tabOne.setAttribute('aria-selected', String(one)); ref.tabBatch.setAttribute('aria-selected', String(!one));
@@ -357,7 +361,7 @@ export function openExport(host) {
     ref.fullBtn.disabled = !srcFull;
     if (!srcFull) {
       plan = null; ref.print.disabled = true; ref.go.disabled = true;
-      ref.canvas.getContext('2d').clearRect(0, 0, ref.canvas.width, ref.canvas.height);
+      clearPreview();
       ref.preLabel.textContent = 'Preview · nothing to export'; ref.foot.textContent = 'Nothing to export';
       ref.sheetLbl.textContent = ''; ref.tileLbl.textContent = ''; ref.checkLbl.textContent = ''; fill(ref.pageBtns, []);
       return;
@@ -379,7 +383,7 @@ export function openExport(host) {
       const cap = err instanceof PageCapError;
       plan = null; ref.print.disabled = true; ref.go.disabled = true; ref.fullBtn.disabled = true;
       if (cap) showScaleError(err.message); else { ref.marginError.textContent = err.message; ref.marginError.hidden = false; }
-      ref.canvas.getContext('2d').clearRect(0, 0, ref.canvas.width, ref.canvas.height);
+      clearPreview(); ref.titleInputs.scale.value = '';
       ref.preLabel.textContent = cap ? 'Preview · too many pages' : 'Preview · no printable area'; ref.checkLbl.textContent = ''; ref.tileLbl.textContent = ''; ref.customLbl.textContent = ''; ref.scaleOther.textContent = '';
       fill(ref.pageBtns, []);
       return;
@@ -444,35 +448,69 @@ export function openExport(host) {
   // ---- the full-screen preview: an overlay above the dialog; the same paintPage at the overlay's size, wheel zoom (1×–32×), drag pan
   function openFull() {
     if (full || !plan || settings.tab !== 'one') return;
-    const startIdx = settings.pageIdx, pages = new Map();
+    const startIdx = settings.pageIdx;
+    let pages = new Map(), btns = [], view = FIT, raf = 0, drag = null;
     const pageAt = (i) => { if (!pages.has(i)) pages.set(i, plan.build(i)); return pages.get(i); };         // built once per page while open
-    let view = FIT, raf = 0, drag = null;
     const canvas = h('canvas', { role: 'img', 'data-testid': 'pdf-full-canvas' });
     const stage = h('div', { class: 'pdfull-stage' }, canvas);
-    const zoomLbl = h('span', { class: 'lbl mono', 'data-testid': 'pdf-full-zoom' });
+    const zoomLbl = h('span', { class: 'lbl mono', 'data-testid': 'pdf-full-zoom' });         // the view's zoom, not the print scale
     const pageLbl = h('span', { class: 'lbl', 'data-testid': 'pdf-full-label', 'aria-live': 'polite' });
-    const go = (i) => { settings.pageIdx = Math.max(0, Math.min(plan.count - 1, i)); show(); };
-    const btns = plan.pages.slice(0, 60).map((q, i) => h('button', { class: 'btn', type: 'button', 'data-testid': 'pdf-full-pagebtn', onclick: () => go(i) }, pageName(q)));
+    const go = (i) => { if (!plan) return; settings.pageIdx = Math.max(0, Math.min(plan.count - 1, i)); show(); };
+    const btnBox = h('div', { class: 'pd-pagebtns' });
     const prev = h('button', { class: 'btn', type: 'button', 'data-testid': 'pdf-full-prev', onclick: () => go(settings.pageIdx - 1) }, 'Previous');
     const next = h('button', { class: 'btn', type: 'button', 'data-testid': 'pdf-full-next', onclick: () => go(settings.pageIdx + 1) }, 'Next');
     const fit = h('button', { class: 'btn', type: 'button', 'data-testid': 'pdf-full-fit', onclick: () => { view = FIT; show(); } }, 'Fit');
     const closeBtn = h('button', { class: 'btn', type: 'button', 'aria-label': 'Close', title: 'Close (Esc)', 'data-testid': 'pdf-full-close', onclick: () => closeFull() }, '×');
+    // Scale and margins: the dialog's own settings, validation and remembered values (typeScale / editMargin); the dialog repaints this bar through refresh
+    const scaleBox = h('input', { class: 'fld', type: 'text', style: 'width:90px', 'aria-label': 'Scale', 'data-testid': 'pdf-full-scale' });
+    scaleBox.addEventListener('input', () => typeScale(scaleBox.value));
+    const scaleOther = h('span', { class: 'lbl mono', 'data-testid': 'pdf-full-scale-other' });
+    const marginIn = {};
+    const mField = (key, text) => {
+      const i = h('input', { class: 'fld', type: 'number', min: 0, max: MARGIN_MAX, step: 0.5, style: 'width:64px', 'data-testid': 'pdf-full-margin-' + key });
+      i.addEventListener('input', () => editMargin(key, i.value));
+      marginIn[key] = i;
+      return h('label', { class: 'lbl pdfull-m' }, text, i);
+    };
+    const mLink = h('button', { class: 'btn sm pd-margin-link', type: 'button', 'aria-pressed': 'false', 'data-testid': 'pdf-full-margin-link', onclick: () => { ref.marginLink.click(); sync(); } }, 'Same on all sides');
+    const err = h('span', { class: 'pd-margin-error', role: 'alert', hidden: true, 'data-testid': 'pdf-full-error' });
+    const marginBar = h('div', { class: 'pdfull-bar pdfull-margins', 'data-testid': 'pdf-full-margins' }, h('span', { class: 'lbl' }, 'Margins (mm)'),
+      mField('top', 'Top'), mField('right', 'Right'), mField('bottom', 'Bottom'), mField('left', 'Left'), mLink, err);
     const overlay = h('div', { class: 'pdfull', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Full screen preview', 'data-testid': 'pdf-full' }, stage,
-      h('div', { class: 'pdfull-bar' }, prev, h('div', { class: 'pd-pagebtns' }, btns), next, h('span', { class: 'pdfull-gap' }), pageLbl, zoomLbl, fit, closeBtn));
+      h('div', { class: 'pdfull-bar' }, prev, btnBox, next, h('span', { class: 'pdfull-gap' }), pageLbl, zoomLbl, fit,
+        h('label', { class: 'lbl pdfull-m' }, 'Scale', scaleBox), scaleOther, closeBtn), marginBar);
     const paintFull = () => {
       raf = 0;
       const r = stage.getBoundingClientRect();
       if (r.width < 10 || r.height < 10) return;
+      if (!plan) { const c = canvas.getContext('2d'); c.setTransform(1, 0, 0, 1, 0, 0); c.clearRect(0, 0, canvas.width, canvas.height); return; }      // nothing to print: no old page left on screen
       const pg = pageAt(settings.pageIdx);
       paintPage(canvas, pg, r, colours(), paintView(fitBase(r.width, r.height, pg.w, pg.h), view), settings.page === 'sheet' ? null : shownMargins());
     };
     function show() {                                                // labels now, the repaint in one animation frame
-      const p = plan.pages[settings.pageIdx];
-      btns.forEach((b, i) => b.classList.toggle('on', i === settings.pageIdx));
-      pageLbl.textContent = `Page ${p.n} of ${plan.count} · ${p.layer || 'All layers'}${p.tile ? ` · tile ${p.tile.n}/${p.tile.of}` : ''}`;
-      canvas.setAttribute('aria-label', `Page ${p.n} preview`);
-      zoomLbl.textContent = Math.round(view.z * 100) + '%';
+      zoomLbl.textContent = 'View ' + Math.round(view.z * 100) + '%';
+      if (plan) {
+        const p = plan.pages[settings.pageIdx];
+        btns.forEach((b, i) => b.classList.toggle('on', i === settings.pageIdx));
+        pageLbl.textContent = `Page ${p.n} of ${plan.count} · ${p.layer || 'All layers'}${p.tile ? ` · tile ${p.tile.n}/${p.tile.of}` : ''}`;
+        canvas.setAttribute('aria-label', `Page ${p.n} preview`);
+      } else pageLbl.textContent = 'Nothing to print';
       if (!raf) raf = requestAnimationFrame(paintFull);
+    }
+    function sync() {                                                // the plan changed (Scale or margins): page buttons, page cache and labels again
+      pages = new Map(); view = FIT;                                 // shortcut: the zoom resets on every change, keep it only if margin edits get fiddly
+      btns = plan ? plan.pages.slice(0, 60).map((q, i) => h('button', { class: 'btn', type: 'button', 'data-testid': 'pdf-full-pagebtn', onclick: () => go(i) }, pageName(q))) : [];
+      fill(btnBox, btns);
+      const sheet = settings.page === 'sheet';
+      marginBar.style.opacity = sheet ? '0.5' : '';
+      for (const i of [mLink, ...Object.values(marginIn)]) i.disabled = sheet;
+      mLink.setAttribute('aria-pressed', ref.marginLink.getAttribute('aria-pressed'));
+      err.textContent = !ref.scaleError.hidden ? ref.scaleError.textContent : ref.marginError.hidden ? '' : ref.marginError.textContent;
+      err.hidden = !err.textContent;
+      scaleBox.setAttribute('aria-invalid', ref.scaleBox.getAttribute('aria-invalid') || 'false');
+      if (document.activeElement !== scaleBox) scaleBox.value = ref.scaleBox.value;
+      scaleOther.textContent = ref.scaleOther.textContent;
+      show();
     }
     stage.addEventListener('wheel', (e) => {
       e.preventDefault();
@@ -492,9 +530,9 @@ export function openExport(host) {
     stage.addEventListener('pointerup', endDrag); stage.addEventListener('pointercancel', endDrag);
     const onFullKey = (e) => {
       if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeFull(); }
-      else if (e.key === 'PageDown' || e.key === 'PageUp') { e.preventDefault(); go(settings.pageIdx + (e.key === 'PageDown' ? 1 : -1)); }
+      else if ((e.key === 'PageDown' || e.key === 'PageUp') && e.target.tagName !== 'INPUT') { e.preventDefault(); go(settings.pageIdx + (e.key === 'PageDown' ? 1 : -1)); }
       else if (e.key === 'Tab') {                                    // Tab stays inside the overlay
-        const f = [...overlay.querySelectorAll('button')], i = f.indexOf(document.activeElement);
+        const f = [...overlay.querySelectorAll('button:not(:disabled), input:not(:disabled)')], i = f.indexOf(document.activeElement);
         if (e.shiftKey ? i <= 0 : i < 0 || i === f.length - 1) { e.preventDefault(); f[e.shiftKey ? f.length - 1 : 0].focus(); }
       }
     };
@@ -503,14 +541,14 @@ export function openExport(host) {
       document.removeEventListener('keydown', onFullKey, true);
       if (ro) ro.disconnect();
       cancelAnimationFrame(raf);
-      overlay.remove(); full = null;
+      overlay.remove(); full = null; ref.fullSync = ref.fullMargins = null;
       if (restore) { if (settings.pageIdx !== startIdx) refresh(); ref.fullBtn.focus(); }
     }
-    full = closeFull;
+    full = closeFull; ref.fullSync = sync; ref.fullMargins = marginIn;
     document.addEventListener('keydown', onFullKey, true);
     back.append(overlay);
     if (ro) ro.observe(stage);
-    show();
+    fillMargins(); sync();
     closeBtn.focus();
   }
 
