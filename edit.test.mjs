@@ -935,6 +935,60 @@ test('area and perimeter of a rounded outline (100 x 60, r 10)', () => {
   near(r.perimeter, 320 - 80 + 20 * Math.PI, 'perimeter', 1e-4);
 });
 
+test('areaPerimeter: box reject gives the same result on nested loops and counts few inside tests', () => {
+  const index = (entities) => {
+    const doc = W.newDoc(4); W.addEntities(doc, entities);
+    const raw = D.readDxf(W.writeDxf(doc)); return E.makeIndex(raw, D.flatten(raw));
+  };
+  // The old depth calculation, without a box reject, is the reference for all returned fields.
+  const before = (ed, factor = 1, tol = 1e-6) => {
+    const r = E.outlineLoops(ed, ed.shown, tol);
+    if (!r) return null;
+    const loops = r.loops.map((l) => l.pts), areas = loops.map((pts) => {
+      let a = 0; for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) a += pts[j][0] * pts[i][1] - pts[i][0] * pts[j][1];
+      return Math.abs(a) / 2;
+    });
+    let area = 0, holes = 0;
+    loops.forEach((L, i) => {
+      const depth = loops.reduce((n, M, k) => {
+        if (k === i || areas[k] <= areas[i]) return n;
+        let inside = false;
+        for (let p = 0, q = M.length - 1; p < M.length; q = p++) {
+          if ((M[p][1] > L[0][1]) !== (M[q][1] > L[0][1]) && L[0][0] < (M[q][0] - M[p][0]) * (L[0][1] - M[p][1]) / (M[q][1] - M[p][1]) + M[p][0]) inside = !inside;
+        }
+        return n + (inside ? 1 : 0);
+      }, 0);
+      if (depth % 2) { area -= areas[i]; holes++; } else area += areas[i];
+    });
+    return { area: area * factor * factor, perimeter: r.len * factor, loops: loops.length, holes, gaps: r.gaps, open: r.open };
+  };
+  // 300 loops in separate groups of three nested outlines: genuine holes plus many box rejects.
+  const ed = index(Array.from({ length: 100 }, (_, i) => [W.rect(i * 30, 0, 20, 20), W.rect(i * 30 + 4, 4, 12, 12), W.rect(i * 30 + 8, 8, 4, 4)]).flat());
+  const expected = before(ed), loops = E.outlineLoops(ed, ed.shown).loops, pts = loops[0].pts.length;
+  assert.ok(loops.every((l) => l.pts.length === pts));
+  const iter = Array.prototype[Symbol.iterator]; let steps = 0, result;
+  // As in the P13 counter, inside() destructures two points per polygon step; boxes read coordinates directly.
+  Array.prototype[Symbol.iterator] = function () { if (this.length === 2) steps++; return iter.call(this); };
+  try { result = E.areaPerimeter(ed, ed.shown); } finally { Array.prototype[Symbol.iterator] = iter; }
+  assert.deepEqual(result, expected);
+  assert.deepEqual([result.area, result.perimeter, result.loops, result.holes], [27200, 14400, 300, 100]);
+  const calls = steps / 2 / pts;
+  assert.equal(calls, 300, 'each nested outline is tested only against its larger neighbours');
+  assert.ok(calls < loops.length ** 2 * .05, `${calls} inside tests must be under 5% of loops squared`);
+  console.log(`P11: ${calls} inside tests for ${loops.length} loops (under 5% of loops squared)`);
+  const edges = [
+    [[0, 4], [2, 4], [2, 6], [0, 6]], [[20, 4], [18, 4], [18, 6], [20, 6]],
+    [[4, 0], [6, 0], [6, 2], [4, 2]], [[4, 20], [6, 20], [6, 18], [4, 18]],
+  ];
+  for (const points of edges) {
+    const edge = index([W.rect(0, 0, 20, 20), W.lwpoly(points, { closed: true })]);
+    assert.deepEqual(E.areaPerimeter(edge, edge.shown, 25.4), before(edge, 25.4), 'points on each box edge keep the old containment result');
+  }
+  const open = index([W.line(0, 0, 10, 0)]), empty = index([W.text(0, 0, 1, 'no outline')]);
+  assert.deepEqual(E.areaPerimeter(open, open.shown), before(open));
+  assert.deepEqual(E.areaPerimeter(empty, empty.shown), before(empty));
+});
+
 test('area across a tiny gap: the outline scaled x2 (gaps 0.008 and 0.012 mm) still closes, and says so', () => {
   const { raw } = load('outline.dxf');
   const s = E.scaleAbout(raw, 2, 0, 0), big = { ...raw, entities: s.entities, blocks: s.blocks }, fl = D.flatten(big);

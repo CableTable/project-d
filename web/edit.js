@@ -141,9 +141,17 @@ export function areaPerimeter(ed, ents, factor = 1, tol = 1e-6) {
     return c;
   };
   const a = loops.map(shoelace);
+  const boxes = loops.map((pts) => {
+    const b = [Infinity, Infinity, -Infinity, -Infinity];
+    for (const p of pts) {
+      b[0] = Math.min(b[0], p[0]); b[1] = Math.min(b[1], p[1]);
+      b[2] = Math.max(b[2], p[0]); b[3] = Math.max(b[3], p[1]);
+    }
+    return b;
+  });
   let area = 0, holes = 0;
   loops.forEach((L, i) => {
-    const depth = loops.reduce((n, M, j) => n + (j !== i && a[j] > a[i] && inside(L[0], M) ? 1 : 0), 0);
+    const depth = loops.reduce((n, M, j) => n + (j !== i && a[j] > a[i] && L[0][0] >= boxes[j][0] && L[0][1] >= boxes[j][1] && L[0][0] <= boxes[j][2] && L[0][1] <= boxes[j][3] && inside(L[0], M) ? 1 : 0), 0);
     if (depth % 2) { area -= a[i]; holes++; } else area += a[i];
   });
   return { area: area * factor * factor, perimeter: len * factor, loops: loops.length, holes, gaps, open };
