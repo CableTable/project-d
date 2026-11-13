@@ -157,6 +157,16 @@ export function areaPerimeter(ed, ents, factor = 1, tol = 1e-6) {
   return { area: area * factor * factor, perimeter: len * factor, loops: loops.length, holes, gaps, open };
 }
 
+/** Is this flattened item one the editor lists (an entity's item, in the shown space, layer on, not hidden)? makeIndex and the no-index selection share it. */
+export const itemShown = (it, space, off, hid) => it.e != null && (it.ps ? 1 : 0) === space && itemVisible(it, off) && !(hid && hid.has(it.e));
+
+/** The shown items of the entities in sel, in the order makeIndex's byEnt lists them (sel order, then item order), without building the index. */
+export function itemsOfEntities(fl, sel, off = new Set(), hid = null) {
+  const space = spaceOf(fl), by = new Map();
+  for (const it of fl.items) if (sel.has(it.e) && itemShown(it, space, off, hid)) { if (!by.has(it.e)) by.set(it.e, []); by.get(it.e).push(it); }
+  return [...sel].flatMap((e) => by.get(e) || []);
+}
+
 /**
  * What the editor needs about a drawing: per shown entity its items and box, a pick grid, and the end points.
  * off: the layer indexes switched off (their entities are not there to pick); hid: entities hidden one by one (Objects tab), the same.
@@ -167,7 +177,7 @@ export function makeIndex(raw, fl, off = new Set(), hid = null) {
   const areas = [], shown = [];
   for (let i = 0; i < items.length; i++) {
     const it = items[i];
-    if (it.e == null || (it.ps ? 1 : 0) !== space || !itemVisible(it, off) || (hid && hid.has(it.e))) continue;
+    if (!itemShown(it, space, off, hid)) continue;
     vis[i] = 1;
     const e = it.e, b = it.b;
     if (!byEnt[e]) { byEnt[e] = []; shown.push(e); box[e * 4] = b[0]; box[e * 4 + 1] = b[1]; box[e * 4 + 2] = b[2]; box[e * 4 + 3] = b[3]; }

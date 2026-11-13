@@ -4742,6 +4742,7 @@ function paintOverlay(gesture = false) {
     } else drawn = paintEditable(c, d, base, marks);
     ui.cmdUI.place();
     c.dataset.drawn = drawn || 0;
+    c.dataset.indexed = d && d.ed ? '1' : '0';       // test hook (P3): a paint right after a commit comes before the pick index
     if (heavy(performance.now() - t0, drawn || 0)) {
       snapCv = snapCv || document.createElement('canvas');
       snapCv.width = cw; snapCv.height = chh;
@@ -4756,7 +4757,7 @@ function paintEditable(c, d, base, marks) {
   const dragSnap = state.paste?.d === d ? state.paste.to : state.entityDrag?.d === d && state.entityDrag.to;
   if (dragSnap?.[2]) marks = [[dragSnap[0], dragSnap[1], dragSnap[2], true]];
   const drawn = paintDrawing(c, { ...base, fl: ed ? ed.dim.fl : d && d.fl, off: base.cmpOff || d && d.off, factor: d ? d.factor : 1,
-    bg: d && d.bg, hl: d ? ((state.drawingRotate?.drag?.items || state.entityDrag?.items) ? null : (state.grip && state.grip.d === d && state.grip.next ? d.hl.filter((it) => !gripShown(state.grip).includes(it.e)) : textSel(d) ? d.hl.filter((it) => it.k !== 't') : ed ? d.hl.filter((it) => it.e !== ed.e || it.k !== 't') : d.hl)) : null, hide: hideNow(d), marks: marks || (drawLive() && state.drawHover && state.drawHover[2] ? [[state.drawHover[0] / d.factor, state.drawHover[1] / d.factor, state.drawHover[2], true]] : state.grip && state.grip.d === d && state.grip.to && state.grip.to[2] ? [[state.grip.to[0], state.grip.to[1], state.grip.to[2], true]] : null), dim: previewDim(d), gaps: d && d.ed && editable() ? Ed.gapMarks(gapsOf(d), d.gapShow) : null,
+    bg: d && d.bg, hl: d ? ((state.drawingRotate?.drag?.items || state.entityDrag?.items) ? null : (state.grip && state.grip.d === d && state.grip.next ? d.hl.filter((it) => !gripShown(state.grip).includes(it.e)) : textSel(d) ? d.hl.filter((it) => it.k !== 't') : ed ? d.hl.filter((it) => it.e !== ed.e || it.k !== 't') : d.hl)) : null, hide: hideNow(d), marks: marks || (drawLive() && state.drawHover && state.drawHover[2] ? [[state.drawHover[0] / d.factor, state.drawHover[1] / d.factor, state.drawHover[2], true]] : state.grip && state.grip.d === d && state.grip.to && state.grip.to[2] ? [[state.grip.to[0], state.grip.to[1], state.grip.to[2], true]] : null), dim: previewDim(d), gaps: d && d.ed && editable() ? (d.gapShow ? Ed.gapMarks(gapsOf(d), true) : []) : null,
     contour: d && d.cRes && state.tool === 'contour' ? d.cRes.polys : null,
     contourCol: d && d.cRes ? contourColour(d).replace('var(--text)', workDark() ? '#ededef' : '#18181b') : null, contourDash: contourStyle().dash,
     markCol: cssVar('--mark', '#c2410c'),
@@ -5730,12 +5731,12 @@ async function placePaste() {
   renderEdit(); paintOverlay();
 }
 /** The edit index of a tab (pick grid, ends), built on first use and again after a change. */
-function edIndex(d) { if (!d.ed) d.ed = Ed.makeIndex(d.raw, d.fl, d.off, hidIdx(d)); return d.ed; }
+function edIndex(d) { if (!d.ed) d.ed =Ed.makeIndex(d.raw, d.fl, d.off, hidIdx(d)); return d.ed; }
 /** The entity under a point, unless its layer is locked (Objects tab): a locked layer is drawn and snapped to, but cannot be picked. -1 if none. */
 function hitAt(d, p) { const e = Ed.hitEntity(edIndex(d), p[0], p[1], pickTol(d)); return e >= 0 && lockedEnt(d, e) ? -1 : e; }
 const lockedEnt = (d, e) => (!!d.locked && d.locked.size > 0 && d.locked.has(d.raw.entities[e].layer)) || (!!d.lockedEnts && d.lockedEnts.has(d.raw.entities[e]));      // lockedEnts: a layout's locked objects
 /** Builds the index once the page has painted, so the first click is quick. */
-function warm(d) { requestAnimationFrame(() => setTimeout(() => { if (state.docs.includes(d) && d.fl && !d.ed) { edIndex(d); d.outl = null; if (curDoc() === d) renderEdit(); } }, 0)); }
+function warm(d) { requestAnimationFrame(() => setTimeout(() => { if (state.docs.includes(d) && d.fl) { if (!d.ed) { edIndex(d); d.outl = null; } if (curDoc() === d) renderEdit(); } }, 0)); }       // renders even when a hover built the index first: the panel shows … until then
 function layersChanged(d) { state.drawingRotate = null; selectionCycle = null; d.ed = null; d.outl = null; d.sel = new Set(); d.stretchSelection = null; d.hl = []; if (cmpDoc()) cmpRefresh(d); warm(d); renderEdit(); }
 
 /** A pointer position → drawing units (y up), and the pick distance (7 px) in them. */
@@ -5871,9 +5872,9 @@ function setSel(d, sel, stretchSelection = null) {
   d.stretchSelection = stretchSelection || { boxes: [], picked: new Set(sel) };
   d.sel = sel; d.lastPick = -1;       // lastPick: the entity just clicked (Shaping's target); a box or any other selection has none
   if (sel.size) state.balSel = null;
-  const ed = edIndex(d);
-  d.hl = [];
-  for (const e of sel) for (const i of ed.byEnt[e] || []) d.hl.push(ed.items[i]);
+  // no index right after a commit: list from the items so the click does not build it (warm does, after the paint)
+  d.hl = d.ed ? [...sel].flatMap((e) => (d.ed.byEnt[e] || []).map((i) => d.ed.items[i])) : Ed.itemsOfEntities(d.fl, sel, d.off, hidIdx(d));
+  if (!d.ed) warm(d);
   paintOverlay(); renderEdit();
   if (state.ptab === 'objects') renderObjects(true);
 }
@@ -11455,7 +11456,8 @@ function renderSelection(d) {
   ui.barKeep.disabled = ui.barExtract.disabled = ui['keep-only'].disabled = noPart;
   ui.barKeep.title = ui.barExtract.title = ui['keep-only'].title = n && noPart ? 'A kept dimension is not part of a part' : '';
   if (!n) { ui.selName.textContent = 'Nothing selected'; ui.selLayer.textContent = 'right-click an edge → Select connected'; ui.selArea.textContent = ''; return; }
-  const ed = edIndex(d);
+  const ed = d.ed;
+  if (!ed) { ui.selName.textContent = ui.selArea.textContent = '…'; ui.selLayer.textContent = 'layer ' + d.raw.entities[[...d.sel][0]].layer; return; }      // warm builds the index after the paint and renders again
   const sel = [...d.sel], k = outs ? outs.findIndex((o) => o.set.size === n && sel.every((e) => o.set.has(e))) : -1;
   ui.selName.textContent = wholeDrawingGroup(d.raw.groups, d.sel) ? drawingSelectionName(d) : k >= 0 ? 'Outline ' + (k + 1) : n + ' selected';
   ui.selLayer.textContent = 'layer ' + d.raw.entities[[...d.sel][0]].layer;
@@ -11602,7 +11604,7 @@ function renderEdit() {
   ui.canvas.classList.toggle('pick', (on && (state.tool === 'select' || state.tool === 'contour' || state.tool === 'dimension' || !!state.draw || !!L)) || (!!measureTarget() && state.tool === 'measure'));
   if (!on) return;
   renderSelection(d);
-  const n = d.sel.size, b = sizeBox(d), rb = resizeBox(d), scalable = !!b;
+  const n = d.sel.size, b = sizeBox(d), rb = n && !d.ed ? null : resizeBox(d), scalable = !!b;       // a selection's size needs the index: — until warm builds it and renders again
   ui.bgName.textContent = d.bg ? d.bg.name : '';
   ui.bgX.hidden = !d.bg;
   ui.bgTrace.hidden = !d.bg;

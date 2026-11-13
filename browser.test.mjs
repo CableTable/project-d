@@ -19280,6 +19280,26 @@ try {
     await typeCmd('nu'); await t('nudge-input').fill('1'); await t('nudge-input').press('Enter');
   });
 
+  await step('P3: commit with a kept selection builds the index after the paint', async () => {
+    await openGrips(); await click(190, 100); await waitSel('1 selected');
+    const settled = () => page.waitForFunction(() => document.querySelector('[data-testid=sel-area]').textContent !== '…' && document.querySelector('[data-testid=gap-count]').textContent !== '…', null, { timeout: 8000 });
+    await settled();
+    const area = await t('sel-area').textContent(), name = await t('sel-name').textContent();
+    await page.evaluate(() => {
+      const log = window.__p3 = [], o = new MutationObserver((rs) => { for (const r of rs) log.push(r.type === 'attributes' ? 'indexed' + r.target.dataset.indexed : 'area' + r.target.textContent); });
+      o.observe(document.querySelector('[data-testid=drawing]'), { attributes: true, attributeFilter: ['data-indexed'] });
+      o.observe(document.querySelector('[data-testid=sel-area]'), { childList: true });
+    });
+    await page.keyboard.press('ArrowRight');
+    await settled();
+    const log = await page.evaluate(() => window.__p3);
+    assert.ok(log.includes('area…'), 'the panel shows … while the index is not built: ' + log);
+    assert.equal(log.find((x) => x.startsWith('indexed')), 'indexed0', 'the first frame after the commit is painted before the index exists: ' + log);
+    assert.equal(await t('sel-area').textContent(), area, 'after warm the area reads as before');
+    assert.equal(await t('sel-name').textContent(), name);
+    assert.ok(await accentInk() > 0, 'the moved selection is still painted');
+  });
+
   await step('Mirror: the selection (or the objects picked, then Enter), two points, Erase Yes / No (default No); text keeps reading the same way; one undo step "Mirror"', async () => {
     const doc0 = newDoc(4);
     addEntities(doc0, dxfLine(20, 30, 60, 50, { layer: 'Cut' }), dxfCircle(100, 80, 10, { layer: 'Cut' }), dxfText(30, 10, 5, 'ABC', { layer: 'Cut' }));

@@ -26,6 +26,21 @@ test('TODO 155c fixes: expand every selected chain once, retaining isolated sele
   assert.deepEqual([...E.connectedSelection(ed, new Set(), .01)], []);
 });
 
+test('items of entities without an index match byEnt', () => {
+  for (const f of ['sample.dxf', 'many-layers.dxf', 'table.dxf', 'groups.dxf', 'wireframe.dxf']) {
+    const { raw, fl } = load(f), n = raw.entities.length;
+    for (const [off, hid] of [[new Set(), null], [new Set([0]), null], [new Set(), new Set([1, 3])], [new Set([1]), new Set([0, 2, 4])]]) {
+      const ed = E.makeIndex(raw, fl, off, hid);
+      const sel = new Set(Array.from({ length: n }, (_, i) => n - 1 - i).filter((i) => i % 3 !== 1));        // reverse order, some entities hidden or off
+      const want = [...sel].flatMap((e) => (ed.byEnt[e] || []).map((i) => ed.items[i]));
+      const got = E.itemsOfEntities(fl, sel, off, hid);
+      assert.equal(got.length, want.length, f);
+      assert.ok(got.every((it, i) => it === want[i]), f + ' same items, same order');
+    }
+  }
+  assert.deepEqual(E.itemsOfEntities(load('sample.dxf').fl, new Set()), []);
+});
+
 test('TODO 68a: snap index filters every type, respects SNAP off and filters unfinished tool ends too', () => {
   const { snapTypes } = SNAP;
   const { raw, fl } = load('outline.dxf'), ed = E.makeIndex(raw, fl);
