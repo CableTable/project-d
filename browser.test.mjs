@@ -24730,6 +24730,97 @@ try {
     }
   });
 
+  await step('layout kept base: Measure hover and part click do no full paint, pixels equal a full paint', async () => {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    try {
+      const p = await ctx.newPage(), drawing = p.getByTestId('drawing'), errors = [];
+      p.on('pageerror', (e) => errors.push(String(e)));
+      // The Layers panel exposes Parts, not the layers inside a placed part; also exercise its off Set in place.
+      await p.route('**/app.js', (route) => route.fulfill({ contentType: 'text/javascript', body: readFileSync('web/app.js', 'utf8') + `
+        window.p7b1Paint = () => paintOverlay();
+        window.p7b1Layer = (off) => {
+          const part = Object.values(curDoc().lay.parts)[0];
+          if (off) part.off.add(0); else part.off.clear();
+          paintOverlay();
+        };` }));
+      const frame = () => p.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+      const paints = async () => Number(await drawing.getAttribute('data-paints'));
+      const menu = async (top, name) => { await p.locator(`[data-menu=${top}]`).click(); await p.getByRole(name.startsWith('Theme:') ? 'menuitemcheckbox' : 'menuitem', { name: name.startsWith('Theme:') ? new RegExp(name + '\\b') : name, exact: true }).click(); };
+      const centre = async () => { const b = await p.getByTestId('canvas').boundingBox(); return { x: b.x + b.width / 2, y: b.y + b.height / 2 }; };
+      const pixels = async (label) => {
+        const at = await centre(); await p.mouse.move(at.x, at.y); await frame();
+        await drawing.evaluate((c) => { window.__A = c.getContext('2d').getImageData(0, 0, c.width, c.height); c.dataset.nokeep = '1'; });
+        const before = await paints();
+        await p.mouse.move(at.x + 1, at.y); await frame();
+        await p.mouse.move(at.x, at.y); await p.evaluate(() => window.p7b1Paint()); await frame();
+        assert.ok(await paints() > before, `${label}: nokeep forces a full pass`);
+        const diff = await drawing.evaluate((c) => {
+          const a = window.__A, b = c.getContext('2d').getImageData(0, 0, c.width, c.height);
+          delete c.dataset.nokeep; delete window.__A;
+          let different = 0, over2 = 0;
+          for (let i = 0; i < a.data.length; i += 4) {
+            let max = 0;
+            for (let j = 0; j < 4; j++) max = Math.max(max, Math.abs(a.data[i + j] - b.data[i + j]));
+            if (max) different++;
+            if (max > 2) over2++;
+          }
+          return { different, over2 };
+        });
+        assert.equal(diff.over2, 0, `${label}: kept and full pixels (max channel difference 2)`);
+        console.log(`P7b1 ${label}: ${diff.different} pixels not byte-equal, ${diff.over2} over tolerance`);
+      };
+      const stale = async (label, act) => {
+        const before = await paints(); await act(); await frame();
+        assert.equal(await paints(), before + 1, `${label}: exactly one stale base pass`);
+        await pixels(label);
+      };
+      await p.goto(URL_ + '?autosave=86400000'); await p.getByTestId('count').waitFor({ state: 'attached' });
+      await menu('View', 'Theme: light');
+      await p.getByTestId('picker').setInputFiles({ name: 'p7b1-big.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(bigDoc(20000))) });
+      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'p7b1-big.dxf');
+      await menu('Layout', 'Add to layout');
+      await p.locator('[data-ribbon-tab=Layout]').click();
+      for (const key of ['sheetW', 'sheetH']) {
+        const f = p.locator(`[data-key=${key}]:visible`).first(); await f.fill('2000'); await f.press('Enter');
+      }
+      await panelControl(p, p.getByTestId('apply')).click();
+      await p.getByTestId('canvas').getByRole('button', { name: 'Fit', exact: true }).click(); await frame();
+      assert.equal(await p.locator('[data-group=parts] [data-i]').count(), 1, 'one placed part from one Add to layout');
+      assert.ok(Number(await drawing.getAttribute('data-drawn')) > 15000, 'the fitted layout is heavy by item count');
+      await p.locator('[data-tool=measure]').click();
+      const at = await centre(); await p.mouse.move(at.x, at.y); await frame();
+      const before = await paints();
+      for (let i = 1; i <= 40; i++) { await p.mouse.move(at.x + i * 2, at.y); await frame(); }
+      assert.equal(await paints(), before, '40 Measure moves do no full paint');
+      assert.equal(await drawing.getAttribute('data-keep'), '1', 'Measure hover uses the kept base');
+      await pixels('Measure hover');
+      await p.keyboard.press('Escape'); await p.locator('[data-tool=select]').click();
+      await p.mouse.move(at.x, at.y); await frame();
+      const clickBefore = await paints(); await p.mouse.click(at.x, at.y); await frame();
+      assert.equal(await paints(), clickBefore, 'part click does no full paint');
+      assert.equal(await p.locator('[data-group=tools] .sel-box').count(), 1, 'the click selects the placed part');
+      await pixels('part click');
+      await stale('part layer off', () => p.evaluate(() => window.p7b1Layer(true)));
+      await stale('part layers all on', () => p.evaluate(() => window.p7b1Layer(false)));
+      await p.getByTestId('ptab-layers').click(); await frame();
+      for (const label of ['Parts hidden in Layers', 'Parts shown in Layers']) await stale(label, async () => {
+        await p.locator('.layers-rows [data-layer=parts]').click(); await p.evaluate(() => window.p7b1Paint());
+      });
+      for (const theme of ['dark', 'light']) {
+        await stale('theme ' + theme, () => menu('View', 'Theme: ' + theme));
+        const path = `${shotDir}/p7b1-${theme}.png`; await p.screenshot({ path });
+        assert.ok(readFileSync(path).length > 1000, 'required screenshot exists');
+      }
+      await stale('wireframe', () => p.keyboard.press('F9'));
+      await stale('resize', () => p.setViewportSize({ width: 1450, height: 900 }));
+      const pick = await centre(); await p.mouse.click(pick.x, pick.y); await frame();
+      await stale('nudge', () => p.keyboard.press('ArrowRight'));
+      await stale('Undo nudge', () => p.keyboard.press('Control+z'));
+      assert.deepEqual(errors, []);
+      console.log('P7b1: Measure hover and part click 0 full paints; stale cases +1; pixel comparisons passed');
+    } finally { await ctx.close(); }
+  });
+
   await step('lag harness: spline fixture counts', async () => {
     const { splineDoc } = await import('./tools/gen-big-dxf.mjs');
     assert.equal(typeof splineDoc, 'function', 'P6 provides the generated spline fixture');
@@ -24793,9 +24884,9 @@ try {
     const big = Buffer.from(writeDxf(bigDoc(20000)));
     const lay = await flow((p) => interactLayout(p, big, 'lag-big.dxf', 2));
     assert.deepEqual(Object.keys(lay), ['open', 'Add to layout x 3', 'Layout wheel', 'Layout pan', 'Layout Measure hover', 'Layout Line hover', 'Layout part click', 'Layout part drag', 'Layout undo', 'Layout sheet size', 'Layout Apply']);
-    assert.ok(lay['Layout part click'].lineTo > 30000, `two placed parts paint: lineTo ${lay['Layout part click'].lineTo}`);
+    assert.ok(lay['Layout undo'].lineTo > 30000, `two placed parts paint: lineTo ${lay['Layout undo'].lineTo}`);
     assert.equal(lay['Layout wheel'].snap, '1', 'Layout wheel reuses the kept picture after the burst');
-    within(lay, { 'Layout wheel': 1, 'Layout pan': 1, 'Layout Measure hover': 42, 'Layout Line hover': 42, 'Layout part click': 2, 'Layout part drag': 24, 'Layout undo': 2 });
+    within(lay, { 'Layout wheel': 1, 'Layout pan': 1, 'Layout Measure hover': 0, 'Layout Line hover': 0, 'Layout part click': 0, 'Layout part drag': 24, 'Layout undo': 2 });
     const cmp = await flow((p) => interactCompare(p, big, 'lag-big.dxf'));
     assert.deepEqual(Object.keys(cmp), ['open', 'Compare start', 'Compare wheel', 'Compare pan', 'Compare click', 'Compare button', 'Compare button again', 'Compare drag']);
     assert.ok(cmp['Compare start'].lineTo > 30000, `both snapshots paint: lineTo ${cmp['Compare start'].lineTo}`);

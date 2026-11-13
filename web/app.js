@@ -30,7 +30,7 @@ import * as BAL from './balloons.js';
 import * as PS from './pdf-sheets.js';
 import { paintDrawing, drawMarks, drawContour, drawDimPreview, ink, FONT_FAMILY } from './render.js';
 import { overlayBox } from './preview.js';
-import { snapPlace, snapUsable, heavy } from './perf.js';
+import { snapPlace, snapUsable, heavy, sameBase } from './perf.js';
 import { flatten, unionBox, CAP, ACI, UNITS, mapply, mmul, pickIndex, arcSweep, DrawingError } from './drawing.js';
 import { writeDxf, writeDxfWithReport, saveReportNote, unwritable, addLayer, newDoc, lwpoly, point } from './dxf-write.js';
 import * as SH from './shaping.js';
@@ -4672,18 +4672,6 @@ function paintOverlay(gesture = false) {
     const want = { view: { ox: view.ox, oy: view.oy, scale: view.scale }, w: cw, h: chh };
     clearTimeout(snapTimer);
     const full = paintFull; paintFull = false;
-    if (!full && snapUsable(snap, want)) {
-      const { dx, dy, r } = snapPlace(snap.view, want.view), g = c.getContext('2d');
-      g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, cw, chh);
-      g.drawImage(snapCv, dx * dpr, dy * dpr, cw * r, chh * r);
-      c.dataset.snap = '1';
-      snapTimer = setTimeout(() => paintOverlay(), 120);
-      ui.cmdUI.place();
-      return;
-    }
-    snap = null; c.dataset.snap = '';
-    c.dataset.paints = (+c.dataset.paints || 0) + 1;
-    const t0 = performance.now();
     const d = curDoc();
     // Artwork and layout sheet paper follow the same Work area.
     const base = { sheetH: state.sheetH, ox: view.ox, oy: view.oy, scale: view.scale, w, h: ch, dpr, dark: workDark(), wireframe: state.wireframe };
@@ -4693,6 +4681,51 @@ function paintOverlay(gesture = false) {
     const dragSnap = (d?.lay || d?.cmp) && (state.paste?.to || (pdrag?.moved && state.snap && !pdrag.skipSnap && pdrag.to));
     const preview = selectSnapPreview(d);
     const marks = preview?.[2] ? [[preview[0], preview[1], preview[2], true]] : dragSnap?.[2] ? [[dragSnap[0], dragSnap[1], dragSnap[2], true]] : L2 && d ? [...L2.pts.map((q) => [q[0], q[1], q[2], false]), ...(L2.pts.length < 2 && hv ? [[hv[0], hv[1], hv[2], true]] : [])] : null;
+    const calls = [];
+    let key = null;
+    if (d?.lay) {
+      if (!state.hidden.parts) {
+        const byPart = new Map(), gripped = new Set(state.grip && state.grip.d.vlay === d ? gripShown(state.grip).map((e) => state.grip.d.at.get(state.grip.ents ? state.grip.ents.get(e) : state.grip.ent)) : []);       // the objects a grip drags are drawn by the overlay only
+        for (const p of placedNow) { if (p.src === 'loose' && gripped.has(p.i)) continue; if (!byPart.has(p.partId)) byPart.set(p.partId, []); byPart.get(p.partId).push(p); }
+        for (const [id, part] of Object.entries(d.lay.parts)) {
+          if (d.hiddenParts && d.hiddenParts.has(id)) continue;                                // hidden in the Objects tab
+          const fl = state.text.ed?.dim?.raw === part.raw ? state.text.ed.dim.fl : part.fl;
+          const mine = byPart.get(id) || [], slotsOf = (list) => list.map((p) => placedMat(part, p, state.sheetH));
+          const on = mine.filter((p) => !p.off), outside = mine.filter((p) => p.off);          // a part off the sheet is drawn in the mark colour
+          if (on.length) calls.push({ fl, off: part.off, factor: part.factor || 1, slots: slotsOf(on) });
+          if (outside.length) calls.push({ fl, off: part.off, factor: part.factor || 1, slots: slotsOf(outside), tint: cssVar('--mark', '#c2410c') });
+        }
+      }
+      key = [d, base.ox, base.oy, base.scale, cw, chh, dpr, base.dark, base.wireframe, base.sheetH, state.hidden.parts];
+      for (const call of calls) {
+        key.push(call.fl, call.factor, call.tint, ...[...(call.off || [])].sort((a, b) => a - b), null);
+        for (const slot of call.slots) key.push(...slot);
+        key.push(null);
+      }
+    }
+    c.dataset.snap = ''; c.dataset.keep = '';
+    if (!full && snapUsable(snap, want)) {
+      const { dx, dy, r } = snapPlace(snap.view, want.view), g = c.getContext('2d');
+      g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, cw, chh);
+      g.drawImage(snapCv, dx * dpr, dy * dpr, cw * r, chh * r);
+      if (d?.lay) layOverlay(c, d, base, marks);
+      c.dataset.snap = '1';
+      snapTimer = setTimeout(() => paintOverlay(), 120);
+      ui.cmdUI.place();
+      return;
+    }
+    if (key && snap?.key && c.dataset.nokeep !== '1' && sameBase(snap.key, key)) {
+      const g = c.getContext('2d');
+      g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, cw, chh);
+      g.drawImage(snapCv, 0, 0);
+      layOverlay(c, d, base, marks);
+      c.dataset.keep = '1';
+      ui.cmdUI.place();
+      return;
+    }
+    snap = null;
+    c.dataset.paints = (+c.dataset.paints || 0) + 1;
+    const t0 = performance.now();
     let drawn = 0;
     if (d?.cmp) {
       const paste = state.paste?.d === d && state.paste;
@@ -4707,49 +4740,43 @@ function paintOverlay(gesture = false) {
       }
     } else if (d && d.lay) {                // a layout: each part painted once for all the places it is placed at (its matrix per place)
       paintDrawing(c, { ...base, fl: null, factor: 1 });                                      // clears
-      if (!state.hidden.parts) {
-        const byPart = new Map(), gripped = new Set(state.grip && state.grip.d.vlay === d ? gripShown(state.grip).map((e) => state.grip.d.at.get(state.grip.ents ? state.grip.ents.get(e) : state.grip.ent)) : []);       // the objects a grip drags are drawn by the overlay only
-        for (const p of placedNow) { if (p.src === 'loose' && gripped.has(p.i)) continue; if (!byPart.has(p.partId)) byPart.set(p.partId, []); byPart.get(p.partId).push(p); }
-        for (const [id, part] of Object.entries(d.lay.parts)) {
-          if (d.hiddenParts && d.hiddenParts.has(id)) continue;                                // hidden in the Objects tab
-          const fl = state.text.ed?.dim?.raw === part.raw ? state.text.ed.dim.fl : part.fl;
-          const mine = byPart.get(id) || [], slotsOf = (list) => list.map((p) => placedMat(part, p, state.sheetH));
-          const on = mine.filter((p) => !p.off), outside = mine.filter((p) => p.off);          // a part off the sheet is drawn in the mark colour
-          if (on.length) drawn += paintDrawing(c, { ...base, keep: true, fl, off: part.off, factor: part.factor || 1, slots: slotsOf(on) });
-          if (outside.length) drawn += paintDrawing(c, { ...base, keep: true, fl, off: part.off, factor: part.factor || 1, slots: slotsOf(outside), tint: cssVar('--mark', '#c2410c') });
-        }
-      }
-      const gm = state.grip?.d.vlay === d && state.grip.move;                                 // a text, hatch or block a grip moves: its objects' drawing (sheet mm) shifted
-      c.dataset.preview = gm?.items ? paintDrawing(c, { ...base, ox: base.ox - gm.dx, oy: base.oy + gm.dy, keep: true, fl: gm.preview, off: state.grip.d.off, factor: 1, tint: cssVar('--selection', '#4f46e5'), previewBounds: (box) => { canvasPreviewBounds = unionBox(canvasPreviewBounds, box); } }) : 0;
-      const paste = state.paste;
-      if (paste?.d === d && paste.from) for (const [id, part] of Object.entries(paste.parts)) {
-        const slots = paste.placed.filter((p) => p.partId === id).map((p) => placedMat(part, PL.translate(p, paste.dx, paste.dy), state.sheetH));
-        paintDrawing(c, { ...base, keep: true, fl: part.fl, off: part.off, factor: part.factor || 1, slots,
-          tint: `color-mix(in srgb, ${cssVar('--selection', '#4f46e5')} 50%, transparent)`, previewBounds: (box) => { canvasPreviewBounds = unionBox(canvasPreviewBounds, box); } });
-        c.dataset.preview = +c.dataset.preview + slots.length;
-      }
-      if (state.layCt && state.tool === 'contour') {                                          // Contour's preview on the placed parts (sheet mm, y up)
-        const k = base.scale * dpr, T = [k, 0, 0, -k, -base.ox * k, (base.sheetH - base.oy) * k];
-        drawContour(c.getContext('2d'), state.layCt, T, dpr, contourColour(d).replace('var(--text)', base.dark ? '#ededef' : '#18181b'), contourStyle().dash);
-        canvasPreviewBounds = unionBox(canvasPreviewBounds, overlayBox({ contour: state.layCt }, T, dpr));
-      }
-      const dimG = state.dim ? previewDim(d) : null;                                          // a dimension being placed (sheet mm)
-      if (marks || dimG) {
-        const k = base.scale * dpr, T = [k, 0, 0, -k, -base.ox * k, (base.sheetH - base.oy) * k];
-        if (dimG) { drawDimPreview(c.getContext('2d'), dimG, T, dpr, cssVar('--dim', '#0f766e')); canvasPreviewBounds = unionBox(canvasPreviewBounds, overlayBox({ dim: dimG }, T, dpr)); }
-        if (marks) { drawMarks(c.getContext('2d'), marks, T, dpr, cssVar('--selection', '#4f46e5'), cssVar('--snap-mark', '#00c000')); canvasPreviewBounds = unionBox(canvasPreviewBounds, overlayBox({ marks }, T, dpr)); }
-      }
+      for (const call of calls) drawn += paintDrawing(c, { ...base, keep: true, ...call });
     } else drawn = paintEditable(c, d, base, marks);
-    ui.cmdUI.place();
     c.dataset.drawn = drawn || 0;
     c.dataset.indexed = d && d.ed ? '1' : '0';       // test hook (P3): a paint right after a commit comes before the pick index
     if (heavy(performance.now() - t0, drawn || 0)) {
       snapCv = snapCv || document.createElement('canvas');
       snapCv.width = cw; snapCv.height = chh;
       snapCv.getContext('2d').drawImage(c, 0, 0);
-      snap = want;
+      snap = { ...want, key };
     }
+    if (d?.lay) layOverlay(c, d, base, marks);
+    ui.cmdUI.place();
   });
+}
+
+function layOverlay(c, d, base, marks) {
+  const { dpr } = base;
+  const gm = state.grip?.d.vlay === d && state.grip.move;                                 // a text, hatch or block a grip moves: its objects' drawing (sheet mm) shifted
+  c.dataset.preview = gm?.items ? paintDrawing(c, { ...base, ox: base.ox - gm.dx, oy: base.oy + gm.dy, keep: true, fl: gm.preview, off: state.grip.d.off, factor: 1, tint: cssVar('--selection', '#4f46e5'), previewBounds: (box) => { canvasPreviewBounds = unionBox(canvasPreviewBounds, box); } }) : 0;
+  const paste = state.paste;
+  if (paste?.d === d && paste.from) for (const [id, part] of Object.entries(paste.parts)) {
+    const slots = paste.placed.filter((p) => p.partId === id).map((p) => placedMat(part, PL.translate(p, paste.dx, paste.dy), state.sheetH));
+    paintDrawing(c, { ...base, keep: true, fl: part.fl, off: part.off, factor: part.factor || 1, slots,
+      tint: `color-mix(in srgb, ${cssVar('--selection', '#4f46e5')} 50%, transparent)`, previewBounds: (box) => { canvasPreviewBounds = unionBox(canvasPreviewBounds, box); } });
+    c.dataset.preview = +c.dataset.preview + slots.length;
+  }
+  if (state.layCt && state.tool === 'contour') {                                          // Contour's preview on the placed parts (sheet mm, y up)
+    const k = base.scale * dpr, T = [k, 0, 0, -k, -base.ox * k, (base.sheetH - base.oy) * k];
+    drawContour(c.getContext('2d'), state.layCt, T, dpr, contourColour(d).replace('var(--text)', base.dark ? '#ededef' : '#18181b'), contourStyle().dash);
+    canvasPreviewBounds = unionBox(canvasPreviewBounds, overlayBox({ contour: state.layCt }, T, dpr));
+  }
+  const dimG = state.dim ? previewDim(d) : null;                                          // a dimension being placed (sheet mm)
+  if (marks || dimG) {
+    const k = base.scale * dpr, T = [k, 0, 0, -k, -base.ox * k, (base.sheetH - base.oy) * k];
+    if (dimG) { drawDimPreview(c.getContext('2d'), dimG, T, dpr, cssVar('--dim', '#0f766e')); canvasPreviewBounds = unionBox(canvasPreviewBounds, overlayBox({ dim: dimG }, T, dpr)); }
+    if (marks) { drawMarks(c.getContext('2d'), marks, T, dpr, cssVar('--selection', '#4f46e5'), cssVar('--snap-mark', '#00c000')); canvasPreviewBounds = unionBox(canvasPreviewBounds, overlayBox({ marks }, T, dpr)); }
+  }
 }
 
 function paintEditable(c, d, base, marks) {

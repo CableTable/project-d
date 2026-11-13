@@ -7,6 +7,19 @@ import { bigDoc } from './tools/gen-big-dxf.mjs';
 import { writeDxf } from './web/dxf-write.js';
 import { readDxf, flatten, mapply } from './web/drawing.js';
 
+test('sameBase: equal arrays, length change, one element change', () => {
+  const doc = {}, a = [doc, 10, 20, 2, 'light', null];
+  assert.equal(perf.sameBase([], []), true);
+  assert.equal(perf.sameBase(a, [...a]), true);
+  assert.equal(perf.sameBase(a, [...a, 1]), false);
+  assert.equal(perf.sameBase([...a, 1], a), false);
+  for (let i = 0; i < a.length; i++) {
+    const b = [...a]; b[i] = i === 0 ? {} : 'changed';
+    assert.equal(perf.sameBase(a, b), false);
+  }
+  assert.equal(perf.sameBase([NaN], [NaN]), false);
+});
+
 test('outsideView is conservative: a box touching or overlapping the view, or reaching it through its pad, is kept', () => {
   const vr = [0, 0, 100, 100];
   assert.equal(outsideView([10, 10, 20, 20], 0, vr), false);

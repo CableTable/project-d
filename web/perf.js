@@ -19,6 +19,9 @@ export function maxScale([a, b, c, d]) {
  *  then moving the view reuses its bitmap until the view settles. */
 export const heavy = (ms, drawn) => ms > 25 || drawn > 15000;
 
+/** Equal flat base-paint keys keep the same picture. */
+export const sameBase = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
+
 /**
  * Where the bitmap painted at view `a` lands in view `b` ({ ox, oy, scale }: sheet mm at the canvas' top-left, px per mm).
  * Returns { dx, dy, r }: shift in css px and the size ratio, so the bitmap is drawn at (dx, dy) with its size times r.
