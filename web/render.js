@@ -78,6 +78,7 @@ export function paintDrawing(canvas, o) {
   const col = o.tint ? () => o.tint : (css, exact) => exact ? css : ink(css, dark);          // exact: a fill with its own colour keeps it
   const sheetBg = dark ? SHEETS.dark.bg : SHEETS.light.bg;
   if (o.slots) {
+    let drawn = 0;
     // Layout: the drawing once per slot (drawing units → sheet mm), any slot in view; no per-item culling
     const box = fl.boxes && fl.boxes[spaceOf(fl) ? 'paper' : 'model'];
     const view = [ox, oy, ox + w / scale, oy + h / scale];
@@ -87,9 +88,9 @@ export function paintDrawing(canvas, o) {
         const X = xs.map((p) => p[0]), Y = xs.map((p) => p[1]);
         if (Math.max(...X) < view[0] || Math.min(...X) > view[2] || Math.max(...Y) < view[1] || Math.min(...Y) > view[3]) continue;
       }
-      paintItems(c, fl, off, mmul(V, M), k, null, dpr, col, sheetBg, null, factor, o.wireframe);
+      drawn += paintItems(c, fl, off, mmul(V, M), k, null, dpr, col, sheetBg, null, factor, o.wireframe);
     }
-    return;
+    return drawn;
   }
   // drawing units → canvas pixels: the placement, then the view
   const T = mmul(V, placement(factor, sheetH));

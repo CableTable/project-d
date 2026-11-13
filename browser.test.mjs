@@ -24654,6 +24654,62 @@ try {
     await closeTabs(/big/);
   });
 
+  await step('Layout and Compare: pan and wheel reuse the kept picture', async () => {
+    const buffer = Buffer.from(writeDxf(bigDoc(20000)));
+    for (const kind of ['Layout', 'Compare']) {
+      const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+      try {
+        const p = await ctx.newPage(), drawing = p.getByTestId('drawing');
+        const frame = () => p.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+        const paints = async () => Number(await drawing.getAttribute('data-paints'));
+        const menu = async (top, name) => { await p.locator(`[data-menu=${top}]`).click(); await p.getByRole('menuitem', { name, exact: true }).click({ timeout: 120000 }); };
+        const open = async (name) => {
+          await p.getByTestId('picker').setInputFiles({ name, mimeType: 'text/plain', buffer });
+          await p.waitForFunction((n) => document.querySelector('.dtab.on .tname').textContent === n, name, { timeout: 120000 });
+          await frame();
+        };
+        await p.goto(URL_ + '?autosave=86400000');
+        await p.waitForSelector('[data-testid=count]', { state: 'attached' });
+        await open('p7a-big.dxf');
+        if (kind === 'Layout') {
+          await menu('Layout', 'Add to layout');
+          await p.locator('.tabs .dtab').first().click();
+          await menu('Layout', 'Add to layout');
+        } else {
+          await open('p7a-other.dxf');
+          await menu('File', 'Compare drawings…');
+        }
+        for (const theme of ['light', 'dark']) {
+          await p.locator('[data-menu=View]').click();
+          await p.getByRole('menuitemcheckbox', { name: new RegExp('Theme: ' + theme + '\\b') }).click();
+          for (const gesture of ['pan', 'wheel']) {
+            await p.getByTestId('canvas').getByRole('button', { name: 'Fit', exact: true }).click(); await frame();
+            const all = Number(await drawing.getAttribute('data-drawn'));
+            assert.ok(all > 15000, `${kind}: the summed full-paint count is heavy (${all})`);
+            const b = await p.getByTestId('canvas').boundingBox(), cx = b.x + b.width / 2, cy = b.y + b.height / 2;
+            await p.mouse.move(cx, cy); await frame();
+            const before = await paints();
+            if (gesture === 'pan') {
+              await p.mouse.down({ button: 'middle' });
+              for (let i = 1; i <= 20; i++) { await p.mouse.move(cx + i * 3, cy + i * 2); await frame(); }
+              await p.mouse.up({ button: 'middle' });
+            } else for (let i = 0; i < 4; i++) await p.mouse.wheel(0, -100);
+            await frame();
+            assert.equal(await drawing.getAttribute('data-snap'), '1', `${kind} ${gesture}: the gesture uses the kept picture`);
+            assert.equal(await paints(), before, `${kind} ${gesture}: no full paint during the burst`);
+            await p.waitForFunction(() => document.querySelector('[data-testid=drawing]').dataset.snap === '', null, { timeout: 5000 });
+            assert.equal(await paints(), before + 1, `${kind} ${gesture}: exactly one full paint after settling`);
+            assert.ok(Number(await drawing.getAttribute('data-drawn')) > 0, `${kind} ${gesture}: settled artwork is drawn`);
+          }
+          const path = `${shotDir}/p7a-${kind.toLowerCase()}-${theme}.png`;
+          await p.screenshot({ path });
+          assert.ok(readFileSync(path).length > 1000, 'required screenshot exists');
+        }
+        console.log(`P7a ${kind}: 20k fixture, light/dark pan and wheel reuse; zero burst paints, one settle paint`);
+      } finally { await ctx.close(); }
+    }
+  });
+
   await step('lag harness: spline fixture counts', async () => {
     const { splineDoc } = await import('./tools/gen-big-dxf.mjs');
     assert.equal(typeof splineDoc, 'function', 'P6 provides the generated spline fixture');
@@ -24702,8 +24758,8 @@ try {
 
   await step('lag harness: layout and Compare counts', async () => {
     // Counts only, today's numbers as upper bounds (a fix ticket tightens its own rows): full paints per interaction on a layout of the 20k
-    // fixture and on a Compare (a 300-spline drawing: Compare start on the 20k one takes 96 s, its 6 600 closed loops go through areaPerimeter), Ctrl+A on the 20k drawing.
-    const { interactLayout, interactCompare, interactEdit } = await import('./tools/perf-interact.mjs'), { splineDoc } = await import('./tools/gen-big-dxf.mjs');
+    // fixture and in Compare, Ctrl+A on the 20k drawing.
+    const { interactLayout, interactCompare, interactEdit } = await import('./tools/perf-interact.mjs');
     const flow = async (run) => {
       const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
       try {
@@ -24718,11 +24774,12 @@ try {
     const lay = await flow((p) => interactLayout(p, big, 'lag-big.dxf', 2));
     assert.deepEqual(Object.keys(lay), ['open', 'Add to layout x 3', 'Layout wheel', 'Layout pan', 'Layout Measure hover', 'Layout Line hover', 'Layout part click', 'Layout part drag', 'Layout undo', 'Layout sheet size', 'Layout Apply']);
     assert.ok(lay['Layout part click'].lineTo > 30000, `two placed parts paint: lineTo ${lay['Layout part click'].lineTo}`);
-    within(lay, { 'Layout wheel': 21, 'Layout pan': 21, 'Layout Measure hover': 42, 'Layout Line hover': 42, 'Layout part click': 2, 'Layout part drag': 24, 'Layout undo': 2 });
-    const cmp = await flow((p) => interactCompare(p, Buffer.from(writeDxf(splineDoc(300))), 'lag-spline.dxf'));
+    assert.equal(lay['Layout wheel'].snap, '1', 'Layout wheel reuses the kept picture after the burst');
+    within(lay, { 'Layout wheel': 1, 'Layout pan': 1, 'Layout Measure hover': 42, 'Layout Line hover': 42, 'Layout part click': 2, 'Layout part drag': 24, 'Layout undo': 2 });
+    const cmp = await flow((p) => interactCompare(p, big, 'lag-big.dxf'));
     assert.deepEqual(Object.keys(cmp), ['open', 'Compare start', 'Compare wheel', 'Compare pan', 'Compare click', 'Compare button', 'Compare drag']);
-    assert.ok(cmp['Compare start'].lineTo > 48000, `both snapshots paint: lineTo ${cmp['Compare start'].lineTo}`);
-    within(cmp, { 'Compare start': 2, 'Compare wheel': 21, 'Compare pan': 21, 'Compare click': 2, 'Compare button': 2, 'Compare drag': 22 });
+    assert.ok(cmp['Compare start'].lineTo > 30000, `both snapshots paint: lineTo ${cmp['Compare start'].lineTo}`);
+    within(cmp, { 'Compare start': 2, 'Compare wheel': 21, 'Compare pan': 1, 'Compare click': 2, 'Compare button': 2, 'Compare drag': 22 });
     const edit = await flow((p) => interactEdit(p, big, 'lag-big.dxf'));
     assert.deepEqual(Object.keys(edit), ['open', 'Ctrl+A', 'box select', 'Move hover', 'Move commit click', 'Trim hover', 'object drag', 'LINE grip drag', 'Delete', 'Ctrl+Z', 'Ctrl+Y']);
     within(edit, { 'Ctrl+A': 1 });

@@ -4693,10 +4693,11 @@ function paintOverlay(gesture = false) {
     const dragSnap = (d?.lay || d?.cmp) && (state.paste?.to || (pdrag?.moved && state.snap && !pdrag.skipSnap && pdrag.to));
     const preview = selectSnapPreview(d);
     const marks = preview?.[2] ? [[preview[0], preview[1], preview[2], true]] : dragSnap?.[2] ? [[dragSnap[0], dragSnap[1], dragSnap[2], true]] : L2 && d ? [...L2.pts.map((q) => [q[0], q[1], q[2], false]), ...(L2.pts.length < 2 && hv ? [[hv[0], hv[1], hv[2], true]] : [])] : null;
+    let drawn = 0;
     if (d?.cmp) {
       const paste = state.paste?.d === d && state.paste;
       c.dataset.preview = 0;
-      cmpPaint(c, d.cmp, base, paste || preview ? null : marks);
+      drawn = cmpPaint(c, d.cmp, base, paste || preview ? null : marks);
       if (paste?.from) c.dataset.preview = paintDrawing(c, { ...base, ox: base.ox - paste.dx, oy: base.oy + paste.dy, keep: true, fl: paste.preview, off: paste.source.off, factor: paste.source.factor,
         tint: `color-mix(in srgb, ${cssVar('--selection', '#4f46e5')} 50%, transparent)`, previewBounds: (box) => { canvasPreviewBounds = unionBox(canvasPreviewBounds, box); } });
       if (marks && (state.tool === 'measure' || paste || preview)) {
@@ -4704,9 +4705,7 @@ function paintOverlay(gesture = false) {
         drawMarks(c.getContext('2d'), marks, T, dpr, cssVar('--selection', '#4f46e5'), cssVar('--snap-mark', '#00c000'));
         canvasPreviewBounds = unionBox(canvasPreviewBounds, overlayBox({ marks }, T, dpr));
       }
-      ui.cmdUI.place(); return;
-    }
-    if (d && d.lay) {                       // a layout: each part painted once for all the places it is placed at (its matrix per place)
+    } else if (d && d.lay) {                // a layout: each part painted once for all the places it is placed at (its matrix per place)
       paintDrawing(c, { ...base, fl: null, factor: 1 });                                      // clears
       if (!state.hidden.parts) {
         const byPart = new Map(), gripped = new Set(state.grip && state.grip.d.vlay === d ? gripShown(state.grip).map((e) => state.grip.d.at.get(state.grip.ents ? state.grip.ents.get(e) : state.grip.ent)) : []);       // the objects a grip drags are drawn by the overlay only
@@ -4716,8 +4715,8 @@ function paintOverlay(gesture = false) {
           const fl = state.text.ed?.dim?.raw === part.raw ? state.text.ed.dim.fl : part.fl;
           const mine = byPart.get(id) || [], slotsOf = (list) => list.map((p) => placedMat(part, p, state.sheetH));
           const on = mine.filter((p) => !p.off), outside = mine.filter((p) => p.off);          // a part off the sheet is drawn in the mark colour
-          if (on.length) paintDrawing(c, { ...base, keep: true, fl, off: part.off, factor: part.factor || 1, slots: slotsOf(on) });
-          if (outside.length) paintDrawing(c, { ...base, keep: true, fl, off: part.off, factor: part.factor || 1, slots: slotsOf(outside), tint: cssVar('--mark', '#c2410c') });
+          if (on.length) drawn += paintDrawing(c, { ...base, keep: true, fl, off: part.off, factor: part.factor || 1, slots: slotsOf(on) });
+          if (outside.length) drawn += paintDrawing(c, { ...base, keep: true, fl, off: part.off, factor: part.factor || 1, slots: slotsOf(outside), tint: cssVar('--mark', '#c2410c') });
         }
       }
       const gm = state.grip?.d.vlay === d && state.grip.move;                                 // a text, hatch or block a grip moves: its objects' drawing (sheet mm) shifted
@@ -4740,10 +4739,7 @@ function paintOverlay(gesture = false) {
         if (dimG) { drawDimPreview(c.getContext('2d'), dimG, T, dpr, cssVar('--dim', '#0f766e')); canvasPreviewBounds = unionBox(canvasPreviewBounds, overlayBox({ dim: dimG }, T, dpr)); }
         if (marks) { drawMarks(c.getContext('2d'), marks, T, dpr, cssVar('--selection', '#4f46e5'), cssVar('--snap-mark', '#00c000')); canvasPreviewBounds = unionBox(canvasPreviewBounds, overlayBox({ marks }, T, dpr)); }
       }
-      ui.cmdUI.place();
-      return;
-    }
-    const drawn = paintEditable(c, d, base, marks);
+    } else drawn = paintEditable(c, d, base, marks);
     ui.cmdUI.place();
     c.dataset.drawn = drawn || 0;
     if (heavy(performance.now() - t0, drawn || 0)) {
@@ -11884,11 +11880,12 @@ function cmpZoom(d, x) {
 
 function cmpPaint(canvas, c, base, marks) {
   paintDrawing(canvas, { ...base, fl: null, factor: 1 });                                      // clears
+  let drawn = 0;
   for (const sd of c.items) {
     if (!sd.visible) continue;
     const target = sd.id === c.selected && cmpSourceTab(sd), placed = { ...base, ox: base.ox - sd.offset[0], oy: base.oy + sd.offset[1], keep: true, tint: cmpCss(sd.colour), cmpOff: sd.off };
-    if (target) paintEditable(canvas, target, placed, state.tool === 'measure' ? null : marks);
-    else paintDrawing(canvas, { ...placed, fl: sd.fl, off: sd.off, factor: sd.factor });
+    if (target) drawn += paintEditable(canvas, target, placed, state.tool === 'measure' ? null : marks);
+    else drawn += paintDrawing(canvas, { ...placed, fl: sd.fl, off: sd.off, factor: sd.factor });
   }
   if (c.moving && c.snap) {                                                                    // the snap: a thin dotted guide through it and the usual marker with its name
     const ctx = canvas.getContext('2d'), k = base.scale * base.dpr, T = [k, 0, 0, -k, -base.ox * k, (base.sheetH - base.oy) * k], at = mapply(T, c.snap.x, c.snap.y), accent = cssVar('--selection', '#4f46e5');
@@ -11896,6 +11893,7 @@ function cmpPaint(canvas, c, base, marks) {
     ctx.beginPath(); ctx.moveTo(0, at[1]); ctx.lineTo(canvas.width, at[1]); ctx.moveTo(at[0], 0); ctx.lineTo(at[0], canvas.height); ctx.stroke();
     drawMarks(ctx, [[c.snap.x, c.snap.y, c.snap.kind, true]], T, base.dpr, accent, cssVar('--snap-mark', '#00c000'));
   }
+  return drawn;
 }
 /** The differences as a glow (a soft round patch) with its number; the one picked in the list has a ring. */
 function cmpGlow(c, out) {

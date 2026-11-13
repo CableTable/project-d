@@ -39,6 +39,7 @@ async function instrument(page) {
     const started = Date.now();
     await fn(); await frame();
     const ms = Date.now() - started;
+    const snap = await page.locator('[data-testid=drawing]').getAttribute('data-snap');
     // Include the 120 ms gesture settle paint and delivery of long-task records.
     await page.waitForTimeout(500); await frame();
     const rec = await page.evaluate(() => {
@@ -47,7 +48,7 @@ async function instrument(page) {
       return { ...rec, paints: Number(document.querySelector('[data-testid=drawing]').dataset.paints) };
     });
     const gaps = rec.frames.slice(1).map((t, i) => t - rec.frames[i]).sort((a, b) => a - b);
-    const r = { action, ms, frames: gaps.length, gapMedian: gaps[Math.floor(gaps.length / 2)] || 0,
+    const r = { action, ms, snap, frames: gaps.length, gapMedian: gaps[Math.floor(gaps.length / 2)] || 0,
       gapP90: gaps[Math.floor(gaps.length * .9)] || 0, gapMax: gaps.at(-1) || 0,
       longTasks: rec.long.length, longTotal: rec.long.reduce((a, b) => a + b, 0), longMax: Math.max(0, ...rec.long),
       lineTo: rec.lineTo, paints: rec.paints - paints };
