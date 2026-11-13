@@ -368,9 +368,9 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
 - [x] 212. **Snap preview toggle in Select mode** (S, T61).
 - [x] 213. **Ribbon Line width: Custom… and last 5 custom widths** (S, T62).
 - [x] 214. **PDF / Print: Selection only** (M, T63; done S41: 214a `4999cfb` drawing tab, 214b `1c5dd60` layout, 214c `b71ad5e` Compare; suite-b71ad5e green; Lows in runs41/lows.txt).
-- [ ] 215. **PDF / Print: custom scale, also in the preview bar** (M, T64; grill `runs41/grill-215.md`):
+- [x] 215. **PDF / Print: custom scale, also in the preview bar** (M, T64; grill `runs41/grill-215.md`):
   - [x] 215a. The dialog: Custom scale page, paper A4-A0, tiles (built: `1adbf7e`, King, review ship).
-  - [ ] 215b. The full-screen bar: Scale box beside Fit, "View 100%" relabel, margin fields.
+  - [x] 215b. The full-screen bar: Scale box beside Fit, "View 100%" relabel, margin fields. Done `740cf2f` (King, `runs45/rv-215b.jsonl` ship, 1 Low held: `browser.test.mjs:5594` wait loop re-reads the locator).
 - [ ] 216. **Print… to the printer (Windows print dialog)** (M, T65).
 - [x] 217. **PDF / Print: custom margins per side, Office printer 5 mm** (S, T66). Done `757ba10` + `fa7d67f` (Bishop build, 217fix Knight; `runs41/rv-217fix.jsonl` ship as is, Lows: `web/export.js:356` leftover preview on no printable area). Bar margin fields go with 215b. Ticked S45p.
 - [x] 218. **Combine (Ctrl+L) / Break Apart** (M, T67; like CorelDRAW, his rule 2026-11-10; grills `runs42/grill-218.md`, `runs42/grill-218b.md`):
