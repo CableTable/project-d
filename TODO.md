@@ -371,7 +371,7 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
 - [x] 215. **PDF / Print: custom scale, also in the preview bar** (M, T64; grill `runs41/grill-215.md`):
   - [x] 215a. The dialog: Custom scale page, paper A4-A0, tiles (built: `1adbf7e`, King, review ship).
   - [x] 215b. The full-screen bar: Scale box beside Fit, "View 100%" relabel, margin fields. Done `740cf2f` (King, `runs45/rv-215b.jsonl` ship, 1 Low held: `browser.test.mjs:5594` wait loop re-reads the locator).
-- [ ] 216. **Print… to the printer (Windows print dialog)** (M, T65).
+- [x] 216. **Print… to the printer (Windows print dialog)** (M, T65; grill `runs45/grill-216.md`). Done `ca83a25` (Knight, Bishop review `runs45/rv-216.jsonl` ship as is, 3 Lows + blank-print risk in `runs45/lows.txt`; suite ca83a25 green). Real exe print unchecked till he prints once. Ticked S45q.
 - [x] 217. **PDF / Print: custom margins per side, Office printer 5 mm** (S, T66). Done `757ba10` + `fa7d67f` (Bishop build, 217fix Knight; `runs41/rv-217fix.jsonl` ship as is, Lows: `web/export.js:356` leftover preview on no printable area). Bar margin fields go with 215b. Ticked S45p.
 - [x] 218. **Combine (Ctrl+L) / Break Apart** (M, T67; like CorelDRAW, his rule 2026-11-10; grills `runs42/grill-218.md`, `runs42/grill-218b.md`):
   - [x] 218a. Drawing tabs (built: `c3fe964` + fix `f4c608d`, King, Bishop review ship after 1 fix round; Lows in runs41/lows.txt).
