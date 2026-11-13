@@ -10478,6 +10478,90 @@ try {
       }
     } finally { await context.close(); }
   });
+  await step('TODO 261: paste into a blank tab keeps source units, coordinates and layers; Esc, one Undo and next Open', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    try {
+      const p = await context.newPage(), q = (id) => p.getByTestId(id);
+      p.on('pageerror', (e) => errors.push(String(e)));
+      await p.goto(URL_ + '?autosave=86400000'); await q('count').waitFor({ state: 'attached' });
+      const open = async (name, raw) => {
+        await q('picker').setInputFiles({ name, mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(raw)) });
+        await p.waitForFunction((name) => document.querySelector('.dtab.on .tname').textContent === name, name);
+      };
+      const save = async () => {
+        await p.waitForTimeout(110);
+        const [dl] = await Promise.all([p.waitForEvent('download'), p.keyboard.press('Control+s')]);
+        return readDxf(readFileSync(await dl.path(), 'latin1'));
+      };
+      const geometry = (raw) => raw.entities.map((e) => [10, 20, 11, 21].map((c) => fieldOf(e, c)));
+      const follow = async (x, y) => {
+        const point = () => p.evaluate(([x, y]) => {
+          const sheet = document.querySelector('rect.sheet'), b = sheet.getBoundingClientRect(), sc = b.width / +sheet.getAttribute('width');
+          return { x: b.x + x * sc, y: b.y + (+sheet.getAttribute('height') - y) * sc };
+        }, [x, y]);
+        let at = await point();
+        await p.mouse.move(at.x, at.y); await p.keyboard.press('Control+v');
+        await p.waitForFunction(() => /Paste:/.test(document.querySelector('[data-testid=cmd-prompt]').textContent));
+        assert.match(await q('cmd-prompt').textContent(), /follows the cursor, click to place/, 'Ctrl+V must accept a never-touched blank tab');
+        await p.waitForFunction(() => +document.querySelector('[data-testid=drawing]').dataset.preview > 0);
+        at = await point(); await p.mouse.move(at.x, at.y);
+        return at;
+      };
+      for (const kind of ['mm', 'inch', 'layout']) {
+        const units = kind === 'inch' ? 1 : 4, factor = units === 1 ? 25.4 : 1;
+        const raw = newDoc(units), coords = units === 1 ? [1, 2, 3, 4] : [50, 20, 150, 80];
+        addLayer(raw, '261 red', { aci: 1 }); addLayer(raw, '261 blue', { tc: 0x3366cc });
+        addEntities(raw, dxfLine(...coords, { layer: '261 red' }), dxfLine(coords[0], coords[3], coords[2], coords[1], { layer: '261 blue' }));
+        const layers = readDxf(writeDxf(raw)).layers;
+        let source = raw;
+        const expected = geometry(raw);
+        if (kind === 'layout') {
+          const lay = newLayout('261 layout');
+          lay.parts['261-part'] = makePart('261-part', '261 part', raw, 1, '261 source');
+          lay.placed = [{ partId: '261-part', x: coords[0], y: coords[1], rot: 0, mirrorX: false, mirrorY: false }];
+          source = layoutRaw(lay);
+        }
+        const sourceName = `261 ${kind}.dxf`;
+        await open(sourceName, source); await p.locator('.coords').click();
+        await p.keyboard.press('Control+a'); await p.keyboard.press('Control+c');
+        await q('new-tab').click();
+        await follow(coords[0] * factor, coords[3] * factor); await p.keyboard.press('Escape');
+        await p.waitForFunction(() => +document.querySelector('[data-testid=drawing]').dataset.preview === 0);
+        assert.equal(await q('drawing').getAttribute('data-preview'), '0', 'Esc drops the preview');
+        assert.equal((await save()).entities.length, 0, 'Esc commits no objects');
+        await q('new-tab').click();
+        const targetName = await p.locator('.dtab.on .tname').textContent();
+        const at = await follow(coords[0] * factor, coords[3] * factor);
+        await p.mouse.click(at.x, at.y);
+        await p.waitForFunction(() => /2 selected/.test(document.querySelector('[data-testid=sel-count]').textContent));
+        assert.match(await q('sel-count').textContent(), /2 selected/);
+        const tabs = await p.locator('.dtab .tname').allTextContents();
+        await open(`261 next ${kind}.dxf`, raw);
+        assert.deepEqual(await p.locator('.dtab .tname').allTextContents(), [...tabs, `261 next ${kind}.dxf`], 'Open must not replace the pasted tab, even before Save');
+        await p.locator('.dtab').filter({ has: p.locator('.tname', { hasText: new RegExp(`^${targetName}$`) }) }).click();
+        const pasted = await save();
+        assert.equal(+pasted.header.$INSUNITS, units, 'blank drawing inherits source units; layout copies use mm');
+        geometry(pasted).forEach((line, i) => line.forEach((v, j) => assert.ok(Math.abs(v - expected[i][j]) * factor < .02, `${kind}: coordinate ${i}/${j} stays ${expected[i][j]}, got ${v}`)));
+        assert.deepEqual(pasted.entities.map((e) => e.layer), raw.entities.map((e) => e.layer));
+        for (const name of ['261 red', '261 blue']) for (const prop of ['aci', 'tc']) assert.equal(pasted.layers[name][prop], layers[name][prop]);
+        if (kind === 'mm') for (const theme of ['light', 'dark']) {
+          await p.emulateMedia({ colorScheme: theme });
+          await p.screenshot({ path: `${shotDir}/todo261-pasted-${theme}.png` });
+        }
+        await p.keyboard.press('Control+z');
+        const undone = await save();
+        assert.equal(undone.entities.length, 0, 'one Undo leaves an empty drawing');
+        assert.equal(+undone.header.$INSUNITS, units);
+        await p.locator('.dtab', { hasText: sourceName }).click(); await p.locator('.coords').click();
+        await p.keyboard.press('Control+a'); await p.keyboard.press('Delete');
+        await q('new-tab').click(); await p.keyboard.press('Control+Shift+v');
+        assert.match(await q('cmd-prompt').textContent(), /Pasted 2 drawing objects at the same coordinates/);
+        const inPlace = await save();
+        assert.deepEqual(geometry(inPlace), expected, 'paste in place keeps the snapshot after editing its source');
+        assert.equal(+inPlace.header.$INSUNITS, units);
+      }
+    } finally { await context.close(); }
+  });
   await step('TODO 211a: follow paste on drawing and PDF sheets; scaled top-left, SNAP, Shift, click, one Undo and cancel', async () => {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     try {

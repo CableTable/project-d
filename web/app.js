@@ -5661,7 +5661,10 @@ function pasteInPlace() { return pasteClipboard(true); }
 async function pasteClipboard(inPlace) {
   const d = cmpDoc() || editable() || curDoc();
   if (!clipboard) { note('Nothing to paste: copy drawing objects first'); return; }
-  if (!d?.cmp && !d?.lay && !editable()) { note('Paste: open a drawing or layout first'); return; }
+  if (!d?.cmp && !d?.lay && !editable()) {
+    if (!d.raw) ensureScratch(d, clipboard.raw?.header?.$INSUNITS);
+    if (!editable()) { note('Paste: open a drawing or layout first'); return; }
+  }
   try {
     if (!inPlace) setTool('select');
     state.paste = null;
@@ -7223,11 +7226,11 @@ function applyLength() {
 
 // ---- drawing tools (draw.js): Line, Polyline, Rectangle, Rounded rectangle, Circle, Ellipse, Arc ----
 
-/** An empty tab becomes a drawing to draw in (mm, one layer "0"); its first change makes it dirty. */
-function ensureScratch(d) {
+/** An empty tab becomes a drawing (default mm, one layer "0"); its first change makes it dirty. */
+function ensureScratch(d, units = 4) {
   if (d.raw || d.lay) return;
-  const raw = newDoc(4), fl = flatten(raw);
-  Object.assign(d, tabFields(raw, fl), { scratch: true, drawingUnit: d.drawingUnit || 'mm' });
+  const raw = newDoc(units), fl = flatten(raw);
+  Object.assign(d, tabFields(raw, fl), { scratch: true, drawingUnit: d.drawingUnit || DU.defaultUnit(units) });
   d.hist = Ed.createHistory(); d.sel = new Set(); d.hl = []; d.ed = null; warm(d);
   update();
 }
