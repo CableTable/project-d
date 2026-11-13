@@ -155,6 +155,10 @@ test('addItem builds no index; compareItems gives the same metrics as before', (
   let result;
   assert.equal(count(() => { result = L.compareItems(items, .1); }), 2, 'first comparison measures each item once');
   assert.equal(count(() => assert.deepEqual(L.compareItems(items, .1), result)), 0, 'same items reuse their measurements');
+  const fresh = L.addItem(L.addItem([], plate('press.dxf')), plate('press wider', 32));      // each press lines up again: new item copies, same artwork
+  assert.equal(count(() => L.compareItems(L.lineUpItems(fresh, 'bl'), .1)), 2, 'first press measures each item once');
+  assert.notEqual(L.lineUpItems(fresh, 'bl')[1], fresh[1], 'line up copies the items');
+  assert.equal(count(() => L.compareItems(L.lineUpItems(fresh, 'bl'), .1)), 0, 'second press: 0 makeIndex');
   assert.deepEqual(items, before, 'measurements stay off the items');
   assert.ok(items.every((item) => !Object.hasOwn(item, 'metrics')));
   const oldMetrics = (src) => {

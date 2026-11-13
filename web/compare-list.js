@@ -6,7 +6,7 @@ export const MAX_ITEMS = 5;
 export const reference = (items) => items.find((x) => x.checked);
 export const removeItem = (items, id) => items.filter((x) => x.id !== id);
 export const setItem = (items, id, patch) => items.map((x) => x.id === id ? { ...x, ...patch } : x);
-const metrics = new WeakMap();
+const metrics = new WeakMap();      // keyed by the snapshot's artwork: copies made by lineUpItems / setItem share it, and every change of off / factor / source makes a new fl
 
 /** Artwork and dimensions refreshed together, including an emptied drawing. */
 export function snapshotGeometry(source) {
@@ -52,12 +52,12 @@ export function compareItems(items, tol) {
   const diffs = [], rows = [];
   let truncated = false;
   for (const item of chosen) {
-    if (!metrics.has(item)) {
+    if (!metrics.has(item.fl)) {
       const ed = makeIndex(item.raw, item.fl, item.off);
       const m = item.box && areaPerimeter(ed, new Set(ed.shown), item.factor, chainTol(item.box, 1) / item.factor);
-      metrics.set(item, { area: m?.area || 0, perimeter: m?.perimeter || 0, w: item.w, h: item.h });
+      metrics.set(item.fl, { area: m?.area || 0, perimeter: m?.perimeter || 0, w: item.w, h: item.h });
     }
-    const current = metrics.get(item), base = metrics.get(ref);
+    const current = metrics.get(item.fl), base = metrics.get(ref.fl);
     const delta = Object.fromEntries(Object.keys(base).map((k) => [k, current[k] - base[k]]));
     rows.push({ id: item.id, ...delta });
     if (item === ref) continue;
