@@ -4685,7 +4685,7 @@ function paintOverlay(gesture = false) {
     let key = null;
     if (d?.lay) {
       if (!state.hidden.parts) {
-        const byPart = new Map(), liftedBy = new Map(), drag = pdrag?.moved && pdrag.idxs, gripped = new Set(state.grip && state.grip.d.vlay === d ? gripShown(state.grip).map((e) => state.grip.d.at.get(state.grip.ents ? state.grip.ents.get(e) : state.grip.ent)) : []);       // the objects a grip drags are drawn by the overlay only
+        const byPart = new Map(), liftedBy = new Map(), drag = pdrag?.moved ? pdrag.idxs : null, gripped = new Set(state.grip && state.grip.d.vlay === d ? gripShown(state.grip).map((e) => state.grip.d.at.get(state.grip.ents ? state.grip.ents.get(e) : state.grip.ent)) : []);       // the objects a grip drags are drawn by the overlay only
         for (const p of placedNow) {
           if (p.src === 'loose' && gripped.has(p.i)) continue;
           const to = p.src === 'loose' && drag?.includes(p.i) ? liftedBy : byPart;

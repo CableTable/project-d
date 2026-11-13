@@ -24865,6 +24865,16 @@ try {
     } finally { await ctx.close(); }
   });
 
+  await step('P7b2 fix: a layout redraw while a part pointerdown has not moved yet gives no page error', async () => {
+    await freshLayoutWithPlate();
+    const errs0 = errors.length, box = await page.locator('[data-group=parts] [data-i]').first().boundingBox();
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2); await page.mouse.down();
+    await page.setViewportSize({ width: 1400, height: 880 }); await frames();       // a resize repaints the layout with the part pointer still down
+    await page.mouse.up(); await frames(); await page.setViewportSize({ width: 1440, height: 900 }); await frames();
+    assert.deepEqual(errors.slice(errs0), [], 'no page error from the redraw');
+    await closeTabs(/./);
+  });
+
   await step('TODO P14b: Compare drag keeps the base; drop and Esc repaint in order', async () => {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
     try {
