@@ -417,7 +417,7 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
 - [ ] 260. **Audit where else the app lags on big drawings** (L, T77; after 258 / 259).
 - [x] 261. **Paste into a blank `+` tab is refused** (bug, S, T80; built Knight `d676535`, Bishop ship, 3 Lows held in `runs45/lows.txt`; picked HEAD~1 of the tick, suite pending).
 - [x] 262. **Layout: "Group of 6" stays selected after Esc or empty click** (bug, S, T82; built King `911c679`, Bishop ship, 3 Lows held in `runs45/lows.txt`; picked HEAD~1 of the tick, suite pending).
-- [ ] 263. **Print: sheet size and gripper labels fall off the page with a small margin** (bug, M, T83).
+- [x] 263. **Print: sheet size and gripper labels fall off the page with a small margin** (bug, M, T83; built Knight `3793404`, Bishop ship, 4 Lows held in `runs45/lows.txt`; picked HEAD~1 of the tick, suite pending).
 - [ ] 264. **"Extreme" snap: lowest / highest / leftmost / rightmost point of a curve** (M, T79).
 - [ ] 265. **`center` command: centre a selection on the first selected object** (S, T81).
 - [ ] 266. **Bigger PDF / Print dialog** (S, T84).
