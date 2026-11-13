@@ -9147,13 +9147,15 @@ try {
     // Delete removes all three, one undo brings them back
     await dragMm([20, 690], [980, 100]);
     assert.equal(await t("pp-name").textContent(), "3 parts");
+    const live = await selBoxes();
     await page.keyboard.press('Delete');
     assert.equal(await nParts(), 0);
     assert.match(await prompt(), /^3 parts deleted. Ctrl\+Z brings them back:?$/);
     await page.keyboard.press('Control+z');
     assert.equal(await nParts(), 3);
     // a plain click on one of the selected parts selects just that one
-    await click(408, 308);
+    // (the parts moved above, so click a part's own middle: TODO 262, a click on empty sheet now clears)
+    await click((live[0][0] + live[0][2]) / 2, (live[0][1] + live[0][3]) / 2);
     assert.notEqual(await t('pp-name').textContent(), '3 parts');
     assert.equal(await page.locator('[data-testid=sec-arrange]').isVisible(), false);
   });
@@ -9385,7 +9387,7 @@ try {
     await page.locator('[data-menu=Layout]').click();
     assert.deepEqual(await page.locator('.dropdown button').evaluateAll((bs) => bs.map((b) => [b.firstChild.textContent, b.disabled])).then((r) => r.filter((x) => /Group|Ungroup|Lock|Unlock/.test(x[0]))),
       [['Group', true], ['Ungroup', false], ['Lock', false], ['Unlock', true]]);
-    await page.keyboard.press('Escape');
+    await page.locator('[data-menu=Layout]').click();             // closes the menu; Esc would also clear a whole group (TODO 262)
     await menuItem('Layout', 'Lock');
     await menuItem('Layout', 'Unlock');
     await menuItem('Edit', 'Undo history…'); await t('hist-dialog').waitFor();
@@ -21692,10 +21694,11 @@ try {
       lay.parts.b = objectPart('b', 'Attributed block', ins, raw.layers, raw.header, raw.blocks);
       lay.placed = [objectPlacement(lay.parts.b)];
       await open('layout-attributes.dxf', layoutRaw(lay));
-      await click(150, 100); await clearPaint(); await typeCmd('explode');
+      // the layout opens with its one object selected, at the sheet's corner: a click at (150, 100) is empty sheet and would clear it (TODO 262)
+      await clearPaint(); await typeCmd('explode');
       assert.equal(await nParts(), 3); await painted(['TAG_SHOWN', 'TAG_HIDDEN']);
       await undo(); assert.equal(await nParts(), 1);
-      await click(150, 100); await clearPaint(); await typeCmd('burst');
+      await clearPaint(); await typeCmd('burst');                  // Undo keeps the object selected
       assert.equal(await nParts(), 3); await painted(['Value shown', 'Value hidden']);
       await undo(); assert.equal(await nParts(), 1, 'one layout Undo restores the insert');
       await open('compare-attributes.dxf', raw);
@@ -21858,7 +21861,9 @@ try {
     lay.placed = [objectPlacement(lay.parts.h), objectPlacement(lay.parts.b)];
     await open('layout-hatch-explode.dxf', layoutRaw(lay));
     assert.equal(await nParts(), 2);
-    await click(150, 125); await typeCmd('x');
+    // the layout opens with the Hatch selected; a click at (150, 125) is empty sheet and would clear it (TODO 262)
+    assert.equal(await t('pp-name').textContent(), 'Hatch');
+    await typeCmd('x');
     assert.match(await prompt(), /Hatch boundary associativity removed\./);
     assert.equal(await nParts(), lines.length + 1, 'layout hatch becomes separate line objects beside its boundary');
     const layoutPieces = readDxf((await downloaded(() => page.keyboard.press('Control+s'))).text);
