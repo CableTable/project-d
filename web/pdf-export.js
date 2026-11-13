@@ -112,11 +112,26 @@ export function tileGrid(w, h, pw, ph, m = STANDARD_MARGINS.tile) {
   return { tw, th, cols: count(w, tw), rows: count(h, th) };
 }
 
-/** The scale a sheet w × h gets on a check-print page pw × ph, and where it sits (page mm). */
-export function checkFit(w, h, pw, ph, titleBlock = true, m = STANDARD_MARGINS.check) {
+// 2.5 mm lettering: 5.2 mm sheet-size baseline + glyph height fits in 8 mm; narrow grippers need 2 + 2.5 mm.
+function labelMargins(m, labels, s, w, h) {
+  if (!labels) return m;
+  const narrow = (edge) => labels === true || (gripOf(labels, edge) > 0 && Math.min(gripOf(labels, edge) * s, (edge === 'left' || edge === 'right' ? w : h) * s) < 3.5);
+  return { top: m.top + 8, left: m.left + 8, right: m.right + (narrow('right') ? 4.5 : 0), bottom: m.bottom + (narrow('bottom') ? 4.5 : 0) };
+}
+
+/** The scale and position in page mm. labels: false, true (allow every narrow band), or the layout's grippers. */
+export function checkFit(w, h, pw, ph, titleBlock = true, m = STANDARD_MARGINS.check, labels = false) {
   const block = titleBlock ? CHECK.block : 0;
+  let s = Math.min((pw - m.left - m.right) / w, (ph - m.top - m.bottom - block) / h), lm;
+  // A reduction can make another band narrow; each of the two extra sides can be added only once.
+  for (;;) {
+    lm = labelMargins(m, labels, s, w, h);
+    const next = Math.min((pw - lm.left - lm.right) / w, (ph - lm.top - lm.bottom - block) / h);
+    if (next === s) break;
+    s = next;
+  }
+  m = lm;
   const aw = pw - m.left - m.right, ah = ph - m.top - m.bottom - block;
-  const s = Math.min(aw / w, ah / h);
   return { s, ox: m.left + (aw - w * s) / 2, oy: m.bottom + block + (ah - h * s) / 2 };
 }
 
@@ -180,6 +195,7 @@ export function planPdf(src, opts) {
   }
   // what every page is laid out on
   const mg = marginsOf(o);
+  const labels = o.sheetSizeGripper && !src.part ? src.grippers || {} : false;
   let geos;
   /** The tiles of a sheet w × h (page mm) in the better paper orientation; extra goes on every page's geometry; perTile (pages per tile) turns on the page cap. */
   const tiled = (w, h, [lw, lh], m, extra, perTile = 0) => {
@@ -199,18 +215,19 @@ export function planPdf(src, opts) {
     const s = o.scale, [lw, lh] = PAPERS[o.customPaper] || PAPERS.A3;
     if (!(s >= SCALE_RANGE[0] && s <= SCALE_RANGE[1])) throw new RangeError('Scale must be between 1 : 1000 and 1000 : 1');
     const cm = marginsOf({ ...o, page: 'check' }), block = o.titleBlock.enabled ? CHECK.block : 0;
-    const place = (pw, ph) => {                                       // the sheet at s, centred in the page's printable area above the title block
-      const aw = pw - cm.left - cm.right, ah = ph - cm.top - cm.bottom - block;
-      return { w: pw, h: ph, mg: cm, scale: { s, ox: cm.left + (aw - W * s) / 2, oy: cm.bottom + block + (ah - H * s) / 2 }, ok: W * s <= aw + 1e-9 && H * s <= ah + 1e-9 };
+    const place = (pw, ph, notes) => {                                // keep the typed scale; centre the sheet and its labels above the title block
+      const m = labelMargins(cm, notes, s, W, H), aw = pw - m.left - m.right, ah = ph - m.top - m.bottom - block;
+      return { w: pw, h: ph, mg: cm, scale: { s, ox: m.left + (aw - W * s) / 2, oy: m.bottom + block + (ah - H * s) / 2 }, ok: W * s <= aw + 1e-9 && H * s <= ah + 1e-9 };
     };
-    const one = [place(lw, lh), place(lh, lw)].find((p) => p.ok);
+    const one = [place(lw, lh, labels), place(lh, lw, labels)].find((p) => p.ok);
+    if (!one && labels && [place(lw, lh, false), place(lh, lw, false)].some((p) => p.ok)) throw new RangeError(`Sheet labels do not fit at ${scaleText(s).replaceAll(' ', '')}`);
     if (one) {
       if (groups.length > PAGE_CAP) throw new PageCapError(groups.length);
       geos = [one];
     } else geos = tiled(W * s, H * s, [lw, lh], mg, { scale: { s }, mg }, groups.length);     // mg: marginsOf's tile side for a custom page
   } else if (o.page === 'check') {
     const [lw, lh] = PAPERS[o.checkPaper] || PAPERS.A4;
-    const a = checkFit(W, H, lw, lh, o.titleBlock.enabled, mg), b = checkFit(W, H, lh, lw, o.titleBlock.enabled, mg);
+    const a = checkFit(W, H, lw, lh, o.titleBlock.enabled, mg, labels), b = checkFit(W, H, lh, lw, o.titleBlock.enabled, mg, labels);
     const land = b.s > a.s * 1.0001 ? [lh, lw, b] : [lw, lh, a];
     if (!(land[2].s > 0)) throw new RangeError('Margins leave no printable area. Reduce the margins.');
     geos = [{ w: land[0], h: land[1], scale: land[2] }];

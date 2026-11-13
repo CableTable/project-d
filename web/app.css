@@ -412,6 +412,8 @@ select.fld { font-family: var(--sans); }
 .pdfull-bar .pd-pagebtns { flex: 0 1 auto; min-width: 0; }
 .pdfull-bar .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .pdfull-gap { flex: 1; }
+.pdfull-m { display: flex; align-items: center; gap: 6px; }
+.pdfull-margins { flex-wrap: wrap; padding-top: 0; border-top: 0; }
 .pd-footer { display: flex; align-items: center; gap: 10px; height: 60px; padding: 0 18px; border-top: 1px solid var(--line); flex-shrink: 0; }
 .pd-footer .btn { height: 32px; padding: 0 14px; }
 .pd-foot { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }

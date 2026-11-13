@@ -110,4 +110,35 @@ test('a big drawing stays quick: 200 circles, a few of them moved', () => {
   assert.ok(Date.now() - t0 < 3000, 'took ' + (Date.now() - t0) + ' ms');
 });
 
+test('TODO P14c: equality grid preserves baseline differences, truncation and sample counts', () => {
+  const polys = [Float64Array.from([0, 0, 3, 0, 3, 2])];
+  // Captured before P14c, including the floating-point distances at the tolerance boundary.
+  const samples = [102, 52, 22], tolerances = [0.1, 0.2, 0.5];
+  for (const offsetB of [[0, 0], [0.2, 0], [-2, 1]]) for (const [i, tol] of tolerances.entries()) {
+    let diffs = [];
+    if (offsetB[0] === 0.2 && tol < 0.5) {
+      diffs = [{ n: 1, x: 3, y: tol === 0.1 ? 0.3 : 0.4, mm: 0.20000000000000018, box: [3, 0, 3.2, 2], samples: tol === 0.1 ? 41 : 20, side: 'AB' }];
+      if (tol === 0.1) { diffs[0].n = 2; diffs.unshift({ n: 1, x: 0, y: 0, mm: 0.2, box: [0, 0, 0, 0], samples: 1, side: 'A' }); }
+    } else if (offsetB[0] === -2) {
+      diffs = [{ n: 1, x: 3, y: 0, mm: 2.23606797749979, box: [-2, 0, 3, 3], samples: samples[i], side: 'AB' }];
+    }
+    assert.deepEqual(C.compare(polys, polys, tol, { offsetB }), { diffs, truncated: false, samples: samples[i] });
+  }
+  assert.deepEqual(C.compare([Float64Array.from([0, 0, 1000000, 0])], [], 0.1), {
+    diffs: [{ n: 1, x: 0, y: 0, mm: Infinity, box: [0, 0, 199996.66666666666, 0], samples: 60000, side: 'A' }], truncated: true, samples: 60000,
+  });
+});
+
+test('TODO P14c: 100000 dense segments, tol 2 and an offset, compare within three times the measured time', () => {
+  // Rows 2 apart, 0.05 long segments: a grid cell holds hundreds of segments. Old code: ~11500 ms; new code: ~30 ms.
+  const polys = Array.from({ length: 50 }, (_, row) => Float64Array.from({ length: 4002 }, (_, i) => i % 2 ? row * 2 : Math.floor(i / 2) * 0.05));
+  const start = performance.now(), result = C.compare(polys, polys, 2, { offsetB: [0.3, -0.2] }), ms = performance.now() - start;
+  assert.equal(result.samples, 200100);
+  assert.equal(result.truncated, false);
+  assert.equal(result.diffs.length, 0);
+  const bound = process.env.CI ? 400 : 100; // CI runner measured 102.49 ms (3 x ~30 ms locally); old code ~11500 ms
+  assert.ok(ms < bound, `${ms.toFixed(2)} ms exceeds ${bound} ms (${process.env.CI ? 'CI: runner ~3.5x slower than this PC, 102.49 ms seen' : '3 x ~30 ms measured'})`);
+  console.log(`P14c dense tol 2 offset 0.3,-0.2: ${ms.toFixed(2)} ms < ${bound} ms`);
+});
+
 console.log(n + ' compare tests passed');

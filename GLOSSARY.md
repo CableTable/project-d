@@ -447,3 +447,7 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 **Freehand path**: A fence drawn by dragging with the mouse in Quick Trim or Extend; when you let go, everything it crosses is trimmed (Extend: extended).
 
 **Colour readout**: The tool that shows the R G B, C M Y K and hex of the object, picture pixel or panel under the cursor inside the app; a click copies the hex.
+
+**Full paint**: One pass that clears the drawing canvas and draws every item again. Counted in `data-paints` on the drawing canvas; a frame that reuses the Kept picture is not one. Where: `web/app.js` `paintOverlay`; `DECISIONS.md`, Layout kept picture (P7b2).
+
+**Kept picture**: The bitmap of the last Full paint of a heavy tab, saved before the overlay (marks, ghosts, a dragged part) is drawn. Wheel and pan frames move and scale it; on a layout a hover, click or part drag frame whose base is unchanged (same view, size, theme, parts, layers) draws it 1:1 and then only the overlay. Where: `web/app.js` `snap`, `web/perf.js` `sameBase`; `DECISIONS.md` Big-file performance (TODO 55) and Layout kept picture (P7b2).

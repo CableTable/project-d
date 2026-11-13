@@ -30,13 +30,13 @@ import * as BAL from './balloons.js';
 import * as PS from './pdf-sheets.js';
 import { paintDrawing, drawMarks, drawContour, drawDimPreview, ink, FONT_FAMILY } from './render.js';
 import { overlayBox } from './preview.js';
-import { snapPlace, snapUsable, heavy } from './perf.js';
-import { flatten, unionBox, CAP, ACI, UNITS, mapply, mmul, pickIndex, arcSweep, DrawingError } from './drawing.js';
+import { snapPlace, snapUsable, heavy, sameBase } from './perf.js';
+import { flatten, primeSplines, unionBox, CAP, ACI, UNITS, mapply, mmul, pickIndex, arcSweep, DrawingError } from './drawing.js';
 import { writeDxf, writeDxfWithReport, saveReportNote, unwritable, addLayer, newDoc, lwpoly, point } from './dxf-write.js';
 import * as SH from './shaping.js';
 import { explodeSelection } from './explode.js';
 import { breakApart } from './breakapart.js';
-import { combine, combinedLabel } from './combine.js';
+import { combine, combinedLabel, fillCombined, blockNameOf } from './combine.js';
 import { cutterDoc } from './dxf-cutter.js';
 import * as DR from './draw.js';
 import * as DI from './dynamic-input.js';
@@ -518,7 +518,7 @@ function buildMenus() {
     return b;
   });
   document.addEventListener('click', close);
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !drop.hidden) { close(); e.stopImmediatePropagation(); } });       // an open menu takes the Esc: editKey (registered later) never sees it
   return h('div', { class: 'menubar' }, h('strong', null, 'Project D'), ui.menuBtns, drop);
 }
 
@@ -2550,7 +2550,12 @@ function lockSel(on) {
 function layoutBoxSelect(r, e) {
   const lay = curLay();
   if (!lay) return;
-  if (!r.moved) { if (selIdxs().length > 1 && !r.shift) { selectMany(groupIdxs(state.sel), state.sel); update(); note('Selection: just the main part'); } return; }
+  if (!r.moved) {
+    // an empty click with the Select tool clears; Ctrl/Cmd keeps; Stretch / Step / Contour picks stay
+    if ((state.tool === 'select' || state.tool === 'step') && !layModLive()) { if (selIdxs().length && !r.shift && !r.ctrl) { selectMany([]); update(); note('Selection cleared'); } }
+    else if (selIdxs().length > 1 && !r.shift) { selectMany(groupIdxs(state.sel), state.sel); update(); note('Selection: just the main part'); }
+    return;
+  }
   const a = sheetAt(r.x, r.y), b = sheetAt(e.clientX, e.clientY), crossing = e.clientX < r.x;
   const box = [Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[0], b[0]), Math.max(a[1], b[1])];
   const eligible = partSelectable;
@@ -4658,6 +4663,17 @@ function previewBounds() {
 }
 // A heavy drawing (perf.js heavy) keeps the bitmap of its last full paint: wheel and pan frames move and scale that, and one full paint follows when the view settles (TODO 55)
 let paintFull = true, snap = null, snapCv = null, snapTimer = 0;
+// A drawing tab whose own paint is slow keeps its bitmap (without selection, marks, previews): a hover or a select click paints only those on top (TODO 258 / 259).
+let kept = null, keptCv = null;
+const KEEP_MS = 10;
+/** Everything the drawing's own pass reads, flat (compare with sameBase); null while a grip or drag hides entities one by one. */
+function paintKey(d, base, cw, chh) {
+  const hide = hideNow(d), hid = hidIdx(d);
+  if (hide && hide.size !== (hid ? hid.size : 0)) return null;
+  const ed = state.text.ed?.d === d && state.text.ed.dim ? state.text.ed : null, fl = ed ? ed.dim.fl : d.fl, bg = d.bg;
+  return [d, fl, fl.items.length, hid, d.factor, base.ox, base.oy, base.scale, cw, chh, base.dpr, base.dark, base.wireframe, base.sheetH,
+    bg, bg?.visible, bg?.bitmap, bg?.x, bg?.y, bg?.mm, ...[...d.off || []].sort((a, b) => a - b)];       // d.off is changed in place: its layers are part of the key
+}
 function paintOverlay(gesture = false) {
   if (!gesture) paintFull = true;
   if (paintQueued) return;
@@ -4672,18 +4688,6 @@ function paintOverlay(gesture = false) {
     const want = { view: { ox: view.ox, oy: view.oy, scale: view.scale }, w: cw, h: chh };
     clearTimeout(snapTimer);
     const full = paintFull; paintFull = false;
-    if (!full && snapUsable(snap, want)) {
-      const { dx, dy, r } = snapPlace(snap.view, want.view), g = c.getContext('2d');
-      g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, cw, chh);
-      g.drawImage(snapCv, dx * dpr, dy * dpr, cw * r, chh * r);
-      c.dataset.snap = '1';
-      snapTimer = setTimeout(() => paintOverlay(), 120);
-      ui.cmdUI.place();
-      return;
-    }
-    snap = null; c.dataset.snap = '';
-    c.dataset.paints = (+c.dataset.paints || 0) + 1;
-    const t0 = performance.now();
     const d = curDoc();
     // Artwork and layout sheet paper follow the same Work area.
     const base = { sheetH: state.sheetH, ox: view.ox, oy: view.oy, scale: view.scale, w, h: ch, dpr, dark: workDark(), wireframe: state.wireframe };
@@ -4693,10 +4697,82 @@ function paintOverlay(gesture = false) {
     const dragSnap = (d?.lay || d?.cmp) && (state.paste?.to || (pdrag?.moved && state.snap && !pdrag.skipSnap && pdrag.to));
     const preview = selectSnapPreview(d);
     const marks = preview?.[2] ? [[preview[0], preview[1], preview[2], true]] : dragSnap?.[2] ? [[dragSnap[0], dragSnap[1], dragSnap[2], true]] : L2 && d ? [...L2.pts.map((q) => [q[0], q[1], q[2], false]), ...(L2.pts.length < 2 && hv ? [[hv[0], hv[1], hv[2], true]] : [])] : null;
+    const calls = [], lifted = [];                                   // lifted: the parts a drag moves, painted by the overlay (R11: on top until the drop)
+    let key = null;
+    if (d?.lay) {
+      if (!state.hidden.parts) {
+        const byPart = new Map(), liftedBy = new Map(), drag = pdrag?.moved ? pdrag.idxs : null, gripped = new Set(state.grip && state.grip.d.vlay === d ? gripShown(state.grip).map((e) => state.grip.d.at.get(state.grip.ents ? state.grip.ents.get(e) : state.grip.ent)) : []);       // the objects a grip drags are drawn by the overlay only
+        for (const p of placedNow) {
+          if (p.src === 'loose' && gripped.has(p.i)) continue;
+          const to = p.src === 'loose' && drag?.includes(p.i) ? liftedBy : byPart;
+          if (!to.has(p.partId)) to.set(p.partId, []);
+          to.get(p.partId).push(p);
+        }
+        for (const [id, part] of Object.entries(d.lay.parts)) {
+          if (d.hiddenParts && d.hiddenParts.has(id)) continue;                                // hidden in the Objects tab
+          const fl = state.text.ed?.dim?.raw === part.raw ? state.text.ed.dim.fl : part.fl;
+          const slotsOf = (list) => list.map((p) => placedMat(part, p, state.sheetH));
+          for (const [list, to] of [[byPart.get(id) || [], calls], [liftedBy.get(id) || [], lifted]]) {
+            const on = list.filter((p) => !p.off), outside = list.filter((p) => p.off);          // a part off the sheet is drawn in the mark colour
+            if (on.length) to.push({ fl, off: part.off, factor: part.factor || 1, slots: slotsOf(on) });
+            if (outside.length) to.push({ fl, off: part.off, factor: part.factor || 1, slots: slotsOf(outside), tint: cssVar('--mark', '#c2410c') });
+          }
+        }
+      }
+      key = [d, base.ox, base.oy, base.scale, cw, chh, dpr, base.dark, base.wireframe, base.sheetH, state.hidden.parts];
+      for (const call of calls) {
+        key.push(call.fl, call.factor, call.tint, ...[...(call.off || [])].sort((a, b) => a - b), null);
+        for (const slot of call.slots) key.push(...slot);
+        key.push(null);
+      }
+    } else if (d?.cmp?.dragged) {
+      // shortcut: the snapshot stays on top and is retraced each frame; revisit if a real drag remains heavy.
+      key = [d, d.cmp.dragged, base.ox, base.oy, base.scale, cw, chh, dpr, base.dark, base.wireframe, base.sheetH];
+      for (const sd of d.cmp.items) {
+        if (!sd.visible || sd.id === d.cmp.dragged) continue;
+        key.push(sd.fl, sd.factor, cmpCss(sd.colour), ...sd.offset, ...[...(sd.off || [])].sort((a, b) => a - b), null);
+      }
+    }
+    c.dataset.snap = ''; c.dataset.keep = '';
+    if (!full && snapUsable(snap, want)) {
+      const { dx, dy, r } = snapPlace(snap.view, want.view), g = c.getContext('2d');
+      g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, cw, chh);
+      g.drawImage(snapCv, dx * dpr, dy * dpr, cw * r, chh * r);
+      if (d?.lay) layOverlay(c, d, base, marks, lifted);
+      if (d?.cmp?.dragged) cmpPaint(c, d.cmp, base, marks, true);
+      c.dataset.snap = '1';
+      snapTimer = setTimeout(() => paintOverlay(), 120);
+      ui.cmdUI.place();
+      return;
+    }
+    if (key && snap?.key && c.dataset.nokeep !== '1' && sameBase(snap.key, key)) {
+      const g = c.getContext('2d');
+      g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, cw, chh);
+      g.drawImage(snapCv, 0, 0);
+      if (d?.lay) layOverlay(c, d, base, marks, lifted);
+      if (d?.cmp?.dragged) cmpPaint(c, d.cmp, base, marks, true);
+      c.dataset.keep = '1';
+      ui.cmdUI.place();
+      return;
+    }
+    const ekey = d && d.fl && !d.lay && !d.cmp ? paintKey(d, base, cw, chh) : null;
+    if (ekey && kept && c.dataset.nokeep !== '1' && sameBase(kept.key, ekey)) {
+      const g = c.getContext('2d');
+      g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, cw, chh);
+      g.drawImage(keptCv, 0, 0);
+      paintEditable(c, d, base, marks, 'over');
+      c.dataset.keep = '1';
+      ui.cmdUI.place();
+      return;
+    }
+    snap = null; kept = null;
+    c.dataset.paints = (+c.dataset.paints || 0) + 1;
+    const t0 = performance.now();
+    let drawn = 0;
     if (d?.cmp) {
       const paste = state.paste?.d === d && state.paste;
       c.dataset.preview = 0;
-      cmpPaint(c, d.cmp, base, paste || preview ? null : marks);
+      drawn = cmpPaint(c, d.cmp, base, paste || preview ? null : marks);
       if (paste?.from) c.dataset.preview = paintDrawing(c, { ...base, ox: base.ox - paste.dx, oy: base.oy + paste.dy, keep: true, fl: paste.preview, off: paste.source.off, factor: paste.source.factor,
         tint: `color-mix(in srgb, ${cssVar('--selection', '#4f46e5')} 50%, transparent)`, previewBounds: (box) => { canvasPreviewBounds = unionBox(canvasPreviewBounds, box); } });
       if (marks && (state.tool === 'measure' || paste || preview)) {
@@ -4704,68 +4780,70 @@ function paintOverlay(gesture = false) {
         drawMarks(c.getContext('2d'), marks, T, dpr, cssVar('--selection', '#4f46e5'), cssVar('--snap-mark', '#00c000'));
         canvasPreviewBounds = unionBox(canvasPreviewBounds, overlayBox({ marks }, T, dpr));
       }
-      ui.cmdUI.place(); return;
-    }
-    if (d && d.lay) {                       // a layout: each part painted once for all the places it is placed at (its matrix per place)
+    } else if (d && d.lay) {                // a layout: each part painted once for all the places it is placed at (its matrix per place)
       paintDrawing(c, { ...base, fl: null, factor: 1 });                                      // clears
-      if (!state.hidden.parts) {
-        const byPart = new Map(), gripped = new Set(state.grip && state.grip.d.vlay === d ? gripShown(state.grip).map((e) => state.grip.d.at.get(state.grip.ents ? state.grip.ents.get(e) : state.grip.ent)) : []);       // the objects a grip drags are drawn by the overlay only
-        for (const p of placedNow) { if (p.src === 'loose' && gripped.has(p.i)) continue; if (!byPart.has(p.partId)) byPart.set(p.partId, []); byPart.get(p.partId).push(p); }
-        for (const [id, part] of Object.entries(d.lay.parts)) {
-          if (d.hiddenParts && d.hiddenParts.has(id)) continue;                                // hidden in the Objects tab
-          const fl = state.text.ed?.dim?.raw === part.raw ? state.text.ed.dim.fl : part.fl;
-          const mine = byPart.get(id) || [], slotsOf = (list) => list.map((p) => placedMat(part, p, state.sheetH));
-          const on = mine.filter((p) => !p.off), outside = mine.filter((p) => p.off);          // a part off the sheet is drawn in the mark colour
-          if (on.length) paintDrawing(c, { ...base, keep: true, fl, off: part.off, factor: part.factor || 1, slots: slotsOf(on) });
-          if (outside.length) paintDrawing(c, { ...base, keep: true, fl, off: part.off, factor: part.factor || 1, slots: slotsOf(outside), tint: cssVar('--mark', '#c2410c') });
-        }
-      }
-      const gm = state.grip?.d.vlay === d && state.grip.move;                                 // a text, hatch or block a grip moves: its objects' drawing (sheet mm) shifted
-      c.dataset.preview = gm?.items ? paintDrawing(c, { ...base, ox: base.ox - gm.dx, oy: base.oy + gm.dy, keep: true, fl: gm.preview, off: state.grip.d.off, factor: 1, tint: cssVar('--selection', '#4f46e5'), previewBounds: (box) => { canvasPreviewBounds = unionBox(canvasPreviewBounds, box); } }) : 0;
-      const paste = state.paste;
-      if (paste?.d === d && paste.from) for (const [id, part] of Object.entries(paste.parts)) {
-        const slots = paste.placed.filter((p) => p.partId === id).map((p) => placedMat(part, PL.translate(p, paste.dx, paste.dy), state.sheetH));
-        paintDrawing(c, { ...base, keep: true, fl: part.fl, off: part.off, factor: part.factor || 1, slots,
-          tint: `color-mix(in srgb, ${cssVar('--selection', '#4f46e5')} 50%, transparent)`, previewBounds: (box) => { canvasPreviewBounds = unionBox(canvasPreviewBounds, box); } });
-        c.dataset.preview = +c.dataset.preview + slots.length;
-      }
-      if (state.layCt && state.tool === 'contour') {                                          // Contour's preview on the placed parts (sheet mm, y up)
-        const k = base.scale * dpr, T = [k, 0, 0, -k, -base.ox * k, (base.sheetH - base.oy) * k];
-        drawContour(c.getContext('2d'), state.layCt, T, dpr, contourColour(d).replace('var(--text)', base.dark ? '#ededef' : '#18181b'), contourStyle().dash);
-        canvasPreviewBounds = unionBox(canvasPreviewBounds, overlayBox({ contour: state.layCt }, T, dpr));
-      }
-      const dimG = state.dim ? previewDim(d) : null;                                          // a dimension being placed (sheet mm)
-      if (marks || dimG) {
-        const k = base.scale * dpr, T = [k, 0, 0, -k, -base.ox * k, (base.sheetH - base.oy) * k];
-        if (dimG) { drawDimPreview(c.getContext('2d'), dimG, T, dpr, cssVar('--dim', '#0f766e')); canvasPreviewBounds = unionBox(canvasPreviewBounds, overlayBox({ dim: dimG }, T, dpr)); }
-        if (marks) { drawMarks(c.getContext('2d'), marks, T, dpr, cssVar('--selection', '#4f46e5'), cssVar('--snap-mark', '#00c000')); canvasPreviewBounds = unionBox(canvasPreviewBounds, overlayBox({ marks }, T, dpr)); }
-      }
-      ui.cmdUI.place();
-      return;
-    }
-    const drawn = paintEditable(c, d, base, marks);
-    ui.cmdUI.place();
+      for (const call of calls) drawn += paintDrawing(c, { ...base, keep: true, ...call });
+    } else drawn = paintEditable(c, d, base, marks, undefined, ekey && ((n) => {
+      if (performance.now() - t0 <= KEEP_MS && n <= 15000) return;
+      keptCv = keptCv || document.createElement('canvas');
+      keptCv.width = cw; keptCv.height = chh;
+      keptCv.getContext('2d').drawImage(c, 0, 0);
+      kept = { key: ekey };
+    }));
     c.dataset.drawn = drawn || 0;
+    c.dataset.indexed = d && d.ed ? '1' : '0';       // test hook (P3): a paint right after a commit comes before the pick index
     if (heavy(performance.now() - t0, drawn || 0)) {
       snapCv = snapCv || document.createElement('canvas');
       snapCv.width = cw; snapCv.height = chh;
       snapCv.getContext('2d').drawImage(c, 0, 0);
-      snap = want;
+      snap = { ...want, key };
     }
+    if (d?.lay) layOverlay(c, d, base, marks, lifted);
+    if (d?.cmp?.dragged) cmpPaint(c, d.cmp, base, marks, true);
+    ui.cmdUI.place();
   });
 }
 
-function paintEditable(c, d, base, marks) {
+function layOverlay(c, d, base, marks, lifted) {
+  const { dpr } = base;
+  for (const call of lifted) paintDrawing(c, { ...base, keep: true, ...call });
+  const gm = state.grip?.d.vlay === d && state.grip.move;                                 // a text, hatch or block a grip moves: its objects' drawing (sheet mm) shifted
+  c.dataset.preview = gm?.items ? paintDrawing(c, { ...base, ox: base.ox - gm.dx, oy: base.oy + gm.dy, keep: true, fl: gm.preview, off: state.grip.d.off, factor: 1, tint: cssVar('--selection', '#4f46e5'), previewBounds: (box) => { canvasPreviewBounds = unionBox(canvasPreviewBounds, box); } }) : 0;
+  const paste = state.paste;
+  if (paste?.d === d && paste.from) for (const [id, part] of Object.entries(paste.parts)) {
+    const slots = paste.placed.filter((p) => p.partId === id).map((p) => placedMat(part, PL.translate(p, paste.dx, paste.dy), state.sheetH));
+    paintDrawing(c, { ...base, keep: true, fl: part.fl, off: part.off, factor: part.factor || 1, slots,
+      tint: `color-mix(in srgb, ${cssVar('--selection', '#4f46e5')} 50%, transparent)`, previewBounds: (box) => { canvasPreviewBounds = unionBox(canvasPreviewBounds, box); } });
+    c.dataset.preview = +c.dataset.preview + slots.length;
+  }
+  if (state.layCt && state.tool === 'contour') {                                          // Contour's preview on the placed parts (sheet mm, y up)
+    const k = base.scale * dpr, T = [k, 0, 0, -k, -base.ox * k, (base.sheetH - base.oy) * k];
+    drawContour(c.getContext('2d'), state.layCt, T, dpr, contourColour(d).replace('var(--text)', base.dark ? '#ededef' : '#18181b'), contourStyle().dash);
+    canvasPreviewBounds = unionBox(canvasPreviewBounds, overlayBox({ contour: state.layCt }, T, dpr));
+  }
+  const dimG = state.dim ? previewDim(d) : null;                                          // a dimension being placed (sheet mm)
+  if (marks || dimG) {
+    const k = base.scale * dpr, T = [k, 0, 0, -k, -base.ox * k, (base.sheetH - base.oy) * k];
+    if (dimG) { drawDimPreview(c.getContext('2d'), dimG, T, dpr, cssVar('--dim', '#0f766e')); canvasPreviewBounds = unionBox(canvasPreviewBounds, overlayBox({ dim: dimG }, T, dpr)); }
+    if (marks) { drawMarks(c.getContext('2d'), marks, T, dpr, cssVar('--selection', '#4f46e5'), cssVar('--snap-mark', '#00c000')); canvasPreviewBounds = unionBox(canvasPreviewBounds, overlayBox({ marks }, T, dpr)); }
+  }
+}
+
+/** part: 'over' paints only what goes on top of the drawing (selection, marks, previews) on a base already on the canvas; afterBase(drawn), when given, is called between the drawing and that rest. */
+function paintEditable(c, d, base, marks, part, afterBase) {
   const ed = state.text.ed?.d === d && state.text.ed.dim ? state.text.ed : null;
   const dragSnap = state.paste?.d === d ? state.paste.to : state.entityDrag?.d === d && state.entityDrag.to;
   if (dragSnap?.[2]) marks = [[dragSnap[0], dragSnap[1], dragSnap[2], true]];
-  const drawn = paintDrawing(c, { ...base, fl: ed ? ed.dim.fl : d && d.fl, off: base.cmpOff || d && d.off, factor: d ? d.factor : 1,
-    bg: d && d.bg, hl: d ? ((state.drawingRotate?.drag?.items || state.entityDrag?.items) ? null : (state.grip && state.grip.d === d && state.grip.next ? d.hl.filter((it) => !gripShown(state.grip).includes(it.e)) : textSel(d) ? d.hl.filter((it) => it.k !== 't') : ed ? d.hl.filter((it) => it.e !== ed.e || it.k !== 't') : d.hl)) : null, hide: hideNow(d), marks: marks || (drawLive() && state.drawHover && state.drawHover[2] ? [[state.drawHover[0] / d.factor, state.drawHover[1] / d.factor, state.drawHover[2], true]] : state.grip && state.grip.d === d && state.grip.to && state.grip.to[2] ? [[state.grip.to[0], state.grip.to[1], state.grip.to[2], true]] : null), dim: previewDim(d), gaps: d && d.ed && editable() ? Ed.gapMarks(gapsOf(d), d.gapShow) : null,
+  const o = { ...base, fl: ed ? ed.dim.fl : d && d.fl, off: base.cmpOff || d && d.off, factor: d ? d.factor : 1,
+    bg: d && d.bg, hl: d ? ((state.drawingRotate?.drag?.items || state.entityDrag?.items) ? null : (state.grip && state.grip.d === d && state.grip.next ? d.hl.filter((it) => !gripShown(state.grip).includes(it.e)) : textSel(d) ? d.hl.filter((it) => it.k !== 't') : ed ? d.hl.filter((it) => it.e !== ed.e || it.k !== 't') : d.hl)) : null, hide: hideNow(d), marks: marks || (drawLive() && state.drawHover && state.drawHover[2] ? [[state.drawHover[0] / d.factor, state.drawHover[1] / d.factor, state.drawHover[2], true]] : state.grip && state.grip.d === d && state.grip.to && state.grip.to[2] ? [[state.grip.to[0], state.grip.to[1], state.grip.to[2], true]] : null), dim: previewDim(d), gaps: d && d.ed && editable() ? (d.gapShow ? Ed.gapMarks(gapsOf(d), true) : []) : null,
     contour: d && d.cRes && state.tool === 'contour' ? d.cRes.polys : null,
     contourCol: d && d.cRes ? contourColour(d).replace('var(--text)', workDark() ? '#ededef' : '#18181b') : null, contourDash: contourStyle().dash,
     markCol: cssVar('--mark', '#c2410c'),
     accent: cssVar('--selection', '#4f46e5'), snapCol: cssVar('--snap-mark', '#00c000'),
-    dimCol: cssVar('--dim', '#0f766e'), previewBounds: (box) => { canvasPreviewBounds = unionBox(canvasPreviewBounds, box); } });
+    dimCol: cssVar('--dim', '#0f766e'), previewBounds: (box) => { canvasPreviewBounds = unionBox(canvasPreviewBounds, box); } };
+  let drawn;
+  if (afterBase) { drawn = paintDrawing(c, { ...o, part: 'base' }); afterBase(drawn); paintDrawing(c, { ...o, part: 'over' }); }
+  else drawn = paintDrawing(c, part ? { ...o, part } : o);
   const move = state.drawingRotate?.drag || state.entityDrag || (state.grip?.d === d && state.grip.move) || (modLive() && ['move', 'copy', 'stretch', 'array', 'rotate', 'scale', 'mirror', 'align'].includes(state.mod.kind) ? state.mod.move : null);
   c.dataset.preview = move?.items ? paintDrawing(c, { ...base, ox: base.ox - move.dx * d.factor, oy: base.oy + move.dy * d.factor, keep: true, fl: move.preview, off: d.off, factor: d.factor, slots: (!state.entityDrag && !state.grip && modTypedSlots(d)) || move.slots, tint: cssVar('--selection', '#4f46e5'), previewBounds: (box) => { canvasPreviewBounds = unionBox(canvasPreviewBounds, box); } }) : 0;
   const paste = state.paste;
@@ -4927,7 +5005,7 @@ function attachCanvasEvents() {
       }
       if (curLay() && (state.tool === 'select' || state.tool === 'step' || state.tool === 'contour' || (layModLive() && state.mod.stage === 'pick'))) {
         if (placedDown(e)) { capture(c, e); }
-        else if (!gh) { lrub = { x: e.clientX, y: e.clientY, shift: e.shiftKey, moved: false }; capture(c, e); }
+        else if (!gh) { lrub = { x: e.clientX, y: e.clientY, shift: e.shiftKey, ctrl: e.ctrlKey || e.metaKey, moved: false }; capture(c, e); }
       } else if (layModLive()) { lmod = { x: e.clientX, y: e.clientY, shift: e.shiftKey, moved: false }; lengthenDown(mdoc(curDoc()), lmod); capture(c, e); }
     }
   });
@@ -5619,7 +5697,10 @@ function pasteInPlace() { return pasteClipboard(true); }
 async function pasteClipboard(inPlace) {
   const d = cmpDoc() || editable() || curDoc();
   if (!clipboard) { note('Nothing to paste: copy drawing objects first'); return; }
-  if (!d?.cmp && !d?.lay && !editable()) { note('Paste: open a drawing or layout first'); return; }
+  if (!d?.cmp && !d?.lay && !editable()) {
+    if (!d.raw) ensureScratch(d, clipboard.raw?.header?.$INSUNITS);
+    if (!editable()) { note('Paste: open a drawing or layout first'); return; }
+  }
   try {
     if (!inPlace) setTool('select');
     state.paste = null;
@@ -5734,12 +5815,24 @@ async function placePaste() {
   renderEdit(); paintOverlay();
 }
 /** The edit index of a tab (pick grid, ends), built on first use and again after a change. */
-function edIndex(d) { if (!d.ed) d.ed = Ed.makeIndex(d.raw, d.fl, d.off, hidIdx(d)); return d.ed; }
+function edIndex(d) { if (!d.ed) d.ed =Ed.makeIndex(d.raw, d.fl, d.off, hidIdx(d)); return d.ed; }
 /** The entity under a point, unless its layer is locked (Objects tab): a locked layer is drawn and snapped to, but cannot be picked. -1 if none. */
 function hitAt(d, p) { const e = Ed.hitEntity(edIndex(d), p[0], p[1], pickTol(d)); return e >= 0 && lockedEnt(d, e) ? -1 : e; }
 const lockedEnt = (d, e) => (!!d.locked && d.locked.size > 0 && d.locked.has(d.raw.entities[e].layer)) || (!!d.lockedEnts && d.lockedEnts.has(d.raw.entities[e]));      // lockedEnts: a layout's locked objects
 /** Builds the index once the page has painted, so the first click is quick. */
-function warm(d) { requestAnimationFrame(() => setTimeout(() => { if (state.docs.includes(d) && d.fl && !d.ed) { edIndex(d); d.outl = null; if (curDoc() === d) renderEdit(); } }, 0)); }
+function warm(d) {
+  const raw = d.raw, entities = raw?.entities, blocks = raw?.blocks, splines = raw && primeSplines(raw);
+  if (splines) {
+    const chunk = (deadline) => {
+      if (!state.docs.includes(d) || d.raw !== raw || raw.entities !== entities || raw.blocks !== blocks) return;
+      const start = performance.now();
+      while (deadline.timeRemaining() > 1 && performance.now() - start < 8) if (splines.next().done) return;
+      requestIdleCallback(chunk);
+    };
+    requestIdleCallback(chunk);
+  }
+  requestAnimationFrame(() => setTimeout(() => { if (state.docs.includes(d) && d.fl) { if (!d.ed) { edIndex(d); d.outl = null; } if (curDoc() === d || editable() === d) renderEdit(); } }, 0));       // also refresh a Compare source, even when a hover built its index first
+}
 function layersChanged(d) { state.drawingRotate = null; selectionCycle = null; d.ed = null; d.outl = null; d.sel = new Set(); d.stretchSelection = null; d.hl = []; if (cmpDoc()) cmpRefresh(d); warm(d); renderEdit(); }
 
 /** A pointer position → drawing units (y up), and the pick distance (7 px) in them. */
@@ -5875,9 +5968,9 @@ function setSel(d, sel, stretchSelection = null) {
   d.stretchSelection = stretchSelection || { boxes: [], picked: new Set(sel) };
   d.sel = sel; d.lastPick = -1;       // lastPick: the entity just clicked (Shaping's target); a box or any other selection has none
   if (sel.size) state.balSel = null;
-  const ed = edIndex(d);
-  d.hl = [];
-  for (const e of sel) for (const i of ed.byEnt[e] || []) d.hl.push(ed.items[i]);
+  // no index right after a commit: list from the items so the click does not build it (warm does, after the paint)
+  d.hl = d.ed ? [...sel].flatMap((e) => (d.ed.byEnt[e] || []).map((i) => d.ed.items[i])) : Ed.itemsOfEntities(d.fl, sel, d.off, hidIdx(d));
+  if (!d.ed) warm(d);
   paintOverlay(); renderEdit();
   if (state.ptab === 'objects') renderObjects(true);
 }
@@ -6217,14 +6310,7 @@ function sizePadlock(id) {
 }
 function resizeBox(d) {
   if (!d.sel.size) return sizeBox(d);
-  const ed = edIndex(d);
-  let box = null;
-  for (const e of d.sel) {
-    if (d.raw.entities[e].layer === Ed.DIM_LAYER || !ed.byEnt[e]) continue;
-    const b = Array.from(ed.box.slice(e * 4, e * 4 + 4), (n) => n * d.factor);
-    box = unionBox(box, b);
-  }
-  return box;
+  return Ed.resizeItemsBox(d.raw, d.hl, d.factor);
 }
 function sizeTyped(input, axis) {
   input.blur();
@@ -7188,11 +7274,11 @@ function applyLength() {
 
 // ---- drawing tools (draw.js): Line, Polyline, Rectangle, Rounded rectangle, Circle, Ellipse, Arc ----
 
-/** An empty tab becomes a drawing to draw in (mm, one layer "0"); its first change makes it dirty. */
-function ensureScratch(d) {
+/** An empty tab becomes a drawing (default mm, one layer "0"); its first change makes it dirty. */
+function ensureScratch(d, units = 4) {
   if (d.raw || d.lay) return;
-  const raw = newDoc(4), fl = flatten(raw);
-  Object.assign(d, tabFields(raw, fl), { scratch: true, drawingUnit: d.drawingUnit || 'mm' });
+  const raw = newDoc(units), fl = flatten(raw);
+  Object.assign(d, tabFields(raw, fl), { scratch: true, drawingUnit: d.drawingUnit || DU.defaultUnit(units) });
   d.hist = Ed.createHistory(); d.sel = new Set(); d.hl = []; d.ed = null; warm(d);
   update();
 }
@@ -10477,7 +10563,7 @@ function editKey(e) {
     else if (curLay() && pdrag) cancelPlacedDrag();
     else if (layModLive()) modEsc(curDoc());
     else if (!state.grip && gripDoc() && hotsOf(gripDoc())) { state.hots = null; note('Hot grips cleared'); paintOverlay(); }
-    else if (curLay() && multiSel() && !state.grip && !state.setlen && state.tool !== 'measure') { selectMany(groupIdxs(state.sel), state.sel); update(); note('Selection: just the main part'); }
+    else if (curLay() && multiSel() && !state.grip && !state.setlen && state.tool !== 'measure') { if (wholeGroup()) { selectMany([]); update(); note('Selection cleared'); } else { selectMany(groupIdxs(state.sel), state.sel); update(); note('Selection: just the main part'); } }
     else if (curLay() && state.mode === 'rotate') { state.mode = 'select'; state.rotCopy = false; update(); note('Rotate done'); }
     else if (state.colourTool) { state.colourTool = null; note('Colour tool ended'); renderEdit(); renderRibbon(); paintOverlay(); }
     else if (state.match) endMatch();
@@ -10997,19 +11083,34 @@ function selectSimilarMenu(btn) {
 }
 
 function fillTargets(d, targets, key) {
-  const keep = new Set(d.sel);
-  const eligible = targets.filter((i) => FI.closedOutline(d.raw.entities[i]) && !lockedEnt(d, i));
-  const changed = new Set(eligible.filter((i) => (d.raw.entities[i].fill || null) !== key));
+  const keep = new Set(d.sel), changed = new Map();
+  let eligible = 0, blocks = d.raw.blocks;
+  for (const i of targets) {
+    if (lockedEnt(d, i)) continue;
+    const e = d.raw.entities[i], combined = fillCombined(d.vlay ? d.raw : { ...d.raw, blocks }, e, key, !d.vlay);
+    if (combined) {
+      eligible++;
+      if (combined.entity !== e) {
+        changed.set(i, combined.entity);
+        blocks = d.vlay ? { ...blocks, [blockNameOf(e)]: combined.blocks[blockNameOf(e)] } : combined.blocks;
+      }
+    } else if (FI.closedOutline(e)) {
+      eligible++;
+      if ((e.fill || null) !== key) changed.set(i, { ...e, fill: key });
+    }
+  }
   if (changed.size) {
+    const before = d.raw.blocks;
+    if (d.vlay) d.raw.blocks = blocks;       // objectReplace reads the recoloured blocks before copying each part
     const ok = d.vlay
-      ? layGripCommit(d, [...changed].map((i) => [d.raw.entities[i], { ...d.raw.entities[i], fill: key }]), key ? 'Fill colour' : 'No fill')
-      : commit(d, { entities: d.raw.entities.map((e, i) => changed.has(i) ? { ...e, fill: key } : e), blocks: d.raw.blocks }, key ? 'Fill colour' : 'No fill');
-    if (!ok) { renderEdit(); renderRibbon(); return; }       // refused (too nested): the commit showed why
+      ? layGripCommit(d, [...changed].map(([i, next]) => [d.raw.entities[i], next]), key ? 'Fill colour' : 'No fill')
+      : commit(d, { entities: d.raw.entities.map((e, i) => changed.get(i) || e), blocks }, key ? 'Fill colour' : 'No fill');
+    if (!ok) { if (d.vlay) d.raw.blocks = before; renderEdit(); renderRibbon(); return; }       // refused (too nested): the commit showed why
     if (!d.vlay) setSel(d, keep);
     if (key) usedColour(key);
   }
   renderEdit(); renderRibbon();
-  note(`${changed.size} outline${changed.size === 1 ? '' : 's'} ${key ? 'filled' : 'cleared'}` + (eligible.length < targets.length ? '; open shapes or locked outlines skipped' : '') + '. Ctrl+Z takes it back');
+  note(`${changed.size} outline${changed.size === 1 ? '' : 's'} ${key ? 'filled' : 'cleared'}` + (eligible < targets.length ? '; open shapes or locked outlines skipped' : '') + '. Ctrl+Z takes it back');
 }
 function applyFill(key) {
   if (key) currentFill = key;                          // only an actual fill (fillTargets, the Fill tool) joins the recents
@@ -11459,8 +11560,9 @@ function renderSelection(d) {
   ui.barKeep.disabled = ui.barExtract.disabled = ui['keep-only'].disabled = noPart;
   ui.barKeep.title = ui.barExtract.title = ui['keep-only'].title = n && noPart ? 'A kept dimension is not part of a part' : '';
   if (!n) { ui.selName.textContent = 'Nothing selected'; ui.selLayer.textContent = 'right-click an edge → Select connected'; ui.selArea.textContent = ''; return; }
-  const ed = edIndex(d);
-  const k = outs ? outs.findIndex((o) => o.set.size === n && [...d.sel].every((e) => o.set.has(e))) : -1;
+  const ed = d.ed;
+  if (!ed) { ui.selName.textContent = ui.selArea.textContent = '…'; ui.selLayer.textContent = 'layer ' + d.raw.entities[[...d.sel][0]].layer; return; }      // warm builds the index after the paint and renders again
+  const sel = [...d.sel], k = outs ? outs.findIndex((o) => o.set.size === n && sel.every((e) => o.set.has(e))) : -1;
   ui.selName.textContent = wholeDrawingGroup(d.raw.groups, d.sel) ? drawingSelectionName(d) : k >= 0 ? 'Outline ' + (k + 1) : n + ' selected';
   ui.selLayer.textContent = 'layer ' + d.raw.entities[[...d.sel][0]].layer;
   // area and perimeter (TODO 31): for ink and cost; skipped on a huge selection, where it would be slow
@@ -11882,20 +11984,22 @@ function cmpZoom(d, x) {
   note(`Difference ${x.n}: ${x.mm.toFixed(2)} mm at X ${fmt(x.x)}, Y ${fmt(x.y)}`);
 }
 
-function cmpPaint(canvas, c, base, marks) {
-  paintDrawing(canvas, { ...base, fl: null, factor: 1 });                                      // clears
+function cmpPaint(canvas, c, base, marks, lifted = false) {
+  if (!lifted) paintDrawing(canvas, { ...base, fl: null, factor: 1 });                         // clears
+  let drawn = 0;
   for (const sd of c.items) {
-    if (!sd.visible) continue;
+    if (!sd.visible || (sd.id === c.dragged) !== lifted) continue;
     const target = sd.id === c.selected && cmpSourceTab(sd), placed = { ...base, ox: base.ox - sd.offset[0], oy: base.oy + sd.offset[1], keep: true, tint: cmpCss(sd.colour), cmpOff: sd.off };
-    if (target) paintEditable(canvas, target, placed, state.tool === 'measure' ? null : marks);
-    else paintDrawing(canvas, { ...placed, fl: sd.fl, off: sd.off, factor: sd.factor });
+    if (target) drawn += paintEditable(canvas, target, placed, state.tool === 'measure' ? null : marks);
+    else drawn += paintDrawing(canvas, { ...placed, fl: sd.fl, off: sd.off, factor: sd.factor });
   }
-  if (c.moving && c.snap) {                                                                    // the snap: a thin dotted guide through it and the usual marker with its name
+  if (lifted && c.snap) {                                                                    // the snap: a thin dotted guide through it and the usual marker with its name
     const ctx = canvas.getContext('2d'), k = base.scale * base.dpr, T = [k, 0, 0, -k, -base.ox * k, (base.sheetH - base.oy) * k], at = mapply(T, c.snap.x, c.snap.y), accent = cssVar('--selection', '#4f46e5');
     ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.strokeStyle = accent; ctx.lineWidth = base.dpr; ctx.setLineDash([3 * base.dpr, 4 * base.dpr]);
     ctx.beginPath(); ctx.moveTo(0, at[1]); ctx.lineTo(canvas.width, at[1]); ctx.moveTo(at[0], 0); ctx.lineTo(at[0], canvas.height); ctx.stroke();
     drawMarks(ctx, [[c.snap.x, c.snap.y, c.snap.kind, true]], T, base.dpr, accent, cssVar('--snap-mark', '#00c000'));
   }
+  return drawn;
 }
 /** The differences as a glow (a soft round patch) with its number; the one picked in the list has a ring. */
 function cmpGlow(c, out) {
@@ -11930,7 +12034,7 @@ function cmpDown(e) {
   const source = editable(), p = source && toDrawing(source, e.clientX, e.clientY);
   if (source && (e.target.closest('[data-rot], [data-pivot]') || gripOn(source) && gripAt(source, e.clientX, e.clientY))) return false;
   const target = ref === item ? c.items.find((x) => x !== item && x.checked && x.visible) : ref?.visible ? ref : null;
-  const p0 = sheetAt(e.clientX, e.clientY), m0 = [...item.offset];
+  const p0 = sheetAt(e.clientX, e.clientY), m0 = [...item.offset], mode0 = c.mode;
   const grab = cmpSnap(item, m0, p0), g = grab ? [grab.x, grab.y] : p0;
   c.moving = true;
   let moved = false, manual = false;
@@ -11944,10 +12048,18 @@ function cmpDown(e) {
     if (drop) o = [o[0] + drop.x - q[0], o[1] + drop.y - q[1]];
     const hit = snapGuideBox(item.box.map((v, i) => v + o[i % 2]));
     o = [o[0] + hit.dx, o[1] + hit.dy];
-    moved = true; item.offset = o; paintOverlay();
+    moved = true; c.dragged = item.id; item.offset = o; paintOverlay();
   };
-  const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); window.removeEventListener('pointercancel', up); c.moving = false; c.snap = null; if (moved) { cmpMoved(d); if (manual) note('Line-up set to Manual'); } else if (source) clickSelect(source, p, e.shiftKey); else cmpEdit(); };
+  const up = (ev) => {
+    window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); window.removeEventListener('pointercancel', up); window.removeEventListener('keydown', key, true);
+    c.moving = false; c.dragged = null; c.snap = null;
+    if (ev.key === 'Escape') { item.offset = m0; c.mode = mode0; cmpMoved(d); }
+    else if (moved) { cmpMoved(d); if (manual) note('Line-up set to Manual'); }
+    else if (source) clickSelect(source, p, e.shiftKey); else cmpEdit();
+  };
+  const key = (ev) => { if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); up(ev); } };
   window.addEventListener('pointermove', move); window.addEventListener('pointerup', up); window.addEventListener('pointercancel', up);
+  window.addEventListener('keydown', key, true);
   return true;
 }
 function cmpManual(c) {

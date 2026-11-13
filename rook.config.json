@@ -2,11 +2,13 @@
   "name": "Project D",
   "slug": "project-d",
   "extras": "E:/Project B/Claude/Project D extras",
+  "acad": "E:/Program Files/Autodesk/AutoCad/AutoCAD 2027",
   "main": "E:/Project B/Claude/Project D",
   "support": "E:/Project B/Claude/support",
   "github": "CableTable/project-d",
   "test": "npm test",
   "browserTest": "npm run test:browser",
+  "browserShard": "node browser.test.mjs {port} SHARD={i}/4",
   "docs": { "todo": "TODO.md", "decisions": "DECISIONS.md", "history": "HISTORY.md", "glossary": "GLOSSARY.md", "workflow": "WORKFLOW.md" },
   "folders": {
     "bishop": { "review": "ProjectD-s15fix", "build": "ProjectD-s15fix" },

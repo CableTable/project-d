@@ -382,6 +382,34 @@ let splinePoints = new WeakMap();
 /** Empties the spline points cache (tests only). */
 export const clearSplineCache = () => { splinePoints = new WeakMap(); };
 
+function splineOf(r) {
+  let hit = splinePoints.get(r);
+  if (!hit) {
+    const cp = [], fit = [], knots = [], w = [];
+    for (let k = 0; k < r.c.length; k++) {
+      const c = r.c[k];
+      if (c === 10) cp.push([num(r.v[k]), r.c[k + 1] === 20 ? num(r.v[k + 1]) : 0]);
+      else if (c === 11) fit.push([num(r.v[k]), r.c[k + 1] === 21 ? num(r.v[k + 1]) : 0]);
+      else if (c === 40) knots.push(num(r.v[k]));
+      else if (c === 41) w.push(num(r.v[k]));
+    }
+    const f = firsts(r);
+    const p = nurbs(cp, knots, num(f[71], 3), w, fit);
+    splinePoints.set(r, hit = { pts: p, fit: p === fit });
+  }
+  return hit;
+}
+
+/** The worker's cache does not cross realms; yield per record so the page can prime its own in idle chunks. */
+export function* primeSplines(doc) {
+  for (const ents of [doc.entities, ...Object.values(doc.blocks).map(b => b.entities)]) {
+    for (const e of ents) {
+      if (e.type === 'SPLINE') splineOf(e.r);
+      yield;
+    }
+  }
+}
+
 export function flatten(doc, hidden = new Set()) {
   const H = doc.header, units = UNITS[num(H.$INSUNITS)] || '';
   const ltscale = num(H.$LTSCALE, 1) || 1;
@@ -478,19 +506,7 @@ export function flatten(doc, hidden = new Set()) {
         case 'LWPOLYLINE': lwpoly(e, f, base, path, put); break;
         case 'POLYLINE': polyline(e, f, base, path); break;
         case 'SPLINE': {
-          let hit = splinePoints.get(r);
-          if (!hit) {
-            const cp = [], fit = [], knots = [], w = [];
-            for (let k = 0; k < r.c.length; k++) {
-              const c = r.c[k];
-              if (c === 10) cp.push([num(r.v[k]), r.c[k + 1] === 20 ? num(r.v[k + 1]) : 0]);
-              else if (c === 11) fit.push([num(r.v[k]), r.c[k + 1] === 21 ? num(r.v[k + 1]) : 0]);
-              else if (c === 40) knots.push(num(r.v[k]));
-              else if (c === 41) w.push(num(r.v[k]));
-            }
-            const p = nurbs(cp, knots, num(f[71], 3), w, fit);
-            splinePoints.set(r, hit = { pts: p, fit: p === fit });
-          }
+          const hit = splineOf(r);
           let pts = hit.pts;
           const closed = closedOutline(e);
           if (closed && hit.fit && pts.length > 2 && Math.hypot(pts[0][0] - pts.at(-1)[0], pts[0][1] - pts.at(-1)[1]) < 1e-9) pts = pts.slice(0, -1);   // fit points that repeat the first one (a copy: the cached array stays whole)

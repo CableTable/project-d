@@ -4,7 +4,7 @@
 import { ownBlock } from './drawing.js';
 import { insert } from './dxf-write.js';
 import { explodeInsert } from './explode.js';
-import { usedBlocks } from './edit.js';
+import { usedBlocks, freeNameWithPrefix } from './edit.js';
 import { closedOutline, fillHatch, hatchKey } from './fill.js';
 import { typeName } from './props.js';
 
@@ -27,6 +27,23 @@ export function combinedLabel(blocks, ent) {
 
 /** The block's outlines and its HATCH (null when it has none): what Combine and Break Apart work on. */
 export const partsOf = (block) => ({ hatch: block.entities.find((x) => x.type === 'HATCH') || null, outlines: block.entities.filter((x) => x.type !== 'HATCH') });
+
+/** Per-object fill; null for a non-Combined or open-only object. Layouts let objectReplace copy the part instead. */
+export function fillCombined(raw, e, key, copy = true) {
+  if (e.type !== 'INSERT' || e.kids?.length) return null;
+  const name = blockNameOf(e), block = ownBlock(raw.blocks, name);
+  if (!isCombined(name, block)) return null;
+  const { hatch, outlines } = partsOf(block), closed = outlines.filter(closedOutline);
+  if (!closed.length) return null;
+  if ((hatch ? hatchKey(hatch) : null) === key) return { entity: e, blocks: raw.blocks };
+  const made = key ? fillHatch({ ...closed[0], fill: key, layer: '0' }, closed.slice(1)) : null;
+  const filled = made && (hatch ? { ...hatch, aci: made.aci, tc: made.tc } : made);
+  const uses = (x) => x !== e && x.type === 'INSERT' && blockNameOf(x) === name;
+  const shared = copy && (raw.entities.some(uses) || Object.values(raw.blocks).some((b) => b.entities.some(uses)));
+  const nextName = shared ? freeNameWithPrefix(raw.blocks, PREFIX) : name;
+  const entity = { ...e, r: { ...e.r, v: e.r.v.map((v, i) => e.r.c[i] === 2 ? nextName : v) } };
+  return { entity, blocks: { ...raw.blocks, [nextName]: { ...block, entities: filled ? [filled, ...outlines] : outlines } } };
+}
 
 const reset = (e) => ({ ...e, layer: '0', aci: 0, tc: null, lw: -2, lt: 'BYBLOCK', fill: undefined });     // ByBlock in everything: the INSERT's look shows
 

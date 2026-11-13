@@ -593,7 +593,10 @@ function layoutFromMeta(raw, name) {
     .map((p) => ({ ...placement1(p.partId, +p.x, +p.y, num(p.rot, 0), p.mirrorX, p.mirrorY), ...(typeof p.g === 'string' && p.g ? { g: p.g } : {}), ...(p.lock === true ? { lock: true } : {}), ...(num(p.sc, 1, 1e-6) !== 1 ? { sc: num(p.sc, 1, 1e-6) } : {}),
       ...(typeof p.cid === 'string' && p.cid ? { cid: p.cid } : {}), ...(typeof p.ct === 'string' && p.ct ? { ct: p.ct } : {}) }));   // cid: a part that has a contour; ct: the contour of the part with that cid (layoutcontour.js)
   if (lay.s.gridPart && !lay.parts[lay.s.gridPart]) lay.s.gridPart = null;
-  for (const pm of parts) if (pm.obj === true && lay.parts[pm.id]) lay.parts[pm.id].obj = true;       // an object kept as a block
+  for (const pm of parts) if (pm.obj === true && lay.parts[pm.id]) {
+    const part = lay.parts[pm.id]; part.obj = true;       // an object kept as a block brings its layer colour back too
+    for (const e of part.raw.entities) if (raw.layers[e.layer]) layersOf(lay)[e.layer] = raw.layers[e.layer];
+  }
   readObjects(lay, raw, Array.isArray(m.ob) ? m.ob : [], m.obCount);
   return lay;
 }

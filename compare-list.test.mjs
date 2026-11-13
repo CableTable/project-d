@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import * as L from './web/compare-list.js';
 import * as C from './web/compare.js';
 import { flatten, readDxf } from './web/drawing.js';
+import { makeIndex, areaPerimeter, chainTol } from './web/edit.js';
 import { newDoc, addEntities, addLayer, writeDxf, rect, circle, line } from './web/dxf-write.js';
 
 function source(name, entities, factor = 1) {
@@ -11,6 +12,7 @@ function source(name, entities, factor = 1) {
   return { name, raw, fl: flatten(raw), factor, off: new Set() };
 }
 const plate = (name, w = 30, x = 0) => source(name, [rect(x, 0, w, 20), circle(x + 10, 10, 2)]);
+const measurements = (item) => L.compareItems([{ ...item, ...L.snapshotGeometry(source('empty', [])), id: 0 }, item], .1).rows[1];
 
 test('linked snapshots keep tab identity; coordinates undo offset and inch factor; refresh can empty the artwork', () => {
   const original = { ...plate('same.dxf'), tabId: 'tab-2' }, item = L.addItem([], original)[0];
@@ -24,7 +26,7 @@ test('linked snapshots keep tab identity; coordinates undo offset and inch facto
   assert.equal(empty.tabId, 'tab-2');
   assert.equal(empty.box, null);
   assert.deepEqual(empty.polys, []);
-  assert.equal(empty.metrics.perimeter, 0);
+  assert.equal(measurements(empty).perimeter, 0);
   assert.doesNotThrow(() => L.lineUpItems([empty, item], 'bl'));
   assert.ok(L.compareItems([empty, { ...item, id: 2 }], .1).diffs.length);
 });
@@ -90,10 +92,11 @@ test('two checked items use exactly the existing differences, including manual o
 test('measurements reuse closed loops with holes, joined lines, open lengths and drawing units', () => {
   const entities = [line(0, 0, 10, 0), line(10, 0, 10, 10), line(10, 10, 0, 10), line(0, 10, 0, 0), rect(2, 2, 2, 2), line(20, 0, 25, 0)];
   const item = L.addItem([], source('inch plate', entities, 25.4))[0];
-  assert.ok(Math.abs(item.metrics.area - 96 * 25.4 ** 2) < 1e-6);
-  assert.ok(Math.abs(item.metrics.perimeter - 53 * 25.4) < 1e-6);
-  assert.equal(item.metrics.w, 635);
-  assert.equal(item.metrics.h, 254);
+  const metrics = measurements(item);
+  assert.ok(Math.abs(metrics.area - 96 * 25.4 ** 2) < 1e-6);
+  assert.ok(Math.abs(metrics.perimeter - 53 * 25.4) < 1e-6);
+  assert.equal(metrics.w, 635);
+  assert.equal(metrics.h, 254);
 });
 
 test('hiding a layer in one snapshot recomputes its outlines and leaves the source and the other snapshots alone', () => {
@@ -101,9 +104,10 @@ test('hiding a layer in one snapshot recomputes its outlines and leaves the sour
   const raw = readDxf(writeDxf(doc)), src = { name: 'p', raw, fl: flatten(raw), factor: 1, off: new Set() };
   const [a, b] = L.addItem(L.addItem([], src), src).slice(0, 2);
   const holes = a.fl.layers.findIndex((l) => l.name === 'Holes');
+  const originalMetrics = measurements(a);
   const hidden = L.setItemOff(a, new Set([holes]));
   assert.ok(hidden.off.has(holes) && hidden.polys.length < a.polys.length, 'the circle is gone from the outlines');
-  assert.ok(hidden.metrics.perimeter < a.metrics.perimeter);
+  assert.ok(measurements(hidden).perimeter < originalMetrics.perimeter);
   assert.equal(hidden.id, a.id);
   assert.equal(src.off.size, 0, 'the source keeps its own list');
   assert.equal(b.off.size, 0, 'the other snapshot keeps its own list');
@@ -130,4 +134,45 @@ test('a refreshed snapshot keeps its hidden layers by name when the layer number
     assert.deepEqual(structuredClone(source), before, 'refresh leaves the source unchanged');
     assert.deepEqual([...hidden.off], [...item.fl.layers.keys()].filter((i) => item.fl.layers[i].name === 'B'), 'the old snapshot keeps its own hidden list');
   }
+});
+
+test('addItem builds no index; compareItems gives the same metrics as before', () => {
+  // makeIndex is imported by compare-list.js, so count what it allocates and nothing else does: its visibility mask, one Uint8Array per shown item.
+  const src = plate('count.dxf'), n = src.fl.items.length, Native = globalThis.Uint8Array;
+  let made = 0;
+  const Counting = class extends Native { constructor(...a) { super(...a); if (a[0] === n) made++; } };
+  const count = (fn) => {
+    made = 0; globalThis.Uint8Array = Counting;
+    try { fn(); } finally { globalThis.Uint8Array = Native; }
+    return made;
+  };
+  assert.equal(count(() => makeIndex(src.raw, src.fl)), 1, 'the counter sees one makeIndex');
+  let items;
+  const calls = count(() => { items = L.addItem(L.addItem([], src), plate('wider', 32)); });
+  assert.equal(calls, 0, 'addItem builds no index');
+  console.log(`P13: makeIndex calls in addItem ${calls}, bound 0`);
+  const before = structuredClone(items);
+  let result;
+  assert.equal(count(() => { result = L.compareItems(items, .1); }), 2, 'first comparison measures each item once');
+  assert.equal(count(() => assert.deepEqual(L.compareItems(items, .1), result)), 0, 'same items reuse their measurements');
+  const fresh = L.addItem(L.addItem([], plate('press.dxf')), plate('press wider', 32));      // each press lines up again: new item copies, same artwork
+  assert.equal(count(() => L.compareItems(L.lineUpItems(fresh, 'bl'), .1)), 2, 'first press measures each item once');
+  assert.notEqual(L.lineUpItems(fresh, 'bl')[1], fresh[1], 'line up copies the items');
+  assert.equal(count(() => L.compareItems(L.lineUpItems(fresh, 'bl'), .1)), 0, 'second press: 0 makeIndex');
+  assert.deepEqual(items, before, 'measurements stay off the items');
+  assert.ok(items.every((item) => !Object.hasOwn(item, 'metrics')));
+  const oldMetrics = (src) => {
+    const outlines = C.polylines(src.fl, src.factor, src.off), ed = makeIndex(src.raw, src.fl, src.off);
+    const m = outlines.box && areaPerimeter(ed, new Set(ed.shown), src.factor, chainTol(outlines.box, 1) / src.factor);
+    return { area: m?.area || 0, perimeter: m?.perimeter || 0,
+      w: outlines.box ? outlines.box[2] - outlines.box[0] : 0, h: outlines.box ? outlines.box[3] - outlines.box[1] : 0 };
+  };
+  for (const src of [plate('holes', 32), source('joined inch', [line(0, 0, 10, 0), line(10, 0, 0, 10), line(0, 10, 0, 0), line(20, 0, 25, 0)], 25.4), source('empty', [])]) {
+    const item = { ...items[1], ...L.snapshotGeometry(src) }, expected = oldMetrics(src), ref = oldMetrics(plate('count.dxf'));
+    const [row] = L.compareItems([items[0], item], .1).rows.slice(1);
+    assert.deepEqual(row, { id: item.id, ...Object.fromEntries(Object.keys(ref).map((k) => [k, expected[k] - ref[k]])) }, src.name);
+  }
+  const refreshed = { ...items[1], ...L.refreshGeometry(items[1], plate('refreshed', 35)) };
+  assert.equal(count(() => L.compareItems([items[0], refreshed], .1)), 1, 'a refreshed item is measured anew');
+  assert.equal(L.compareItems([items[0], refreshed], .1).rows[1].w, 5, 'a refresh never reads the old metrics');
 });

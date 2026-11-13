@@ -1,11 +1,38 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { browserArgs, expandNeeds, pickSteps, shardSelector } from './tools/browser-shards.mjs';
+
+function stepNames(source) {
+  const names = [];
+  let skipped = 0;
+  const calls = /\bfunction\s+step\s*\(|\bstep\s*\(\s*(?:'((?:\\.|[^'\\])*)'|"((?:\\.|[^"\\])*)"|`((?:\\.|[^`\\])*)`)?/g;
+  for (const match of source.matchAll(calls)) {
+    if (match[0].startsWith('function')) continue;
+    const name = match[1] ?? match[2] ?? match[3];
+    if (name === undefined || match[3]?.includes('${') || !/^\s*[,)]/.test(source.slice(match.index + match[0].length))) skipped++;
+    else names.push(name.replace(/\\(['"`\\])/g, '$1'));
+  }
+  return { names, skipped };
+}
+
+test('TODO F19b: untimed steps stay under 10%', (t) => {
+  const MAX_UNTIMED = 0.10;
+  assert.deepEqual(stepNames("function step(name, fn) {}\r\nstep('single', fn); step(\"double\", fn); step(`plain`, fn); step('it\\'s', fn); step(`dynamic ${name}`, fn); step(variable, fn); step('prefix' + name, fn);"), {
+    names: ['single', 'double', 'plain', "it's"], skipped: 3,
+  });
+  const { names, skipped } = stepNames(readFileSync(new URL('./browser.test.mjs', import.meta.url), 'utf8'));
+  const timings = JSON.parse(readFileSync(process.env.F19B_TIMINGS || new URL('./tools/browser-shards.json', import.meta.url), 'utf8'));
+  assert.ok(names.length > 0, 'no browser step names parsed');
+  const missing = names.filter((name) => !Object.hasOwn(timings, name));
+  const message = `${missing.length}/${names.length} untimed steps; ${skipped} dynamic names skipped. Missing (up to 10): ${missing.slice(0, 10).join('; ')}. Fix: node browser.test.mjs <port> --update-timings`;
+  t.diagnostic(message);
+  assert.ok(missing.length / names.length <= MAX_UNTIMED, message);
+});
 
 test('four contiguous shards balance time, cover every step once, and include new steps', () => {
   const timings = { a: 8, b: 1, c: 1, d: 10, e: 5, f: 5, g: 10, 'no console errors': 0 };
@@ -25,7 +52,7 @@ test('four contiguous shards balance time, cover every step once, and include ne
 });
 
 test('arguments preserve ONLY and full runs; reject invalid shards and partial timing updates', () => {
-  assert.deepEqual(browserArgs(['5291']), { port: 5291, only: undefined, shard: undefined, updateTimings: false, shots: 'shots' });
+  assert.deepEqual(browserArgs(['5291']), { port: 5291, only: undefined, shard: undefined, updateTimings: false, shots: 'shots', until: undefined });
   assert.deepEqual(browserArgs(['5291', 'SHARD=2/4']).shard, { index: 2, count: 4 });
   assert.deepEqual(browserArgs(['--shard=3/4'], { TEST_PORT: '5292' }).shard, { index: 3, count: 4 });
   assert.deepEqual(browserArgs([], { SHARD: '1/4' }).shard, { index: 1, count: 4 });
@@ -43,7 +70,7 @@ test('arguments preserve ONLY and full runs; reject invalid shards and partial t
 test('--shots consumes its directory, preserves filters and shards, and overrides SHOTS_DIR', () => {
   for (const args of [['5291', 'some regex', '--shots', 'shots-kretro'], ['--shots', 'shots-kretro', '5291', 'some regex']]) {
     assert.deepEqual(browserArgs(args, { SHOTS_DIR: 'env shots' }), {
-      port: 5291, only: 'some regex', shard: undefined, updateTimings: false, shots: 'shots-kretro',
+      port: 5291, only: 'some regex', shard: undefined, updateTimings: false, shots: 'shots-kretro', until: undefined,
     });
   }
   assert.equal(browserArgs([], { SHOTS_DIR: 'env shots' }).shots, 'env shots');
@@ -82,6 +109,29 @@ test('a filter matching no step throws; a match, or no filter, picks steps', () 
   assert.throws(() => pickSteps(steps, 'one', (name) => name !== 'one'), /matches no step/);
   assert.deepEqual(pickSteps(steps, 'one|two', all), steps);
   assert.deepEqual(pickSteps(steps, undefined, all), steps);
+});
+
+test('TODO K5: --until parses an exact step name without becoming ONLY', () => {
+  const until = 'second step [exact]=yes';
+  for (const args of [['5291', 'SHARD=1/4', `--until=${until}`], [`--until=${until}`, '5291', '--shard=1/4']]) {
+    const parsed = browserArgs(args);
+    assert.equal(parsed.until, until);
+    assert.equal(parsed.only, undefined);
+    assert.deepEqual(parsed.shard, { index: 1, count: 4 });
+  }
+  assert.throws(() => browserArgs(['--update-timings', `--until=${until}`]), /full/);
+});
+
+test('TODO K5: --until stops at the exact selected step, inclusive and in suite order', () => {
+  const names = ['a', 'b', 'new step', 'c [exact]=yes', 'c', 'd', 'no console errors'];
+  const steps = names.map((name) => ({ name }));
+  const select = () => shardSelector({ a: 1, b: 1, 'c [exact]=yes': 1, c: 1, d: 4 }, 1, 2);
+  assert.deepEqual(pickSteps(steps, undefined, select(), 'c [exact]=yes'), steps.slice(0, 4));
+  assert.deepEqual(pickSteps(steps, undefined, select(), 'a'), steps.slice(0, 1));
+  assert.deepEqual(pickSteps(steps, undefined, select(), 'c'), steps.slice(0, 5));
+  for (const until of ['missing', 'c [exact]', 'd', '']) {
+    assert.throws(() => pickSteps(steps, undefined, select(), until), /--until.*not in the selected steps/);
+  }
 });
 
 test('local runner launches four children together, prefixes failures and counts crashed children', () => {

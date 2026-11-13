@@ -6,15 +6,14 @@ export const MAX_ITEMS = 5;
 export const reference = (items) => items.find((x) => x.checked);
 export const removeItem = (items, id) => items.filter((x) => x.id !== id);
 export const setItem = (items, id, patch) => items.map((x) => x.id === id ? { ...x, ...patch } : x);
+const metrics = new WeakMap();      // keyed by the snapshot's artwork: copies made by lineUpItems / setItem share it, and every change of off / factor / source makes a new fl
 
-/** Artwork and measurements refreshed together, including an emptied drawing. */
+/** Artwork and dimensions refreshed together, including an emptied drawing. */
 export function snapshotGeometry(source) {
   const { name, raw, factor = 1 } = source, fl = structuredClone(source.fl), off = new Set(source.off);
   const outlines = polylines(fl, factor, off);
-  const ed = makeIndex(raw, fl, off), ents = new Set(ed.shown);
-  const metrics = outlines.box && areaPerimeter(ed, ents, factor, chainTol(outlines.box, 1) / factor);
   return { name, fl, factor, off, raw: { entities: raw.entities.map(({ type, layer }) => ({ type, layer })) }, ...outlines,     // all that the measurements read, kept so a layer can be hidden later (no live link to the source)
-    metrics: { area: metrics?.area || 0, perimeter: metrics?.perimeter || 0, w: outlines.box ? outlines.box[2] - outlines.box[0] : 0, h: outlines.box ? outlines.box[3] - outlines.box[1] : 0 }, sn: null };
+    w: outlines.box ? outlines.box[2] - outlines.box[0] : 0, h: outlines.box ? outlines.box[3] - outlines.box[1] : 0, sn: null };
 }
 
 /** Hide or show layers in this snapshot only (its own off list): outlines and measurements follow; the source drawing is untouched. */
@@ -53,7 +52,13 @@ export function compareItems(items, tol) {
   const diffs = [], rows = [];
   let truncated = false;
   for (const item of chosen) {
-    const delta = Object.fromEntries(Object.keys(ref.metrics).map((k) => [k, item.metrics[k] - ref.metrics[k]]));
+    if (!metrics.has(item.fl)) {
+      const ed = makeIndex(item.raw, item.fl, item.off);
+      const m = item.box && areaPerimeter(ed, new Set(ed.shown), item.factor, chainTol(item.box, 1) / item.factor);
+      metrics.set(item.fl, { area: m?.area || 0, perimeter: m?.perimeter || 0, w: item.w, h: item.h });
+    }
+    const current = metrics.get(item.fl), base = metrics.get(ref.fl);
+    const delta = Object.fromEntries(Object.keys(base).map((k) => [k, current[k] - base[k]]));
     rows.push({ id: item.id, ...delta });
     if (item === ref) continue;
     const result = compare(ref.polys, item.polys, tol, { offsetB: [item.offset[0] - ref.offset[0], item.offset[1] - ref.offset[1]] });

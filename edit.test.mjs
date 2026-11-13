@@ -26,6 +26,37 @@ test('TODO 155c fixes: expand every selected chain once, retaining isolated sele
   assert.deepEqual([...E.connectedSelection(ed, new Set(), .01)], []);
 });
 
+test('items of entities without an index match byEnt', () => {
+  for (const f of ['sample.dxf', 'many-layers.dxf', 'table.dxf', 'groups.dxf', 'wireframe.dxf']) {
+    const { raw, fl } = load(f), n = raw.entities.length;
+    for (const [off, hid] of [[new Set(), null], [new Set([0]), null], [new Set(), new Set([1, 3])], [new Set([1]), new Set([0, 2, 4])]]) {
+      const ed = E.makeIndex(raw, fl, off, hid);
+      const sel = new Set(Array.from({ length: n }, (_, i) => n - 1 - i).filter((i) => i % 3 !== 1));        // reverse order, some entities hidden or off
+      const want = [...sel].flatMap((e) => (ed.byEnt[e] || []).map((i) => ed.items[i]));
+      const got = E.itemsOfEntities(fl, sel, off, hid);
+      assert.equal(got.length, want.length, f);
+      assert.ok(got.every((it, i) => it === want[i]), f + ' same items, same order');
+    }
+  }
+  assert.deepEqual(E.itemsOfEntities(load('sample.dxf').fl, new Set()), []);
+});
+
+test('P3: selection size from shown items matches the index without kept dimensions', () => {
+  const raw = W.newDoc(4);
+  W.addEntities(raw, [W.lwpoly([[20, 20], [120, 20], [120, 80], [20, 80]], { closed: true }),
+    W.circle(200, 100, 10, { layer: 'Hidden' }), W.line(-100, -100, 300, 300, { layer: E.DIM_LAYER })]);
+  const fl = D.flatten(raw), hiddenLayer = fl.layers.findIndex((l) => l.name === 'Hidden');
+  for (const factor of [1, 25.4]) for (const [off, hid] of [[new Set(), null], [new Set([hiddenLayer]), null], [new Set(), new Set([0, 1])]]) {
+    const sel = new Set([2, 1, 0]), ed = E.makeIndex(raw, fl, off, hid);
+    let expected = null;
+    for (const e of sel) if (raw.entities[e].layer !== E.DIM_LAYER && ed.byEnt[e]) expected = D.unionBox(expected, Array.from(ed.box.slice(e * 4, e * 4 + 4), (n) => n * factor));
+    assert.deepEqual(E.resizeItemsBox(raw, E.itemsOfEntities(fl, sel, off, hid), factor), expected);
+  }
+  assert.deepEqual(E.resizeItemsBox(raw, E.itemsOfEntities(fl, new Set([0]))), [20, 20, 120, 80]);
+  assert.equal(E.resizeItemsBox(raw, E.itemsOfEntities(fl, new Set([2]))), null);
+  assert.equal(E.resizeItemsBox(raw, []), null);
+});
+
 test('TODO 68a: snap index filters every type, respects SNAP off and filters unfinished tool ends too', () => {
   const { snapTypes } = SNAP;
   const { raw, fl } = load('outline.dxf'), ed = E.makeIndex(raw, fl);
@@ -935,6 +966,60 @@ test('area and perimeter of a rounded outline (100 x 60, r 10)', () => {
   near(r.perimeter, 320 - 80 + 20 * Math.PI, 'perimeter', 1e-4);
 });
 
+test('areaPerimeter: box reject gives the same result on nested loops and counts few inside tests', () => {
+  const index = (entities) => {
+    const doc = W.newDoc(4); W.addEntities(doc, entities);
+    const raw = D.readDxf(W.writeDxf(doc)); return E.makeIndex(raw, D.flatten(raw));
+  };
+  // The old depth calculation, without a box reject, is the reference for all returned fields.
+  const before = (ed, factor = 1, tol = 1e-6) => {
+    const r = E.outlineLoops(ed, ed.shown, tol);
+    if (!r) return null;
+    const loops = r.loops.map((l) => l.pts), areas = loops.map((pts) => {
+      let a = 0; for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) a += pts[j][0] * pts[i][1] - pts[i][0] * pts[j][1];
+      return Math.abs(a) / 2;
+    });
+    let area = 0, holes = 0;
+    loops.forEach((L, i) => {
+      const depth = loops.reduce((n, M, k) => {
+        if (k === i || areas[k] <= areas[i]) return n;
+        let inside = false;
+        for (let p = 0, q = M.length - 1; p < M.length; q = p++) {
+          if ((M[p][1] > L[0][1]) !== (M[q][1] > L[0][1]) && L[0][0] < (M[q][0] - M[p][0]) * (L[0][1] - M[p][1]) / (M[q][1] - M[p][1]) + M[p][0]) inside = !inside;
+        }
+        return n + (inside ? 1 : 0);
+      }, 0);
+      if (depth % 2) { area -= areas[i]; holes++; } else area += areas[i];
+    });
+    return { area: area * factor * factor, perimeter: r.len * factor, loops: loops.length, holes, gaps: r.gaps, open: r.open };
+  };
+  // 300 loops in separate groups of three nested outlines: genuine holes plus many box rejects.
+  const ed = index(Array.from({ length: 100 }, (_, i) => [W.rect(i * 30, 0, 20, 20), W.rect(i * 30 + 4, 4, 12, 12), W.rect(i * 30 + 8, 8, 4, 4)]).flat());
+  const expected = before(ed), loops = E.outlineLoops(ed, ed.shown).loops, pts = loops[0].pts.length;
+  assert.ok(loops.every((l) => l.pts.length === pts));
+  const iter = Array.prototype[Symbol.iterator]; let steps = 0, result;
+  // As in the P13 counter, inside() destructures two points per polygon step; boxes read coordinates directly.
+  Array.prototype[Symbol.iterator] = function () { if (this.length === 2) steps++; return iter.call(this); };
+  try { result = E.areaPerimeter(ed, ed.shown); } finally { Array.prototype[Symbol.iterator] = iter; }
+  assert.deepEqual(result, expected);
+  assert.deepEqual([result.area, result.perimeter, result.loops, result.holes], [27200, 14400, 300, 100]);
+  const calls = steps / 2 / pts;
+  assert.equal(calls, 300, 'each nested outline is tested only against its larger neighbours');
+  assert.ok(calls < loops.length ** 2 * .05, `${calls} inside tests must be under 5% of loops squared`);
+  console.log(`P11: ${calls} inside tests for ${loops.length} loops (under 5% of loops squared)`);
+  const edges = [
+    [[0, 4], [2, 4], [2, 6], [0, 6]], [[20, 4], [18, 4], [18, 6], [20, 6]],
+    [[4, 0], [6, 0], [6, 2], [4, 2]], [[4, 20], [6, 20], [6, 18], [4, 18]],
+  ];
+  for (const points of edges) {
+    const edge = index([W.rect(0, 0, 20, 20), W.lwpoly(points, { closed: true })]);
+    assert.deepEqual(E.areaPerimeter(edge, edge.shown, 25.4), before(edge, 25.4), 'points on each box edge keep the old containment result');
+  }
+  const open = index([W.line(0, 0, 10, 0)]), empty = index([W.text(0, 0, 1, 'no outline')]);
+  assert.deepEqual(E.areaPerimeter(open, open.shown), before(open));
+  assert.deepEqual(E.areaPerimeter(empty, empty.shown), before(empty));
+});
+
 test('area across a tiny gap: the outline scaled x2 (gaps 0.008 and 0.012 mm) still closes, and says so', () => {
   const { raw } = load('outline.dxf');
   const s = E.scaleAbout(raw, 2, 0, 0), big = { ...raw, entities: s.entities, blocks: s.blocks }, fl = D.flatten(big);
@@ -1196,4 +1281,51 @@ test('gapMarks requires Show; 50 rings are allowed, 51 keeps the count and draws
   assert.deepEqual(E.gapMarks(gaps, true), []);
   assert.deepEqual(E.gapMarks([], true), []);
   assert.equal(gaps.length, 51, 'the count is never truncated');
+});
+
+test('P13 lag counter: areaPerimeter point-in-loop tests on 300 loops stay at today\'s number (upper bound; the fix ticket tightens it)', () => {
+  // inside() is private and reads two points per polygon step by array destructuring: count those on 2-element arrays (no hook in web/).
+  const insideCalls = (rects) => {
+    const doc = W.newDoc(4); W.addEntities(doc, rects);
+    const raw = D.readDxf(W.writeDxf(doc)), ed = E.makeIndex(raw, D.flatten(raw)), ents = new Set(ed.shown);
+    const loops = E.outlineLoops(ed, ents).loops, pts = loops[0].pts.length, iter = Array.prototype[Symbol.iterator];
+    assert.ok(loops.every((l) => l.pts.length === pts), 'every loop has the same vertex count, so steps / pts = calls');
+    let steps = 0, r;
+    Array.prototype[Symbol.iterator] = function () { if (this.length === 2) steps++; return iter.call(this); };
+    try { r = E.areaPerimeter(ed, ents); } finally { Array.prototype[Symbol.iterator] = iter; }
+    return { calls: steps / 2 / pts, r };
+  };
+  const side = (i) => W.rect(-i, -i, 2 * i, 2 * i);
+  assert.equal(insideCalls([side(1), side(2), side(3)]).calls, 3, 'the counter sees the 3 tests (each loop against each bigger one) of three nested loops');
+  const N = 300, bound = N * (N - 1) / 2;
+  const nested = insideCalls(Array.from({ length: N }, (_, k) => side(k + 1)));
+  assert.equal(nested.r.loops, N);
+  let want = 0; for (let k = 1; k <= N; k++) want += (N - k) % 2 ? -4 * k * k : 4 * k * k;      // loop k sits inside the N - k bigger ones: odd = a hole
+  near(nested.r.area, want, 'nested area');
+  assert.ok(nested.calls <= bound, `nested loops: ${nested.calls} inside tests, today's bound ${bound}`);
+  const apart = insideCalls(Array.from({ length: N }, (_, k) => W.rect((k + 1) ** 2, 0, k + 1, k + 1)));      // 300 loops of different sizes side by side
+  assert.equal(apart.r.holes, 0);
+  assert.ok(apart.calls <= bound, `loops side by side: ${apart.calls} inside tests, today's bound ${bound}`);
+  console.log(`P13: inside tests, nested ${nested.calls}, side by side ${apart.calls}, bound ${bound}`);
+});
+
+test('P14a: joining open pieces through the end grid gives the loops the scan of every piece gave', async () => {
+  // The expected numbers were taken from the scanning outlineLoops on 4cff4b3, the same inputs and tolerance 0.01.
+  const { splineDoc } = await import('./tools/gen-big-dxf.mjs');
+  const measure = (doc) => { const raw = D.readDxf(W.writeDxf(doc)), ed = E.makeIndex(raw, D.flatten(raw)); return E.areaPerimeter(ed, new Set(ed.shown), 1, 0.01); };
+  const spline = measure(splineDoc(900));
+  assert.deepEqual([spline.loops, spline.holes, spline.open], [910, 0, 0]);
+  near(spline.area, 34908.6202508142, 'spline area'); near(spline.perimeter, 20471.507313889517, 'spline perimeter');
+  const doc = W.newDoc(4);       // a plate with a round hole, and a triangle of three lines given in a shuffled direction
+  W.addEntities(doc, [W.rect(0, 0, 30, 20), W.circle(10, 10, 2), W.line(40, 0, 50, 0), W.line(40, 0, 50, 10), W.line(50, 10, 50, 0)]);
+  const plate = measure(doc);
+  assert.deepEqual([plate.loops, plate.holes, plate.open, plate.gaps], [3, 1, 0, 0]);
+  near(plate.area, 637.4336692599301, 'plate area'); near(plate.perimeter, 146.7084962695119, 'plate perimeter');
+  // 1505 open pieces: the scan made 5.8 million Math.hypot calls (the lengths cost 1.27 million of them), the grid 1.27 million.
+  const { bigDoc } = await import('./tools/gen-big-dxf.mjs');
+  const raw = D.readDxf(W.writeDxf(bigDoc(3000))), ed = E.makeIndex(raw, D.flatten(raw)), hypot = Math.hypot;
+  let calls = 0;
+  Math.hypot = (...a) => { calls++; return hypot(...a); };
+  try { E.outlineLoops(ed, new Set(ed.shown), 0.01); } finally { Math.hypot = hypot; }
+  assert.ok(calls < 2500000, `joining 1505 open pieces made ${calls} Math.hypot calls, bound 2500000`);
 });

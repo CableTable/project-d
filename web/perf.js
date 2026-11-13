@@ -6,9 +6,21 @@ export const outsideView = (b, pad, vr) => b[2] + pad < vr[0] || b[0] - pad > vr
 /** True when the box, grown by pad, is under half a pixel each way at k pixels per unit. */
 export const subPixel = (b, pad, k) => (b[2] - b[0] + 2 * pad) * k < 0.4 && (b[3] - b[1] + 2 * pad) * k < 0.4;
 
+/** True when a point is under 0.5 device px from the last drawn point; zero disables skipping. */
+export const skipPoint = (dx, dy, pxPerUnit) => pxPerUnit > 0 && Math.hypot(dx, dy) * pxPerUnit < 0.5;
+
+/** Largest singular value of the set transform: bounds device-pixel stretch even under shear. */
+export function maxScale([a, b, c, d]) {
+  const t = a * a + b * b + c * c + d * d, det = a * d - b * c;
+  return Math.sqrt((t + Math.sqrt(Math.max(0, t * t - 4 * det * det))) / 2);
+}
+
 /** A full paint is heavy when it took over 25 ms of script (30 fps) or drew over 15 000 items (the raster cost shows later, not in script time):
  *  then moving the view reuses its bitmap until the view settles. */
 export const heavy = (ms, drawn) => ms > 25 || drawn > 15000;
+
+/** Equal flat base-paint keys keep the same picture. */
+export const sameBase = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
 
 /**
  * Where the bitmap painted at view `a` lands in view `b` ({ ox, oy, scale }: sheet mm at the canvas' top-left, px per mm).

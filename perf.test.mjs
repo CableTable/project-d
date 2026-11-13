@@ -1,9 +1,24 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { outsideView, subPixel, snapPlace, snapUsable, heavy } from './web/perf.js';
+import * as perf from './web/perf.js';
+import { paintDrawing } from './web/render.js';
 import { bigDoc } from './tools/gen-big-dxf.mjs';
 import { writeDxf } from './web/dxf-write.js';
-import { readDxf, flatten } from './web/drawing.js';
+import { readDxf, flatten, mapply } from './web/drawing.js';
+
+test('sameBase: equal arrays, length change, one element change', () => {
+  const doc = {}, a = [doc, 10, 20, 2, 'light', null];
+  assert.equal(perf.sameBase([], []), true);
+  assert.equal(perf.sameBase(a, [...a]), true);
+  assert.equal(perf.sameBase(a, [...a, 1]), false);
+  assert.equal(perf.sameBase([...a, 1], a), false);
+  for (let i = 0; i < a.length; i++) {
+    const b = [...a]; b[i] = i === 0 ? {} : 'changed';
+    assert.equal(perf.sameBase(a, b), false);
+  }
+  assert.equal(perf.sameBase([NaN], [NaN]), false);
+});
 
 test('outsideView is conservative: a box touching or overlapping the view, or reaching it through its pad, is kept', () => {
   const vr = [0, 0, 100, 100];
@@ -20,6 +35,79 @@ test('subPixel only for boxes under half a pixel in both directions', () => {
   assert.equal(subPixel([0, 0, 10, 0.1], 0, 0.3), false);             // a long thin line stays
   assert.equal(subPixel([0, 0, 1, 1], 0.1, 0.3), true);
   assert.equal(subPixel([0, 0, 1, 1], 5, 0.3), false);
+});
+
+test('skipPoint keeps run ends and stays within half a pixel', () => {
+  assert.equal(typeof perf.skipPoint, 'function');
+  for (const [dx, dy, k, want] of [[0, 0, 0, false], [.49, 0, 1, true], [.5, 0, 1, false],
+    [.3, .4, 1, false], [-.3, -.3, 1, true], [.1, 0, 5, false], [.1, 0, 4, true]]) {
+    assert.equal(perf.skipPoint(dx, dy, k), want);
+  }
+  const paint = (ops, { kind = 'p', fill = false, dash, dpx, matrix = [1, 0, 0, 1, 0, 0], scale = 1, dpr = 1, slots, highlight = false, wireframe = false } = {}) => {
+    const calls = [], c = {
+      setTransform(...m) { this.m = m; }, clearRect() {}, beginPath() {}, stroke() {}, fill() {},
+      save() {}, restore() {}, clip() {}, fillRect() {}, setLineDash() {},
+      moveTo(x, y) { calls.push(['M', ...mapply(this.m, x, y)]); },
+      lineTo(x, y) { calls.push(['L', ...mapply(this.m, x, y)]); },
+      arc() { calls.push(['A']); }, closePath() { calls.push(['Z']); }
+    };
+    const it = { k: kind, ops, b: [-50, -50, 50, 50], L: [0], m: 0, css: '#000000', fill, dash, dpx, fam: [] };
+    const fl = { items: highlight ? [] : [it], mats: [matrix], boxes: { model: it.b } };
+    paintDrawing({ getContext: () => c }, { fl, off: new Set(), factor: 1, sheetH: 0, ox: 0, oy: 0,
+      scale, dpr, w: 200, h: 200, slots, hl: highlight ? [it] : [], wireframe });
+    return calls;
+  };
+  const shearOps = Array.from({ length: 11 }, (_, i) => [i ? 1 : 0, i * .1, i * .1]).flat();
+  for (const highlight of [false, true]) {
+    const matrix = [1, .2, 1, .2, 0, 0];
+    const full = paint(shearOps, { matrix, dpx: [6, 4] }), kept = paint(shearOps, { matrix, highlight });
+    let last = kept[0], skipped = 0;
+    for (const p of full.slice(1)) {
+      if (kept.some((q) => q[1] === p[1] && q[2] === p[2])) last = p;
+      else {
+        skipped++;
+        assert.ok(Math.hypot(p[1] - last[1], p[2] - last[2]) < .5, 'every skipped point under shear stays within half a device pixel of the last drawn point');
+      }
+    }
+    assert.ok(skipped > 0, 'sheared paths still skip sub-pixel points');
+  }
+  const tiny = [0, 0, 0, 1, .1, 0, 1, .2, 0];
+  for (const tail of [[], [0, .21, 0, 1, .3, 0, 1, .4, 0], [2, 1, 0, 1, 0, 1, 0, 1, 1.1, 0, 1, 1.2, 0], [3, 1, .1, 0, 1, .2, 0]]) {
+    const full = paint([...tiny, ...tail], { dpx: [6, 4] }), kept = paint([...tiny, ...tail]);
+    assert.deepEqual(kept, full.filter((_, i) => i !== 1 && !(tail[0] === 0 && i === 4)), 'reset at every move; keep ends before moves, arcs, closes and end of ops');
+  }
+  const points = Array.from({ length: 401 }, (_, i) => [i * .025, Math.sin(i * .3) * .12]);
+  points.push([10.01, points.at(-1)[1]]);
+  const ops = points.flatMap((p, i) => [i ? 1 : 0, ...p]);
+  const dist = (p, a, b) => {
+    const dx = b[1] - a[1], dy = b[2] - a[2], len = dx * dx + dy * dy;
+    const t = len ? Math.max(0, Math.min(1, ((p[1] - a[1]) * dx + (p[2] - a[2]) * dy) / len)) : 0;
+    return Math.hypot(p[1] - a[1] - t * dx, p[2] - a[2] - t * dy);
+  };
+  for (const options of [{}, { scale: 8, dpr: 2 }, { matrix: [0, 10, -.1, 0, 0, 0] },
+    { matrix: [.1, 0, 0, 10, 0, 0] }, { slots: [[12, 0, 0, -2, 0, 100]] },
+    { fill: true }, { kind: 'w' }, { kind: 'h' }, { highlight: true },
+    { highlight: true, matrix: [0, 10, -.1, 0, 0, 0] }, { wireframe: true }]) {
+    const full = paint(ops, { ...options, kind: 'p', fill: false, highlight: false, wireframe: false, dpx: [6, 4] });
+    const kept = paint(ops, options);
+    assert.ok(kept.length < full.length, 'all trace callers skip short pieces: ' + JSON.stringify(options));
+    assert.deepEqual(kept[0], full[0]); assert.deepEqual(kept.at(-1), full.at(-1), 'the final point is always drawn');
+    let start = 0;
+    for (let i = 1; i < kept.length; i++) {
+      const end = full.findIndex((p, j) => j > start && p[1] === kept[i][1] && p[2] === kept[i][2]);
+      assert.ok(end > start, 'kept points stay in path order');
+      for (let j = start; j <= end; j++) assert.ok(dist(full[j], kept[i - 1], kept[i]) < .5, 'original line stays within half a device pixel of its chord');
+      for (let t = 0; t <= 1; t += .1) {
+        const p = ['L', kept[i - 1][1] * (1 - t) + kept[i][1] * t, kept[i - 1][2] * (1 - t) + kept[i][2] * t];
+        assert.ok(Math.min(...full.slice(start, end).map((a, j) => dist(p, a, full[start + j + 1]))) < .5, 'drawn chord stays within half a device pixel of the original line');
+      }
+      start = end;
+    }
+  }
+  for (const options of [{ dash: [6, 4] }, { dpx: [6, 4] }]) {
+    assert.equal(paint(ops, options).length, points.length, 'dashed batches keep every point and their dash phase');
+  }
+  assert.equal(paint(ops, { scale: 1000 }).length, points.length, 'zooming in redraws the original pieces');
 });
 
 test('snapPlace: the same view is the identity; a pan shifts; a zoom about a point keeps that point', () => {

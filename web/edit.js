@@ -13,7 +13,7 @@
 //   removeEntities / keepOnly    → { entities, blocks } without (or with only) some entities; unused blocks go too
 //   scaleAbout(raw, s, ax, ay)   → { entities, blocks, skipped } scaled uniformly about (ax, ay)
 //   createHistory()              → undo / redo of { entities, blocks } states
-import { mapply, mscale, pickIndex, pickAt, piecesNear, flatten, ownBlock } from './drawing.js';
+import { mapply, mscale, pickIndex, pickAt, piecesNear, flatten, ownBlock, unionBox } from './drawing.js';
 import { rotateRecord } from './rotate.js';
 import { format as formatLength, parse as parseLength } from './units.js';
 import { spaceOf, itemVisible } from './doc.js';
@@ -91,6 +91,18 @@ export function outlineLoops(ed, ents, tol = 1e-6) {
     if (p.closed || (p.pts.length > 2 && near(p.pts[0], p.pts[p.pts.length - 1]))) { loops.push({ pts: p.pts, ents: p.ents }); p.used = true; }
   }
   const open = pieces.filter((p) => !p.used), gapTol = tol * 10;
+  // The first unused open piece with an end within tol of pt: its ends sit in a grid of tol-sized cells, so only the 9 cells around pt are looked at (the answer of a scan of `open`, in `open` order).
+  const cell = Math.max(tol, 1e-9), cellOf = (v) => Math.floor(v / cell), ends = new Map();
+  open.forEach((q, i) => { for (const p of [q.pts[0], q.pts[q.pts.length - 1]]) { const k = cellOf(p[0]) + ',' + cellOf(p[1]); if (!ends.has(k)) ends.set(k, []); ends.get(k).push(i); } });
+  const nextTo = (pt) => {
+    let best = -1;
+    for (let di = -1; di <= 1; di++) for (let dj = -1; dj <= 1; dj++) for (const i of ends.get((cellOf(pt[0]) + di) + ',' + (cellOf(pt[1]) + dj)) || []) {
+      if (best >= 0 && i >= best) break;
+      const q = open[i];
+      if (!q.used && (near(q.pts[0], pt) || near(q.pts[q.pts.length - 1], pt))) { best = i; break; }
+    }
+    return open[best];
+  };
   let gaps = 0;
   for (const start of open) {                                  // join open pieces end to end until they close
     if (start.used) continue;
@@ -100,14 +112,14 @@ export function outlineLoops(ed, ents, tol = 1e-6) {
     for (;;) {
       if (path.length > 2 && near(path[0], path[path.length - 1])) { closed = true; break; }
       const end = path[path.length - 1];
-      const next = open.find((q) => !q.used && (near(q.pts[0], end) || near(q.pts[q.pts.length - 1], end)));
+      const next = nextTo(end);
       if (!next) break;
       next.used = true; for (const x of next.ents) es.add(x);
       path = path.concat((near(next.pts[0], end) ? next.pts : next.pts.slice().reverse()).slice(1));
     }
     while (!closed) {                                          // stuck: grow it from its other end too
       const head = path[0];
-      const prev = open.find((q) => !q.used && (near(q.pts[0], head) || near(q.pts[q.pts.length - 1], head)));
+      const prev = nextTo(head);
       if (!prev) break;
       prev.used = true; for (const x of prev.ents) es.add(x);
       path = (near(prev.pts[prev.pts.length - 1], head) ? prev.pts : prev.pts.slice().reverse()).slice(0, -1).concat(path);
@@ -141,12 +153,42 @@ export function areaPerimeter(ed, ents, factor = 1, tol = 1e-6) {
     return c;
   };
   const a = loops.map(shoelace);
+  const boxes = loops.map((pts) => {
+    const b = [Infinity, Infinity, -Infinity, -Infinity];
+    for (const p of pts) {
+      b[0] = Math.min(b[0], p[0]); b[1] = Math.min(b[1], p[1]);
+      b[2] = Math.max(b[2], p[0]); b[3] = Math.max(b[3], p[1]);
+    }
+    return b;
+  });
   let area = 0, holes = 0;
   loops.forEach((L, i) => {
-    const depth = loops.reduce((n, M, j) => n + (j !== i && a[j] > a[i] && inside(L[0], M) ? 1 : 0), 0);
+    const px = L[0][0], py = L[0][1], ai = a[i];     // no destructuring: edit.test.mjs counts inside() by the array iterations of 2-element arrays
+    let depth = 0;
+    for (let j = 0; j < loops.length; j++) {            // a plain loop: 6700 loops make 45 million box checks
+      const b = boxes[j];
+      if (a[j] > ai && px >= b[0] && py >= b[1] && px <= b[2] && py <= b[3] && inside(L[0], loops[j])) depth++;
+    }
     if (depth % 2) { area -= a[i]; holes++; } else area += a[i];
   });
   return { area: area * factor * factor, perimeter: len * factor, loops: loops.length, holes, gaps, open };
+}
+
+/** Is this flattened item one the editor lists (an entity's item, in the shown space, layer on, not hidden)? makeIndex and the no-index selection share it. */
+export const itemShown = (it, space, off, hid) => it.e != null && (it.ps ? 1 : 0) === space && itemVisible(it, off) && !(hid && hid.has(it.e));
+
+/** The shown items of the entities in sel, in the order makeIndex's byEnt lists them (sel order, then item order), without building the index. */
+export function itemsOfEntities(fl, sel, off = new Set(), hid = null) {
+  const space = spaceOf(fl), by = new Map();
+  for (const it of fl.items) if (sel.has(it.e) && itemShown(it, space, off, hid)) { if (!by.has(it.e)) by.set(it.e, []); by.get(it.e).push(it); }
+  return [...sel].flatMap((e) => by.get(e) || []);
+}
+
+/** The selection's shown items already carry its bounds; kept dimensions do not size the part. */
+export function resizeItemsBox(raw, items, factor = 1) {
+  let box = null;
+  for (const it of items) if (raw.entities[it.e].layer !== DIM_LAYER) box = unionBox(box, it.b);
+  return box ? box.map((n) => n * factor) : null;
 }
 
 /**
@@ -159,7 +201,7 @@ export function makeIndex(raw, fl, off = new Set(), hid = null) {
   const areas = [], shown = [];
   for (let i = 0; i < items.length; i++) {
     const it = items[i];
-    if (it.e == null || (it.ps ? 1 : 0) !== space || !itemVisible(it, off) || (hid && hid.has(it.e))) continue;
+    if (!itemShown(it, space, off, hid)) continue;
     vis[i] = 1;
     const e = it.e, b = it.b;
     if (!byEnt[e]) { byEnt[e] = []; shown.push(e); box[e * 4] = b[0]; box[e * 4 + 1] = b[1]; box[e * 4 + 2] = b[2]; box[e * 4 + 3] = b[3]; }
