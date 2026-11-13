@@ -41,6 +41,22 @@ test('items of entities without an index match byEnt', () => {
   assert.deepEqual(E.itemsOfEntities(load('sample.dxf').fl, new Set()), []);
 });
 
+test('P3: selection size from shown items matches the index without kept dimensions', () => {
+  const raw = W.newDoc(4);
+  W.addEntities(raw, [W.lwpoly([[20, 20], [120, 20], [120, 80], [20, 80]], { closed: true }),
+    W.circle(200, 100, 10, { layer: 'Hidden' }), W.line(-100, -100, 300, 300, { layer: E.DIM_LAYER })]);
+  const fl = D.flatten(raw), hiddenLayer = fl.layers.findIndex((l) => l.name === 'Hidden');
+  for (const factor of [1, 25.4]) for (const [off, hid] of [[new Set(), null], [new Set([hiddenLayer]), null], [new Set(), new Set([0, 1])]]) {
+    const sel = new Set([2, 1, 0]), ed = E.makeIndex(raw, fl, off, hid);
+    let expected = null;
+    for (const e of sel) if (raw.entities[e].layer !== E.DIM_LAYER && ed.byEnt[e]) expected = D.unionBox(expected, Array.from(ed.box.slice(e * 4, e * 4 + 4), (n) => n * factor));
+    assert.deepEqual(E.resizeItemsBox(raw, E.itemsOfEntities(fl, sel, off, hid), factor), expected);
+  }
+  assert.deepEqual(E.resizeItemsBox(raw, E.itemsOfEntities(fl, new Set([0]))), [20, 20, 120, 80]);
+  assert.equal(E.resizeItemsBox(raw, E.itemsOfEntities(fl, new Set([2]))), null);
+  assert.equal(E.resizeItemsBox(raw, []), null);
+});
+
 test('TODO 68a: snap index filters every type, respects SNAP off and filters unfinished tool ends too', () => {
   const { snapTypes } = SNAP;
   const { raw, fl } = load('outline.dxf'), ed = E.makeIndex(raw, fl);

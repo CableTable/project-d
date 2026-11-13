@@ -13,7 +13,7 @@
 //   removeEntities / keepOnly    → { entities, blocks } without (or with only) some entities; unused blocks go too
 //   scaleAbout(raw, s, ax, ay)   → { entities, blocks, skipped } scaled uniformly about (ax, ay)
 //   createHistory()              → undo / redo of { entities, blocks } states
-import { mapply, mscale, pickIndex, pickAt, piecesNear, flatten, ownBlock } from './drawing.js';
+import { mapply, mscale, pickIndex, pickAt, piecesNear, flatten, ownBlock, unionBox } from './drawing.js';
 import { rotateRecord } from './rotate.js';
 import { format as formatLength, parse as parseLength } from './units.js';
 import { spaceOf, itemVisible } from './doc.js';
@@ -165,6 +165,13 @@ export function itemsOfEntities(fl, sel, off = new Set(), hid = null) {
   const space = spaceOf(fl), by = new Map();
   for (const it of fl.items) if (sel.has(it.e) && itemShown(it, space, off, hid)) { if (!by.has(it.e)) by.set(it.e, []); by.get(it.e).push(it); }
   return [...sel].flatMap((e) => by.get(e) || []);
+}
+
+/** The selection's shown items already carry its bounds; kept dimensions do not size the part. */
+export function resizeItemsBox(raw, items, factor = 1) {
+  let box = null;
+  for (const it of items) if (raw.entities[it.e].layer !== DIM_LAYER) box = unionBox(box, it.b);
+  return box ? box.map((n) => n * factor) : null;
 }
 
 /**

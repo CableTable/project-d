@@ -5736,7 +5736,7 @@ function edIndex(d) { if (!d.ed) d.ed =Ed.makeIndex(d.raw, d.fl, d.off, hidIdx(d
 function hitAt(d, p) { const e = Ed.hitEntity(edIndex(d), p[0], p[1], pickTol(d)); return e >= 0 && lockedEnt(d, e) ? -1 : e; }
 const lockedEnt = (d, e) => (!!d.locked && d.locked.size > 0 && d.locked.has(d.raw.entities[e].layer)) || (!!d.lockedEnts && d.lockedEnts.has(d.raw.entities[e]));      // lockedEnts: a layout's locked objects
 /** Builds the index once the page has painted, so the first click is quick. */
-function warm(d) { requestAnimationFrame(() => setTimeout(() => { if (state.docs.includes(d) && d.fl) { if (!d.ed) { edIndex(d); d.outl = null; } if (curDoc() === d) renderEdit(); } }, 0)); }       // renders even when a hover built the index first: the panel shows … until then
+function warm(d) { requestAnimationFrame(() => setTimeout(() => { if (state.docs.includes(d) && d.fl) { if (!d.ed) { edIndex(d); d.outl = null; } if (curDoc() === d || editable() === d) renderEdit(); } }, 0)); }       // also refresh a Compare source, even when a hover built its index first
 function layersChanged(d) { state.drawingRotate = null; selectionCycle = null; d.ed = null; d.outl = null; d.sel = new Set(); d.stretchSelection = null; d.hl = []; if (cmpDoc()) cmpRefresh(d); warm(d); renderEdit(); }
 
 /** A pointer position → drawing units (y up), and the pick distance (7 px) in them. */
@@ -6214,14 +6214,7 @@ function sizePadlock(id) {
 }
 function resizeBox(d) {
   if (!d.sel.size) return sizeBox(d);
-  const ed = edIndex(d);
-  let box = null;
-  for (const e of d.sel) {
-    if (d.raw.entities[e].layer === Ed.DIM_LAYER || !ed.byEnt[e]) continue;
-    const b = Array.from(ed.box.slice(e * 4, e * 4 + 4), (n) => n * d.factor);
-    box = unionBox(box, b);
-  }
-  return box;
+  return Ed.resizeItemsBox(d.raw, d.hl, d.factor);
 }
 function sizeTyped(input, axis) {
   input.blur();
@@ -11604,7 +11597,7 @@ function renderEdit() {
   ui.canvas.classList.toggle('pick', (on && (state.tool === 'select' || state.tool === 'contour' || state.tool === 'dimension' || !!state.draw || !!L)) || (!!measureTarget() && state.tool === 'measure'));
   if (!on) return;
   renderSelection(d);
-  const n = d.sel.size, b = sizeBox(d), rb = n && !d.ed ? null : resizeBox(d), scalable = !!b;       // a selection's size needs the index: — until warm builds it and renders again
+  const n = d.sel.size, b = sizeBox(d), rb = resizeBox(d), scalable = !!b;
   ui.bgName.textContent = d.bg ? d.bg.name : '';
   ui.bgX.hidden = !d.bg;
   ui.bgTrace.hidden = !d.bg;
