@@ -10284,6 +10284,79 @@ try {
     await c2.close();
   });
 
+  await step('TODO 270 recovery: balloons and the drawing unit come back unsaved, Save writes the balloon file', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    try {
+      const p = await context.newPage(), q = (id) => panelControl(p, p.getByTestId(id));
+      p.on('pageerror', (e) => errors.push(String(e)));
+      const copies = () => p.evaluate(async () => (await import('./recovery.js')).loadCopies());
+      const waitCopy = async (predicate) => {
+        for (let i = 0; i < 60; i++) { const list = await copies(); if (list.length === 1 && predicate(list[0])) return list[0]; await p.waitForTimeout(100); }
+        throw new Error('waiting for the changed recovery copy');
+      };
+      const item = { n: 7, sheet: 1, tip: [20, 20], c: [40, 40], dim: '42', tp: '+0.1', tm: '-0.1', note: 'before' };
+      const balloons = JSON.stringify({ kind: 'project-d-balloons', v: 1, next: 8, items: [item] });
+      const raw = newDoc(4); addEntities(raw, dxfLine(10, 10, 80, 10));
+      await p.goto(URL_ + '?autosave=300'); await q('count').waitFor({ state: 'attached' });
+      await q('picker').setInputFiles([
+        { name: 'recover.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(raw)) },
+        { name: 'recover.pdballoons.json', mimeType: 'application/json', buffer: Buffer.from(balloons) },
+      ]);
+      await q('bal-row').waitFor();
+      await q('drawing-unit').click(); await p.locator('[data-unit="ft-in"]').click();
+      await waitCopy((c) => c.unit === 'ft-in');
+      await q('bal-row').click(); await q('bal-note').fill('last autosave <b>text</b>'); await q('bal-note').press('Enter');
+      const copy = await waitCopy((c) => c.balloons && JSON.parse(c.balloons).items[0].note === 'last autosave <b>text</b>');
+      await p.reload(); await q('recover-dialog').waitFor(); await q('recover-ok').click();
+      await q('recover-dialog').waitFor({ state: 'detached' });
+      await p.waitForFunction(() => document.querySelector('[data-testid=cmd-prompt]').textContent.startsWith('Recovered'));
+      assert.equal(await q('drawing-unit').textContent(), 'ft-in');
+      assert.equal(await p.locator('.dtab.on .dot').count(), 1, 'recovered sidecars are unsaved');
+      assert.deepEqual(await p.locator('[data-testid=balloon] .bal-n').allTextContents(), ['7']);
+      assert.match(await q('bal-row').textContent(), /last autosave <b>text<\/b>/);
+      assert.equal(await q('bal-row').locator('b').count(), 0, 'balloon text stays text');
+      await q('bal-row').click();
+      for (const theme of ['light', 'dark']) {
+        await p.locator('[data-menu=View]').click(); await p.getByRole('menuitemcheckbox', { name: new RegExp('Theme: ' + theme + '\\b') }).click();
+        const path = `${shotDir}/todo270-recovered-${theme}.png`;
+        await p.screenshot({ path }); assert.ok(readFileSync(path).length > 0);
+      }
+      const saveFiles = async () => {
+        await p.evaluate(() => {
+          window.recoveryWrites = [];
+          window.__TAURI__ = {
+            dialog: { save: async () => 'E:/recovery/kept.dxf' },
+            fs: { exists: async () => false, writeTextFile: async (path, text) => { window.recoveryWrites.push({ path, text }); } },
+          };
+        });
+        await p.keyboard.press('Control+s');
+        await p.waitForFunction(() => window.recoveryWrites.length === 3 && !document.querySelector('.dtab.on .dot'));
+        return p.evaluate(() => window.recoveryWrites);
+      };
+      let files = await saveFiles();
+      assert.deepEqual(JSON.parse(files.find((f) => f.path.endsWith('.pdballoons.json')).text).items, JSON.parse(copy.balloons).items);
+      assert.equal(JSON.parse(files.find((f) => f.path.endsWith('.pdunits.json')).text).unit, 'ft-in');
+      assert.equal(readDxf(files.find((f) => f.path.endsWith('.dxf')).text).entities.length, 1);
+      assert.deepEqual(await copies(), [], 'Save removes the recovered copy');
+      // A picture sheet has no entities; only its own balloons return, on sheet 1.
+      await p.evaluate(async (c) => (await import('./recovery.js')).saveCopy(c), {
+        ...copy, id: 'picture-sheet2', name: 'picture.pdf sheet 2', dxf: writeDxf(newDoc()), sheet: 2, unit: 'inch',
+        balloons: JSON.stringify({ kind: 'project-d-balloons', v: 1, next: 10, items: [item, { ...item, n: 9, sheet: 2, note: 'sheet 2' }] }),
+      });
+      await p.reload(); await q('recover-dialog').waitFor(); await q('recover-ok').click(); await q('recover-dialog').waitFor({ state: 'detached' });
+      await p.waitForFunction(() => document.querySelector('[data-testid=cmd-prompt]').textContent.startsWith('Recovered'));
+      assert.match(await q('cmd-prompt').textContent(), /Balloons kept; open the PDF or picture again for the background picture/);
+      assert.equal(await q('drawing-unit').textContent(), 'inch');
+      assert.deepEqual(await p.locator('[data-testid=balloon] .bal-n').allTextContents(), ['9']);
+      files = await saveFiles();
+      const kept = JSON.parse(files.find((f) => f.path.endsWith('.pdballoons.json')).text);
+      assert.deepEqual(kept.items, [{ ...item, n: 9, sheet: 1, note: 'sheet 2' }]);
+      assert.equal(kept.next, 10);
+      assert.equal(JSON.parse(files.find((f) => f.path.endsWith('.pdunits.json')).text).unit, 'inch');
+      assert.equal(readDxf(files.find((f) => f.path.endsWith('.dxf')).text).entities.length, 0);
+    } finally { await context.close(); }
+  });
+
   await step('TODO 176: Recover keeps the tab order', async () => {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
     try {

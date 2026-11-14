@@ -1,6 +1,10 @@
 // recovery.js — the pure parts: the prompt, the time text, and cleaning what comes back from storage.   node recovery.test.mjs
 import assert from 'node:assert/strict';
 import * as R from './web/recovery.js';
+import { readFileSync } from 'node:fs';
+import { runInNewContext } from 'node:vm';
+import * as BAL from './web/balloons.js';
+import * as DU from './web/units.js';
 
 const at = (y, mo, d, h, mi) => new Date(y, mo - 1, d, h, mi).getTime();
 let n = 0;
@@ -25,6 +29,40 @@ test('cleanCopies: only well-formed records, fields in the right types', () => {
   assert.equal(out[0].saved, true); assert.equal(out[1].path, null); assert.equal(out[1].t, 0); assert.equal(out[1].fromPdf, null);
   assert.deepEqual(R.cleanCopies('nonsense'), []);
 });
+
+test('cleanCopies: balloons, unit and sheet pass as text, wrong types become null', () => {
+  const good = { id: 'a', name: 'scan.pdf', kind: 'drawing', dxf: '0\nEOF\n', balloons: BAL.encode(BAL.EMPTY), unit: 'ft-in', sheet: 2 };
+  const [copy, wrong, old] = R.cleanCopies([good, { ...good, balloons: {}, unit: 4, sheet: '2' }, { id: 'old', name: 'old.dxf', kind: 'drawing', dxf: good.dxf }]);
+  assert.deepEqual([copy.balloons, copy.unit, copy.sheet], [good.balloons, 'ft-in', 2]);
+  for (const c of [wrong, old]) assert.deepEqual([c.balloons, c.unit, c.sheet], [null, null, null]);
+  for (const sheet of [0, -1, 1.5, Infinity]) assert.equal(R.cleanCopies([{ ...good, sheet }])[0].sheet, null);
+});
+
+// Exercise the private restore path without loading the UI or adding app exports.
+const source = readFileSync(new URL('./web/app.js', import.meta.url), 'utf8').match(/^async function recoverOne\(c\) \{\r?\n[\s\S]*?^\}/m)?.[0];
+assert.ok(source, 'recoverOne exists');
+let restored;
+const recoverOne = runInNewContext(`${source}\nrecoverOne`, {
+  BAL, DU, TextEncoder, console, state: {},
+  readDrawing: async () => ({ ok: true, doc: { header: {} }, result: {} }),
+  tabFields: () => ({ drawingUnit: 'mm' }),
+  addTab: (doc) => { restored = doc; },
+});
+let set = BAL.add(BAL.EMPTY, { tip: [10, 20], c: [30, 40], sheet: 1 });
+set = BAL.add(set, { tip: [50, 60], c: [70, 80], sheet: 2 });
+set = BAL.update(set, 2, { dim: '42', note: '<b>keep as text</b>' });
+assert.equal(await recoverOne({ id: 'sheet2', kind: 'drawing', name: 'scan sheet 2', dxf: '', sheet: 2, balloons: BAL.encode(set), unit: 'inch' }), true);
+assert.deepEqual(JSON.parse(JSON.stringify(restored.balloons.items)), [{ ...set.items[1], id: 2, sheet: 1 }]);
+assert.equal(restored.balloons.next, set.next);
+assert.equal(restored.balSaved, undefined, 'Save must write the restored balloons');
+assert.equal(restored.drawingUnit, 'inch'); assert.equal(restored.unitsDirty, true); assert.equal(restored.dirty, true);
+n++; console.log('ok recovery: only the copy sheet comes back as sheet 1, with unsaved balloons');
+assert.equal(await recoverOne({ id: 'unit', kind: 'drawing', name: 'unit.dxf', dxf: '', unit: 'ft-in' }), true);
+assert.equal(restored.drawingUnit, 'ft-in'); assert.equal(restored.unitsDirty, true); assert.equal(restored.balloons, undefined);
+n++; console.log('ok unit comes back when the drawing has a unit and no balloons');
+assert.equal(await recoverOne({ id: 'bad', kind: 'drawing', name: 'bad.dxf', dxf: '', unit: 'bogus', balloons: '{}' }), true);
+assert.equal(restored.drawingUnit, 'mm'); assert.equal(restored.unitsDirty, undefined); assert.equal(restored.balloons, undefined);
+n++; console.log('ok recovery: invalid balloon text and unknown units do not replace defaults');
 
 // Keep the storage boundary small; the table exercises loadCopies' real sort.
 let stored = [];
