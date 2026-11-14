@@ -3350,20 +3350,21 @@ async function autosaveNow() {
       if (!PS.hasChanges(d)) { await Promise.all(PS.pageStates(d).map(dropCopy)); continue; }
       for (const n of d.pdf ? PS.sheetNumbers(d.pdf) : [null]) {
         const page = PS.pageState(d, n);
-        if (!page || (!page.raw && !page.lay)) continue;
+        if (!page || (!page.raw && !page.lay && !balOf(d).items.some((it) => it.sheet === (n ?? 1)))) continue;
         if (!page.dirty) { await dropCopy(page); continue; }
         // Shared with the kept page so an in-flight copy still belongs to it after switching sheets.
         const r = page.recovery || (page.recovery = { rid: uid() + (n == null ? '' : `-sheet${n}`) });
         const raw = page.raw, titleBlock = d.titleBlock, tab = state.docs.indexOf(d);
-        if (!page.lay && r.autoTab === tab && r.autoEnts === raw.entities && r.autoBlocks === raw.blocks && r.autoLayers === raw.layers && r.autoTitle === titleBlock) continue;        // a drawing's state is replaced at every change: same one, same tab index, same copy
+        const balloons = d.balloons ? BAL.encode(balOf(d), { source: d.balName || d.name, pages: d.pdf ? d.pdf.pages : 1 }) : null, unit = d.drawingUnit || null;
+        if (!page.lay && r.autoTab === tab && r.autoEnts === raw?.entities && r.autoBlocks === raw?.blocks && r.autoLayers === raw?.layers && r.autoGroups === raw?.groups && r.autoLtypes === raw?.ltypes && r.autoHeader === raw?.header && r.autoTitle === titleBlock && r.autoBalloons === balloons && r.autoUnit === unit) continue;        // a drawing's state is replaced at every change: same one, same tab index, same copy
         let dxf;
-        try { dxf = writeDxf(rawForSave({ ...page, titleBlock }), { escapeUnicode: true, extents: page.lay || !page.fl ? null : page.fl.boxes.model }); } catch (e) { console.warn('Autosave: could not write', page.name, e); continue; }
-        if (page.lay && r.hasCopy && r.autoTab === tab && r.autoDxf === dxf) continue;                    // a layout: the same text and tab index as the last copy
+        try { dxf = writeDxf(rawForSave({ ...page, raw: raw || newDoc(), titleBlock }), { escapeUnicode: true, extents: page.lay || !page.fl ? null : page.fl.boxes.model }); } catch (e) { console.warn('Autosave: could not write', page.name, e); continue; }
+        if (page.lay && r.hasCopy && r.autoTab === tab && r.autoDxf === dxf && r.autoBalloons === balloons && r.autoUnit === unit) continue;                    // a layout: the same text, balloons, unit and tab index as the last copy
         const name = n == null ? page.name : `${d.pdf.name} sheet ${n}`;
         await RC.saveCopy({ id: r.rid, name, path: page.path || null, kind: page.lay ? 'layout' : 'drawing', dxf, t: Date.now(),
-          tab, sheet: n, saved: !!page.saved, fromFile: !!d.fromFile, fromPdf: d.fromPdf || null, acceptedLoss: !!page.acceptedLoss });
-        r.hasCopy = true; r.autoTab = tab; if (page.lay) r.autoDxf = dxf;
-        if (!page.lay) { r.autoEnts = raw.entities; r.autoBlocks = raw.blocks; r.autoLayers = raw.layers; r.autoTitle = titleBlock; }
+          tab, sheet: n, balloons, unit, saved: !!page.saved, fromFile: !!d.fromFile, fromPdf: d.fromPdf || null, acceptedLoss: !!page.acceptedLoss });
+        r.hasCopy = true; r.autoTab = tab; r.autoBalloons = balloons; r.autoUnit = unit; if (page.lay) r.autoDxf = dxf;
+        if (!page.lay) { r.autoEnts = raw?.entities; r.autoBlocks = raw?.blocks; r.autoLayers = raw?.layers; r.autoGroups = raw?.groups; r.autoLtypes = raw?.ltypes; r.autoHeader = raw?.header; r.autoTitle = titleBlock; }
         if (!state.docs.includes(d) || !PS.pageState(d, n)?.dirty || (d.pdf && !PS.sheetNumbers(d.pdf).includes(n))) await dropCopy({ recovery: r }); // closed, saved or deleted while writing
       }
     }
@@ -3398,6 +3399,11 @@ async function recoverOne(c) {
     const doc = lay ? { name: c.name, path: c.path, openPath, dirty: true, lay, titleBlock: readTitleBlock(r.doc), fromFile: c.fromFile, saved: c.saved }
       : { name: c.name, path: c.path, openPath, dirty: true, saved: c.saved, fromPdf: c.fromPdf || undefined, acceptedLoss: c.acceptedLoss, ...tabFields(r.doc, r.result) };
     if (lay) lay.name = c.name;
+    if (c.balloons) {
+      const b = BAL.decode(c.balloons);
+      if (!b.error) doc.balloons = { ...b.set, items: b.set.items.filter((it) => it.sheet === (c.sheet ?? 1)).map((it) => ({ ...it, sheet: 1 })) };
+    }
+    if (DU.UNITS.includes(c.unit)) { doc.drawingUnit = c.unit; doc.unitsDirty = true; }
     doc.recovery = { rid: c.id, hasCopy: true };                              // the copy stays until the tab is saved or closed
     state.panel = 'main';
     addTab(doc);
@@ -3417,9 +3423,13 @@ async function offerRecovery() {
   const choice = await askRecover(RC.recoverPrompt(copies), copies);
   if (choice === 'discard') { try { await RC.clearCopies(); } catch { /* ignore */ } note('Discarded the recovery copies'); return; }
   if (choice !== 'recover') return;
-  let n = 0;
-  for (const c of copies) if (await recoverOne(c)) n++;
-  note(n === copies.length ? `Recovered ${n} unsaved ${n === 1 ? 'drawing' : 'drawings'}. Save them to keep the changes` : `Recovered ${n} of ${copies.length}: the rest could not be read`);
+  let n = 0, picture = false;
+  for (const c of copies) if (await recoverOne(c)) {
+    n++;
+    const d = curDoc();
+    if (!d.lay && balOf(d).items.length && !d.raw.entities.length) picture = true;
+  }
+  note((n === copies.length ? `Recovered ${n} unsaved ${n === 1 ? 'drawing' : 'drawings'}. Save them to keep the changes` : `Recovered ${n} of ${copies.length}: the rest could not be read`) + (picture ? '. Balloons kept; open the PDF or picture again for the background picture' : ''));
 }
 
 /** Browser fallback: the file goes to the Downloads folder. */
