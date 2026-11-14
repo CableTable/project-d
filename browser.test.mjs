@@ -12316,6 +12316,8 @@ try {
   const gripCount = () => page.locator('[data-testid=grip], [data-testid=grip-hot]').count();
   const gripWhen = async (n) => { await page.waitForFunction((k) => document.querySelectorAll('[data-testid=grip], [data-testid=grip-hot]').length === k, n, { timeout: 8000 }).catch(async () => { throw new Error(`waiting for ${n} grips, there are ${await gripCount()}; prompt: ${await prompt()}; hist: ${await t("cmd-hist").textContent()}`); }); };
   const frames = () => page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));       // the overlay repaints on the next frame
+  // an overlay node is rebuilt on each repaint: a box read in that gap is null (CI shard 2, slow runner), so read it once the node is laid out
+  const boxOf = async (loc) => { for (let i = 0; i < 100; i++) { const b = await loc.boundingBox(); if (b) return b; await frames(); } throw new Error(`no box for ${loc} after 100 frames`); };
   const hoverPreview = async (x, y) => {
     await page.evaluate(() => { if (document.activeElement?.closest('.cbar')) document.activeElement.blur(); });
     await t('cmd-bar').waitFor({ state: 'hidden' });
@@ -17095,7 +17097,7 @@ try {
     await pic(50, 50); await pic(90, 80);
     assert.deepEqual(await balNums(), ['1']);
     await page.locator('[data-tool=select]').click();
-    const bb = await page.locator('[data-testid=balloon] .bal-c').first().boundingBox(); await page.mouse.click(bb.x + bb.width / 2, bb.y + bb.height / 2);
+    const bb = await boxOf(page.locator('[data-testid=balloon] .bal-c').first()); await page.mouse.click(bb.x + bb.width / 2, bb.y + bb.height / 2);
     assert.equal(await t('bal-pick').getAttribute('aria-disabled'), 'true');
     await t('bal-pick').click({ force: true }); assert.match(await prompt(), /this page has no text \(it is a picture\)/); assert.equal(await t('bal-dim').inputValue(), '');
     await t('bal-dim').fill('42'); await t('bal-dim').press('Enter');
@@ -19120,7 +19122,7 @@ try {
       await page.mouse.move(cursor.x, cursor.y); await frames();
       assert.equal(await t('mod-preview').count(), 1);
       await page.keyboard.type('1'); await frames();
-      const box = await t('cmd-bar').boundingBox(), preview = await t('mod-preview').boundingBox(), canvas = await t('canvas').boundingBox();
+      const box = await boxOf(t('cmd-bar')), preview = await boxOf(t('mod-preview')), canvas = await boxOf(t('canvas'));
       const old = placeBar({ x: cursor.x - canvas.x, y: cursor.y - canvas.y }, { w: box.width, h: box.height }, { w: canvas.width, h: canvas.height });
       assert.ok(overlap({ ...box, x: canvas.x + old.x, y: canvas.y + old.y }, preview) > 0, 'fixture would be covered by the old placement');
       assert.equal(overlap(box, preview), 0, 'command box leaves the Extend preview clear');
