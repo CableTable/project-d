@@ -10479,6 +10479,17 @@ try {
         assert.deepEqual(await radii(), scenario === 'second' ? [] : [5]);
         assert.deepEqual(await p.locator('[data-testid=balloon] .bal-n').allTextContents(), scenario === 'second' ? [] : ['1']);
         assert.ok((await exported()).entities.some((e) => e.type !== 'CIRCLE'), 'fresh vector page remains');
+        if (scenario === 'both') {
+          // A pick on the recovered sheet 1 must hit its own circle, not a line of the fresh page the pick index was built for.
+          const total = (await exported()).entities.length;
+          await p.locator('[data-tool=select]').click();
+          const b = await p.locator('rect.sheet').boundingBox(), scale = b.width / Number(await p.locator('[data-key=sheetW]').inputValue());
+          await p.mouse.click(b.x + 60 * scale, b.y + b.height - 65 * scale);
+          await p.keyboard.press('Delete');
+          assert.deepEqual(await radii(), [], 'Delete after a pick removes the recovered circle');
+          assert.equal((await exported()).entities.length, total - 1, 'and nothing else');
+          await p.keyboard.press('Control+z'); assert.deepEqual(await radii(), [5]);
+        }
         await sheet(2); assert.deepEqual(await radii(), [8]);
         assert.deepEqual(await p.locator('[data-testid=balloon] .bal-n').allTextContents(), [scenario === 'second' ? '1' : '2']);
         assert.equal(await q('drawing-unit').textContent(), 'inch');

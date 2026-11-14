@@ -3412,7 +3412,7 @@ async function recoverOne(c, target = null) {
     if (target) {
       doc.name = c.path ? c.path.split(/[\\/]/).pop() : baseName(target.pdf.name) + '.dxf';
       doc.hist = Ed.createHistory();
-      if ((c.sheet ?? 1) === target.pdf.page) Object.assign(target, PS.pageFields(doc), { titleBlock: doc.titleBlock });
+      if ((c.sheet ?? 1) === target.pdf.page) { Object.assign(target, PS.pageFields(doc), { titleBlock: doc.titleBlock }); dropPageCaches(target); }
       else { const states = target.pdf.states || (target.pdf.states = new Map()); states.set(c.sheet ?? 1, PS.pageFields(doc)); }
       if (doc.balloons) target.balloons = PS.restoreBalloons(balOf(target), doc.balloons, c.sheet ?? 1);
       if (DU.UNITS.includes(c.unit)) { target.drawingUnit = c.unit; target.unitsDirty = true; }
@@ -6939,6 +6939,10 @@ async function balExport(excel) {
 }
 
 // -- sheets: visited drawings and their Undo stay in the tab; unvisited pages are read from the PDF --
+/** A tab's shown page changed under it: forget the selection and every cache built from the old page (pick index, outlines, grips). */
+function dropPageCaches(d) {
+  d.sel = new Set(); d.stretchSelection = null; d.hl = []; d.ed = d.outl = d.hidC = d.txtMemo = d.gripCache = d.cAn = d.cRes = d.gaps = d.duplicates = d.txoSel = d.lastPick = d.newLayer = null;
+}
 async function balSheet(d, n) {
   const P = d.pdf;
   if (!P || P.busy || n === P.page || !PS.sheetNumbers(P).includes(n)) return false;
@@ -6958,7 +6962,7 @@ async function balSheet(d, n) {
     if (P.picture) d.bg?.bitmap?.close();
     Object.assign(d, PS.pageFields(next));
     if (d.unitsDirty) d.dirty = true;
-    d.sel = new Set(); d.stretchSelection = null; d.hl = []; d.ed = d.outl = d.hidC = d.txtMemo = d.gripCache = d.cAn = d.cRes = d.gaps = d.duplicates = d.txoSel = d.lastPick = d.newLayer = null;
+    dropPageCaches(d);
     P.page = n;
   } catch (err) { note(`Sheet ${n}: could not read this page (${err && err.message ? err.message : err})`); return false; }
   finally { P.busy = false; }
