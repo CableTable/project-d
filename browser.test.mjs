@@ -10357,6 +10357,148 @@ try {
     } finally { await context.close(); }
   });
 
+  for (const [scenario, label] of [
+    ['both', 'both edited sheets and balloons return in one PDF tab; first Save protects the source'],
+    ['second', 'only sheet 2 has a copy; sheet 1 stays fresh'],
+    ['missing', 'deleted source recovers drawing tabs with a not found note'],
+    ['changed', 'a one-page replacement recovers drawing tabs with a changed note'],
+    ['names', 'same PDF names in different folders stay separate and keep tab order'],
+    ['unreadable', 'unreadable source recovers drawing tabs with a could not be read note'],
+    ['invalid', 'non-PDF source recovers drawing tabs with a could not be read note'],
+  ]) await step(`TODO 271 recovery: ${label}`, async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    try {
+      const p = await context.newPage(), q = (id) => panelControl(p, p.getByTestId(id));
+      p.on('pageerror', (e) => errors.push(String(e)));
+      const pages = [new Page(120, 90), new Page(120, 90)];
+      for (const page of pages) { page.rect(10, 10, 80, 50); page.stroke(); }
+      await p.addInitScript(({ pdf, single, scenario }) => {
+        const changed = () => sessionStorage.getItem('recover-source');
+        window.pdfReads = []; window.pdfWrites = []; window.pdfSaves = [];
+        window.pdfPath = 'E:/one/same.pdf';
+        window.__TAURI__ = {
+          dialog: {
+            open: async () => window.pdfPath,
+            save: async (opts) => { if (window.pdfProbe) return 'E:/probe.dxf'; window.pdfSaves.push(opts.defaultPath); return 'E:/saved-sheet.dxf'; },
+          },
+          fs: {
+            readFile: async (path) => {
+              window.pdfReads.push(path);
+              if (changed() && ['missing', 'unreadable'].includes(scenario)) throw new Error('read failed');
+              return new Uint8Array(changed() && scenario === 'changed' ? single : changed() && scenario === 'invalid' ? [1, 2, 3] : pdf);
+            },
+            exists: async (path) => path.endsWith('.pdf') && !(changed() && scenario === 'missing'),
+            readTextFile: async () => { throw new Error('no sidecar'); },
+            writeTextFile: async (path, text) => { if (window.pdfProbe) window.pdfProbeText = text; else window.pdfWrites.push({ path, text }); },
+          },
+        };
+      }, { pdf: Array.from(writePdf(pages)), single: Array.from(writePdf([pages[0]])), scenario });
+      const copies = () => p.evaluate(async () => (await import('./recovery.js')).loadCopies());
+      const waitCopies = async (n, ready = () => true) => {
+        for (let i = 0; i < 60; i++) { const list = await copies(); if (list.length === n && list.every(ready)) return list; await p.waitForTimeout(100); }
+        throw new Error(`waiting for ${n} PDF recovery copies`);
+      };
+      const cmd = async (word) => {
+        if (!await q('cmd-input').isVisible()) await q('cmd-echo').click();
+        await q('cmd-input').fill(word); await q('cmd-input').press('Enter');
+      };
+      const circle = async (radius) => {
+        await p.keyboard.press('Escape'); await p.keyboard.press('Escape');
+        for (const word of ['c', '60,60', String(radius)]) await cmd(word);
+        await p.keyboard.press('Escape'); await p.keyboard.press('Escape');
+      };
+      const sheet = async (n) => {
+        await p.locator(`[data-sheet="${n}"]`).click();
+        await p.waitForFunction((n) => document.querySelector('[data-testid=sheet-chip]').textContent === `Sheet ${n} / 2`, n);
+      };
+      const balloon = async () => {
+        await p.locator('[data-tool=balloon]').click();
+        const b = await p.locator('rect.sheet').boundingBox();
+        const scale = b.width / Number(await p.locator('[data-key=sheetW]').inputValue());
+        await p.mouse.click(b.x + 30 * scale, b.y + b.height - 30 * scale);
+        await p.mouse.click(b.x + 45 * scale, b.y + b.height - 45 * scale);
+        await p.locator('[data-tool=select]').click();
+      };
+      const exported = async () => {
+        await p.evaluate(() => { window.pdfProbe = true; window.pdfProbeText = null; });
+        await p.locator('[data-menu=File]').click(); await p.getByRole('menuitem', { name: /^Export DXF/ }).click();
+        await q('export-dxf-go').click(); await p.waitForFunction(() => window.pdfProbeText !== null);
+        const text = await p.evaluate(() => { window.pdfProbe = false; return window.pdfProbeText; });
+        return readDxf(text);
+      };
+      const radii = async () => (await exported()).entities.filter((e) => e.type === 'CIRCLE').map((e) => Number(e.r.v[e.r.c.indexOf(40)]));
+      await p.goto(URL_ + '?autosave=300'); await q('open').click(); await q('bal-sheets').waitFor();
+      if (scenario !== 'second') { await circle(5); await balloon(); await waitCopies(1); }
+      await sheet(2); await circle(8); await balloon();
+      await q('drawing-unit').click(); await p.locator('[data-unit="inch"]').click();
+      const kept = await waitCopies(scenario === 'second' ? 1 : 2, (c) => c.unit === 'inch' && JSON.parse(c.balloons).items.length === (scenario === 'second' ? 1 : 2));
+      for (const c of kept) { assert.equal(c.openPath, 'E:/one/same.pdf'); assert.equal(c.pdfPages, 2); }
+      if (scenario === 'names') {
+        // A drawing between the PDF tabs also keeps its position after sheets merge.
+        await q('picker').setInputFiles({ name: 'middle.dxf', mimeType: 'application/dxf', buffer: readFileSync('fixtures/outline.dxf') });
+        await q('gap-join').click(); await waitCopies(3);
+        await p.evaluate(() => { window.pdfPath = 'E:/two/same.pdf'; });
+        await q('open').click(); await q('bal-sheets').waitFor(); await circle(12); await waitCopies(4);
+      }
+      await p.evaluate(() => sessionStorage.setItem('recover-source', 'yes'));
+      await p.reload(); await q('recover-dialog').waitFor();
+      if (scenario === 'both') {
+        await p.keyboard.press('Escape'); await q('recover-dialog').waitFor({ state: 'detached' });
+        assert.equal((await copies()).length, 2, 'Esc keeps the copies for next launch');
+        await p.reload(); await q('recover-dialog').waitFor();
+      }
+      await q('recover-ok').click();
+      await p.waitForFunction(() => document.querySelector('[data-testid=cmd-prompt]').textContent.startsWith('Recovered'));
+      const fallback = ['missing', 'changed', 'unreadable', 'invalid'].includes(scenario);
+      if (fallback) {
+        const reason = scenario === 'missing' ? 'not found' : scenario === 'changed' ? 'changed' : 'could not be read';
+        assert.match(await q('cmd-prompt').textContent(), new RegExp(`source PDF ${reason}: recovered as a drawing`));
+        assert.equal(await p.locator('.dtab .dot').count(), 2);
+        for (const n of [1, 2]) {
+          await p.locator('.dtab', { hasText: `same.pdf sheet ${n}` }).click();
+          assert.equal(await q('bal-sheets').isVisible(), false);
+          assert.deepEqual(await radii(), [n === 1 ? 5 : 8]);
+          assert.deepEqual(await p.locator('[data-testid=balloon] .bal-n').allTextContents(), [String(n)]);
+        }
+        assert.equal(await q('drawing-unit').textContent(), 'inch');
+      } else {
+        assert.equal(await p.locator('.dtab .dot').count(), scenario === 'names' ? 3 : 1);
+        if (scenario === 'names') {
+          assert.deepEqual(await p.locator('.tabs .dtab:not([aria-label]) .tname').allTextContents(), ['same.dxf', 'middle.dxf', 'same.dxf']);
+          assert.deepEqual(await p.evaluate(() => window.pdfReads), ['E:/one/same.pdf', 'E:/two/same.pdf']);
+          assert.deepEqual(await radii(), [12]);
+          await p.locator('.tabs .dtab:not([aria-label])').first().click();
+        }
+        await q('bal-sheets').waitFor();
+        await sheet(1);
+        assert.deepEqual(await radii(), scenario === 'second' ? [] : [5]);
+        assert.deepEqual(await p.locator('[data-testid=balloon] .bal-n').allTextContents(), scenario === 'second' ? [] : ['1']);
+        assert.ok((await exported()).entities.some((e) => e.type !== 'CIRCLE'), 'fresh vector page remains');
+        await sheet(2); assert.deepEqual(await radii(), [8]);
+        assert.deepEqual(await p.locator('[data-testid=balloon] .bal-n').allTextContents(), [scenario === 'second' ? '1' : '2']);
+        assert.equal(await q('drawing-unit').textContent(), 'inch');
+        if (scenario === 'both') {
+          await circle(9); assert.deepEqual(await radii(), [8, 228.6]);
+          await p.keyboard.press('Control+z'); assert.deepEqual(await radii(), [8], 'Undo after recovery keeps the restored edit');
+          for (const theme of ['light', 'dark']) {
+            await p.locator('[data-menu=View]').click(); await p.getByRole('menuitemcheckbox', { name: new RegExp('Theme: ' + theme + '\\b') }).click();
+            const path = `${shotDir}/todo271-recovered-${theme}.png`;
+            await p.screenshot({ path }); assert.ok(readFileSync(path).length > 0);
+          }
+          await p.keyboard.press('Control+s');
+          await p.waitForFunction(() => window.pdfWrites.some((w) => w.path === 'E:/saved-sheet.dxf'));
+          const written = await p.evaluate(() => window.pdfWrites);
+          assert.deepEqual(await p.evaluate(() => window.pdfSaves), ['E:/one/same-sheet2.dxf'], 'PDF recovery keeps the PDF first-Save guard');
+          assert.equal(written.some((w) => w.path === 'E:/one/same.pdf'), false, 'first Save never overwrites the source PDF');
+          assert.deepEqual(written.map((w) => w.path).filter((path) => path.endsWith('.dxf')), ['E:/saved-sheet.dxf']);
+          assert.equal(readDxf(written.find((w) => w.path.endsWith('.dxf')).text).entities.filter((e) => e.type === 'CIRCLE').length, 1);
+          assert.deepEqual(JSON.parse(written.find((w) => w.path.endsWith('.pdballoons.json')).text).items.map((it) => [it.n, it.sheet]), [[1, 1], [2, 2]]);
+          await waitCopies(1);
+        }
+      }
+    } finally { await context.close(); }
+  });
+
   await step('TODO 176: Recover keeps the tab order', async () => {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
     try {

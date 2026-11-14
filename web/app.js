@@ -1170,12 +1170,15 @@ async function openBytes(name, buf, path = null) {
 
 
 /** A PDF as a drawing: its vector lines and arcs, its text; page 1, in mm. No vector lines: offer the page as a background picture instead. */
-async function openPdf(name, buf, path = null) {
+async function openPdf(name, buf, path = null, copies = null) {
   note('Reading ' + name + '…');
   const bytes = buf instanceof ArrayBuffer ? buf : buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
   let r;
-  try { r = await readPdf(new Uint8Array(bytes.slice(0))); } catch (err) { note(name + ': could not read this PDF (' + (err && err.message ? err.message : err) + ')'); return; }
+  try { r = await readPdf(new Uint8Array(bytes.slice(0))); } catch (err) { if (copies) throw err; note(name + ': could not read this PDF (' + (err && err.message ? err.message : err) + ')'); return; }
+  // shortcut: changed content with the same page count is not detected, compare source fingerprints if that check is needed.
+  if (copies && copies.some((c) => (c.pdfPages != null && c.pdfPages !== r.pages) || (c.sheet ?? 1) > r.pages)) throw new Error('source PDF changed');
   if (!r.paths) {
+    if (copies) throw new Error('source PDF has no vector lines');
     const yes = await confirmAsk(name + ' has no vector lines, only a picture (or text). Use it as a background picture instead?', 'Use as background');
     if (yes) await importBackgroundPdf(name, bytes, true, path);
     else note(name + ': no vector lines to open');
@@ -1187,6 +1190,7 @@ async function openPdf(name, buf, path = null) {
   addTab(doc);
   note(`Opened ${name} as a drawing (page ${r.page} of ${r.pages}): ${raw.entities.length} entities, ${r.texts} texts, ${fmtSize(r.mm[0])} × ${fmtSize(r.mm[1])} mm. Not saved yet: Save writes ${base}${PS.sheetNumbers(doc.pdf).length > 1 ? `-sheet${r.page}` : ''}.dxf` + (fl.truncated ? '. Too big to show all of it' : ''));
   await balLoad(doc, path, name);
+  return doc;
 }
 /** Asks a yes / no question (the native dialog in the app, confirm() in a browser). */
 async function confirmAsk(text, okLabel, kind = 'info', cancelLabel = 'No') {
@@ -3361,7 +3365,7 @@ async function autosaveNow() {
         try { dxf = writeDxf(rawForSave({ ...page, raw: raw || newDoc(), titleBlock }), { escapeUnicode: true, extents: page.lay || !page.fl ? null : page.fl.boxes.model }); } catch (e) { console.warn('Autosave: could not write', page.name, e); continue; }
         if (page.lay && r.hasCopy && r.autoTab === tab && r.autoDxf === dxf && r.autoBalloons === balloons && r.autoUnit === unit) continue;                    // a layout: the same text, balloons, unit and tab index as the last copy
         const name = n == null ? page.name : `${d.pdf.name} sheet ${n}`;
-        await RC.saveCopy({ id: r.rid, name, path: page.path || null, kind: page.lay ? 'layout' : 'drawing', dxf, t: Date.now(),
+        await RC.saveCopy({ id: r.rid, name, path: page.path || null, openPath: d.openPath || null, pdfPages: d.pdf?.pages || null, kind: page.lay ? 'layout' : 'drawing', dxf, t: Date.now(),
           tab, sheet: n, balloons, unit, saved: !!page.saved, fromFile: !!d.fromFile, fromPdf: d.fromPdf || null, acceptedLoss: !!page.acceptedLoss });
         r.hasCopy = true; r.autoTab = tab; r.autoBalloons = balloons; r.autoUnit = unit; if (page.lay) r.autoDxf = dxf;
         if (!page.lay) { r.autoEnts = raw?.entities; r.autoBlocks = raw?.blocks; r.autoLayers = raw?.layers; r.autoGroups = raw?.groups; r.autoLtypes = raw?.ltypes; r.autoHeader = raw?.header; r.autoTitle = titleBlock; }
@@ -3390,21 +3394,30 @@ function askRecover(text, copies) {
   });
 }
 /** One copy back as a tab marked unsaved, with its old name and path (so Save works as before). */
-async function recoverOne(c) {
+async function recoverOne(c, target = null) {
   try {
     const r = await readDrawing(new TextEncoder().encode(c.dxf).buffer);
     if (!r.ok) return false;
     const lay = c.kind === 'layout' ? LD.layoutFromRaw(r.doc, c.name) : null;
-    const openPath = c.saved ? null : c.path;                                  // not saved yet: its path is still the opened file's
+    const openPath = c.openPath || (c.saved ? null : c.path);                  // old copies only kept the opened file's path before Save
     const doc = lay ? { name: c.name, path: c.path, openPath, dirty: true, lay, titleBlock: readTitleBlock(r.doc), fromFile: c.fromFile, saved: c.saved }
       : { name: c.name, path: c.path, openPath, dirty: true, saved: c.saved, fromPdf: c.fromPdf || undefined, acceptedLoss: c.acceptedLoss, ...tabFields(r.doc, r.result) };
     if (lay) lay.name = c.name;
     if (c.balloons) {
       const b = BAL.decode(c.balloons);
-      if (!b.error) doc.balloons = { ...b.set, items: b.set.items.filter((it) => it.sheet === (c.sheet ?? 1)).map((it) => ({ ...it, sheet: 1 })) };
+      if (!b.error) doc.balloons = { ...b.set, items: b.set.items.filter((it) => it.sheet === (c.sheet ?? 1)).map((it) => ({ ...it, sheet: target ? (c.sheet ?? 1) : 1 })) };
     }
     if (DU.UNITS.includes(c.unit)) { doc.drawingUnit = c.unit; doc.unitsDirty = true; }
     doc.recovery = { rid: c.id, hasCopy: true };                              // the copy stays until the tab is saved or closed
+    if (target) {
+      doc.name = c.path ? c.path.split(/[\\/]/).pop() : baseName(target.pdf.name) + '.dxf';
+      doc.hist = Ed.createHistory();
+      if ((c.sheet ?? 1) === target.pdf.page) Object.assign(target, PS.pageFields(doc), { titleBlock: doc.titleBlock });
+      else { const states = target.pdf.states || (target.pdf.states = new Map()); states.set(c.sheet ?? 1, PS.pageFields(doc)); }
+      if (doc.balloons) target.balloons = PS.restoreBalloons(balOf(target), doc.balloons, c.sheet ?? 1);
+      if (DU.UNITS.includes(c.unit)) { target.drawingUnit = c.unit; target.unitsDirty = true; }
+      return true;
+    }
     state.panel = 'main';
     addTab(doc);
     return true;
@@ -3424,12 +3437,34 @@ async function offerRecovery() {
   if (choice === 'discard') { try { await RC.clearCopies(); } catch { /* ignore */ } note('Discarded the recovery copies'); return; }
   if (choice !== 'recover') return;
   let n = 0, picture = false;
-  for (const c of copies) if (await recoverOne(c)) {
-    n++;
-    const d = curDoc();
-    if (!d.lay && balOf(d).items.length && !d.raw.entities.length) picture = true;
+  const pdfs = new Map(), reasons = new Set();
+  for (const c of copies) {
+    if (c.fromPdf && c.openPath) {
+      const key = pathKey(c.openPath);
+      if (!pdfs.has(key)) {
+        const group = copies.filter((it) => it.fromPdf && it.openPath && pathKey(it.openPath) === key);
+        let doc = null;
+        try {
+          const t = window.__TAURI__;
+          doc = await openPdf(c.fromPdf, await t.fs.readFile(c.openPath), c.openPath, group);
+        } catch (err) {
+          let missing = false;
+          try { missing = await window.__TAURI__?.fs?.exists?.(c.openPath) === false; } catch { /* an existence check can also be denied */ }
+          reasons.add(`source PDF ${missing ? 'not found' : err.message === 'source PDF changed' ? 'changed' : 'could not be read'}: recovered as a drawing`);
+        }
+        pdfs.set(key, doc);
+      }
+      const doc = pdfs.get(key);
+      if (doc) { if (await recoverOne(c, doc)) n++; continue; }
+    }
+    if (await recoverOne(c)) {
+      n++;
+      const d = curDoc();
+      if (!d.lay && balOf(d).items.length && !d.raw.entities.length) picture = true;
+    }
   }
-  note((n === copies.length ? `Recovered ${n} unsaved ${n === 1 ? 'drawing' : 'drawings'}. Save them to keep the changes` : `Recovered ${n} of ${copies.length}: the rest could not be read`) + (picture ? '. Balloons kept; open the PDF or picture again for the background picture' : ''));
+  showDoc();
+  note((n === copies.length ? `Recovered ${n} unsaved ${n === 1 ? 'drawing' : 'drawings'}. Save them to keep the changes` : `Recovered ${n} of ${copies.length}: the rest could not be read`) + (picture ? '. Balloons kept; open the PDF or picture again for the background picture' : '') + [...reasons].map((reason) => '. ' + reason).join(''));
 }
 
 /** Browser fallback: the file goes to the Downloads folder. */
