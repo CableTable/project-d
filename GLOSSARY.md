@@ -183,6 +183,8 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Recovery**: Offers local copies of unsaved tabs after an interrupted run, with copies removed after a successful save or clean close. Where: `DECISIONS.md`, Autosave and recovery and Recovery after a clean close. Avoid: A backup of original files.
 
+**Recovery copy**: An autosave record of a changed tab or PDF sheet: its drawing, groups, line types, header, balloons and drawing unit. Recover brings back that sheet's balloons as sheet 1, unsaved; a background picture is not kept. Where: `web/recovery.js`, `DECISIONS.md`, Autosave and recovery. Avoid: A backup of the source picture or PDF.
+
 **Remove duplicates**: Removes repeated or overlapping geometry on the same layer, plane and drawing space while keeping uncovered portions. Where: `DECISIONS.md`, Duplicate / overlapping geometry. Avoid: Removing overlapping parts from a nest.
 
 **Save**: Writes DXF while protecting the opened source path, so the first save of an opened file asks for an edited copy's name. Where: `DECISIONS.md`, Save: the opened file. Avoid: Overwriting the imported original.
