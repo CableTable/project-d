@@ -10461,6 +10461,11 @@ try {
           assert.deepEqual(await p.locator('[data-testid=balloon] .bal-n').allTextContents(), [String(n)]);
         }
         assert.equal(await q('drawing-unit').textContent(), 'inch');
+        // The fallback tabs do not hold the PDF: once it reads again, opening it makes a new PDF tab.
+        await p.evaluate(() => sessionStorage.removeItem('recover-source'));
+        await q('open').click(); await q('bal-sheets').waitFor();
+        assert.equal(await p.locator('.tabs .dtab:not([aria-label])').count(), 3, 'the PDF opened as a third tab');
+        assert.doesNotMatch(await q('cmd-prompt').textContent(), /already open/);
       } else {
         assert.equal(await p.locator('.dtab .dot').count(), scenario === 'names' ? 3 : 1);
         if (scenario === 'names') {

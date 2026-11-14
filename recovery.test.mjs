@@ -75,8 +75,8 @@ assert.equal(restored.drawingUnit, 'mm'); assert.equal(restored.unitsDirty, unde
 n++; console.log('ok recovery: invalid balloon text and unknown units do not replace defaults');
 
 assert.equal(await recoverOne({ id: 'saved', kind: 'drawing', name: 'saved.dxf', dxf: '', path: 'E:/saved.dxf', saved: true, openPath: 'E:/source.pdf', fromPdf: 'source.pdf' }), true);
-assert.equal(restored.openPath, 'E:/source.pdf'); assert.equal(restored.path, 'E:/saved.dxf'); assert.equal(restored.fromPdf, 'source.pdf');
-n++; console.log('ok TODO 271: saved copies keep their PDF source path and Save state');
+assert.equal(restored.openPath, null); assert.equal(restored.path, 'E:/saved.dxf'); assert.equal(restored.fromPdf, 'source.pdf');
+n++; console.log('ok TODO 271: a fallback drawing tab does not keep the PDF path, so the PDF can be opened');
 const target = { pdf: { name: 'source.pdf', page: 1, pages: 2 }, fromPdf: 'source.pdf', balloons: BAL.add(BAL.EMPTY, { tip: [1, 2], c: [3, 4], sheet: 1 }) };
 assert.equal(await recoverOne({ id: 'sheet2', kind: 'drawing', name: 'source.pdf sheet 2', dxf: '', sheet: 2, balloons: BAL.encode(set), unit: 'inch' }, target), true);
 assert.deepEqual(target.balloons.items.map((it) => it.sheet), [1, 2]);

@@ -3399,7 +3399,7 @@ async function recoverOne(c, target = null) {
     const r = await readDrawing(new TextEncoder().encode(c.dxf).buffer);
     if (!r.ok) return false;
     const lay = c.kind === 'layout' ? LD.layoutFromRaw(r.doc, c.name) : null;
-    const openPath = c.openPath || (c.saved ? null : c.path);                  // old copies only kept the opened file's path before Save
+    const openPath = (target ? c.openPath : null) || (c.saved ? null : c.path); // a fallback drawing tab must not claim the PDF (openBytes would call it "already open")
     const doc = lay ? { name: c.name, path: c.path, openPath, dirty: true, lay, titleBlock: readTitleBlock(r.doc), fromFile: c.fromFile, saved: c.saved }
       : { name: c.name, path: c.path, openPath, dirty: true, saved: c.saved, fromPdf: c.fromPdf || undefined, acceptedLoss: c.acceptedLoss, ...tabFields(r.doc, r.result) };
     if (lay) lay.name = c.name;
