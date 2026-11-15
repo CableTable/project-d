@@ -133,14 +133,14 @@ export function stepRepeat(o) {
     gridW = cols ? xs[cols - 1] + pw - x0 : 0; gridH = rows ? ys[rows - 1] + ph - y0 : 0;
   }
   const occupied = [...(o.occupied || []), ...placed.map((p) => p.box)];
-  const positions = [];
+  const positions = [], cells = [];                                    // cells[i] = [row, column] of positions[i] in the grid (true numbering, skipped cells leave gaps)
   let skipped = 0, dropped = 0, taken = 0;
   for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
     const x = xs[c], y = ys[r];
     if (anchor && (x < area.x - 1e-9 || y < area.y - 1e-9 || x + pw > area.x + area.w + 1e-9 || y + ph > area.y + area.h + 1e-9)) { dropped++; continue; }
     if (matching.some(({ box: b }) => Math.abs(x - b[0]) < 1e-9 && Math.abs(y - b[1]) < 1e-9)) { taken++; continue; }
     if (occupied.some((b) => x < b[2] - 1e-9 && x + pw > b[0] + 1e-9 && y < b[3] - 1e-9 && y + ph > b[1] + 1e-9)) { skipped++; continue; }
-    positions.push({ x, y });
+    positions.push({ x, y }); cells.push([r, c]);
   }
   const count = positions.length;
   const colGaps = xs.slice(0, -1).map((x, i) => ({ after: i + 1, at: x + pw, size: xs[i + 1] - x - pw }));
@@ -152,7 +152,7 @@ export function stepRepeat(o) {
   const sheetArea = o.sheetW * o.sheetH;
   const usedPct = sheetArea > 0 ? (count * partW * partH) / sheetArea * 100 : 0;
   const fits = count > 0 && (!!anchor || (gridW <= area.w + 1e-9 && gridH <= area.h + 1e-9));
-  return { cols, rows, baseCols: base.cols, baseRows: base.rows, count, skipped, dropped, taken, rotated, partW: pw, partH: ph, x0, y0, gridW, gridH, usedPct, area, positions, colGaps, rowGaps, manual, fits };
+  return { cols, rows, baseCols: base.cols, baseRows: base.rows, count, skipped, dropped, taken, rotated, partW: pw, partH: ph, x0, y0, gridW, gridH, usedPct, area, positions, cells, colGaps, rowGaps, manual, fits };
 }
 
 /**

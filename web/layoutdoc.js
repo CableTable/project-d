@@ -17,7 +17,7 @@ import { writeDxf, text as dxfText, addBlock, addEntities, newDoc, insert } from
 import { explodeInsert, explodeDimension, explodeSelection } from './explode.js';
 import { unitFactor, startHidden } from './doc.js';
 import { stepRepeat, markGeometry, MAX_LINE } from './layout.js';
-import { buildLayoutDoc, gridPlacements, placedBox, partFromDrawing, placement1, GRID_KEYS } from './apply.js';
+import { buildLayoutDoc, gridPlacements, placedBox, partFromDrawing, placement1, GRID_KEYS, gridSig } from './apply.js';
 import { keepOnly, newLayerName, DIM_LAYER, DIM_BLOCK, dimTag, freeNameWithPrefix } from './edit.js';
 import { followDimensions } from './linked-dimensions.js';
 import { isDimPart, dimName, isSettled, bakeBlock, turnedTag, freeBlockName } from './layoutdim.js';
@@ -552,7 +552,8 @@ function cleanGrids(grids, lay) {
     if (!G || typeof G !== 'object' || typeof G.gridPart !== 'string' || !lay.parts[G.gridPart] || !Array.isArray(G.slots)) continue;
     const s = cleanSettings(G), n = (v) => Number.isFinite(+v) && v !== null && v !== '';
     out[gid] = { ...Object.fromEntries(GRID_KEYS.map((k) => [k, s[k]])), extraRows: s.extraRows, extraCols: s.extraCols,
-      slots: G.slots.filter((q) => q && n(q.x) && n(q.y) && n(q.rot) && Number.isInteger(q.r) && Number.isInteger(q.c)).map((q) => ({ x: +q.x, y: +q.y, rot: +q.rot, r: q.r, c: q.c })) };
+      slots: G.slots.filter((q) => q && Number.isInteger(q.r) && Number.isInteger(q.c)).map((q) => (n(q.x) && n(q.y) && n(q.rot) ? { x: +q.x, y: +q.y, rot: +q.rot, r: q.r, c: q.c } : { r: q.r, c: q.c })) };       // a slot without a position is an empty one
+    if (G.sig) out[gid].sig = gridSig(lay, out[gid]);       // as applied: the cleaned settings are what Update compares with
   }
   return out;
 }

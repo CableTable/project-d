@@ -5,7 +5,7 @@
 // and y is up. layout.js works from the top-left with y down, so every y here is sheetH - y.
 import { spaceOf } from './doc.js';
 import { baseName } from './savepath.js';
-import { markGeometry, stepRepeat } from './layout.js';
+import { markGeometry, stepRepeat, usableArea } from './layout.js';
 import { newDoc, addLayer, addBlock, addEntities, insert, rect, roundRect, line, circle } from './dxf-write.js';
 
 export const LAYERS = { parts: 'Parts', sheet: 'Sheet', marks: 'Marks' };
@@ -84,60 +84,81 @@ export function gridLayout(lay, G) {
 
 const same = (a, b) => Math.abs(a - b) < 1e-6;
 const turn = (r) => ((r || 0) % 360 + 360) % 360;
-/** Ranks of the distinct values of `vals`: a function value → its place in the ascending list (equal within 1e-6). */
-function ranks(vals) {
-  const u = [];
-  for (const v of [...vals].sort((a, b) => a - b)) if (!u.length || !same(u[u.length - 1], v)) u.push(v);
-  return (v) => u.findIndex((q) => same(q, v));
-}
+/** What decides where an applied grid's copies sit: its settings (GRID_KEYS, extra gaps) and the sheet's usable area. Equal to G.sig = nothing to lay again. */
+export const gridSig = (lay, G) => JSON.stringify([...GRID_KEYS.map((k) => G[k]), G.extraRows, G.extraCols, usableArea(lay.s)]);
 
 /**
- * Records an applied grid and adds its copies to lay.placed, each with `gid`. copies: placements in the grid's order; L: the live
- * grid (stepRepeat result) they came from; s: the layout settings at that moment (lay.s).
+ * Records an applied grid and adds its copies to lay.placed, each with `gid`. copies: placements in the grid's order (L.positions);
+ * L: the live grid (stepRepeat result) they came from; s: the layout settings at that moment (lay.s).
+ * slots: one per cell of the grid, numbered by its true row (from the top) and column (from the left); a cell the live grid skipped
+ * (a part in the way, taken by an existing copy) is an empty slot { r, c }, which Update grid never fills.
  */
 export function bakeGrid(lay, gid, copies, L, s = lay.s) {
-  const col = ranks(copies.map((p) => p.x)), row = ranks(copies.map((p) => -p.y));       // y is up: the top row has the largest y
+  const slots = copies.map((p, i) => ({ x: p.x, y: p.y, rot: p.rot, r: L.cells[i][0], c: L.cells[i][1] })), have = new Set(slots.map((q) => q.r * 1000 + q.c));
+  for (let r = 0; r < L.rows; r++) for (let c = 0; c < L.cols; c++) if (!have.has(r * 1000 + c)) slots.push({ r, c });
   lay.grids = lay.grids || {};
-  lay.grids[gid] = {
+  const G = lay.grids[gid] = {
     ...Object.fromEntries(GRID_KEYS.map((k) => [k, s[k]])), rows: L.rows, cols: L.cols,
-    extraRows: s.extraRows.map((e) => ({ ...e })), extraCols: s.extraCols.map((e) => ({ ...e })),
-    slots: copies.map((p) => ({ x: p.x, y: p.y, rot: p.rot, r: row(-p.y), c: col(p.x) })),
+    extraRows: s.extraRows.map((e) => ({ ...e })), extraCols: s.extraCols.map((e) => ({ ...e })), slots,
   };
+  G.sig = gridSig(lay, G);
   for (const p of copies) lay.placed.push({ ...p, gid });
+}
+
+const plain = (p) => !p.mirrorX && !p.mirrorY && !(p.sc && p.sc !== 1) && !p.lock;       // a copy not turned into something else by hand
+const posKey = (o) => Math.round(o.x * 1e5) + ',' + Math.round(o.y * 1e5) + ',' + turn(o.rot);
+const slotMaps = new WeakMap();      // slots array → { position key → slot index }; relayGrid replaces G.slots, so a new array has a new map
+function slotAt(G) {
+  let m = slotMaps.get(G.slots);
+  if (!m) { m = new Map(); G.slots.forEach((s, k) => { if (s.x != null && !m.has(posKey(s))) m.set(posKey(s), k); }); slotMaps.set(G.slots, m); }
+  return m;
 }
 
 /** The index in its grid's slots of the slot a placement still sits on (not moved, turned, mirrored or scaled; the first one there owns it), or -1. */
 export function slotOf(lay, p) {
   const G = p && p.gid && lay.grids && lay.grids[p.gid];
-  if (!G || p.mirrorX || p.mirrorY || (p.sc && p.sc !== 1) || p.lock) return -1;
-  const at = (q) => G.slots.findIndex((s) => same(s.x, q.x) && same(s.y, q.y) && turn(s.rot) === turn(q.rot));
-  const k = at(p);
-  return k >= 0 && lay.placed.find((q) => q.gid === p.gid && at(q) === k && !q.mirrorX && !q.mirrorY && !(q.sc && q.sc !== 1) && !q.lock) === p ? k : -1;
+  if (!G || !plain(p)) return -1;
+  const k = slotAt(G).get(posKey(p));
+  if (k == null) return -1;
+  for (const q of lay.placed) {
+    if (q === p) return k;
+    if (q.gid === p.gid && plain(q) && same(q.x, p.x) && same(q.y, p.y) && turn(q.rot) === turn(p.rot)) return -1;       // an earlier copy owns the slot
+  }
+  return -1;
 }
 
 /**
- * Lays an applied grid again from its settings (lay.grids[gid]): the copies still on their slots move to the new slot with the same
- * row and column, slots the grid did not have before get a new copy, copies past the new rows / columns go, a slot that was empty stays empty,
+ * Lays an applied grid again from its settings (lay.grids[gid]). Nothing changed since it was applied (or last laid) = nothing moves.
+ * Otherwise the copies still on their slots move to the new slot with the same row and column, a cell the grid did not have before gets
+ * a new copy (unless another placed part is in the way), copies past the new rows / columns go, a slot that was empty stays empty,
  * and a copy that left its slot (moved, turned, locked) stays where it is. The placement objects are changed in place.
  * → { moved, added, dropped } or null when nothing fits (then nothing is changed).
  */
 export function relayGrid(lay, gid) {
   const G = lay.grids && lay.grids[gid], L = G && gridLayout(lay, G);
   if (!L || !L.count) return null;
-  const spots = gridPlacements(L, lay.s.sheetH, G.gridPart).map((p, i) => ({ ...p, r: Math.floor(i / L.cols), c: i % L.cols }));
-  const key = (o) => o.r + ',' + o.c, was = new Set(G.slots.map(key)), alive = new Map();
-  for (const p of lay.placed) { const k = slotOf(lay, p); if (k >= 0) alive.set(key(G.slots[k]), p); }
-  const out = { moved: 0, added: 0, dropped: 0 };
-  const fresh = [];
-  for (const sp of spots) {
-    const p = alive.get(key(sp));
-    if (p) { Object.assign(p, { partId: G.gridPart, x: sp.x, y: sp.y, rot: sp.rot }); alive.delete(key(sp)); out.moved++; }
-    else if (!was.has(key(sp))) { fresh.push({ ...placement1(G.gridPart, sp.x, sp.y, sp.rot), gid }); out.added++; }
-  }
+  const out = { moved: 0, added: 0, dropped: 0 }, sig = gridSig(lay, G);
+  if (G.sig === sig) return out;
+  const at = slotAt(G), alive = new Map();                       // slot index → the copy on it (the first one there)
+  for (const p of lay.placed) if (p.gid === gid && plain(p)) { const k = at.get(posKey(p)); if (k != null && !alive.has(k)) alive.set(k, p); }
+  const mine = new Set(alive.values()), H = lay.s.sheetH, pw = L.partW, ph = L.partH;
+  const others = lay.placed.filter((p) => !mine.has(p) && lay.parts[p.partId] && !lay.parts[p.partId].obj).map((p) => {
+    const [x0, y0, x1, y1] = placedBox(lay.parts[p.partId], p);
+    return [x0, H - y1, x1, H - y0];
+  });                                                            // sheet mm, y down, as stepRepeat's
+  const blocked = (x, y) => others.some((b) => x < b[2] - 1e-9 && x + pw > b[0] + 1e-9 && y < b[3] - 1e-9 && y + ph > b[1] + 1e-9);
+  const old = new Map(G.slots.map((s, k) => [s.r * 1000 + s.c, k])), spots = gridPlacements(L, H, G.gridPart), slots = [], fresh = [];
+  spots.forEach((sp, i) => {
+    const [r, c] = L.cells[i], k = old.get(r * 1000 + c), p = k != null && alive.get(k), slot = { x: sp.x, y: sp.y, rot: sp.rot, r, c };
+    if (p) { Object.assign(p, { partId: G.gridPart, x: sp.x, y: sp.y, rot: sp.rot }); alive.delete(k); out.moved++; slots.push(slot); }
+    else if (k != null) slots.push(G.slots[k].x == null ? { r, c } : slot);     // a slot that was empty stays empty; a copy gone from its slot is not put back
+    else if (blocked(L.positions[i].x, L.positions[i].y)) slots.push({ r, c });
+    else { fresh.push({ ...placement1(G.gridPart, sp.x, sp.y, sp.rot), gid }); out.added++; slots.push(slot); }
+  });
   const gone = new Set(alive.values());
   out.dropped = gone.size;
   lay.placed = lay.placed.filter((p) => !gone.has(p)).concat(fresh);
-  G.slots = spots.map(({ x, y, rot, r, c }) => ({ x, y, rot, r, c }));
+  G.slots = slots; G.sig = sig;
   return out;
 }
 
