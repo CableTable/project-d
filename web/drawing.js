@@ -398,7 +398,7 @@ function splineOf(r) {
     }
     const f = firsts(r);
     const p = nurbs(cp, knots, num(f[71], 3), w, fit);
-    splinePoints.set(r, hit = { pts: p, fit: p === fit });
+    splinePoints.set(r, hit = { pts: p, fit: p === fit, refine: nurbsOk(cp, knots, num(f[71], 3)) });
   }
   return hit;
 }
@@ -503,7 +503,7 @@ export function flatten(doc, hidden = new Set()) {
           const full = t1 - t0 > TAU - 1e-6;
           const quads = [];                                                // the 4 axis ends (inside a partial ellipse's sweep): quadrant snaps, as before it was flattened
           for (let k = Math.ceil((t0 - 1e-9) / (TAU / 4)); k * TAU / 4 <= (full ? t1 - 1e-6 : t1 + 1e-9); k++) { const t = k * TAU / 4; quads.push([cx + mx * Math.cos(t) + nx * Math.sin(t), cy + my * Math.cos(t) + ny * Math.sin(t)]); }
-          path(lineOps(full ? pts.slice(0, -1) : pts, full), { ell: [cx, cy, quads, mx, my, nx, ny, t0, t1] });
+          path(lineOps(full ? pts.slice(0, -1) : pts, full), { ell: [cx, cy, quads, mx, my, nx, ny, t0, t1], params: full ? ts.slice(0, -1) : ts });
           break;
         }
         case 'LWPOLYLINE': lwpoly(e, f, base, path, put); break;
@@ -513,7 +513,7 @@ export function flatten(doc, hidden = new Set()) {
           let pts = hit.pts;
           const closed = closedOutline(e);
           if (closed && hit.fit && pts.length > 2 && Math.hypot(pts[0][0] - pts.at(-1)[0], pts[0][1] - pts.at(-1)[1]) < 1e-9) pts = pts.slice(0, -1);   // fit points that repeat the first one (a copy: the cached array stays whole)
-          if (pts.length > 1) path(lineOps(pts, closed), { spl: 1 });
+          if (pts.length > 1) path(lineOps(pts, closed), { spl: 1, refine: hit.refine });
           break;
         }
         case 'TEXT': text(base, f, false, put); break;
@@ -868,11 +868,36 @@ function mleader(e, base, put, arrowSize) {
 const similar = (m) => Math.abs(m[0] * m[0] + m[1] * m[1] - m[2] * m[2] - m[3] * m[3]) < 1e-9 * (m[0] * m[0] + m[1] * m[1] + 1e-30)
   && Math.abs(m[0] * m[2] + m[1] * m[3]) < 1e-9 * (m[0] * m[0] + m[1] * m[1] + 1e-30);
 
+/** Turning points in either axis, refined by a parabola through three parameterised samples. */
+function curveExtremes(points, closed, refine, period) {
+  points = points.filter((p, i) => !i || Math.hypot(p[0] - points[i - 1][0], p[1] - points[i - 1][1]) > 1e-12);
+  if (closed && points.length > 1 && Math.hypot(points[0][0] - points.at(-1)[0], points[0][1] - points.at(-1)[1]) < 1e-9) points.pop();
+  const out = [], n = points.length;
+  for (let i = closed ? 0 : 1; i < n - (closed ? 0 : 1); i++) {
+    const a = points[(i + n - 1) % n], b = points[i], c = points[(i + 1) % n];
+    if (n < 3) break;
+    const l = b[2] - a[2] + (i === 0 ? period : 0), r = c[2] - b[2] + (i === n - 1 ? period : 0);
+    for (let axis = 0; axis < 2; axis++) {
+      const left = b[axis] - a[axis], right = c[axis] - b[axis];
+      if (left * right > 0 || (!left && !right)) continue;
+      let q = b;
+      if (refine) {
+        const A = [0, 1].map((k) => ((c[k] - b[k]) / r - (b[k] - a[k]) / l) / (l + r));
+        const B = [0, 1].map((k) => (l * (c[k] - b[k]) / r + r * (b[k] - a[k]) / l) / (l + r));
+        const t = -B[axis] / (2 * A[axis]);
+        if (Number.isFinite(t) && t >= -l && t <= r) q = [0, 1].map((k) => b[k] + B[k] * t + A[k] * t * t);
+      }
+      if (!out.some((p) => Math.hypot(p[0] - q[0], p[1] - q[1]) < 1e-6)) out.push(q);
+    }
+  }
+  return out;
+}
+
 /**
  * The pickable pieces of one space (the model, or the sheet): straight pieces, arcs, and snap points (ends,
  * middles, centres, points), in the drawing's own coordinates, on a grid for quick lookups.
  */
-export function pickIndex(fl, paper, visible = () => true) {
+export function pickIndex(fl, paper, visible = () => true, extremeFrame = IDENT) {
   const pieces = [], snaps = [];
   for (const { p: [x, y], start, end } of fl.insertions || []) {
     for (let it = start; it < end; it++) if (!!fl.items[it].ps === !!paper && visible(it)) {
@@ -893,6 +918,12 @@ export function pickIndex(fl, paper, visible = () => true) {
     }
     const curve = !!(it.ell || it.spl), s0 = snaps.length;                 // an ellipse or spline is flattened: the joints of its pieces are no ends or middles (only its own ends are), Nearest finds the curve
     let cur = null, first = null, justMoved = false, closed = false;
+    const curvePoints = [], extremes = [];
+    const turning = (points, closed, refine = true, params = null, period = null) => {
+      const [a, b, c, d] = extremeFrame, det = a * d - b * c;
+      period ??= points.length - (closed && Math.hypot(points[0][0] - points.at(-1)[0], points[0][1] - points.at(-1)[1]) < 1e-9 ? 1 : 0);
+      for (const [x, y] of curveExtremes(points.map(([x, y], i) => [a * x + c * y, b * x + d * y, params ? params[i] : i]), closed, refine, period)) extremes.push([(d * x - c * y) / det, (a * y - b * x) / det]);
+    };
     const seg = (a, b) => {
       if (Math.hypot(b[0] - a[0], b[1] - a[1]) < 1e-12) return;
       pieces.push({ t: 's', it: idx, x1: a[0], y1: a[1], x2: b[0], y2: b[1], curve });
@@ -900,8 +931,8 @@ export function pickIndex(fl, paper, visible = () => true) {
     };
     for (let i = 0; i < ops.length; justMoved = ops[i] === 0, i += ops[i] === 2 ? 7 : ops[i] === 9 ? 1 : 3) {
       const op = ops[i];
-      if (op === 0) { cur = first = mapply(m, ops[i + 1], ops[i + 2]); snaps.push({ x: cur[0], y: cur[1], kind: 'end', it: idx }); }
-      else if (op === 1) { const p = mapply(m, ops[i + 1], ops[i + 2]); if (cur) seg(cur, p); cur = p; if (!curve) snaps.push({ x: p[0], y: p[1], kind: 'end', it: idx }); }
+      if (op === 0) { cur = first = mapply(m, ops[i + 1], ops[i + 2]); if (curve) curvePoints.push(cur); snaps.push({ x: cur[0], y: cur[1], kind: 'end', it: idx }); }
+      else if (op === 1) { const p = mapply(m, ops[i + 1], ops[i + 2]); if (cur) seg(cur, p); cur = p; if (curve) curvePoints.push(p); else snaps.push({ x: p[0], y: p[1], kind: 'end', it: idx }); }
       else if (op === 2) {
         const [cx, cy, r, a0, a1, cw] = ops.slice(i + 1, i + 7);
         const [s, sw] = arcSweep(a0, a1, cw), full = sw > TAU - 1e-6;
@@ -917,13 +948,18 @@ export function pickIndex(fl, paper, visible = () => true) {
           for (let j = 0; j < 4; j++) {
             const t = j * TAU / 4, rel = ((t - ws) % TAU + TAU) % TAU;
             if (full || rel <= sw + 1e-9 || rel >= TAU - 1e-9) snaps.push({ x: c[0] + R * Math.cos(t), y: c[1] + R * Math.sin(t), kind: 'quadrant', it: idx });
+            const et = Math.atan2(extremeFrame[2], extremeFrame[0]) + t, erel = ((et - ws) % TAU + TAU) % TAU;
+            if (full || erel <= sw + 1e-9 || erel >= TAU - 1e-9) extremes.push([c[0] + R * Math.cos(et), c[1] + R * Math.sin(et)]);
           }
           snaps.push({ x: c[0], y: c[1], kind: 'centre', it: idx });
           if (!full) { snaps.push({ x: pm[0], y: pm[1], kind: 'mid', it: idx }); snaps.push({ x: ps[0], y: ps[1], kind: 'end', it: idx }, { x: pe[0], y: pe[1], kind: 'end', it: idx }); }
         } else {                                                     // stretched by its block: an ellipse, in pieces
           const steps = Math.max(8, Math.ceil(48 * sw / TAU));
           let p = mapply(m, cx + r * Math.cos(s), cy + r * Math.sin(s));
-          for (let j = 1; j <= steps; j++) { const t = s + sw * j / steps, q = mapply(m, cx + r * Math.cos(t), cy + r * Math.sin(t)); pieces.push({ t: 's', it: idx, x1: p[0], y1: p[1], x2: q[0], y2: q[1], curve: true }); p = q; }
+          const points = [p];
+          for (let j = 1; j <= steps; j++) { const t = s + sw * j / steps, q = mapply(m, cx + r * Math.cos(t), cy + r * Math.sin(t)); pieces.push({ t: 's', it: idx, x1: p[0], y1: p[1], x2: q[0], y2: q[1], curve: true }); points.push(q); p = q; }
+          turning(points, full);
+          if (!full) snaps.push({ x: ps[0], y: ps[1], kind: 'end', it: idx }, { x: pe[0], y: pe[1], kind: 'end', it: idx });
           for (let j = Math.ceil((s - 1e-9) / (TAU / 4)); j * TAU / 4 <= s + sw + 1e-9; j++) {
             const t = j * TAU / 4, q = mapply(m, cx + r * Math.cos(t), cy + r * Math.sin(t));
             snaps.push({ x: q[0], y: q[1], kind: 'quadrant', it: idx });
@@ -938,6 +974,9 @@ export function pickIndex(fl, paper, visible = () => true) {
       const c = mapply(m, it.ell[0], it.ell[1]); snaps.push({ x: c[0], y: c[1], kind: 'centre', it: idx });
       for (const q of it.ell[2]) { const p = mapply(m, q[0], q[1]); snaps.push({ x: p[0], y: p[1], kind: 'quadrant', it: idx }); }
     }
+    if (curve) turning(curvePoints, closed, !it.spl || it.refine, it.params, it.ell ? TAU : undefined);
+    const endpoints = snaps.slice(s0).filter((p) => p.kind === 'end' || p.kind === 'quadrant');
+    for (const [x, y] of extremes) if (!endpoints.some((p) => Math.hypot(p.x - x, p.y - y) < 1e-6)) snaps.push({ x, y, kind: 'extreme', it: idx });
   });
   // the grid
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;

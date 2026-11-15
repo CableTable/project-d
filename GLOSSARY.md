@@ -319,7 +319,7 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 **Snap preview**: The chip beside SNAP that shows the nearest ticked snap marker and its type name while hovering in Select mode, with SNAP on and no drag. Off by default and remembered on this PC; clicks and selection stay unchanged. Where: `DECISIONS.md`, TODO 212.
 **Nearest snap**: The lowest-priority snap: the closest point on a line, arc, circle, ellipse, polyline or spline under the pointer, drawn as an hourglass; ends, middles and centres win when they are in reach. Where: `DECISIONS.md`, Nearest snap. Avoid: On-line snap.
 
-**Snap types**: The tick list beside SNAP, also opened by `OSNAP` / `OS`: end, middle, centre (AutoCAD Center), geometric centre, point (AutoCAD Node), quadrant, intersection, extension, insertion, perpendicular, tangent, nearest, apparent intersection and parallel. All default on; ticks are remembered on this PC, outside drawing files. Where: `TODO.md`, items 68 and 155k; `web/snap.js`.
+**Snap types**: The tick list beside SNAP, also opened by `OSNAP` / `OS`: end, middle, centre (AutoCAD Center), geometric centre, point (AutoCAD Node), quadrant, extreme, intersection, extension, insertion, perpendicular, tangent, nearest, apparent intersection and parallel. Extreme defaults off; all others default on. Ticks are remembered on this PC, outside drawing files. Where: `TODO.md`, items 68, 155k and 264; `web/snap.js`.
 
 **Snap candidate**: One enabled snap point of the object under the pointer. During a point pick, Tab moves the marker and label through these candidates and a click accepts the displayed point. Typed cursor fields keep Tab for field switching. Where: `web/edit.js`, `web/app.js`; `DECISIONS.md`, TODO 155k as built.
 

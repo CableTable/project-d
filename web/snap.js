@@ -1,10 +1,10 @@
 // Snap types use the same keys as the drawing index and marker names.
-export const SNAP_NAME = { end: 'end', mid: 'middle', centre: 'centre', geometric: 'geometric centre', node: 'point', quadrant: 'quadrant', intersection: 'intersection', extension: 'extension', insertion: 'insertion', perpendicular: 'perpendicular', tangent: 'tangent', near: 'nearest', apparent: 'apparent intersection', parallel: 'parallel' };
-export const DEFAULT_TYPES = Object.freeze(Object.fromEntries(Object.keys(SNAP_NAME).map((k) => [k, true])));
+export const SNAP_NAME = { end: 'end', mid: 'middle', centre: 'centre', geometric: 'geometric centre', node: 'point', quadrant: 'quadrant', extreme: 'extreme', intersection: 'intersection', extension: 'extension', insertion: 'insertion', perpendicular: 'perpendicular', tangent: 'tangent', near: 'nearest', apparent: 'apparent intersection', parallel: 'parallel' };
+export const DEFAULT_TYPES = Object.freeze(Object.fromEntries(Object.keys(SNAP_NAME).map((k) => [k, k !== 'extreme'])));
 
-/** Stored settings are optional and untrusted; missing or invalid ticks default to on. */
+/** Stored settings are optional and untrusted; Extreme alone defaults off. */
 export function snapTypes(saved) {
-  return Object.fromEntries(Object.keys(SNAP_NAME).map((k) => [k, typeof saved?.[k] === 'boolean' ? saved[k] : true]));
+  return Object.fromEntries(Object.keys(SNAP_NAME).map((k) => [k, typeof saved?.[k] === 'boolean' ? saved[k] : DEFAULT_TYPES[k]]));
 }
 
 /** The foot of the perpendicular from `from` onto the segment a→b, on the segment itself only (not its extension); null for a zero-length segment. */
@@ -15,7 +15,7 @@ export function perpFoot(from, a, b) {
   return t < 0 || t > 1 ? null : [a[0] + t * dx, a[1] + t * dy];
 }
 
-const RANK = Object.fromEntries(['end', 'centre', 'node', 'mid', 'intersection', 'quadrant', 'perpendicular', 'tangent', 'geometric', 'insertion', 'extension', 'parallel', 'apparent', 'near'].map((k, i) => [k, i]));
+const RANK = Object.fromEntries(['end', 'centre', 'node', 'mid', 'intersection', 'quadrant', 'extreme', 'perpendicular', 'tangent', 'geometric', 'insertion', 'extension', 'parallel', 'apparent', 'near'].map((k, i) => [k, i]));
 
 /** Stable Tab order, with duplicate points of the same type removed (polyline joints, block contents). */
 export function orderCandidates(candidates, types = DEFAULT_TYPES, x = 0, y = 0) {

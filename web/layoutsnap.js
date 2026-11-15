@@ -5,9 +5,19 @@ import { makeIndex, snapPick, snapObject, snapCandidates, snapReference } from '
 import { DEFAULT_TYPES, preferSnap, orderCandidates } from './snap.js';
 
 const indexes = new WeakMap();
+const placedIndexes = new WeakMap();
 
-/** The part's pick index, built once. */
-export function partIndex(part) {
+/** The part's pick index; placed curves use sheet axes, cached until their transform or source changes. */
+export function partIndex(part, pl) {
+  if (pl) {
+    const frame = placedMat(part, pl, 0), key = frame.slice(0, 4).join(',');
+    let cached = placedIndexes.get(pl);
+    if (!cached || cached.part !== part || cached.key !== key) {
+      cached = { part, key, ed: makeIndex(part.raw, part.fl, part.off, null, frame) };
+      placedIndexes.set(pl, cached);
+    }
+    return cached.ed;
+  }
   let ed = indexes.get(part);
   if (!ed) { ed = makeIndex(part.raw, part.fl, part.off); indexes.set(part, ed); }
   return ed;
@@ -26,7 +36,7 @@ export function placedSnap(parts, placed, x, y, tol, types = DEFAULT_TYPES, from
     if (!part?.fl) continue;
     // query the part in its own units, then turn its snap back to y up.
     const M = placedMat(part, p, 0);
-    const sn = snapPick(partIndex(part), ...toPart(part, p, x, y), tol / (part.factor || 1), true, -1, types, [], from && toPart(part, p, from[0], from[1]));
+    const sn = snapPick(partIndex(part, types.extreme ? p : null), ...toPart(part, p, x, y), tol / (part.factor || 1), true, -1, types, [], from && toPart(part, p, from[0], from[1]));
     if (sn) { const q = mapply(M, sn.x, sn.y); best = preferSnap(best, { x: q[0], y: -q[1], kind: sn.kind }, x, y, tol, types); }
   }
   return best;
@@ -48,7 +58,7 @@ export function layoutCandidates(parts, placed, W, H, x, y, tol, types = DEFAULT
   for (const pl of placed) {
     const part = parts[pl.partId];
     if (!part?.fl) continue;
-    const ed = partIndex(part), p = toPart(part, pl, x, y), localTol = tol / (part.factor || 1);
+    const ed = partIndex(part, types.extreme ? pl : null), p = toPart(part, pl, x, y), localTol = tol / (part.factor || 1);
     const sn = snapPick(ed, ...p, localTol, true, -1, types, [], from && toPart(part, pl, ...from));
     if (!sn) continue;
     const M = placedMat(part, pl, 0), world = (q) => { const r = mapply(M, q.x, q.y); return { x: r[0], y: -r[1], kind: q.kind }; };

@@ -2229,7 +2229,7 @@ try {
       await p.goto(URL_); await q('snap-types-open').waitFor();
       for (const name of ['osnap', 'os']) {
         await command(name); await q('snap-types').waitFor({ state: 'visible' });
-        assert.equal(await q('snap-types').locator('input').count(), 14);
+        assert.equal(await q('snap-types').locator('input').count(), Object.keys(SNAP_NAME).length);
         assert.ok(await q('snap-type-tangent').isChecked()); await p.keyboard.press('Escape');
       }
       for (const mode of ['ON', 'OFF']) {
@@ -2420,6 +2420,63 @@ try {
       console.log('212: default/off/on, marker labels, leave, SNAP/types, reload, selection, source edit/Undo, Esc and drawing/PDF/layout/Compare passed; light/dark screenshots saved');
     } finally { await context.close(); }
   });
+  await step('TODO 264: Extreme snap on a spline, off by default', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const p = await context.newPage(), q = (id) => p.getByTestId(id);
+    p.on('pageerror', (e) => errors.push(String(e)));
+    await p.addInitScript(() => {
+      const fill = CanvasRenderingContext2D.prototype.fillText;
+      CanvasRenderingContext2D.prototype.fillText = function (text, ...args) {
+        if (this.canvas.dataset.testid === 'drawing' && ['extreme', 'nearest'].includes(text)) window.__snap264 = text;
+        return fill.call(this, text, ...args);
+      };
+      localStorage.setItem('pd-track', JSON.stringify({ polar: false, inc: 15, otrack: false }));
+    });
+    mkdirSync('shots-264', { recursive: true });
+    try {
+      await p.goto(URL_); await q('snap-types-open').waitFor();
+      const doc = newDoc(4);
+      addEntities(doc, entity('SPLINE', [[70, 0], [71, 2], ...[0, 0, 0, 1, 1, 1].map((t) => [40, t]), [10, 20], [20, 80], [10, 70], [20, -20], [10, 120], [20, 80]]));
+      await q('picker').setInputFiles({ name: 'extreme-264.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(doc)) });
+      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'extreme-264.dxf');
+      for (const theme of ['light', 'dark']) {
+        await p.locator('[data-menu=View]').click();
+        await p.getByRole('menuitemcheckbox', { name: new RegExp('Theme: ' + theme + '\\b') }).click();
+        await q('snap-types-open').click();
+        assert.equal(await q('snap-type-extreme').isChecked(), false, 'Extreme defaults off, including an older saved list');
+        await p.keyboard.press('Escape');
+        await p.locator('[data-tool=line]').click();
+        const r = await p.locator('rect.sheet').evaluate((el) => { const r = el.getBoundingClientRect(); return { x: r.x, y: r.y, scale: r.width / el.width.baseVal.value, h: el.height.baseVal.value }; });
+        const x = r.x + 70 * r.scale + 3, y = r.y + (r.h - 30) * r.scale - 1;
+        const hover = async (name) => {
+          await p.mouse.move(x + 30, y - 30);
+          await p.evaluate(() => { window.__snap264 = ''; });
+          await p.mouse.move(x, y);
+          await p.waitForFunction((want) => window.__snap264 === want, name);
+        };
+        await hover('nearest');
+        await p.screenshot({ path: `shots-264/extreme-off-${theme}.png` });
+        await q('snap-types-open').click(); await q('snap-type-extreme').check(); await p.keyboard.press('Escape');
+        await hover('extreme');
+        await p.screenshot({ path: `shots-264/extreme-on-${theme}.png` });
+        await p.mouse.click(x, y); await p.mouse.move(x + 50, y - 50);
+        const start = (await q('draw-preview').getAttribute('d')).match(/-?\d+(?:\.\d+)?/g).slice(0, 2).map(Number);
+        assert.ok(Math.abs(start[0] - 70) < .01 && Math.abs(start[1] - (r.h - 30)) < .01, 'pick lands on the spline minimum');
+        await p.keyboard.press('Escape');
+        await p.mouse.move(x, y); await p.keyboard.down('Shift'); await p.mouse.click(x, y, { button: 'right' }); await p.keyboard.up('Shift');
+        assert.ok(await p.getByRole('menuitem', { name: '✓ Snap: extreme', exact: true }).isVisible(), 'right-click menu uses the same snap list');
+        await p.keyboard.press('Escape');
+        await q('snap-types-open').click(); await q('snap-type-extreme').uncheck(); await p.keyboard.press('Escape');
+      }
+      await p.reload(); await q('snap-types-open').click();
+      assert.equal(await q('snap-type-extreme').isChecked(), false, 'saved false stays off');
+      await q('snap-type-extreme').check(); await p.keyboard.press('Escape');
+      await p.reload(); await q('snap-types-open').click();
+      assert.equal(await q('snap-type-extreme').isChecked(), true, 'saved true stays on');
+      await p.keyboard.press('Escape');
+      console.log('264: off/on marker and exact spline pick, shared right-click list, saved ticks; light/dark screenshots saved');
+    } finally { await context.close(); }
+  });
   await step('TODO 68a: snap per type', async () => {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
     const p = await context.newPage(), q = (id) => p.locator(`[data-testid=${id}]`);
@@ -2438,7 +2495,7 @@ try {
     try {
       await p.goto(URL_); await arrow.waitFor();
       await arrow.focus(); await p.keyboard.press('Enter'); await list.waitFor({ state: 'visible' });
-      assert.equal(await list.locator('input:checked').count(), 14, 'all fourteen snap types default on');
+      assert.equal(await list.locator('input:checked').count(), Object.keys(SNAP_NAME).length - 1, 'all snap types except Extreme default on');
       assert.equal(await list.locator('input:disabled').count(), 0, 'every type is live');
       await end.focus(); await p.keyboard.press('Space');
       assert.equal(await end.isChecked(), false, 'keyboard toggles a tick');
@@ -26032,7 +26089,7 @@ try {
     await t('ctx-menu').waitFor();
   };
   const menuRows = () => page.locator('[data-testid=ctx-menu] .mi').evaluateAll((bs) => bs.map((b) => [b.childNodes[0].textContent, b.disabled]));
-  const SNAP_ROWS = ['end', 'middle', 'centre', 'geometric centre', 'point', 'quadrant', 'intersection', 'extension', 'insertion', 'perpendicular', 'tangent', 'nearest', 'apparent intersection', 'parallel'].map((n) => ['✓ Snap: ' + n, false]);
+  const SNAP_ROWS = Object.entries(SNAP_NAME).map(([kind, name]) => [(kind === 'extreme' ? ' ' : '✓') + ' Snap: ' + name, false]);
 
   await step('TODO 72: Shift+right-click while a tool is on opens Enter / Cancel / Close / Undo last point and the snap types; plain right-click still finishes', async () => {
     await openGrips(); await page.evaluate(() => localStorage.removeItem('pd-snap-types'));

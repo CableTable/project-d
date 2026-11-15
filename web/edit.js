@@ -195,7 +195,7 @@ export function resizeItemsBox(raw, items, factor = 1) {
  * What the editor needs about a drawing: per shown entity its items and box, a pick grid, and the end points.
  * off: the layer indexes switched off (their entities are not there to pick); hid: entities hidden one by one (Objects tab), the same.
  */
-export function makeIndex(raw, fl, off = new Set(), hid = null) {
+export function makeIndex(raw, fl, off = new Set(), hid = null, extremeFrame) {
   const space = spaceOf(fl), n = raw.entities.length, items = fl.items;
   const vis = new Uint8Array(items.length), byEnt = new Array(n), box = new Float64Array(n * 4);
   const areas = [], shown = [];
@@ -223,7 +223,7 @@ export function makeIndex(raw, fl, off = new Set(), hid = null) {
     if (type !== 'LINE' && Math.hypot(a[0] - b[0], a[1] - b[1]) < 1e-9 * size) continue;     // a circle: its start is no end; zero-length lines can be micro pieces
     ends[e * 4] = a[0]; ends[e * 4 + 1] = a[1]; ends[e * 4 + 2] = b[0]; ends[e * 4 + 3] = b[1];
   }
-  const ix = pickIndex(fl, space === 1, (i) => vis[i] === 1), bc = new Map(), bw = [];
+  const ix = pickIndex(fl, space === 1, (i) => vis[i] === 1, extremeFrame), bc = new Map(), bw = [];
   const at = (v) => Math.min(ix.G - 1, Math.max(0, Math.floor(v)));
   // Entity boxes share the pick grid; dimensions need their whole block box, text and hatches have no pick pieces.
   for (const e of shown) {
