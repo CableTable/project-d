@@ -11697,7 +11697,7 @@ try {
     const boxA = await at(18, 18), boxB = await at(42, 52);
     await page.mouse.move(boxA.x, boxA.y); await page.mouse.down();
     await page.mouse.move(boxB.x, boxB.y, { steps: 5 }); await page.mouse.up();
-    await waitSel('3 selected');
+    await waitSel('2 selected'); // the chevron's two strokes are one joined polyline since 272a
     const start = await at(22.5, 27.5), end = await at(32.5, 32.5);
     await page.mouse.move(start.x, start.y); await page.mouse.down();
     await page.mouse.move(end.x, end.y, { steps: 5 });
@@ -11711,7 +11711,7 @@ try {
     const moved = await savedDoc();
     assert.ok(Math.abs(fieldOf(moved.entities[0], 10) - fieldOf(before.entities[0], 10) - 10) < .05, 'selected A moves');
     assert.ok(Math.abs(fieldOf(moved.entities[0], 20) - fieldOf(before.entities[0], 20) - 5) < .05);
-    assert.deepEqual(moved.entities[3], before.entities[3], 'unselected text stays');
+    assert.deepEqual(moved.entities[2], before.entities[2], 'unselected text stays');
     await page.keyboard.press('Control+z');
     assert.deepEqual((await savedDoc()).entities, before.entities, 'one undo restores the whole A');
     // A single imported TEXT also moves by its body, away from its resize handles.
@@ -11720,7 +11720,7 @@ try {
     await page.mouse.move(textStart.x, textStart.y); await page.mouse.down();
     await page.mouse.move(textEnd.x, textEnd.y, { steps: 5 }); await page.mouse.up();
     const textMoved = await savedDoc();
-    assert.ok(Math.abs(fieldOf(textMoved.entities[3], 10) - fieldOf(before.entities[3], 10) - 10) < .05);
+    assert.ok(Math.abs(fieldOf(textMoved.entities[2], 10) - fieldOf(before.entities[2], 10) - 10) < .05);
     const cancelStart = await at(73, 37), cancelEnd = await at(83, 42);
     await page.mouse.move(cancelStart.x, cancelStart.y); await page.mouse.down();
     await page.mouse.move(cancelEnd.x, cancelEnd.y, { steps: 5 }); await page.keyboard.press('Escape'); await page.mouse.up();
@@ -11732,8 +11732,8 @@ try {
     await page.mouse.move(cancelStart.x, cancelStart.y); await page.mouse.down();
     await page.keyboard.down('Shift'); await page.mouse.move(cancelEnd.x, cancelEnd.y, { steps: 5 }); await page.mouse.up(); await page.keyboard.up('Shift');
     const straight = await savedDoc();
-    assert.ok(Math.abs(fieldOf(straight.entities[3], 10) - fieldOf(textMoved.entities[3], 10) - 10) < .05);
-    assert.equal(fieldOf(straight.entities[3], 20), fieldOf(textMoved.entities[3], 20), 'Shift constrains the move');
+    assert.ok(Math.abs(fieldOf(straight.entities[2], 10) - fieldOf(textMoved.entities[2], 10) - 10) < .05);
+    assert.equal(fieldOf(straight.entities[2], 20), fieldOf(textMoved.entities[2], 20), 'Shift constrains the move');
     for (const theme of ['light', 'dark']) {
       await menuItem('View', 'Theme: ' + theme);
       await page.screenshot({ path: `${shotDir}/s17-120-moved-A-${theme}.png` });
