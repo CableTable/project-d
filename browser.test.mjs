@@ -8950,7 +8950,7 @@ try {
     assert.equal(await t('pp-name').textContent(), '2 parts');
     assert.equal(await page.locator('[data-testid=sec-arrange]').isVisible(), true);
     assert.equal(await page.locator('[data-group=tools] .pick-badge').count(), 2);
-    assert.match(await prompt(), /^Align or distribute \[Left \/ Centre \/ Right \/ Top \/ Middle \/ Bottom \/ Horizontal \/ Vertical\]:?$/);
+    assert.match(await prompt(), /^Align or distribute \[Left \/ Centre on first \/ Right \/ Top \/ Middle \/ Bottom \/ Horizontal \/ Vertical\]:?$/);
     assert.match(await t('cmd-hist').textContent(), /^Command: SELECT {3}2 parts selected \(Shift-click adds or removes a part\)$/);
     // ... and takes a part out
     await click(150, 450, { shift: true });
@@ -29297,6 +29297,68 @@ try {
     const [x, y, xx, yy] = [10, 20, 11, 21].map((c) => fieldOf(e, c));
     return [Math.min(x, xx), Math.min(y, yy), Math.max(x, xx), Math.max(y, yy)];
   });
+  await step('TODO 265: center on first in drawing, layout and Compare, groups, one Undo and guards', async () => {
+    const need = 'Center: select two or more objects; the first selected stays put';
+    for (const tab of ['drawing', 'layout', 'Compare', 'group']) {
+      const raw = doc97i2();
+      if (tab === 'group') raw.groups = [{ members: [1, 2], name: '', description: '', unnamed: true, selectable: true }];
+      else raw.entities.pop();
+      const filename = `center265-${tab}.dxf`;
+      if (tab === 'layout') {
+        const lay = layout97i2(); lay.placed.pop();
+        await open97c(layoutRaw(lay), filename);
+      } else await open97c(raw, filename);
+      await typeCmd('center'); assert.equal(await said(new RegExp('^' + need + '$')), need, 'nothing selected');
+      const labels = await histLabels();
+      if (tab === 'Compare') await typeCmd('compare');
+      await key97c('Control+a');
+      const relative = tab === 'layout' ? 'sheet' : 'selection';
+      await t('arrange-rel').selectOption(relative);
+      const before = tab === 'layout' ? await selBoxes() : boxes97i2(raw);
+      if (tab === 'drawing') {
+        await typeCmd('zw'); await typeCmd('centre');
+        assert.match(await said(/^Drag a box with the left button to zoom into it \(Esc cancels\):$/), /zoom into it/, 'running command keeps the word');
+        await key97c('Escape');
+        await t('cmd-echo').click(); await cmdLine().fill('center'); await page.keyboard.press('Escape');
+      }
+      await typeCmd('center');
+      assert.equal(await said(/^2 objects centred on the first selected$/), '2 objects centred on the first selected');
+      assert.equal(await t('arrange-rel').inputValue(), relative, 'Relative to unchanged');
+      if (tab === 'Compare') await page.locator('.dtab').filter({ has: page.locator('.tname', { hasText: /^center265-Compare(?:-edited)*\.dxf$/ }) }).click();
+      const after = tab === 'layout' ? await selBoxes() : boxes97i2(await savedDoc());
+      assert.deepEqual(after[0], before[0], 'first selected stays put');
+      const second = tab === 'group' ? [Math.min(...after.slice(1).map((b) => b[0])), Math.min(...after.slice(1).map((b) => b[1])), Math.max(...after.slice(1).map((b) => b[2])), Math.max(...after.slice(1).map((b) => b[3]))] : after[1];
+      for (const axis of [0, 1]) approx((second[axis] + second[axis + 2]) / 2, (after[0][axis] + after[0][axis + 2]) / 2, .001, 'both centres meet');
+      if (tab === 'group') for (const axis of [0, 1, 2, 3]) approx(after[1][axis] - before[1][axis], after[2][axis] - before[2][axis], .001, 'group moves as one');
+      assert.deepEqual((await histLabels()).slice(labels.length), ['Centre on first']);
+      await typeCmd('centre'); assert.equal(await said(/^Already centred \(nothing moved\)$/), 'Already centred (nothing moved)');
+      assert.deepEqual((await histLabels()).slice(labels.length), ['Centre on first']);
+      if (tab === 'drawing') for (const theme of ['light', 'dark']) {
+        await menuItem('View', 'Theme: ' + theme);
+        const path = `${shotDir}/todo265-center-${theme}.png`;
+        await page.screenshot({ path }); assert.ok(readFileSync(path).length > 1000);
+      }
+      await key97c('Control+z');
+      assert.deepEqual(tab === 'layout' ? await selBoxes() : boxes97i2(await savedDoc()), before, 'one Undo restores every object');
+      if (tab === 'layout') {
+        await typeCmd('c'); assert.equal(await said(/^2 objects centred on the first selected$/), '2 objects centred on the first selected');
+        await key97c('Control+z'); assert.deepEqual(await selBoxes(), before);
+      }
+      if (tab === 'drawing') {
+        await typeCmd('mv'); await typeCmd('0,0'); await typeCmd('10,20'); await key97c('Escape');
+        assert.deepEqual(boxes97i2(await savedDoc()), before.map((b) => b.map((v, i) => v + (i % 2 ? 20 : 10))), 'source remains editable');
+      }
+      await closeTabs(/./);
+    }
+    const group = doc97i2(); group.entities.pop();
+    group.groups = [{ members: [0, 1], name: '', description: '', unnamed: true, selectable: true }];
+    await open97c(group, 'center265-one-group.dxf'); await key97c('Control+a');
+    const labels = await histLabels();
+    await typeCmd('center'); assert.equal(await said(new RegExp('^' + need + '$')), need);
+    assert.deepEqual(boxes97i2(await savedDoc()), boxes97i2(group)); assert.deepEqual(await histLabels(), labels);
+    await closeTabs(/./); await menuItem('View', 'Theme: light'); assert.deepEqual(errors, []);
+  });
+
   await step('TODO 97i2: Drawings align left three lines, one Undo restores, no-op note and light/dark panel', async () => {
     await open97c(doc97i2(), 'arrange97i2.dxf'); await key97c('Control+a');
     assert.equal(await t('sec-arrange').isVisible(), true);
@@ -29403,11 +29465,16 @@ try {
     const raw = doc97i2(); raw.entities[1] = dxfLine(220, 160, 260, 200);
     await open97c(raw, 'words97i2.dxf'); await key97c('Control+a'); await t('arrange-rel').selectOption('selection');
     const before = lineEnds97c(await savedDoc());
-    for (const [how, index, target] of [['left', 0, 100], ['centre', 0, 240], ['right', 2, 380], ['top', 3, 340], ['middle', 1, 220], ['bottom', 1, 100]]) {
+    for (const [how, index, target] of [['left', 0, 100], ['centre', 0, 140], ['right', 2, 380], ['top', 3, 340], ['middle', 1, 220], ['bottom', 1, 100]]) {
       for (const word of [how]) {
         await typeCmd(word);
-        assert.equal(await prompt(), `3 objects aligned ${how} to the selection`, word);
+        assert.equal(await prompt(), how === 'centre' ? '3 objects centred on the first selected' : `3 objects aligned ${how} to the selection`, word);
         for (const b of boxes97i2(await savedDoc())) approx(how === 'centre' ? (b[0] + b[2]) / 2 : how === 'middle' ? (b[1] + b[3]) / 2 : b[index], target, .001, word);
+        if (how === 'centre') {
+          const boxes = boxes97i2(await savedDoc());
+          assert.deepEqual(boxes[0], boxes97i2(raw)[0]);
+          for (const b of boxes) approx((b[1] + b[3]) / 2, 100, .001, word);
+        }
         await key97c('Control+z'); assert.deepEqual(lineEnds97c(await savedDoc()), before);
       }
     }

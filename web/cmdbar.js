@@ -67,6 +67,7 @@ const TABLE = [
   ['measurepoints', 'Draw', 'Place points every given length along an object', ['me'], 'draw'],
   ['rotate', 'Edit', 'Turn selected objects or a layout part about a pivot', ['r', 'ro'], ''],
   ['align', 'Edit', 'Move, turn and scale objects so source points meet destination points', ['al'], 'draw'],
+  ['center', 'Edit', 'Centre on first selected object on both axes', ['centre'], ''],
   ['nest', 'Layout', 'Auto-nest mixed parts', ['n'], ''],
   ['step', 'Layout', 'Step and repeat the chosen part', ['sr'], 'layout'],
   ['group', 'Layout', 'Group the selected objects or parts', ['g'], '', 'Ctrl+G'],

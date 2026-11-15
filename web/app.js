@@ -2279,7 +2279,7 @@ const loosenedNote = (g) => (g.loosened ? 'The step and repeat grid became separ
  * A locked part is not changed (says so). Nothing happens (and nothing is kept for undo) when it comes out the same.
  * → { g, part, next, idx, idxs, lay, items, nexts, name, many } or null.
  */
-function editSelected(fn, { copy = false, key = '', pick = false, label = 'Edit' } = {}) {
+function editSelected(fn, { copy = false, key = '', pick = false, label = 'Edit', labelSelection = true } = {}) {
   const items = selItems();
   if (!items.length) return null;
   const d = curDoc(), lay = d.lay, many = items.length > 1;
@@ -2289,7 +2289,7 @@ function editSelected(fn, { copy = false, key = '', pick = false, label = 'Edit'
   const nexts = items.map((x, k) => fn(x.part, curs[k], { ...ctx, k }));
   if (!copy && nexts.every((n, k) => PL.samePlacement(n, curs[k]))) return null;
   const name = many ? `${items.length} parts` : items[0].part.name;
-  const g = startGesture(d, `${label} ${name}`);
+  const g = startGesture(d, labelSelection ? `${label} ${name}` : label);
   g.key = key;
   gMark(g);
   let idxs;
@@ -2454,19 +2454,23 @@ function setPivotText(axis, text) {
 }
 
 // ---- Arrange (TODO 36, TODO 97i2): a group is one object in every tab ----
-const ARRANGE_PROMPT = 'Align or distribute [Left / Centre / Right / Top / Middle / Bottom / Horizontal / Vertical]:';
+const ARRANGE_PROMPT = 'Align or distribute [Left / Centre on first / Right / Top / Middle / Bottom / Horizontal / Vertical]:';
 /** Align or distribute the selected objects, relative to the selection, the sheet or the first selected. */
 function arrange(kind, how) {
-  const lay = curLay(), d = !lay && editable();
+  const lay = curLay(), d = !lay && editable(), center = kind === 'center';
   if (d && moveLocked(d, d.sel, 'align')) return;
   const items = lay ? selItems().map((x) => ({ ...x, g: x.p.g, box: boxOf(x) })) : d ? [...d.sel].map((i) => ({ i, g: groupOf(d.raw.groups, i), box: OB.boxOf(d.fl, [i])?.map((v) => v * d.factor) })).filter((x) => x.box) : [];
-  if (items.length < 2) { note(lay ? 'Arrange: select two or more parts first (Shift-click, or drag a box round them)' : 'Arrange: select two or more objects first (Shift-click, or drag a box round them)'); return; }
+  const needCenter = 'Center: select two or more objects; the first selected stays put';
+  if (items.length < 2) { note(center ? needCenter : lay ? 'Arrange: select two or more parts first (Shift-click, or drag a box round them)' : 'Arrange: select two or more objects first (Shift-click, or drag a box round them)'); return; }
   if (lay && items.some((x) => x.p.lock)) { note(LOCKED); return; }
-  const rel = !lay && state.arrangeRel === 'sheet' ? 'selection' : state.arrangeRel, sheet = lay ? [0, 0, lay.s.sheetW, lay.s.sheetH] : null;
+  const rel = center ? 'first' : !lay && state.arrangeRel === 'sheet' ? 'selection' : state.arrangeRel, sheet = lay ? [0, 0, lay.s.sheetW, lay.s.sheetH] : null;
   const objs = A.objectsOf(items);
   const boxes = objs.map((o) => o.box), relName = { selection: 'the selection', sheet: 'the sheet', first: 'the first selected' }[rel];
   let deltas, extra = '';
-  if (kind === 'align') {
+  if (center) {
+    if (objs.length < 2) { note(needCenter); return; }
+    deltas = A.centreOnFirstDeltas(boxes);
+  } else if (kind === 'align') {
     if (objs.length < 2 && rel !== 'sheet') { note(lay ? 'Align: that is one object (a group). Pick Relative to: Sheet, or select another part' : 'Align: that is one object (a group). Select another object'); return; }
     deltas = A.alignDeltas(boxes, how, rel, sheet, 0);
   } else {
@@ -2475,12 +2479,13 @@ function arrange(kind, how) {
     deltas = r.deltas; extra = `, gaps of ${fmt(r.gap)} mm`;
   }
   const per = A.spreadToItems(objs, deltas, items.length);
-  const label = (kind === 'align' ? 'Align ' : 'Distribute ') + how;
-  const message = (name) => kind === 'align' ? `${name} aligned ${how} to ${relName}` : `${name} distributed ${how}ly with equal gaps${extra} (${relName})`;
+  const label = center ? 'Centre on first' : (kind === 'align' ? 'Align ' : 'Distribute ') + how;
+  const message = (name) => center ? `${objs.length} objects centred on the first selected` : kind === 'align' ? `${name} aligned ${how} to ${relName}` : `${name} distributed ${how}ly with equal gaps${extra} (${relName})`;
+  const unchanged = 'Already ' + (center ? 'centred' : kind === 'align' ? 'aligned' : 'evenly spaced') + ' (nothing moved)';
   if (d) {
     try {
       const next = A.moveByDeltas(d.raw, items.map((x) => x.i), per.map(({ dx, dy }) => ({ dx: dx / d.factor, dy: dy / d.factor })));
-      if (next === d.raw) { note('Already ' + (kind === 'align' ? 'aligned' : 'evenly spaced') + ' (nothing moved)'); return; }
+      if (next === d.raw) { note(unchanged); return; }
       const sel = new Set(d.sel);
       view.fitted = false;
       if (!commit(d, followDimensions(d.raw, next, d.factor), label, sel)) return;
@@ -2489,8 +2494,8 @@ function arrange(kind, how) {
     } catch (err) { note(err.message); }
     return;
   }
-  const r = editSelected((part, pl, c) => PL.translate(pl, per[c.k].dx, per[c.k].dy), { label });
-  if (!r) { note('Already ' + (kind === 'align' ? 'aligned' : 'evenly spaced') + ' (nothing moved)'); return; }
+  const r = editSelected((part, pl, c) => PL.translate(pl, per[c.k].dx, per[c.k].dy), { label, labelSelection: !center });
+  if (!r) { note(unchanged); return; }
   afterEdit(r, message(r.name));
 }
 /** The Relative to select: Selection, Sheet or First selected (remembered for the session). */
@@ -4199,9 +4204,9 @@ function cmdEnter(raw) {
     if (PL.parseAngle(c) != null) { const copy = state.rotCopy; state.rotCopy = false; const why = setAngleText(c, copy); if (why) note(why); return; }
   }
   if (!activeCmd() && (curLay() ? selIdxs().length : editable()?.sel.size) > 1) {    // several selected, no command running: the words in the prompt
-    const w = { left: 'left', centre: 'centre', center: 'centre', right: 'right', top: 'top', middle: 'middle', bottom: 'bottom', horizontal: 'horizontal', vertical: 'vertical' }[c]
-      || (curLay() ? { l: 'left', c: 'centre', r: 'right', t: 'top', m: 'middle', b: 'bottom', h: 'horizontal', v: 'vertical' }[c] : null);   // single letters keep starting Line, Rectangle... on the drawing tabs
-    if (w) { arrange(['horizontal', 'vertical'].includes(w) ? 'distribute' : 'align', w); return; }
+    const w = { left: 'left', centre: 'center', center: 'center', right: 'right', top: 'top', middle: 'middle', bottom: 'bottom', horizontal: 'horizontal', vertical: 'vertical' }[c]
+      || (curLay() ? { l: 'left', c: 'center', r: 'right', t: 'top', m: 'middle', b: 'bottom', h: 'horizontal', v: 'vertical' }[c] : null);   // single letters keep starting Line, Rectangle... on the drawing tabs
+    if (w) { if (w === 'center') runCommand(CB.resolve(w)); else arrange(['horizontal', 'vertical'].includes(w) ? 'distribute' : 'align', w); return; }
   }
   if (state.tool === 'contour' && (editable() || curLay())) {           // the words in the Contour prompt
     const m = /^(distance|dist|d|steps|s)\s+(.+)$/.exec(c), cfg = state.contourCfg, set = (k, v) => { cfg[k] = v; saveContourCfg(); renderContour(); renderCommand(); };
@@ -4223,6 +4228,7 @@ function cmdEnter(raw) {
 const TOOL_OF = { rectangle: 'rect' };
 const DIM_OF = { dimauto: 'auto', dimlinear: 'linear', dimradius: 'radius', dimdiameter: 'diameter', dimangular: 'angle' };
 const DO = {
+  center: () => { if (!activeCmd()) arrange('center'); },
   units: chooseUnits,
   eattedit: () => {
     if (cmpDoc() && !cmpEdit()) return;
