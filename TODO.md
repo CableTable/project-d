@@ -419,7 +419,7 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
 - [x] 262. **Layout: "Group of 6" stays selected after Esc or empty click** (bug, S, T82; built King `911c679`, Bishop ship, 3 Lows held in `runs45/lows.txt`; picked HEAD~1 of the tick; fixes 1-5 (stale steps + Esc on open menu closes only the menu, fix 5 on Opus) picked `f3e93e0`..`86f2ee4`, rv-262fix5 ship; suite pending).
 - [x] 263. **Print: sheet size and gripper labels fall off the page with a small margin** (bug, M, T83; built Knight `3793404`, Bishop ship, 4 Lows held in `runs45/lows.txt`; picked HEAD~1 of the tick, suite pending).
 - [ ] 264. **"Extreme" snap: lowest / highest / leftmost / rightmost point of a curve** (M, T79).
-- [ ] 265. **`center` command: centre a selection on the first selected object** (S, T81).
+- [x] 265. **`center` command: centre a selection on the first selected object** (S, T81).
 - [ ] 266. **Bigger PDF / Print dialog** (S, T84).
 - [ ] 267. **Auto nest "Free angles": random angles, best kept, time limit** (L, T85).
 - [ ] 268. **Tab right-click "Duplicate" (drawing, Compare, layout)** (M, T86).
