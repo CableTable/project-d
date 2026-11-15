@@ -17,7 +17,7 @@ const compact = (n) => Intl.NumberFormat('en', { notation: 'compact', maximumFra
 const num = (x) => (x === '' || x == null ? null : Number(x));
 
 let data = { limits: [], history: [], runs: [], analysis: [], tickets: [], tokens: [], queue: [] };
-let queueUpdated = '';
+let queueUpdated = '', queueNext = [], showAllDone = false;
 function paceRows() {
   return data.limits.map((r) => ({ agent: r.agent, window: r.window,
     pace_pct: Math.round(Math.max(0, Math.min(1, (Date.parse(r.as_of) - Date.parse(r.starts)) / (Date.parse(r.resets) - Date.parse(r.starts)))) * 100) }));
@@ -341,30 +341,48 @@ function drawQueue() {
   const box = document.getElementById('queue-list'), time = Date.parse(queueUpdated);
   document.getElementById('queue-updated').textContent = Number.isFinite(time) ? 'Updated ' + IST.format(new Date(time)) + ' IST' : '';
   box.replaceChildren();
-  const rows = [...data.queue].reverse(), running = (row) => row.state === 'running';
-  rows.sort((a, b) => running(b) - running(a)); // stable: newest first inside each group
+  const rows = [...data.queue].reverse(), running = (row) => row.state === 'running'; // newest first
   if (!rows.length) { box.append(el('p', 'ud-muted', 'No runs')); return; }
-  const card = el('div', 'ud-card'); box.append(card);
-  for (const row of rows) {
-    const item = el('div', 'queue-row'), head = el('div', 'ud-mrow');
-    head.append(el('strong', null, queueHeadline(row)), el('span', 'ud-chip ' + (running(row) ? 'warn' : row.state === 'ended' ? 'ok' : 'info'), row.state === 'ended' ? 'done' : row.state));
-    item.append(head, el('div', 'ud-muted queue-raw', [row.kind, row.id, row.out, row.extra].filter(Boolean).join(' · ')));
-    card.append(item);
-  }
+  const part = (name, empty, build, count) => {
+    if (!count) { box.append(el('p', 'ud-muted', `${name}: ${empty}`)); return; }
+    const card = el('div', 'ud-card'); box.append(el('h3', null, name), card); build(card);
+  };
+  const line = (card, text, row) => {
+    const item = el('div', 'queue-row'), head = el('div', 'ud-mrow'); head.append(el('strong', null, text));
+    if (row) head.append(el('span', 'ud-chip ' + (running(row) ? 'warn' : row.state === 'ended' ? 'ok' : 'info'), row.state === 'ended' ? 'done' : row.state));
+    item.append(head); card.append(item);
+  };
+  const now = rows.filter(running), done = rows.filter((row) => !running(row)), next = queueNext.map(String);
+  part('Now', 'nothing running', (card) => now.forEach((row) => line(card, queueHeadline(row), row)), now.length);
+  part('Next', 'nothing planned', (card) => next.forEach((id) => line(card, id + todoTitle(id))), next.length);
+  part('Done', 'nothing yet', (card) => {
+    done.slice(0, showAllDone ? done.length : 5).forEach((row) => line(card, queueHeadline(row), row));
+    if (done.length > 5) {
+      const more = el('button', null, showAllDone ? 'Show fewer' : `Show ${done.length - 5} more`);
+      more.type = 'button'; more.setAttribute('aria-expanded', showAllDone);
+      more.addEventListener('click', () => { showAllDone = !showAllDone; drawQueue(); });
+      card.append(more);
+    }
+  }, done.length);
 }
 
-// "Who: verb item (TODO title, first 5 words)" from a queue row; the raw fields stay on the second line.
+// " · short title" from the TODO row of an item id (number or letter id like U1d): "U1c: " prefix dropped, 8 words at most; '' when there is no row.
+function todoTitle(base) {
+  const todo = todoSections.flatMap((s) => s.items).find((t) => (/^\d+$/.test(base) ? t.num === Number(base) : /^[A-Za-z]/.test(base) && t.title.startsWith(base + ':')));
+  const words = todo?.title.replace(/^[A-Za-z]+\d+[A-Za-z]*: /, '').split(/\s+/) || [];
+  return todo ? ' · ' + words.slice(0, 8).join(' ') + (words.length > 8 ? '…' : '') : '';
+}
+
+// "Who verb item · short title" from a queue row; every sha is cut to 7 chars.
 function queueHeadline({ kind, id, out, state }) {
   const first = id.split(' ')[0], branch = first.match(/^(king|knight)\//);
   const acct = id.match(/\(([A-Za-z]\w*)[,)]/)?.[1] || id.match(/--as (\w+)/)?.[1] || (branch ? branch[1] : kind === 'knight' ? 'knight' : '');
   const who = acct && acct[0].toUpperCase() + acct.slice(1);
   const from = kind === 'review' ? out.match(/(?:^|\/)rv-(.+?)\.\w+$/)?.[1] || first.slice(0, 7) : first.replace(/^(king|knight)\//, '');
   const name = from.replace(/^(.+?)fix\d*$/, '$1 fix'), base = name.replace(/ fix$/, '');
-  const todo = todoSections.flatMap((s) => s.items).find((t) => (/^\d+$/.test(base) ? t.num === Number(base) : /^[A-Za-z]/.test(base) && t.title.startsWith(base + ':')));
-  const words = todo?.title.split(/\s+/) || [], title = todo ? ' (' + words.slice(0, 5).join(' ') + (words.length > 5 ? '…' : '') + ')' : '';
-  const done = state === 'ended', verbs = { build: ['building', 'built'], knight: ['building', 'built'], review: ['reviewing', 'reviewed'] }[kind];
-  const text = kind === 'suite' ? (done ? `suite ${first} done` : `running suite ${first}`) : kind === 'fresh' ? 'fresh read ' + name : (verbs ? verbs[+done] : kind) + ' ' + name;
-  return (kind === 'suite' || kind === 'fresh' ? '' : who ? who + ': ' : '') + text + title;
+  const done = state === 'ended', verbs = { build: ['building', 'built'], knight: ['building', 'built'], review: ['checking', 'checked'] }[kind];
+  const text = kind === 'suite' ? 'Full tests ' + first : kind === 'fresh' ? 'Grill check ' + name : [who, verbs ? verbs[+done] : kind, name].filter(Boolean).join(' ');
+  return (text + todoTitle(base)).replace(/\b(?=[0-9a-f]*\d)[0-9a-f]{8,}\b/gi, (hex) => hex.slice(0, 7));
 }
 
 function draw() {
@@ -451,7 +469,7 @@ if (Object.values(firebaseConfig).some((v) => v.includes('<'))) {
   getRedirectResult(auth).catch(report);
   onAuthStateChanged(auth, (user) => {
     stopListening(); allowed = false; currentStatus = {};
-    data = { limits: [], history: [], runs: [], analysis: [], tickets: [], tokens: [], queue: [] }; queueUpdated = '';
+    data = { limits: [], history: [], runs: [], analysis: [], tickets: [], tokens: [], queue: [] }; queueUpdated = ''; queueNext = [];
     drawTodo([]); drawTickets(); drawQueue(); drawRookStuck();
     draw(); finishUpdate(user ? 'Loading…' : 'Sign in to see usage.');
     dashboard.hidden = pageTabs.hidden = true; signin.hidden = !!user; signout.hidden = !user; showStatus();
@@ -468,7 +486,7 @@ if (Object.values(firebaseConfig).some((v) => v.includes('<'))) {
         else if (name === 'rook') drawRookStuck(value);
         else data[name] = (value[name === 'analysis' ? 'items' : 'rows'] || []).map((r) => (r.agent === 'Pip' ? { ...r, agent: 'Bishop' } : r)); // rows uploaded before the rename
         if (name === 'tickets') drawTickets();
-        if (name === 'queue') queueUpdated = value.updated || '';
+        if (name === 'queue') { queueUpdated = value.updated || ''; queueNext = Array.isArray(value.next) ? value.next : []; }
         if (name === 'queue' || name === 'todo') drawQueue(); // a TODO upload can fill in titles
         showStatus(); draw();
       }, report));
