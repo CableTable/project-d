@@ -20175,9 +20175,13 @@ try {
     await settled();
     const area = await t('sel-area').textContent(), name = await t('sel-name').textContent();
     await page.evaluate(() => {
-      const log = window.__p3 = [], o = new MutationObserver((rs) => { for (const r of rs) log.push(r.type === 'attributes' ? 'indexed' + r.target.dataset.indexed : 'area' + r.target.textContent); });
-      o.observe(document.querySelector('[data-testid=drawing]'), { attributes: true, attributeFilter: ['data-indexed'] });
-      o.observe(document.querySelector('[data-testid=sel-area]'), { childList: true });
+      // Start at the commit keydown so a pending selection paint cannot enter the log.
+      document.addEventListener('keydown', (e) => {
+        if (e.key !== 'ArrowRight') return;
+        const log = window.__p3 = [], o = new MutationObserver((rs) => { for (const r of rs) log.push(r.type === 'attributes' ? 'indexed' + r.target.dataset.indexed : 'area' + r.target.textContent); });
+        o.observe(document.querySelector('[data-testid=drawing]'), { attributes: true, attributeFilter: ['data-indexed'] });
+        o.observe(document.querySelector('[data-testid=sel-area]'), { childList: true });
+      }, { capture: true, once: true });
     });
     await page.keyboard.press('ArrowRight');
     await settled();
