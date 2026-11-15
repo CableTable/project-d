@@ -533,3 +533,4 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
 2. A per-user .dxf file association, with no admin rights.
 3. A "keep settings next to the exe" switch.
 4. ✅ (built, TODO 66a) Drawing selection drag now moves HATCH and native DIMENSION entities through the shared translation code.
+- [ ] 297. **Colour change on a selected object shows only after deselect** (bug, S-M, his report 2026-11-16 01:0x IST): the blue selection outline hides the object's own colour. Selected objects keep their own colour, drawn dashed, plus a box with 8 handles (Corel + AutoCAD both keep the colour). All tabs. Grill `rook-hq/runs47/grill-297.md`.
