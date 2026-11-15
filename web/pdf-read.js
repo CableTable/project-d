@@ -100,6 +100,7 @@ export function pdfToDoc({ ops, text: items = [], view = [0, 0, 0, 0], rotate = 
     let cur = null, start = null;
     let chain = [];
     const flush = (closed = false) => {
+      if (closed && chain.length > 2 && Math.hypot(chain.at(-1)[0] - chain[0][0], chain.at(-1)[1] - chain[0][1]) <= 1e-6) chain.pop(); // a repeated start would be a zero-length side
       if (chain.length > 1) { ents.push(lwpoly(chain, { closed })); paths++; }
       chain = [];
     };

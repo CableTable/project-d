@@ -32,6 +32,15 @@ test('TODO 272a: h closes joined lines; fills remain unfilled and paint operatio
   assert.equal(separate.paths, 2);
 });
 
+test('TODO 272a fix: m l l l(start) h closes without a repeated point', async () => {
+  const { moveTo: m, lineTo: l, closePath: h } = pdfjs.OPS;
+  const { doc, paths } = pdfPath([m, l, l, l, h], [0, 0, 10, 0, 10, 10, 0, 0]);
+  assert.equal(paths, 1);
+  assert.deepEqual(doc.entities, [W.lwpoly([[0, 0], [10 * R.PT, 0], [10 * R.PT, 10 * R.PT]], { closed: true })]);
+  const r = (await import('./web/modify.js')).offsetEntity(doc.entities[0], 0.5, [3, 1]);
+  assert.ok(!r.error, r.error);
+});
+
 test('TODO 272a: move gaps within 1e-6 mm join; larger gaps split the chain', () => {
   const { moveTo: m, lineTo: l } = pdfjs.OPS;
   for (const [gap, count] of [[0.5e-6, 1], [2e-6, 2]]) {
