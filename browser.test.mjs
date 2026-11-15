@@ -8566,10 +8566,10 @@ try {
     assert.deepEqual([await page.evaluate(() => window.__reads273), await page.locator('.tabs .dtab').count()], [0, tabs], 'Cancel opens nothing');
     await page.evaluate(() => { window.__ans273 = true; });                                    // OK: it opens
     await fileMenu.click(); await items.filter({ hasText: 'big273.dxf' }).click();
-    await page.waitForFunction((n) => document.querySelectorAll('.tabs .dtab').length > n, tabs);
+    await page.waitForFunction(() => /Opened big273\.dxf/.test(document.querySelector('[data-testid=cmd-prompt]').textContent));   // not the tab count: an untouched empty tab is used up
     assert.equal(await page.evaluate(() => window.__reads273), 1);
     await fileMenu.click(); await items.filter({ hasText: 'small273.dxf' }).click();           // a small one never asks
-    await page.waitForFunction((n) => document.querySelectorAll('.tabs .dtab').length > n, tabs + 1);
+    await page.waitForFunction(() => /Opened small273\.dxf/.test(document.querySelector('[data-testid=cmd-prompt]').textContent));
     assert.equal(await page.evaluate(() => window.__ask273.length), 2, 'asked for the big file twice, never for the small one');
     await page.evaluate(() => { delete window.__TAURI__; delete window.__ask273; delete window.__ans273; delete window.__reads273; localStorage.removeItem('pd-recent'); });
   });
