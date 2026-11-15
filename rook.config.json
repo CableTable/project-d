@@ -13,6 +13,7 @@
   "folders": {
     "bishop": { "review": "ProjectD-s15fix", "build": "ProjectD-s15fix" },
     "king": { "review": "ProjectD-king2", "build": "ProjectD-king" },
+    "rook": { "review": "ProjectD-rook2", "build": "ProjectD-rook" },
     "knight": "ProjectD-rowan"
   }
 }

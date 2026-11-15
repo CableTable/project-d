@@ -11,15 +11,76 @@ const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
 
 const near = (a, b, m, eps = 1e-3) => assert.ok(Math.abs(a - b) <= eps * (1 + Math.abs(b)), `${m || ''} ${a} !~ ${b}`);
 const read = () => R.readPdf(new Uint8Array(fs.readFileSync('fixtures/vector.pdf')), { pdfjs });
+const pdfPath = (codes, coords, paint = pdfjs.OPS.stroke) => R.pdfToDoc({ ops: {
+  fnArray: [pdfjs.OPS.constructPath, paint], argsArray: [[codes, coords], null],
+} }, pdfjs.OPS);
+
+test('TODO 272a: three contiguous lines become one open polyline, even back at the start', () => {
+  const { moveTo: m, lineTo: l } = pdfjs.OPS;
+  const { doc, paths } = pdfPath([m, l, l, l], [0, 0, 10, 0, 10, 10, 0, 0]);
+  assert.equal(paths, 1);
+  assert.deepEqual(doc.entities, [W.lwpoly([[0, 0], [10 * R.PT, 0], [10 * R.PT, 10 * R.PT], [0, 0]])]);
+});
+
+test('TODO 272a: h closes joined lines; fills remain unfilled and paint operations stay separate', () => {
+  const { moveTo: m, lineTo: l, closePath: h, fill, stroke, constructPath } = pdfjs.OPS;
+  const { doc, paths } = pdfPath([m, l, l, h], [0, 0, 10, 0, 10, 10], fill);
+  assert.equal(paths, 1);
+  assert.deepEqual(doc.entities, [W.lwpoly([[0, 0], [10 * R.PT, 0], [10 * R.PT, 10 * R.PT]], { closed: true })]);
+  const separate = R.pdfToDoc({ ops: { fnArray: [constructPath, stroke, constructPath, stroke],
+    argsArray: [[[m, l], [0, 0, 10, 0]], null, [[m, l], [10, 0, 20, 0]], null] } }, pdfjs.OPS);
+  assert.equal(separate.paths, 2);
+});
+
+test('TODO 272a fix: m l l l(start) h closes without a repeated point', async () => {
+  const { moveTo: m, lineTo: l, closePath: h } = pdfjs.OPS;
+  const { doc, paths } = pdfPath([m, l, l, l, h], [0, 0, 10, 0, 10, 10, 0, 0]);
+  assert.equal(paths, 1);
+  assert.deepEqual(doc.entities, [W.lwpoly([[0, 0], [10 * R.PT, 0], [10 * R.PT, 10 * R.PT]], { closed: true })]);
+  const r = (await import('./web/modify.js')).offsetEntity(doc.entities[0], 0.5, [3, 1]);
+  assert.ok(!r.error, r.error);
+});
+
+test('TODO 272a: move gaps within 1e-6 mm join; larger gaps split the chain', () => {
+  const { moveTo: m, lineTo: l } = pdfjs.OPS;
+  for (const [gap, count] of [[0.5e-6, 1], [2e-6, 2]]) {
+    const { doc, paths } = pdfPath([m, l, m, l], [0, 0, 10, 0, 10 + gap / R.PT, 0, 20, 0]);
+    assert.equal(paths, count);
+    assert.equal(doc.entities.length, count);
+    assert.ok(doc.entities.every((e) => e.type === 'LWPOLYLINE'));
+    near(D.flatten(doc).boxes.model[2], 20 * R.PT);
+  }
+});
+
+test('TODO 272a: line-arc-line emits polyline, ARC, polyline; h never closes across the arc', () => {
+  const { moveTo: m, lineTo: l, curveTo: c, closePath: h } = pdfjs.OPS, K = 0.5522847498;
+  const coords = [20, 0, 10, 0, 10, 10 * K, 10 * K, 10, 0, 10, 0, 20];
+  for (const close of [false, true]) {
+    const { doc, paths } = pdfPath([m, l, c, l, ...(close ? [h] : [])], coords);
+    assert.equal(paths, 3);
+    assert.deepEqual(doc.entities.map((e) => e.type), ['LWPOLYLINE', 'ARC', 'LWPOLYLINE']);
+    assert.equal(+doc.entities[2].r.v[doc.entities[2].r.c.indexOf(70)], 0);
+    assert.deepEqual(doc.entities[2], W.lwpoly([[0, 10 * R.PT], [0, 20 * R.PT], ...(close ? [[20 * R.PT, 0]] : [])]));
+  }
+});
+
+test('TODO 272a: noncircular curve pieces join straight neighbours and rectangles flush the chain', () => {
+  const { moveTo: m, lineTo: l, curveTo: c, rectangle: r } = pdfjs.OPS;
+  const { doc, paths } = pdfPath([m, l, c, l, r], [-10, 0, 0, 0, 10, 20, 20, -20, 30, 0, 40, 0, 50, 0, 10, 5]);
+  assert.equal(paths, 2);
+  assert.deepEqual(doc.entities.map((e) => e.type), ['LWPOLYLINE', 'LWPOLYLINE']);
+  assert.ok(+doc.entities[0].r.v[doc.entities[0].r.c.indexOf(90)] > 4);
+  assert.equal(+doc.entities[1].r.v[doc.entities[1].r.c.indexOf(70)], 1);
+});
 
 test('T32: searchable invisible text is not artwork; visible text and the original stroked A survive', async () => {
   const bytes = fs.readFileSync('fixtures/pdf-search-text.pdf');
   const mixed = await R.readPdf(new Uint8Array(bytes), { pdfjs });
-  assert.equal(mixed.paths, 3); assert.equal(mixed.texts, 1);
+  assert.equal(mixed.paths, 2); assert.equal(mixed.texts, 1);
   assert.deepEqual(mixed.doc.entities.filter((e) => e.type === 'TEXT').map((e) => e.r.v[e.r.c.indexOf(1)]), ['C']);
   const hidden = await R.readPdf(new Uint8Array(bytes), { pdfjs, page: 2 });
-  assert.equal(hidden.paths, 3); assert.equal(hidden.texts, 0);
-  assert.ok(hidden.doc.entities.every((e) => e.type === 'LINE'));
+  assert.equal(hidden.paths, 2); assert.equal(hidden.texts, 0);
+  assert.ok(hidden.doc.entities.every((e) => e.type === 'LWPOLYLINE'));
 });
 
 test('T32: rendering modes 3 / 7 are invisible, other modes paint; save and form scopes restore text mode', () => {
@@ -67,7 +128,7 @@ test('the fixture reads: 160 × 80 plate, dial, box, leader and text, in mm from
   for (const e of r.doc.entities) types[e.type] = (types[e.type] || 0) + 1;
   assert.equal(types.TEXT, 1);
   assert.equal(types.ARC, 8, 'four plate corners and four of the dial');
-  assert.equal(types.LINE, 9, 'four plate sides, the box\'s four, the leader');
+  assert.equal(types.LWPOLYLINE, 6, 'four plate sides, one closed box, the leader');
 });
 
 test('as a drawing: mm from the page corner, one click on the plate picks its 8 pieces, the leader and the dial stay out', async () => {
@@ -75,10 +136,10 @@ test('as a drawing: mm from the page corner, one click on the plate picks its 8 
   const b = fl.boxes.model;
   near(b[0], 5, 'x0'); near(b[2], 180, 'x1'); near(b[1], 20, 'y0'); near(b[3], 100, 'y1');
   const ed = E.makeIndex(doc, fl), e = E.hitEntity(ed, 100, 20.1, 1);
-  assert.equal(doc.entities[e].type, 'LINE');
+  assert.equal(doc.entities[e].type, 'LWPOLYLINE');
   const chain = E.chainAt(ed, e, E.chainTol(b, 1));
   assert.equal(chain.length, 8);
-  assert.ok(chain.every((i) => doc.entities[i].type === 'LINE' || doc.entities[i].type === 'ARC'));
+  assert.ok(chain.every((i) => doc.entities[i].type === 'LWPOLYLINE' || doc.entities[i].type === 'ARC'));
   const kept = E.keepOnly(doc, new Set(chain)), d2 = { ...doc, entities: kept.entities, blocks: kept.blocks }, b2 = D.flatten(d2).boxes.model;
   near(b2[2] - b2[0], 160, 'width'); near(b2[3] - b2[1], 80, 'height');
 });
@@ -106,7 +167,7 @@ test('pure conversion: the CTM and a form\'s matrix apply, clips are not drawn, 
   const [l, q] = r.doc.entities;
   assert.equal(r.doc.entities.length, 2, 'the clipped path is dropped');
   const f = (e, c) => +e.r.v[e.r.c.indexOf(c)];
-  near(f(l, 10), 10 * R.PT, 'x1'); near(f(l, 20), 20 * R.PT, 'y1'); near(f(l, 11), 20 * R.PT, 'x2');
+  near(f(l, 10), 10 * R.PT, 'x1'); near(f(l, 20), 20 * R.PT, 'y1'); near(+l.r.v[l.r.c.lastIndexOf(10)], 20 * R.PT, 'x2');
   assert.equal(q.type, 'LWPOLYLINE'); assert.equal((+q.r.v[q.r.c.indexOf(70)]) & 1, 1, 'closed');
 });
 
@@ -136,7 +197,7 @@ test('a page with /Rotate: drawn as it is shown (a portrait page turned 90° is 
   const text = [{ str: 'AB', transform: [10, 0, 0, 10, 20, 30] }];
   const ends = (rotate) => {
     const { doc } = R.pdfToDoc({ ops, text, view, rotate }, OPS), l = doc.entities[0], f = (c) => +l.r.v[l.r.c.indexOf(c)];
-    return [f(10), f(20), f(11), f(21)].map((v) => +(v / R.PT).toFixed(3));
+    return [f(10), f(20), +l.r.v[l.r.c.lastIndexOf(10)], +l.r.v[l.r.c.lastIndexOf(20)]].map((v) => +(v / R.PT).toFixed(3));
   };
   assert.deepEqual(ends(0), [0, 0, 50, 0]);
   assert.deepEqual(ends(90), [0, 100, 0, 50], 'bottom-left goes to top-left, the line runs down');

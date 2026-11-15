@@ -21,6 +21,7 @@
       <button type="button" data-tab="usage" aria-pressed="true" aria-controls="usage">Usage</button>
       <button type="button" data-tab="todo" aria-pressed="false" aria-controls="todo">TODO</button>
       <button type="button" data-tab="tickets" aria-pressed="false" aria-controls="tickets">Tickets</button>
+      <button type="button" data-tab="queue" aria-pressed="false" aria-controls="queue">Queue</button>
     </nav>
     <div class="ud-agent"><div><button id="signin" type="button">Sign in with Google</button><button id="signout" type="button" hidden>Sign out</button></div>
       <button id="refresh" type="button" disabled>Update now</button></div>
@@ -108,6 +109,11 @@
       <label for="ticket-tag">Tag</label><select id="ticket-tag"></select>
     </div>
     <div id="ticket-list" class="ud-sec"></div>
+  </section>
+  <section class="ud-sec" id="queue" data-page hidden>
+    <h2>Queue</h2>
+    <p id="queue-updated" class="ud-muted"></p>
+    <div id="queue-list" class="ud-sec"></div>
   </section>
 </main>
 </div>

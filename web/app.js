@@ -13,7 +13,7 @@ import { idbStore, localStore } from './idbstore.js';
 import { WORK_AREAS, workAreaDark } from './workarea.js';
 import { FOLDS, ribbonTabs, nextFold, doubleFold } from './ribbon.js';
 import { PRESETS, presetFor, stepRepeat, gridCellNote, GRIP_KEYS } from './layout.js';
-import { unitFactor, convertedNote, startHidden, entityCount, layerCounts, drawingBoxMm, fitRect, cursorMm, fitsSheet, spaceOf, boxOnSheet, itemVisible, addRecent, closePrompt } from './doc.js';
+import { unitFactor, convertedNote, startHidden, entityCount, layerCounts, drawingBoxMm, fitRect, cursorMm, fitsSheet, spaceOf, boxOnSheet, itemVisible, addRecent, closePrompt, BIG_FILE, bigFileAsk } from './doc.js';
 import * as Ed from './edit.js';
 import { follow as followGroups, remap as remapGroups, splice as spliceGroups, swap as swapGroups, copy as copyGroups, group as groupDrawing, ungroup as ungroupDrawing, groupOf, selectionOf, wholeGroup as wholeDrawingGroup } from './groups.js';
 import * as AD from './autodim.js';
@@ -31,7 +31,7 @@ import * as PS from './pdf-sheets.js';
 import { paintDrawing, drawMarks, drawContour, drawDimPreview, ink, FONT_FAMILY } from './render.js';
 import { overlayBox } from './preview.js';
 import { snapPlace, snapUsable, heavy, sameBase } from './perf.js';
-import { flatten, primeSplines, unionBox, CAP, ACI, UNITS, mapply, mmul, pickIndex, arcSweep, DrawingError } from './drawing.js';
+import { flatten, patchWidths, primeSplines, unionBox, CAP, ACI, UNITS, mapply, mmul, pickIndex, arcSweep, DrawingError } from './drawing.js';
 import { writeDxf, writeDxfWithReport, saveReportNote, unwritable, addLayer, newDoc, lwpoly, point } from './dxf-write.js';
 import * as SH from './shaping.js';
 import { explodeSelection } from './explode.js';
@@ -66,7 +66,7 @@ import * as PR from './props.js';
 import { openQuickSelect } from './qselectdlg.js';
 import * as FI from './fill.js';
 import { extendEntity, extendRegion, previewEdit, curveShape, isBoundary, extendable } from './extend.js';
-import { placedMat, placedBox, placement1 } from './apply.js';
+import { placedMat, placedBox, placement1, GRID_KEYS, gridLayout, bakeGrid, slotOf, relayGrid } from './apply.js';
 import { layoutSnap, placedSnap, layoutCandidates, layoutReference, partIndex, toPart } from './layoutsnap.js';
 import * as LD from './layoutdoc.js';
 import { isDimPart } from './layoutdim.js';
@@ -286,7 +286,17 @@ Object.defineProperty(state, 'sel', { enumerable: true, get: () => selIdx, set: 
 Object.defineProperty(state, 'picks', { enumerable: true, get: () => picksArr, set: (v) => { picksArr = v; } });
 const idleSettings = LD.newSettings();
 const curLay = () => { const d = state.docs[state.doc]; return d && d.lay ? d.lay : null; };
-for (const k of LD.SETTING_KEYS) Object.defineProperty(state, k, { enumerable: true, get: () => (curLay() ? curLay().s : idleSettings)[k], set: (v) => { (curLay() ? curLay().s : idleSettings)[k] = v; } });
+/** The applied grid (lay.grids[gid]) the selected copy still belongs to, or null. While one is selected the Step and repeat section shows and edits its settings (GRID_KEYS), not the live grid's; "Update grid" lays its copies again (TODO 283). */
+function gridEdit() {
+  const lay = curLay(), p = lay && state.sel >= 0 && placedNow[state.sel];
+  return p && p.src === 'loose' && slotOf(lay, lay.placed[p.i]) >= 0 ? lay.grids[p.gid] : null;
+}
+/** The grid the Step and repeat section shows: the selected copy's applied grid, else the live one. */
+const sectionLayout = () => { const G = gridEdit(); return G ? gridLayout(curLay(), G) : layout; };
+for (const k of LD.SETTING_KEYS) {
+  const own = () => (GRID_KEYS.includes(k) && gridEdit()) || (curLay() ? curLay().s : idleSettings);
+  Object.defineProperty(state, k, { enumerable: true, get: () => own()[k], set: (v) => { own()[k] = v; } });
+}
 /** A tab with nothing in it yet; its name is the first free "Drawing N". */
 function emptyDoc() {
   const names = new Set(state.docs.map((d) => d.name));
@@ -1162,7 +1172,7 @@ async function openBytes(name, buf, path = null) {
   addTab(doc);
   if (dwg && path) rememberRecent(path);
   note(`Opened ${name}: ${doc.entities} entities` + (doc.conv ? ', ' + doc.conv : '') +
-    (fitsSheet(doc.box, state.sheetW, state.sheetH) ? '' : ' (larger than the sheet)') + (fontNote ? '. ' + fontNote : '') + (fl.truncated ? '. Too big to show all of it' : '') + (dwg ? '. Converted from DWG by LibreDWG' : ''));
+    (fitsSheet(doc.box, state.sheetW, state.sheetH) ? '' : ' (larger than the sheet)') + (fontNote ? '. ' + fontNote : '') + (fl.truncated ? '. Too big to show all of it' : '') + (fl.endsEarly ? '. File ends early: parts may be missing' : '') + (dwg ? '. Converted from DWG by LibreDWG' : ''));
   ui.fontNote.textContent = fontNote;
   ui.fontNote.hidden = !fontNote;
   await balLoad(doc, path, name);
@@ -1175,8 +1185,10 @@ async function openPdf(name, buf, path = null, copies = null) {
   const bytes = buf instanceof ArrayBuffer ? buf : buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
   let r;
   try { r = await readPdf(new Uint8Array(bytes.slice(0))); } catch (err) { if (copies) throw err; note(name + ': could not read this PDF (' + (err && err.message ? err.message : err) + ')'); return; }
-  // shortcut: changed content with the same page count is not detected, compare source fingerprints if that check is needed.
-  if (copies && copies.some((c) => (c.pdfPages != null && c.pdfPages !== r.pages) || (c.sheet ?? 1) > r.pages)) throw new Error('source PDF changed');
+  // SHA-256 of the source bytes (lowercase hex); null without crypto.subtle, hashing never fails the open.
+  let hash = null;
+  try { hash = [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map((b) => b.toString(16).padStart(2, '0')).join(''); } catch { /* not a secure context */ }
+  if (copies && copies.some((c) => (c.pdfPages != null && c.pdfPages !== r.pages) || (c.pdfHash && hash && c.pdfHash !== hash) || (c.sheet ?? 1) > r.pages)) throw new Error('source PDF changed');
   if (!r.paths) {
     if (copies) throw new Error('source PDF has no vector lines');
     const yes = await confirmAsk(name + ' has no vector lines, only a picture (or text). Use it as a background picture instead?', 'Use as background');
@@ -1186,7 +1198,7 @@ async function openPdf(name, buf, path = null, copies = null) {
   }
   const raw = r.doc, fl = flatten(raw);
   const base = baseName(name), dxfName = base + '.dxf';
-  const doc = { name: dxfName, path: null, openPath: path, dirty: false, fromPdf: name, pdf: { name, bytes, pages: r.pages, page: r.page }, ...tabFields(raw, fl) };
+  const doc = { name: dxfName, path: null, openPath: path, dirty: false, fromPdf: name, pdf: { name, bytes, pages: r.pages, page: r.page, hash }, ...tabFields(raw, fl) };
   addTab(doc);
   note(`Opened ${name} as a drawing (page ${r.page} of ${r.pages}): ${raw.entities.length} entities, ${r.texts} texts, ${fmtSize(r.mm[0])} × ${fmtSize(r.mm[1])} mm. Not saved yet: Save writes ${base}${PS.sheetNumbers(doc.pdf).length > 1 ? `-sheet${r.page}` : ''}.dxf` + (fl.truncated ? '. Too big to show all of it' : ''));
   await balLoad(doc, path, name);
@@ -1197,6 +1209,17 @@ async function confirmAsk(text, okLabel, kind = 'info', cancelLabel = 'No') {
   const t = window.__TAURI__;
   if (t && t.dialog && t.dialog.ask) { try { return await t.dialog.ask(text, { title: 'Project D', kind, okLabel, cancelLabel }); } catch { return false; } }
   return window.confirm(text);
+}
+/** Before reading files ({ name, size }): one question for all the big ones (over 50 MB); Cancel drops the big ones, the rest go on. */
+async function bigOk(files) {
+  const q = bigFileAsk(files);
+  if (!q || await confirmAsk(q, 'Open', 'warning', 'Cancel')) return files;
+  for (const f of files) if (f.size > BIG_FILE) note(f.name + ': not opened (big file)');
+  return files.filter((f) => f.size <= BIG_FILE);
+}
+/** A file's size in bytes from its path in the app; 0 when it cannot be told (the read then reports the real problem). */
+async function pathSize(path) {
+  try { return (await window.__TAURI__.fs.stat?.(path))?.size || 0; } catch { return 0; }
 }
 
 async function openFile() {
@@ -1226,6 +1249,7 @@ async function openPath(path, recent = false) {
   const t = window.__TAURI__, name = path.split(/[\\/]/).pop();
   if (!t || !t.fs || !t.fs.readFile) return;
   try {
+    if (!(await bigOk([{ name, size: await pathSize(path) }])).length) return;
     if (!/\.(dxf|pdf)$/i.test(name)) {                                       // a .dwg is converted from its path; other names are refused
       if (recent && t.fs.exists && !(await t.fs.exists(path))) throw new Error('not found');   // a DXF's readFile fails by itself; the helper's error would not say "moved"
       await openBytes(name, new ArrayBuffer(0), path); return;
@@ -1324,7 +1348,7 @@ function attachDrop() {
     if (!e.dataTransfer.files.length) return;
     e.preventDefault();
     ui.canvas.classList.remove('dropping');
-    for (const f of balFirst([...e.dataTransfer.files])) await openPicked(f);
+    for (const f of balFirst(await bigOk([...e.dataTransfer.files]))) await openPicked(f);
   });
 }
 
@@ -1543,7 +1567,7 @@ function buildCanvas() {
   ui.dcanvas = h('canvas', { class: 'drawing-layer', 'data-testid': 'drawing' });
   ui.gridDisplay = h('div', { class: 'drawing-grid', hidden: true, 'aria-hidden': 'true', 'data-testid': 'drawing-grid' });
   ui.picker = h('input', { type: 'file', accept: '.dxf,.dwg,.pdf,.json', hidden: true, 'data-testid': 'picker', multiple: true });
-  ui.picker.addEventListener('change', async () => { const files = [...ui.picker.files]; ui.picker.value = ''; for (const f of balFirst(files)) await openPicked(f); });   // emptied, so the same file can be picked again
+  ui.picker.addEventListener('change', async () => { const files = [...ui.picker.files]; ui.picker.value = ''; for (const f of balFirst(await bigOk(files))) await openPicked(f); });   // emptied, so the same file can be picked again
   ui.bgPicker = h('input', { type: 'file', accept: '.png,.jpg,.jpeg,.pdf', hidden: true, 'data-testid': 'bg-picker' });
   ui.bgPicker.addEventListener('change', async () => {
     const f = ui.bgPicker.files[0], trace = traceAfter;
@@ -1651,7 +1675,7 @@ function buildPanel() {
   ui.fit = h('input', { type: 'checkbox', role: 'switch', class: 'swin', 'data-testid': 'fit-switch', 'aria-label': 'Fit to sheet' });
   ui.fit.addEventListener('change', () => {
     if (!curLay()) return;
-    if (!ui.fit.checked) { state.rows = Math.max(1, layout.rows || 1); state.cols = Math.max(1, layout.cols || 1); }     // typing starts from what was worked out
+    if (!ui.fit.checked) { const L = sectionLayout(); state.rows = Math.max(1, L.rows || 1); state.cols = Math.max(1, L.cols || 1); }     // typing starts from what was worked out
     pushLay(curDoc(), null, 'set:fit', 'Fit to sheet'); state.fit = ui.fit.checked; touch(); update();
   });
   ui.fitText = h('span', { class: 'lbl', 'data-testid': 'fit-state' }, 'On');
@@ -1955,27 +1979,41 @@ function addToLayout() {
 function pickGridPart(v) {
   const lay = curLay();
   if (!lay) return;
+  const G = gridEdit(), own = G || lay.s;           // an applied grid has a part always: "No grid" does nothing there
+  if (G && !v) { update(); return; }
   if (v.startsWith('lib:')) {
     const rec = lib.items.find((r) => r.id === v.slice(4)), part = rec && libPart(rec);
     if (!part) { note('This part could not be read'); update(); return; }
     pushLay(curDoc(), null, '', 'Pick the grid part');
-    lay.parts[part.id] = { ...part }; lay.s.gridPart = part.id;
-  } else { pushLay(curDoc(), null, '', 'Pick the grid part'); lay.s.gridPart = v || null; }
+    lay.parts[part.id] = { ...part }; own.gridPart = part.id;
+  } else { pushLay(curDoc(), null, '', 'Pick the grid part'); own.gridPart = v || null; }
   touch(); update();
 }
 
 /** Apply: the grid's copies become separate placed parts (to place one by one); the grid is cleared, so another can be made. */
 function apply() {
+  if (gridEdit()) { updateGrid(); return; }
   const d = curDoc(), lay = d && d.lay;
   if (!lay) { note('Apply is on a layout tab: Add to layout, or New layout'); return; }
   if (!lay.s.gridPart) { note('Pick a part for step and repeat first'); return; }
   if (!layout.count) { note('Nothing fits on the sheet, so there is nothing to apply'); return; }
   const grid = placedNow.filter((p) => p.src === 'grid'), id = lay.s.gridPart, cellNote = gridCellNote(layout);
   pushLay(d, null, '', 'Apply the grid');
-  for (const p of grid) lay.placed.push(placement1(p.partId, p.x, p.y, p.rot));
-  lay.s.gridPart = null;
+  bakeGrid(lay, 'g' + uid(), grid.map((p) => placement1(p.partId, p.x, p.y, p.rot)), layout);
+  lay.s.gridPart = null; state.sel = -1;         // nothing selected, so the section is the live grid again (another grid can be made); select a copy to change this one
   touch(); update();
-  note(`${grid.length} copies of ${lay.parts[id].name} are now placed parts of their own. ${cellNote ? cellNote + '. ' : ''}Pick a part in Step and repeat to make another grid`);
+  note(`${grid.length} copies of ${lay.parts[id].name} are now placed parts of their own. ${cellNote ? cellNote + '. ' : ''}Select one to change the grid (Update grid), or pick a part in Step and repeat to make another grid`);
+}
+/** Update grid: the selected copy's applied grid is laid again from the section's values, as one undo step. */
+function updateGrid() {
+  const d = curDoc(), lay = d && d.lay, G = gridEdit(), cur = G && lay.placed[placedNow[state.sel].i];
+  if (!G) return;
+  if (!gridLayout(lay, G).count) { note('Nothing fits on the sheet, so there is nothing to lay out'); return; }
+  pushLay(d, null, '', 'Update the grid');
+  const r = relayGrid(lay, cur.gid), at = lay.placed.indexOf(cur);
+  selLooseMany = [at >= 0 ? at : lay.placed.findIndex((p) => p.gid === cur.gid)];
+  touch(); update();
+  note(`Grid updated: ${r.moved} copies laid again${r.added ? `, ${r.added} added` : ''}${r.dropped ? `, ${r.dropped} taken off` : ''}. Copies moved by hand stay where they are`);
 }
 
 // ---- Auto-nest (nestdlg.js is the dialog, nest.js the packer): the preview is only applied by Apply, as one undo step ----
@@ -2058,7 +2096,7 @@ let lastPush = { key: '', t: 0, d: null };
 const r2 = (v) => Math.round(v * 100) / 100;
 const fmt1 = (v) => Number(v).toFixed(1);
 const centrePivot = () => ({ kind: 'centre', x: 0, y: 0 });
-const laySnap = (lay) => ({ sw: lay.s.sheetW, sh: lay.s.sheetH, s: structuredClone(lay.s), placed: lay.placed.map((p) => ({ ...p })), gridPart: lay.s.gridPart, parts: { ...lay.parts }, layers: LD.layersOf(lay),
+const laySnap = (lay) => ({ sw: lay.s.sheetW, sh: lay.s.sheetH, s: structuredClone(lay.s), placed: lay.placed.map((p) => ({ ...p })), gridPart: lay.s.gridPart, parts: { ...lay.parts }, layers: LD.layersOf(lay), grids: structuredClone(lay.grids || {}),
   lsel: lay === (curLay() || {}) ? selIdxs().map((i) => placedNow[i]).filter((p) => p.src === 'loose').map((p) => p.i) : [] });      // lsel: which loose parts were selected (undo brings the selection back)
 const layHist = (d) => d.lhist || (d.lhist = Ed.createHistory());
 /** Keeps the layout as it is now for undo; the same key within 0.8 s (arrow key held down) keeps only the first. */
@@ -2073,7 +2111,7 @@ function layRestore(d, st, dirty = true) {
   if (st.lsel && st.lsel.length) selLooseMany = st.lsel.slice();
   const sized = st.sw != null && (st.sw !== d.lay.s.sheetW || st.sh !== d.lay.s.sheetH);
   if (sized) { d.lay.s.sheetW = st.sw; d.lay.s.sheetH = st.sh; syncFields(); }
-  d.lay.placed = st.placed; d.lay.parts = st.parts; if (st.layers) d.lay.layers = st.layers; Object.assign(d.lay.s, structuredClone(st.s));       // every setting (grippers, gaps, rows, marks, grid part, guides) comes back with the parts
+  d.lay.placed = st.placed; d.lay.parts = st.parts; if (st.layers) d.lay.layers = st.layers; if (st.grids) d.lay.grids = st.grids; Object.assign(d.lay.s, structuredClone(st.s));       // every setting (grippers, gaps, rows, marks, grid part, guides) comes back with the parts
   gapSig = ''; syncFields();                                           // the extra-gap rows hold the old gap objects: rebuilt
   state.mode = 'select'; state.pivot = centrePivot(); state.rotCopy = false; pdrag = null; lastPush = { key: '', t: 0, d: null }; if (before !== JSON.stringify(LD.placedAll(d.lay))) { picksArr = []; state.sel = -1; d.stretchSelection = null; }
   linkBase.delete(d.lay);                                              // an undo is not an edit the dimensions follow
@@ -2229,7 +2267,7 @@ function selectMany(list, main, stretchSelection = null) {
 /** A copy of a placement for a new part: not locked, and a group's copy is a group of its own (gmap: old group id → new one, one per copy).
  * A part with a contour (cid) and the contour (ct) get a new cid together, so the copy has a contour of its own. */
 function fresh(pl, gmap) {
-  const { lock, g, cid, ct, ...rest } = pl;
+  const { lock, g, cid, ct, gid, ...rest } = pl;       // a copy is not a copy of the applied grid
   const link = (c) => gmap['c|' + c] || (gmap['c|' + c] = 'c' + uid());
   return { ...rest, ...(g ? { g: gmap[g] || (gmap[g] = newGroupId()) } : {}), ...(cid ? { cid: link(cid) } : {}), ...(ct ? { ct: link(ct) } : {}) };
 }
@@ -2264,7 +2302,7 @@ function gLooseMany(g, sels) {
   if (ps.some((p) => p.src !== 'loose')) {
     gMark(g);
     const grid = placedNow.filter((q) => q.src === 'grid'), base = g.lay.placed.length;
-    for (const q of grid) g.lay.placed.push(placementOf(q));
+    bakeGrid(g.lay, 'g' + uid(), grid.map(placementOf), layout);       // an applied grid too: Update grid can lay it again
     g.lay.s.gridPart = null; g.loosened = true;
     return ps.map((p) => (p.src === 'loose' ? p.i : base + p.i));
   }
@@ -2279,7 +2317,7 @@ const loosenedNote = (g) => (g.loosened ? 'The step and repeat grid became separ
  * A locked part is not changed (says so). Nothing happens (and nothing is kept for undo) when it comes out the same.
  * → { g, part, next, idx, idxs, lay, items, nexts, name, many } or null.
  */
-function editSelected(fn, { copy = false, key = '', pick = false, label = 'Edit' } = {}) {
+function editSelected(fn, { copy = false, key = '', pick = false, label = 'Edit', labelSelection = true } = {}) {
   const items = selItems();
   if (!items.length) return null;
   const d = curDoc(), lay = d.lay, many = items.length > 1;
@@ -2289,7 +2327,7 @@ function editSelected(fn, { copy = false, key = '', pick = false, label = 'Edit'
   const nexts = items.map((x, k) => fn(x.part, curs[k], { ...ctx, k }));
   if (!copy && nexts.every((n, k) => PL.samePlacement(n, curs[k]))) return null;
   const name = many ? `${items.length} parts` : items[0].part.name;
-  const g = startGesture(d, `${label} ${name}`);
+  const g = startGesture(d, labelSelection ? `${label} ${name}` : label);
   g.key = key;
   gMark(g);
   let idxs;
@@ -2454,19 +2492,23 @@ function setPivotText(axis, text) {
 }
 
 // ---- Arrange (TODO 36, TODO 97i2): a group is one object in every tab ----
-const ARRANGE_PROMPT = 'Align or distribute [Left / Centre / Right / Top / Middle / Bottom / Horizontal / Vertical]:';
+const ARRANGE_PROMPT = 'Align or distribute [Left / Centre on first / Right / Top / Middle / Bottom / Horizontal / Vertical]:';
 /** Align or distribute the selected objects, relative to the selection, the sheet or the first selected. */
 function arrange(kind, how) {
-  const lay = curLay(), d = !lay && editable();
+  const lay = curLay(), d = !lay && editable(), center = kind === 'center';
   if (d && moveLocked(d, d.sel, 'align')) return;
   const items = lay ? selItems().map((x) => ({ ...x, g: x.p.g, box: boxOf(x) })) : d ? [...d.sel].map((i) => ({ i, g: groupOf(d.raw.groups, i), box: OB.boxOf(d.fl, [i])?.map((v) => v * d.factor) })).filter((x) => x.box) : [];
-  if (items.length < 2) { note(lay ? 'Arrange: select two or more parts first (Shift-click, or drag a box round them)' : 'Arrange: select two or more objects first (Shift-click, or drag a box round them)'); return; }
+  const needCenter = 'Center: select two or more objects; the first selected stays put';
+  if (items.length < 2) { note(center ? needCenter : lay ? 'Arrange: select two or more parts first (Shift-click, or drag a box round them)' : 'Arrange: select two or more objects first (Shift-click, or drag a box round them)'); return; }
   if (lay && items.some((x) => x.p.lock)) { note(LOCKED); return; }
-  const rel = !lay && state.arrangeRel === 'sheet' ? 'selection' : state.arrangeRel, sheet = lay ? [0, 0, lay.s.sheetW, lay.s.sheetH] : null;
+  const rel = center ? 'first' : !lay && state.arrangeRel === 'sheet' ? 'selection' : state.arrangeRel, sheet = lay ? [0, 0, lay.s.sheetW, lay.s.sheetH] : null;
   const objs = A.objectsOf(items);
   const boxes = objs.map((o) => o.box), relName = { selection: 'the selection', sheet: 'the sheet', first: 'the first selected' }[rel];
   let deltas, extra = '';
-  if (kind === 'align') {
+  if (center) {
+    if (objs.length < 2) { note(needCenter); return; }
+    deltas = A.centreOnFirstDeltas(boxes);
+  } else if (kind === 'align') {
     if (objs.length < 2 && rel !== 'sheet') { note(lay ? 'Align: that is one object (a group). Pick Relative to: Sheet, or select another part' : 'Align: that is one object (a group). Select another object'); return; }
     deltas = A.alignDeltas(boxes, how, rel, sheet, 0);
   } else {
@@ -2475,12 +2517,13 @@ function arrange(kind, how) {
     deltas = r.deltas; extra = `, gaps of ${fmt(r.gap)} mm`;
   }
   const per = A.spreadToItems(objs, deltas, items.length);
-  const label = (kind === 'align' ? 'Align ' : 'Distribute ') + how;
-  const message = (name) => kind === 'align' ? `${name} aligned ${how} to ${relName}` : `${name} distributed ${how}ly with equal gaps${extra} (${relName})`;
+  const label = center ? 'Centre on first' : (kind === 'align' ? 'Align ' : 'Distribute ') + how;
+  const message = (name) => center ? `${objs.length} objects centred on the first selected` : kind === 'align' ? `${name} aligned ${how} to ${relName}` : `${name} distributed ${how}ly with equal gaps${extra} (${relName})`;
+  const unchanged = 'Already ' + (center ? 'centred' : kind === 'align' ? 'aligned' : 'evenly spaced') + ' (nothing moved)';
   if (d) {
     try {
       const next = A.moveByDeltas(d.raw, items.map((x) => x.i), per.map(({ dx, dy }) => ({ dx: dx / d.factor, dy: dy / d.factor })));
-      if (next === d.raw) { note('Already ' + (kind === 'align' ? 'aligned' : 'evenly spaced') + ' (nothing moved)'); return; }
+      if (next === d.raw) { note(unchanged); return; }
       const sel = new Set(d.sel);
       view.fitted = false;
       if (!commit(d, followDimensions(d.raw, next, d.factor), label, sel)) return;
@@ -2489,8 +2532,8 @@ function arrange(kind, how) {
     } catch (err) { note(err.message); }
     return;
   }
-  const r = editSelected((part, pl, c) => PL.translate(pl, per[c.k].dx, per[c.k].dy), { label });
-  if (!r) { note('Already ' + (kind === 'align' ? 'aligned' : 'evenly spaced') + ' (nothing moved)'); return; }
+  const r = editSelected((part, pl, c) => PL.translate(pl, per[c.k].dx, per[c.k].dy), { label, labelSelection: !center });
+  if (!r) { note(unchanged); return; }
   afterEdit(r, message(r.name));
 }
 /** The Relative to select: Selection, Sheet or First selected (remembered for the session). */
@@ -3005,7 +3048,7 @@ function cancelPlacedDrag() {
 }
 
 function renderStep() {
-  const lay = curLay(), s = state, on = s.fit;
+  const lay = curLay(), s = state, on = s.fit, applied = !!gridEdit(), layout = sectionLayout();       // an applied grid's own grid while one of its copies is selected (TODO 283)
   const label = (p) => `${p.name} · ${fmtSize(p.w)} × ${fmtSize(p.h)}`;
   const own = lay ? LD.partsForPlacement(lay) : [], rest = lay ? lib.items.filter((r) => !lay.parts[r.id]) : [];
   ui.partSel.replaceChildren(h('option', { value: '' }, lay && own.length + rest.length ? 'No grid' : 'No parts yet'),
@@ -3024,10 +3067,11 @@ function renderStep() {
   const bad = layout.count > 0 && !layout.fits;
   ui.fitNote.hidden = !bad;
   ui.fitNote.textContent = bad ? `Does not fit: the grid is ${fmtSize(layout.gridW)} × ${fmtSize(layout.gridH)} mm, the usable area ${fmtSize(layout.area.w)} × ${fmtSize(layout.area.h)} mm.` : '';
-  ui.stepHint.textContent = !lay ? '' : !s.gridPart ? 'Pick a part to repeat over the sheet, or add parts from the Parts library.' : gridCellNote(layout) || (!layout.count && !layout.taken && on ? 'The part is larger than the usable area.' : '');
+  ui.stepHint.textContent = !lay ? '' : !s.gridPart ? 'Pick a part to repeat over the sheet, or add parts from the Parts library.' : gridCellNote(layout) || (!layout.count && !layout.taken && on ? 'The part is larger than the usable area.' : applied ? 'This copy\'s grid. Copies you moved stay put.' : '');
   ui.stepFoot.classList.toggle('idle', !!lay && !s.gridPart);     // no grid part: just the hint, not a floating "0" and a greyed Apply
+  ui.applyBtn.textContent = applied ? 'Update grid' : 'Apply';
   ui.applyBtn.disabled = !lay || !layout.count;
-  ui.applyBtn.title = !lay ? 'Apply is on a layout tab' : !s.gridPart ? 'Pick a part for step and repeat first' : '';
+  ui.applyBtn.title = !lay ? 'Apply is on a layout tab' : applied ? 'Lay the copies of this grid again with these values' : !s.gridPart ? 'Pick a part for step and repeat first' : '';
   ui.sheetSec.querySelectorAll('input[data-key]').forEach((el) => { el.disabled = !lay; });
 }
 
@@ -3365,7 +3409,7 @@ async function autosaveNow() {
         try { dxf = writeDxf(rawForSave({ ...page, raw: raw || newDoc(), titleBlock }), { escapeUnicode: true, extents: page.lay || !page.fl ? null : page.fl.boxes.model }); } catch (e) { console.warn('Autosave: could not write', page.name, e); continue; }
         if (page.lay && r.hasCopy && r.autoTab === tab && r.autoDxf === dxf && r.autoBalloons === balloons && r.autoUnit === unit) continue;                    // a layout: the same text, balloons, unit and tab index as the last copy
         const name = n == null ? page.name : `${d.pdf.name} sheet ${n}`;
-        await RC.saveCopy({ id: r.rid, name, path: page.path || null, openPath: d.openPath || null, pdfPages: d.pdf?.pages || null, kind: page.lay ? 'layout' : 'drawing', dxf, t: Date.now(),
+        await RC.saveCopy({ id: r.rid, name, path: page.path || null, openPath: d.openPath || null, pdfPages: d.pdf?.pages || null, pdfHash: d.pdf?.hash || null, kind: page.lay ? 'layout' : 'drawing', dxf, t: Date.now(),
           tab, sheet: n, balloons, unit, saved: !!page.saved, fromFile: !!d.fromFile, fromPdf: d.fromPdf || null, acceptedLoss: !!page.acceptedLoss });
         r.hasCopy = true; r.autoTab = tab; r.autoBalloons = balloons; r.autoUnit = unit; if (page.lay) r.autoDxf = dxf;
         if (!page.lay) { r.autoEnts = raw?.entities; r.autoBlocks = raw?.blocks; r.autoLayers = raw?.layers; r.autoGroups = raw?.groups; r.autoLtypes = raw?.ltypes; r.autoHeader = raw?.header; r.autoTitle = titleBlock; }
@@ -4199,9 +4243,9 @@ function cmdEnter(raw) {
     if (PL.parseAngle(c) != null) { const copy = state.rotCopy; state.rotCopy = false; const why = setAngleText(c, copy); if (why) note(why); return; }
   }
   if (!activeCmd() && (curLay() ? selIdxs().length : editable()?.sel.size) > 1) {    // several selected, no command running: the words in the prompt
-    const w = { left: 'left', centre: 'centre', center: 'centre', right: 'right', top: 'top', middle: 'middle', bottom: 'bottom', horizontal: 'horizontal', vertical: 'vertical' }[c]
-      || (curLay() ? { l: 'left', c: 'centre', r: 'right', t: 'top', m: 'middle', b: 'bottom', h: 'horizontal', v: 'vertical' }[c] : null);   // single letters keep starting Line, Rectangle... on the drawing tabs
-    if (w) { arrange(['horizontal', 'vertical'].includes(w) ? 'distribute' : 'align', w); return; }
+    const w = { left: 'left', centre: 'center', center: 'center', right: 'right', top: 'top', middle: 'middle', bottom: 'bottom', horizontal: 'horizontal', vertical: 'vertical' }[c]
+      || (curLay() ? { l: 'left', c: 'center', r: 'right', t: 'top', m: 'middle', b: 'bottom', h: 'horizontal', v: 'vertical' }[c] : null);   // single letters keep starting Line, Rectangle... on the drawing tabs
+    if (w) { if (w === 'center') runCommand(CB.resolve(w)); else arrange(['horizontal', 'vertical'].includes(w) ? 'distribute' : 'align', w); return; }
   }
   if (state.tool === 'contour' && (editable() || curLay())) {           // the words in the Contour prompt
     const m = /^(distance|dist|d|steps|s)\s+(.+)$/.exec(c), cfg = state.contourCfg, set = (k, v) => { cfg[k] = v; saveContourCfg(); renderContour(); renderCommand(); };
@@ -4223,6 +4267,7 @@ function cmdEnter(raw) {
 const TOOL_OF = { rectangle: 'rect' };
 const DIM_OF = { dimauto: 'auto', dimlinear: 'linear', dimradius: 'radius', dimdiameter: 'diameter', dimangular: 'angle' };
 const DO = {
+  center: () => { if (!activeCmd()) arrange('center'); },
   units: chooseUnits,
   eattedit: () => {
     if (cmpDoc() && !cmpEdit()) return;
@@ -4607,7 +4652,7 @@ function drawTools() {
   if (items.length > 1) {                                           // several selected: each outline, the box round them with its readout, and the pick-order numbers
     const ghosts = pdrag && pdrag.ghosts;
     if (ghosts) for (const gh of ghosts) out.push(s('polygon', { class: 'ghost', points: poly(PL.corners(gh.part, gh.pl).map(Y)) }));
-    for (const x of items) out.push(s('polygon', { class: 'sel-box sel-multi', points: poly(PL.corners(x.part, x.p).map(Y)) }));
+    for (const x of items) out.push(s('polygon', { class: 'sel-box sel-multi', points: poly(PL.corners(x.part, x.p).map(Y)), 'stroke-dasharray': '6 6' }));
     const ub = A.unionBox(items.map(boxOf)), pad = 8 * k, x0 = ub[0] - pad, x1 = ub[2] + pad, yT = H - ub[3] - pad, yB = H - ub[1] + pad, xm = (x0 + x1) / 2, ym = (yT + yB) / 2;
     out.push(s('rect', { class: 'sel-union', x: x0, y: yT, width: x1 - x0, height: yB - yT }));
     out.push(s('g', { class: 'grip-sq' }, [[x0, yT], [xm, yT], [x1, yT], [x0, ym], [x1, ym], [x0, yB], [xm, yB], [x1, yB]].map((q) => s('rect', { x: q[0] - 6 * k, y: q[1] - 6 * k, width: 12 * k, height: 12 * k }))));
@@ -4629,7 +4674,7 @@ function drawTools() {
   const cor = PL.corners(sel.part, sel.p).map(Y);
   if (pdrag && pdrag.ghost) out.push(s('polygon', { class: 'ghost', points: poly(PL.corners(sel.part, pdrag.ghost).map(Y)) }));
   if (pdrag && pdrag.ghosts) for (const gh of pdrag.ghosts) out.push(s('polygon', { class: 'ghost', points: poly(PL.corners(gh.part, gh.pl).map(Y)) }));
-  out.push(s('polygon', { class: 'sel-box', points: poly(cor), 'data-mode': state.mode }));
+  out.push(s('polygon', { class: 'sel-box', points: poly(cor), 'stroke-dasharray': `${6 * k} ${6 * k}`, 'data-mode': state.mode }));
   if (state.mode === 'rotate') {
     const mid = PL.centreOf(sel.part, sel.p), c = Y(mid), pv = Y(pivotPoint(sel.part, sel.p));
     out.push(...rotationControls(cor, c, pv, k, pdrag?.label?.text));
@@ -6190,17 +6235,29 @@ function settleMeasures(d, next) {
 /** A new state for the tab: kept for undo; the drawing is drawn again from it. False (nothing changed, no undo step, the message shown) when it is too nested to draw. */
 function commit(d, next, label, keepSel) {       // keepSel (a grip edit's objects): Undo / Redo of this step select them again
   if (d.vlay) { layObjCommit(d, next, label, keepSel); return true; }
-  let fl;       // drawn first, so a too-nested result leaves history, Redo and the drawing untouched; restore reuses it
+  let fl, names, index;       // drawn first, so a too-nested result leaves history, Redo and the drawing untouched; restore reuses it
   const raw = d.raw;
   next = settleMeasures(d, next);
   if (raw && (next.entities !== raw.entities || next.blocks !== raw.blocks || next.layers && next.layers !== raw.layers || 'attmode' in next && next.attmode !== raw.header.$ATTMODE)) {
-    try { fl = flatten({ ...raw, entities: next.entities, blocks: next.blocks, layers: next.layers || raw.layers, ltypes: next.ltypes || raw.ltypes, header: 'attmode' in next ? { ...raw.header, $ATTMODE: next.attmode } : raw.header }, d.hid); } catch (e) {
-      if (!(e instanceof DrawingError)) throw e;
-      note(e.message); return false;
+    if (next.widths) {
+      fl = patchWidths(d.fl, next.entities, next.widths.keys, d.factor, next.widths.reshape);
+      if (fl.items.length === d.fl.items.length && fl.items.every((it, i) => it.b === d.fl.items[i].b)) index = d.ed;
+      d.pb = null;
+    }
+    else {
+      names = [...d.off].map((i) => d.fl.layers[i]?.name);
+      let cached = { fl: d.fl, ed: d.ed, outl: d.outl, pb: d.pb, hl: d.hl };
+      d.fl = d.ed = d.outl = d.pb = d.hl = null;
+      try { fl = flatten({ ...raw, entities: next.entities, blocks: next.blocks, layers: next.layers || raw.layers, ltypes: next.ltypes || raw.ltypes, header: 'attmode' in next ? { ...raw.header, $ATTMODE: next.attmode } : raw.header }, d.hid); } catch (e) {
+        Object.assign(d, cached);
+        if (!(e instanceof DrawingError)) throw e;
+        note(e.message); return false;
+      }
+      cached = null;
     }
   }
   pushHistory(d, keepSel ? { ...snapshotOf(d), sel: [...keepSel], grip: true } : snapshotOf(d), label); d.newLayer = null;
-  restore(d, next, fl);
+  restore(d, next, fl, names, index);
   return true;
 }
 /** A drawing-tab command on a layout's objects (layObjDoc) is done: the layout takes the objects it left, in one undo step. */
@@ -6224,7 +6281,7 @@ function restoreBg(d, st) {
   if (st.pos && d.bg) [d.bg.x, d.bg.y] = st.pos;
 }
 /** Puts the tab in the state `st`. False (and the tab as it was, everything) when the drawing is too nested to draw again. */
-function restore(d, st, drawn) {
+function restore(d, st, drawn, layerNames, index) {
   const before = snapshotOf(d), header = d.raw?.header;
   const groupsChanged = 'groups' in st && st.groups !== d.raw?.groups;
   if (st.guides) { guideTarget(d).s.guides = structuredClone(st.guides); rememberGuides(d); }
@@ -6242,7 +6299,7 @@ function restore(d, st, drawn) {
   }
   d.raw.groups = st.groups || followGroups(d.raw.groups, d.raw.entities, st.entities);       // Undo / Redo bring the groups back; an edit follows its entities
   d.raw.entities = st.entities; d.raw.blocks = st.blocks;
-  const names = [...d.off].map((i) => d.fl.layers[i] && d.fl.layers[i].name);
+  const names = layerNames || [...d.off].map((i) => d.fl.layers[i] && d.fl.layers[i].name);
   let fl;
   try { fl = drawn || flatten(d.raw, d.hid); } catch (e) {
     if (!(e instanceof DrawingError)) throw e;
@@ -6253,7 +6310,8 @@ function restore(d, st, drawn) {
   }
   restoreBg(d, st);
   d.off = new Set(fl.layers.map((l, i) => (names.includes(l.name) ? i : -1)).filter((i) => i >= 0));      // layer numbers can shift: keep them by name
-  Object.assign(d, { fl, counts: layerCounts(d.raw, fl), entities: entityCount(d.raw, fl), box: drawingBoxMm(fl, d.factor), dirty: true, ed: null, outl: null, sel: new Set(), stretchSelection: null, hl: [] });
+  if (index) { index.fl = fl; index.items = fl.items; }
+  Object.assign(d, { fl, counts: layerCounts(d.raw, fl), entities: entityCount(d.raw, fl), box: drawingBoxMm(fl, d.factor), dirty: true, ed: index || null, outl: null, sel: new Set(), stretchSelection: null, hl: [] });
   if (cmpDoc()) cmpRefresh(d);
   showDoc();
   warm(d);
@@ -11018,7 +11076,7 @@ function renderPropsPanel(d) {
 
 const propLocked = (d) => !!d.vlay && selItems().some((x) => x.p.src === 'loose' && x.part.obj && x.p.lock);
 /** Applies fn to every entity in the selection (not kept dimensions) as one undo step; fn returns the changed entity or null (left as it was). */
-function propCommit(d, label, fn, all = false) {
+function propCommit(d, label, fn, all = false, widthOnly = false) {
   if (propLocked(d)) { note(LOCKED); renderEdit(); return 0; }      // as the strip colour: a locked Layout object is not changed
   const pe = propEnts(d, all), repl = new Map();
   for (const [i, ent] of pe) { const n = fn(ent); if (n && n !== ent) repl.set(i, n); }
@@ -11026,7 +11084,12 @@ function propCommit(d, label, fn, all = false) {
   view.fitted = false;
   if (d.vlay) return layGripCommit(d, [...repl].map(([i, next]) => [d.raw.entities[i], next]), label) ? repl.size : 0;
   const keep = new Set(d.sel);
-  if (!commit(d, { entities: d.raw.entities.map((x, i) => repl.get(i) || x), blocks: d.raw.blocks }, label)) return 0;
+  const widths = widthOnly ? { keys: new Map(), reshape: new Set() } : null;
+  if (widths) for (const [i, ent] of repl) {
+    widths.keys.set(i, PR.widthKey(ent, d.factor));
+    if (PR.widthKey(d.raw.entities[i], d.factor) == null) widths.reshape.add(i);
+  }
+  if (!commit(d, { entities: d.raw.entities.map((x, i) => repl.get(i) || x), blocks: d.raw.blocks, widths }, label)) return 0;
   setSel(d, keep);
   return repl.size;
 }
@@ -11053,7 +11116,7 @@ function propWidthSet(value, custom = false) {
   const n = propCommit(d, 'Outline width → ' + label, (ent) => {
     const next = PR.withWidth(ent, value, d.factor);
     return PR.widthKey(next, d.factor) === PR.widthKey(ent, d.factor) ? null : next;
-  }, true);
+  }, true, true);
   if (n) note(`Outline width ${label} on ${n} shape${n === 1 ? '' : 's'}. Ctrl+Z takes it back`);
   if (custom) {
     recentWidths = PR.recentWidths(recentWidths, value);
@@ -11919,7 +11982,9 @@ async function cmpPick() {
   try {
     const picked = await t.dialog.open({ multiple: false, filters: [{ name: 'Drawings', extensions: ['dxf', 'dwg'] }] });
     const path = Array.isArray(picked) ? picked[0] : picked;
-    if (path) await cmpLoad(d, String(path).split(/[\\/]/).pop(), await t.fs.readFile(path), String(path));
+    if (!path) return;
+    const name = String(path).split(/[\\/]/).pop();
+    if ((await bigOk([{ name, size: await pathSize(path) }])).length) await cmpLoad(d, name, await t.fs.readFile(path), String(path));
   } catch (err) { note('Open failed: ' + (err && err.message ? err.message : err)); }
 }
 async function cmpLoad(d, name, buf, path = null) {
@@ -11935,7 +12000,7 @@ function buildCompareSection() {
   ui.cmpPicker = h('input', { type: 'file', accept: '.dxf,.dwg', hidden: true, 'data-testid': 'cmp-picker' });
   ui.cmpPicker.addEventListener('change', async () => {
     const f = ui.cmpPicker.files[0], d = ui.cmpPicker.doc; ui.cmpPicker.value = '';
-    try { if (f) await cmpLoad(d, f.name, await f.arrayBuffer()); } catch (err) { note('Open failed: ' + err.message); }
+    try { if (f && (await bigOk([f])).length) await cmpLoad(d, f.name, await f.arrayBuffer()); } catch (err) { note('Open failed: ' + err.message); }
   });
   ui.cmpItems = h('div', { class: 'cmpitems', 'data-testid': 'cmp-items' });
   ui.cmpAdd = [h('button', { class: 'btn', type: 'button', 'data-testid': 'cmp-add-tab', onclick: (e) => cmpChoose(e) }, 'Add tab'),

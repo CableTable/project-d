@@ -206,6 +206,23 @@ test('toasts: live -> done / cut off / failed, CI running -> green / red; none o
   expect(toastsFor(before, snap([], { num: 12, state: 'red' }))).toEqual([])
 })
 
+test('TODO 278: same-name jobs keep two snapshot rows and two unchanged toasts', async () => {
+  const jobs = [5, 3].map(m => ({ desc: 'same job', command: 'npm test', startedMs: min(m), state: 'running' as const }))
+  const before = snapshot(paneRows(jobs, [], NOW), null)
+  const ended = jobs.map(j => ({ ...j, state: 'completed' as const, endedMs: NOW }))
+  const after = snapshot(paneRows(ended, [], NOW + 60_000), null)
+  expect(Object.keys(before.jobs).length).toBe(2)
+  expect(Object.keys(after.jobs).length).toBe(2)
+  expect(toastsFor(before, after)).toEqual(['♜ Rook same job done', '♜ Rook same job done'])
+
+  const rows = ['first.jsonl', 'second.jsonl'].map(file => ({ who: 'Bishop', name: 'same job', files: [file], state: 'running', age: 0 }))
+  const fileBefore = snapshot(paneRows([], rows, NOW), null)
+  const fileAfter = snapshot(paneRows([], rows.map(r => ({ ...r, state: 'done' })), NOW), null)
+  expect(Object.keys(fileBefore.jobs).length).toBe(2)
+  expect(Object.keys(fileAfter.jobs).length).toBe(2)
+  expect(toastsFor(fileBefore, fileAfter)).toEqual(['♝ Bishop same job done', '♝ Bishop same job done'])
+})
+
 test('hideInDirs: the folder itself or inside it; / and \\ alike, any case, trailing slash, ; list, empty hides nowhere', async () => {
   const dirs = 'E:/Project B/Claude/support'
   expect(hiddenIn('E:\\Project B\\Claude\\support', dirs)).toBe(true)

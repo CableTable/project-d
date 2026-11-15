@@ -37,6 +37,17 @@ test('drawing deltas preserve successive edits to shared native dimension blocks
 // three boxes at different heights, as on the mock-up
 const B = [[90, 90, 390, 210], [480, 70, 590, 180], [740, 120, 900, 220]];
 
+test('TODO 265: centre both axes on the first object, including a group, without changing the input', () => {
+  const items = [{ box: [100, 100, 180, 100] }, { g: 'pair', box: [220, 180, 260, 220] }, { g: 'pair', box: [320, 300, 380, 340] }];
+  const before = structuredClone(items), objects = A.objectsOf(items);
+  const deltas = A.centreOnFirstDeltas(objects.map((o) => o.box));
+  assert.deepEqual(deltas, [{ dx: 0, dy: 0 }, { dx: -160, dy: -160 }]);
+  assert.deepEqual(A.spreadToItems(objects, deltas, items.length), [deltas[0], deltas[1], deltas[1]]);
+  assert.deepEqual(items, before);
+  assert.deepEqual(A.centreOnFirstDeltas([[0, 0, 20, 20], [5, 5, 15, 15]]), [{ dx: 0, dy: 0 }, { dx: 0, dy: 0 }]);
+  assert.deepEqual(A.centreOnFirstDeltas([]), []);
+});
+
 test('unionBox', () => {
   assert.deepEqual(A.unionBox(B), [90, 70, 900, 220]);
   assert.equal(A.unionBox([]), null);

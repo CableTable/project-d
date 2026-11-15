@@ -53,7 +53,7 @@
   "TODO 62: Open keeps drawn, edited and saved tabs; only an untouched new tab is replaced": 14.03,
   "Many tabs: only the tab strip scrolls at 1024; widening to 1440 keeps the menu and toolbar in place and + New layout on one line": 0.94,
   "a DXF opens on a drawing tab (no sheet); Add to layout makes a layout tab and the part fills Step and repeat": 0.17,
-  "default sheet case: 56, 8 × 7, 77%": 0.01,
+  "TODO 284: default sheet case: 64, 8 × 8, 88%": 0.01,
   "layout: menu bar, rail tools in order, layers": 0.01,
   "gripper per side, no margin: four fields, every side with a gripper is shaded; rail and panel fit at 900 px": 0.05,
   "Gap X 20 changes the count": 0.06,

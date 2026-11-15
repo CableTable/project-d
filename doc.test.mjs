@@ -5,7 +5,7 @@ import { decodeDxf, readDxf, flatten } from './web/drawing.js';
 import { mapply } from './web/drawing.js';
 import { buildTree } from './web/objects.js';
 import { makeDimension, addDimension } from './web/edit.js';
-import { unitFactor, convertedNote, spaceOf, shownItems, itemVisible, startHidden, entityCount, layerCounts, drawingBoxMm, placement, boxOnSheet, fitRect, cursorMm, fitsSheet, addRecent, closePrompt } from './web/doc.js';
+import { unitFactor, convertedNote, spaceOf, shownItems, itemVisible, startHidden, entityCount, layerCounts, drawingBoxMm, placement, boxOnSheet, fitRect, cursorMm, fitsSheet, addRecent, closePrompt, BIG_FILE, bigFileAsk } from './web/doc.js';
 
 const load = (f) => flatten(readDxf(decodeDxf(readFileSync(f))));
 let n = 0;
@@ -101,5 +101,15 @@ test('closePrompt: one name in quotes, or a count with the names listed', () => 
   const r = closePrompt(['1', '2', '3', '4', '5', '6', '7']);
   assert.equal(r.title, 'Save changes to 7 drawings?');
   assert.deepEqual(r.names, ['1', '2', '3', '4', '5', 'and 2 more']);
+});
+test('bigFileAsk (T273a): exactly 50 MB is fine, one byte more asks; several big files share one question', () => {
+  const MB = 1024 * 1024;
+  assert.equal(BIG_FILE, 50 * MB);
+  assert.equal(bigFileAsk([{ name: 'a.dxf', size: 50 * MB }, { name: 'b.dxf', size: 0 }]), null);
+  assert.equal(bigFileAsk([{ name: 'a.dxf', size: 50 * MB + 1 }]), 'a.dxf is 50 MB: big drawings may open slowly and some tools may lag. Open it?');
+  assert.equal(bigFileAsk([{ name: 'a.dxf', size: 111 * MB }, { name: 'small.dxf', size: 1 }]), 'a.dxf is 111 MB: big drawings may open slowly and some tools may lag. Open it?');
+  const q = bigFileAsk([{ name: 'a.dxf', size: 60 * MB }, { name: 'b.dwg', size: 70 * MB }, { name: 'c.dxf', size: 2 * MB }]);
+  assert.match(q, /^2 files are big \(a\.dxf 60 MB, b\.dwg 70 MB\)/);
+  assert.doesNotMatch(q, /c\.dxf/);
 });
 console.log(n + ' passed');

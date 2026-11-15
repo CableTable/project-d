@@ -185,3 +185,186 @@ test('parts from two files that share a block name: the nested reference follows
   const lay = Object.keys(back.layers).map((k) => k.toLowerCase()), blk = Object.keys(back.blocks).map((k) => k.toLowerCase());
   assert.equal(new Set(lay).size, lay.length); assert.equal(new Set(blk).size, blk.length);
 });
+
+// ---- TODO 283: an applied grid keeps a grid id and can be laid again
+const LD = await import('./web/layoutdoc.js');
+function appliedLayout(rows = 2, cols = 2) {
+  const lay = LD.newLayout('Applied'), raw = W.newDoc(4);
+  W.addEntities(raw, W.roundRect(0, 0, 100, 60, 0));
+  lay.parts.p = LD.makePart('p', 'Plate', raw, 1);
+  Object.assign(lay.s, { sheetW: 1000, sheetH: 700, gripTop: 0, gripBottom: 0, gripLeft: 0, gripRight: 0, fit: false, rows, cols, gapX: 5, gapY: 5, gridPart: 'p' });
+  const L = A.gridLayout(lay, lay.s);
+  A.bakeGrid(lay, 'a', A.gridPlacements(L, lay.s.sheetH, 'p'), L);
+  return lay;
+}
+const xsOf = (lay) => [...new Set(lay.placed.map((p) => Math.round(p.x * 1e6) / 1e6))].sort((a, b) => a - b);
+
+test('TODO 283: Apply keeps a grid id and the grid\'s settings and slots; every copy is on its slot', () => {
+  const lay = appliedLayout();
+  assert.equal(lay.placed.length, 4); assert.ok(lay.placed.every((p) => p.gid === 'a'));
+  assert.deepEqual(lay.grids.a.slots.map((s) => [s.r, s.c]), [[0, 0], [0, 1], [1, 0], [1, 1]]);
+  assert.deepEqual([lay.grids.a.rows, lay.grids.a.cols, lay.grids.a.gapX, lay.grids.a.gridPart], [2, 2, 5, 'p']);
+  assert.deepEqual(lay.placed.map((p) => A.slotOf(lay, p)), [0, 1, 2, 3]);
+  assert.equal(A.slotOf(lay, { partId: 'p', x: 1, y: 1, rot: 0 }), -1, 'a plain placement is in no grid');
+  assert.equal(A.relayGrid(lay, 'none'), null);
+});
+
+test('TODO 283: Update grid: Rows 2 to 3 and a bigger gap lay six copies at the new spacing', () => {
+  const lay = appliedLayout();
+  Object.assign(lay.grids.a, { rows: 3, gapX: 20, gapY: 9 });
+  const r = A.relayGrid(lay, 'a');
+  assert.deepEqual(r, { moved: 4, added: 2, dropped: 0 });
+  assert.equal(lay.placed.length, 6);
+  const want = A.gridPlacements(A.gridLayout(lay, lay.grids.a), 700, 'p');
+  assert.deepEqual(lay.placed.map((p) => [p.x, p.y]), want.map((p) => [p.x, p.y]), 'the copies are on the new grid, in order');
+  const xs = xsOf(lay); near(xs[1] - xs[0], 120, 'gap X 20 + width 100');
+  assert.equal(new Set(lay.placed.map((p) => p.y)).size, 3);
+  assert.ok(lay.placed.every((p) => A.slotOf(lay, p) >= 0), 'still in the grid, so it can be updated again');
+  Object.assign(lay.grids.a, { rows: 1, cols: 2 });      // Fit changing the count: the slots past it go
+  assert.deepEqual(A.relayGrid(lay, 'a'), { moved: 2, added: 0, dropped: 4 });
+  assert.equal(lay.placed.length, 2);
+});
+
+test('TODO 283: a copy moved or deleted by hand leaves the grid: Update keeps it where it is and its slot stays empty', () => {
+  const lay = appliedLayout();
+  lay.placed[0].x += 7;                          // moved by hand
+  lay.placed.splice(3, 1);                       // slot (1,1) deleted
+  assert.equal(A.slotOf(lay, lay.placed[0]), -1);
+  const moved = { ...lay.placed[0] };
+  lay.grids.a.rows = 3;
+  const r = A.relayGrid(lay, 'a');
+  assert.deepEqual(r, { moved: 2, added: 2, dropped: 0 });
+  assert.equal(lay.placed.length, 5, 'the hand-moved copy, two laid again, two new in the third row; the deleted slot is not refilled');
+  assert.deepEqual(lay.placed[0], moved, 'the moved copy stays');
+  assert.ok(!lay.placed.some((p) => A.slotOf(lay, p) === lay.grids.a.slots.findIndex((s) => s.r === 1 && s.c === 1)));
+  lay.grids.a.rows = 1; lay.grids.a.cols = 1;
+  assert.deepEqual(A.relayGrid(lay, 'a'), { moved: 0, added: 0, dropped: 4 }, 'slot (0,0) was the moved copy\'s: empty; every other copy is past the grid and goes');
+  assert.deepEqual(lay.placed.map((p) => p.x), [moved.x]);
+});
+
+test('TODO 283: nothing fits: Update changes nothing', () => {
+  const lay = appliedLayout();
+  lay.grids.a.rows = 400; lay.grids.a.cols = 400;         // 160000 copies: stepRepeat gives none
+  const before = JSON.stringify([lay.placed, lay.grids]);
+  assert.equal(A.relayGrid(lay, 'a'), null);
+  assert.equal(JSON.stringify([lay.placed, lay.grids]), before);
+});
+
+test('TODO 283: the grid ids and grids are saved with the layout and read back; an old layout has none', () => {
+  const lay = appliedLayout();
+  const back = LD.layoutFromRaw(D.readDxf(W.writeDxf(LD.layoutRaw(lay))), 'x');
+  assert.deepEqual(back.placed.map((p) => p.gid), ['a', 'a', 'a', 'a']);
+  assert.deepEqual(back.grids, lay.grids);
+  const old = LD.layoutFromRaw(D.readDxf(W.writeDxf(LD.layoutRaw({ ...lay, grids: {}, placed: lay.placed.map(({ gid, ...p }) => p) }))), 'x');
+  assert.deepEqual(old.grids, {}); assert.ok(old.placed.every((p) => !('gid' in p)));
+  assert.equal(A.slotOf(old, old.placed[0]), -1);
+});
+
+// The live grid skips cells other parts cover and lines up with a copy of the same part; the applied grid must keep exactly that
+function liveApplied(loose, rows = 3, cols = 3, rest = {}) {
+  const lay = LD.newLayout('Live'), mk = (id, w, h) => { const raw = W.newDoc(4); W.addEntities(raw, W.roundRect(0, 0, w, h, 0)); lay.parts[id] = LD.makePart(id, id, raw, 1); };
+  mk('p', 100, 60); mk('q', 40, 700);
+  Object.assign(lay.s, { sheetW: 1000, sheetH: 700, gripTop: 0, gripBottom: 0, gripLeft: 0, gripRight: 0, fit: false, rows, cols, gapX: 5, gapY: 5, gridPart: 'p', ...rest });
+  lay.placed = loose.map((p) => ({ ...p }));
+  const L = LD.gridOf(lay);
+  A.bakeGrid(lay, 'a', A.gridPlacements(L, lay.s.sheetH, 'p'), L);
+  return { lay, L };
+}
+const snap = (lay) => JSON.stringify([lay.placed, lay.grids]);
+const hits = (lay, a, b) => { const [p, q] = [A.placedBox(lay.parts[a.partId], a), A.placedBox(lay.parts[b.partId], b)]; return p[0] < q[2] - 1e-6 && p[2] > q[0] + 1e-6 && p[1] < q[3] - 1e-6 && p[3] > q[1] + 1e-6; };
+
+test('TODO 283: a loose part in the grid\'s way: Update with nothing changed moves and adds nothing; a new cell is not laid over it', () => {
+  const loose = [A.placement1('q', 345, 0)];        // 40 mm wide: covers the whole first column of a 3 × 3 grid centred at x 345
+  const { lay, L } = liveApplied(loose);
+  assert.equal(L.skipped, 3, 'the live grid skipped the first column');
+  assert.equal(lay.placed.length, 1 + 6);
+  const before = snap(lay);
+  assert.deepEqual(A.relayGrid(lay, 'a'), { moved: 0, added: 0, dropped: 0 });
+  assert.equal(snap(lay), before, 'nothing changed at all');
+  assert.deepEqual(lay.grids.a.slots.filter((s) => s.x == null).map((s) => [s.r, s.c]), [[0, 0], [1, 0], [2, 0]], 'the skipped cells are empty slots, numbered by the true column');
+  assert.deepEqual(lay.grids.a.slots.filter((s) => s.x != null).map((s) => s.c).sort(), [1, 1, 1, 2, 2, 2]);
+  lay.grids.a.rows = 4;                              // a new row: its first cell is under the loose part, the other two are free
+  const r = A.relayGrid(lay, 'a');
+  assert.deepEqual(r, { moved: 6, added: 2, dropped: 0 });
+  assert.ok(!lay.placed.filter((p) => p.gid === 'a').some((p) => hits(lay, p, lay.placed[0])), 'no copy over the loose part');
+  assert.ok(lay.grids.a.slots.some((s) => s.r === 3 && s.c === 0 && s.x == null), 'and its slot stays empty');
+});
+
+test('TODO 283: a grid lined up with an existing copy: Update with nothing changed does not shift it', () => {
+  const loose = [A.placement1('p', 123, 17)];
+  const { lay, L } = liveApplied(loose);
+  assert.equal(L.taken, 1, 'the live grid took the existing copy as its cell');
+  const free = A.gridLayout(lay, lay.s);
+  assert.notDeepEqual(L.positions[0], free.positions[0], 'lined up, so not where a fresh centred grid would be');
+  const before = snap(lay);
+  assert.deepEqual(A.relayGrid(lay, 'a'), { moved: 0, added: 0, dropped: 0 });
+  assert.equal(snap(lay), before);
+  assert.ok(!lay.placed.filter((p) => p.gid === 'a').some((p) => hits(lay, p, lay.placed[0])), 'no copy over the existing one');
+});
+
+test('TODO 283: a whole column skipped at Apply keeps its numbering through a save, an Update and Update again', () => {
+  const { lay } = liveApplied([A.placement1('q', 345, 0)], 2, 3);
+  const cols = () => lay.grids.a.slots.filter((s) => s.x != null).map((s) => s.c).sort().join('');
+  assert.equal(cols(), '1122');
+  const back = LD.layoutFromRaw(D.readDxf(W.writeDxf(LD.layoutRaw(lay))), 'x');
+  assert.deepEqual(back.grids.a.slots, lay.grids.a.slots, 'empty slots are saved and read back');
+  const snapBack = snap(back);
+  assert.deepEqual(A.relayGrid(back, 'a'), { moved: 0, added: 0, dropped: 0 }, 'unchanged after reopening too');
+  assert.equal(snap(back), snapBack);
+  lay.grids.a.gapY = 9;
+  assert.deepEqual(A.relayGrid(lay, 'a'), { moved: 4, added: 0, dropped: 0 }, 'the four copies move, none is added to column 0');
+  assert.equal(cols(), '1122');
+  assert.deepEqual(A.relayGrid(lay, 'a'), { moved: 0, added: 0, dropped: 0 });
+});
+
+test('TODO 283: rows typed but not updated before the save: Update after reopen lays the grid again; an untouched grid stays put', () => {
+  const { lay } = liveApplied([], 2, 3);
+  const reopen = (l) => LD.layoutFromRaw(D.readDxf(W.writeDxf(LD.layoutRaw(l))), 'x');
+  assert.deepEqual(A.relayGrid(reopen(lay), 'a'), { moved: 0, added: 0, dropped: 0 }, 'nothing typed: nothing moves');
+  lay.grids.a.rows = 3;                              // typed, no Update, saved
+  const back = reopen(lay);
+  assert.equal(back.grids.a.rows, 3);
+  assert.deepEqual(A.relayGrid(back, 'a'), { moved: 6, added: 3, dropped: 0 }, '2 × 3 → 3 × 3');
+  assert.equal(back.placed.filter((p) => p.gid === 'a').length, 9);
+});
+
+test('TODO 283: slots past 1000 columns do not collide (key r,c)', () => {
+  const lay = LD.newLayout('Wide'), raw = W.newDoc(4);
+  W.addEntities(raw, W.roundRect(0, 0, 1, 1, 0));
+  lay.parts.p = LD.makePart('p', 'Dot', raw, 1);
+  const L = { rows: 2, cols: 1002, cells: [[0, 1000], [1, 0]] };      // (1, 0) and (0, 1000) were both key 1000
+  A.bakeGrid(lay, 'a', [{ x: 1, y: 1, rot: 0 }, { x: 2, y: 2, rot: 0 }], L, { ...lay.s, extraRows: [], extraCols: [] });
+  assert.equal(lay.grids.a.slots.length, 2 * 1002, 'every cell has exactly one slot');
+});
+
+test('TODO 283: a big grid (4648-ish copies) is laid again and read fast', () => {
+  const lay = LD.newLayout('Big'), raw = W.newDoc(4);
+  W.addEntities(raw, W.roundRect(0, 0, 10, 10, 0));
+  lay.parts.p = LD.makePart('p', 'Chip', raw, 1);
+  Object.assign(lay.s, { sheetW: 1000, sheetH: 700, fit: true, gapX: 2, gapY: 2, gridPart: 'p', rotate: '0' });
+  const L = LD.gridOf(lay);
+  assert.ok(L.count > 4000, 'count ' + L.count);
+  A.bakeGrid(lay, 'a', A.gridPlacements(L, 700, 'p'), L);
+  const last = lay.placed[lay.placed.length - 1];
+  // A state read's steady cost is the best of three: the first read after a bake or relay builds the slot map once, and a cold call
+  // (JIT, GC, a parallel test run) can stall one read (17 ms on the CI runner, 8721f49).
+  const bestRead = (p) => {
+    let best = Infinity;
+    for (let i = 0; i < 3; i++) { const t0 = performance.now(); A.slotOf(lay, p); best = Math.min(best, performance.now() - t0); }
+    return best;
+  };
+  assert.equal(A.slotOf(lay, last), L.count - 1);
+  const read = bestRead(last);
+  assert.ok(read < 5, 'a state read with the last copy selected: best ' + read + ' ms');
+  let t = performance.now();
+  assert.deepEqual(A.relayGrid(lay, 'a'), { moved: 0, added: 0, dropped: 0 });
+  const same0 = performance.now() - t;
+  lay.grids.a.gapX = 3;
+  t = performance.now();
+  const r = A.relayGrid(lay, 'a');
+  const dt = performance.now() - t;
+  assert.ok(r.moved > 3000 && r.dropped > 0, JSON.stringify(r));
+  assert.ok(dt < 500, 'relayGrid ' + dt + ' ms (unchanged ' + same0 + ' ms)');
+  const best = bestRead(lay.placed[lay.placed.length - 1]);
+  assert.ok(best < 5, 'a state read after the relay: best ' + best + ' ms');
+});

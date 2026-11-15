@@ -265,8 +265,8 @@ export const isLive = (state) => /^(running|testing|queued)/.test(state);
 export function paneRows(jobs, rows, now) {
   const mine = jobs.map((j) => {
     const wait = /waiting[^'"\n]*?\bfor (\d\d:\d\d)/i.exec(j.command ?? '');
-    if (j.state === 'running') return { who: 'Rook', name: j.desc, state: wait ? `queued ${wait[1]}` : 'running', age: now - j.startedMs };
-    return { who: 'Rook', name: j.desc, state: j.state === 'completed' ? 'done' : j.state === 'failed' ? 'failed' : 'cut off', age: now - (j.endedMs ?? j.startedMs) };
+    if (j.state === 'running') return { who: 'Rook', name: j.desc, state: wait ? `queued ${wait[1]}` : 'running', age: now - j.startedMs, startedMs: j.startedMs };
+    return { who: 'Rook', name: j.desc, state: j.state === 'completed' ? 'done' : j.state === 'failed' ? 'failed' : 'cut off', age: now - (j.endedMs ?? j.startedMs), startedMs: j.startedMs };
   });
   const view = (all) => ({
     running: all.filter((r) => isLive(r.state)).sort((a, b) => b.age - a.age).slice(0, MAX_RUNNING),
@@ -333,8 +333,7 @@ export function ciLines(ci, at) {
 
 // view: paneRows(); ci: parseCi() or null.
 export const snapshot = (view, ci) => ({
-  // shortcut: keyed "who name", so two jobs of one name collapse; upgrade if that shows up
-  jobs: Object.fromEntries([...view.running, ...view.recent].map((r) => [`${r.who} ${r.name}`, r.state])),
+  jobs: Object.fromEntries([...view.running, ...view.recent].map((r) => [JSON.stringify([r.who, r.name, r.files?.length ? r.files : r.startedMs]), r.state])),
   ci: ci ? { num: ci.num, state: ci.state } : null,
 });
 // prev null (first tick after a load) -> nothing. A job toasts when it went from live to done / cut off / failed; CI when it went running -> green / red.
@@ -343,7 +342,8 @@ export function toastsFor(prev, cur) {
   const out = [];
   for (const [key, state] of Object.entries(cur.jobs)) {
     const was = prev.jobs[key];
-    if (was && isLive(was) && !isLive(state)) out.push(`${PIECE[key.split(' ')[0]] ?? '·'} ${key} ${state}`);
+    const [who, name] = JSON.parse(key);
+    if (was && isLive(was) && !isLive(state)) out.push(`${PIECE[who] ?? '·'} ${who} ${name} ${state}`);
   }
   if (prev.ci && cur.ci && prev.ci.num === cur.ci.num && prev.ci.state === 'running' && (cur.ci.state === 'green' || cur.ci.state === 'red')) out.push(`CI #${cur.ci.num} ${cur.ci.state}`);
   return out;

@@ -377,3 +377,27 @@ test('spline cache: cached flatten equals cold flatten after edits and undo', as
   D.clearSplineCache();
   assert.notDeepEqual(D.flatten(raw0).items.map((it) => it.ops), before, 'clearSplineCache flattens it again');
 });
+
+test('272b: a DXF with no EOF, or cut mid-section, sets endsEarly (not truncated); a whole one does not', () => {
+  const line = g([0, 'LINE'], [8, '0'], [10, 0], [20, 0], [11, 10], [21, 0]);
+  const whole = dxf([line, line]);
+  assert.equal(lay(whole).endsEarly, false);
+  assert.equal(D.readDxf(whole).endsEarly, false);
+  const noEof = whole.replace(/0\nEOF\n$/, '');
+  assert.ok(!noEof.includes('EOF'));
+  assert.equal(lay(noEof).endsEarly, true);
+  const cut = whole.slice(0, whole.lastIndexOf('0\nENDSEC\n0\nEOF'));             // ENTITIES has no ENDSEC
+  const fl = lay(cut);
+  assert.equal(fl.endsEarly, true);
+  assert.equal(fl.items.length, 2, 'what was read is kept');
+  assert.equal(fl.truncated, false);
+});
+
+test('272b: 12000 same-colour strokes are painted as 3 paths of 5000, not one', () => {
+  let strokes = 0;
+  const c = { setTransform() {}, clearRect() {}, beginPath() {}, moveTo() {}, lineTo() {}, setLineDash() {}, save() {}, restore() {}, stroke() { strokes++; } };
+  const it = { k: 'p', ops: [0, 0, 0, 1, 10, 0], b: [0, 0, 10, 1], L: [0], m: 0, css: '#000000', fill: false, fam: [] };
+  const fl = { items: Array.from({ length: 12000 }, () => it), mats: [[1, 0, 0, 1, 0, 0]], boxes: { model: it.b } };
+  paintDrawing({ getContext: () => c }, { fl, factor: 1, off: new Set(), sheetH: 0, ox: 0, oy: 0, scale: 1, w: 100, h: 100, dpr: 1 });
+  assert.equal(strokes, 3);
+});

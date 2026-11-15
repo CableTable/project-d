@@ -34,6 +34,13 @@ test('TODO 97b: Group / G and Ungroup resolve on drawing, Compare and layout tab
   assert.equal(CB.resolve('group').key, 'Ctrl+G'); assert.equal(CB.resolve('ungroup').key, 'Ctrl+Shift+G');
 });
 
+test('TODO 265: center and centre resolve in every tab without a key', () => {
+  for (const tab of ['draw', 'layout', 'compare']) for (const word of ['center', 'centre']) {
+    const cmd = CB.resolve(word, tab);
+    assert.equal(cmd.name, 'center'); assert.equal(cmd.where, ''); assert.equal(cmd.key, '');
+  }
+});
+
 test('every name and alias is lower case, and no command repeats a word on the same tab', () => {
   for (const tab of ['draw', 'layout']) {
     const seen = new Map();

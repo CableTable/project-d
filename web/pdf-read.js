@@ -5,7 +5,7 @@
 //   readPdf(bytes, { page, pdfjs })   → { doc, paths, texts, pages, page, mm: [w, h] }   (the drawing, in mm)
 //   renderPdfPage(bytes, { page, dpi }) → { canvas, w, h, mmPerPx, pages }              (the page as a picture)
 //   pdfToDoc({ ops, text, view, rotate }, OPS) → { doc, paths, texts }                  (the pure part; rotate: the page's /Rotate)
-import { newDoc, addEntities, line, arc, lwpoly, text } from './dxf-write.js';
+import { newDoc, addEntities, arc, lwpoly, text } from './dxf-write.js';
 
 /** mm in one PDF point. */
 export const PT = 25.4 / 72;
@@ -76,8 +76,9 @@ export function bezierArc(p0, p1, p2, p3) {
 
 /**
  * pdf.js's operator list ({ fnArray, argsArray }), text items and the page's view [x0, y0, x1, y1] (points) → a drawing
- * in mm with the page's bottom-left at 0,0. Every stroked or filled path piece is a LINE, an ARC (a circular Bézier) or a
- * short polyline (any other curve); a rectangle is a closed polyline; text is TEXT at its place and size.
+ * in mm with the page's bottom-left at 0,0. Contiguous straight and short-polyline curve pieces of one painted path join
+ * within 1e-6 mm; circular Béziers stay ARCs. Only h / rectangles close polylines; fills stay unfilled. paths counts
+ * emitted entities (one polyline = 1); text is TEXT at its place and size.
  * rotate: the page's /Rotate (clockwise degrees), so a portrait plotter page with /Rotate 90 comes out landscape, as it is shown.
  * OPS: pdf.js's operator numbers.
  */
@@ -97,27 +98,50 @@ export function pdfToDoc({ ops, text: items = [], view = [0, 0, 0, 0], rotate = 
   let paths = 0;
   const pieces = (list) => {
     let cur = null, start = null;
+    let chain = [];
+    const flush = (closed = false) => {
+      if (closed && chain.length > 2 && Math.hypot(chain.at(-1)[0] - chain[0][0], chain.at(-1)[1] - chain[0][1]) <= 1e-6) chain.pop(); // a repeated start would be a zero-length side
+      if (chain.length > 1) { ents.push(lwpoly(chain, { closed })); paths++; }
+      chain = [];
+    };
+    const join = (pts) => {
+      if (chain.length && Math.hypot(chain.at(-1)[0] - pts[0][0], chain.at(-1)[1] - pts[0][1]) > 1e-6) flush();
+      if (!chain.length) chain.push(pts[0]);
+      for (let i = 1; i < pts.length; i++) chain.push(pts[i]);
+    };
     for (const it of list) {
-      if (it.k === 'm') { cur = start = it.p; continue; }
-      if (it.k === 'h') { if (cur && start && Math.hypot(cur[0] - start[0], cur[1] - start[1]) > 1e-9) { ents.push(line(cur[0], cur[1], start[0], start[1])); paths++; } cur = start; continue; }
-      if (it.k === 'r') { ents.push(lwpoly(it.pts, { closed: true })); paths++; cur = start = it.pts[0]; continue; }
+      if (it.k === 'm') {
+        if (chain.length && Math.hypot(chain.at(-1)[0] - it.p[0], chain.at(-1)[1] - it.p[1]) > 1e-6) flush();
+        cur = start = it.p; continue;
+      }
+      if (it.k === 'h') {
+        if (cur && start) {
+          const closed = chain.length > 0 && Math.hypot(chain[0][0] - start[0], chain[0][1] - start[1]) <= 1e-6;
+          if (!closed && Math.hypot(cur[0] - start[0], cur[1] - start[1]) > 1e-9) join([cur, start]);
+          flush(closed);
+        }
+        cur = start; continue;
+      }
+      if (it.k === 'r') { flush(); ents.push(lwpoly(it.pts, { closed: true })); paths++; cur = start = it.pts[0]; continue; }
       if (!cur) { cur = start = it.k === 'l' ? it.p : it.p3; continue; }
       if (it.k === 'l') {
-        if (Math.hypot(it.p[0] - cur[0], it.p[1] - cur[1]) > 1e-9) { ents.push(line(cur[0], cur[1], it.p[0], it.p[1])); paths++; }
+        if (Math.hypot(it.p[0] - cur[0], it.p[1] - cur[1]) > 1e-9) join([cur, it.p]);
         cur = it.p;
       } else if (it.k === 'c') {
         const a = bezierArc(cur, it.p1, it.p2, it.p3);
-        if (a && a.a0 !== a.a1) ents.push(arc(a.cx, a.cy, a.r, a.a0, a.a1));
+        // shortcut: arcs break the chain, join them as lwpoly bulges (dxf-write.js:74) once flatten draws bulges in a test
+        if (a && a.a0 !== a.a1) { flush(); ents.push(arc(a.cx, a.cy, a.r, a.a0, a.a1)); paths++; }
         else {
           const len = Math.hypot(it.p1[0] - cur[0], it.p1[1] - cur[1]) + Math.hypot(it.p2[0] - it.p1[0], it.p2[1] - it.p1[1]) + Math.hypot(it.p3[0] - it.p2[0], it.p3[1] - it.p2[1]);
           const n = Math.max(4, Math.min(64, Math.ceil(len / 0.5))), pts = [cur];
           for (let i = 1; i < n; i++) pts.push(bez(cur, it.p1, it.p2, it.p3, i / n));
           pts.push(it.p3);
-          ents.push(lwpoly(pts));
+          join(pts);
         }
-        paths++; cur = it.p3;
+        cur = it.p3;
       }
     }
+    flush();
   };
   const { fnArray, argsArray } = ops;
   for (let i = 0; i < fnArray.length; i++) {

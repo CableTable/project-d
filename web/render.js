@@ -138,7 +138,7 @@ function wireStroke(c, dpr) {
 /** The shown items through T (drawing units → canvas pixels), k pixels per unit; vr culls to the view (drawing units), or null. */
 function paintItems(c, fl, off, T, k, vr, dpr, col, sheetBg, hide, factor, wireframe) {
   const mats = fl.mats;
-  let cur = -1, kk = k, pxPerUnit = 0, open = false, pc = null, pw = 0, pd = null, origin = [0, 0], drawn = 0;
+  let cur = -1, kk = k, pxPerUnit = 0, open = false, pc = null, pw = 0, pd = null, origin = [0, 0], drawn = 0, run = 0;
   const flush = () => { if (open) { if (wireframe) wireStroke(c, dpr); else c.stroke(); } open = false; };
   for (const it of shownItems(fl)) {
     const b = it.b;
@@ -154,7 +154,9 @@ function paintItems(c, fl, off, T, k, vr, dpr, col, sheetBg, hide, factor, wiref
       const lw = wireframe ? dpr / kk : Math.max(strokeWidth(it, factor, kk / k) * k / factor, 1.2 * dpr) / kk;
       const dash = wireframe ? null : it.dash && it.dash.reduce((a, x) => a + x, 0) * kk > 4 * dpr ? it.dash : it.dpx ? it.dpx : null;
       const css = col(it.css);
-      if (!open || css !== pc || lw !== pw || dash !== pd) {
+      // shortcut: 5000 is a guess; one open path of 96k splines is the unverified cause of a blank laptop canvas (T87), retest with Untitled-1.dxf
+      if (!open || css !== pc || lw !== pw || dash !== pd || ++run > 5000) {
+        run = 1;
         flush();
         c.strokeStyle = css; c.lineWidth = lw; c.setLineDash(dash === it.dpx && dash ? dash.map((x) => x * dpr / kk) : dash || []);
         c.beginPath(); open = true; pc = css; pw = lw; pd = dash;
@@ -177,15 +179,16 @@ function paintItems(c, fl, off, T, k, vr, dpr, col, sheetBg, hide, factor, wiref
   return drawn;
 }
 
-/** The selection: a thin accent centre line over the object's true-width stroke. */
+/** The selection: a dashed accent centre line leaves the object's own colour and fill visible. */
 function highlight(c, items, mats, T, k, dpr, accent, wireframe) {
-  c.strokeStyle = accent; c.fillStyle = accent; c.setLineDash([]);
+  c.strokeStyle = accent;
   let cur = -1, kk = k, pxPerUnit = 0, origin = [0, 0];
   for (const it of items) {
     if (it.m !== cur) { cur = it.m; const M = mats[cur], V = mmul(T, M); origin = viewOrigin(V); c.setTransform(...V.slice(0, 4), ...mapply(V, ...origin)); kk = k * mscale(M) || k; pxPerUnit = maxScale(V); }
     c.lineWidth = 2.6 * dpr / kk;
     c.beginPath();
-    if (it.k === 'p' || (wireframe && it.ops)) { trace(c, it.ops, origin, pxPerUnit); if (it.fill && !wireframe) c.fill('evenodd'); else c.stroke(); } else c.strokeRect(it.b[0] - origin[0], it.b[1] - origin[1], it.b[2] - it.b[0], it.b[3] - it.b[1]);
+    if (it.k === 'p' || (wireframe && it.ops)) { c.setLineDash([6 * dpr / kk, 6 * dpr / kk]); trace(c, it.ops, origin, pxPerUnit); c.stroke(); }
+    else { c.setLineDash([]); c.strokeRect(it.b[0] - origin[0], it.b[1] - origin[1], it.b[2] - it.b[0], it.b[3] - it.b[1]); }
   }
 }
 
@@ -232,6 +235,7 @@ export function drawMarks(c, pts, T, dpr, accent, snapCol = '#00c000') {
     c.beginPath();
     if (k === 'end') c.rect(x - h, y - h, 2 * h, 2 * h);
     else if (k === 'centre') c.arc(x, y, h, 0, Math.PI * 2);
+    else if (k === 'extreme') { c.moveTo(x - h, y - h); c.lineTo(x + h, y - h); c.moveTo(x, y - h); c.lineTo(x, y + h); c.moveTo(x - h, y + h); c.lineTo(x + h, y + h); }
     else if (k === 'tangent') { c.arc(x, y, h, 0, Math.PI * 2); c.moveTo(x - h, y - h); c.lineTo(x + h, y - h); }
     else if (k === 'geometric') { c.moveTo(x - h, y + h); c.lineTo(x, y - h); c.lineTo(x + h, y + h); c.closePath(); c.moveTo(x - h, y); c.lineTo(x + h, y); }
     else if (k === 'insertion') { c.rect(x - h, y - h, 2 * h, 2 * h); c.moveTo(x - h, y); c.lineTo(x, y); c.lineTo(x, y + h); }

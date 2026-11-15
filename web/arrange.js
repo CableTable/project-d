@@ -67,6 +67,12 @@ export function alignDeltas(boxes, how, rel = 'selection', sheet = null, first =
   });
 }
 
+/** Centre both axes on the first selected object, which stays put. */
+export function centreOnFirstDeltas(boxes) {
+  const horizontal = alignDeltas(boxes, 'centre', 'first'), vertical = alignDeltas(boxes, 'middle', 'first');
+  return horizontal.map((d, i) => ({ dx: d.dx + vertical[i].dx, dy: d.dy + vertical[i].dy }));
+}
+
 /**
  * Equal gaps between the boxes along an axis ('x' left to right, 'y' bottom to top), in their current order. The span is the
  * outer edges of the selection (the first and last stay put) or, relative to the sheet, the sheet's whole width / height

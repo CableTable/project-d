@@ -88,6 +88,205 @@ test('TODO 198b: Rook stuck line shown in IST and hidden on recovery or sign-out
   }
 });
 
+test('TODO U1b: Queue tab lists running runs first, then newest first, as plain text, and sign-out empties it', async (t) => {
+  const shotDir = process.env.SHOTS_DIR || 'shots-U1b';
+  mkdirSync(shotDir, { recursive: true });
+  const browser = await chromium.launch(process.env.CHROME ? { executablePath: process.env.CHROME } : {});
+  t.after(() => browser.close());
+  // What the agent's parseQueue (kit/usage-agent.mjs) makes of a small queue.txt, in file order.
+  const queue = { updated: '2026-11-05T18:45:00.000Z', next: ['<img src=x onerror=alert(1)>'], rows: [
+    { kind: 'build', id: 'K1', out: 'runs1/b-K1.txt', state: 'ended', extra: 'ship' },
+    { kind: 'build', id: 'K2', out: 'runs1/b-K2.txt', state: 'running' },
+    { kind: 'review', id: '<img src=x onerror=alert(1)>', out: 'runs1/rv-K2.txt', state: 'ended', extra: 'denied: 2' },
+  ] };
+  for (const colorScheme of ['light', 'dark']) {
+    const context = await browser.newContext({ viewport: { width: 390, height: 844 }, colorScheme });
+    try {
+      await context.addInitScript((queue) => { window.__docs = { queue }; }, queue);
+      await context.route('**/*', (route) => {
+        const url = new URL(route.request().url());
+        if (url.hostname === 'usage.test') {
+          const name = url.pathname === '/' ? 'index.html' : url.pathname.slice(1);
+          assert.ok(['index.html', 'app.js', 'app.css', 'firebase-config.js', 'token-chart.js', 'usage-window.js'].includes(name));
+          return route.fulfill({ body: readFileSync(new URL('../usage-site/public/' + name, import.meta.url)), contentType: name.endsWith('.html') ? 'text/html' : name.endsWith('.css') ? 'text/css' : 'text/javascript' });
+        }
+        const body = url.pathname.endsWith('firebase-app.js') ? 'export const initializeApp = () => ({});'
+          : url.pathname.endsWith('firebase-auth.js') ? authModule : url.pathname.endsWith('firebase-firestore.js') ? storeModule : '';
+        return route.fulfill({ body, contentType: body ? 'text/javascript' : 'text/css' });
+      });
+      const page = await context.newPage(), errors = [];
+      page.on('pageerror', (e) => errors.push(e.message));
+      await page.goto('http://usage.test/');
+      await page.locator('#dashboard').waitFor();
+      assert.equal(await page.locator('#queue').isVisible(), false);
+      await page.locator('[data-tab=queue]').click();
+      assert.equal(await page.locator('#queue').isVisible(), true);
+      assert.equal(await page.locator('[data-tab=queue]').getAttribute('aria-pressed'), 'true');
+      assert.match(await page.locator('#queue-updated').textContent(), /^Updated Fri,? 6 Nov,? 00:15 IST$/);
+      const ids = () => page.locator('#queue-list .queue-row strong').allTextContents();
+      assert.deepEqual(await ids(), ['building K2', '<img src=x onerror=alert(1)>', 'checked K2', 'built K1']); // Now (running), Next (planned id, shown as text), Done (newest first)
+      assert.deepEqual(await page.locator('#queue-list .ud-chip').evaluateAll((chips) => chips.map((c) => c.className + ':' + c.textContent)), ['ud-chip warn:running', 'ud-chip ok:done', 'ud-chip ok:done']);
+      assert.equal(await page.locator('#queue img').count(), 0);
+      assert.equal(new Set(await page.locator('.page-tabs button').evaluateAll((b) => b.map((x) => x.getBoundingClientRect().top))).size, 1, 'Four tabs share one row on a phone');
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+      await page.screenshot({ path: `${shotDir}/queue-phone-${colorScheme}.png`, fullPage: true });
+      await page.evaluate(() => window.__emit('queue', { rows: [] }));
+      assert.equal(await page.locator('#queue-list').textContent(), 'No runs');
+      assert.equal(await page.locator('#queue-updated').textContent(), '');
+      await page.evaluate(() => window.__emit('queue', { rows: [], next: ['K9'] }));
+      assert.deepEqual(await ids(), ['K9']); // empty rows still show the Next line
+      assert.match(await page.locator('#queue-list').textContent(), /^No runsNext/);
+      await page.evaluate((queue) => window.__emit('queue', queue), queue);
+      assert.equal((await ids()).length, 4);
+      await page.locator('#signout').click();
+      await page.waitForFunction(() => document.getElementById('dashboard').hidden);
+      assert.equal(await page.locator('#queue-list .queue-row').count(), 0);
+      assert.equal(await page.locator('#queue-updated').textContent(), '');
+      assert.deepEqual(errors, []);
+    } finally { await context.close(); }
+  }
+});
+
+test('TODO U1d: Queue row reads Who verb item · short title with a running / done chip and no raw line', async (t) => {
+  const shotDir = process.env.SHOTS_DIR || 'shots-U1c';
+  mkdirSync(shotDir, { recursive: true });
+  const browser = await chromium.launch(process.env.CHROME ? { executablePath: process.env.CHROME } : {});
+  t.after(() => browser.close());
+  const sha = '855b4951d56364408799500f0997906b99300edc';
+  // Rows as the agent's parseQueue makes them, in file order.
+  const queue = { updated: '2026-11-05T18:45:00.000Z', rows: [
+    { kind: 'review', id: sha, out: 'review-277.jsonl', state: 'ended', extra: '' }, // chained review: out is review-<id>, not rv-<id>
+    { kind: 'build', id: 'king/273a', out: 'b-273a.jsonl', state: 'ended', extra: '' }, // sub-id: title of TODO 273
+    { kind: 'build', id: 'king/280bfix1', out: 'b-280bfix1.jsonl', state: 'ended', extra: '' },
+    { kind: 'review', id: '280abcdf0000000000000000000000000000000', out: 'check.jsonl', state: 'ended', extra: '' }, // a sha that starts with digits is no TODO id
+    { kind: 'fresh', id: 'U1c', out: 'fresh-U1c.out', state: 'ended', extra: '' },
+    { kind: 'job', id: 'debt47 (bishop, claude-sonnet-5-5)', out: 'debt47.jsonl', state: 'ended', extra: '' },
+    { kind: 'suite', id: '0225cb8', out: 'suite-0225cb8.log', state: 'ended', extra: '' },
+    { kind: 'review', id: sha, out: 'rv-277.jsonl', state: 'ended', extra: 'autofix · denied: 2' },
+    { kind: 'review', id: sha, out: 'check.jsonl', state: 'ended', extra: '' },
+    { kind: 'build', id: 'king/999', out: 'b-999.jsonl', state: 'ended', extra: '' },
+    { kind: 'build', id: 'king/275', out: 'b-275.jsonl', state: 'running', extra: '' },
+  ] };
+  const todo = { sections: [{ title: 'Whole TODO', items: [
+    { num: 275, title: 'Rotate objects about a chosen pivot point', done: false },
+    { num: 273, title: 'Huge files: Hairline on all crashes', done: false },
+    { num: 277, title: 'Copy objects with undo', done: true },
+    { num: 279, title: 'U1c: plain Queue rows', done: false },
+    { num: 280, title: 'U1d: simpler Queue tab with Next and short titles', done: true },
+  ] }] };
+  for (const colorScheme of ['light', 'dark']) {
+    const context = await browser.newContext({ viewport: { width: 390, height: 844 }, colorScheme });
+    try {
+      await context.addInitScript((docs) => { window.__docs = docs; }, { queue, todo });
+      await context.route('**/*', (route) => {
+        const url = new URL(route.request().url());
+        if (url.hostname === 'usage.test') {
+          const name = url.pathname === '/' ? 'index.html' : url.pathname.slice(1);
+          assert.ok(['index.html', 'app.js', 'app.css', 'firebase-config.js', 'token-chart.js', 'usage-window.js'].includes(name));
+          return route.fulfill({ body: readFileSync(new URL('../usage-site/public/' + name, import.meta.url)), contentType: name.endsWith('.html') ? 'text/html' : name.endsWith('.css') ? 'text/css' : 'text/javascript' });
+        }
+        const body = url.pathname.endsWith('firebase-app.js') ? 'export const initializeApp = () => ({});'
+          : url.pathname.endsWith('firebase-auth.js') ? authModule : url.pathname.endsWith('firebase-firestore.js') ? storeModule : '';
+        return route.fulfill({ body, contentType: body ? 'text/javascript' : 'text/css' });
+      });
+      const page = await context.newPage(), errors = [];
+      page.on('pageerror', (e) => errors.push(e.message));
+      await page.goto('http://usage.test/');
+      await page.locator('#dashboard').waitFor();
+      await page.locator('[data-tab=queue]').click();
+      await page.getByRole('button', { name: 'Show 5 more' }).click(); // 10 done rows: 5 shown first
+      assert.deepEqual(await page.locator('#queue-list .queue-row strong').allTextContents(), [
+        'King building 275 · Rotate objects about a chosen pivot point', // running first
+        'King built 999', // no TODO 999: no title
+        'checked 855b495', // sha only: short sha
+        'checked 277 · Copy objects with undo',
+        'Full tests 0225cb8',
+        'Bishop job debt47',
+        'Grill check U1c · plain Queue rows', // letter id: title starts with "U1c:", prefix dropped
+        'checked 280abcd',
+        'King built 280b fix · simpler Queue tab with Next and short titles',
+        'King built 273a · Huge files: Hairline on all crashes',
+        'checked 277 · Copy objects with undo',
+      ]);
+      assert.deepEqual(await page.locator('#queue-list .ud-chip').allTextContents(), ['running', ...Array(10).fill('done')]);
+      assert.equal(await page.locator('#queue-list .queue-raw').count(), 0);
+      assert.equal(await page.locator('#queue-list table').count(), 0);
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+      await page.screenshot({ path: `${shotDir}/queue-rows-${colorScheme}.png`, fullPage: true });
+      await page.evaluate(() => window.__emit('todo', { sections: [] }));
+      assert.equal(await page.locator('#queue-list .queue-row strong').first().textContent(), 'King building 275'); // title left out when the TODO has none
+      assert.deepEqual(errors, []);
+    } finally { await context.close(); }
+  }
+});
+
+test('TODO 280b: Queue tab has Now / Next / Done parts, 5 done rows and a Show N more toggle, no long sha, one column on a phone', async (t) => {
+  const shotDir = process.env.SHOTS_DIR || 'shots-280b';
+  mkdirSync(shotDir, { recursive: true });
+  const browser = await chromium.launch(process.env.CHROME ? { executablePath: process.env.CHROME } : {});
+  t.after(() => browser.close());
+  const sha = '855b4951d56364408799500f0997906b99300edc';
+  const ended = (id, out = id + '.jsonl') => ({ kind: 'build', id: 'king/' + id, out, state: 'ended', extra: '' });
+  const queue = { updated: '2026-11-05T18:45:00.000Z', next: ['264', 'U1d', 999], rows: [
+    ended('101'), ended('102'), ended('103'), ended('104'), ended('105'),
+    { kind: 'review', id: sha, out: 'check.jsonl', state: 'ended', extra: '' },
+    { kind: 'suite', id: sha, out: 'suite.log', state: 'ended', extra: '' },
+    { kind: 'build', id: 'king/108', out: 'b-108.jsonl', state: 'running', extra: '' },
+  ] };
+  const todo = { sections: [{ title: 'Whole TODO', items: [
+    { num: 264, title: 'Rotate objects about a chosen pivot point with one undo step please', done: false },
+    { num: 280, title: 'U1d: simpler Queue tab', done: false },
+  ] }] };
+  for (const colorScheme of ['light', 'dark']) {
+    const context = await browser.newContext({ viewport: { width: 390, height: 844 }, colorScheme });
+    try {
+      await context.addInitScript((docs) => { window.__docs = docs; }, { queue, todo });
+      await context.route('**/*', (route) => {
+        const url = new URL(route.request().url());
+        if (url.hostname === 'usage.test') {
+          const name = url.pathname === '/' ? 'index.html' : url.pathname.slice(1);
+          assert.ok(['index.html', 'app.js', 'app.css', 'firebase-config.js', 'token-chart.js', 'usage-window.js'].includes(name));
+          return route.fulfill({ body: readFileSync(new URL('../usage-site/public/' + name, import.meta.url)), contentType: name.endsWith('.html') ? 'text/html' : name.endsWith('.css') ? 'text/css' : 'text/javascript' });
+        }
+        const body = url.pathname.endsWith('firebase-app.js') ? 'export const initializeApp = () => ({});'
+          : url.pathname.endsWith('firebase-auth.js') ? authModule : url.pathname.endsWith('firebase-firestore.js') ? storeModule : '';
+        return route.fulfill({ body, contentType: body ? 'text/javascript' : 'text/css' });
+      });
+      const page = await context.newPage(), errors = [];
+      page.on('pageerror', (e) => errors.push(e.message));
+      await page.goto('http://usage.test/');
+      await page.locator('#dashboard').waitFor();
+      await page.locator('[data-tab=queue]').click();
+      const lines = () => page.locator('#queue-list .queue-row strong').allTextContents();
+      assert.deepEqual(await page.locator('#queue-list h3').allTextContents(), ['Now', 'Next', 'Done']);
+      assert.deepEqual((await lines()).slice(0, 4), ['King building 108', '264 · Rotate objects about a chosen pivot point with…', 'U1d · simpler Queue tab', '999']); // Next: titles, letter id, none
+      assert.equal((await lines()).length, 9, '1 now + 3 next + 5 done');
+      assert.deepEqual((await lines()).slice(4, 6), ['Full tests 855b495', 'checked 855b495']); // newest done first, sha cut to 7
+      assert.equal(await page.getByRole('button', { name: 'Show 2 more' }).getAttribute('aria-expanded'), 'false');
+      assert.doesNotMatch(await page.locator('#queue').innerText(), /[0-9a-f]{8,}/i); // innerText: textContent glues the "done" chip onto the sha
+      // One column, chip right of the text, nothing wider than the phone.
+      const box = await page.locator('#queue-list').evaluate((list) => ({
+        cards: [...list.querySelectorAll('.ud-card')].map((c) => c.getBoundingClientRect()).map((r) => [r.left, r.right]),
+        chipRight: [...list.querySelectorAll('.queue-row')].filter((r) => r.querySelector('.ud-chip')).every((r) => r.querySelector('.ud-chip').getBoundingClientRect().left >= r.querySelector('strong').getBoundingClientRect().right - 1),
+      }));
+      assert.equal(new Set(box.cards.map((c) => c.join())).size, 1, 'Every part is one full-width column');
+      assert.equal(box.chipRight, true);
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+      await page.screenshot({ path: `${shotDir}/queue-parts-${colorScheme}.png`, fullPage: true });
+      await page.getByRole('button', { name: 'Show 2 more' }).click();
+      assert.equal((await lines()).length, 11);
+      await page.getByRole('button', { name: 'Show fewer' }).click();
+      assert.equal((await lines()).length, 9);
+      await page.setViewportSize({ width: 1024, height: 800 });
+      await page.screenshot({ path: `${shotDir}/queue-parts-1024-${colorScheme}.png`, fullPage: true });
+      await page.evaluate(() => window.__emit('queue', { updated: '2026-11-05T18:45:00.000Z', rows: [{ kind: 'build', id: 'king/108', out: 'b-108.jsonl', state: 'ended', extra: '' }] }));
+      assert.equal(await page.locator('#queue-list p').allTextContents().then((p) => p.join('|')), 'Now: nothing running|Next: nothing planned'); // no `next` field yet
+      assert.equal(await page.getByRole('button', { name: /Show/ }).count(), 0);
+      assert.deepEqual(errors, []);
+    } finally { await context.close(); }
+  }
+});
+
 test('Usage site: remembered TODO sub-steps, tabs, tickets, forecasts and safe refresh failures on phone and desktop', async (t) => {
   const shotDir = process.env.SHOTS_DIR || 'shots';
   mkdirSync(shotDir, { recursive: true });

@@ -42,6 +42,8 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Command alias**: A short word such as `tb` for Trace that is typed and accepted in the command bar. Where: `DECISIONS.md`, Command bar and Shortcuts. Avoid: Single-key shortcut.
 
+**Centre on first**: Lines up the centres of the selected objects horizontally and vertically with the first selected object, which stays put. A group counts as one object. Type `center` or `centre` in Drawings, Layouts or Compare; one Undo restores the selection's positions. Relative to is ignored and stays as it was.
+
 **Command bar**: The floating input near the cursor for commands, coordinates and clickable options, with full history available through F2. Where: `DECISIONS.md`, Command bar. Avoid: Fixed bottom command line.
 **Cursor field**: One editable or read-only box by the cursor or on the drawing beside the segment: Length and Angle take typing (Tab switches), Δx and Δy show live. Before the first point the editable fields are absolute X and Y; comma switches later chain points to coordinate entry. Rectangle and Rounded rectangle use Width and Height at the other corner, signed toward the cursor. Where: `DECISIONS.md`, Dynamic input (TODO 69), Dynamic input fields on the drawing (TODO 155t). Avoid: Command bar.
 **Dynamic input**: The tag beside the cursor during point prompts showing length, angle, Δx and Δy (absolute X and Y before the first point; Width and Height at a rectangle's other corner), where typed numbers go instead of the command bar; F12 or DYN turns it on and off. Where: `DECISIONS.md`, Dynamic input (TODO 69); `TODO.md`, item 69. Avoid: Cursor tag, Live numbers.
@@ -317,7 +319,7 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 **Snap preview**: The chip beside SNAP that shows the nearest ticked snap marker and its type name while hovering in Select mode, with SNAP on and no drag. Off by default and remembered on this PC; clicks and selection stay unchanged. Where: `DECISIONS.md`, TODO 212.
 **Nearest snap**: The lowest-priority snap: the closest point on a line, arc, circle, ellipse, polyline or spline under the pointer, drawn as an hourglass; ends, middles and centres win when they are in reach. Where: `DECISIONS.md`, Nearest snap. Avoid: On-line snap.
 
-**Snap types**: The tick list beside SNAP, also opened by `OSNAP` / `OS`: end, middle, centre (AutoCAD Center), geometric centre, point (AutoCAD Node), quadrant, intersection, extension, insertion, perpendicular, tangent, nearest, apparent intersection and parallel. All default on; ticks are remembered on this PC, outside drawing files. Where: `TODO.md`, items 68 and 155k; `web/snap.js`.
+**Snap types**: The tick list beside SNAP, also opened by `OSNAP` / `OS`: end, middle, centre (AutoCAD Center), geometric centre, point (AutoCAD Node), quadrant, extreme, intersection, extension, insertion, perpendicular, tangent, nearest, apparent intersection and parallel. Extreme defaults off; all others default on. Ticks are remembered on this PC, outside drawing files. Where: `TODO.md`, items 68, 155k and 264; `web/snap.js`.
 
 **Snap candidate**: One enabled snap point of the object under the pointer. During a point pick, Tab moves the marker and label through these candidates and a click accepts the displayed point. Typed cursor fields keep Tab for field switching. Where: `web/edit.js`, `web/app.js`; `DECISIONS.md`, TODO 155k as built.
 
@@ -328,6 +330,7 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 **Intersection snap**: A real crossing or tangent touch of finite lines, arcs, circles or straight / bulged polyline segments, shown with an X. Candidates come from geometry within the cursor's pick tolerance; extended lines and flattened ellipse / spline curves are excluded. Where: `web/modify.js`, `web/edit.js`.
 
 **Quadrant snap**: A circle's 0 / 90 / 180 / 270 degree points, restricted to the sweep for arcs and bulged polyline segments, shown with a diamond. Ellipses retain their axis ends as quadrant points. Where: `web/drawing.js`.
+**Extreme snap**: Every point where a curve (spline, ellipse, arc, circle, bulged polyline segment) turns from going down to up, or left to right, as seen on screen: its lowest, highest, leftmost and rightmost points. Not on straight pieces. Off by default in the snap types list. Where: `TODO.md` item 264, `web/drawing.js`.
 
 **SOLID / TRACE**: DXF filled shapes handled together by the reader and left out of cutter export. Where: `web/drawing.js`, `web/dxf-cutter.js`. Avoid: Bitmap tracing for TRACE.
 
