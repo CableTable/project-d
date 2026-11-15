@@ -344,16 +344,27 @@ function drawQueue() {
   const rows = [...data.queue].reverse(), running = (row) => row.state === 'running';
   rows.sort((a, b) => running(b) - running(a)); // stable: newest first inside each group
   if (!rows.length) { box.append(el('p', 'ud-muted', 'No runs')); return; }
-  const card = el('div', 'ud-card'), table = el('table', 'run-table'), head = el('thead'), headings = el('tr'), body = el('tbody');
-  for (const name of ['State', 'Kind', 'Id', 'Out', 'Note']) headings.append(el('th', null, name));
-  head.append(headings); table.append(head, body); card.append(table); box.append(card);
+  const card = el('div', 'ud-card'); box.append(card);
   for (const row of rows) {
-    const tr = el('tr', 'queue-row');
-    const cell = (name, text) => { const td = el('td', null, text); td.dataset.label = name; tr.append(td); return td; };
-    cell('State').append(el('span', 'ud-chip ' + (running(row) ? 'warn' : row.state === 'ended' ? 'ok' : 'info'), row.state));
-    cell('Kind', row.kind); cell('Id', row.id); cell('Out', row.out); cell('Note', row.extra);
-    body.append(tr);
+    const item = el('div', 'queue-row'), head = el('div', 'ud-mrow');
+    head.append(el('strong', null, queueHeadline(row)), el('span', 'ud-chip ' + (running(row) ? 'warn' : row.state === 'ended' ? 'ok' : 'info'), row.state === 'ended' ? 'done' : row.state));
+    item.append(head, el('div', 'ud-muted queue-raw', [row.kind, row.id, row.out, row.extra].filter(Boolean).join(' · ')));
+    card.append(item);
   }
+}
+
+// "Who: verb item (TODO title, first 5 words)" from a queue row; the raw fields stay on the second line.
+function queueHeadline({ kind, id, out, state }) {
+  const first = id.split(' ')[0], branch = first.match(/^(king|knight)\//);
+  const acct = id.match(/\(([A-Za-z]\w*)[,)]/)?.[1] || id.match(/--as (\w+)/)?.[1] || (branch ? branch[1] : kind === 'knight' ? 'knight' : '');
+  const who = acct && acct[0].toUpperCase() + acct.slice(1);
+  const from = kind === 'review' ? out.match(/(?:^|\/)rv-(.+?)\.\w+$/)?.[1] || first.slice(0, 7) : first.replace(/^(king|knight)\//, '');
+  const name = from.replace(/^(.+?)fix\d*$/, '$1 fix'), base = name.replace(/ fix$/, '');
+  const todo = todoSections.flatMap((s) => s.items).find((t) => (/^\d+$/.test(base) ? t.num === Number(base) : /^[A-Za-z]/.test(base) && t.title.startsWith(base + ':')));
+  const words = todo?.title.split(/\s+/) || [], title = todo ? ' (' + words.slice(0, 5).join(' ') + (words.length > 5 ? '…' : '') + ')' : '';
+  const done = state === 'ended', verbs = { build: ['building', 'built'], knight: ['building', 'built'], review: ['reviewing', 'reviewed'] }[kind];
+  const text = kind === 'suite' ? (done ? `suite ${first} done` : `running suite ${first}`) : kind === 'fresh' ? 'fresh read ' + name : (verbs ? verbs[+done] : kind) + ' ' + name;
+  return (kind === 'suite' || kind === 'fresh' ? '' : who ? who + ': ' : '') + text + title;
 }
 
 function draw() {
@@ -457,7 +468,8 @@ if (Object.values(firebaseConfig).some((v) => v.includes('<'))) {
         else if (name === 'rook') drawRookStuck(value);
         else data[name] = (value[name === 'analysis' ? 'items' : 'rows'] || []).map((r) => (r.agent === 'Pip' ? { ...r, agent: 'Bishop' } : r)); // rows uploaded before the rename
         if (name === 'tickets') drawTickets();
-        if (name === 'queue') { queueUpdated = value.updated || ''; drawQueue(); }
+        if (name === 'queue') queueUpdated = value.updated || '';
+        if (name === 'queue' || name === 'todo') drawQueue(); // a TODO upload can fill in titles
         showStatus(); draw();
       }, report));
     }

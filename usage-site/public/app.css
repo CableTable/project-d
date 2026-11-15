@@ -31,6 +31,8 @@ h1 { font-size: 28px; letter-spacing: -.03em; } h2 { font-size: 20px; } h3 { fon
 .ud-muted { color: var(--color-fg-muted); font-size: 13px; overflow-wrap: anywhere; }
 .ud-agent, .ud-mrow { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; flex-wrap: wrap; }
 .ud-mrow { font-variant-numeric: tabular-nums; }
+.queue-row { display: grid; gap: 4px; }
+.queue-raw { font-size: 12px; }
 .ud-big { font-size: 32px; font-weight: 700; line-height: 1.2; }
 .ud-track { position: relative; height: 10px; border-radius: 5px; background: var(--cds-chart-grid); }
 .ud-fill { position: absolute; inset: 0 auto 0 0; border-radius: 5px; }

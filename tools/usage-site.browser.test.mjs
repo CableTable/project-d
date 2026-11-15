@@ -123,11 +123,9 @@ test('TODO U1b: Queue tab lists running runs first, then newest first, as plain 
       assert.equal(await page.locator('#queue').isVisible(), true);
       assert.equal(await page.locator('[data-tab=queue]').getAttribute('aria-pressed'), 'true');
       assert.match(await page.locator('#queue-updated').textContent(), /^Updated Fri,? 6 Nov,? 00:15 IST$/);
-      const ids = () => page.locator('#queue-list tbody tr td:nth-child(3)').allTextContents();
-      assert.deepEqual(await ids(), ['K2', '<img src=x onerror=alert(1)>', 'K1']); // running first, then newest first
-      assert.deepEqual(await page.locator('#queue-list tbody .ud-chip').evaluateAll((chips) => chips.map((c) => c.className + ':' + c.textContent)), ['ud-chip warn:running', 'ud-chip ok:ended', 'ud-chip ok:ended']);
-      assert.equal(await page.locator('#queue-list tbody tr').first().locator('td').last().textContent(), '');
-      assert.equal(await page.locator('#queue-list tbody tr').nth(1).locator('td').last().textContent(), 'denied: 2');
+      const ids = () => page.locator('#queue-list .queue-raw').allTextContents();
+      assert.deepEqual(await ids(), ['build · K2 · runs1/b-K2.txt', 'review · <img src=x onerror=alert(1)> · runs1/rv-K2.txt · denied: 2', 'build · K1 · runs1/b-K1.txt · ship']); // running first, then newest first
+      assert.deepEqual(await page.locator('#queue-list .ud-chip').evaluateAll((chips) => chips.map((c) => c.className + ':' + c.textContent)), ['ud-chip warn:running', 'ud-chip ok:done', 'ud-chip ok:done']);
       assert.equal(await page.locator('#queue img').count(), 0);
       assert.equal(new Set(await page.locator('.page-tabs button').evaluateAll((b) => b.map((x) => x.getBoundingClientRect().top))).size, 1, 'Four tabs share one row on a phone');
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
@@ -139,8 +137,73 @@ test('TODO U1b: Queue tab lists running runs first, then newest first, as plain 
       assert.equal((await ids()).length, 3);
       await page.locator('#signout').click();
       await page.waitForFunction(() => document.getElementById('dashboard').hidden);
-      assert.equal(await page.locator('#queue-list tbody tr').count(), 0);
+      assert.equal(await page.locator('#queue-list .queue-row').count(), 0);
       assert.equal(await page.locator('#queue-updated').textContent(), '');
+      assert.deepEqual(errors, []);
+    } finally { await context.close(); }
+  }
+});
+
+test('TODO U1c: Queue row reads Who: verb item (title) with a running / done chip and a muted raw line', async (t) => {
+  const shotDir = process.env.SHOTS_DIR || 'shots-U1c';
+  mkdirSync(shotDir, { recursive: true });
+  const browser = await chromium.launch(process.env.CHROME ? { executablePath: process.env.CHROME } : {});
+  t.after(() => browser.close());
+  const sha = '855b4951d56364408799500f0997906b99300edc';
+  // Rows as the agent's parseQueue makes them, in file order.
+  const queue = { updated: '2026-11-05T18:45:00.000Z', rows: [
+    { kind: 'fresh', id: 'U1c', out: 'fresh-U1c.out', state: 'ended', extra: '' },
+    { kind: 'job', id: 'debt47 (bishop, claude-sonnet-5-5)', out: 'debt47.jsonl', state: 'ended', extra: '' },
+    { kind: 'suite', id: '0225cb8', out: 'suite-0225cb8.log', state: 'ended', extra: '' },
+    { kind: 'review', id: sha, out: 'rv-277.jsonl', state: 'ended', extra: 'autofix · denied: 2' },
+    { kind: 'review', id: sha, out: 'check.jsonl', state: 'ended', extra: '' },
+    { kind: 'build', id: 'king/999', out: 'b-999.jsonl', state: 'ended', extra: '' },
+    { kind: 'build', id: 'king/275', out: 'b-275.jsonl', state: 'running', extra: '' },
+  ] };
+  const todo = { sections: [{ title: 'Whole TODO', items: [
+    { num: 275, title: 'Rotate objects about a chosen pivot point', done: false },
+    { num: 277, title: 'Copy objects with undo', done: true },
+    { num: 279, title: 'U1c: plain Queue rows', done: false },
+  ] }] };
+  for (const colorScheme of ['light', 'dark']) {
+    const context = await browser.newContext({ viewport: { width: 390, height: 844 }, colorScheme });
+    try {
+      await context.addInitScript((docs) => { window.__docs = docs; }, { queue, todo });
+      await context.route('**/*', (route) => {
+        const url = new URL(route.request().url());
+        if (url.hostname === 'usage.test') {
+          const name = url.pathname === '/' ? 'index.html' : url.pathname.slice(1);
+          assert.ok(['index.html', 'app.js', 'app.css', 'firebase-config.js', 'token-chart.js', 'usage-window.js'].includes(name));
+          return route.fulfill({ body: readFileSync(new URL('../usage-site/public/' + name, import.meta.url)), contentType: name.endsWith('.html') ? 'text/html' : name.endsWith('.css') ? 'text/css' : 'text/javascript' });
+        }
+        const body = url.pathname.endsWith('firebase-app.js') ? 'export const initializeApp = () => ({});'
+          : url.pathname.endsWith('firebase-auth.js') ? authModule : url.pathname.endsWith('firebase-firestore.js') ? storeModule : '';
+        return route.fulfill({ body, contentType: body ? 'text/javascript' : 'text/css' });
+      });
+      const page = await context.newPage(), errors = [];
+      page.on('pageerror', (e) => errors.push(e.message));
+      await page.goto('http://usage.test/');
+      await page.locator('#dashboard').waitFor();
+      await page.locator('[data-tab=queue]').click();
+      assert.deepEqual(await page.locator('#queue-list .queue-row strong').allTextContents(), [
+        'King: building 275 (Rotate objects about a chosen…)', // running first
+        'King: built 999', // no TODO 999: no title
+        'reviewed 855b495', // sha only: short sha
+        'reviewed 277 (Copy objects with undo)',
+        'suite 0225cb8 done',
+        'Bishop: job debt47',
+        'fresh read U1c (U1c: plain Queue rows)', // letter id: title starts with "U1c:"
+      ]);
+      assert.deepEqual(await page.locator('#queue-list .ud-chip').allTextContents(), ['running', 'done', 'done', 'done', 'done', 'done', 'done']);
+      assert.equal(await page.locator('#queue-list .queue-row').nth(3).locator('.queue-raw').textContent(), `review · ${sha} · rv-277.jsonl · autofix · denied: 2`);
+      const raw = page.locator('#queue-list .queue-raw').first();
+      assert.equal(await raw.evaluate((n) => getComputedStyle(n).fontSize), '12px');
+      assert.equal(await raw.evaluate((n) => getComputedStyle(n).color), await page.locator('.ud-muted').first().evaluate((n) => getComputedStyle(n).color), 'Raw line is muted grey');
+      assert.equal(await page.locator('#queue-list table').count(), 0);
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+      await page.screenshot({ path: `${shotDir}/queue-rows-${colorScheme}.png`, fullPage: true });
+      await page.evaluate(() => window.__emit('todo', { sections: [] }));
+      assert.equal(await page.locator('#queue-list .queue-row strong').first().textContent(), 'King: building 275'); // title left out when the TODO has none
       assert.deepEqual(errors, []);
     } finally { await context.close(); }
   }
