@@ -16,7 +16,8 @@ const chartDate = (time) => DAY.format(new Date(time)).replace(' ', '-').slice(0
 const compact = (n) => Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 }).format(n);
 const num = (x) => (x === '' || x == null ? null : Number(x));
 
-let data = { limits: [], history: [], runs: [], analysis: [], tickets: [], tokens: [] };
+let data = { limits: [], history: [], runs: [], analysis: [], tickets: [], tokens: [], queue: [] };
+let queueUpdated = '';
 function paceRows() {
   return data.limits.map((r) => ({ agent: r.agent, window: r.window,
     pace_pct: Math.round(Math.max(0, Math.min(1, (Date.parse(r.as_of) - Date.parse(r.starts)) / (Date.parse(r.resets) - Date.parse(r.starts)))) * 100) }));
@@ -26,7 +27,7 @@ const mark = (e, src, field, where) => { e.dataset.source = src; e.dataset.field
 const wh = (a, w) => 'agent=' + encodeURIComponent(a) + '&window=' + encodeURIComponent(w);
 
 function setPage(name) {
-  if (!['usage', 'todo', 'tickets'].includes(name)) name = 'usage';
+  if (!['usage', 'todo', 'tickets', 'queue'].includes(name)) name = 'usage';
   document.querySelectorAll('[data-page]').forEach((page) => { page.hidden = page.id !== name; });
   document.querySelectorAll('[data-tab]').forEach((button) => button.setAttribute('aria-pressed', button.dataset.tab === name));
   try { localStorage.setItem('usage-tab', name); } catch { /* Private browsing can deny storage. */ }
@@ -336,6 +337,25 @@ function drawTickets() {
   }
 }
 
+function drawQueue() {
+  const box = document.getElementById('queue-list'), time = Date.parse(queueUpdated);
+  document.getElementById('queue-updated').textContent = Number.isFinite(time) ? 'Updated ' + IST.format(new Date(time)) + ' IST' : '';
+  box.replaceChildren();
+  const rows = [...data.queue].reverse(), running = (row) => row.state === 'running';
+  rows.sort((a, b) => running(b) - running(a)); // stable: newest first inside each group
+  if (!rows.length) { box.append(el('p', 'ud-muted', 'No runs')); return; }
+  const card = el('div', 'ud-card'), table = el('table', 'run-table'), head = el('thead'), headings = el('tr'), body = el('tbody');
+  for (const name of ['State', 'Kind', 'Id', 'Out', 'Note']) headings.append(el('th', null, name));
+  head.append(headings); table.append(head, body); card.append(table); box.append(card);
+  for (const row of rows) {
+    const tr = el('tr', 'queue-row');
+    const cell = (name, text) => { const td = el('td', null, text); td.dataset.label = name; tr.append(td); return td; };
+    cell('State').append(el('span', 'ud-chip ' + (running(row) ? 'warn' : row.state === 'ended' ? 'ok' : 'info'), row.state));
+    cell('Kind', row.kind); cell('Id', row.id); cell('Out', row.out); cell('Note', row.extra);
+    body.append(tr);
+  }
+}
+
 function draw() {
   const times = data.limits.map((r) => Date.parse(r.as_of)).filter(Number.isFinite);
   document.getElementById('asof').textContent = times.length ? IST.format(new Date(Math.max(...times))) + ' IST' : '\u2014';
@@ -420,12 +440,12 @@ if (Object.values(firebaseConfig).some((v) => v.includes('<'))) {
   getRedirectResult(auth).catch(report);
   onAuthStateChanged(auth, (user) => {
     stopListening(); allowed = false; currentStatus = {};
-    data = { limits: [], history: [], runs: [], analysis: [], tickets: [], tokens: [] };
-    drawTodo([]); drawTickets(); drawRookStuck();
+    data = { limits: [], history: [], runs: [], analysis: [], tickets: [], tokens: [], queue: [] }; queueUpdated = '';
+    drawTodo([]); drawTickets(); drawQueue(); drawRookStuck();
     draw(); finishUpdate(user ? 'Loading…' : 'Sign in to see usage.');
     dashboard.hidden = pageTabs.hidden = true; signin.hidden = !!user; signout.hidden = !user; showStatus();
     if (!user) return;
-    for (const name of ['limits', 'history', 'runs', 'analysis', 'todo', 'tickets', 'tokens', 'rook', 'status']) {
+    for (const name of ['limits', 'history', 'runs', 'analysis', 'todo', 'tickets', 'queue', 'tokens', 'rook', 'status']) {
       subscriptions.push(onSnapshot(doc(db, 'usage', name), { includeMetadataChanges: true }, (snapshot) => {
         if (snapshot.metadata.fromCache) return;
         allowed = true; dashboard.hidden = pageTabs.hidden = false;
@@ -437,6 +457,7 @@ if (Object.values(firebaseConfig).some((v) => v.includes('<'))) {
         else if (name === 'rook') drawRookStuck(value);
         else data[name] = (value[name === 'analysis' ? 'items' : 'rows'] || []).map((r) => (r.agent === 'Pip' ? { ...r, agent: 'Bishop' } : r)); // rows uploaded before the rename
         if (name === 'tickets') drawTickets();
+        if (name === 'queue') { queueUpdated = value.updated || ''; drawQueue(); }
         showStatus(); draw();
       }, report));
     }

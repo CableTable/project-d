@@ -88,6 +88,64 @@ test('TODO 198b: Rook stuck line shown in IST and hidden on recovery or sign-out
   }
 });
 
+test('TODO U1b: Queue tab lists running runs first, then newest first, as plain text, and sign-out empties it', async (t) => {
+  const shotDir = process.env.SHOTS_DIR || 'shots-U1b';
+  mkdirSync(shotDir, { recursive: true });
+  const browser = await chromium.launch(process.env.CHROME ? { executablePath: process.env.CHROME } : {});
+  t.after(() => browser.close());
+  // What the agent's parseQueue (kit/usage-agent.mjs) makes of a small queue.txt, in file order.
+  const queue = { updated: '2026-11-05T18:45:00.000Z', rows: [
+    { kind: 'build', id: 'K1', out: 'runs1/b-K1.txt', state: 'ended', extra: 'ship' },
+    { kind: 'build', id: 'K2', out: 'runs1/b-K2.txt', state: 'running' },
+    { kind: 'review', id: '<img src=x onerror=alert(1)>', out: 'runs1/rv-K2.txt', state: 'ended', extra: 'denied: 2' },
+  ] };
+  for (const colorScheme of ['light', 'dark']) {
+    const context = await browser.newContext({ viewport: { width: 390, height: 844 }, colorScheme });
+    try {
+      await context.addInitScript((queue) => { window.__docs = { queue }; }, queue);
+      await context.route('**/*', (route) => {
+        const url = new URL(route.request().url());
+        if (url.hostname === 'usage.test') {
+          const name = url.pathname === '/' ? 'index.html' : url.pathname.slice(1);
+          assert.ok(['index.html', 'app.js', 'app.css', 'firebase-config.js', 'token-chart.js', 'usage-window.js'].includes(name));
+          return route.fulfill({ body: readFileSync(new URL('../usage-site/public/' + name, import.meta.url)), contentType: name.endsWith('.html') ? 'text/html' : name.endsWith('.css') ? 'text/css' : 'text/javascript' });
+        }
+        const body = url.pathname.endsWith('firebase-app.js') ? 'export const initializeApp = () => ({});'
+          : url.pathname.endsWith('firebase-auth.js') ? authModule : url.pathname.endsWith('firebase-firestore.js') ? storeModule : '';
+        return route.fulfill({ body, contentType: body ? 'text/javascript' : 'text/css' });
+      });
+      const page = await context.newPage(), errors = [];
+      page.on('pageerror', (e) => errors.push(e.message));
+      await page.goto('http://usage.test/');
+      await page.locator('#dashboard').waitFor();
+      assert.equal(await page.locator('#queue').isVisible(), false);
+      await page.locator('[data-tab=queue]').click();
+      assert.equal(await page.locator('#queue').isVisible(), true);
+      assert.equal(await page.locator('[data-tab=queue]').getAttribute('aria-pressed'), 'true');
+      assert.match(await page.locator('#queue-updated').textContent(), /^Updated Fri,? 6 Nov,? 00:15 IST$/);
+      const ids = () => page.locator('#queue-list tbody tr td:nth-child(3)').allTextContents();
+      assert.deepEqual(await ids(), ['K2', '<img src=x onerror=alert(1)>', 'K1']); // running first, then newest first
+      assert.deepEqual(await page.locator('#queue-list tbody .ud-chip').evaluateAll((chips) => chips.map((c) => c.className + ':' + c.textContent)), ['ud-chip warn:running', 'ud-chip ok:ended', 'ud-chip ok:ended']);
+      assert.equal(await page.locator('#queue-list tbody tr').first().locator('td').last().textContent(), '');
+      assert.equal(await page.locator('#queue-list tbody tr').nth(1).locator('td').last().textContent(), 'denied: 2');
+      assert.equal(await page.locator('#queue img').count(), 0);
+      assert.equal(new Set(await page.locator('.page-tabs button').evaluateAll((b) => b.map((x) => x.getBoundingClientRect().top))).size, 1, 'Four tabs share one row on a phone');
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+      await page.screenshot({ path: `${shotDir}/queue-phone-${colorScheme}.png`, fullPage: true });
+      await page.evaluate(() => window.__emit('queue', { rows: [] }));
+      assert.equal(await page.locator('#queue-list').textContent(), 'No runs');
+      assert.equal(await page.locator('#queue-updated').textContent(), '');
+      await page.evaluate((queue) => window.__emit('queue', queue), queue);
+      assert.equal((await ids()).length, 3);
+      await page.locator('#signout').click();
+      await page.waitForFunction(() => document.getElementById('dashboard').hidden);
+      assert.equal(await page.locator('#queue-list tbody tr').count(), 0);
+      assert.equal(await page.locator('#queue-updated').textContent(), '');
+      assert.deepEqual(errors, []);
+    } finally { await context.close(); }
+  }
+});
+
 test('Usage site: remembered TODO sub-steps, tabs, tickets, forecasts and safe refresh failures on phone and desktop', async (t) => {
   const shotDir = process.env.SHOTS_DIR || 'shots';
   mkdirSync(shotDir, { recursive: true });
