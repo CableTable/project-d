@@ -398,7 +398,7 @@ function splineOf(r) {
     }
     const f = firsts(r);
     const p = nurbs(cp, knots, num(f[71], 3), w, fit);
-    splinePoints.set(r, hit = { pts: p, fit: p === fit, refine: nurbsOk(cp, knots, num(f[71], 3)) });
+    splinePoints.set(r, hit = { pts: p, fit: p === fit, refine: num(f[71], 3) > 1 && nurbsOk(cp, knots, num(f[71], 3)) });
   }
   return hit;
 }
@@ -873,15 +873,24 @@ function curveExtremes(points, closed, refine, period) {
   points = points.filter((p, i) => !i || Math.hypot(p[0] - points[i - 1][0], p[1] - points[i - 1][1]) > 1e-12);
   if (closed && points.length > 1 && Math.hypot(points[0][0] - points.at(-1)[0], points[0][1] - points.at(-1)[1]) < 1e-9) points.pop();
   const out = [], n = points.length;
+  if (n < 3) return out;
+  const xs = points.map((p) => p[0]), ys = points.map((p) => p[1]);
+  const level = 1e-9 * Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys));
   for (let i = closed ? 0 : 1; i < n - (closed ? 0 : 1); i++) {
     const a = points[(i + n - 1) % n], b = points[i], c = points[(i + 1) % n];
-    if (n < 3) break;
     const l = b[2] - a[2] + (i === 0 ? period : 0), r = c[2] - b[2] + (i === n - 1 ? period : 0);
     for (let axis = 0; axis < 2; axis++) {
-      const left = b[axis] - a[axis], right = c[axis] - b[axis];
-      if (left * right > 0 || (!left && !right)) continue;
-      let q = b;
-      if (refine) {
+      const left = b[axis] - a[axis];
+      if (Math.abs(left) < level) continue;
+      let end = i, right = c[axis] - b[axis];
+      while (Math.abs(right) < level && end < (closed ? i + n - 1 : n - 2)) {
+        end++;
+        right = points[(end + 1) % n][axis] - points[end % n][axis];
+      }
+      if (Math.abs(right) < level || left * right >= 0) continue;
+      const mid = (i + end) / 2, u = points[Math.floor(mid) % n], v = points[Math.ceil(mid) % n];
+      let q = end === i ? b : [0, 1].map((k) => (u[k] + v[k]) / 2);
+      if (refine && end === i) {
         const A = [0, 1].map((k) => ((c[k] - b[k]) / r - (b[k] - a[k]) / l) / (l + r));
         const B = [0, 1].map((k) => (l * (c[k] - b[k]) / r + r * (b[k] - a[k]) / l) / (l + r));
         const t = -B[axis] / (2 * A[axis]);

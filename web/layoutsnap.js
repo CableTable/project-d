@@ -7,16 +7,14 @@ import { DEFAULT_TYPES, preferSnap, orderCandidates } from './snap.js';
 const indexes = new WeakMap();
 const placedIndexes = new WeakMap();
 
-/** The part's pick index; placed curves use sheet axes, cached until their transform or source changes. */
+/** The part's pick index; copies with the same frame share sheet-axis extremes. */
 export function partIndex(part, pl) {
-  if (pl) {
+  if (pl && (pl.rot || 0) % 90 !== 0) {
     const frame = placedMat(part, pl, 0), key = frame.slice(0, 4).join(',');
-    let cached = placedIndexes.get(pl);
-    if (!cached || cached.part !== part || cached.key !== key) {
-      cached = { part, key, ed: makeIndex(part.raw, part.fl, part.off, null, frame) };
-      placedIndexes.set(pl, cached);
-    }
-    return cached.ed;
+    let cached = placedIndexes.get(part);
+    if (!cached) { cached = new Map(); placedIndexes.set(part, cached); }
+    if (!cached.has(key)) cached.set(key, makeIndex(part.raw, part.fl, part.off, null, frame));
+    return cached.get(key);
   }
   let ed = indexes.get(part);
   if (!ed) { ed = makeIndex(part.raw, part.fl, part.off); indexes.set(part, ed); }

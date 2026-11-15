@@ -5,7 +5,7 @@ import { newDoc, addEntities, addBlock, entity, insert, ellipse, arc, circle, li
 import { DEFAULT_TYPES, snapTypes, orderCandidates } from './web/snap.js';
 import { makePart } from './web/layoutdoc.js';
 import { placedMat } from './web/apply.js';
-import { layoutSnap, layoutCandidates } from './web/layoutsnap.js';
+import { layoutSnap, layoutCandidates, partIndex } from './web/layoutsnap.js';
 
 const spline = () => entity('SPLINE', [[70, 0], [71, 2], ...[0, 0, 0, 1, 1, 1].map((t) => [40, t]), [10, 0], [20, 50], [10, 50], [20, -40], [10, 100], [20, 70]]);
 const indexed = (ents, block = null) => {
@@ -69,4 +69,46 @@ test('TODO 264: placed ellipse snaps and Tab candidates use the sheet low point 
     near(extremes(candidates.candidates), x, y);
     assert.notEqual(layoutSnap(parts, [pl], 600, 500, x, y, .2)?.kind, 'extreme');
   }
+});
+
+const controlSpline = (pts, degree = 3) => entity('SPLINE', [[70, 0], [71, degree],
+  ...Array.from({ length: pts.length + degree + 1 }, (_, i) => [40, Math.max(0, Math.min(pts.length - degree, i - degree))]),
+  ...pts.flatMap(([x, y]) => [[10, x], [20, y]])]);
+
+test('TODO 264: flat runs give one unrefined midpoint at block rotations 90 and 180', () => {
+  const flat = controlSpline([[0, 20], ...Array.from({ length: 30 }, (_, i) => [10 * (i + 1), 0]), [310, 20]]);
+  for (const rot of [0, 90, 180]) {
+    const points = extremes(indexed([flat], { rot }));
+    assert.equal(points.length, 1, `rotation ${rot}`);
+    const t = rot * Math.PI / 180;
+    near(points, 155 * Math.cos(t), 155 * Math.sin(t));
+  }
+});
+
+test('TODO 264: down-level-down has no extreme; degree-1 V keeps its vertex; two points are guarded', () => {
+  const stair = controlSpline([[0, 20], [10, 10], [20, 10], [30, 10], [40, 10], [50, 10], [60, 0]]);
+  for (const rot of [0, 90, 180]) assert.deepEqual(extremes(indexed([stair], { rot })), []);
+  const v = extremes(indexed([controlSpline([[0, 10], [10, 0], [20, 20]], 1)]));
+  assert.equal(v.length, 1); near(v, 10, 0);
+  assert.equal(v[0].y, 0);
+  assert.deepEqual(extremes(indexed([controlSpline([[0, 0], [10, 10]], 1)])), []);
+  assert.deepEqual(extremes(indexed([entity('SPLINE', [[71, 3], [11, 0], [21, 0], [11, 10], [21, 10]])])), []);
+});
+
+test('TODO 264: 100 same-frame copies build one index; axis swaps and mirrors reuse the plain index', () => {
+  const raw = newDoc(4); addEntities(raw, spline());
+  const source = makePart('p', 'Spline', raw, 1);
+  let builds = 0;
+  const part = { ...source, get raw() { builds++; return raw; } };
+  const copies = Array.from({ length: 100 }, (_, i) => ({ partId: 'p', x: i * 100, y: i * 50, rot: 45 }));
+  assert.equal(new Set(copies.map((pl) => partIndex(part, pl))).size, 1);
+  assert.equal(builds, 1);
+  const plain = partIndex(part);
+  for (const rot of [0, 90, 180, 270]) for (const mirrorX of [false, true]) for (const mirrorY of [false, true]) {
+    assert.equal(partIndex(part, { rot, mirrorX, mirrorY }), plain);
+  }
+  assert.equal(builds, 2);
+  assert.notEqual(partIndex(part, { rot: 30 }), partIndex(part, copies[0]));
+  const changed = newDoc(4); addEntities(changed, ellipse(0, 0, 20, 0, .5));
+  assert.notEqual(partIndex(makePart('p', 'Edited', changed, 1), copies[0]), partIndex(part, copies[0]));
 });
