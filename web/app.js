@@ -1175,8 +1175,10 @@ async function openPdf(name, buf, path = null, copies = null) {
   const bytes = buf instanceof ArrayBuffer ? buf : buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
   let r;
   try { r = await readPdf(new Uint8Array(bytes.slice(0))); } catch (err) { if (copies) throw err; note(name + ': could not read this PDF (' + (err && err.message ? err.message : err) + ')'); return; }
-  // shortcut: changed content with the same page count is not detected, compare source fingerprints if that check is needed.
-  if (copies && copies.some((c) => (c.pdfPages != null && c.pdfPages !== r.pages) || (c.sheet ?? 1) > r.pages)) throw new Error('source PDF changed');
+  // SHA-256 of the source bytes (lowercase hex); null without crypto.subtle, hashing never fails the open.
+  let hash = null;
+  try { hash = [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map((b) => b.toString(16).padStart(2, '0')).join(''); } catch { /* not a secure context */ }
+  if (copies && copies.some((c) => (c.pdfPages != null && c.pdfPages !== r.pages) || (c.pdfHash && hash && c.pdfHash !== hash) || (c.sheet ?? 1) > r.pages)) throw new Error('source PDF changed');
   if (!r.paths) {
     if (copies) throw new Error('source PDF has no vector lines');
     const yes = await confirmAsk(name + ' has no vector lines, only a picture (or text). Use it as a background picture instead?', 'Use as background');
@@ -1186,7 +1188,7 @@ async function openPdf(name, buf, path = null, copies = null) {
   }
   const raw = r.doc, fl = flatten(raw);
   const base = baseName(name), dxfName = base + '.dxf';
-  const doc = { name: dxfName, path: null, openPath: path, dirty: false, fromPdf: name, pdf: { name, bytes, pages: r.pages, page: r.page }, ...tabFields(raw, fl) };
+  const doc = { name: dxfName, path: null, openPath: path, dirty: false, fromPdf: name, pdf: { name, bytes, pages: r.pages, page: r.page, hash }, ...tabFields(raw, fl) };
   addTab(doc);
   note(`Opened ${name} as a drawing (page ${r.page} of ${r.pages}): ${raw.entities.length} entities, ${r.texts} texts, ${fmtSize(r.mm[0])} × ${fmtSize(r.mm[1])} mm. Not saved yet: Save writes ${base}${PS.sheetNumbers(doc.pdf).length > 1 ? `-sheet${r.page}` : ''}.dxf` + (fl.truncated ? '. Too big to show all of it' : ''));
   await balLoad(doc, path, name);
@@ -3382,7 +3384,7 @@ async function autosaveNow() {
         try { dxf = writeDxf(rawForSave({ ...page, raw: raw || newDoc(), titleBlock }), { escapeUnicode: true, extents: page.lay || !page.fl ? null : page.fl.boxes.model }); } catch (e) { console.warn('Autosave: could not write', page.name, e); continue; }
         if (page.lay && r.hasCopy && r.autoTab === tab && r.autoDxf === dxf && r.autoBalloons === balloons && r.autoUnit === unit) continue;                    // a layout: the same text, balloons, unit and tab index as the last copy
         const name = n == null ? page.name : `${d.pdf.name} sheet ${n}`;
-        await RC.saveCopy({ id: r.rid, name, path: page.path || null, openPath: d.openPath || null, pdfPages: d.pdf?.pages || null, kind: page.lay ? 'layout' : 'drawing', dxf, t: Date.now(),
+        await RC.saveCopy({ id: r.rid, name, path: page.path || null, openPath: d.openPath || null, pdfPages: d.pdf?.pages || null, pdfHash: d.pdf?.hash || null, kind: page.lay ? 'layout' : 'drawing', dxf, t: Date.now(),
           tab, sheet: n, balloons, unit, saved: !!page.saved, fromFile: !!d.fromFile, fromPdf: d.fromPdf || null, acceptedLoss: !!page.acceptedLoss });
         r.hasCopy = true; r.autoTab = tab; r.autoBalloons = balloons; r.autoUnit = unit; if (page.lay) r.autoDxf = dxf;
         if (!page.lay) { r.autoEnts = raw?.entities; r.autoBlocks = raw?.blocks; r.autoLayers = raw?.layers; r.autoGroups = raw?.groups; r.autoLtypes = raw?.ltypes; r.autoHeader = raw?.header; r.autoTitle = titleBlock; }

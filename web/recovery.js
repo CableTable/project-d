@@ -2,7 +2,7 @@
 // the user's files and never over them. Every call can fail (private mode, blocked storage, a full disk): the caller catches and the app
 // carries on without recovery.
 //
-// A record: { id (the tab or PDF sheet's recovery id), name, path, openPath, pdfPages, kind ('drawing' | 'layout'), dxf (the text Save would write), balloons (sidecar text or null), unit (string or null), t (ms), tab, sheet,
+// A record: { id (the tab or PDF sheet's recovery id), name, path, openPath, pdfPages, pdfHash (SHA-256 of the source PDF, 64 lowercase hex, or null), kind ('drawing' | 'layout'), dxf (the text Save would write), balloons (sidecar text or null), unit (string or null), t (ms), tab, sheet,
 //             saved, fromFile, fromPdf, acceptedLoss (the tab's Save state, so Save works as before after a recovery) }.
 import { idbStore } from './idbstore.js';
 
@@ -41,6 +41,7 @@ export function cleanCopies(list) {
   return (Array.isArray(list) ? list : []).filter((c) => c && typeof c.id === 'string' && typeof c.dxf === 'string' && c.dxf.length && typeof c.name === 'string' && (c.kind === 'drawing' || c.kind === 'layout'))
     .map((c) => ({ id: c.id, name: c.name, path: typeof c.path === 'string' ? c.path : null, kind: c.kind, dxf: c.dxf, t: Number.isFinite(c.t) ? c.t : 0,
       openPath: typeof c.openPath === 'string' ? c.openPath : null, pdfPages: Number.isInteger(c.pdfPages) && c.pdfPages > 0 ? c.pdfPages : null,
+      pdfHash: typeof c.pdfHash === 'string' && /^[0-9a-f]{64}$/.test(c.pdfHash) ? c.pdfHash : null,
       balloons: typeof c.balloons === 'string' ? c.balloons : null, unit: typeof c.unit === 'string' ? c.unit : null, sheet: Number.isInteger(c.sheet) && c.sheet > 0 ? c.sheet : null,
       saved: !!c.saved, fromFile: !!c.fromFile, fromPdf: typeof c.fromPdf === 'string' ? c.fromPdf : null, acceptedLoss: !!c.acceptedLoss }));
 }

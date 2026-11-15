@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict';
 import * as R from './web/recovery.js';
 import { readFileSync } from 'node:fs';
+import { createHash, webcrypto } from 'node:crypto';
 import { runInNewContext } from 'node:vm';
 import * as BAL from './web/balloons.js';
 import * as DU from './web/units.js';
@@ -47,6 +48,12 @@ test('TODO 271: source PDF path and original page count survive cleaning; old co
   for (const pdfPages of [0, -1, 1.5, Infinity]) assert.equal(R.cleanCopies([{ ...good, pdfPages }])[0].pdfPages, null);
 });
 
+test('TODO 276: pdfHash survives only as 64 lowercase hex characters', () => {
+  const good = { id: 'pdf', name: 'same.pdf', kind: 'drawing', dxf: '0\nEOF\n' }, hex = 'ab'.repeat(32);
+  assert.equal(R.cleanCopies([{ ...good, pdfHash: hex }])[0].pdfHash, hex);
+  for (const pdfHash of [hex.toUpperCase(), hex.slice(1), hex + '0', 'zz'.repeat(32), 5, null, undefined]) assert.equal(R.cleanCopies([{ ...good, pdfHash }])[0].pdfHash, null);
+});
+
 // Exercise the private restore path without loading the UI or adding app exports.
 const source = readFileSync(new URL('./web/app.js', import.meta.url), 'utf8').match(/^async function recoverOne\(c[^)]*\) \{\r?\n[\s\S]*?^\}/m)?.[0];
 assert.ok(source, 'recoverOne exists');
@@ -87,12 +94,21 @@ n++; console.log('ok TODO 271: restoring a PDF sheet keeps other sheets balloons
 
 const pdfSource = readFileSync(new URL('./web/app.js', import.meta.url), 'utf8').match(/^async function openPdf\([^\r\n]*\) \{\r?\n[\s\S]*?^\}/m)?.[0];
 assert.ok(pdfSource, 'openPdf exists');
-const openPdf = runInNewContext(`${pdfSource}\nopenPdf`, { ArrayBuffer, Uint8Array, note: () => {}, readPdf: async () => ({ pages: 1, paths: 0 }) });
+const openPdf = runInNewContext(`${pdfSource}\nopenPdf`, { ArrayBuffer, Uint8Array, note: () => {}, readPdf: async () => ({ pages: 1, paths: 0 }), crypto: webcrypto });
 for (const copy of [{ pdfPages: 2, sheet: 1 }, { pdfPages: 2, sheet: 2 }, { sheet: 2 }]) {
   await assert.rejects(openPdf('source.pdf', new ArrayBuffer(0), 'E:/source.pdf', [copy]), /source PDF changed/);
 }
 await assert.rejects(openPdf('source.pdf', new ArrayBuffer(0), 'E:/source.pdf', [{ pdfPages: 1, sheet: 1 }]), /source PDF has no vector lines/);
 n++; console.log('ok TODO 271: a changed page count or out-of-range copy falls back before opening a tab');
+// TODO 276: same page count, different bytes. readPdf is stubbed (no vector lines), so "opens" = passes the check and reaches that error.
+const srcBytes = new Uint8Array([1, 2, 3]).buffer, srcHash = createHash('sha256').update(new Uint8Array(srcBytes)).digest('hex');
+await assert.rejects(openPdf('source.pdf', new Uint8Array([1, 2, 4]).buffer, 'E:/source.pdf', [{ pdfPages: 1, pdfHash: srcHash, sheet: 1 }]), /source PDF changed/);
+await assert.rejects(openPdf('source.pdf', srcBytes, 'E:/source.pdf', [{ pdfPages: 1, pdfHash: srcHash, sheet: 1 }]), /source PDF has no vector lines/);
+await assert.rejects(openPdf('source.pdf', new Uint8Array([1, 2, 4]).buffer, 'E:/source.pdf', [{ pdfPages: 1, sheet: 1 }]), /source PDF has no vector lines/);
+await assert.rejects(openPdf('source.pdf', new Uint8Array([1, 2, 4]).buffer, 'E:/source.pdf', [{ pdfPages: 2, pdfHash: srcHash, sheet: 1 }]), /source PDF changed/);
+const noCrypto = runInNewContext(`${pdfSource}\nopenPdf`, { ArrayBuffer, Uint8Array, note: () => {}, readPdf: async () => ({ pages: 1, paths: 0 }) });
+await assert.rejects(noCrypto('source.pdf', new Uint8Array([1, 2, 4]).buffer, 'E:/source.pdf', [{ pdfPages: 1, pdfHash: srcHash, sheet: 1 }]), /source PDF has no vector lines/);
+n++; console.log('ok TODO 276: a changed PDF with the same page count is caught by its hash; no hash on the copy or no crypto keeps the old check');
 
 // Keep the storage boundary small; the table exercises loadCopies' real sort.
 let stored = [];
