@@ -29,7 +29,7 @@ export const LAYOUT_BLOCK = 'PD_LAYOUT';
 const CHUNK = 200;
 
 export const DEFAULTS = Object.freeze({
-  sheetW: 1000, sheetH: 700, gripTop: 0, gripRight: 0, gripBottom: 30, gripLeft: 0,
+  sheetW: 1000, sheetH: 700, gripTop: 0, gripRight: 0, gripBottom: 0, gripLeft: 0,
   crop: false, reg: false, gapX: 5, gapY: 5, rotate: '0', align: 'centre',
   fit: true, rows: 1, cols: 1, extraRows: [], extraCols: [], gridPart: null,
   guides: [], guidesShow: true, guidesLock: false,       // guidelines (guides.js): per layout, saved with it

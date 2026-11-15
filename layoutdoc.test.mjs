@@ -17,6 +17,14 @@ function test(name, fn) { fn(); n++; console.log('ok', name); }
 const load = (f) => readDxf(decodeDxf(readFileSync('fixtures/' + f)));
 const R = (x) => Math.round(x * 1e6) / 1e6;
 
+test('TODO 284: a new layout has no gripper', () => {
+  const lay = LD.newLayout('No gripper');
+  assert.deepEqual(['gripTop', 'gripRight', 'gripBottom', 'gripLeft'].map((key) => lay.s[key]), [0, 0, 0, 0]);
+  lay.s.gripBottom = 30;
+  const back = LD.layoutFromRaw(readDxf(writeDxf(LD.layoutRaw(lay))));
+  assert.equal(back.s.gripBottom, 30, 'a saved bottom gripper is kept');
+});
+
 test('TODO 155i2b: layout ATTMODE refresh keeps placement, source and undo snapshot; header survives reopen', () => {
   const raw = newDoc(4), ins = insert('Attributes', 0, 0);
   addBlock(raw, 'Attributes', [line(0, 0, 100, 0)]);

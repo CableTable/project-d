@@ -92,7 +92,7 @@ function panelControl(page, locator) {
 }
 
 const base = { sheetW: 1000, sheetH: 700, gripTop: 0, gripRight: 0, gripBottom: 30, gripLeft: 0, partW: 120, partH: 80, gapX: 5, gapY: 5, rotate: '0', align: 'centre' };
-const N0 = stepRepeat(base).count;                // the default sheet, 120 × 80 parts: 8 × 7 = 56
+const N0 = stepRepeat(base).count;                // the 30 mm bottom-gripper fixture, 120 × 80 parts: 8 × 7 = 56
 let failed = 0;
 const timings = {};
 let afterStep = async () => {};
@@ -3963,11 +3963,11 @@ try {
     assert.equal(await t('apply').isDisabled(), false);
   });
 
-  await step('default sheet case: 56, 8 × 7, 77%', async () => {
+  await step('TODO 284: default sheet case: 64, 8 × 8, 88%', async () => {
     const r = await readout();
-    assert.equal(r.count, N0); assert.equal(N0, 56); assert.match(r.grid, /8 × 7/);
-    assert.equal(await t('pct').textContent(), '77% of sheet');
-    assert.equal(await page.locator('[data-group=parts] .part-hit').count(), N0);
+    assert.equal(r.count, 64); assert.match(r.grid, /8 × 8/);
+    assert.equal(await t('pct').textContent(), '88% of sheet');
+    assert.equal(await page.locator('[data-group=parts] .part-hit').count(), 64);
   }, { needs: ['a DXF opens on a drawing tab (no sheet); Add to layout makes a layout tab and the part fills Step and repeat'] });
 
   await step('layout: menu bar, rail tools in order, layers', async () => {
@@ -4001,11 +4001,10 @@ try {
   await step('gripper per side, no margin: four fields, every side with a gripper is shaded; rail and panel fit at 900 px', async () => {
     assert.equal(await panelControl(page, page.locator('[data-key=margin]')).count(), 0, 'no margin field');
     assert.equal(await panelControl(page, page.locator('[data-key=gripper]')).count(), 0);
-    assert.deepEqual(await Promise.all(['Top', 'Right', 'Bottom', 'Left'].map((x) => grip(x).inputValue())), ['0', '0', '30', '0']);
+    assert.deepEqual(await Promise.all(['Top', 'Right', 'Bottom', 'Left'].map((x) => grip(x).inputValue())), ['0', '0', '0', '0']);
     const band = page.locator('.grip-band');
-    assert.equal(await band.count(), 1, 'only the bottom gripper is set');
-    assert.deepEqual(await band.evaluate((r) => [r.getAttribute('data-edge'), r.getAttribute('y'), r.getAttribute('height')]), ['bottom', '670', '30']);
-    assert.equal(await page.locator('.grip-label').textContent(), 'GRIPPER 30');
+    assert.equal(await band.count(), 0, 'a new layout has no gripper');
+    assert.equal(await page.locator('.grip-label').count(), 0);
     const fits = (sel) => page.locator(sel).evaluate((e) => e.scrollHeight <= e.clientHeight + 1);
     assert.ok(await fits('nav.rail'), 'rail scrolls');
     await page.screenshot({ path: shotDir + '/a-light.png' });
@@ -4013,17 +4012,17 @@ try {
 
   await step('Gap X 20 changes the count', async () => {
     await panelControl(page, page.locator('[data-key=gapX]')).fill('20');
-    const want = stepRepeat({ ...base, gapX: 20 }).count;
-    assert.notEqual(want, N0);
+    const want = stepRepeat({ ...base, gripBottom: 0, gapX: 20 }).count;
+    assert.notEqual(want, 64);
     assert.equal((await readout()).count, want);
     assert.equal(await page.locator('[data-group=parts] .part-hit').count(), want);
     await panelControl(page, page.locator('[data-key=gapX]')).fill('5');
-    assert.equal((await readout()).count, N0);
+    assert.equal((await readout()).count, 64);
   }, { needs: ['a DXF opens on a drawing tab (no sheet); Add to layout makes a layout tab and the part fills Step and repeat'] });
 
   await step('rotate 90° recomputes', async () => {
     await t('rotate').selectOption('90');
-    const want = stepRepeat({ ...base, rotate: '90' });
+    const want = stepRepeat({ ...base, gripBottom: 0, rotate: '90' });
     const r = await readout();
     assert.equal(r.count, want.count); assert.match(r.grid, new RegExp(`${want.cols} × ${want.rows}`));
     await page.locator('[data-group=parts] [data-i="0"] .part-hit').click({ force: true });
@@ -4057,7 +4056,7 @@ try {
   await step('preset, gripper sides and top-left align: the count and the first position follow', async () => {
     await layoutTab(); await t('preset').selectOption('a3');
     assert.equal(await panelControl(page, page.locator('[data-key=sheetW]')).inputValue(), '420');
-    assert.equal((await readout()).count, stepRepeat({ ...base, sheetW: 420, sheetH: 297 }).count);
+    assert.equal((await readout()).count, stepRepeat({ ...base, gripBottom: 0, sheetW: 420, sheetH: 297 }).count);
     await layoutTab(); await t('preset').selectOption('screen');
     await layoutTab(); await grip('Top').fill('30'); await layoutTab(); await grip('Bottom').fill('0');
     await t('align').selectOption('topleft');
@@ -4364,7 +4363,7 @@ try {
     assert.equal((await tabs()).filter((x) => x.startsWith('sample-copy.dxf')).length, 1, 'the drawing\'s own tab stays');
     assert.equal(await partText(), 'sample-copy · 165.9 × 119.3');
     applied = Number(await t('count').textContent());
-    const want = stepRepeat({ ...base, partW: 165.9, partH: 119.3 }).count;
+    const want = stepRepeat({ ...base, gripBottom: 0, partW: 165.9, partH: 119.3 }).count;
     assert.equal(applied, want); assert.ok(applied > 1);
     assert.ok((await inkedWhen((n) => n > 500)) > 500, 'layout is blank');
     assert.deepEqual(await page.locator('.layer .nm').allTextContents(), ['Parts', 'Marks', 'Dimensions']);
@@ -6365,7 +6364,7 @@ try {
     await page.waitForFunction((n) => document.querySelectorAll('.tabs .dtab:not([aria-label])').length === n, before + 1);
     assert.match((await tabs()).at(-1), /^outline-edited layout •/);
     assert.equal(await partText(), 'outline-edited · 62.5 × 37.5');
-    const want = stepRepeat({ ...base, partW: 62.5, partH: 37.5 }).count;
+    const want = stepRepeat({ ...base, gripBottom: 0, partW: 62.5, partH: 37.5 }).count;
     assert.equal(Number(await t('count').textContent()), want);
     const dl = await downloaded(() => page.keyboard.press('Control+s'));
     assert.equal(dl.name, 'outline-edited layout.dxf');
@@ -6427,7 +6426,7 @@ try {
     assert.equal(await partText(), 'outline · 100 × 60');
     assert.ok((await page.locator('.layer .nm').allTextContents()).includes('Parts'));
     assert.equal(await page.locator('[data-tool=step]').getAttribute('class'), 'tool on');
-    assert.equal(await t('count').textContent(), String(stepRepeat({ ...base, partW: 100, partH: 60 }).count));
+    assert.equal(await t('count').textContent(), String(stepRepeat({ ...base, gripBottom: 0, partW: 100, partH: 60 }).count));
     // the part itself is drawn in every slot, and nothing of it is left off the sheet
     const inkIn = (sel) => page.evaluate((sel) => {
       const c = document.querySelector('[data-testid=drawing]'), cr = c.getBoundingClientRect(), k = c.width / cr.width;
@@ -6442,7 +6441,7 @@ try {
     }, sel);
     await inkedWhen((n) => n > 500);
     const ink = await inkIn('[data-group=parts] .part-hit');
-    assert.equal(ink.n.length, stepRepeat({ ...base, partW: 100, partH: 60 }).count);
+    assert.equal(ink.n.length, stepRepeat({ ...base, gripBottom: 0, partW: 100, partH: 60 }).count);
     assert.ok(ink.n.every((x) => x > 50), 'every slot draws the part: ' + ink.n.join(','));
     assert.equal(ink.out, 0, 'no ink outside the slots');
     assert.equal(await page.locator('.part-body').count(), 0, 'no plain box over a drawn part');
@@ -8043,7 +8042,7 @@ try {
     assert.equal(await rows.inputValue(), String(worked.rows), 'typing starts from the worked-out numbers');
     assert.equal(await rows.locator('xpath=..').textContent().then((x) => x.trim()), 'Rows');
     await rows.fill('2'); await cols.fill('3');
-    let want = stepRepeat({ ...base, partW: 100, partH: 60, fit: false, rows: 2, cols: 3 });
+    let want = stepRepeat({ ...base, gripBottom: 0, partW: 100, partH: 60, fit: false, rows: 2, cols: 3 });
     assert.equal(await t('count').textContent(), '6');
     assert.equal(await t('grid').textContent(), 'placed · 3 × 2');
     assert.equal(await t('pct').textContent(), Math.round(want.usedPct) + '% of sheet');
@@ -8054,7 +8053,7 @@ try {
     await rows.fill('40');
     assert.equal(await t('count').textContent(), '120');
     assert.equal(await t('fit-note').isVisible(), true);
-    assert.match(await t('fit-note').textContent(), /^Does not fit: the grid is 310 × 2\d\d\d mm, the usable area 1000 × 670 mm\.$/);
+    assert.match(await t('fit-note').textContent(), /^Does not fit: the grid is 310 × 2\d\d\d mm, the usable area 1000 × 700 mm\.$/);
     assert.match(await t('cmd-prompt').textContent(), /Does not fit the usable area/);
     await rows.fill('2');
     // rotate and an extra gap keep working
@@ -8065,7 +8064,7 @@ try {
     await page.keyboard.type('12');
     assert.equal(await page.locator('[data-gap-row=r1]').count(), 1);
     assert.equal(await t('count').textContent(), '6');
-    want = stepRepeat({ ...base, partW: 100, partH: 60, fit: false, rows: 2, cols: 3, extraRows: [{ after: 1, mm: 12 }] });
+    want = stepRepeat({ ...base, gripBottom: 0, partW: 100, partH: 60, fit: false, rows: 2, cols: 3, extraRows: [{ after: 1, mm: 12 }] });
     assert.equal(Math.round(want.gridH), 60 + 5 + 12 + 60);
     // Apply: the copies become placed parts of their own and the grid is empty again
     await t('apply').click();
@@ -8115,7 +8114,7 @@ try {
     await t('ptab-drawing').click();
     const val = (k) => panelControl(page, page.locator(`[data-key=${k}]`)).inputValue();
     assert.equal(await t('preset').inputValue(), 'a3');
-    assert.deepEqual(await Promise.all(['sheetW', 'sheetH', 'gripTop', 'gripRight', 'gripBottom', 'gripLeft', 'gapX', 'gapY', 'rows', 'cols'].map(val)), ['420', '297', '12', '0', '30', '8', '7', '9', '2', '2']);
+    assert.deepEqual(await Promise.all(['sheetW', 'sheetH', 'gripTop', 'gripRight', 'gripBottom', 'gripLeft', 'gapX', 'gapY', 'rows', 'cols'].map(val)), ['420', '297', '12', '0', '0', '8', '7', '9', '2', '2']);
     assert.equal(await t('rotate').inputValue(), '90'); assert.equal(await t('align').inputValue(), 'topleft');
     assert.equal(await panelControl(page, page.locator('[data-key=crop]')).isChecked(), false); assert.equal(await panelControl(page, page.locator('[data-key=reg]')).isChecked(), true);
     assert.equal(await t('fit-switch').isChecked(), false);
@@ -20294,7 +20293,7 @@ try {
     await t('nest').click();
     const dlg = page.locator('[data-testid=nest-dialog]');
     assert.equal(await dlg.getAttribute('role'), 'dialog'); assert.equal(await dlg.getAttribute('aria-label'), 'Auto-nest'); assert.equal(await dlg.getAttribute('data-state'), 'idle');
-    assert.match(await t('nest-sub').textContent(), /^Layout \d+ · sheet 1000 × 700 mm · gripper 30 mm · gap 5 mm$/);
+    assert.match(await t('nest-sub').textContent(), /^Layout \d+ · sheet 1000 × 700 mm · gripper 0 mm · gap 5 mm$/);
     assert.equal(await t('nest-gap').textContent(), '5 mm');
     assert.deepEqual(await page.locator('[data-testid^=nest-rot-]').allTextContents(), ['0° only', '0° + 180°', 'Every 90°']);
     assert.equal(await t('nest-rot-all').getAttribute('aria-pressed'), 'true');
