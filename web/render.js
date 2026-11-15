@@ -179,15 +179,16 @@ function paintItems(c, fl, off, T, k, vr, dpr, col, sheetBg, hide, factor, wiref
   return drawn;
 }
 
-/** The selection: a thin accent centre line over the object's true-width stroke. */
+/** The selection: a dashed accent centre line leaves the object's own colour and fill visible. */
 function highlight(c, items, mats, T, k, dpr, accent, wireframe) {
-  c.strokeStyle = accent; c.fillStyle = accent; c.setLineDash([]);
+  c.strokeStyle = accent;
   let cur = -1, kk = k, pxPerUnit = 0, origin = [0, 0];
   for (const it of items) {
     if (it.m !== cur) { cur = it.m; const M = mats[cur], V = mmul(T, M); origin = viewOrigin(V); c.setTransform(...V.slice(0, 4), ...mapply(V, ...origin)); kk = k * mscale(M) || k; pxPerUnit = maxScale(V); }
     c.lineWidth = 2.6 * dpr / kk;
     c.beginPath();
-    if (it.k === 'p' || (wireframe && it.ops)) { trace(c, it.ops, origin, pxPerUnit); if (it.fill && !wireframe) c.fill('evenodd'); else c.stroke(); } else c.strokeRect(it.b[0] - origin[0], it.b[1] - origin[1], it.b[2] - it.b[0], it.b[3] - it.b[1]);
+    if (it.k === 'p' || (wireframe && it.ops)) { c.setLineDash([6 * dpr / kk, 6 * dpr / kk]); trace(c, it.ops, origin, pxPerUnit); c.stroke(); }
+    else { c.setLineDash([]); c.strokeRect(it.b[0] - origin[0], it.b[1] - origin[1], it.b[2] - it.b[0], it.b[3] - it.b[1]); }
   }
 }
 

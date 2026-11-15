@@ -12636,6 +12636,70 @@ try {
   const gripCount = () => page.locator('[data-testid=grip], [data-testid=grip-hot]').count();
   const gripWhen = async (n) => { await page.waitForFunction((k) => document.querySelectorAll('[data-testid=grip], [data-testid=grip-hot]').length === k, n, { timeout: 8000 }).catch(async () => { throw new Error(`waiting for ${n} grips, there are ${await gripCount()}; prompt: ${await prompt()}; hist: ${await t("cmd-hist").textContent()}`); }); };
   const frames = () => page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));       // the overlay repaints on the next frame
+  await step('TODO 297: a selected line shows its new colour at once; a selected filled shape keeps its own fill', async () => {
+    const doc = newDoc(4);
+    addEntities(doc, dxfLine(20, 30, 120, 30, { aci: 5, lw: 50 }),
+      dxfPoly([[20, 60], [120, 60], [120, 100], [20, 100]], { closed: true, aci: 5, fill: 'aci:3' }));
+    const swatch = (key) => page.locator(`[data-swatch-group=standard] [data-colour="${key}"]`);
+    const pixels = (x, y, end = x) => page.evaluate(([x, y, end]) => {
+      const svg = document.querySelector('.canvas > svg'), H = +document.querySelector('rect.sheet').getAttribute('height');
+      const c = document.querySelector('[data-testid=drawing]'), r = c.getBoundingClientRect();
+      const a = new DOMPoint(x, H - y).matrixTransform(svg.getScreenCTM()), b = new DOMPoint(end, H - y).matrixTransform(svg.getScreenCTM());
+      const px = Math.floor((a.x - r.x) * c.width / r.width), py = Math.floor((a.y - r.y) * c.height / r.height);
+      const data = c.getContext('2d').getImageData(px, py, Math.max(1, Math.floor((b.x - a.x) * c.width / r.width)), 1).data;
+      return Array.from({ length: data.length / 4 }, (_, i) => [...data.slice(i * 4, i * 4 + 4)]);
+    }, [x, y, end]);
+    const has = (pixels, rgb) => pixels.some((p) => p[3] > 100 && rgb.every((v, i) => Math.abs(p[i] - v) < 15));
+    for (const theme of ['light', 'dark']) {
+      await menuItem('View', 'Theme: ' + theme);
+      await openGrips(writeDxf(doc), `todo297-${theme}.dxf`);
+      await click(45, 30); await gripWhen(3);
+      await swatch('aci:1').click(); await frames();
+      assert.equal(await t('prop-colour').inputValue(), 'aci:1');
+      await waitSel('1 selected'); await gripWhen(3);
+      let line = await pixels(35, 30, 55);
+      assert.ok(has(line, [255, 0, 0]), `the selected line shows its new palette colour between accent dashes (${theme}: ${JSON.stringify([...new Set(line.map((p) => p.join(',')))])})`);
+      assert.ok(has(line, theme === 'light' ? [47, 123, 208] : [96, 165, 250]), 'accent dashes still mark the selection');
+      await t('prop-colour').selectOption('aci:3'); await frames();
+      line = await pixels(35, 30, 55);
+      assert.ok(has(line, theme === 'light' ? [0, 153, 0] : [0, 255, 0]), 'Properties colour is visible while the line stays selected');
+      await waitSel('1 selected'); await gripWhen(3);
+      await page.locator('.coords').click(); await page.keyboard.press('Control+z'); await frames();
+      assert.ok(has(await pixels(35, 30, 55), [255, 0, 0]), 'one Undo restores the palette colour');
+      await page.keyboard.press('Escape'); await frames();
+      assert.ok(has(await pixels(35, 30, 55), [255, 0, 0]), 'deselection keeps the new colour');
+      await click(45, 30); await page.keyboard.down('Shift');
+      try { await click(20, 80); } finally { await page.keyboard.up('Shift'); }
+      await waitSel('2 selected');
+      await swatch('aci:1').click(); await frames();
+      assert.ok(has(await pixels(70, 80), [0, 255, 0]), 'selected rectangle keeps its own fill, without accent fill');
+      assert.ok(has(await pixels(35, 30, 55), [255, 0, 0]), 'line still shows red while both objects are selected');
+      await swatch('aci:5').click({ button: 'right' }); await frames();
+      assert.ok(has(await pixels(70, 80), [0, 0, 255]), 'a fill colour change appears while the rectangle stays selected');
+      await waitSel('2 selected');
+      await page.screenshot({ path: `${shotDir}/todo297-${theme}.png` });
+      await page.keyboard.press('Escape');
+      const lay = newLayout('Selection colour'), part = makePart('source', 'Line and fill', doc, 1);
+      lay.parts.source = part; lay.placed = [100, 350].map((x) => ({ partId: 'source', x, y: 100 }));
+      const name = `todo297-layout-${theme}.dxf`;
+      await t('picker').setInputFiles({ name, mimeType: 'text/plain', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
+      await page.waitForFunction((name) => document.querySelector('.dtab.on .tname')?.textContent === name, name);
+      const hit = (i) => page.locator(`[data-group=parts] [data-i="${i}"] .part-hit`);
+      await hit(0).click({ force: true }); await swatch('aci:1').click(); await frames();
+      const boxes = () => page.locator('[data-group=tools] .sel-box').evaluateAll((els) => els.map((el) => {
+        const c = getComputedStyle(el); return { fill: c.fill, dash: c.strokeDasharray };
+      }));
+      let styles = await boxes();
+      assert.equal(styles.length, 1); assert.equal(styles[0].fill, 'none'); assert.notEqual(styles[0].dash, 'none');
+      assert.ok(has(await pixels(115, 100, 135), [255, 0, 0]), 'selected layout line shows its new colour');
+      assert.ok(has(await pixels(150, 150), [0, 255, 0]), 'selected layout part keeps its own fill');
+      await hit(1).click({ force: true, modifiers: ['Shift'] }); await frames();
+      styles = await boxes(); assert.equal(styles.length, 2);
+      assert.ok(styles.every((c) => c.fill === 'none' && c.dash !== 'none'), 'each layout selection box is dashed and unfilled');
+      await page.screenshot({ path: `${shotDir}/todo297-layout-${theme}.png` });
+      await page.keyboard.press('Escape');
+    }
+  });
   // an overlay node is rebuilt on each repaint: a box read in that gap is null (CI shard 2, slow runner), so read it once the node is laid out
   const boxOf = async (loc) => { for (let i = 0; i < 100; i++) { const b = await loc.boundingBox(); if (b) return b; await frames(); } throw new Error(`no box for ${loc} after 100 frames`); };
   const hoverPreview = async (x, y) => {

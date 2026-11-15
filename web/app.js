@@ -4652,7 +4652,7 @@ function drawTools() {
   if (items.length > 1) {                                           // several selected: each outline, the box round them with its readout, and the pick-order numbers
     const ghosts = pdrag && pdrag.ghosts;
     if (ghosts) for (const gh of ghosts) out.push(s('polygon', { class: 'ghost', points: poly(PL.corners(gh.part, gh.pl).map(Y)) }));
-    for (const x of items) out.push(s('polygon', { class: 'sel-box sel-multi', points: poly(PL.corners(x.part, x.p).map(Y)) }));
+    for (const x of items) out.push(s('polygon', { class: 'sel-box sel-multi', points: poly(PL.corners(x.part, x.p).map(Y)), 'stroke-dasharray': '6 6' }));
     const ub = A.unionBox(items.map(boxOf)), pad = 8 * k, x0 = ub[0] - pad, x1 = ub[2] + pad, yT = H - ub[3] - pad, yB = H - ub[1] + pad, xm = (x0 + x1) / 2, ym = (yT + yB) / 2;
     out.push(s('rect', { class: 'sel-union', x: x0, y: yT, width: x1 - x0, height: yB - yT }));
     out.push(s('g', { class: 'grip-sq' }, [[x0, yT], [xm, yT], [x1, yT], [x0, ym], [x1, ym], [x0, yB], [xm, yB], [x1, yB]].map((q) => s('rect', { x: q[0] - 6 * k, y: q[1] - 6 * k, width: 12 * k, height: 12 * k }))));
@@ -4674,7 +4674,7 @@ function drawTools() {
   const cor = PL.corners(sel.part, sel.p).map(Y);
   if (pdrag && pdrag.ghost) out.push(s('polygon', { class: 'ghost', points: poly(PL.corners(sel.part, pdrag.ghost).map(Y)) }));
   if (pdrag && pdrag.ghosts) for (const gh of pdrag.ghosts) out.push(s('polygon', { class: 'ghost', points: poly(PL.corners(gh.part, gh.pl).map(Y)) }));
-  out.push(s('polygon', { class: 'sel-box', points: poly(cor), 'data-mode': state.mode }));
+  out.push(s('polygon', { class: 'sel-box', points: poly(cor), 'stroke-dasharray': `${6 * k} ${6 * k}`, 'data-mode': state.mode }));
   if (state.mode === 'rotate') {
     const mid = PL.centreOf(sel.part, sel.p), c = Y(mid), pv = Y(pivotPoint(sel.part, sel.p));
     out.push(...rotationControls(cor, c, pv, k, pdrag?.label?.text));
