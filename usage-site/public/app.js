@@ -342,7 +342,6 @@ function drawQueue() {
   document.getElementById('queue-updated').textContent = Number.isFinite(time) ? 'Updated ' + IST.format(new Date(time)) + ' IST' : '';
   box.replaceChildren();
   const rows = [...data.queue].reverse(), running = (row) => row.state === 'running'; // newest first
-  if (!rows.length) { box.append(el('p', 'ud-muted', 'No runs')); return; }
   const part = (name, empty, build, count) => {
     if (!count) { box.append(el('p', 'ud-muted', `${name}: ${empty}`)); return; }
     const card = el('div', 'ud-card'); box.append(el('h3', null, name), card); build(card);
@@ -353,8 +352,10 @@ function drawQueue() {
     item.append(head); card.append(item);
   };
   const now = rows.filter(running), done = rows.filter((row) => !running(row)), next = queueNext.map(String);
+  const nextPart = () => part('Next', 'nothing planned', (card) => next.forEach((id) => line(card, id + todoTitle(id))), next.length);
+  if (!rows.length) { box.append(el('p', 'ud-muted', 'No runs')); if (next.length) nextPart(); return; } // planned work shows when nothing runs
   part('Now', 'nothing running', (card) => now.forEach((row) => line(card, queueHeadline(row), row)), now.length);
-  part('Next', 'nothing planned', (card) => next.forEach((id) => line(card, id + todoTitle(id))), next.length);
+  nextPart();
   part('Done', 'nothing yet', (card) => {
     done.slice(0, showAllDone ? done.length : 5).forEach((row) => line(card, queueHeadline(row), row));
     if (done.length > 5) {

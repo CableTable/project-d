@@ -94,7 +94,7 @@ test('TODO U1b: Queue tab lists running runs first, then newest first, as plain 
   const browser = await chromium.launch(process.env.CHROME ? { executablePath: process.env.CHROME } : {});
   t.after(() => browser.close());
   // What the agent's parseQueue (kit/usage-agent.mjs) makes of a small queue.txt, in file order.
-  const queue = { updated: '2026-11-05T18:45:00.000Z', rows: [
+  const queue = { updated: '2026-11-05T18:45:00.000Z', next: ['<img src=x onerror=alert(1)>'], rows: [
     { kind: 'build', id: 'K1', out: 'runs1/b-K1.txt', state: 'ended', extra: 'ship' },
     { kind: 'build', id: 'K2', out: 'runs1/b-K2.txt', state: 'running' },
     { kind: 'review', id: '<img src=x onerror=alert(1)>', out: 'runs1/rv-K2.txt', state: 'ended', extra: 'denied: 2' },
@@ -124,7 +124,7 @@ test('TODO U1b: Queue tab lists running runs first, then newest first, as plain 
       assert.equal(await page.locator('[data-tab=queue]').getAttribute('aria-pressed'), 'true');
       assert.match(await page.locator('#queue-updated').textContent(), /^Updated Fri,? 6 Nov,? 00:15 IST$/);
       const ids = () => page.locator('#queue-list .queue-row strong').allTextContents();
-      assert.deepEqual(await ids(), ['building K2', 'checked K2', 'built K1']); // running first, then newest first
+      assert.deepEqual(await ids(), ['building K2', '<img src=x onerror=alert(1)>', 'checked K2', 'built K1']); // Now (running), Next (planned id, shown as text), Done (newest first)
       assert.deepEqual(await page.locator('#queue-list .ud-chip').evaluateAll((chips) => chips.map((c) => c.className + ':' + c.textContent)), ['ud-chip warn:running', 'ud-chip ok:done', 'ud-chip ok:done']);
       assert.equal(await page.locator('#queue img').count(), 0);
       assert.equal(new Set(await page.locator('.page-tabs button').evaluateAll((b) => b.map((x) => x.getBoundingClientRect().top))).size, 1, 'Four tabs share one row on a phone');
@@ -133,8 +133,11 @@ test('TODO U1b: Queue tab lists running runs first, then newest first, as plain 
       await page.evaluate(() => window.__emit('queue', { rows: [] }));
       assert.equal(await page.locator('#queue-list').textContent(), 'No runs');
       assert.equal(await page.locator('#queue-updated').textContent(), '');
+      await page.evaluate(() => window.__emit('queue', { rows: [], next: ['K9'] }));
+      assert.deepEqual(await ids(), ['K9']); // empty rows still show the Next line
+      assert.match(await page.locator('#queue-list').textContent(), /^No runsNext/);
       await page.evaluate((queue) => window.__emit('queue', queue), queue);
-      assert.equal((await ids()).length, 3);
+      assert.equal((await ids()).length, 4);
       await page.locator('#signout').click();
       await page.waitForFunction(() => document.getElementById('dashboard').hidden);
       assert.equal(await page.locator('#queue-list .queue-row').count(), 0);
