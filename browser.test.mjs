@@ -5731,6 +5731,37 @@ try {
     } finally { await ctx.close(); }
   });
 
+  await step('TODO 266: PDF / Print dialog is up to 1200 x 860 and at most 95% of the window', async () => {
+    const ctx = await browser.newContext({ viewport: { width: 1600, height: 1000 } });
+    const p = await ctx.newPage(), q = (id) => p.getByTestId(id);
+    p.on('pageerror', (e) => errors.push(String(e)));
+    const raw = newDoc(4); addEntities(raw, dxfPoly([[0, 0], [180, 0], [180, 100], [0, 100]], { closed: true }));
+    const dlg = () => p.locator('.pdlg').boundingBox();
+    try {
+      await p.goto(URL_);
+      await q('picker').setInputFiles({ name: 'big-print.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(raw)) });
+      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'big-print.dxf');
+      await q('pdf-open').click(); await q('pdf-dialog').waitFor();
+      let b = await dlg(), left = await p.locator('.pd-left').boundingBox(), pb = await p.locator('.pd-prev').boundingBox();
+      assert.deepEqual([b.width, b.height], [1200, 860], 'box at 1600 x 1000');
+      assert.ok(pb.width > 880 - left.width + 100, `preview ${pb.width} wider than the old dialog's`);
+      await p.setViewportSize({ width: 1024, height: 700 });
+      b = await dlg();
+      assert.ok(b.width <= 1024 * .95 + .5 && b.height <= 700 * .95 + .5, `box at 1024 x 700: ${b.width} x ${b.height}`);
+      await p.screenshot({ path: `${shotDir}/todo266-print-1024.png` });
+      await p.setViewportSize({ width: 390, height: 800 });
+      b = await dlg();
+      assert.ok(b.width <= 390 * .95 + .5, `box at 390: ${b.width}`);
+      assert.ok(await p.evaluate(() => document.documentElement.scrollWidth <= innerWidth && document.querySelector('.pdlg').scrollWidth <= document.querySelector('.pdlg').clientWidth), 'no sideways scroll at 390 px');
+      await p.setViewportSize({ width: 1600, height: 1000 });
+      for (const theme of ['light', 'dark']) {
+        await p.evaluate((theme) => { document.documentElement.dataset.theme = theme; }, theme);
+        await p.waitForTimeout(150);
+        await p.screenshot({ path: `${shotDir}/todo266-print-${theme}.png` });
+      }
+    } finally { await ctx.close(); }
+  });
+
   await step('TODO 215b: PDF / Print full-screen Scale and margins', async () => {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const p = await ctx.newPage(), q = (id) => p.getByTestId(id);
