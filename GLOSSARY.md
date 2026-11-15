@@ -330,6 +330,7 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 **Intersection snap**: A real crossing or tangent touch of finite lines, arcs, circles or straight / bulged polyline segments, shown with an X. Candidates come from geometry within the cursor's pick tolerance; extended lines and flattened ellipse / spline curves are excluded. Where: `web/modify.js`, `web/edit.js`.
 
 **Quadrant snap**: A circle's 0 / 90 / 180 / 270 degree points, restricted to the sweep for arcs and bulged polyline segments, shown with a diamond. Ellipses retain their axis ends as quadrant points. Where: `web/drawing.js`.
+**Extreme snap**: Every point where a curve (spline, ellipse, arc, circle, bulged polyline segment) turns from going down to up, or left to right, as seen on screen: its lowest, highest, leftmost and rightmost points. Not on straight pieces. Off by default in the snap types list. Where: `TODO.md` item 264, `web/drawing.js`.
 
 **SOLID / TRACE**: DXF filled shapes handled together by the reader and left out of cutter export. Where: `web/drawing.js`, `web/dxf-cutter.js`. Avoid: Bitmap tracing for TRACE.
 
