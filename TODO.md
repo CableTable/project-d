@@ -418,7 +418,7 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
 - [x] 261. **Paste into a blank `+` tab is refused** (bug, S, T80; built Knight `d676535`, Bishop ship, 3 Lows held in `runs45/lows.txt`; picked HEAD~1 of the tick, suite pending).
 - [x] 262. **Layout: "Group of 6" stays selected after Esc or empty click** (bug, S, T82; built King `911c679`, Bishop ship, 3 Lows held in `runs45/lows.txt`; picked HEAD~1 of the tick; fixes 1-5 (stale steps + Esc on open menu closes only the menu, fix 5 on Opus) picked `f3e93e0`..`86f2ee4`, rv-262fix5 ship; suite pending).
 - [x] 263. **Print: sheet size and gripper labels fall off the page with a small margin** (bug, M, T83; built Knight `3793404`, Bishop ship, 4 Lows held in `runs45/lows.txt`; picked HEAD~1 of the tick, suite pending).
-- [ ] 264. **"Extreme" snap: lowest / highest / leftmost / rightmost point of a curve** (M, T79).
+- [x] 264. **"Extreme" snap: lowest / highest / leftmost / rightmost point of a curve** (M, T79; done 2026-11-15 `14f4ce8` + fix `e1e08b2`, Knight build, Bishop review ship; Lows in rook-hq/runs47/lows.txt).
 - [x] 265. **`center` command: centre a selection on the first selected object** (S, T81).
 - [x] 266. **Bigger PDF / Print dialog** (S, T84).
 - [ ] 267. **Auto nest "Free angles": random angles, best kept, time limit** (L, T85).
@@ -427,7 +427,7 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
 - [x] 270. **Recovery copy keeps balloons, unit, groups** (M, audit R2; grill `rook-hq/runs46/grill-270.md`; built Knight `bcc0c61`, King ship, 2 Lows held in `runs46/lows.txt`; picked HEAD~1 of the tick, suite pending).
 - [x] 271. **Recover re-opens the source PDF / picture** (M, audit R9, his "build" 2026-11-14 01:12; grill `rook-hq/runs46/grill-R9.md`; after 270).
 - [x] 272. **Big drawing (111MB DXF / its PDF) draws blank or partly on pan / zoom** (bug, M, T87). Done S47g: 272a PDF import joins contiguous straight pieces into polylines (his PDF 693028 truncated -> 130823 items, all dials; `5948d86` + fix `3c87530`); 272b DXF that ends early gets a note, stroke batches split every 5000 (`3463d67`; laptop blank-on-open unverified till he retests; his DXF copy is cut off, for-him 14).
-- [ ] 273. **Huge files: Hairline on all crashes (Out of Memory); warn on open, open smoothly** (L, T88; size threshold to ask him).
+- [ ] 273. **Huge files: Hairline on all crashes (Out of Memory); warn on open, open smoothly** (L, T88; warn above 50 MB, his "11 over 50mb" 2026-11-15).
 - [ ] 274. **Dimension tool lags on a big drawing; Measure still a bit** (bug, M, T89; first ship a release with 258, he retests Measure).
 - [x] 275. **Old standalone `usage-site/browser.test.mjs` is red and run nowhere** (S, source `rook-hq/runs47/lows.txt`): it times out on `#todo-sections > .ud-card` on `4fadd43` too (its fixture serves only `index.html` + `app.js`). The real test, `tools/usage-site.browser.test.mjs`, runs in CI from `browser.test.mjs:24954` (suite-0225cb8 shard 3 "ok Usage site: ..."). Delete the old file or point it at the tools test; fix the "run with node usage-site/browser.test.mjs" comments.
 - [ ] 276. **Changed source PDF with the same page count is not detected** (bug, S-M, source `rook-hq/runs47/debt-report.txt` #6): `shortcut:` at `web/app.js:1178`; the check runs only on the Recover / re-open path (`copies`, R9), so a re-saved PDF with the same page count re-opens without "source PDF changed". Held: build with R9 (held, after open bugs).
