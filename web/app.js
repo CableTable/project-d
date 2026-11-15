@@ -31,7 +31,7 @@ import * as PS from './pdf-sheets.js';
 import { paintDrawing, drawMarks, drawContour, drawDimPreview, ink, FONT_FAMILY } from './render.js';
 import { overlayBox } from './preview.js';
 import { snapPlace, snapUsable, heavy, sameBase } from './perf.js';
-import { flatten, primeSplines, unionBox, CAP, ACI, UNITS, mapply, mmul, pickIndex, arcSweep, DrawingError } from './drawing.js';
+import { flatten, patchWidths, primeSplines, unionBox, CAP, ACI, UNITS, mapply, mmul, pickIndex, arcSweep, DrawingError } from './drawing.js';
 import { writeDxf, writeDxfWithReport, saveReportNote, unwritable, addLayer, newDoc, lwpoly, point } from './dxf-write.js';
 import * as SH from './shaping.js';
 import { explodeSelection } from './explode.js';
@@ -6235,17 +6235,29 @@ function settleMeasures(d, next) {
 /** A new state for the tab: kept for undo; the drawing is drawn again from it. False (nothing changed, no undo step, the message shown) when it is too nested to draw. */
 function commit(d, next, label, keepSel) {       // keepSel (a grip edit's objects): Undo / Redo of this step select them again
   if (d.vlay) { layObjCommit(d, next, label, keepSel); return true; }
-  let fl;       // drawn first, so a too-nested result leaves history, Redo and the drawing untouched; restore reuses it
+  let fl, names, index;       // drawn first, so a too-nested result leaves history, Redo and the drawing untouched; restore reuses it
   const raw = d.raw;
   next = settleMeasures(d, next);
   if (raw && (next.entities !== raw.entities || next.blocks !== raw.blocks || next.layers && next.layers !== raw.layers || 'attmode' in next && next.attmode !== raw.header.$ATTMODE)) {
-    try { fl = flatten({ ...raw, entities: next.entities, blocks: next.blocks, layers: next.layers || raw.layers, ltypes: next.ltypes || raw.ltypes, header: 'attmode' in next ? { ...raw.header, $ATTMODE: next.attmode } : raw.header }, d.hid); } catch (e) {
-      if (!(e instanceof DrawingError)) throw e;
-      note(e.message); return false;
+    if (next.widths) {
+      fl = patchWidths(d.fl, next.entities, next.widths.keys, d.factor, next.widths.reshape);
+      if (fl.items.length === d.fl.items.length && fl.items.every((it, i) => it.b === d.fl.items[i].b)) index = d.ed;
+      d.pb = null;
+    }
+    else {
+      names = [...d.off].map((i) => d.fl.layers[i]?.name);
+      let cached = { fl: d.fl, ed: d.ed, outl: d.outl, pb: d.pb, hl: d.hl };
+      d.fl = d.ed = d.outl = d.pb = d.hl = null;
+      try { fl = flatten({ ...raw, entities: next.entities, blocks: next.blocks, layers: next.layers || raw.layers, ltypes: next.ltypes || raw.ltypes, header: 'attmode' in next ? { ...raw.header, $ATTMODE: next.attmode } : raw.header }, d.hid); } catch (e) {
+        Object.assign(d, cached);
+        if (!(e instanceof DrawingError)) throw e;
+        note(e.message); return false;
+      }
+      cached = null;
     }
   }
   pushHistory(d, keepSel ? { ...snapshotOf(d), sel: [...keepSel], grip: true } : snapshotOf(d), label); d.newLayer = null;
-  restore(d, next, fl);
+  restore(d, next, fl, names, index);
   return true;
 }
 /** A drawing-tab command on a layout's objects (layObjDoc) is done: the layout takes the objects it left, in one undo step. */
@@ -6269,7 +6281,7 @@ function restoreBg(d, st) {
   if (st.pos && d.bg) [d.bg.x, d.bg.y] = st.pos;
 }
 /** Puts the tab in the state `st`. False (and the tab as it was, everything) when the drawing is too nested to draw again. */
-function restore(d, st, drawn) {
+function restore(d, st, drawn, layerNames, index) {
   const before = snapshotOf(d), header = d.raw?.header;
   const groupsChanged = 'groups' in st && st.groups !== d.raw?.groups;
   if (st.guides) { guideTarget(d).s.guides = structuredClone(st.guides); rememberGuides(d); }
@@ -6287,7 +6299,7 @@ function restore(d, st, drawn) {
   }
   d.raw.groups = st.groups || followGroups(d.raw.groups, d.raw.entities, st.entities);       // Undo / Redo bring the groups back; an edit follows its entities
   d.raw.entities = st.entities; d.raw.blocks = st.blocks;
-  const names = [...d.off].map((i) => d.fl.layers[i] && d.fl.layers[i].name);
+  const names = layerNames || [...d.off].map((i) => d.fl.layers[i] && d.fl.layers[i].name);
   let fl;
   try { fl = drawn || flatten(d.raw, d.hid); } catch (e) {
     if (!(e instanceof DrawingError)) throw e;
@@ -6298,7 +6310,8 @@ function restore(d, st, drawn) {
   }
   restoreBg(d, st);
   d.off = new Set(fl.layers.map((l, i) => (names.includes(l.name) ? i : -1)).filter((i) => i >= 0));      // layer numbers can shift: keep them by name
-  Object.assign(d, { fl, counts: layerCounts(d.raw, fl), entities: entityCount(d.raw, fl), box: drawingBoxMm(fl, d.factor), dirty: true, ed: null, outl: null, sel: new Set(), stretchSelection: null, hl: [] });
+  if (index) { index.fl = fl; index.items = fl.items; }
+  Object.assign(d, { fl, counts: layerCounts(d.raw, fl), entities: entityCount(d.raw, fl), box: drawingBoxMm(fl, d.factor), dirty: true, ed: index || null, outl: null, sel: new Set(), stretchSelection: null, hl: [] });
   if (cmpDoc()) cmpRefresh(d);
   showDoc();
   warm(d);
@@ -11063,7 +11076,7 @@ function renderPropsPanel(d) {
 
 const propLocked = (d) => !!d.vlay && selItems().some((x) => x.p.src === 'loose' && x.part.obj && x.p.lock);
 /** Applies fn to every entity in the selection (not kept dimensions) as one undo step; fn returns the changed entity or null (left as it was). */
-function propCommit(d, label, fn, all = false) {
+function propCommit(d, label, fn, all = false, widthOnly = false) {
   if (propLocked(d)) { note(LOCKED); renderEdit(); return 0; }      // as the strip colour: a locked Layout object is not changed
   const pe = propEnts(d, all), repl = new Map();
   for (const [i, ent] of pe) { const n = fn(ent); if (n && n !== ent) repl.set(i, n); }
@@ -11071,7 +11084,12 @@ function propCommit(d, label, fn, all = false) {
   view.fitted = false;
   if (d.vlay) return layGripCommit(d, [...repl].map(([i, next]) => [d.raw.entities[i], next]), label) ? repl.size : 0;
   const keep = new Set(d.sel);
-  if (!commit(d, { entities: d.raw.entities.map((x, i) => repl.get(i) || x), blocks: d.raw.blocks }, label)) return 0;
+  const widths = widthOnly ? { keys: new Map(), reshape: new Set() } : null;
+  if (widths) for (const [i, ent] of repl) {
+    widths.keys.set(i, PR.widthKey(ent, d.factor));
+    if (PR.widthKey(d.raw.entities[i], d.factor) == null) widths.reshape.add(i);
+  }
+  if (!commit(d, { entities: d.raw.entities.map((x, i) => repl.get(i) || x), blocks: d.raw.blocks, widths }, label)) return 0;
   setSel(d, keep);
   return repl.size;
 }
@@ -11098,7 +11116,7 @@ function propWidthSet(value, custom = false) {
   const n = propCommit(d, 'Outline width → ' + label, (ent) => {
     const next = PR.withWidth(ent, value, d.factor);
     return PR.widthKey(next, d.factor) === PR.widthKey(ent, d.factor) ? null : next;
-  }, true);
+  }, true, true);
   if (n) note(`Outline width ${label} on ${n} shape${n === 1 ? '' : 's'}. Ctrl+Z takes it back`);
   if (custom) {
     recentWidths = PR.recentWidths(recentWidths, value);

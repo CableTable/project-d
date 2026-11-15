@@ -11,6 +11,7 @@ import { group, follow } from './groups.js';
 //     m   its matrix, mats[m] (a block's placement; 0 is none) · L its layers (its own, then the blocks' it sits in)
 //     e   the index of the top-level entity it was drawn from (a block's contents: the INSERT's)
 //     ps  on the sheet (paper space) · css its colour · lw its weight (1/100 mm)
+//     widthFromTop whether its lineweight follows the top-level entity (through ByBlock)
 //     dash a line type in its own units (on, off, on, off …) · dpx one in screen pixels · b its box [x0, y0, x1, y1]
 //   a path's ops: 0 x y (move) · 1 x y (line) · 2 cx cy r a0 a1 cw (arc; cw 1 = clockwise) · 9 (close)
 
@@ -460,7 +461,7 @@ export function flatten(doc, hidden = new Set()) {
       const lt = ltName === 'BYLAYER' ? lay.lt : ltName === 'BYBLOCK' ? ctx.lt || '' : ltName;
       let m = ctx.m;
       if (e.flip) { mats.push(mmul(mats[ctx.m], FLIP)); m = mats.length - 1; }
-      const base = { m, L, e: top, ps: ctx.ps != null ? ctx.ps : e.ps ? 1 : 0, css, lw, ...dashOf(lt, e.lts) };
+      const base = { m, L, e: top, ps: ctx.ps != null ? ctx.ps : e.ps ? 1 : 0, css, lw, widthFromTop: depth === 0 || e.lw === -2 && ctx.widthFromTop, ...dashOf(lt, e.lts) };
       const put = (it) => {
         if (items.length >= MAX_ITEMS) { truncated = true; return; }
         if (!it.b) return;
@@ -472,7 +473,7 @@ export function flatten(doc, hidden = new Set()) {
         if (ops.length <= 3 && !(ops.length === 3 && extra?.fill)) return;
         put({ k: 'p', ...base, ops, ...extra, b: opsBox(ops, extra?.w ? extra.w / 2 : 0) });
       };
-      const inner = (lt2) => ({ layer: own, L, css, lw, lt: lt2, ps: base.ps, ei: top });
+      const inner = (lt2) => ({ layer: own, L, css, lw, widthFromTop: base.widthFromTop, lt: lt2, ps: base.ps, ei: top });
       const r = e.r, f = firsts(r);
       if (e.fill && closedOutline(e)) {
         const ops = fillOps(e, holes.get(e));
@@ -625,6 +626,45 @@ function arrow(from, tip, size, base, put) {
 
 /** Physical stroke in mm: polyline widths follow geometry; lineweight is already in 1/100 mm. */
 export const strokeWidth = (it, factor = 1, scale = 1) => Math.max(it.w ? it.w * factor * scale : (it.lw || 0) / 100, 0.05);
+
+/** Width-only edits share geometry, but keep the previous items untouched for Undo and other drawing views. */
+export function patchWidths(fl, entities, keys, factor = 1, reshape = new Set()) {
+  const items = [], rebuilt = new Set(), weights = new Map(fl.layers.map((l) => [l.name, l.lw]));
+  const offsets = reshape.size ? new Uint32Array(fl.items.length + 1) : null;
+  for (let i = 0; i < fl.items.length; i++) {
+    const it = fl.items[i];
+    if (offsets) offsets[i] = items.length;
+    if (!keys.has(it.e) || !it.widthFromTop) { items.push(it); continue; }
+    const ent = entities[it.e], key = keys.get(it.e), poly = ent.type === 'LWPOLYLINE' || ent.type === 'POLYLINE' && !(num(firsts(ent.r)[70]) & 64);
+    const lw = ent.lw === -1 ? weights.get(ent.layer) ?? 25 : ent.lw === -2 || ent.lw === -3 ? 25 : ent.lw;
+    if (poly && reshape.has(it.e) && !it.attachedFill) {
+      if (rebuilt.has(it.e)) continue;
+      rebuilt.add(it.e);
+      const base = { k: 'p', m: it.m, L: it.L, e: it.e, ps: it.ps, css: it.css, lw, widthFromTop: true, dash: it.dash, dpx: it.dpx };
+      const put = (item) => { item.b = worldBox(fl.mats[item.m], item.b); items.push(item); };
+      const path = (ops, extra) => { if (ops.length > 3) put({ ...base, ops, ...extra, b: opsBox(ops, extra?.w ? extra.w / 2 : 0) }); };
+      if (ent.type === 'LWPOLYLINE') lwpoly(ent, firsts(ent.r), base, path, put);
+      else polyline(ent, firsts(ent.r), base, path);
+      continue;
+    }
+    const item = { ...it, lw };
+    if (poly && !it.attachedFill) {
+      if (typeof key === 'number') item.w = key / factor;
+      else delete item.w;
+      if (item.w !== it.w) item.b = worldBox(fl.mats[item.m], opsBox(item.ops, item.w ? item.w / 2 : 0));
+    }
+    items.push(item);
+  }
+  const layers = fl.layers.map((l) => ({ ...l, n: 0 })), boxes = { model: null, paper: null };
+  for (const it of items) {
+    layers[it.L[0]].n++;
+    if (it.L.every((l) => layers[l].on)) boxes[it.ps ? 'paper' : 'model'] = unionBox(boxes[it.ps ? 'paper' : 'model'], it.b);
+  }
+  for (const v of fl.vports) boxes.paper = unionBox(boxes.paper, [v.cx - v.w / 2, v.cy - v.h / 2, v.cx + v.w / 2, v.cy + v.h / 2]);
+  if (offsets) offsets[fl.items.length] = items.length;
+  const insertions = offsets ? fl.insertions.map((v) => ({ ...v, start: offsets[v.start], end: offsets[v.end] })) : fl.insertions;
+  return { ...fl, items, layers, boxes, insertions };
+}
 
 function lwpoly(e, f, base, path, put) {
   const r = e.r, pts = [];
