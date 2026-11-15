@@ -11545,14 +11545,14 @@ try {
     await t('picker').setInputFiles({ name: 'search-text.pdf', mimeType: 'application/pdf', buffer: readFileSync('fixtures/pdf-search-text.pdf') });
     await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'search-text.dxf');
     const before = await savedDoc();
-    assert.deepEqual(before.entities.map((e) => e.type), ['LINE', 'LINE', 'LINE', 'TEXT']);
-    assert.equal(before.entities[3].r.v[before.entities[3].r.c.indexOf(1)], 'C', 'invisible searchable A is not imported over its strokes');
+    assert.deepEqual(before.entities.map((e) => e.type), ['LWPOLYLINE', 'LWPOLYLINE', 'TEXT']);
+    assert.equal(before.entities[2].r.v[before.entities[2].r.c.indexOf(1)], 'C', 'invisible searchable A is not imported over its strokes');
     await page.keyboard.press('Control+a');
     await menuItem('Modify', 'Text to outlines');
     await page.waitForFunction(() => /1 text →/.test(document.querySelector('[data-testid=cmd-prompt]').textContent), null, { timeout: 15000 });
     const outlined = await savedDoc();
-    assert.deepEqual(outlined.entities.slice(0, 3), before.entities.slice(0, 3), 'original letter strokes stay once');
-    assert.ok(outlined.entities.slice(3).length > 0 && outlined.entities.slice(3).every((e) => e.type === 'LWPOLYLINE'), 'visible text is replaced by curves');
+    assert.deepEqual(outlined.entities.slice(0, 2), before.entities.slice(0, 2), 'original letter strokes stay once');
+    assert.ok(outlined.entities.slice(2).length > 0 && outlined.entities.slice(2).every((e) => e.type === 'LWPOLYLINE'), 'visible text is replaced by curves');
     for (const theme of ['light', 'dark']) {
       await menuItem('View', 'Theme: ' + theme); await page.waitForTimeout(150);
       await page.screenshot({ path: `${shotDir}/s17-115-outlines-${theme}.png` });
