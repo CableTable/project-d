@@ -5,7 +5,7 @@
 // and y is up. layout.js works from the top-left with y down, so every y here is sheetH - y.
 import { spaceOf } from './doc.js';
 import { baseName } from './savepath.js';
-import { markGeometry } from './layout.js';
+import { markGeometry, stepRepeat } from './layout.js';
 import { newDoc, addLayer, addBlock, addEntities, insert, rect, roundRect, line, circle } from './dxf-write.js';
 
 export const LAYERS = { parts: 'Parts', sheet: 'Sheet', marks: 'Marks' };
@@ -70,6 +70,76 @@ export function placedBox(part, pl) {
 
 /** Where a stepRepeat result puts its copies, as placed parts of `partId`. */
 export const gridPlacements = (L, sheetH, partId) => placements(L, sheetH).map((p) => placement1(partId, p.x, p.y, p.rot));
+
+// ---- applied grids (TODO 283): the copies Apply makes keep a grid id (placement.gid); lay.grids[gid] holds that grid's settings and
+// its slots ({ x, y, rot, r, c }: where each copy was laid, row r from the top, column c from the left), so "Update grid" can lay them again.
+/** The step-and-repeat settings the panel shows and edits for an applied grid (its extra gaps are kept as applied). */
+export const GRID_KEYS = ['gridPart', 'fit', 'rows', 'cols', 'gapX', 'gapY', 'rotate', 'align'];
+
+/** The grid a grid record G makes on the layout's sheet (a stepRepeat result; count 0 when its part is gone), without anchors: the copies are laid fresh. */
+export function gridLayout(lay, G) {
+  const p = lay.parts[G.gridPart];
+  return stepRepeat({ ...lay.s, ...G, partW: p ? p.w : 0, partH: p ? p.h : 0 });
+}
+
+const same = (a, b) => Math.abs(a - b) < 1e-6;
+const turn = (r) => ((r || 0) % 360 + 360) % 360;
+/** Ranks of the distinct values of `vals`: a function value → its place in the ascending list (equal within 1e-6). */
+function ranks(vals) {
+  const u = [];
+  for (const v of [...vals].sort((a, b) => a - b)) if (!u.length || !same(u[u.length - 1], v)) u.push(v);
+  return (v) => u.findIndex((q) => same(q, v));
+}
+
+/**
+ * Records an applied grid and adds its copies to lay.placed, each with `gid`. copies: placements in the grid's order; L: the live
+ * grid (stepRepeat result) they came from; s: the layout settings at that moment (lay.s).
+ */
+export function bakeGrid(lay, gid, copies, L, s = lay.s) {
+  const col = ranks(copies.map((p) => p.x)), row = ranks(copies.map((p) => -p.y));       // y is up: the top row has the largest y
+  lay.grids = lay.grids || {};
+  lay.grids[gid] = {
+    ...Object.fromEntries(GRID_KEYS.map((k) => [k, s[k]])), rows: L.rows, cols: L.cols,
+    extraRows: s.extraRows.map((e) => ({ ...e })), extraCols: s.extraCols.map((e) => ({ ...e })),
+    slots: copies.map((p) => ({ x: p.x, y: p.y, rot: p.rot, r: row(-p.y), c: col(p.x) })),
+  };
+  for (const p of copies) lay.placed.push({ ...p, gid });
+}
+
+/** The index in its grid's slots of the slot a placement still sits on (not moved, turned, mirrored or scaled; the first one there owns it), or -1. */
+export function slotOf(lay, p) {
+  const G = p && p.gid && lay.grids && lay.grids[p.gid];
+  if (!G || p.mirrorX || p.mirrorY || (p.sc && p.sc !== 1) || p.lock) return -1;
+  const at = (q) => G.slots.findIndex((s) => same(s.x, q.x) && same(s.y, q.y) && turn(s.rot) === turn(q.rot));
+  const k = at(p);
+  return k >= 0 && lay.placed.find((q) => q.gid === p.gid && at(q) === k && !q.mirrorX && !q.mirrorY && !(q.sc && q.sc !== 1) && !q.lock) === p ? k : -1;
+}
+
+/**
+ * Lays an applied grid again from its settings (lay.grids[gid]): the copies still on their slots move to the new slot with the same
+ * row and column, slots the grid did not have before get a new copy, copies past the new rows / columns go, a slot that was empty stays empty,
+ * and a copy that left its slot (moved, turned, locked) stays where it is. The placement objects are changed in place.
+ * → { moved, added, dropped } or null when nothing fits (then nothing is changed).
+ */
+export function relayGrid(lay, gid) {
+  const G = lay.grids && lay.grids[gid], L = G && gridLayout(lay, G);
+  if (!L || !L.count) return null;
+  const spots = gridPlacements(L, lay.s.sheetH, G.gridPart).map((p, i) => ({ ...p, r: Math.floor(i / L.cols), c: i % L.cols }));
+  const key = (o) => o.r + ',' + o.c, was = new Set(G.slots.map(key)), alive = new Map();
+  for (const p of lay.placed) { const k = slotOf(lay, p); if (k >= 0) alive.set(key(G.slots[k]), p); }
+  const out = { moved: 0, added: 0, dropped: 0 };
+  const fresh = [];
+  for (const sp of spots) {
+    const p = alive.get(key(sp));
+    if (p) { Object.assign(p, { partId: G.gridPart, x: sp.x, y: sp.y, rot: sp.rot }); alive.delete(key(sp)); out.moved++; }
+    else if (!was.has(key(sp))) { fresh.push({ ...placement1(G.gridPart, sp.x, sp.y, sp.rot), gid }); out.added++; }
+  }
+  const gone = new Set(alive.values());
+  out.dropped = gone.size;
+  lay.placed = lay.placed.filter((p) => !gone.has(p)).concat(fresh);
+  G.slots = spots.map(({ x, y, rot, r, c }) => ({ x, y, rot, r, c }));
+  return out;
+}
 
 /** Blocks named in `map` renamed where the entities refer to them (INSERT and DIMENSION carry the name in group 2). */
 function renameRefs(ents, map0) {

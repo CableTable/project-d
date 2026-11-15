@@ -66,7 +66,7 @@ import * as PR from './props.js';
 import { openQuickSelect } from './qselectdlg.js';
 import * as FI from './fill.js';
 import { extendEntity, extendRegion, previewEdit, curveShape, isBoundary, extendable } from './extend.js';
-import { placedMat, placedBox, placement1 } from './apply.js';
+import { placedMat, placedBox, placement1, GRID_KEYS, gridLayout, bakeGrid, slotOf, relayGrid } from './apply.js';
 import { layoutSnap, placedSnap, layoutCandidates, layoutReference, partIndex, toPart } from './layoutsnap.js';
 import * as LD from './layoutdoc.js';
 import { isDimPart } from './layoutdim.js';
@@ -286,7 +286,17 @@ Object.defineProperty(state, 'sel', { enumerable: true, get: () => selIdx, set: 
 Object.defineProperty(state, 'picks', { enumerable: true, get: () => picksArr, set: (v) => { picksArr = v; } });
 const idleSettings = LD.newSettings();
 const curLay = () => { const d = state.docs[state.doc]; return d && d.lay ? d.lay : null; };
-for (const k of LD.SETTING_KEYS) Object.defineProperty(state, k, { enumerable: true, get: () => (curLay() ? curLay().s : idleSettings)[k], set: (v) => { (curLay() ? curLay().s : idleSettings)[k] = v; } });
+/** The applied grid (lay.grids[gid]) the selected copy still belongs to, or null. While one is selected the Step and repeat section shows and edits its settings (GRID_KEYS), not the live grid's; "Update grid" lays its copies again (TODO 283). */
+function gridEdit() {
+  const lay = curLay(), p = lay && state.sel >= 0 && placedNow[state.sel];
+  return p && p.src === 'loose' && slotOf(lay, lay.placed[p.i]) >= 0 ? lay.grids[p.gid] : null;
+}
+/** The grid the Step and repeat section shows: the selected copy's applied grid, else the live one. */
+const sectionLayout = () => { const G = gridEdit(); return G ? gridLayout(curLay(), G) : layout; };
+for (const k of LD.SETTING_KEYS) {
+  const own = () => (GRID_KEYS.includes(k) && gridEdit()) || (curLay() ? curLay().s : idleSettings);
+  Object.defineProperty(state, k, { enumerable: true, get: () => own()[k], set: (v) => { own()[k] = v; } });
+}
 /** A tab with nothing in it yet; its name is the first free "Drawing N". */
 function emptyDoc() {
   const names = new Set(state.docs.map((d) => d.name));
@@ -1665,7 +1675,7 @@ function buildPanel() {
   ui.fit = h('input', { type: 'checkbox', role: 'switch', class: 'swin', 'data-testid': 'fit-switch', 'aria-label': 'Fit to sheet' });
   ui.fit.addEventListener('change', () => {
     if (!curLay()) return;
-    if (!ui.fit.checked) { state.rows = Math.max(1, layout.rows || 1); state.cols = Math.max(1, layout.cols || 1); }     // typing starts from what was worked out
+    if (!ui.fit.checked) { const L = sectionLayout(); state.rows = Math.max(1, L.rows || 1); state.cols = Math.max(1, L.cols || 1); }     // typing starts from what was worked out
     pushLay(curDoc(), null, 'set:fit', 'Fit to sheet'); state.fit = ui.fit.checked; touch(); update();
   });
   ui.fitText = h('span', { class: 'lbl', 'data-testid': 'fit-state' }, 'On');
@@ -1969,27 +1979,41 @@ function addToLayout() {
 function pickGridPart(v) {
   const lay = curLay();
   if (!lay) return;
+  const G = gridEdit(), own = G || lay.s;           // an applied grid has a part always: "No grid" does nothing there
+  if (G && !v) { update(); return; }
   if (v.startsWith('lib:')) {
     const rec = lib.items.find((r) => r.id === v.slice(4)), part = rec && libPart(rec);
     if (!part) { note('This part could not be read'); update(); return; }
     pushLay(curDoc(), null, '', 'Pick the grid part');
-    lay.parts[part.id] = { ...part }; lay.s.gridPart = part.id;
-  } else { pushLay(curDoc(), null, '', 'Pick the grid part'); lay.s.gridPart = v || null; }
+    lay.parts[part.id] = { ...part }; own.gridPart = part.id;
+  } else { pushLay(curDoc(), null, '', 'Pick the grid part'); own.gridPart = v || null; }
   touch(); update();
 }
 
 /** Apply: the grid's copies become separate placed parts (to place one by one); the grid is cleared, so another can be made. */
 function apply() {
+  if (gridEdit()) { updateGrid(); return; }
   const d = curDoc(), lay = d && d.lay;
   if (!lay) { note('Apply is on a layout tab: Add to layout, or New layout'); return; }
   if (!lay.s.gridPart) { note('Pick a part for step and repeat first'); return; }
   if (!layout.count) { note('Nothing fits on the sheet, so there is nothing to apply'); return; }
   const grid = placedNow.filter((p) => p.src === 'grid'), id = lay.s.gridPart, cellNote = gridCellNote(layout);
   pushLay(d, null, '', 'Apply the grid');
-  for (const p of grid) lay.placed.push(placement1(p.partId, p.x, p.y, p.rot));
-  lay.s.gridPart = null;
+  bakeGrid(lay, 'g' + uid(), grid.map((p) => placement1(p.partId, p.x, p.y, p.rot)), layout);
+  lay.s.gridPart = null; state.sel = -1;         // nothing selected, so the section is the live grid again (another grid can be made); select a copy to change this one
   touch(); update();
-  note(`${grid.length} copies of ${lay.parts[id].name} are now placed parts of their own. ${cellNote ? cellNote + '. ' : ''}Pick a part in Step and repeat to make another grid`);
+  note(`${grid.length} copies of ${lay.parts[id].name} are now placed parts of their own. ${cellNote ? cellNote + '. ' : ''}Select one to change the grid (Update grid), or pick a part in Step and repeat to make another grid`);
+}
+/** Update grid: the selected copy's applied grid is laid again from the section's values, as one undo step. */
+function updateGrid() {
+  const d = curDoc(), lay = d && d.lay, G = gridEdit(), cur = G && lay.placed[placedNow[state.sel].i];
+  if (!G) return;
+  if (!gridLayout(lay, G).count) { note('Nothing fits on the sheet, so there is nothing to lay out'); return; }
+  pushLay(d, null, '', 'Update the grid');
+  const r = relayGrid(lay, cur.gid), at = lay.placed.indexOf(cur);
+  selLooseMany = [at >= 0 ? at : lay.placed.findIndex((p) => p.gid === cur.gid)];
+  touch(); update();
+  note(`Grid updated: ${r.moved} copies laid again${r.added ? `, ${r.added} added` : ''}${r.dropped ? `, ${r.dropped} taken off` : ''}. Copies moved by hand stay where they are`);
 }
 
 // ---- Auto-nest (nestdlg.js is the dialog, nest.js the packer): the preview is only applied by Apply, as one undo step ----
@@ -2072,7 +2096,7 @@ let lastPush = { key: '', t: 0, d: null };
 const r2 = (v) => Math.round(v * 100) / 100;
 const fmt1 = (v) => Number(v).toFixed(1);
 const centrePivot = () => ({ kind: 'centre', x: 0, y: 0 });
-const laySnap = (lay) => ({ sw: lay.s.sheetW, sh: lay.s.sheetH, s: structuredClone(lay.s), placed: lay.placed.map((p) => ({ ...p })), gridPart: lay.s.gridPart, parts: { ...lay.parts }, layers: LD.layersOf(lay),
+const laySnap = (lay) => ({ sw: lay.s.sheetW, sh: lay.s.sheetH, s: structuredClone(lay.s), placed: lay.placed.map((p) => ({ ...p })), gridPart: lay.s.gridPart, parts: { ...lay.parts }, layers: LD.layersOf(lay), grids: structuredClone(lay.grids || {}),
   lsel: lay === (curLay() || {}) ? selIdxs().map((i) => placedNow[i]).filter((p) => p.src === 'loose').map((p) => p.i) : [] });      // lsel: which loose parts were selected (undo brings the selection back)
 const layHist = (d) => d.lhist || (d.lhist = Ed.createHistory());
 /** Keeps the layout as it is now for undo; the same key within 0.8 s (arrow key held down) keeps only the first. */
@@ -2087,7 +2111,7 @@ function layRestore(d, st, dirty = true) {
   if (st.lsel && st.lsel.length) selLooseMany = st.lsel.slice();
   const sized = st.sw != null && (st.sw !== d.lay.s.sheetW || st.sh !== d.lay.s.sheetH);
   if (sized) { d.lay.s.sheetW = st.sw; d.lay.s.sheetH = st.sh; syncFields(); }
-  d.lay.placed = st.placed; d.lay.parts = st.parts; if (st.layers) d.lay.layers = st.layers; Object.assign(d.lay.s, structuredClone(st.s));       // every setting (grippers, gaps, rows, marks, grid part, guides) comes back with the parts
+  d.lay.placed = st.placed; d.lay.parts = st.parts; if (st.layers) d.lay.layers = st.layers; if (st.grids) d.lay.grids = st.grids; Object.assign(d.lay.s, structuredClone(st.s));       // every setting (grippers, gaps, rows, marks, grid part, guides) comes back with the parts
   gapSig = ''; syncFields();                                           // the extra-gap rows hold the old gap objects: rebuilt
   state.mode = 'select'; state.pivot = centrePivot(); state.rotCopy = false; pdrag = null; lastPush = { key: '', t: 0, d: null }; if (before !== JSON.stringify(LD.placedAll(d.lay))) { picksArr = []; state.sel = -1; d.stretchSelection = null; }
   linkBase.delete(d.lay);                                              // an undo is not an edit the dimensions follow
@@ -2243,7 +2267,7 @@ function selectMany(list, main, stretchSelection = null) {
 /** A copy of a placement for a new part: not locked, and a group's copy is a group of its own (gmap: old group id → new one, one per copy).
  * A part with a contour (cid) and the contour (ct) get a new cid together, so the copy has a contour of its own. */
 function fresh(pl, gmap) {
-  const { lock, g, cid, ct, ...rest } = pl;
+  const { lock, g, cid, ct, gid, ...rest } = pl;       // a copy is not a copy of the applied grid
   const link = (c) => gmap['c|' + c] || (gmap['c|' + c] = 'c' + uid());
   return { ...rest, ...(g ? { g: gmap[g] || (gmap[g] = newGroupId()) } : {}), ...(cid ? { cid: link(cid) } : {}), ...(ct ? { ct: link(ct) } : {}) };
 }
@@ -2278,7 +2302,7 @@ function gLooseMany(g, sels) {
   if (ps.some((p) => p.src !== 'loose')) {
     gMark(g);
     const grid = placedNow.filter((q) => q.src === 'grid'), base = g.lay.placed.length;
-    for (const q of grid) g.lay.placed.push(placementOf(q));
+    bakeGrid(g.lay, 'g' + uid(), grid.map(placementOf), layout);       // an applied grid too: Update grid can lay it again
     g.lay.s.gridPart = null; g.loosened = true;
     return ps.map((p) => (p.src === 'loose' ? p.i : base + p.i));
   }
@@ -3024,7 +3048,7 @@ function cancelPlacedDrag() {
 }
 
 function renderStep() {
-  const lay = curLay(), s = state, on = s.fit;
+  const lay = curLay(), s = state, on = s.fit, applied = !!gridEdit(), layout = sectionLayout();       // an applied grid's own grid while one of its copies is selected (TODO 283)
   const label = (p) => `${p.name} · ${fmtSize(p.w)} × ${fmtSize(p.h)}`;
   const own = lay ? LD.partsForPlacement(lay) : [], rest = lay ? lib.items.filter((r) => !lay.parts[r.id]) : [];
   ui.partSel.replaceChildren(h('option', { value: '' }, lay && own.length + rest.length ? 'No grid' : 'No parts yet'),
@@ -3043,10 +3067,11 @@ function renderStep() {
   const bad = layout.count > 0 && !layout.fits;
   ui.fitNote.hidden = !bad;
   ui.fitNote.textContent = bad ? `Does not fit: the grid is ${fmtSize(layout.gridW)} × ${fmtSize(layout.gridH)} mm, the usable area ${fmtSize(layout.area.w)} × ${fmtSize(layout.area.h)} mm.` : '';
-  ui.stepHint.textContent = !lay ? '' : !s.gridPart ? 'Pick a part to repeat over the sheet, or add parts from the Parts library.' : gridCellNote(layout) || (!layout.count && !layout.taken && on ? 'The part is larger than the usable area.' : '');
+  ui.stepHint.textContent = !lay ? '' : !s.gridPart ? 'Pick a part to repeat over the sheet, or add parts from the Parts library.' : gridCellNote(layout) || (!layout.count && !layout.taken && on ? 'The part is larger than the usable area.' : applied ? 'This copy\'s grid. Copies you moved stay put.' : '');
   ui.stepFoot.classList.toggle('idle', !!lay && !s.gridPart);     // no grid part: just the hint, not a floating "0" and a greyed Apply
+  ui.applyBtn.textContent = applied ? 'Update grid' : 'Apply';
   ui.applyBtn.disabled = !lay || !layout.count;
-  ui.applyBtn.title = !lay ? 'Apply is on a layout tab' : !s.gridPart ? 'Pick a part for step and repeat first' : '';
+  ui.applyBtn.title = !lay ? 'Apply is on a layout tab' : applied ? 'Lay the copies of this grid again with these values' : !s.gridPart ? 'Pick a part for step and repeat first' : '';
   ui.sheetSec.querySelectorAll('input[data-key]').forEach((el) => { el.disabled = !lay; });
 }
 

@@ -17,7 +17,7 @@ import { writeDxf, text as dxfText, addBlock, addEntities, newDoc, insert } from
 import { explodeInsert, explodeDimension, explodeSelection } from './explode.js';
 import { unitFactor, startHidden } from './doc.js';
 import { stepRepeat, markGeometry, MAX_LINE } from './layout.js';
-import { buildLayoutDoc, gridPlacements, placedBox, partFromDrawing, placement1 } from './apply.js';
+import { buildLayoutDoc, gridPlacements, placedBox, partFromDrawing, placement1, GRID_KEYS } from './apply.js';
 import { keepOnly, newLayerName, DIM_LAYER, DIM_BLOCK, dimTag, freeNameWithPrefix } from './edit.js';
 import { followDimensions } from './linked-dimensions.js';
 import { isDimPart, dimName, isSettled, bakeBlock, turnedTag, freeBlockName } from './layoutdim.js';
@@ -41,7 +41,7 @@ export const SETTING_KEYS = Object.keys(DEFAULTS);
 export const newSettings = (over = {}) => ({ ...DEFAULTS, extraRows: [], extraCols: [], guides: [], ...over });
 
 /** An empty layout. */
-export const newLayout = (name) => ({ name, s: newSettings(), parts: {}, placed: [] });
+export const newLayout = (name) => ({ name, s: newSettings(), parts: {}, placed: [], grids: {} });
 
 const hasAttributes = (raw) => [raw.entities, ...Object.values(raw.blocks).map((b) => b.entities)].some((ents) => ents.some((e) => e.kids?.some((a) => a.type === 'ATTRIB')));
 
@@ -483,6 +483,7 @@ function metaEntities(lay, blockOf, ids, ob = []) {
     v: 1, app: 'Project D', name: lay.name, s: lay.s,
     parts: ids.map((id) => { const p = lay.parts[id]; return { id, name: p.name, block: blockOf[id], factor: p.factor || 1, w: p.w, h: p.h, src: p.src || '', ...(p.obj ? { obj: true } : {}) }; }),
     placed: lay.placed.filter((p) => ids.includes(p.partId)),
+    ...(lay.grids && Object.keys(lay.grids).length ? { grids: lay.grids } : {}),       // applied grids (apply.js bakeGrid): the settings and slots of each placement's gid
     ...(ob.some((o) => o) ? { ob, obCount: ob.length } : {}),       // the group / lock of each baked object, in entity order (a plain entity carries neither)
   };
   const b = enc(meta), out = [];
@@ -542,6 +543,20 @@ export function cleanSettings(s) {
   };
 }
 
+/** The applied grids read from a file: only those a placement points to, with a part the layout has, settings cleaned, slots with numbers. */
+function cleanGrids(grids, lay) {
+  const out = {};
+  if (!grids || typeof grids !== 'object') return out;
+  for (const gid of new Set(lay.placed.map((p) => p.gid).filter(Boolean))) {
+    const G = grids[gid];
+    if (!G || typeof G !== 'object' || typeof G.gridPart !== 'string' || !lay.parts[G.gridPart] || !Array.isArray(G.slots)) continue;
+    const s = cleanSettings(G), n = (v) => Number.isFinite(+v) && v !== null && v !== '';
+    out[gid] = { ...Object.fromEntries(GRID_KEYS.map((k) => [k, s[k]])), extraRows: s.extraRows, extraCols: s.extraCols,
+      slots: G.slots.filter((q) => q && n(q.x) && n(q.y) && n(q.rot) && Number.isInteger(q.r) && Number.isInteger(q.c)).map((q) => ({ x: +q.x, y: +q.y, rot: +q.rot, r: q.r, c: q.c })) };
+  }
+  return out;
+}
+
 const isRef = (e) => (e.type === 'INSERT' || e.type === 'DIMENSION' || e.type === 'ACAD_TABLE') && e.r;
 const refs = (ents) => ents.filter(isRef).map((e) => String(e.r.v[e.r.c.indexOf(2)] || '').trim());
 /** The entity pointing to the block `names` (old name → new name) gives, a copy; the same entity when nothing changes. */
@@ -591,7 +606,9 @@ function layoutFromMeta(raw, name) {
   }
   lay.placed = (Array.isArray(m.placed) ? m.placed : []).filter((p) => p && lay.parts[p.partId] && Number.isFinite(+p.x) && Number.isFinite(+p.y))
     .map((p) => ({ ...placement1(p.partId, +p.x, +p.y, num(p.rot, 0), p.mirrorX, p.mirrorY), ...(typeof p.g === 'string' && p.g ? { g: p.g } : {}), ...(p.lock === true ? { lock: true } : {}), ...(num(p.sc, 1, 1e-6) !== 1 ? { sc: num(p.sc, 1, 1e-6) } : {}),
-      ...(typeof p.cid === 'string' && p.cid ? { cid: p.cid } : {}), ...(typeof p.ct === 'string' && p.ct ? { ct: p.ct } : {}) }));   // cid: a part that has a contour; ct: the contour of the part with that cid (layoutcontour.js)
+      ...(typeof p.cid === 'string' && p.cid ? { cid: p.cid } : {}), ...(typeof p.ct === 'string' && p.ct ? { ct: p.ct } : {}),   // cid: a part that has a contour; ct: the contour of the part with that cid (layoutcontour.js)
+      ...(typeof p.gid === 'string' && p.gid ? { gid: p.gid } : {}) }));        // gid: the applied grid the copy belongs to
+  lay.grids = cleanGrids(m.grids, lay);
   if (lay.s.gridPart && !lay.parts[lay.s.gridPart]) lay.s.gridPart = null;
   for (const pm of parts) if (pm.obj === true && lay.parts[pm.id]) {
     const part = lay.parts[pm.id]; part.obj = true;       // an object kept as a block brings its layer colour back too

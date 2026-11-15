@@ -185,3 +185,77 @@ test('parts from two files that share a block name: the nested reference follows
   const lay = Object.keys(back.layers).map((k) => k.toLowerCase()), blk = Object.keys(back.blocks).map((k) => k.toLowerCase());
   assert.equal(new Set(lay).size, lay.length); assert.equal(new Set(blk).size, blk.length);
 });
+
+// ---- TODO 283: an applied grid keeps a grid id and can be laid again
+const LD = await import('./web/layoutdoc.js');
+function appliedLayout(rows = 2, cols = 2) {
+  const lay = LD.newLayout('Applied'), raw = W.newDoc(4);
+  W.addEntities(raw, W.roundRect(0, 0, 100, 60, 0));
+  lay.parts.p = LD.makePart('p', 'Plate', raw, 1);
+  Object.assign(lay.s, { sheetW: 1000, sheetH: 700, gripTop: 0, gripBottom: 0, gripLeft: 0, gripRight: 0, fit: false, rows, cols, gapX: 5, gapY: 5, gridPart: 'p' });
+  const L = A.gridLayout(lay, lay.s);
+  A.bakeGrid(lay, 'a', A.gridPlacements(L, lay.s.sheetH, 'p'), L);
+  return lay;
+}
+const xsOf = (lay) => [...new Set(lay.placed.map((p) => Math.round(p.x * 1e6) / 1e6))].sort((a, b) => a - b);
+
+test('TODO 283: Apply keeps a grid id and the grid\'s settings and slots; every copy is on its slot', () => {
+  const lay = appliedLayout();
+  assert.equal(lay.placed.length, 4); assert.ok(lay.placed.every((p) => p.gid === 'a'));
+  assert.deepEqual(lay.grids.a.slots.map((s) => [s.r, s.c]), [[0, 0], [0, 1], [1, 0], [1, 1]]);
+  assert.deepEqual([lay.grids.a.rows, lay.grids.a.cols, lay.grids.a.gapX, lay.grids.a.gridPart], [2, 2, 5, 'p']);
+  assert.deepEqual(lay.placed.map((p) => A.slotOf(lay, p)), [0, 1, 2, 3]);
+  assert.equal(A.slotOf(lay, { partId: 'p', x: 1, y: 1, rot: 0 }), -1, 'a plain placement is in no grid');
+  assert.equal(A.relayGrid(lay, 'none'), null);
+});
+
+test('TODO 283: Update grid: Rows 2 to 3 and a bigger gap lay six copies at the new spacing', () => {
+  const lay = appliedLayout();
+  Object.assign(lay.grids.a, { rows: 3, gapX: 20, gapY: 9 });
+  const r = A.relayGrid(lay, 'a');
+  assert.deepEqual(r, { moved: 4, added: 2, dropped: 0 });
+  assert.equal(lay.placed.length, 6);
+  const want = A.gridPlacements(A.gridLayout(lay, lay.grids.a), 700, 'p');
+  assert.deepEqual(lay.placed.map((p) => [p.x, p.y]), want.map((p) => [p.x, p.y]), 'the copies are on the new grid, in order');
+  const xs = xsOf(lay); near(xs[1] - xs[0], 120, 'gap X 20 + width 100');
+  assert.equal(new Set(lay.placed.map((p) => p.y)).size, 3);
+  assert.ok(lay.placed.every((p) => A.slotOf(lay, p) >= 0), 'still in the grid, so it can be updated again');
+  Object.assign(lay.grids.a, { rows: 1, cols: 2 });      // Fit changing the count: the slots past it go
+  assert.deepEqual(A.relayGrid(lay, 'a'), { moved: 2, added: 0, dropped: 4 });
+  assert.equal(lay.placed.length, 2);
+});
+
+test('TODO 283: a copy moved or deleted by hand leaves the grid: Update keeps it where it is and its slot stays empty', () => {
+  const lay = appliedLayout();
+  lay.placed[0].x += 7;                          // moved by hand
+  lay.placed.splice(3, 1);                       // slot (1,1) deleted
+  assert.equal(A.slotOf(lay, lay.placed[0]), -1);
+  const moved = { ...lay.placed[0] };
+  lay.grids.a.rows = 3;
+  const r = A.relayGrid(lay, 'a');
+  assert.deepEqual(r, { moved: 2, added: 2, dropped: 0 });
+  assert.equal(lay.placed.length, 5, 'the hand-moved copy, two laid again, two new in the third row; the deleted slot is not refilled');
+  assert.deepEqual(lay.placed[0], moved, 'the moved copy stays');
+  assert.ok(!lay.placed.some((p) => A.slotOf(lay, p) === lay.grids.a.slots.findIndex((s) => s.r === 1 && s.c === 1)));
+  lay.grids.a.rows = 1; lay.grids.a.cols = 1;
+  assert.deepEqual(A.relayGrid(lay, 'a'), { moved: 0, added: 0, dropped: 4 }, 'slot (0,0) was the moved copy\'s: empty; every other copy is past the grid and goes');
+  assert.deepEqual(lay.placed.map((p) => p.x), [moved.x]);
+});
+
+test('TODO 283: nothing fits: Update changes nothing', () => {
+  const lay = appliedLayout();
+  lay.grids.a.rows = 400; lay.grids.a.cols = 400;         // 160000 copies: stepRepeat gives none
+  const before = JSON.stringify([lay.placed, lay.grids]);
+  assert.equal(A.relayGrid(lay, 'a'), null);
+  assert.equal(JSON.stringify([lay.placed, lay.grids]), before);
+});
+
+test('TODO 283: the grid ids and grids are saved with the layout and read back; an old layout has none', () => {
+  const lay = appliedLayout();
+  const back = LD.layoutFromRaw(D.readDxf(W.writeDxf(LD.layoutRaw(lay))), 'x');
+  assert.deepEqual(back.placed.map((p) => p.gid), ['a', 'a', 'a', 'a']);
+  assert.deepEqual(back.grids, lay.grids);
+  const old = LD.layoutFromRaw(D.readDxf(W.writeDxf(LD.layoutRaw({ ...lay, grids: {}, placed: lay.placed.map(({ gid, ...p }) => p) }))), 'x');
+  assert.deepEqual(old.grids, {}); assert.ok(old.placed.every((p) => !('gid' in p)));
+  assert.equal(A.slotOf(old, old.placed[0]), -1);
+});

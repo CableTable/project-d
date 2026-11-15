@@ -8972,6 +8972,54 @@ try {
     await closeTabs(/./);
   });
 
+  await step('TODO 283: an applied grid can be changed after Apply', async () => {
+    await closeTabs(/./);
+    const made = newLayout('Applied grid'), small = newDoc(4);              // a layout with only the 100 × 60 grid part, 2 × 2 typed (no loose part to anchor the grid)
+    addEntities(small, roundRect(0, 0, 100, 60, 0));
+    made.parts.grid = makePart('grid', 'Grid part', small, 1);
+    Object.assign(made.s, { sheetW: 1000, sheetH: 700, gridPart: 'grid', rows: 2, cols: 2, fit: false, gripTop: 0, gripBottom: 0, gripLeft: 0, gripRight: 0 });
+    await t('picker').setInputFiles({ name: 'applied-grid.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(layoutRaw(made))) });
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'applied-grid.dxf');
+    await page.locator('[data-tool=select]').click(); await t('ptab-drawing').click();
+    const field = (k) => panelControl(page, page.locator(`[data-key=${k}]`));
+    const rows = field('rows'), cols = field('cols'), gapX = field('gapX');
+    const copy = (i) => page.locator(`[data-group=parts] [data-i="${i}"] .part-hit`).click({ force: true });
+    assert.equal(await t('count').textContent(), '4');
+    await t('apply').click();
+    assert.equal(await nParts(), 4); assert.equal(await t('count').textContent(), '0'); assert.equal(await t('apply').textContent(), 'Apply');
+    // a copy selected: the section holds its grid; Rows 3 and a wider gap make six copies once Update grid is pressed
+    await copy(0);
+    assert.equal(await rows.inputValue(), '2'); assert.equal(await cols.inputValue(), '2'); assert.equal(await gapX.inputValue(), '5');
+    assert.equal(await t('fit-switch').isChecked(), false);
+    await rows.fill('3'); await gapX.fill('20');
+    assert.equal(await t('count').textContent(), '6', 'the section shows the applied grid: 3 rows of 2');
+    assert.equal(await t('apply').textContent(), 'Update grid');
+    assert.equal(await nParts(), 4, 'nothing moves before Update grid');
+    await shotBoth('step-update-grid');
+    await t('apply').click();
+    assert.equal(await nParts(), 6);
+    assert.match(await prompt(), /^Grid updated: 4 copies laid again, 2 added\. Copies moved by hand/);
+    const lay = layoutFromRaw(readDxf((await downloaded(() => page.keyboard.press('Control+s'))).text));
+    const xs = [...new Set(lay.placed.map((p) => p.x))].sort((a, b) => a - b), ys = new Set(lay.placed.map((p) => p.y));
+    assert.equal(xs.length, 2); assert.equal(Math.round(xs[1] - xs[0]), 120, 'width 100 + the new gap 20'); assert.equal(ys.size, 3);
+    assert.equal(new Set(lay.placed.map((p) => p.gid)).size, 1, 'the six copies are one grid, saved with the layout');
+    assert.equal(Object.keys(lay.grids).length, 1); assert.equal(Object.values(lay.grids)[0].rows, 3);
+    // one undo step
+    await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z');
+    assert.equal(await nParts(), 4, 'Update grid is one undo step'); await page.keyboard.press('Control+y'); assert.equal(await nParts(), 6);
+    // a copy moved by hand leaves the grid: Update keeps it, and the other copies follow the new rows
+    await copy(0); await partTab(); await t('px').fill('5'); await t('px').press('Enter');
+    await copy(1); await rows.fill('2');
+    await t('apply').click();
+    assert.equal(await nParts(), 4, 'the moved copy, and three laid again in 2 rows (its own slot stays empty)');
+    assert.match(await prompt(), /^Grid updated: 3 copies laid again, 2 taken off\. Copies moved by hand stay where they are$/);
+    // the moved copy is on its own now: the live grid is in the section (no grid part, Apply)
+    await copy(0); await partTab();
+    assert.equal((await pos())[0], 5, 'the moved copy stayed');
+    assert.equal(await t('apply').textContent(), 'Apply'); assert.equal(await t('count').textContent(), '0');
+    await closeTabs(/./);
+  });
+
   await step('placing: saved with its rotation and mirror, reopened the same, the PDF draws it; screenshots light and dark', async () => {
     await freshLayoutWithPlate();
     await partTab(); await t('px').fill('200'); await t('px').press('Enter'); await partTab(); await t('py').fill('300'); await t('py').press('Enter');
