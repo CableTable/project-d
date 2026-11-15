@@ -367,9 +367,10 @@ function drawQueue() {
   }, done.length);
 }
 
-// " · short title" from the TODO row of an item id (number or letter id like U1d): "U1c: " prefix dropped, 8 words at most; '' when there is no row.
+// " · short title" from the TODO row of an item id (number, sub-id like 273a, or letter id like U1d): "U1c: " prefix dropped, 8 words at most; '' when there is no row.
 function todoTitle(base) {
-  const todo = todoSections.flatMap((s) => s.items).find((t) => (/^\d+$/.test(base) ? t.num === Number(base) : /^[A-Za-z]/.test(base) && t.title.startsWith(base + ':')));
+  const num = base.match(/^(\d+)[a-z]?$/)?.[1]; // 273a (a sub-step) reads the title of TODO 273; one letter at most, so a sha like 280abcd stays a sha
+  const todo = todoSections.flatMap((s) => s.items).find((t) => (num ? t.num === Number(num) : /^[A-Za-z]/.test(base) && t.title.startsWith(base + ':')));
   const words = todo?.title.replace(/^[A-Za-z]+\d+[A-Za-z]*: /, '').split(/\s+/) || [];
   return todo ? ' · ' + words.slice(0, 8).join(' ') + (words.length > 8 ? '…' : '') : '';
 }
@@ -379,7 +380,7 @@ function queueHeadline({ kind, id, out, state }) {
   const first = id.split(' ')[0], branch = first.match(/^(king|knight)\//);
   const acct = id.match(/\(([A-Za-z]\w*)[,)]/)?.[1] || id.match(/--as (\w+)/)?.[1] || (branch ? branch[1] : kind === 'knight' ? 'knight' : '');
   const who = acct && acct[0].toUpperCase() + acct.slice(1);
-  const from = kind === 'review' ? out.match(/(?:^|\/)rv-(.+?)\.\w+$/)?.[1] || first.slice(0, 7) : first.replace(/^(king|knight)\//, '');
+  const from = kind === 'review' ? out.match(/(?:^|\/)(?:rv|review)-(.+?)\.\w+$/)?.[1] || first.slice(0, 7) : first.replace(/^(king|knight)\//, '');
   const name = from.replace(/^(.+?)fix\d*$/, '$1 fix'), base = name.replace(/ fix$/, '');
   const done = state === 'ended', verbs = { build: ['building', 'built'], knight: ['building', 'built'], review: ['checking', 'checked'] }[kind];
   const text = kind === 'suite' ? 'Full tests ' + first : kind === 'fresh' ? 'Grill check ' + name : [who, verbs ? verbs[+done] : kind, name].filter(Boolean).join(' ');

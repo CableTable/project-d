@@ -155,6 +155,10 @@ test('TODO U1d: Queue row reads Who verb item · short title with a running / do
   const sha = '855b4951d56364408799500f0997906b99300edc';
   // Rows as the agent's parseQueue makes them, in file order.
   const queue = { updated: '2026-11-05T18:45:00.000Z', rows: [
+    { kind: 'review', id: sha, out: 'review-277.jsonl', state: 'ended', extra: '' }, // chained review: out is review-<id>, not rv-<id>
+    { kind: 'build', id: 'king/273a', out: 'b-273a.jsonl', state: 'ended', extra: '' }, // sub-id: title of TODO 273
+    { kind: 'build', id: 'king/280bfix1', out: 'b-280bfix1.jsonl', state: 'ended', extra: '' },
+    { kind: 'review', id: '280abcdf0000000000000000000000000000000', out: 'check.jsonl', state: 'ended', extra: '' }, // a sha that starts with digits is no TODO id
     { kind: 'fresh', id: 'U1c', out: 'fresh-U1c.out', state: 'ended', extra: '' },
     { kind: 'job', id: 'debt47 (bishop, claude-sonnet-5-5)', out: 'debt47.jsonl', state: 'ended', extra: '' },
     { kind: 'suite', id: '0225cb8', out: 'suite-0225cb8.log', state: 'ended', extra: '' },
@@ -165,8 +169,10 @@ test('TODO U1d: Queue row reads Who verb item · short title with a running / do
   ] };
   const todo = { sections: [{ title: 'Whole TODO', items: [
     { num: 275, title: 'Rotate objects about a chosen pivot point', done: false },
+    { num: 273, title: 'Huge files: Hairline on all crashes', done: false },
     { num: 277, title: 'Copy objects with undo', done: true },
     { num: 279, title: 'U1c: plain Queue rows', done: false },
+    { num: 280, title: 'U1d: simpler Queue tab with Next and short titles', done: true },
   ] }] };
   for (const colorScheme of ['light', 'dark']) {
     const context = await browser.newContext({ viewport: { width: 390, height: 844 }, colorScheme });
@@ -188,7 +194,7 @@ test('TODO U1d: Queue row reads Who verb item · short title with a running / do
       await page.goto('http://usage.test/');
       await page.locator('#dashboard').waitFor();
       await page.locator('[data-tab=queue]').click();
-      await page.getByRole('button', { name: 'Show 1 more' }).click(); // 6 done rows: 5 shown first
+      await page.getByRole('button', { name: 'Show 5 more' }).click(); // 10 done rows: 5 shown first
       assert.deepEqual(await page.locator('#queue-list .queue-row strong').allTextContents(), [
         'King building 275 · Rotate objects about a chosen pivot point', // running first
         'King built 999', // no TODO 999: no title
@@ -197,8 +203,12 @@ test('TODO U1d: Queue row reads Who verb item · short title with a running / do
         'Full tests 0225cb8',
         'Bishop job debt47',
         'Grill check U1c · plain Queue rows', // letter id: title starts with "U1c:", prefix dropped
+        'checked 280abcd',
+        'King built 280b fix · simpler Queue tab with Next and short titles',
+        'King built 273a · Huge files: Hairline on all crashes',
+        'checked 277 · Copy objects with undo',
       ]);
-      assert.deepEqual(await page.locator('#queue-list .ud-chip').allTextContents(), ['running', 'done', 'done', 'done', 'done', 'done', 'done']);
+      assert.deepEqual(await page.locator('#queue-list .ud-chip').allTextContents(), ['running', ...Array(10).fill('done')]);
       assert.equal(await page.locator('#queue-list .queue-raw').count(), 0);
       assert.equal(await page.locator('#queue-list table').count(), 0);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
