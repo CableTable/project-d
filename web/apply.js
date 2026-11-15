@@ -94,8 +94,8 @@ export const gridSig = (lay, G) => JSON.stringify([...GRID_KEYS.map((k) => G[k])
  * (a part in the way, taken by an existing copy) is an empty slot { r, c }, which Update grid never fills.
  */
 export function bakeGrid(lay, gid, copies, L, s = lay.s) {
-  const slots = copies.map((p, i) => ({ x: p.x, y: p.y, rot: p.rot, r: L.cells[i][0], c: L.cells[i][1] })), have = new Set(slots.map((q) => q.r * 1000 + q.c));
-  for (let r = 0; r < L.rows; r++) for (let c = 0; c < L.cols; c++) if (!have.has(r * 1000 + c)) slots.push({ r, c });
+  const slots = copies.map((p, i) => ({ x: p.x, y: p.y, rot: p.rot, r: L.cells[i][0], c: L.cells[i][1] })), have = new Set(slots.map((q) => q.r + ',' + q.c));
+  for (let r = 0; r < L.rows; r++) for (let c = 0; c < L.cols; c++) if (!have.has(r + ',' + c)) slots.push({ r, c });
   lay.grids = lay.grids || {};
   const G = lay.grids[gid] = {
     ...Object.fromEntries(GRID_KEYS.map((k) => [k, s[k]])), rows: L.rows, cols: L.cols,
@@ -147,9 +147,9 @@ export function relayGrid(lay, gid) {
     return [x0, H - y1, x1, H - y0];
   });                                                            // sheet mm, y down, as stepRepeat's
   const blocked = (x, y) => others.some((b) => x < b[2] - 1e-9 && x + pw > b[0] + 1e-9 && y < b[3] - 1e-9 && y + ph > b[1] + 1e-9);
-  const old = new Map(G.slots.map((s, k) => [s.r * 1000 + s.c, k])), spots = gridPlacements(L, H, G.gridPart), slots = [], fresh = [];
+  const old = new Map(G.slots.map((s, k) => [s.r + ',' + s.c, k])), spots = gridPlacements(L, H, G.gridPart), slots = [], fresh = [];
   spots.forEach((sp, i) => {
-    const [r, c] = L.cells[i], k = old.get(r * 1000 + c), p = k != null && alive.get(k), slot = { x: sp.x, y: sp.y, rot: sp.rot, r, c };
+    const [r, c] = L.cells[i], k = old.get(r + ',' + c), p = k != null && alive.get(k), slot = { x: sp.x, y: sp.y, rot: sp.rot, r, c };
     if (p) { Object.assign(p, { partId: G.gridPart, x: sp.x, y: sp.y, rot: sp.rot }); alive.delete(k); out.moved++; slots.push(slot); }
     else if (k != null) slots.push(G.slots[k].x == null ? { r, c } : slot);     // a slot that was empty stays empty; a copy gone from its slot is not put back
     else if (blocked(L.positions[i].x, L.positions[i].y)) slots.push({ r, c });

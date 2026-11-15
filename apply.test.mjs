@@ -317,6 +317,26 @@ test('TODO 283: a whole column skipped at Apply keeps its numbering through a sa
   assert.deepEqual(A.relayGrid(lay, 'a'), { moved: 0, added: 0, dropped: 0 });
 });
 
+test('TODO 283: rows typed but not updated before the save: Update after reopen lays the grid again; an untouched grid stays put', () => {
+  const { lay } = liveApplied([], 2, 3);
+  const reopen = (l) => LD.layoutFromRaw(D.readDxf(W.writeDxf(LD.layoutRaw(l))), 'x');
+  assert.deepEqual(A.relayGrid(reopen(lay), 'a'), { moved: 0, added: 0, dropped: 0 }, 'nothing typed: nothing moves');
+  lay.grids.a.rows = 3;                              // typed, no Update, saved
+  const back = reopen(lay);
+  assert.equal(back.grids.a.rows, 3);
+  assert.deepEqual(A.relayGrid(back, 'a'), { moved: 6, added: 3, dropped: 0 }, '2 × 3 → 3 × 3');
+  assert.equal(back.placed.filter((p) => p.gid === 'a').length, 9);
+});
+
+test('TODO 283: slots past 1000 columns do not collide (key r,c)', () => {
+  const lay = LD.newLayout('Wide'), raw = W.newDoc(4);
+  W.addEntities(raw, W.roundRect(0, 0, 1, 1, 0));
+  lay.parts.p = LD.makePart('p', 'Dot', raw, 1);
+  const L = { rows: 2, cols: 1002, cells: [[0, 1000], [1, 0]] };      // (1, 0) and (0, 1000) were both key 1000
+  A.bakeGrid(lay, 'a', [{ x: 1, y: 1, rot: 0 }, { x: 2, y: 2, rot: 0 }], L, { ...lay.s, extraRows: [], extraCols: [] });
+  assert.equal(lay.grids.a.slots.length, 2 * 1002, 'every cell has exactly one slot');
+});
+
 test('TODO 283: a big grid (4648-ish copies) is laid again and read fast', () => {
   const lay = LD.newLayout('Big'), raw = W.newDoc(4);
   W.addEntities(raw, W.roundRect(0, 0, 10, 10, 0));

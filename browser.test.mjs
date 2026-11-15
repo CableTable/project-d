@@ -8992,13 +8992,15 @@ try {
     assert.equal(await rows.inputValue(), '2'); assert.equal(await cols.inputValue(), '2'); assert.equal(await gapX.inputValue(), '5');
     assert.equal(await t('fit-switch').isChecked(), false);
     await rows.fill('3'); await gapX.fill('20');
-    assert.equal(await t('count').textContent(), '6', 'the section shows the applied grid: 3 rows of 2');
+    const shown = await (await page.waitForFunction(() => { const c = document.querySelector('[data-testid=count]').textContent; return c === '6' && c; }, null, { timeout: 30000 })).jsonValue();
+    assert.equal(shown, '6', 'the section shows the applied grid: 3 rows of 2');
     assert.equal(await t('apply').textContent(), 'Update grid');
     assert.equal(await nParts(), 4, 'nothing moves before Update grid');
     await shotBoth('step-update-grid');
     await t('apply').click();
+    const said = await (await page.waitForFunction(() => { const s = document.querySelector('[data-testid=cmd-prompt]').textContent; return /^Grid updated/.test(s) && s; }, null, { timeout: 30000 })).jsonValue();
     assert.equal(await nParts(), 6);
-    assert.match(await prompt(), /^Grid updated: 4 copies laid again, 2 added\. Copies moved by hand/);
+    assert.match(said, /^Grid updated: 4 copies laid again, 2 added\. Copies moved by hand/);
     const lay = layoutFromRaw(readDxf((await downloaded(() => page.keyboard.press('Control+s'))).text));
     const xs = [...new Set(lay.placed.map((p) => p.x))].sort((a, b) => a - b), ys = new Set(lay.placed.map((p) => p.y));
     assert.equal(xs.length, 2); assert.equal(Math.round(xs[1] - xs[0]), 120, 'width 100 + the new gap 20'); assert.equal(ys.size, 3);
