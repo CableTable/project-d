@@ -92,6 +92,18 @@ export function addRecent(list, path, max = 8) {
   return [path, ...(Array.isArray(list) ? list : []).filter((p) => typeof p === 'string' && key(p) !== key(path))].slice(0, max);
 }
 
+/** Files over this many bytes get a warning before they are opened (T273a). */
+export const BIG_FILE = 50 * 1024 * 1024;
+
+/** The question to ask before opening `files` ({ name, size }): null when none is over BIG_FILE; one dialog names every big one. */
+export function bigFileAsk(files) {
+  const big = files.filter((f) => f.size > BIG_FILE), mb = (f) => Math.round(f.size / 1048576) + ' MB';
+  if (!big.length) return null;
+  const tail = 'big drawings may open slowly and some tools may lag.';
+  if (big.length === 1) return `${big[0].name} is ${mb(big[0])}: ${tail} Open it?`;
+  return `${big.length} files are big (${big.map((f) => `${f.name} ${mb(f)}`).join(', ')}): ${tail} Open them?`;
+}
+
 /** The words of the close prompt for the tabs with unsaved changes (names): { title, names } (names are listed only when there are several, five at most). */
 export function closePrompt(names) {
   const list = names.filter((n) => typeof n === 'string');

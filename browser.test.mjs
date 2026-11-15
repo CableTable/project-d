@@ -8549,6 +8549,31 @@ try {
     await page.keyboard.press('Escape');
   });
 
+  await step('TODO 273a: a file over 50 MB asks before opening', async () => {
+    const bytes = [...readFileSync('fixtures/outline.dxf')];
+    await page.evaluate((b) => {                                     // a stand-in for the app: stat says 111 MB, ask is answered by __ans
+      window.__ask273 = []; window.__ans273 = false; window.__reads273 = 0;
+      window.__TAURI__ = { dialog: { ask: async (text) => { window.__ask273.push(text); return window.__ans273; } },
+        fs: { exists: async () => true, stat: async (p) => ({ size: /big/.test(p) ? 111 * 1024 * 1024 : 1024 }), readFile: async () => { window.__reads273++; return new Uint8Array(b); } } };
+      localStorage.setItem('pd-recent', JSON.stringify(['C:\\work\\big273.dxf', 'C:\\work\\small273.dxf']));
+    }, bytes);
+    const fileMenu = page.locator('[data-menu=File]'), items = page.locator('.dropdown [role=menuitem]');
+    const tabs = await page.locator('.tabs .dtab').count();
+    await fileMenu.click(); await items.filter({ hasText: '1  big273.dxf' }).click();         // Cancel: nothing is read or opened
+    await page.waitForFunction(() => window.__ask273.length === 1);
+    assert.equal(await page.evaluate(() => window.__ask273[0]), 'big273.dxf is 111 MB: big drawings may open slowly and some tools may lag. Open it?');
+    assert.match(await t('cmd-prompt').textContent(), /big273\.dxf: not opened/);
+    assert.deepEqual([await page.evaluate(() => window.__reads273), await page.locator('.tabs .dtab').count()], [0, tabs], 'Cancel opens nothing');
+    await page.evaluate(() => { window.__ans273 = true; });                                    // OK: it opens
+    await fileMenu.click(); await items.filter({ hasText: 'big273.dxf' }).click();
+    await page.waitForFunction((n) => document.querySelectorAll('.tabs .dtab').length > n, tabs);
+    assert.equal(await page.evaluate(() => window.__reads273), 1);
+    await fileMenu.click(); await items.filter({ hasText: 'small273.dxf' }).click();           // a small one never asks
+    await page.waitForFunction((n) => document.querySelectorAll('.tabs .dtab').length > n, tabs + 1);
+    assert.equal(await page.evaluate(() => window.__ask273.length), 2, 'asked for the big file twice, never for the small one');
+    await page.evaluate(() => { delete window.__TAURI__; delete window.__ask273; delete window.__ans273; delete window.__reads273; localStorage.removeItem('pd-recent'); });
+  });
+
   // ---- Build B: placing and editing parts (TODO 2, 9-13, 16) ----
   const pos = async () => [Number(await t('px').inputValue()), Number(await t('py').inputValue())];
   const angleNow = async () => Number((await t('pa').inputValue()).replace('°', ''));

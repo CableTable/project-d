@@ -13,7 +13,7 @@ import { idbStore, localStore } from './idbstore.js';
 import { WORK_AREAS, workAreaDark } from './workarea.js';
 import { FOLDS, ribbonTabs, nextFold, doubleFold } from './ribbon.js';
 import { PRESETS, presetFor, stepRepeat, gridCellNote, GRIP_KEYS } from './layout.js';
-import { unitFactor, convertedNote, startHidden, entityCount, layerCounts, drawingBoxMm, fitRect, cursorMm, fitsSheet, spaceOf, boxOnSheet, itemVisible, addRecent, closePrompt } from './doc.js';
+import { unitFactor, convertedNote, startHidden, entityCount, layerCounts, drawingBoxMm, fitRect, cursorMm, fitsSheet, spaceOf, boxOnSheet, itemVisible, addRecent, closePrompt, BIG_FILE, bigFileAsk } from './doc.js';
 import * as Ed from './edit.js';
 import { follow as followGroups, remap as remapGroups, splice as spliceGroups, swap as swapGroups, copy as copyGroups, group as groupDrawing, ungroup as ungroupDrawing, groupOf, selectionOf, wholeGroup as wholeDrawingGroup } from './groups.js';
 import * as AD from './autodim.js';
@@ -1198,6 +1198,17 @@ async function confirmAsk(text, okLabel, kind = 'info', cancelLabel = 'No') {
   if (t && t.dialog && t.dialog.ask) { try { return await t.dialog.ask(text, { title: 'Project D', kind, okLabel, cancelLabel }); } catch { return false; } }
   return window.confirm(text);
 }
+/** Before reading files ({ name, size }): one question for all the big ones (over 50 MB); Cancel drops the big ones, the rest go on. */
+async function bigOk(files) {
+  const q = bigFileAsk(files);
+  if (!q || await confirmAsk(q, 'Open', 'warning', 'Cancel')) return files;
+  for (const f of files) if (f.size > BIG_FILE) note(f.name + ': not opened (big file)');
+  return files.filter((f) => f.size <= BIG_FILE);
+}
+/** A file's size in bytes from its path in the app; 0 when it cannot be told (the read then reports the real problem). */
+async function pathSize(path) {
+  try { return (await window.__TAURI__.fs.stat?.(path))?.size || 0; } catch { return 0; }
+}
 
 async function openFile() {
   const t = window.__TAURI__;
@@ -1226,6 +1237,7 @@ async function openPath(path, recent = false) {
   const t = window.__TAURI__, name = path.split(/[\\/]/).pop();
   if (!t || !t.fs || !t.fs.readFile) return;
   try {
+    if (!(await bigOk([{ name, size: await pathSize(path) }])).length) return;
     if (!/\.(dxf|pdf)$/i.test(name)) {                                       // a .dwg is converted from its path; other names are refused
       if (recent && t.fs.exists && !(await t.fs.exists(path))) throw new Error('not found');   // a DXF's readFile fails by itself; the helper's error would not say "moved"
       await openBytes(name, new ArrayBuffer(0), path); return;
@@ -1324,7 +1336,7 @@ function attachDrop() {
     if (!e.dataTransfer.files.length) return;
     e.preventDefault();
     ui.canvas.classList.remove('dropping');
-    for (const f of balFirst([...e.dataTransfer.files])) await openPicked(f);
+    for (const f of balFirst(await bigOk([...e.dataTransfer.files]))) await openPicked(f);
   });
 }
 
@@ -1543,7 +1555,7 @@ function buildCanvas() {
   ui.dcanvas = h('canvas', { class: 'drawing-layer', 'data-testid': 'drawing' });
   ui.gridDisplay = h('div', { class: 'drawing-grid', hidden: true, 'aria-hidden': 'true', 'data-testid': 'drawing-grid' });
   ui.picker = h('input', { type: 'file', accept: '.dxf,.dwg,.pdf,.json', hidden: true, 'data-testid': 'picker', multiple: true });
-  ui.picker.addEventListener('change', async () => { const files = [...ui.picker.files]; ui.picker.value = ''; for (const f of balFirst(files)) await openPicked(f); });   // emptied, so the same file can be picked again
+  ui.picker.addEventListener('change', async () => { const files = [...ui.picker.files]; ui.picker.value = ''; for (const f of balFirst(await bigOk(files))) await openPicked(f); });   // emptied, so the same file can be picked again
   ui.bgPicker = h('input', { type: 'file', accept: '.png,.jpg,.jpeg,.pdf', hidden: true, 'data-testid': 'bg-picker' });
   ui.bgPicker.addEventListener('change', async () => {
     const f = ui.bgPicker.files[0], trace = traceAfter;
@@ -11925,7 +11937,9 @@ async function cmpPick() {
   try {
     const picked = await t.dialog.open({ multiple: false, filters: [{ name: 'Drawings', extensions: ['dxf', 'dwg'] }] });
     const path = Array.isArray(picked) ? picked[0] : picked;
-    if (path) await cmpLoad(d, String(path).split(/[\\/]/).pop(), await t.fs.readFile(path), String(path));
+    if (!path) return;
+    const name = String(path).split(/[\\/]/).pop();
+    if ((await bigOk([{ name, size: await pathSize(path) }])).length) await cmpLoad(d, name, await t.fs.readFile(path), String(path));
   } catch (err) { note('Open failed: ' + (err && err.message ? err.message : err)); }
 }
 async function cmpLoad(d, name, buf, path = null) {
@@ -11941,7 +11955,7 @@ function buildCompareSection() {
   ui.cmpPicker = h('input', { type: 'file', accept: '.dxf,.dwg', hidden: true, 'data-testid': 'cmp-picker' });
   ui.cmpPicker.addEventListener('change', async () => {
     const f = ui.cmpPicker.files[0], d = ui.cmpPicker.doc; ui.cmpPicker.value = '';
-    try { if (f) await cmpLoad(d, f.name, await f.arrayBuffer()); } catch (err) { note('Open failed: ' + err.message); }
+    try { if (f && (await bigOk([f])).length) await cmpLoad(d, f.name, await f.arrayBuffer()); } catch (err) { note('Open failed: ' + err.message); }
   });
   ui.cmpItems = h('div', { class: 'cmpitems', 'data-testid': 'cmp-items' });
   ui.cmpAdd = [h('button', { class: 'btn', type: 'button', 'data-testid': 'cmp-add-tab', onclick: (e) => cmpChoose(e) }, 'Add tab'),
