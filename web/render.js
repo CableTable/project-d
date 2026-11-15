@@ -138,7 +138,7 @@ function wireStroke(c, dpr) {
 /** The shown items through T (drawing units → canvas pixels), k pixels per unit; vr culls to the view (drawing units), or null. */
 function paintItems(c, fl, off, T, k, vr, dpr, col, sheetBg, hide, factor, wireframe) {
   const mats = fl.mats;
-  let cur = -1, kk = k, pxPerUnit = 0, open = false, pc = null, pw = 0, pd = null, origin = [0, 0], drawn = 0;
+  let cur = -1, kk = k, pxPerUnit = 0, open = false, pc = null, pw = 0, pd = null, origin = [0, 0], drawn = 0, run = 0;
   const flush = () => { if (open) { if (wireframe) wireStroke(c, dpr); else c.stroke(); } open = false; };
   for (const it of shownItems(fl)) {
     const b = it.b;
@@ -154,7 +154,9 @@ function paintItems(c, fl, off, T, k, vr, dpr, col, sheetBg, hide, factor, wiref
       const lw = wireframe ? dpr / kk : Math.max(strokeWidth(it, factor, kk / k) * k / factor, 1.2 * dpr) / kk;
       const dash = wireframe ? null : it.dash && it.dash.reduce((a, x) => a + x, 0) * kk > 4 * dpr ? it.dash : it.dpx ? it.dpx : null;
       const css = col(it.css);
-      if (!open || css !== pc || lw !== pw || dash !== pd) {
+      // shortcut: 5000 is a guess; one open path of 96k splines is the unverified cause of a blank laptop canvas (T87), retest with Untitled-1.dxf
+      if (!open || css !== pc || lw !== pw || dash !== pd || ++run > 5000) {
+        run = 1;
         flush();
         c.strokeStyle = css; c.lineWidth = lw; c.setLineDash(dash === it.dpx && dash ? dash.map((x) => x * dpr / kk) : dash || []);
         c.beginPath(); open = true; pc = css; pw = lw; pd = dash;

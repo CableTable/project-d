@@ -5,7 +5,7 @@ import { group, follow } from './groups.js';
 // The drawing viewer's reader (.dxf), pure: no DOM, no canvas — drawing.test.mjs. dxf-worker.js runs it off the
 // page's thread, viewers.js draws what it gives, and Measure asks pickAt / describe2d / measure2d (geom.js words them).
 //
-//   flatten(readDxf(decodeDxf(bytes))) → { units, layers, items, mats, vports, boxes, left, truncated }
+//   flatten(readDxf(decodeDxf(bytes))) → { units, layers, items, mats, vports, boxes, left, truncated, endsEarly }
 //   an item, in drawing order: { k, m, L, ps, css, lw, dash | dpx, b, … }
 //     k   'p' a path (stroked, or filled with fill: 1) · 'h' a patterned hatch · 't' text · 'w' a wipeout · 'n' a point
 //     m   its matrix, mats[m] (a block's placement; 0 is none) · L its layers (its own, then the blocks' it sits in)
@@ -53,12 +53,14 @@ export function readDxf(text) {
   }
   if (!C.length) throw new DrawingError('This drawing is empty.');
   const doc = { header: {}, layers: Object.create(null), ltypes: Object.create(null), blocks: Object.create(null), entities: [], groups: [] };   // no prototype: a block named "constructor" must not be found
-  let objects = [];
+  let objects = [], endsEarly = false, last = 0;
   for (let i = 0; i < C.length; i++) {
     if (!(C[i] === 0 && V[i].trim() === 'SECTION' && C[i + 1] === 2)) continue;
     const name = V[i + 1].trim();
     let end = i + 2;
     while (end < C.length && !(C[end] === 0 && V[end].trim() === 'ENDSEC')) end++;
+    if (end >= C.length) endsEarly = true;      // a section with no ENDSEC: the file was cut off
+    last = end;
     if (name === 'HEADER') header(doc, C, V, i + 2, end);
     else if (name === 'TABLES') tables(doc, records(C, V, i + 2, end));
     else if (name === 'BLOCKS') blocks(doc, records(C, V, i + 2, end));
@@ -66,6 +68,7 @@ export function readDxf(text) {
     else if (name === 'OBJECTS') objects = records(C, V, i + 2, end);
     i = end;
   }
+  doc.endsEarly = endsEarly || !C.some((c, i) => i > last && c === 0 && V[i].trim() === 'EOF');   // no EOF after the last section
   doc.groups = readGroups(objects, doc.entities);
   restoreDimensionInserts(doc);
   const before = doc.entities;
@@ -608,7 +611,7 @@ export function flatten(doc, hidden = new Set()) {
   for (const v of vports) boxes.paper = unionBox(boxes.paper, [v.cx - v.w / 2, v.cy - v.h / 2, v.cx + v.w / 2, v.cy + v.h / 2]);
   for (const it of items) layers[it.L[0]].n++;
   for (const l of layers) delete l.lt;
-  return { units, layers, items, insertions, mats, vports, boxes, left, truncated };
+  return { units, layers, items, insertions, mats, vports, boxes, left, truncated, endsEarly: !!doc.endsEarly };
 }
 
 /** A filled arrowhead at `tip`, pointing away from `from`. */

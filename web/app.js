@@ -1162,7 +1162,7 @@ async function openBytes(name, buf, path = null) {
   addTab(doc);
   if (dwg && path) rememberRecent(path);
   note(`Opened ${name}: ${doc.entities} entities` + (doc.conv ? ', ' + doc.conv : '') +
-    (fitsSheet(doc.box, state.sheetW, state.sheetH) ? '' : ' (larger than the sheet)') + (fontNote ? '. ' + fontNote : '') + (fl.truncated ? '. Too big to show all of it' : '') + (dwg ? '. Converted from DWG by LibreDWG' : ''));
+    (fitsSheet(doc.box, state.sheetW, state.sheetH) ? '' : ' (larger than the sheet)') + (fontNote ? '. ' + fontNote : '') + (fl.truncated ? '. Too big to show all of it' : '') + (fl.endsEarly ? '. File ends early: parts may be missing' : '') + (dwg ? '. Converted from DWG by LibreDWG' : ''));
   ui.fontNote.textContent = fontNote;
   ui.fontNote.hidden = !fontNote;
   await balLoad(doc, path, name);
