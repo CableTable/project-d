@@ -7,13 +7,64 @@ import { planPdf } from './web/pdf-export.js';
 import { Page, contentStream } from './web/pdf-write.js';
 import { paintPage } from './web/export.js';
 import { copySnapshot, pasteSnapshot } from './web/clipboard.js';
-import { copyEntities, createHistory } from './web/edit.js';
+import { copyEntities, createHistory, joinGaps, makeIndex } from './web/edit.js';
+import { scaleEntities } from './web/scale.js';
+import { apply as gripApply } from './web/gripmode.js';
+import { combine } from './web/combine.js';
+import { newLayout, objectPart, objectPlacement, objectDoc } from './web/layoutdoc.js';
+import { scaleAbout as scalePlacement } from './web/place.js';
 import { explodePolyline, explodeInsert } from './web/explode.js';
 import { joinEntities } from './web/join.js';
 
 const style = (e) => [e.cap, e.join, e.scaleWithObject];
 const defaults = ['butt', 'miter', false];
 const styled = { cap: 'square', join: 'bevel', scaleWithObject: true };
+
+test('TODO 293b: Scale and grip scale multiply explicit widths only when Scale with object is on', () => {
+  for (const scale of [
+    (raw, k) => scaleEntities(raw, new Set(raw.entities.keys()), [0, 0], k),
+    (raw, k) => gripApply(raw, new Set(raw.entities.keys()), 'SCALE', [0, 0], k),
+  ]) for (const on of [false, true]) for (const k of [2, .5]) {
+    const raw = newDoc();
+    addEntities(raw, line(0, 0, 10, 0, { lw: 50, scaleWithObject: on }),
+      lwpoly([[0, 10], [10, 10]], { width: 2, scaleWithObject: on }),
+      line(0, 20, 10, 20, { scaleWithObject: on }),
+      line(0, 30, 10, 30, { lw: -3, scaleWithObject: on }));
+    const before = structuredClone(raw), result = scale(raw, k);
+    assert.equal(result.entities[0].lw, on ? 50 * k : 50);
+    assert.equal(+result.entities[1].r.v[result.entities[1].r.c.indexOf(43)], on ? 2 * k : 2);
+    assert.deepEqual(result.entities.slice(2).map((e) => e.lw), [-1, -3]);
+    assert.deepEqual(raw, before, 'scaling leaves the source intact');
+  }
+});
+
+test('TODO 293b: Combine and Join gap bridges copy the source ends, corners and scale tick', () => {
+  const raw = newDoc();
+  addEntities(raw, line(0, 0, 10, 0, styled), line(10.01, 0, 20, 0, styled));
+  const combined = combine(raw, new Set([0, 1]));
+  assert.deepEqual(style(combined.entities[0]), style(raw.entities[1]));
+  const ed = makeIndex(raw, flatten(raw), new Set());
+  const bridge = joinGaps(raw, ed, [{ x: 10.005, y: 0, ends: [{ e: 0, k: 1 }, { e: 1, k: 0 }] }], 'chamfer');
+  assert.deepEqual(style(bridge.entities.at(-1)), style(raw.entities[0]));
+});
+
+test('TODO 293b: layout object scaling bakes numeric widths with the same on / off rule', () => {
+  for (const on of [false, true]) for (const ent of [line(0, 0, 10, 0, { lw: 50, scaleWithObject: on }),
+    lwpoly([[0, 0], [10, 0]], { width: 2, scaleWithObject: on }), line(0, 0, 10, 0, { scaleWithObject: on })]) {
+    const lay = newLayout('scale'), part = objectPart('o1', 'Line', ent, {});
+    lay.parts.o1 = part; lay.placed.push(scalePlacement(part, objectPlacement(part), [0, 0], 2));
+    const result = objectDoc(lay).raw.entities[0];
+    assert.equal(result.lw, ent.lw > 0 && on ? ent.lw * 2 : ent.lw);
+    if (ent.type === 'LWPOLYLINE') assert.equal(+result.r.v[result.r.c.indexOf(43)], on ? 4 : 2);
+  }
+});
+
+test('TODO 293b: scaling refuses an unrepresentable lineweight before changing the source', () => {
+  const raw = newDoc(); addEntities(raw, line(0, 0, 10, 0, { lw: 20000, scaleWithObject: true }));
+  const before = structuredClone(raw);
+  assert.throws(() => scaleEntities(raw, new Set([0]), [0, 0], 2), /outline width exceeds/);
+  assert.deepEqual(raw, before);
+});
 
 test('TODO 293a: entity defaults and PROJECTD xdata round trip, including blocks and legacy polylines', () => {
   const raw = newDoc();

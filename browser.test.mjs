@@ -16182,6 +16182,88 @@ try {
     await page.keyboard.press('Control+1'); await closeTabs(/./);
   });
 
+  await step('TODO 293b: Properties Ends, Corners and Scale with object, tab parity, Undo and 1024 / 1440 light / dark', async () => {
+    await closeTabs(/./);
+    const route293b = (route) => route.fulfill({ contentType: 'text/javascript', body: readFileSync('web/app.js', 'utf8') + `
+      window.pick293b = (ids) => { if (curLay()) { selectMany(ids); update(); } else setSel(editable(), new Set(ids)); };
+      window.probe293b = () => { const d = propDoc(); return { entities: d.raw.entities, labels: d.hist.labels().past }; };
+    ` });
+    await page.route('**/app.js', route293b); await page.reload();
+    const pick = async (ids) => { await page.evaluate((ids) => window.pick293b(ids), ids); await frames(); };
+    const probe = () => page.evaluate(() => window.probe293b());
+    const style = (e) => [e.cap, e.join, e.scaleWithObject];
+    try {
+      for (const kind of ['drawing', 'layout', 'compare']) {
+        const raw = newDoc(4);
+        addEntities(raw, dxfLine(100, 100, 180, 100, { lw: 200 }), dxfLine(100, 140, 180, 140, { cap: 'square', join: 'round', scaleWithObject: true }));
+        if (kind === 'layout') {
+          const lay = newLayout('ends293b');
+          raw.entities.forEach((ent, i) => { const id = 'o' + i; lay.parts[id] = objectPart(id, 'Line ' + i, ent, raw.layers); lay.placed.push(objectPlacement(lay.parts[id])); });
+          await open97c(layoutRaw(lay), 'ends293b-layout.dxf');
+        } else {
+          await open97c(raw, 'ends293b-' + kind + '.dxf');
+          if (kind === 'compare') await typeCmd('compare');
+        }
+        await pick([0]); await propsOnNow();
+        assert.equal(await t('prop-ends').inputValue(), 'butt');
+        assert.equal(await t('prop-corners').inputValue(), 'miter');
+        assert.equal(await t('prop-scale-object').isChecked(), false);
+        assert.deepEqual(await t('prop-ends').locator('option').allTextContents(), ['Butt', 'Round', 'Square']);
+        assert.deepEqual(await t('prop-corners').locator('option').allTextContents(), ['Miter', 'Round', 'Bevel']);
+        const before = await probe();
+        await t('prop-ends').selectOption('round');
+        await t('prop-corners').selectOption('bevel');
+        await t('prop-scale-object').check();
+        assert.deepEqual(style((await probe()).entities[0]), ['round', 'bevel', true]);
+        assert.equal((await probe()).labels.length, before.labels.length + 3, 'one Undo per change');
+        const scale = t(kind === 'layout' ? 'pscale' : 'sel-scale');
+        if (kind === 'layout') await page.locator('[data-ribbon-tab=Part]').click();
+        await scale.fill('200'); await scale.press('Enter'); await frames();
+        assert.equal((await probe()).entities[0].lw, 400, kind + ' Scale multiplies the opted-in width');
+        await key97c('Control+z'); await pick([0]); await propsOnNow();
+        assert.equal((await probe()).entities[0].lw, 200);
+        for (const width of [1024, 1440]) for (const theme of ['light', 'dark']) {
+          await page.setViewportSize({ width, height: 900 });
+          await menuItem('View', 'Theme: ' + theme); await frames();
+          await t('prop-line-ends').scrollIntoViewIfNeeded();
+          assert.equal(await t('prop-line-ends').evaluate((el) => {
+            const r = el.getBoundingClientRect();
+            return r.left >= 0 && r.right <= innerWidth && [...el.querySelectorAll('input, select')].every((c) => {
+              const b = c.getBoundingClientRect(); return b.left >= r.left && b.right <= r.right + 1 && b.bottom <= innerHeight;
+            });
+          }), true, kind + ' controls fit');
+          const path = `${shotDir}/todo293b-${kind}-${width}-${theme}.png`;
+          await page.screenshot({ path }); assert.ok(readFileSync(path).length > 1000);
+        }
+        await key97c('Control+z'); await pick([0]);
+        assert.deepEqual(style((await probe()).entities[0]), ['round', 'bevel', false]);
+        await key97c('Control+z'); await pick([0]);
+        assert.deepEqual(style((await probe()).entities[0]), ['round', 'miter', false]);
+        await key97c('Control+z'); await pick([0, 1]);
+        assert.deepEqual((await probe()).entities.map(style), before.entities.map(style));
+        assert.equal(await t('prop-ends').inputValue(), '');
+        assert.equal(await t('prop-corners').inputValue(), '');
+        assert.equal(await t('prop-scale-object').evaluate((el) => el.indeterminate), true);
+        assert.match(await t('prop-line-ends').textContent(), /varies/);
+        for (const [id, value] of [['prop-ends', 'round'], ['prop-corners', 'bevel'], ['prop-scale-object', true]]) {
+          const old = await probe();
+          if (value === true) await t(id).check(); else await t(id).selectOption(value);
+          assert.equal((await probe()).labels.length, old.labels.length + 1, 'one step for the whole selection');
+          await key97c('Control+z'); await pick([0, 1]);
+          assert.deepEqual((await probe()).entities.map(style), old.entities.map(style));
+        }
+        await pick([0]);
+        await t('prop-width').locator('[data-width="0.5"]').click();
+        assert.equal((await probe()).entities[0].lw, 50, 'source remains editable');
+        await closeTabs(/./);
+      }
+    } finally {
+      await page.setViewportSize({ width: 1440, height: 900 });
+      await page.unroute('**/app.js', route293b); await page.reload();
+      await t('count').waitFor({ state: 'attached' });
+    }
+  });
+
   await step('Outline width: presets, Custom, varies, one undo for the selection, polyline save and light/dark screenshots (TODO 48)', async () => {
     await propsOpen(); await propsOnNow(); await click(70, 30); await frames();
     const preset = (value) => t('prop-width').locator(`[data-width="${value}"]`);

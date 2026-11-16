@@ -2424,6 +2424,11 @@ function editSelected(fn, { copy = false, key = '', pick = false, label = 'Edit'
   let idxs;
   if (copy) { const gm = {}; idxs = nexts.map((n) => { lay.placed.push(fresh(n, gm)); return lay.placed.length - 1; }); }
   else { idxs = gLooseMany(g, items.map((x) => x.i)); nexts.forEach((n, k) => { lay.placed[idxs[k]] = n; }); }
+  const scaledObjects = new Set(idxs.filter((_, k) => items[k].part.obj && (nexts[k].sc || 1) !== (curs[k].sc || 1)));
+  if (scaledObjects.size) {
+    const v = LD.objectDoc(lay);
+    for (const ent of v.raw.entities) if (scaledObjects.has(v.at.get(ent))) LD.objectReplace(lay, v, ent, ent, () => 'o' + uid());
+  }
   gCommit(g);
   if (copy || pick) { state.mode = 'select'; state.pivot = centrePivot(); }
   selLooseMany = idxs; update();
@@ -5770,7 +5775,7 @@ function shapeSelection(op) {
   const kept = Ed.removeEntities(d.raw, gone);
   const made = r.rings.map((ring, i) => {
     const src = d.raw.entities[Math.min(...found.loops[r.operands[r.sources[i]].loops[0]].ents)];
-    return lwpoly(ring, op === 'boundary' ? { closed: true, layer: curLayerName(d.vlay || d) } : { closed: true, layer: src.layer, lt: src.lt, aci: src.aci, tc: src.tc, lw: src.lw, lts: src.lts, hidden: src.hidden, ps: src.ps });
+    return lwpoly(ring, op === 'boundary' ? { closed: true, layer: curLayerName(d.vlay || d) } : { closed: true, layer: src.layer, lt: src.lt, aci: src.aci, tc: src.tc, lw: src.lw, cap: src.cap, join: src.join, scaleWithObject: src.scaleWithObject, lts: src.lts, hidden: src.hidden, ps: src.ps });
   }), at = kept.entities.length;
   const had = lay ? new Set(Object.keys(lay.parts)) : null;
   let groups = swapGroups(d.raw.groups, d.raw.entities.length, SH.ringsOf(op, found.loops, r, gone));
@@ -6568,7 +6573,7 @@ function selectionTyped(input, kind) {
     const cx = (b[0] + b[2]) / 2, cy = (b[1] + b[3]) / 2;
     const next = position ? Ed.moveEntities(d.raw, selection, kind === 'x' ? delta : 0, kind === 'y' ? delta : 0)
       : kind === 'rotation' ? rotateEntities(d.raw, selection, [cx, cy], value)
-      : Ed.resizeAbout(d.raw, value / 100, value / 100, cx, cy, spaceOf(d.fl), selection);
+      : scaleEntities(d.raw, selection, [cx, cy], value / 100);
     if (next.skipped && Object.keys(next.skipped).length) { note('Cannot resize this selection: some objects do not support scaling'); return; }
     const label = position ? 'Move' : kind === 'rotation' ? 'Rotate' : 'Scale';
     view.fitted = false;
@@ -11191,6 +11196,11 @@ function buildPropsSection() {
     h('div', { class: 'proprow widthhead' }, h('b', {}, 'Outline width'), ui.propWidthHint), ui.propWidthPresets,
     h('label', { class: 'proprow' }, h('span', { class: 'lbl' }, 'Custom'), ui.propWidthInput, ui.propWidthUnits),
     h('p', { class: 'lbl widthnote' }, 'True width on screen · scales with zoom'));
+  ui.propEnds = h('select', { class: 'fld', 'aria-label': 'Ends', 'data-testid': 'prop-ends', onchange: (e) => propLineEndSet('cap', e.target.value) });
+  ui.propCorners = h('select', { class: 'fld', 'aria-label': 'Corners', 'data-testid': 'prop-corners', onchange: (e) => propLineEndSet('join', e.target.value) });
+  ui.propScale = h('input', { type: 'checkbox', 'aria-label': 'Scale with object', 'data-testid': 'prop-scale-object', onchange: (e) => propLineEndSet('scaleWithObject', e.target.checked) });
+  ui.propScaleHint = h('span', { class: 'lbl' });
+  ui.propLineEnds = h('div', { class: 'propbody', 'data-testid': 'prop-line-ends' }, row('Ends', ui.propEnds), row('Corners', ui.propCorners), h('label', { class: 'proprow' }, ui.propScale, h('span', {}, 'Scale with object'), ui.propScaleHint));
   ui.propGeo = h('div', { class: 'propgeo', 'data-testid': 'prop-geo' });
   ui.propSimilar = h('button', { class: 'btn', type: 'button', 'data-testid': 'prop-similar', title: 'Select every shape like the first one selected', onclick: (e) => selectSimilarMenu(e.currentTarget) }, 'Select similar ▾');
   ui.propQuick = h('button', { class: 'btn', type: 'button', 'data-testid': 'prop-qselect', onclick: startQuickSelect }, 'Quick Select');
@@ -11199,7 +11209,7 @@ function buildPropsSection() {
   ui.propEmpty = h('div', { class: 'lbl', 'data-testid': 'prop-empty' });
   ui.propCommon = h('div', { class: 'propbody' }, row('Layer', ui.propLayer), row('Colour', ui.propSwatch, ui.propColour), ui.propFillRow, row('Line type', ui.propLt));
   ui.propButtons = h('div', { class: 'proprow btns' }, ui.propSimilar, ui.propQuick, ui.propMatch);
-  ui.propBody = h('div', { class: 'propbody' }, ui.propCommon, ui.propWidth, ui.propGeo);
+  ui.propBody = h('div', { class: 'propbody' }, ui.propCommon, ui.propWidth, ui.propLineEnds, ui.propGeo);
   ui.propSec = h('section', { class: 'propbox', hidden: true, 'data-testid': 'props-panel' },
     h('div', { class: 'layers-head' }, h('h2', { class: 'sec' }, 'Properties'), ui.propChip), ui.propEmpty, ui.propBody, ui.propButtons);
   return ui.propSec;
@@ -11255,6 +11265,13 @@ function renderPropsPanel(d) {
     ui.propWidthInput.value = typeof width === 'number' ? String(+width.toPrecision(10)) : '';
     ui.propWidthInput.placeholder = width == null ? VARIES : typeof width === 'string' ? width : '';
   }
+  for (const [control, key, values] of [[ui.propEnds, 'cap', ['butt', 'round', 'square']], [ui.propCorners, 'join', ['miter', 'round', 'bevel']]]) {
+    const value = all[0]?.[key] || values[0], mixed = all.some((e) => (e[key] || values[0]) !== value);
+    setSelect(control, [...(mixed ? [['', VARIES]] : []), ...values.map((v) => [v, v[0].toUpperCase() + v.slice(1)])], mixed ? '' : value);
+  }
+  ui.propScale.checked = all[0]?.scaleWithObject === true;
+  ui.propScale.indeterminate = all.some((e) => !!e.scaleWithObject !== ui.propScale.checked);
+  ui.propScaleHint.textContent = ui.propScale.indeterminate ? VARIES : '';
   if (none) return;
   const closed = ents.filter(FI.closedOutline), fill = closed[0]?.fill;
   ui.propFillRow.hidden = !closed.length;
@@ -11311,6 +11328,13 @@ function propCommit(d, label, fn, all = false, widthOnly = false) {
   return repl.size;
 }
 let recentWidths = [];
+function propLineEndSet(key, value) {
+  const d = propDoc();
+  if (!d || value === '') return;
+  const label = key === 'cap' ? 'Ends' : key === 'join' ? 'Corners' : 'Scale with object';
+  propCommit(d, label, (ent) => ent[key] === value ? null : { ...ent, [key]: value }, true);
+  renderEdit();
+}
 function ribbonCustomWidth(control = ui.ribbonWidth) {
   renderEdit();                       // Custom… is an action; the list keeps showing the selection's width.
   const value = control.value, r = control.getBoundingClientRect();

@@ -809,7 +809,7 @@ function meetPoint(Pa, A, Pb, B, far) {
 
 const deg360 = (a) => { let v = a * 180 / Math.PI % 360; if (v < 0) v += 360; return v; };
 /** The properties a new piece takes from `src` (layer, colour, line type). */
-const like = (s) => ({ layer: s.layer, lt: s.lt, aci: s.aci, tc: s.tc, lw: s.lw, lts: s.lts, ps: s.ps });
+const like = (s) => ({ layer: s.layer, lt: s.lt, aci: s.aci, tc: s.tc, lw: s.lw, cap: s.cap, join: s.join, scaleWithObject: s.scaleWithObject, lts: s.lts, ps: s.ps });
 const lineEntity = (src, p, q) => line(p[0], p[1], q[0], q[1], like(src));
 const arcEntity = (src, c, R, a0, a1) => arc(c[0], c[1], R, deg360(a0), deg360(a1), like(src));
 const BEZIER_PIECES = 12;

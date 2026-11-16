@@ -74,7 +74,7 @@ export function combine(raw, selection, locked = new Set(), reserved = new Set()
   let n = 1; while (taken.has((PREFIX + n).toLowerCase())) n++;
   const name = PREFIX + n, closed = members.filter(closedOutline);
   const hatch = key && closed.length ? fillHatch({ ...closed[0], fill: key, layer: '0' }, closed.slice(1)) : null;
-  const made = insert(name, 0, 0, { layer: last.layer, aci: last.aci, tc: last.tc, lw: last.lw, lt: last.lt, lts: last.lts, ps: last.ps });
+  const made = insert(name, 0, 0, { layer: last.layer, aci: last.aci, tc: last.tc, lw: last.lw, cap: last.cap, join: last.join, scaleWithObject: last.scaleWithObject, lt: last.lt, lts: last.lts, ps: last.ps });
   const first = Math.min(...picked), entities = [];
   raw.entities.forEach((e, i) => { if (i === first) entities.push(made); if (!selection.has(i)) entities.push(e); });
   const blocks = { ...raw.blocks, [name]: { base: [0, 0], xref: false, entities: hatch ? [hatch, ...members] : members } };
