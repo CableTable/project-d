@@ -2259,10 +2259,14 @@ function showHistory() {
       if (restore(target, st) === false) { target.hist[forward ? 'undo' : 'redo'](st); return; }       // the refused step goes back where it was
     } else {
       let st = d.lay ? laySnap(d.lay) : snapshotOf(d);
-      for (let i = 0; i < Math.abs(r - now); i++) st = stepHist(d, dir, st);
+      let blSize = false;
+      for (let i = 0; i < Math.abs(r - now); i++) {
+        st = stepHist(d, dir, st);
+        blSize ||= !!st?.blSize;
+      }
       if (!st) return;
       if (d.lay) layRestore(d, st);
-      else if (restore(d, st) === false) { hist[forward ? 'undoMany' : 'redoMany'](Math.abs(r - now), st); return; }       // the whole jump goes back where it was
+      else if (restore(d, { ...st, blSize }) === false) { hist[forward ? 'undoMany' : 'redoMany'](Math.abs(r - now), st); return; }       // the whole jump goes back where it was
     }
     const current = historyOf(d), step = (d.cmp ? current.undoHistory : current)?.currentStep;
     if (step?.grip) {
