@@ -936,7 +936,7 @@ const text = (n) => String(+n.toPrecision(15));
 // per type: the x codes that are points (moved about the anchor) and vectors (only scaled), and the codes that are lengths
 export const SPEC = {
   LINE: { pts: [10, 11] }, POINT: { pts: [10] }, CIRCLE: { pts: [10], len: [39, 40] }, ARC: { pts: [10], len: [39, 40] },
-  ELLIPSE: { pts: [10], vec: [11] }, LWPOLYLINE: { pts: [10], len: [38, 39, 40, 41, 43] }, POLYLINE: { pts: [], len: [39, 40, 41], z: [30] },
+  ELLIPSE: { pts: [10], vec: [11] }, IMAGE: { pts: [10], vec: [11, 12] }, LWPOLYLINE: { pts: [10], len: [38, 39, 40, 41, 43] }, POLYLINE: { pts: [], len: [39, 40, 41], z: [30] },
   VERTEX: { pts: [10], len: [40, 41] }, SPLINE: { pts: [10, 11] }, SOLID: { pts: [10, 11, 12, 13], len: [39] }, TRACE: { pts: [10, 11, 12, 13], len: [39] },
   '3DFACE': { pts: [10, 11, 12, 13] }, TEXT: { pts: [10, 11], len: [39, 40] }, ATTRIB: { pts: [10, 11], len: [39, 40] }, ATTDEF: { pts: [10, 11], len: [39, 40] },
   MTEXT: { pts: [10], len: [40, 41, 42, 43] }, INSERT: { pts: [10], len: [44, 45] },

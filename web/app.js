@@ -1201,8 +1201,25 @@ async function openBytes(name, buf, path = null) {
   note('Reading ' + name + '…');
   const r = await readDrawing(buf instanceof ArrayBuffer ? buf : buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength));
   if (!r.ok) { note(name + ': ' + (r.sorry || 'could not read this drawing' + (r.error ? ' (' + r.error + ')' : ''))); return; }
+  const t = window.__TAURI__;
+  if (path && t?.fs?.readFile) {
+    for (const e of [...r.doc.entities, ...Object.values(r.doc.blocks).flatMap((b) => b.entities)]) {
+      const file = e.r?.file;
+      if (e.type !== 'IMAGE' || !file || !/^[^<>:"/\\|?*\x00-\x1f]+\.png$/i.test(file)) continue; // only a sibling PNG, never a file-supplied path
+      try {
+        const bytes = await t.fs.readFile(path.replace(/[^\\/]+$/, '') + file);
+        const reader = new FileReader();
+        e.r.px = await new Promise((resolve, reject) => {
+          reader.onload = () => resolve(reader.result); reader.onerror = () => reject(reader.error);
+          reader.readAsDataURL(new Blob([bytes], { type: 'image/png' }));
+        });
+      } catch { /* Missing or unreadable sibling: keep the undrawn IMAGE. */ }
+    }
+    r.result = flatten(r.doc);
+  }
+  await preloadPictures(r.result.items);
   const fl = r.result;
-  if (!fl.items.length) { note(name + (fl.truncated ? ': too big to show all of it, so nothing is drawn' : ': this drawing is empty')); return; }
+  if (!fl.items.length && !r.doc.entities.some((e) => e.type === 'IMAGE')) { note(name + (fl.truncated ? ': too big to show all of it, so nothing is drawn' : ': this drawing is empty')); return; }
   const subs = fontSubstitutions(r.doc.styles, fl.items);
   const fontNote = subs.length ? 'Fonts: ' + subs.map(({ asked, shown }) => `${asked} → ${shown}`).join(', ') : '';
   const lay = LD.layoutFromRaw(r.doc, name);
@@ -3577,7 +3594,12 @@ async function recoverOne(c, target = null) {
   try {
     const r = await readDrawing(new TextEncoder().encode(c.dxf).buffer);
     if (!r.ok) return false;
-    if (c.pics?.length) { r.doc.entities.push(...c.pics); r.result = flatten(r.doc); await preloadPictures(r.result.items); }       // the saved DXF has no IMAGEs (305a); at the end, so the groups' indexes stay
+    if (c.pics?.length) {
+      const images = r.doc.entities.filter((e) => e.type === 'IMAGE' && /^drawing-img\d+\.png$/.test(e.r.file));
+      if (images.length === c.pics.length) images.forEach((e, i) => { e.r.px = c.pics[i].r.px; });
+      else r.doc.entities.push(...c.pics); // 305a recovery copies predate IMAGE output.
+      r.result = flatten(r.doc); await preloadPictures(r.result.items);
+    }
     const lay = c.kind === 'layout' ? LD.layoutFromRaw(r.doc, c.name) : null;
     const openPath = (target ? c.openPath : null) || (c.saved ? null : c.path); // a fallback drawing tab must not claim the PDF (openBytes would call it "already open")
     const doc = lay ? { name: c.name, path: c.path, openPath, dirty: true, lay, titleBlock: readTitleBlock(r.doc), fromFile: c.fromFile, saved: c.saved }
@@ -3648,11 +3670,25 @@ async function offerRecovery() {
 }
 
 /** Browser fallback: the file goes to the Downloads folder. */
-function download(name, text) {
-  const url = URL.createObjectURL(new Blob([text], { type: 'application/dxf' }));
+function download(name, text, type = 'application/dxf') {
+  const url = URL.createObjectURL(new Blob([text], { type }));
   const a = h('a', { href: url, download: name });
   document.body.append(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+
+/** Write the DXF and its pictures through the same destination, using the final chosen file name. */
+async function writeDrawing(raw, name, path, opts = {}) {
+  const report = writeDxfWithReport(raw, { ...opts, name }), t = window.__TAURI__;
+  const bytes = (px) => Uint8Array.from(atob(px.slice(px.indexOf(',') + 1)), (c) => c.charCodeAt(0));
+  if (path && t?.fs?.writeTextFile) {
+    for (const pic of report.pictures) await t.fs.writeFile(path.replace(/[^\\/]+$/, '') + pic.name, bytes(pic.px));
+    await t.fs.writeTextFile(path, report.text);
+  } else {
+    download(name, report.text);
+    for (const pic of report.pictures) download(pic.name, bytes(pic.px), 'image/png');
+  }
+  return report;
 }
 
 /**
@@ -3683,7 +3719,6 @@ async function save(forceAs) {
   const ask = forceAs || lossy || first || (d.lay && !d.saved) || (d.scratch && !d.saved);
   const t = window.__TAURI__;
   try {
-    const { text, tables, skipped } = writeDxfWithReport(raw, { escapeUnicode: true, extents: d.lay || !d.fl ? null : d.fl.boxes.model });
     let path = d.path, name = d.name;
     if (t && t.dialog && t.dialog.save && t.fs && t.fs.writeTextFile) {
       if (ask || !path) {
@@ -3699,12 +3734,11 @@ async function save(forceAs) {
       if (d.openPath && pathKey(path) === pathKey(d.openPath)) { note('Pick another name: that is the opened file, and Save never writes over it'); return; }
       const key = pathKey(path);
       if (state.docs.some((o) => o !== d && [o.path, o.openPath].some((p) => p && pathKey(p) === key))) { note(`Pick another name: ${path.split(/[\\/]/).pop()} is open in another tab`); return; }
-      await t.fs.writeTextFile(path, text);
       name = path.split(/[\\/]/).pop();
     } else {
       name = ask || !path ? want : dxfName(d.name);
-      download(name, text);
     }
+    const { tables, skipped } = await writeDrawing(raw, name, path, { escapeUnicode: true, extents: d.lay || !d.fl ? null : d.fl.boxes.model });
     let unitError = '';
     try { await unitsSave(d, path, name); }
     catch (err) { unitError = err.message || String(err); d.unitsDirty = true; }
@@ -3766,17 +3800,18 @@ function exportDxf() {
     const want = dxfName(name.value.trim()), settings = { units: units.value || undefined, scale: +scale.value, precision: +precision.value, escapeUnicode: true };
     finish();
     try {
-      const report = writeDxfWithReport(rawForSave(d), settings), t = window.__TAURI__;
+      const t = window.__TAURI__;
       try { localStorage.setItem('pd-export-dxf-precision', String(settings.precision)); } catch { /* local settings may be unavailable */ }
-      let written = want;
+      let written = want, destination = null;
       if (t && t.dialog?.save && t.fs?.writeTextFile) {
         let path = await t.dialog.save({ defaultPath: saveDefault(want, d.path || d.openPath), filters: [{ name: 'DXF drawing', extensions: ['dxf'] }] });
         if (!path) return;
         path = await withExt(t, path, 'dxf'); if (!path) return;
         if ([d.openPath, d.path].some((p) => p && pathKey(path) === pathKey(p))) { note('Pick another name: that is the drawing file, and Export never writes over it'); return; }
-        await t.fs.writeTextFile(path, report.text);
+        destination = path;
         written = path.split(/[\\/]/).pop();
-      } else download(want, report.text);
+      }
+      const report = await writeDrawing(rawForSave(d), written, destination, settings);
       note('Exported ' + written + saveReportNote(report));
     } catch (e) { note('Export failed: ' + (e?.message || e)); }
   };

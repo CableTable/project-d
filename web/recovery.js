@@ -4,7 +4,7 @@
 //
 // A record: { id (the tab or PDF sheet's recovery id), name, path, openPath, pdfPages, pdfHash (SHA-256 of the source PDF, 64 lowercase hex, or null), kind ('drawing' | 'layout'), dxf (the text Save would write), balloons (sidecar text or null), unit (string or null), t (ms), tab, sheet,
 //             saved, fromFile, fromPdf, acceptedLoss (the tab's Save state, so Save works as before after a recovery),
-//             pics (the IMAGE entities with pixels: DXF Save leaves them out, the copy keeps them whole) }.
+//             pics (the IMAGE entities with pixels: DXF text has references only, the copy keeps the pixels) }.
 import { idbStore } from './idbstore.js';
 import { isPng } from './pictures.js';
 
@@ -38,7 +38,7 @@ export function recoverPrompt(copies, now = Date.now()) {
   const n = copies.length, newest = Math.max(...copies.map((c) => c.t || 0));
   return `Recover ${n} unsaved ${n === 1 ? 'drawing' : 'drawings'} from ${timeText(newest, now)}?`;
 }
-/** A picture the saved DXF cannot hold (an IMAGE with pixels in r.px, TODO 305a): the copy keeps it beside the DXF text as `pics`. */
+/** An IMAGE with pixels in r.px: the copy keeps the pixels beside the DXF text as `pics`. */
 export const isPicture = (e) => !!e && e.type === 'IMAGE' && !!e.r && Array.isArray(e.r.c) && Array.isArray(e.r.v) && isPng(e.r.px);
 /** Valid copies only (a record from storage is data, not trusted): the fields the recovery needs, in the right types. */
 export function cleanCopies(list) {

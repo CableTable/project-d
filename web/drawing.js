@@ -74,6 +74,12 @@ export function readDxf(text) {
   }
   doc.endsEarly = endsEarly || !C.some((c, i) => i > last && c === 0 && V[i].trim() === 'EOF');   // no EOF after the last section
   doc.groups = readGroups(objects, doc.entities);
+  const imageFiles = new Map(objects.filter((r) => r.type === 'IMAGEDEF').map((r) => {
+    const f = firsts(r); return [(f[5] || '').trim().toUpperCase(), f[1]?.trim()];
+  }));
+  for (const e of [...doc.entities, ...Object.values(doc.blocks).flatMap((b) => b.entities)]) {
+    if (e.type === 'IMAGE') e.r.file = imageFiles.get((firsts(e.r)[340] || '').trim().toUpperCase());
+  }
   restoreDimensionInserts(doc);
   const before = doc.entities;
   linkFills(doc);

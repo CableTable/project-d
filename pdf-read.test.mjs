@@ -377,5 +377,5 @@ test('TODO 305a: a picture becomes an IMAGE with its place from the ctm (to 0.01
   const ix = D.pickIndex(flat, false), at = D.pickAt(ix, mm(100) + mm(20) * 0.5, mm(10) + mm(10) * 0.5, 0.01);       // on the bottom edge's middle (u/2 along)
   assert.equal(at.ent?.it, flat.items.indexOf(item), 'the frame is pickable');
   const w = W.writeDxf(r.doc);
-  assert.ok(!w.includes('data:image') && !/\nIMAGE\r?\n/.test(w), 'DXF Save leaves the picture out (305b writes it)');
+  assert.ok(!w.includes('data:image') && /\nIMAGE\r?\n/.test(w), 'DXF Save writes the IMAGE reference without pixels (305b)');
 });

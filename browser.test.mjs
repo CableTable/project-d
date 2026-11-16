@@ -7766,6 +7766,113 @@ try {
     return { name: 'pictures.pdf', mimeType: 'application/pdf', buffer: Buffer.from(pdf) };
   };
 
+  await step('TODO 305b: Save as DXF writes sibling PNGs; desktop reopen draws them; browser reopen keeps undrawn IMAGEs; Export uses the chosen name', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    try {
+      const p = await context.newPage(), q = (id) => p.getByTestId(id);
+      p.on('pageerror', (e) => errors.push(String(e)));
+      const menu = async (name) => { await p.locator('[data-menu=File]').click(); await p.getByRole('menuitem', { name, exact: true }).click(); };
+      const prompt = (text) => p.waitForFunction((text) => document.querySelector('[data-testid=cmd-prompt]').textContent.startsWith(text), text);
+      const ink = () => q('drawing').evaluate((c) => {
+        const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data, n = [0, 0];
+        for (let i = 0; i < d.length; i += 4) {
+          if (Math.abs(d[i] - 220) < 12 && Math.abs(d[i + 1] - 40) < 12 && Math.abs(d[i + 2] - 40) < 12) n[0]++;
+          if (Math.abs(d[i] - 40) < 12 && Math.abs(d[i + 1] - 80) < 12 && Math.abs(d[i + 2] - 220) < 12) n[1]++;
+        }
+        return n;
+      });
+      const picturesShown = async () => {
+        for (let i = 0; i < 80; i++) { const n = await ink(); if (n.every((n) => n > 100)) return; await p.waitForTimeout(100); }
+        assert.fail('both pictures should be drawn');
+      };
+      await p.goto(URL_ + '?autosave=86400000');
+      await q('picker').setInputFiles(picturesPdf()); await prompt('Opened pictures.pdf'); await picturesShown();
+      const downloads = []; p.on('download', (d) => downloads.push(d));
+      await Promise.all([p.waitForEvent('download', { predicate: (d) => d.suggestedFilename() === 'pictures-img2.png' }), menu('Save As…')]);
+      await prompt('Saved pictures.dxf');
+      const files = new Map();
+      for (const d of downloads) files.set(d.suggestedFilename(), readFileSync(await d.path()));
+      assert.deepEqual([...files.keys()].sort(), ['pictures-img1.png', 'pictures-img2.png', 'pictures.dxf']);
+      for (const name of ['pictures-img1.png', 'pictures-img2.png']) {
+        assert.deepEqual([...files.get(name).subarray(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10]);
+        assert.equal(files.get(name).readUInt32BE(16), 2); assert.equal(files.get(name).readUInt32BE(20), 2);
+      }
+      const text = files.get('pictures.dxf').toString('utf8'), raw = readDxf(text);
+      assert.equal(raw.entities.filter((e) => e.type === 'IMAGE').length, 2);
+      assert.doesNotMatch(text, /data:image|base64/);
+      await q('picker').setInputFiles({ name: 'pictures.dxf', mimeType: 'application/dxf', buffer: files.get('pictures.dxf') });
+      await prompt('Opened pictures.dxf');
+      assert.deepEqual(await ink(), [0, 0], 'a browser picker cannot read sibling PNGs: IMAGEs remain undrawn');
+      assert.match(await q('cmd-prompt').textContent(), /3 entities/);
+
+      // Desktop filesystem boundary: the same binary and text writes the exe uses, with a renamed final picker path.
+      await p.evaluate(() => {
+        window.__pics305 = { files: {}, next: 'C:/jobs/renamed.dxf', writes: [], fail: false };
+        window.__TAURI__ = {
+          dialog: { save: async () => window.__pics305.next, open: async () => window.__pics305.next, ask: async () => true },
+          fs: {
+            exists: async () => false,
+            readFile: async (path) => { const b = window.__pics305.files[path]; if (!b) throw new Error('missing sibling'); return Uint8Array.from(b); },
+            writeFile: async (path, bytes) => { if (window.__pics305.fail) throw new Error('PNG write failed'); window.__pics305.files[path] = [...bytes]; window.__pics305.writes.push(path); },
+            writeTextFile: async (path, text) => { window.__pics305.files[path] = [...new TextEncoder().encode(text)]; window.__pics305.writes.push(path); },
+          },
+        };
+      });
+      await q('picker').setInputFiles(picturesPdf()); await prompt('Opened pictures.pdf');
+      await menu('Save As…'); await prompt('Saved renamed.dxf');
+      const saved = await p.evaluate(() => window.__pics305.files);
+      assert.deepEqual(Object.keys(saved).sort(), ['C:/jobs/renamed-img1.png', 'C:/jobs/renamed-img2.png', 'C:/jobs/renamed.dxf']);
+      const nativeRaw = readDxf(Buffer.from(saved['C:/jobs/renamed.dxf']).toString('utf8'));
+      assert.deepEqual(nativeRaw.entities.filter((e) => e.type === 'IMAGE').map((e) => e.r.file), ['renamed-img1.png', 'renamed-img2.png']);
+      await p.locator('.dtab.on .x').click(); await menu('Open…'); await prompt('Opened renamed.dxf'); await picturesShown();
+      await p.screenshot({ path: shotDir + '/305b-reopen-light.png' });
+      await p.locator('[data-menu=View]').click(); await p.getByRole('menuitemcheckbox', { name: /Theme: dark/ }).click();
+      await p.screenshot({ path: shotDir + '/305b-reopen-dark.png' });
+      await p.evaluate(() => { window.__pics305.next = 'C:/jobs/final-export.dxf'; });
+      await menu('Export DXF…'); await q('export-dxf-name').fill('ignored-dialog-name.dxf');
+      await q('export-dxf-scale').fill('2'); await q('export-dxf-units').selectOption('in'); await q('export-dxf-go').click();
+      await prompt('Exported final-export.dxf');
+      const exported = await p.evaluate(() => window.__pics305.files);
+      for (let k = 1; k <= 2; k++) assert.ok(exported[`C:/jobs/final-export-img${k}.png`]);
+      const exp = readDxf(Buffer.from(exported['C:/jobs/final-export.dxf']).toString('utf8'));
+      assert.equal(exp.header.$INSUNITS, '1');
+      assert.equal(exp.entities.find((e) => e.type === 'IMAGE').r.file, 'final-export-img1.png');
+      assert.equal(await p.locator('.dtab.on .tname').textContent(), 'renamed.dxf', 'Export keeps the source name');
+      await p.evaluate(() => { window.__pics305.fail = true; window.__pics305.next = 'C:/jobs/failed.dxf'; });
+      await menu('Save As…'); await prompt('Save failed: PNG write failed');
+      assert.equal(await p.evaluate(() => window.__pics305.files['C:/jobs/failed.dxf']), undefined, 'no completed DXF after PNG failure');
+      await p.evaluate(() => { delete window.__pics305.files['C:/jobs/renamed-img1.png']; delete window.__pics305.files['C:/jobs/renamed-img2.png']; window.__pics305.next = 'C:/jobs/renamed.dxf'; });
+      await p.locator('.dtab.on .x').click(); await menu('Open…'); await prompt('Opened renamed.dxf');
+      assert.deepEqual(await ink(), [0, 0], 'missing native siblings leave undrawn IMAGEs');
+    } finally { await context.close(); }
+  });
+
+  await step('TODO 305b recovery: stored pixels attach to saved IMAGEs once, and older copies still recover', async () => {
+    for (const legacy of [false, true]) {
+      const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+      try {
+        const p = await context.newPage(), q = (id) => panelControl(p, p.getByTestId(id));
+        p.on('pageerror', (e) => errors.push(String(e)));
+        await p.goto(URL_ + '?autosave=86400000');
+        await p.evaluate(async ({ legacy, pdf }) => {
+          const { readPdf } = await import('./pdf-read.js'), { writeDxf } = await import('./dxf-write.js');
+          const { doc } = await readPdf(Uint8Array.from(pdf));
+          const pics = doc.entities.filter((e) => e.type === 'IMAGE');
+          if (legacy) doc.entities = doc.entities.filter((e) => e.type !== 'IMAGE');
+          await (await import('./recovery.js')).saveCopy({ id: '305b', name: 'recovered.dxf', kind: 'drawing', dxf: writeDxf(doc), pics, t: Date.now() });
+        }, { legacy, pdf: [...picturesPdf().buffer] });
+        await p.reload(); await q('recover-ok').click(); await q('recover-dialog').waitFor({ state: 'detached' });
+        await p.waitForFunction(() => document.querySelector('[data-testid=cmd-prompt]').textContent.startsWith('Recovered'));
+        const downloads = []; p.on('download', (d) => downloads.push(d));
+        await Promise.all([p.waitForEvent('download', { predicate: (d) => /-img2\.png$/.test(d.suggestedFilename()) }), p.keyboard.press('Control+s')]);
+        const dxf = downloads.find((d) => /\.dxf$/.test(d.suggestedFilename()));
+        const raw = readDxf(readFileSync(await dxf.path(), 'utf8'));
+        assert.equal(raw.entities.filter((e) => e.type === 'IMAGE').length, 2, 'recovery keeps exactly two IMAGEs');
+        assert.equal(downloads.filter((d) => /\.png$/.test(d.suggestedFilename())).length, 2, 'both recovered pictures keep their pixels');
+      } finally { await context.close(); }
+    }
+  });
+
   await step('TODO 305a: pictures in a vector PDF are IMAGE objects: under the lines, F9 hides them, click / window / crossing select, Delete and Undo, PDF preview, light, dark, 1024 px', async () => {
     await t('picker').setInputFiles(picturesPdf());
     await page.waitForFunction(() => document.querySelector('.tabs .dtab.on').textContent.startsWith('pictures.dxf'), null, { timeout: 60000 });

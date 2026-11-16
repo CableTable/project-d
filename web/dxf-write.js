@@ -3,7 +3,7 @@
 //
 //   writeDxf(doc, opts) → string, CRLF lines.   opts: { escapeUnicode: true writes non-ASCII as \U+XXXX (R2000's own way); extents: [x0, y0, x1, y1] of model space, when the caller has them (flatten is slow on a big file) }
 //   unwritable(doc) → [{ type, count }]: what writeDxf leaves out (warn before overwriting a file)
-//   writeDxfWithReport(doc, opts) → { text, tables, skipped }: the same file and counts for the caller's Save note
+//   writeDxfWithReport(doc, opts) → { text, pictures: [{ name, px }], tables, skipped }: opts.name is the final DXF file name
 //   Export opts: units ('mm', 'in', 'unitless'), scale (> 0), precision (0–8); transforms a deep copy.
 //
 // The document (drawing.js): { header: { $NAME: string | [x, y] }, layers: { NAME: { aci, tc, off, frozen, lt, lw } },
@@ -20,6 +20,7 @@ import { fillHatch, fillHoles } from './fill.js';
 import { remap } from './groups.js';
 import { scaleRecord, SPEC, relabel, DIM_BLOCK, readDim, dimGeom, insertTransform } from './edit.js';
 import { measuredText, readOverride, textRecord, overrideRecord, dimensionText, measureOverride } from './dimension-text.js';
+import { isPng } from './pictures.js';
 
 const SUPPORTED = new Set(['LINE', 'CIRCLE', 'ARC', 'LWPOLYLINE', 'POLYLINE', 'ELLIPSE', 'SPLINE', 'POINT', 'TEXT', 'MTEXT',
   'INSERT', 'ATTDEF', 'HATCH', 'SOLID', 'TRACE', '3DFACE', 'DIMENSION', 'LEADER']);
@@ -167,7 +168,7 @@ function prepareSave(doc, includeFills = true) {
         const rot = Math.atan2(+field(e, 21, '0'), +field(e, 11, '1')) * 180 / Math.PI;
         e = insert(normal, +field(e, 10, '0'), +field(e, 20, '0'), { ...e, rot });
         tables++;
-      } else if (!SUPPORTED.has(e.type)) { add(e.type); continue; }
+      } else if (!SUPPORTED.has(e.type) && !(e.type === 'IMAGE' && isPng(e.r.px))) { add(e.type); continue; }
       else if (normal && (e.type === 'INSERT' || e.type === 'DIMENSION')) {
         const v = e.r.v.slice(); v[e.r.c.indexOf(2)] = normal;
         e = { ...e, r: { ...e.r, v } };
@@ -198,7 +199,7 @@ const SUB = {
   LINE: [['AcDbLine']], POINT: [['AcDbPoint']], CIRCLE: [['AcDbCircle']], LWPOLYLINE: [['AcDbPolyline']],
   ARC: [['AcDbCircle', null], ['AcDbArc', [50, 51]]], ELLIPSE: [['AcDbEllipse']], SPLINE: [['AcDbSpline']],
   TEXT: [['AcDbText', null], ['AcDbText', [73]]], MTEXT: [['AcDbMText']], INSERT: [['AcDbBlockReference']], HATCH: [['AcDbHatch']],
-  SOLID: [['AcDbTrace']], TRACE: [['AcDbTrace']], '3DFACE': [['AcDbFace']], LEADER: [['AcDbLeader']],
+  SOLID: [['AcDbTrace']], TRACE: [['AcDbTrace']], '3DFACE': [['AcDbFace']], LEADER: [['AcDbLeader']], IMAGE: [['AcDbRasterImage']],
   ATTDEF: [['AcDbText', null], ['AcDbAttributeDefinition', [2, 3, 70, 73, 74]]],
   ATTRIB: [['AcDbText', null], ['AcDbAttribute', [2, 70, 73, 74]]]
 };
@@ -388,7 +389,7 @@ export function writeDxfWithReport(doc, opts = {}) {
     doc.header.$MEASUREMENT = units === 'in' ? '0' : '1';
   }
   const ext = factor !== 1 && opts.extents ? opts.extents.map((n) => n * factor) : opts.extents;
-  return { text: writePreparedDxf(doc, { ...opts, extents: ext }), tables: prepared.tables, skipped: prepared.skipped,
+  return { ...writePreparedDxf(doc, { ...opts, extents: ext }), tables: prepared.tables, skipped: prepared.skipped,
     ...(unreadLabels.size ? { unreadLabels: [...unreadLabels] } : {}) };
 }
 
@@ -410,6 +411,7 @@ function writePreparedDxf(doc, opts) {
     const angular = type === 'DIMENSION' && [2, 5].includes((+pairs.find(([c]) => c === 70)?.[1] || 0) & 7);
     for (const [c, v] of pairs) {
       let length = c >= 10 && c <= 38 && points.includes(10 + c % 10) || (spec?.len || []).includes(c) || (spec?.z || []).includes(c);
+      if (type === 'IMAGE' && [11, 12].includes(10 + c % 10)) length = false; // Per-pixel vectors would round to zero at a low export precision.
       if (angular && c === 42) length = false;
       if (type === 'HATCH') {
         if (c === 91) stage = 'paths'; else if (c === 75) stage = 'pattern'; else if (c === 98) stage = 'seed';
@@ -462,6 +464,8 @@ function writePreparedDxf(doc, opts) {
   const styleRec = new Map([...styles].map((n) => [n.toLowerCase(), handle()]));   // up front: a complex line type points at its text style
   const find = (n) => [...rec.keys()].find((k) => k.toLowerCase() === n.toLowerCase());
   const modelRec = rec.get(find('*Model_Space')), paperRec = rec.get(find('*Paper_Space'));
+  const images = [], pictures = [];
+  let imageDict;
 
   // a group keeps the name it was read with; an unnamed or repeated one gets the next free *A<n>
   const taken = new Set(), kept = (doc.groups || []).map((g) => !!g.name && !taken.has(g.name.toUpperCase()) && !!taken.add(g.name.toUpperCase()));
@@ -500,6 +504,17 @@ function writePreparedDxf(doc, opts) {
     let spec = specific(r, null);
     if (r.type === 'INSERT') { spec = spec.filter((q) => q[0] !== 66); if (kids.length) spec = insertAfterMarker(spec, [66, '1']); }
     if (r.type === 'POLYLINE') { spec = spec.filter((q) => q[0] !== 66); spec = insertAfterMarker(spec, [66, '1']); }
+    if (r.type === 'IMAGE') {
+      imageDict ||= handle();
+      const get = (c) => +r.v[r.c.indexOf(c)] || 0;
+      const def = handle(), reactor = handle();
+      const name = String(opts.name || 'drawing.dxf').split(/[\\/]/).pop().replace(/\.dxf$/i, '') + `-img${pictures.length + 1}.png`;
+      pictures.push({ name, px: r.px });
+      images.push({ def, reactor, image: h, name, w: get(13), h: get(23), u: Math.hypot(get(11), get(21), get(31)), v: Math.hypot(get(12), get(22), get(32)) });
+      spec = spec.filter(([c]) => ![90, 70, 280, 281, 282, 283, 71, 91, 14, 24, 290].includes(c));
+      spec.push([90, 0], [340, def], [70, 3], [280, 0], [281, 50], [282, 50], [283, 0], [360, reactor],
+        [71, 1], [91, 2], [14, -0.5], [24, -0.5], [14, get(13) - 0.5], [24, get(23) - 0.5]);
+    }
     record(o, spec, r.type);
     if (p.cap !== 'butt' || p.join !== 'miter' || p.scaleWithObject) {
       o.s(1001, 'PROJECTD').s(1000, 'LINE_ENDS_V1').p(1070, ['butt', 'round', 'square'].indexOf(p.cap))
@@ -631,6 +646,17 @@ function writePreparedDxf(doc, opts) {
     o.s(0, 'SECTION').s(2, 'OBJECTS');
     o.s(0, 'DICTIONARY').p(5, H.ROOT).p(330, 0).s(100, 'AcDbDictionary').p(281, 1)
       .s(3, 'ACAD_GROUP').p(350, groups).s(3, 'ACAD_PLOTSTYLENAME').p(350, plotStyles);
+    if (images.length) o.s(3, 'ACAD_IMAGE_DICT').p(350, imageDict);
+    if (images.length) {
+      o.s(0, 'DICTIONARY').p(5, imageDict).p(330, H.ROOT).s(100, 'AcDbDictionary').p(281, 1);
+      for (const [i, im] of images.entries()) o.s(3, 'Image' + (i + 1)).p(350, im.def);
+      for (const im of images) {
+        o.s(0, 'IMAGEDEF').p(5, im.def).s(102, '{ACAD_REACTORS').p(330, imageDict).p(330, im.reactor).s(102, '}')
+          .p(330, imageDict).s(100, 'AcDbRasterImageDef').p(90, 0).s(1, im.name).p(10, im.w).p(20, im.h)
+          .p(11, im.u).p(21, im.v).p(280, 1).p(281, 0);
+        o.s(0, 'IMAGEDEF_REACTOR').p(5, im.reactor).p(330, im.image).s(100, 'AcDbRasterImageDefReactor').p(90, 2).p(330, im.image);
+      }
+    }
     o.s(0, 'DICTIONARY').p(5, groups).p(330, H.ROOT).s(100, 'AcDbDictionary').p(281, 1);
     for (const g of drawingGroups) o.s(3, g.name).p(350, g.handle);
     for (const g of drawingGroups) {
@@ -661,7 +687,15 @@ function writePreparedDxf(doc, opts) {
     if (hd.$CLAYER && layerNames.has(String(hd.$CLAYER).trim())) o.s(9, '$CLAYER').s(8, String(hd.$CLAYER).trim());
     o.s(0, 'ENDSEC'); }
 
-  return [...head, ...tabSec, ...blocksSec, ...entSec, ...objSec, '  0\r\nEOF'].join('\r\n') + '\r\n';
+  const classes = [];
+  if (images.length) {
+    const o = out(classes); o.s(0, 'SECTION').s(2, 'CLASSES');
+    for (const [name, sub, flags, entity] of [['IMAGE', 'AcDbRasterImage', 127, 1], ['IMAGEDEF', 'AcDbRasterImageDef', 0, 0], ['IMAGEDEF_REACTOR', 'AcDbRasterImageDefReactor', 1, 0]]) {
+      o.s(0, 'CLASS').s(1, name).s(2, sub).s(3, 'ISM').p(90, flags).p(280, 0).p(281, entity);
+    }
+    o.s(0, 'ENDSEC');
+  }
+  return { text: [...head, ...classes, ...tabSec, ...blocksSec, ...entSec, ...objSec, '  0\r\nEOF'].join('\r\n') + '\r\n', pictures };
 }
 
 /** The model-space extents [x0, y0, x1, y1] of what is drawn, or null. */
