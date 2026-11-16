@@ -589,17 +589,26 @@ function usedColour(key) {
   renderSwatchStrip();
 }
 function buildSwatchStrip() {
+  ui.stripScroll = h('div', { class: 'strip-scroll', 'data-testid': 'strip-scroll' });
+  const arrow = (dir, text, label) => h('button', { type: 'button', class: 'strip-arrow', 'aria-label': label, title: label, 'data-testid': 'strip-' + dir, hidden: true,
+    onclick: () => ui.stripScroll.scrollBy({ top: (dir === 'up' ? -1 : 1) * 22 }) }, text);   // 22 px = one swatch row
+  ui.stripArrows = [arrow('up', '▲', 'Scroll swatches up'), arrow('down', '▼', 'Scroll swatches down')];
   ui.swatchStrip = h('aside', { class: 'swatch-strip', 'aria-label': 'Swatch strip', 'data-testid': 'swatch-strip', hidden: !strip.on,
-    oncontextmenu: (e) => { e.preventDefault(); e.stopPropagation(); } });
+    oncontextmenu: (e) => { e.preventDefault(); e.stopPropagation(); } }, ui.stripArrows[0], ui.stripScroll, ui.stripArrows[1]);
+  new ResizeObserver(showStripArrows).observe(ui.stripScroll);
   document.addEventListener('swatches-changed', loadSwatches);
   renderSwatchStrip();
   return ui.swatchStrip;
 }
+function showStripArrows() {
+  const over = ui.stripScroll.scrollHeight > ui.stripScroll.clientHeight;
+  for (const b of ui.stripArrows) b.hidden = !over;
+}
 function renderSwatchStrip() {
   if (!ui.swatchStrip) return;
-  const scroll = ui.swatchStrip.scrollTop;
+  const scroll = ui.stripScroll.scrollTop;
   const active = document.activeElement, key = active?.dataset.colour, group = active?.parentElement.dataset.swatchGroup;
-  ui.swatchStrip.replaceChildren(h('button', { type: 'button', class: 'strip-swatch no-fill', title: 'No fill', 'aria-label': 'No fill', 'data-testid': 'no-fill',
+  ui.stripScroll.replaceChildren(h('button', { type: 'button', class: 'strip-swatch no-fill', title: 'No fill', 'aria-label': 'No fill', 'data-testid': 'no-fill',
     onclick: () => applyFill(null), oncontextmenu: (e) => { e.preventDefault(); e.stopPropagation(); applyFill(null); } }), ...stripGroups(strip.saved, strip.recent).map(({ group, swatches: list }) =>
     h('div', { class: 'strip-group', role: 'group', 'aria-label': group + ' colours', 'data-swatch-group': group }, list.map(({ key, title, id }) =>
       h('button', { type: 'button', class: 'strip-swatch', title, 'aria-label': title, 'data-colour': key, style: 'background:' + colourCss(key),
@@ -612,8 +621,8 @@ function renderSwatchStrip() {
           else applyFill(key);
         }
       })) )));
-  ui.swatchStrip.scrollTop = scroll;
-  if (group && key) ui.swatchStrip.querySelector(`[data-swatch-group="${group}"] [data-colour="${key}"]`)?.focus({ preventScroll: true });
+  ui.stripScroll.scrollTop = scroll; showStripArrows();
+  if (group && key) ui.stripScroll.querySelector(`[data-swatch-group="${group}"] [data-colour="${key}"]`)?.focus({ preventScroll: true });
 }
 function applyStripColour(key) {
   if (curLay()) {

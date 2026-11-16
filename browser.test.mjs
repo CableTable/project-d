@@ -1966,7 +1966,7 @@ try {
     };
     try {
       await p.goto(URL_); await q('swatch-strip').waitFor();
-      assert.equal(await group('standard').locator('button').count(), 11);
+      assert.equal(await group('standard').locator('button').count(), 99);
       assert.equal(await swatch('standard', 'aci:1').getAttribute('title'), 'Colour 1');
       const panelWidth = await p.locator('aside.panel').evaluate((el) => el.getBoundingClientRect().width);
       await p.locator('[data-menu=View]').click();
@@ -2055,7 +2055,7 @@ try {
       assert.equal(await saved.count(), 0, 'saved removal remembered after reload');
       await recent('aci:3');
       await p.setViewportSize({ width: 1024, height: 480 });
-      assert.equal(await q('swatch-strip').evaluate((el) => el.scrollHeight > el.clientHeight), true, 'strip scrolls in a short window');
+      assert.equal(await q('strip-scroll').evaluate((el) => el.scrollHeight > el.clientHeight), true, 'strip scrolls in a short window');
       await swatch('recent', 'aci:3').scrollIntoViewIfNeeded();
       await p.addInitScript(() => {
         Object.defineProperty(window, 'localStorage', { get() { throw new DOMException('Storage blocked', 'SecurityError'); } });
@@ -2068,6 +2068,48 @@ try {
       assert.equal(await p.getByRole('combobox', { name: 'Ribbon colour', exact: true }).inputValue(), 'aci:5', 'current colour still works without storage');
     } catch (e) {
       await p.screenshot({ path: `${shotDir}/todo148b-failure.png` }); throw e;
+    } finally { await context.close(); }
+  });
+
+  await step('TODO 296: fuller swatch strip: 99 standard swatches, scroll arrows, a grey fills a shape and saves as true colour', async () => {
+    const context = await browser.newContext({ viewport: { width: 1024, height: 600 }, colorScheme: 'light' });
+    const p = await context.newPage(), q = (id) => panelControl(p, p.getByTestId(id));
+    p.on('pageerror', (e) => errors.push(String(e)));
+    try {
+      await p.goto(URL_); await q('swatch-strip').waitFor();
+      const standard = p.locator('[data-swatch-group=standard] button');
+      assert.equal(await standard.count(), 99);
+      assert.deepEqual(await standard.evaluateAll((els) => els.slice(0, 11).map((el) => el.title)), ['Black', 'Grey 90%', 'Grey 80%', 'Grey 70%', 'Grey 60%', 'Grey 40%', 'Grey 30%', 'Grey 20%', 'Grey 10%', 'White', 'Colour 1']);
+      const top = () => q('strip-scroll').evaluate((el) => el.scrollTop);
+      await p.waitForFunction(() => !document.querySelector('[data-testid=strip-down]').hidden);
+      assert.equal(await p.getByRole('button', { name: 'Scroll swatches down', exact: true }).isVisible(), true);
+      assert.equal(await top(), 0);
+      await q('strip-down').click(); assert.equal(await top(), 22, 'one row down');
+      await q('strip-down').focus(); await p.keyboard.press('Enter'); assert.equal(await top(), 44, 'keyboard scrolls too');
+      await q('strip-up').click(); await q('strip-up').click(); assert.equal(await top(), 0, 'one row up each');
+      await q('strip-scroll').hover(); await p.mouse.wheel(0, 100);
+      await p.waitForFunction(() => document.querySelector('[data-testid=strip-scroll]').scrollTop > 0);
+      await p.setViewportSize({ width: 1024, height: 4000 });
+      await p.waitForFunction(() => document.querySelector('[data-testid=strip-down]').hidden);
+      await p.setViewportSize({ width: 1024, height: 600 });
+      await p.waitForFunction(() => !document.querySelector('[data-testid=strip-down]').hidden);
+      const doc = newDoc(4); addEntities(doc, dxfPoly([[10, 10], [60, 10], [60, 60], [10, 60]], { closed: true }));
+      await q('picker').setInputFiles({ name: 'grey296.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(doc)) });
+      await p.waitForFunction(() => document.querySelector('.dtab.on .tname')?.textContent === 'grey296.dxf');
+      await p.locator('.coords').click(); await p.keyboard.press('Control+a');
+      await p.locator('[data-swatch-group=standard] [data-colour="tc:1710618"]').click({ button: 'right' });
+      await p.locator('.coords').click();
+      const [dl] = await Promise.all([p.waitForEvent('download'), p.keyboard.press('Control+s')]);
+      assert.equal(readDxf(readFileSync(await dl.path(), 'utf8')).entities[0].fill, 'tc:1710618', 'Grey 90% fills the shape as a true colour');
+      for (const theme of ['light', 'dark']) {
+        await p.locator('[data-ribbon-tab=View]').click();
+        await p.locator('.ribbon-body').getByRole('button', { name: theme[0].toUpperCase() + theme.slice(1), exact: true }).click();
+        await p.locator('[data-ribbon-tab=Home]').click();
+        assert.equal(await p.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'fits 1024 px');
+        await p.screenshot({ path: `${shotDir}/todo296-swatch-strip-${theme}.png` });
+      }
+    } catch (e) {
+      await p.screenshot({ path: `${shotDir}/todo296-failure.png` }); throw e;
     } finally { await context.close(); }
   });
 
