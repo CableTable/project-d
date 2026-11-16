@@ -199,6 +199,7 @@ function highlight(c, items, mats, T, k, dpr, accent, wireframe) {
 export function drawDimPreview(c, g, T, dpr, accent) {
   c.setTransform(1, 0, 0, 1, 0, 0);
   c.strokeStyle = accent; c.fillStyle = accent; c.lineWidth = 1.4 * dpr; c.setLineDash([]);
+  c.lineCap = 'round'; c.lineJoin = 'round';           // as before 293a; set here, not left by the last paint (a kept base and a full paint must match)
   c.globalAlpha = g.ghost ? 0.5 : 1;                                   // Automatic dimension's hover preview is faint
   const P = (x, y) => mapply(T, x, y);
   c.beginPath();
@@ -229,6 +230,7 @@ export const SNAP_MARK_SIZE = 6;                   // 155p: AutoSnapMarkerSize 6
 export function drawMarks(c, pts, T, dpr, accent, snapCol = '#00c000') {
   c.setTransform(1, 0, 0, 1, 0, 0);
   c.strokeStyle = accent; c.fillStyle = accent; c.lineWidth = 1.6 * dpr; c.setLineDash([]);
+  c.lineCap = 'round'; c.lineJoin = 'round';
   const placed = pts.filter((p) => !p[3]).map(([x, y]) => mapply(T, x, y));
   if (placed.length > 1) { c.beginPath(); c.setLineDash([6 * dpr, 4 * dpr]); c.moveTo(placed[0][0], placed[0][1]); c.lineTo(placed[1][0], placed[1][1]); c.stroke(); c.setLineDash([]); }
   const r = 7 * dpr;
