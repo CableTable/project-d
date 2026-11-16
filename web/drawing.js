@@ -12,6 +12,7 @@ import { group, follow } from './groups.js';
 //     e   the index of the top-level entity it was drawn from (a block's contents: the INSERT's)
 //     ps  on the sheet (paper space) · css its colour · lw its weight (1/100 mm)
 //     widthFromTop whether its lineweight follows the top-level entity (through ByBlock)
+//     cap 'butt' / 'round' / 'square', join 'miter' / 'round' / 'bevel' (miter limit 10)
 //     dash a line type in its own units (on, off, on, off …) · dpx one in screen pixels · b its box [x0, y0, x1, y1]
 //   a path's ops: 0 x y (move) · 1 x y (line) · 2 cx cy r a0 a1 cw (arc; cw 1 = clockwise) · 9 (close)
 
@@ -213,10 +214,18 @@ const OCS = new Set(['CIRCLE', 'ARC', 'LWPOLYLINE', 'POLYLINE', 'TEXT', 'ATTRIB'
 
 /** An entity's own properties (layer, colour, line type, weight…) and its raw pairs. */
 function entity(r, kids) {
-  const e = { type: r.type, layer: '0', lt: null, aci: 256, tc: null, lw: -1, lts: 1, hidden: false, ps: false, flip: false, r, kids };
-  let own = true, nx = 0, ny = 0, nz = 1;
+  const e = { type: r.type, layer: '0', lt: null, aci: 256, tc: null, lw: -1, cap: 'butt', join: 'miter', scaleWithObject: false, lts: 1, hidden: false, ps: false, flip: false, r, kids };
+  let own = true, nx = 0, ny = 0, nz = 1, app = '';
   for (let k = 0; k < r.c.length; k++) {
     const c = r.c[k], v = r.v[k];
+    if (c === 1001) app = v.trim().toUpperCase();
+    if (app === 'PROJECTD' && c === 1000 && v.trim() === 'LINE_ENDS_V1' &&
+      r.c.slice(k + 1, k + 4).every((code) => code === 1070) && r.c.length >= k + 4) {
+      const [cap, join, scale] = r.v.slice(k + 1, k + 4).map((s) => s.trim());
+      if (/^[012]$/.test(cap) && /^[012]$/.test(join) && /^[01]$/.test(scale)) {
+        e.cap = ['butt', 'round', 'square'][+cap]; e.join = ['miter', 'round', 'bevel'][+join]; e.scaleWithObject = scale === '1';
+      }
+    }
     if (c === 210) nx = num(v); else if (c === 220) ny = num(v); else if (c === 230) nz = num(v, 1);
     if (c === 100) { if (v.trim() !== 'AcDbEntity') own = false; continue; }
     if (!own) continue;
@@ -462,7 +471,7 @@ export function flatten(doc, hidden = new Set()) {
       const lt = ltName === 'BYLAYER' ? lay.lt : ltName === 'BYBLOCK' ? ctx.lt || '' : ltName;
       let m = ctx.m;
       if (e.flip) { mats.push(mmul(mats[ctx.m], FLIP)); m = mats.length - 1; }
-      const base = { m, L, e: top, ps: ctx.ps != null ? ctx.ps : e.ps ? 1 : 0, css, lw, ...(exact ? { exact: true } : {}), widthFromTop: depth === 0 || e.lw === -2 && ctx.widthFromTop, ...dashOf(lt, e.lts) };
+      const base = { m, L, e: top, ps: ctx.ps != null ? ctx.ps : e.ps ? 1 : 0, css, lw, cap: e.cap || 'butt', join: e.join || 'miter', ...(exact ? { exact: true } : {}), widthFromTop: depth === 0 || e.lw === -2 && ctx.widthFromTop, ...dashOf(lt, e.lts) };
       const put = (it) => {
         if (items.length >= MAX_ITEMS) { truncated = true; return; }
         if (!it.b) return;
@@ -641,7 +650,7 @@ export function patchWidths(fl, entities, keys, factor = 1, reshape = new Set())
     if (poly && reshape.has(it.e) && !it.attachedFill) {
       if (rebuilt.has(it.e)) continue;
       rebuilt.add(it.e);
-      const base = { k: 'p', m: it.m, L: it.L, e: it.e, ps: it.ps, css: it.css, lw, widthFromTop: true, dash: it.dash, dpx: it.dpx };
+      const base = { k: 'p', m: it.m, L: it.L, e: it.e, ps: it.ps, css: it.css, lw, cap: it.cap, join: it.join, widthFromTop: true, dash: it.dash, dpx: it.dpx };
       const put = (item) => { item.b = worldBox(fl.mats[item.m], item.b); items.push(item); };
       const path = (ops, extra) => { if (ops.length > 3) put({ ...base, ops, ...extra, b: opsBox(ops, extra?.w ? extra.w / 2 : 0) }); };
       if (ent.type === 'LWPOLYLINE') lwpoly(ent, firsts(ent.r), base, path, put);

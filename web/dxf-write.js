@@ -8,11 +8,11 @@
 //
 // The document (drawing.js): { header: { $NAME: string | [x, y] }, layers: { NAME: { aci, tc, off, frozen, lt, lw } },
 //   ltypes: { NAME: { pattern: [dash, gap, …] } }, blocks: { NAME: { base: [x, y], xref, entities } }, entities, groups (groups.js) }
-// An entity: { type, layer, lt, aci, tc, lw, lts, hidden, ps, flip, r: { type, c: [codes], v: [values] }, kids }
+// An entity: { type, layer, lt, aci, tc, lw, cap, join, scaleWithObject, lts, hidden, ps, flip, r: { type, c: [codes], v: [values] }, kids }
 //   Its common properties (layer, colour, line type, weight, scale, hidden, sheet) are the fields; r holds the rest as
 //   group-code pairs. kids: a POLYLINE's VERTEX records or an INSERT's ATTRIB records (each { type, c, v }).
 // Source handles, owners and reactors are not kept: the writer makes its own, including GROUP membership.
-// Extension dictionaries and xdata are not kept.
+// Extension dictionaries and other apps' xdata are not kept; PROJECTD carries line ends and corners.
 
 import { flatten, ownBlock } from './drawing.js';
 import { nearestAci, unpack420 } from './colour.js';
@@ -54,9 +54,10 @@ function value(c, v, esc, precision = 6) {
 // ---------------------------------------------------------------- building entities (the shape readDxf gives)
 
 const props = (o = {}) => ({ layer: o.layer ?? '0', lt: o.lt ?? null, aci: o.aci ?? 256, tc: o.tc ?? null, lw: o.lw ?? -1,
+  cap: ['round', 'square'].includes(o.cap) ? o.cap : 'butt', join: ['round', 'bevel'].includes(o.join) ? o.join : 'miter', scaleWithObject: o.scaleWithObject === true,
   lts: o.lts ?? 1, hidden: !!o.hidden, ps: !!o.ps, flip: false, ...(o.fill ? { fill: o.fill } : {}) });
 
-/** An entity from its type, its pairs [[code, value], …] and its common properties { layer, aci, tc, lt, lw, lts, ps, hidden }. */
+/** An entity from its type, pairs [[code, value], …] and common properties, including cap, join and scaleWithObject. */
 export function entity(type, pairs, o = {}) {
   const p = props(o), all = [[8, p.layer], ...pairs];
   return { type, ...p, r: { type, c: all.map((x) => x[0]), v: all.map((x) => String(x[1])) }, kids: undefined };
@@ -442,8 +443,11 @@ function writePreparedDxf(doc, opts) {
       if (r.c[k] === 3 && r.type === 'DIMENSION' && r.v[k].trim()) addName(dimstyles, r.v[k].trim());
     }
   };
+  let projectD = false;
   const scan = (list) => {
     for (const e of list || []) {
+      const p = props(e);
+      if (p.cap !== 'butt' || p.join !== 'miter' || p.scaleWithObject) projectD = true;
       scanRec(e.r, { ...props(), ...e });
       for (const kid of e.kids || []) scanRec(kid, propsOf(kid));
     }
@@ -474,7 +478,7 @@ function writePreparedDxf(doc, opts) {
 
   // entities
   const ent = (o, e, owner, reactors = []) => {
-    const isEnt = !!e.r, r = isEnt ? e.r : e, p = isEnt ? { ...props(), ...e } : propsOf(e);
+    const isEnt = !!e.r, r = isEnt ? e.r : e, p = isEnt ? props(e) : propsOf(e);
     const h = handle();
     o.s(0, r.type).p(5, h);
     if (reactors.length) {
@@ -497,6 +501,10 @@ function writePreparedDxf(doc, opts) {
     if (r.type === 'INSERT') { spec = spec.filter((q) => q[0] !== 66); if (kids.length) spec = insertAfterMarker(spec, [66, '1']); }
     if (r.type === 'POLYLINE') { spec = spec.filter((q) => q[0] !== 66); spec = insertAfterMarker(spec, [66, '1']); }
     record(o, spec, r.type);
+    if (p.cap !== 'butt' || p.join !== 'miter' || p.scaleWithObject) {
+      o.s(1001, 'PROJECTD').s(1000, 'LINE_ENDS_V1').p(1070, ['butt', 'round', 'square'].indexOf(p.cap))
+        .p(1070, ['miter', 'round', 'bevel'].indexOf(p.join)).p(1070, p.scaleWithObject ? 1 : 0);
+    }
     if (r.type === 'POLYLINE' || kids.length) {
       const flags = r.type === 'POLYLINE' ? (r.c.indexOf(70) >= 0 ? r.v[r.c.indexOf(70)] : '0') : null;
       for (const kid of kids) kidRec(o, kid, h, flags);
@@ -601,7 +609,11 @@ function writePreparedDxf(doc, opts) {
     });
     table('VIEW', 0, () => {});
     table('UCS', 0, () => {});
-    table('APPID', 1, () => { rhead('APPID', 'ACAD', 'AcDbRegAppTableRecord', 'APPID'); o.p(70, 0); });
+    table('APPID', projectD ? 2 : 1, () => {
+      rhead('APPID', 'ACAD', 'AcDbRegAppTableRecord', 'APPID'); o.p(70, 0);
+      // B is reserved below the allocated handles (20+), so untouched entities keep their bytes.
+      if (projectD) { rhead('APPID', 'PROJECTD', 'AcDbRegAppTableRecord', 'APPID', 'B'); o.p(70, 0); }
+    });
     table('DIMSTYLE', dimstyles.size, () => {
       for (const n of dimstyles) { rhead('DIMSTYLE', n, 'AcDbDimStyleTableRecord', 'DIMSTYLE');
         const kept = ciGet(doc.dimstyles, n);

@@ -299,6 +299,8 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Line width**: The physical outline thickness, edited in mm and saved through DXF lineweights or polyline widths. Where: `DECISIONS.md`, Line width. Avoid: A line's length.
 
+**Line ends and corners**: An object's stroke ends (Butt / Round / Square) and corners (Miter / Round / Bevel), including dash ends. Default Butt / Miter, miter limit 10; the entity's Scale with object flag defaults off. Saved in PROJECTD DXF xdata. Properties UI and scaling behavior follow in TODO 293b. Where: `DECISIONS.md`, Line ends and corners; `web/drawing.js`, `web/dxf-write.js`.
+
 **LWPOLYLINE**: A lightweight DXF polyline holding connected straight or bulged arc segments, including rectangles drawn here. Where: `DECISIONS.md`, Drawing tools: how they work; `web/drawing.js`.
 
 **Model space / Paper space**: The DXF drawing and sheet spaces, with Project D showing model space unless only paper space is available. Where: `DECISIONS.md`, Drawing render. Avoid: Project D's drawing-tab and layout-tab distinction.

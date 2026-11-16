@@ -344,7 +344,7 @@ function drawHatch(page, it, M, ink, bg) {
   if (!lb) return;
   const sc = mscale(M), corners = [[lb[0], lb[1]], [lb[2], lb[1]], [lb[2], lb[3]], [lb[0], lb[3]]];
   let tint = !it.fam.length;
-  page.save();
+  page.save(); page.lineEnds();
   trace(page, it.ops, M); page.clip(true);
   page.strokeColor(ink); page.lineWidth(0.15); page.dash([]);
   const lines = [];
@@ -465,7 +465,7 @@ function drawPage(src, o, plan, p, artBox) {
       const w = strokeWidth(it, F, mscale(fl.mats[it.m])) * ws;
       let dash = it.dash && it.dash.reduce((a, x) => a + x, 0) * sc >= 0.3 ? it.dash.map((x) => x * sc) : it.dpx ? it.dpx.map((x) => x * 0.3) : null;
       if (dash && dash.reduce((a, x) => a + x, 0) < 0.3) dash = null;
-      page.strokeColor(inkOf(it.css)); page.lineWidth(w); page.dash(dash || []);
+      page.strokeColor(inkOf(it.css)); page.lineWidth(w); page.dash(dash || []); page.lineEnds(it.cap, it.join);
       trace(page, it.ops, M); page.stroke();
     } else if (it.k === 'p') {
       page.fillColor(it.a != null && it.a < 1 ? mix(inkOf(it.css, it.exact), bg, it.a) : inkOf(it.css, it.exact));
@@ -479,6 +479,7 @@ function drawPage(src, o, plan, p, artBox) {
   }
 
   // crop and registration marks round the art, the same on every page so the colours register
+  page.lineEnds();
   if ((o.crop || o.reg) && artBox) {
     page.strokeColor(markInk); page.lineWidth(Math.max(0.25 * (check ? ws : 1), minW)); page.dash([]);
     const seg = ([x1, y1, x2, y2]) => { const a = mapply(M0, x1, H - y1), b = mapply(M0, x2, H - y2); page.moveTo(a[0], a[1]); page.lineTo(b[0], b[1]); };

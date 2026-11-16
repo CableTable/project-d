@@ -75,7 +75,7 @@ export function paintDrawing(canvas, o) {
   if (o.previewBounds && o.keep) o.previewBounds(drawingPreviewBox(o));       // a kept pass is a ghost: the whole flattened preview
   const k0 = scale * dpr, V = [k0, 0, 0, k0, -ox * k0, -oy * k0];
   const k = k0 * factor;                                   // pixels in one drawing unit
-  c.lineJoin = 'round'; c.lineCap = 'round';
+  c.lineJoin = 'miter'; c.lineCap = 'butt'; c.miterLimit = 10;
   const col = o.tint ? () => o.tint : (css, exact) => exact ? css : ink(css, dark);          // exact: a fill with its own colour keeps it
   const sheetBg = dark ? SHEETS.dark.bg : SHEETS.light.bg;
   if (o.slots) {
@@ -138,7 +138,7 @@ function wireStroke(c, dpr) {
 /** The shown items through T (drawing units → canvas pixels), k pixels per unit; vr culls to the view (drawing units), or null. */
 function paintItems(c, fl, off, T, k, vr, dpr, col, sheetBg, hide, factor, wireframe) {
   const mats = fl.mats;
-  let cur = -1, kk = k, pxPerUnit = 0, open = false, pc = null, pw = 0, pd = null, origin = [0, 0], drawn = 0, run = 0;
+  let cur = -1, kk = k, pxPerUnit = 0, open = false, pc = null, pw = 0, pd = null, cap = null, join = null, origin = [0, 0], drawn = 0, run = 0;
   const flush = () => { if (open) { if (wireframe) wireStroke(c, dpr); else c.stroke(); } open = false; };
   for (const it of shownItems(fl)) {
     const b = it.b;
@@ -154,11 +154,13 @@ function paintItems(c, fl, off, T, k, vr, dpr, col, sheetBg, hide, factor, wiref
       const lw = wireframe ? dpr / kk : Math.max(strokeWidth(it, factor, kk / k) * k / factor, 1.2 * dpr) / kk;
       const dash = wireframe ? null : it.dash && it.dash.reduce((a, x) => a + x, 0) * kk > 4 * dpr ? it.dash : it.dpx ? it.dpx : null;
       const css = col(it.css);
+      const nextCap = it.cap || 'butt', nextJoin = it.join || 'miter';
       // shortcut: 5000 is a guess; one open path of 96k splines is the unverified cause of a blank laptop canvas (T87), retest with Untitled-1.dxf
-      if (!open || css !== pc || lw !== pw || dash !== pd || ++run > 5000) {
+      if (!open || css !== pc || lw !== pw || dash !== pd || nextCap !== cap || nextJoin !== join || ++run > 5000) {
         run = 1;
         flush();
         c.strokeStyle = css; c.lineWidth = lw; c.setLineDash(dash === it.dpx && dash ? dash.map((x) => x * dpr / kk) : dash || []);
+        c.lineCap = cap = nextCap; c.lineJoin = join = nextJoin; c.miterLimit = 10;
         c.beginPath(); open = true; pc = css; pw = lw; pd = dash;
       }
       trace(c, it.ops, origin, dash ? 0 : pxPerUnit);
@@ -186,6 +188,7 @@ function highlight(c, items, mats, T, k, dpr, accent, wireframe) {
   for (const it of items) {
     if (it.m !== cur) { cur = it.m; const M = mats[cur], V = mmul(T, M); origin = viewOrigin(V); c.setTransform(...V.slice(0, 4), ...mapply(V, ...origin)); kk = k * mscale(M) || k; pxPerUnit = maxScale(V); }
     c.lineWidth = 2.6 * dpr / kk;
+    c.lineCap = it.cap || 'butt'; c.lineJoin = it.join || 'miter'; c.miterLimit = 10;
     c.beginPath();
     if (it.k === 'p' || (wireframe && it.ops)) { c.setLineDash([6 * dpr / kk, 6 * dpr / kk]); trace(c, it.ops, origin, pxPerUnit); c.stroke(); }
     else { c.setLineDash([]); c.strokeRect(it.b[0] - origin[0], it.b[1] - origin[1], it.b[2] - it.b[0], it.b[3] - it.b[1]); }
@@ -304,6 +307,7 @@ function drawHatch(c, it, kk, dpr, colOf, origin, pxPerUnit) {
   let tint = !it.fam.length;
   c.save();
   c.beginPath(); trace(c, it.ops, origin, pxPerUnit); c.clip('evenodd');
+  c.lineCap = 'butt'; c.lineJoin = 'miter'; c.miterLimit = 10;
   c.strokeStyle = col; c.lineWidth = dpr / kk;
   for (const f of it.fam) {
     const dx = Math.cos(f.a), dy = Math.sin(f.a), nx = -dy, ny = dx, sp = f.ox * nx + f.oy * ny;

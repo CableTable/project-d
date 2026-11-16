@@ -64,11 +64,11 @@ export function paintPage(canvas, page, box, colours, view, margins) {
   c.setTransform(...V);
   c.fillStyle = colours.paper; c.fillRect(0, 0, page.w, page.h);
   c.strokeStyle = colours.line; c.lineWidth = 1 / k; c.strokeRect(0, 0, page.w, page.h);
-  c.lineJoin = 'round'; c.lineCap = 'round';
+  c.lineJoin = 'miter'; c.lineCap = 'butt'; c.miterLimit = 10;
   c.beginPath();
-  let st = { stroke: colours.film, fill: colours.film, width: 0.25, dash: [] };
+  let st = { stroke: colours.film, fill: colours.film, width: 0.25, dash: [], cap: 0, join: 0, miter: 10 };
   const stack = [];
-  const apply = () => { c.strokeStyle = st.stroke; c.fillStyle = st.fill; c.lineWidth = Math.max(st.width, 0.9 / k); c.setLineDash(st.dash); };
+  const apply = () => { c.strokeStyle = st.stroke; c.fillStyle = st.fill; c.lineWidth = Math.max(st.width, 0.9 / k); c.setLineDash(st.dash); c.lineCap = ['butt', 'round', 'square'][st.cap]; c.lineJoin = ['miter', 'round', 'bevel'][st.join]; c.miterLimit = st.miter; };
   c.save(); c.beginPath(); c.rect(0, 0, page.w, page.h); c.clip(); c.beginPath();      // nothing outside the page
   for (const cmd of page.cmds) {
     switch (cmd[0]) {
@@ -77,6 +77,9 @@ export function paintPage(canvas, page, box, colours, view, margins) {
       case 'RG': st.stroke = css(cmd.slice(1)); break;
       case 'rg': st.fill = css(cmd.slice(1)); break;
       case 'w': st.width = cmd[1]; break;
+      case 'J': st.cap = cmd[1]; break;
+      case 'j': st.join = cmd[1]; break;
+      case 'M': st.miter = cmd[1]; break;
       case 'd': st.dash = cmd[1]; break;
       case 'm': c.moveTo(cmd[1], cmd[2]); break;
       case 'l': c.lineTo(cmd[1], cmd[2]); break;

@@ -1,7 +1,7 @@
 // pdf-write.js — pure: our own PDF 1.4 writer (no dependencies, no DOM) — pdf-write.test.mjs.
 //
 // A Page is a list of drawing commands in millimetres, y up, 0,0 at the page's bottom-left. They are the PDF's own
-// operators (m l c h S f f* W q Q RG rg w d and one text command), so the same list is written as the page's content
+// operators (m l c h S f f* W q Q RG rg w d J j M and one text command), so the same list is written as the page's content
 // stream (writePdf) and replayed on a canvas for the dialog's preview (export.js). Text is the standard Helvetica
 // (WinAnsi), so nothing is embedded. Nothing in the file depends on the time: the same input is the same bytes.
 
@@ -81,7 +81,7 @@ export class Page {
   /** w, h in mm. */
   constructor(w, h) {
     this.w = w; this.h = h; this.cmds = [];
-    this.st = { stroke: '', fill: '', width: NaN, dash: '' };
+    this.st = { stroke: '', fill: '', width: NaN, dash: '', cap: 0, join: 0 };
     this.stack = [];
   }
   save() { this.cmds.push(['q']); this.stack.push({ ...this.st }); }
@@ -91,6 +91,13 @@ export class Page {
   fillColor(c) { const k = c.join(); if (this.st.fill !== k) { this.cmds.push(['rg', ...c]); this.st.fill = k; } }
   /** mm. */
   lineWidth(w) { if (this.st.width !== w) { this.cmds.push(['w', w]); this.st.width = w; } }
+  lineEnds(cap = 'butt', join = 'miter') {
+    const J = Math.max(0, ['butt', 'round', 'square'].indexOf(cap)), j = Math.max(0, ['miter', 'round', 'bevel'].indexOf(join));
+    if (this.st.cap === J && this.st.join === j) return;
+    if (J || j) this.cmds.push(['M', 10]);
+    if (this.st.cap !== J) { this.cmds.push(['J', J]); this.st.cap = J; }
+    if (this.st.join !== j) { this.cmds.push(['j', j]); this.st.join = j; }
+  }
   /** A dash list in mm (on, off, …); empty or all zero = solid. */
   dash(list) {
     const a = (list || []).filter((x) => Number.isFinite(x) && x >= 0);
@@ -114,13 +121,14 @@ export class Page {
 /** A page's content stream. */
 export function contentStream(page, unit = 1) {
   const n = num;
-  const out = [`${num(MM / unit, 6)} 0 0 ${num(MM / unit, 6)} 0 0 cm`, '1 J 1 j'];
+  const out = [`${num(MM / unit, 6)} 0 0 ${num(MM / unit, 6)} 0 0 cm`];
   for (const c of page.cmds) {
     switch (c[0]) {
       case 'q': case 'Q': case 'h': case 'S': case 'f': case 'f*': out.push(c[0]); break;
       case 'W': case 'W*': out.push(c[0] + ' n'); break;
       case 'RG': case 'rg': out.push(`${n(c[1], 3)} ${n(c[2], 3)} ${n(c[3], 3)} ${c[0]}`); break;
       case 'w': out.push(`${n(c[1], 4)} w`); break;
+      case 'J': case 'j': case 'M': out.push(`${n(c[1])} ${c[0]}`); break;
       case 'd': out.push(`[${c[1].map((x) => n(x, 4)).join(' ')}] 0 d`); break;
       case 'm': case 'l': out.push(`${n(c[1], 3)} ${n(c[2], 3)} ${c[0]}`); break;
       case 'c': out.push(`${c.slice(1).map((x) => n(x, 3)).join(' ')} c`); break;
