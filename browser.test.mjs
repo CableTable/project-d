@@ -7425,15 +7425,18 @@ try {
       const white = new Page(80, 50); white.strokeColor([1, 1, 1]); white.rect(10, 10, 60, 30); white.stroke();
       await picker.setInputFiles({ name: 'white.ai', mimeType: 'application/pdf', buffer: Buffer.from(writePdf([white])) });
       await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'white.dxf');
-      for (const theme of ['light', 'dark']) {
+      // The stroke keeps its own white in the file; the canvas draws white as the sheet's ink on light (render.js ink: #1b1d22), pure white on dark.
+      // Wait for the theme, then for the stroke in that theme's colour: the pixels left from the other theme are not the answer.
+      for (const [theme, rgb] of [['light', [0x1b, 0x1d, 0x22]], ['dark', [255, 255, 255]]]) {
         await p.locator('[data-menu=View]').click();
         await p.getByRole('menuitemcheckbox', { name: new RegExp('Theme: ' + theme + '\\b') }).click();
-        await p.waitForFunction(() => {
+        await p.waitForFunction((theme) => document.documentElement.dataset.theme === theme, theme);
+        await p.waitForFunction((rgb) => {
           const canvas = document.querySelector('[data-testid=drawing]'), pixels = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
-          let white = 0;
-          for (let i = 0; i < pixels.length; i += 4) if (pixels[i] === 255 && pixels[i + 1] === 255 && pixels[i + 2] === 255 && pixels[i + 3] > 0) white++;
-          return white > 100;
-        });
+          let hit = 0;
+          for (let i = 0; i < pixels.length; i += 4) if (pixels[i] === rgb[0] && pixels[i + 1] === rgb[1] && pixels[i + 2] === rgb[2] && pixels[i + 3] > 0) hit++;
+          return hit > 100;
+        }, rgb);
       }
     } finally { await context.close(); }
   });
