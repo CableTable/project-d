@@ -20,6 +20,7 @@ import * as AD from './autodim.js';
 import { cyclePick } from './selection-cycle.js';
 import { SNAP_NAME, snapTypes, lineSnaps, preferSnap } from './snap.js';
 import { pushView, popView } from './viewhist.js';
+import { restoreView } from './doc-view.js';
 import { zoomScale } from './zoom-level.js';
 import * as UF from './unitfix.js';
 import * as DU from './units.js';
@@ -315,6 +316,7 @@ function emptyDoc() {
 }
 state.docs.push(emptyDoc());
 const view = { scale: 1, ox: -80, oy: -80, fitted: true };
+let shownDoc = null;
 let layout = null;                  // the step-and-repeat grid of the open layout (layout.js stepRepeat; count 0 = none)
 let placedNow = [];                 // every placed part of the open layout (layoutdoc.js placedAll): grid copies, then loose ones
 const ui = {};
@@ -1052,7 +1054,7 @@ async function closeTab(d) {
   }
   PS.pageStates(d).forEach(dropCopy);
   state.docs.splice(i, 1);
-  if (!state.docs.length) { state.docs.push(emptyDoc()); view.fitted = true; }         // the fresh empty tab is fitted
+  if (!state.docs.length) state.docs.push(emptyDoc());
   state.doc = Math.min(state.doc > i ? state.doc - 1 : state.doc, state.docs.length - 1);
   showDoc();
 }
@@ -1105,6 +1107,12 @@ function cycleTab(step) {
 
 /** The active tab changed: its drawing, layers and status, and Fit if the view is still fitted. */
 function showDoc() {
+  const changed = shownDoc !== curDoc();
+  if (changed) {
+    // Callers have already changed state.doc; the global view still belongs to shownDoc.
+    if (shownDoc) shownDoc.view = { ...view, ...canvasSize() };
+    shownDoc = curDoc();
+  }
   state.paste = null;
   for (const item of cmpDoc()?.cmp.items || []) { const source = cmpSourceTab(item); if (source) cmpRefresh(source); }
   selectionCycle = null;
@@ -1119,7 +1127,9 @@ function showDoc() {
   state.mode = 'select'; state.pivot = centrePivot(); state.rotCopy = false; pdrag = null;
   state.arrangePoint = null;
   state.setlen = null; gripEnd(); trackClear(); if (state.mod && state.modDoc !== (editable() || curDoc())) { state.mod = newMod(state.mod.kind); state.modDoc = editable() || curDoc(); if (curLay()) curDoc().factor = 1; } if (state.draw && state.drawDoc !== (editable() || curLay() && curDoc())) { state.draw = DR.createTool(state.draw.kind, state.drawCfg); state.drawDoc = editable() || curLay() && curDoc(); state.drawHover = null; } state.meas = state.tool === 'measure' ? { pts: [], hover: null } : null; state.dim = state.tool === 'dimension' ? newDim() : null; state.ldr = state.tool === 'leader' ? newLdr() : null; state.bal = state.tool === 'balloon' ? { tip: null, hover: null } : null; state.balDrag = null; state.dimDrag = null; hideRubber();
-  syncFields(); renderTabs(); applyKind(); update();
+  syncFields(); renderTabs(); applyKind();
+  if (changed) Object.assign(view, restoreView(shownDoc.view, canvasSize()));
+  update();
   if (view.fitted) fit(); else applyView();
 }
 
@@ -1155,7 +1165,6 @@ function addTab(d, replaceEmpty = true) {
   const cur = curDoc();
   if (replaceEmpty && cur && cur.empty && !cur.dirty && !d.empty) state.docs[state.doc] = d;      // an untouched empty tab is used up
   else { state.docs.push(d); state.doc = state.docs.length - 1; }
-  view.fitted = true;
   showDoc();
 }
 

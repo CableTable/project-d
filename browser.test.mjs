@@ -166,6 +166,108 @@ try {
   const shotDir = shard ? join(shotRoot, `shard-${shard.index}-of-${shard.count}`) : shotRoot;
   if (shard || process.argv.includes('--shots')) process.env.SHOTS_DIR = shotDir; // Older screenshot steps read the environment directly.
   mkdirSync(shotDir, { recursive: true });
+  await step('TODO 304: drawings and PDF sheet tabs keep their own pan, zoom and Zoom Previous', async () => {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    try {
+      const p = await ctx.newPage(), q = (id) => p.getByTestId(id), faults = [];
+      p.on('pageerror', (e) => faults.push(String(e)));
+      await p.route('**/app.js', (route) => route.fulfill({ contentType: 'text/javascript', body: readFileSync('web/app.js', 'utf8') + `
+        window.t304 = {
+          read: () => ({ ...view, size: canvasSize(), sheetH: state.sheetH, hist: structuredClone(curDoc().viewHist || []), tabs: state.docs.length }),
+          open: (text) => openBytes('304-a.dxf', new TextEncoder().encode(text), 'E:/304-a.dxf')
+        };` }));
+      const frame = () => p.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+      const read = async () => { await frame(); return p.evaluate(() => window.t304.read()); };
+      const command = async (text) => {
+        if (!(await q('cmd-input').isVisible())) await q('cmd-echo').click();
+        await q('cmd-input').fill(text); await q('cmd-input').press('Enter');
+      };
+      const tab = async (name) => { await p.locator('.tabs .dtab').filter({ has: p.locator('.tname', { hasText: name }) }).click(); await frame(); };
+      const same = (actual, expected, why) => {
+        for (const key of ['scale', 'ox', 'oy']) assert.ok(Math.abs(actual[key] - expected[key]) <= 1e-9, `${why}: ${key} ${actual[key]} != ${expected[key]}`);
+        assert.equal(actual.fitted, expected.fitted, why);
+        assert.deepEqual(actual.hist, expected.hist, `${why}: switching adds no history`);
+      };
+      const panZoom = async () => {
+        const b = await q('canvas').boundingBox(), x = b.x + b.width / 2, y = b.y + b.height / 2;
+        await p.mouse.move(x, y); await p.mouse.down({ button: 'middle' });
+        await p.mouse.move(x + 71, y + 43, { steps: 3 }); await p.mouse.up({ button: 'middle' });
+        const beforeZoom = await read();
+        await q('zoom').click(); await q('zoom-input').fill('200'); await q('zoom-input').press('Enter');
+        return { beforeZoom, zoomed: await read() };
+      };
+      await p.goto(URL_ + '?autosave=86400000'); await q('count').waitFor({ state: 'attached' });
+      const raw = newDoc(4); addEntities(raw, [dxfLine(0, 0, 120, 80), dxfCircle(60, 40, 15)]);
+      const text = writeDxf(raw);
+      await p.evaluate((s) => window.t304.open(s), text);
+      await q('picker').setInputFiles({ name: '304-b.dxf', mimeType: 'application/dxf', buffer: Buffer.from(text) });
+      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === '304-b.dxf');
+      const fittedB = await read();
+      await q('picker').setInputFiles('fixtures/three-sheets.pdf'); await q('bal-sheets').waitFor();
+      const pdfName = await p.locator('.dtab.on .tname').textContent();
+      await tab(/^304-a\.dxf$/);
+      const a = await panZoom();
+      await tab(/^304-b\.dxf$/);
+      same(await read(), fittedB, 'B stays fitted after A pans and zooms');
+      assert.notEqual((await read()).scale, a.zoomed.scale);
+      await tab(/^304-a\.dxf$/); same(await read(), a.zoomed, 'A restores exactly');
+      await command('zp');
+      same(await read(), { ...a.beforeZoom, hist: a.zoomed.hist.slice(0, -1) }, 'A Previous undoes its last zoom');
+      await tab(pdfName);
+      const pdf = await panZoom();
+      await tab(/^304-b\.dxf$/); same(await read(), fittedB, 'PDF gestures leave B fitted');
+      await tab(pdfName); same(await read(), pdf.zoomed, 'PDF restores exactly');
+      await command('zp');
+      same(await read(), { ...pdf.beforeZoom, hist: pdf.zoomed.hist.slice(0, -1) }, 'PDF Previous undoes its last zoom');
+
+      // Opening another tab must save the leaving tab before requesting a fresh Fit.
+      await tab(/^304-a\.dxf$/); const keptA = await read();
+      await command('newlayout'); await p.keyboard.press('Escape');
+      const layoutName = await p.locator('.dtab.on .tname').textContent(), fitLayout = await read();
+      assert.equal(fitLayout.fitted, true, 'a never-viewed layout fits');
+      const layoutView = (await panZoom()).zoomed;
+      await tab(/^304-a\.dxf$/); same(await read(), keptA, 'new layout preserves A');
+      await command('compare'); await p.keyboard.press('Escape');
+      const fitCompare = await read(); assert.equal(fitCompare.fitted, true, 'a never-viewed Compare fits');
+      const compareView = (await panZoom()).zoomed;
+      await tab(layoutName); same(await read(), layoutView, 'layout restores independently');
+      await tab(/^Compare$/); same(await read(), compareView, 'Compare restores independently');
+      await command('fit'); const fittedCompare = await read();
+      await tab(/^304-a\.dxf$/); same(await read(), keptA, 'Compare leaves A unchanged');
+
+      // While A is hidden, the fitted tabs refit and A keeps its drawing centre.
+      await tab(/^304-b\.dxf$/); await p.setViewportSize({ width: 1200, height: 760 }); await frame();
+      const resizedB = await read(); assert.equal(resizedB.fitted, true);
+      assert.notEqual(resizedB.scale, fittedB.scale, 'the visible fitted tab refits on resize');
+      await tab(/^304-a\.dxf$/); const resizedA = await read();
+      assert.equal(resizedA.scale, keptA.scale);
+      const centre = (v) => [v.ox + v.size.w / (2 * v.scale), v.sheetH - v.oy - v.size.h / (2 * v.scale)];
+      centre(resizedA).forEach((v, i) => assert.ok(Math.abs(v - centre(keptA)[i]) <= 1e-9, 'hidden unfitted tab keeps its drawing centre'));
+      await tab(layoutName); assert.equal((await read()).scale, layoutView.scale);
+      await command('fit'); const resizedFitLayout = await read();
+      assert.notEqual(resizedFitLayout.scale, fitLayout.scale, 'layout Fit uses the new canvas size');
+      await tab(/^Compare$/); const resizedCompare = await read();
+      assert.equal(resizedCompare.fitted, true); assert.notEqual(resizedCompare.scale, fittedCompare.scale, 'hidden fitted Compare refits');
+      await tab(/^304-b\.dxf$/); await tab(layoutName);
+      same(await read(), resizedFitLayout, 'fitted layout restores through fit layout branch');
+
+      await p.evaluate((s) => window.t304.open(s), text);
+      same(await read(), resizedA, 're-showing an open path preserves its view');
+      await p.locator('.dtab.on .x').click();
+      await p.evaluate((s) => window.t304.open(s), text);
+      assert.equal((await read()).fitted, true, 'a file reopened after close fits');
+      assert.deepEqual((await read()).hist, [], 'reopened file has fresh view history');
+      for (const theme of ['light', 'dark']) {
+        await p.locator('[data-menu=View]').click();
+        await p.getByRole('menuitemcheckbox', { name: new RegExp('Theme: ' + theme + '\\b') }).click();
+        await frame();
+        const path = `${shotDir}/todo304-tabs-${theme}.png`;
+        await p.screenshot({ path }); assert.ok(readFileSync(path).length > 1000, 'required screenshot exists');
+      }
+      assert.deepEqual(faults, []);
+      console.log('TODO 304 proof: drawings/PDF/layout/Compare restore; Previous stays per tab; hidden resize and reopen pass');
+    } finally { await ctx.close(); }
+  });
   await step('TODO 303: a 130k-entity cm drawing peaks under 1.5x its first-draw heap in 90 s', async () => {
     const ctx = await browser.newContext();
     try {
