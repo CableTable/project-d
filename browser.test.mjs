@@ -6224,7 +6224,7 @@ try {
         await pick(80, 80);
         await pick(120, 100); await count(1);
         await pick(120, 100, 'right'); await q('ctx-menu').waitFor();
-        assert.deepEqual(await p.getByRole('menuitem').allTextContents(), ['Select connected', 'Extract part…', 'Keep only this', 'GroupCtrl+G', 'UngroupCtrl+Shift+G', 'Measure from here', 'Delete']);
+        assert.deepEqual(await p.getByRole('menuitem').allTextContents(), ['Select connected', 'Extract part…', 'Keep only this', 'DuplicateCtrl+D', 'GroupCtrl+G', 'UngroupCtrl+Shift+G', 'Measure from here', 'Delete']);
         await p.screenshot({ path: `${shotDir}/155c-fixes-menu-${theme}.png` });
         await p.keyboard.press('Escape');
         await p.locator('[data-tool=contour]').click();
@@ -8056,7 +8056,7 @@ try {
     const p = await at(50, 0);
     await shotBoth('extract-menu', async () => { await page.mouse.click(p.x, p.y, { button: 'right' }); await page.waitForSelector('[data-testid=ctx-menu]'); }, async () => { await page.keyboard.press('Escape'); });
     await page.mouse.click(p.x, p.y, { button: 'right' });
-    assert.deepEqual(await ctxItems(), ['Extract part…', 'Keep only this', 'Select connected', 'GroupCtrl+G', 'UngroupCtrl+Shift+G', 'Measure from here', 'Delete']);
+    assert.deepEqual(await ctxItems(), ['Extract part…', 'Keep only this', 'Select connected', 'DuplicateCtrl+D', 'GroupCtrl+G', 'UngroupCtrl+Shift+G', 'Measure from here', 'Delete']);
     await page.getByRole('menuitem', { name: 'Extract part…' }).click();
     await nameDlg.waitFor();
     assert.equal(await nameDlg.getAttribute('aria-label'), 'Extract part');
@@ -8504,7 +8504,7 @@ try {
     for (const id of ['bar-keep', 'bar-extract', 'keep-only', 'extract']) assert.equal(await t(id).isDisabled() , id === 'extract' ? false : true, id);
     const p = await at(50, -25);
     await page.mouse.click(p.x, p.y, { button: 'right' }); await page.waitForSelector('[data-testid=ctx-menu]');
-    assert.deepEqual(await ctxItems(), ['Select connected', 'GroupCtrl+G', 'UngroupCtrl+Shift+G', 'Measure from here', 'Delete'], 'no Extract or Keep for a dimension');
+    assert.deepEqual(await ctxItems(), ['Select connected', 'DuplicateCtrl+D', 'GroupCtrl+G', 'UngroupCtrl+Shift+G', 'Measure from here', 'Delete'], 'no Extract or Keep for a dimension');
     await page.keyboard.press('Escape');
     await t('extract').click();
     assert.match(await t('cmd-prompt').textContent(), /a kept dimension is not part of a part/);
@@ -29719,6 +29719,95 @@ try {
     await page.getByRole('menuitem', { name: /^Align/ }).click();
     assert.equal(await prompt(), 'Select objects:'); await key97c('Escape');
     await closeTabs(/./); assert.deepEqual(errors, []);
+  });
+
+  await step('TODO 285: Ctrl+D duplicates a line on a drawing tab', async () => {
+    await closeTabs(/./);
+    const route285 = (route) => route.fulfill({ contentType: 'text/javascript', body: readFileSync('web/app.js', 'utf8') + `
+      window.pick285 = (ids) => setSel(editable(), new Set(ids));
+      window.probe285 = () => { const d = editable(); return { raw: d.raw, sel: [...d.sel], labels: d.hist.labels().past }; };
+      window.addEventListener('keydown', (e) => { if (e.ctrlKey && e.key.toLowerCase() === 'd') window.prevented285 = e.defaultPrevented; });
+    ` });
+    await page.route('**/app.js', route285); await page.reload();
+    const probe = () => page.evaluate(() => window.probe285());
+    const pick = (ids) => page.evaluate((ids) => window.pick285(ids), ids);
+    try {
+      for (const compare of [false, true]) for (const units of [4, 1]) {
+        await menuItem('View', 'Theme: light');
+        const raw = newDoc(units), factor = units === 1 ? 25.4 : 1, delta = 10 / factor;
+        addLayer(raw, 'Cut'); addLayer(raw, 'Locked');
+        addEntities(raw, dxfLine(100, 100, 180, 100, { layer: 'Cut', aci: 3, tc: 0x257abd, lw: 35 }), dxfLine(300, 200, 340, 200, { layer: 'Locked' }));
+        const name = `duplicate285-${compare}-${units}.dxf`;
+        await open97c(raw, name);
+        await t('ptab-objects').click(); await page.locator('.or.layer[data-layer=Locked] [data-act=lock]').click();
+        if (compare) await typeCmd('compare');
+        await key97c('Control+a');
+        const before = await probe();
+        await key97c('Control+d');
+        let after = await probe();
+        assert.equal(after.raw.entities.length, 3, 'Ctrl+D adds one copy');
+        assert.equal(await page.evaluate(() => window.prevented285), true, 'our shortcut prevents the browser default');
+        const shifted = (dx, dy) => [100 + dx, 100 + dy, 180 + dx, 100 + dy];
+        const near = (actual, expected) => actual.forEach((v, i) => approx(v, expected[i], .00001));
+        near(lineEnds97c(after.raw).at(-1), shifted(delta, delta));
+        assert.deepEqual(after.sel, [2], 'the copy is selected');
+        for (const code of [8, 62, 420, 370]) assert.equal(after.raw.entities[2].r.v[after.raw.entities[2].r.c.indexOf(code)], before.raw.entities[0].r.v[before.raw.entities[0].r.c.indexOf(code)], 'layer / colour / width preserved');
+        await key97c('Control+d'); after = await probe();
+        near(lineEnds97c(after.raw).at(-1), shifted(2 * delta, 2 * delta));
+        assert.deepEqual(after.sel, [3]);
+        assert.equal(after.labels.length, before.labels.length + 2);
+        await key97c('Control+z'); assert.equal((await probe()).raw.entities.length, 3, 'one Undo removes only the last copy');
+        await pick([0]);
+        await t('dup-x').click(); await t('dup-gap').fill('5'); await t('dup-gap').press('Enter');
+        await t('dup-count').fill('2'); await t('dup-count').press('Enter'); await t('dup-go').click();
+        after = await probe();
+        near(lineEnds97c(after.raw).at(-2), shifted(85, 0)); near(lineEnds97c(after.raw).at(-1), shifted(170, 0));
+        assert.deepEqual(after.sel, [3, 4], 'all row copies become the selection');
+        await key97c('Control+z'); assert.equal((await probe()).raw.entities.length, 3, 'one Undo removes the row');
+        await pick([0]); await t('dup-y').click(); await t('dup-go').click();
+        after = await probe(); near(lineEnds97c(after.raw).at(-1), shifted(0, 10));
+        await key97c('Control+z');
+        await pick([0]); await page.locator('[data-menu=Layout]').click();
+        assert.equal(await page.getByRole('menuitem', { name: 'Duplicate', exact: true }).isEnabled(), true);
+        assert.equal(await page.getByRole('menuitem', { name: 'Duplicate part', exact: true }).count(), 0);
+        await page.getByRole('menuitem', { name: 'Duplicate', exact: true }).click();
+        assert.equal((await probe()).raw.entities.length, 4); await key97c('Control+z');
+        await pick([0]); await page.locator('[data-ribbon-tab=Home]').click();
+        await page.locator('.ribbon-body').getByRole('button', { name: 'Duplicate', exact: true }).click();
+        assert.equal((await probe()).raw.entities.length, 4); await key97c('Control+z');
+        await pick([0]);
+        await page.mouse.click(500, 400, { button: 'right' });
+        await page.getByRole('menuitem', { name: 'Duplicate', exact: true }).click();
+        assert.equal((await probe()).raw.entities.length, 4); await key97c('Control+z');
+        await pick([0, 1]); await key97c('Control+d');
+        assert.equal(await said(/1 on locked layers skipped/), '1 on locked layers skipped');
+        assert.equal((await probe()).raw.entities.length, 4, 'mixed selection copies only the unlocked line');
+        await pick([1]); const locked = await probe(); await key97c('Control+d');
+        assert.equal(await said(/1 on locked layers skipped/), '1 on locked layers skipped');
+        assert.deepEqual(await probe(), locked, 'all locked adds no copy or Undo');
+        await pick([0]); await typeCmd('mv'); await typeCmd('0,0'); await key97c('Escape');
+        assert.deepEqual(lineEnds97c((await probe()).raw)[0], [100, 100, 180, 100], 'Esc mid-command leaves the source alone');
+        await typeCmd('mv'); await typeCmd('0,0'); await typeCmd('1,2'); await key97c('Escape');
+        near(lineEnds97c((await probe()).raw)[0], shifted(1, 2));
+        if (!compare && units === 4) {
+          await pick([0]); await t('dup-x').click();
+          for (const theme of ['light', 'dark']) {
+            await menuItem('View', 'Theme: ' + theme); await t('dup-go').scrollIntoViewIfNeeded(); await frames();
+            const path = `${shotDir}/todo285-duplicate-${theme}.png`;
+            await page.screenshot({ path }); assert.ok(readFileSync(path).length > 1000);
+          }
+        }
+        if (compare) {
+          await page.locator('.dtab').filter({ has: page.locator('.tname', { hasText: new RegExp('^duplicate285-true-' + units + '(?:-edited)*\\.dxf$') }) }).click();
+          assert.equal((await probe()).raw.entities.length, 4, 'Compare edited the selected source drawing');
+        }
+        await closeTabs(/./);
+      }
+      await menuItem('View', 'Theme: light'); assert.deepEqual(errors, []);
+    } finally {
+      await page.unroute('**/app.js', route285); await page.reload();
+      await page.waitForSelector('[data-testid=count]', { state: 'attached' });
+    }
   });
 
   const doc97i2 = () => {

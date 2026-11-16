@@ -513,7 +513,7 @@ function buildMenus() {
   menus.Arrange = () => [['Centre on page', () => runCommand(CB.resolve('cp')), 'CP', () => !!curLay(), curLay() ? 'Centre the selection as one block on the whole sheet' : 'a drawing has no page']];
   menus.Tools = [['Preflight…', showPreflight, 'Drawing checks'], ['Shortcuts…', showShortcuts, 'Aliases + keys']];
   menus.Layout = [['New layout', newLayoutTab], ['Add to layout', addToLayout], ['Parts library', () => showLibrary()], ['Extract part…', () => extractPart()],
-    ['Duplicate part', duplicateOne, 'Ctrl+D', () => !!selectedPlaced()], ['Mirror X', () => mirrorSel('x'), null, () => !!selectedPlaced()], ['Mirror Y', () => mirrorSel('y'), null, () => !!selectedPlaced()],
+    ['Duplicate', duplicate, 'Ctrl+D', () => !!selectedPlaced() || !!editable()?.sel.size], ['Mirror X', () => mirrorSel('x'), null, () => !!selectedPlaced()], ['Mirror Y', () => mirrorSel('y'), null, () => !!selectedPlaced()],
     ['Group', groupSel, 'Ctrl+G', () => selIdxs().length > 1 && !wholeGroup()], ['Ungroup', ungroupSel, 'Ctrl+Shift+G', () => selItems().some((x) => x.p.g)],
     ['Lock', () => lockSel(true), null, () => selItems().some((x) => !x.p.lock)], ['Unlock', () => lockSel(false), null, () => selItems().some((x) => x.p.lock)]];
   const drop = h('div', { class: 'dropdown', hidden: true, role: 'menu' });
@@ -792,6 +792,7 @@ function ribbonContents(kind) {
       stack(ribbonTool('fillet', true), ribbonTool('extend', true), ribbonTool('trim', true)), stack(ribbonTool('array', true)), ribbonTool('break'), ribbonTool('join'), ribbonTool('reverse'), ribbonTool('lengthen')));
   }
   if (kind === 'compare') groups.push(group('Modify', stack(ribbonTool('copy', true), ribbonTool('stretch', true), ribbonTool('align', true)), ribbonTool('fillet', true), ribbonTool('break'), ribbonTool('join'), ribbonTool('reverse'), ribbonTool('lengthen')), shaping());
+  groups.push(group('Copy', btn('Duplicate', '<rect x="3" y="3" width="12" height="12"/><rect x="9" y="9" width="12" height="12"/>', duplicate, { enabled: () => !!editable()?.sel.size })));
   groups.push(group('Groups', btn('Group', ICONS.group, groupSel, { command: 'group', enabled: () => !!editable() && editable().sel.size > 1 && !wholeDrawingGroup(editable().raw.groups, editable().sel) }),
     btn('Ungroup', ICONS.ungroup, ungroupSel, { command: 'ungroup', enabled: () => !!editable() && [...editable().sel].some((i) => groupOf(editable().raw.groups, i)) })));
   ui.ribbonLayer = h('select', { 'aria-label': 'Current layer', onchange: (e) => {
@@ -1394,7 +1395,7 @@ function buildPartRibbon() {
     ribbonGroup('Nudge', ...[['left', 'Left', 'M19 12H5m6-6-6 6 6 6'], ['up', 'Up', 'M12 19V5m-6 6 6-6 6 6'], ['down', 'Down', 'M12 5v14m-6-6 6 6 6-6'], ['right', 'Right', 'M5 12h14m-6-6 6 6-6 6']].map(([dir, label, path]) => ribbonButton(label, '<path d="' + path + '"/>', () => nudgeSel(dir), { enabled: () => !selItems().some((x) => x.p.lock) })), ribbonStack(ribbonField('Step mm', ui.barNudge))),
     ribbonGroup('Arrange', gbtn('bar-group', 'Group', ICONS.group, () => (wholeGroup() ? ungroupSel() : groupSel())),
       gbtn('bar-lock', 'Lock', ICONS.lock, () => lockSel(!selItems().every((x) => x.p.lock)))),
-    ribbonGroup('Copy', ribbonButton('Duplicate part', '<rect x="3" y="3" width="12" height="12"/><rect x="9" y="9" width="12" height="12"/>', duplicateOne)));
+    ribbonGroup('Copy', ribbonButton('Duplicate', '<rect x="3" y="3" width="12" height="12"/><rect x="9" y="9" width="12" height="12"/>', duplicate)));
   ui.partRibbon = h('div', { class: 'ribbon-page', 'data-testid': 'part-ribbon' }, ui.pfields);
   ui.ribbonCache.append(ui.partRibbon);
 }
@@ -1862,8 +1863,8 @@ function buildPlacedPanel() {
   const py = pfield({ 'data-lockable': '1', 'data-testid': 'rot-py', 'aria-label': 'Pivot Y in mm' }, () => { const s = selectedPlaced(); return s ? fmt(pivotPoint(s.part, s.p)[1]) : '—'; }, (t) => setPivotText('y', t), custom);
   const mirror = (axis) => h('button', { class: 'btn sm', type: 'button', 'data-testid': 'mirror-' + axis, title: axis === 'x' ? 'Flip the part left to right about its centre' : 'Flip the part top to bottom about its centre', onclick: () => mirrorSel(axis) }, axis === 'x' ? 'Mirror X' : 'Mirror Y');
   ui.dupAxisBtns = [['x', '→', 'Right (+X)'], ['-x', '←', 'Left (−X)'], ['y', '↑', 'Up (+Y)'], ['-y', '↓', 'Down (−Y)']].map(([a, arrow, label]) =>
-    h('button', { class: 'seg', type: 'button', 'data-testid': 'dup-' + a.replace('-', 'neg'), 'data-axis': a, 'aria-label': label, title: label, onclick: () => { state.dupAxis = a; renderProps(); } }, arrow));
-  const dgap = pfield({ 'data-testid': 'dup-gap', 'aria-label': 'Distance between copies in mm', title: 'Edge to edge: the space between one copy and the next' }, () => String(+state.dupGap.toFixed(3)), (t) => setDupText('dupGap', t));
+    h('button', { class: 'seg', type: 'button', 'data-testid': 'dup-' + a.replace('-', 'neg'), 'data-axis': a, 'aria-label': label, title: label, onclick: () => { state.dupAxis = a; renderProps(); renderEdit(); } }, arrow));
+  ui.dupGap = pfield({ 'data-testid': 'dup-gap', 'aria-label': 'Distance between copies in mm', title: 'Edge to edge: the space between one copy and the next' }, () => curLay() ? String(+state.dupGap.toFixed(3)) : lengthText(state.dupGap, (v) => String(+v.toFixed(3))), (t) => setDupText('dupGap', t));
   const dcount = pfield({ 'data-testid': 'dup-count', 'aria-label': 'Copies' }, () => String(state.dupCount), (t) => setDupText('dupCount', t));
   const nudge = pfield({ 'data-testid': 'nudge-step2', 'aria-label': 'Nudge step in mm' }, showNudge, setNudgeText);
   ui.ppLock = h('span', { class: 'chip lockchip', hidden: true, 'data-testid': 'pp-lock' }, icon(ICONS.lock, { size: 12, width: 1.8, cap: 'round', join: 'round' }), 'Locked');
@@ -1891,10 +1892,10 @@ function buildPlacedPanel() {
     sec('Mirror', 'sec-mirror', h('div', { class: 'btnrow' }, mirror('x'), mirror('y')), h('span', { class: 'lbl' }, 'X flips left to right, Y top to bottom, about the centre of the part.')),
     sec('Duplicate', 'sec-duplicate',
       h('div', { class: 'row between' }, h('span', { class: 'lbl' }, 'Direction'), h('div', { class: 'mode', role: 'group', 'aria-label': 'Direction' }, ui.dupAxisBtns)),
-      h('div', { class: 'grid2' }, labelled('Distance (mm)', dgap, 'field'), labelled('Copies', dcount, 'field')),
-      h('span', { class: 'lbl' }, 'Distance is edge to edge. Copies off the sheet are still placed.'),
-      h('div', { class: 'btnrow' }, h('button', { class: 'btn sm primary', type: 'button', 'data-testid': 'dup-go', onclick: duplicateRow }, 'Duplicate'),
-        h('button', { class: 'btn sm', type: 'button', 'data-testid': 'dup-one', title: 'One copy, 10 mm right and up (Ctrl+D). Drag it where it should go', onclick: duplicateOne }, 'Copy once'))),
+      h('div', { class: 'grid2' }, ui.dupGapLabel = labelled('Distance (mm)', ui.dupGap, 'field'), labelled('Copies', dcount, 'field')),
+      ui.dupHelp = h('span', { class: 'lbl' }, 'Distance is edge to edge. Copies off the sheet are still placed.'),
+      h('div', { class: 'btnrow' }, h('button', { class: 'btn sm primary', type: 'button', 'data-testid': 'dup-go', onclick: () => duplicate(true) }, 'Duplicate'),
+        h('button', { class: 'btn sm', type: 'button', 'data-testid': 'dup-one', title: 'One copy, 10 mm right and up (Ctrl+D). Drag it where it should go', onclick: duplicate }, 'Copy once'))),
     sec('Nudge', 'sec-nudge', h('div', { class: 'row between' }, labelled('Step (mm)', nudge, 'field'), h('span', { class: 'lbl' }, 'Arrow keys move the part by this step.'))),
   ];
   return h('div', { class: 'contents' }, ui.placedSecs);
@@ -2336,6 +2337,20 @@ const loosenedNote = (g) => (g.loosened ? 'The step and repeat grid became separ
  * → { g, part, next, idx, idxs, lay, items, nexts, name, many } or null.
  */
 function editSelected(fn, { copy = false, key = '', pick = false, label = 'Edit', labelSelection = true } = {}) {
+  // Drawing copies use fn(raw, selection); the shared DXF copier also handles blocks, dimensions and groups.
+  if (!curLay()) {
+    const d = editable();
+    if (!copy || !d?.sel.size) return null;
+    const sel = new Set([...d.sel].filter((i) => !lockedEnt(d, i))), skipped = d.sel.size - sel.size;
+    if (!sel.size) { note(`${skipped} on locked layers skipped`); return null; }
+    try {
+      const next = fn(d.raw, sel), first = d.raw.entities.length;
+      view.fitted = false;
+      if (!commit(d, next, label)) return null;
+      setTool('select'); setSel(d, new Set(next.entities.map((_, i) => i).slice(first)));
+      return { skipped };
+    } catch (err) { note(err.message); return null; }
+  }
   const items = selItems();
   if (!items.length) return null;
   const d = curDoc(), lay = d.lay, many = items.length > 1;
@@ -2417,6 +2432,19 @@ function deletePlaced() {
   update();
   say(`${name} deleted`, loosenedNote(g), 'Ctrl+Z brings ' + (items.length > 1 ? 'them' : 'it') + ' back');
 }
+/** Every Duplicate control enters here; layouts retain their placement and off-sheet rules. */
+function duplicate(row = false) {
+  row = row === true;       // click handlers pass an event
+  if (curLay()) { if (row) duplicateRow(); else duplicateOne(); return; }
+  const d = cmpDoc() ? cmpEdit('duplicate') : editable();
+  if (!d) return;
+  if (!d.sel.size) { note('Duplicate: select one or more objects first'); return; }
+  const r = editSelected((raw, sel) => {
+    const offsets = row ? PL.rowOffsets(OB.boxOf(d.fl, [...sel]), state.dupAxis, state.dupGap / d.factor, state.dupCount) : [[10 / d.factor, 10 / d.factor]];
+    return Ed.copyMany(raw, sel, offsets.map(([dx, dy]) => ({ dx, dy })));
+  }, { copy: true, label: row ? `Duplicate ×${state.dupCount}` : 'Duplicate' });
+  if (r) note(r.skipped ? `${r.skipped} on locked layers skipped` : 'Selection duplicated. Ctrl+Z takes it back');
+}
 /** Ctrl+D / Copy once: a copy 10 mm right and up (or left and down when that leaves the sheet), never exactly on another copy; the copy is selected. */
 function duplicateOne() {
   const items = selItems();
@@ -2483,12 +2511,12 @@ function setNudgeText(text) {
   return '';
 }
 function setDupText(key, text) {
-  const v = PL.parseMm(text);
+  const v = PL.parseMm(text, key === 'dupCount' || curLay() ? 'mm' : drawingUnit());
   if (key === 'dupCount') {
     if (v == null || !Number.isInteger(v) || v < 1 || v > 200) return 'Copies must be a whole number from 1 to 200';
     state.dupCount = v;
   } else {
-    if (v == null || v < 0) return 'The distance between copies must be 0 or more (mm, edge to edge)';
+    if (v == null || v < 0) return `The distance between copies must be 0 or more (${curLay() ? 'mm' : drawingUnit()}, edge to edge)`;
     state.dupGap = v;
   }
   return '';
@@ -2647,7 +2675,7 @@ function layoutMenu(e) {
   const items = selItems();
   if (!items.length) return;
   const many = items.length > 1;
-  popMenu(e.clientX, e.clientY, [['Duplicate', duplicateOne, 'Ctrl+D'], ['Mirror X', () => mirrorSel('x'), 'MX'], '-',
+  popMenu(e.clientX, e.clientY, [['Duplicate', duplicate, 'Ctrl+D'], ['Mirror X', () => mirrorSel('x'), 'MX'], '-',
     ['Group', groupSel, 'Ctrl+G', many && !wholeGroup()], ['Ungroup', ungroupSel, 'Ctrl+Shift+G', items.some((x) => x.p.g)],
     ['Lock', () => lockSel(true), null, items.some((x) => !x.p.lock)], ['Unlock', () => lockSel(false), null, items.some((x) => x.p.lock)], '-',
     ['Measure from here', () => { setTool('measure'); measurePoint(curDoc(), sheetAt(e.clientX, e.clientY)); }], ['Delete', deletePlaced, 'Del']]);
@@ -5240,7 +5268,7 @@ function attachCanvasEvents() {
     const p = toDrawing(d, e.clientX, e.clientY), hit = Ed.hitEntity(edIndex(d), p[0], p[1], pickTol(d));
     if (hit >= 0 && !d.sel.has(hit)) clickSelect(d, p, false);
     if (!d.sel.size) return;
-    const items = [['Select connected', () => selectConnected(d)],
+    const items = [['Select connected', () => selectConnected(d)], ['Duplicate', duplicate, 'Ctrl+D'],
       ['Group', groupSel, 'Ctrl+G', d.sel.size > 1 && !wholeDrawingGroup(d.raw.groups, d.sel)],
       ['Ungroup', ungroupSel, 'Ctrl+Shift+G', [...d.sel].some((i) => groupOf(d.raw.groups, i))],
       ['Measure from here', () => { setTool('measure'); measurePoint(d, p, false); }], ['Delete', deleteSelection]];
@@ -10614,7 +10642,7 @@ function layoutKey(e, mod, k) {
   if (mod && !e.altKey && k === 'z') { e.preventDefault(); if (e.shiftKey) redoLay(); else undoLay(); return true; }
   if (mod && !e.altKey && !e.shiftKey && k === 'y') { e.preventDefault(); redoLay(); return true; }
   if (!selectedPlaced()) return false;
-  if (mod && !e.altKey && !e.shiftKey && k === 'd') { e.preventDefault(); duplicateOne(); return true; }
+  if (mod && !e.altKey && !e.shiftKey && k === 'd') { e.preventDefault(); duplicate(); return true; }
   if (e.key === 'Delete' && !mod) { e.preventDefault(); deletePlaced(); return true; }
   const dir = { ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down' }[e.key];
   if (dir && !mod && !e.altKey) { e.preventDefault(); nudgeSel(dir, e.shiftKey); return true; }
@@ -10734,6 +10762,7 @@ function editKey(e) {
   if (cmpKey(e, mod)) return;
   if (!mod && !e.altKey && drawKey(e, k)) return;
   if (e.key === ' ' && !mod && !e.altKey && !e.shiftKey && !dialog && !activeCmd() && !(e.target.closest && e.target.closest('button, a'))) { e.preventDefault(); ui.cmdUI.repeat(); return; }       // Space is Enter: the last command again
+  if (!curLay() && mod && !e.altKey && !e.shiftKey && k === 'd') { e.preventDefault(); duplicate(); return; }
   if (layoutKey(e, mod, k)) return;
   if (!d) { if (cmpDoc() && e.key === 'Delete') { e.preventDefault(); cmpEdit(); } return; }
   const dir = { ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down' }[e.key];
@@ -11028,6 +11057,17 @@ function setSelect(sel, options, current) {
 }
 function renderPropsPanel(d) {
   const lay = curLay(), show = !!d || !!lay;
+  const dup = ui.placedSecs.find((sec) => sec.dataset.testid === 'sec-duplicate'), dupOn = state.panel !== 'library' && (lay ? !!selectedPlaced() : !!d?.sel.size);
+  dup.hidden = !dupOn;
+  ui.dupAxisBtns.forEach((btn) => { const on = btn.dataset.axis === state.dupAxis; btn.classList.toggle('on', on); btn.setAttribute('aria-pressed', String(on)); });
+  for (const f of placedFields.filter((f) => ['dup-gap', 'dup-count'].includes(f.input.dataset.testid))) {
+    f.input.disabled = !dupOn;
+    if (document.activeElement !== f.input) f.input.value = f.show();
+  }
+  const dupUnit = lay ? 'mm' : drawingUnit();
+  ui.dupGapLabel.firstChild.textContent = `Distance (${dupUnit})`;
+  ui.dupGap.setAttribute('aria-label', `Distance between copies in ${dupUnit}`);
+  ui.dupHelp.textContent = 'Distance is edge to edge.' + (lay ? ' Copies off the sheet are still placed.' : '');
   ui.placedSecs[1].hidden = state.panel === 'library' || (lay ? selIdxs().length : d?.sel.size || 0) < (lay ? 1 : 2);
   ui.centreOnPage.disabled = !lay;
   ui.centreOnPage.title = lay ? 'Centre the selection as one block on the whole sheet (CP)' : 'a drawing has no page';
