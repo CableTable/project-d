@@ -7,6 +7,7 @@ import { viewOrigin } from './view-origin.js';
 import { drawingPreviewBox, overlayBox } from './preview.js';
 import { outsideView, subPixel, skipPoint, maxScale } from './perf.js';
 import { SNAP_NAME } from './snap.js';
+import { pictureBitmap } from './pictures.js';
 
 const SHEETS = { light: { bg: '#ffffff', fg: '#1b1d22' }, dark: { bg: '#000000', fg: '#e8e8ec' } };
 /** The canvas font of a text item: its style's font (Standard, Arial-like or Mono), bold when its MTEXT font code says so. */
@@ -135,12 +136,27 @@ function wireStroke(c, dpr) {
   c.save(); c.setTransform(1, 0, 0, 1, 0, 0); c.lineWidth = dpr; c.stroke(); c.restore();
 }
 
+/** The pictures (IMAGE items with pixels, TODO 305a), full opacity: the unit square, its top row at y = 1, through the item's q and matrix. */
+function paintPictures(c, fl, off, T, vr, hide) {
+  c.imageSmoothingQuality = 'high';
+  for (const it of shownItems(fl)) {
+    if (it.k !== 'i' || !itemVisible(it, off) || (hide && hide.has(it.e)) || (vr && outsideView(it.b, 0, vr))) continue;
+    const img = pictureBitmap(it.px);
+    if (!img) continue;                                                      // still loading: pictures.js repaints when it is
+    const [ux, uy, vx, vy, ix, iy] = it.q;
+    c.setTransform(...mmul(mmul(T, fl.mats[it.m]), [ux, uy, -vx, -vy, ix + vx, iy + vy]));
+    c.drawImage(img, 0, 0, 1, 1);
+  }
+}
+
 /** The shown items through T (drawing units → canvas pixels), k pixels per unit; vr culls to the view (drawing units), or null. */
 function paintItems(c, fl, off, T, k, vr, dpr, col, sheetBg, hide, factor, wireframe) {
   const mats = fl.mats;
   let cur = -1, kk = k, pxPerUnit = 0, open = false, pc = null, pw = 0, pd = null, cap = null, join = null, origin = [0, 0], drawn = 0, run = 0;
   const flush = () => { if (open) { if (wireframe) wireStroke(c, dpr); else c.stroke(); } open = false; };
+  if (!wireframe) paintPictures(c, fl, off, T, vr, hide);                   // under every line and text; Wireframe hides them like the background
   for (const it of shownItems(fl)) {
+    if (it.k === 'i') continue;
     const b = it.b;
     const pad = it.k === 'p' && !it.fill ? strokeWidth(it, factor, mscale(mats[it.m])) / factor / 2 : 0;
     if (vr && outsideView(b, pad, vr)) continue;
@@ -190,7 +206,7 @@ function highlight(c, items, mats, T, k, dpr, accent, wireframe) {
     c.lineWidth = 2.6 * dpr / kk;
     c.lineCap = it.cap || 'butt'; c.lineJoin = it.join || 'miter'; c.miterLimit = 10;
     c.beginPath();
-    if (it.k === 'p' || (wireframe && it.ops)) { c.setLineDash([6 * dpr / kk, 6 * dpr / kk]); trace(c, it.ops, origin, pxPerUnit); c.stroke(); }
+    if (it.k === 'p' || it.k === 'i' || (wireframe && it.ops)) { c.setLineDash([6 * dpr / kk, 6 * dpr / kk]); trace(c, it.ops, origin, pxPerUnit); c.stroke(); }
     else { c.setLineDash([]); c.strokeRect(it.b[0] - origin[0], it.b[1] - origin[1], it.b[2] - it.b[0], it.b[3] - it.b[1]); }
   }
 }

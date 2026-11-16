@@ -3,8 +3,10 @@
 // carries on without recovery.
 //
 // A record: { id (the tab or PDF sheet's recovery id), name, path, openPath, pdfPages, pdfHash (SHA-256 of the source PDF, 64 lowercase hex, or null), kind ('drawing' | 'layout'), dxf (the text Save would write), balloons (sidecar text or null), unit (string or null), t (ms), tab, sheet,
-//             saved, fromFile, fromPdf, acceptedLoss (the tab's Save state, so Save works as before after a recovery) }.
+//             saved, fromFile, fromPdf, acceptedLoss (the tab's Save state, so Save works as before after a recovery),
+//             pics (the IMAGE entities with pixels: DXF Save leaves them out, the copy keeps them whole) }.
 import { idbStore } from './idbstore.js';
+import { isPng } from './pictures.js';
 
 const store = idbStore('project-d-recovery', 'copies', 'the recovery store');
 
@@ -36,6 +38,8 @@ export function recoverPrompt(copies, now = Date.now()) {
   const n = copies.length, newest = Math.max(...copies.map((c) => c.t || 0));
   return `Recover ${n} unsaved ${n === 1 ? 'drawing' : 'drawings'} from ${timeText(newest, now)}?`;
 }
+/** A picture the saved DXF cannot hold (an IMAGE with pixels in r.px, TODO 305a): the copy keeps it beside the DXF text as `pics`. */
+export const isPicture = (e) => !!e && e.type === 'IMAGE' && !!e.r && Array.isArray(e.r.c) && Array.isArray(e.r.v) && isPng(e.r.px);
 /** Valid copies only (a record from storage is data, not trusted): the fields the recovery needs, in the right types. */
 export function cleanCopies(list) {
   return (Array.isArray(list) ? list : []).filter((c) => c && typeof c.id === 'string' && typeof c.dxf === 'string' && c.dxf.length && typeof c.name === 'string' && (c.kind === 'drawing' || c.kind === 'layout'))
@@ -43,5 +47,6 @@ export function cleanCopies(list) {
       openPath: typeof c.openPath === 'string' ? c.openPath : null, pdfPages: Number.isInteger(c.pdfPages) && c.pdfPages > 0 ? c.pdfPages : null,
       pdfHash: typeof c.pdfHash === 'string' && /^[0-9a-f]{64}$/.test(c.pdfHash) ? c.pdfHash : null,
       balloons: typeof c.balloons === 'string' ? c.balloons : null, unit: typeof c.unit === 'string' ? c.unit : null, sheet: Number.isInteger(c.sheet) && c.sheet > 0 ? c.sheet : null,
-      saved: !!c.saved, fromFile: !!c.fromFile, fromPdf: typeof c.fromPdf === 'string' ? c.fromPdf : null, acceptedLoss: !!c.acceptedLoss }));
+      saved: !!c.saved, fromFile: !!c.fromFile, fromPdf: typeof c.fromPdf === 'string' ? c.fromPdf : null, acceptedLoss: !!c.acceptedLoss,
+      pics: Array.isArray(c.pics) ? c.pics.filter(isPicture) : [] }));
 }

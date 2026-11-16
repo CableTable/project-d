@@ -6,6 +6,7 @@ import { fitBase, zoomAt, panBy, paintView, FIT } from './pdf-view.js';
 import { baseName, saveDefault, withExt } from './savepath.js';
 import { planPdf, freePdfName, DEFAULT_OPTIONS, tileGrid, scaleText, titleBlockTexts, cleanTitleBlock, readTitleBlock, PAPERS, PART_BORDER, marginsOf, OFFICE_MARGINS, MARGIN_MAX, parseScale, percentText, PageCapError } from './pdf-export.js';
 import { batchPdfSource } from './pdf-source.js';
+import { pictureBitmap } from './pictures.js';
 
 /** Shared by PDF dialogs: the drawing/layout and Part settings keep their existing split, even without storage. */
 export function rememberPdfSettings(part, value) {
@@ -88,6 +89,11 @@ export function paintPage(canvas, page, box, colours, view, margins) {
       case 'S': apply(); c.stroke(); c.beginPath(); break;
       case 'f': case 'f*': apply(); c.fill(cmd[0] === 'f*' ? 'evenodd' : 'nonzero'); c.beginPath(); break;
       case 'W': case 'W*': c.clip(cmd[0] === 'W*' ? 'evenodd' : 'nonzero'); c.beginPath(); break;
+      case 'I': {                                                                          // a picture: its unit square, top row at y = 1 (page y is up here)
+        const img = pictureBitmap(cmd[2].px), m = cmd[1];
+        if (img) { c.save(); c.transform(m[0], m[1], -m[2], -m[3], m[4] + m[2], m[5] + m[3]); c.drawImage(img, 0, 0, 1, 1); c.restore(); }
+        break;
+      }
       case 'T': {
         c.save(); apply();
         c.transform(...cmd[1]); c.scale(0.01, -0.01);

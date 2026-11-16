@@ -116,10 +116,12 @@ export class Page {
   clip(evenOdd = false) { this.cmds.push([evenOdd ? 'W*' : 'W']); }
   /** WinAnsi text (see winAnsi) with a text matrix [a b c d e f]: glyph space is one em, so it carries the size. */
   text(tm, coded) { if (coded) this.cmds.push(['T', tm, coded]); }
+  /** A picture { w, h, rgb (w*h*3 bytes, top row first), a (w*h alpha bytes or null) }, its unit square (top row at y = 1) put on the page by m = [a b c d e f] (mm). */
+  image(m, img) { this.cmds.push(['I', m, img]); }
 }
 
-/** A page's content stream. */
-export function contentStream(page, unit = 1) {
+/** A page's content stream. names: Map picture → its XObject name (see writePdf). */
+export function contentStream(page, unit = 1, names = new Map()) {
   const n = num;
   const out = [`${num(MM / unit, 6)} 0 0 ${num(MM / unit, 6)} 0 0 cm`];
   for (const c of page.cmds) {
@@ -132,6 +134,7 @@ export function contentStream(page, unit = 1) {
       case 'd': out.push(`[${c[1].map((x) => n(x, 4)).join(' ')}] 0 d`); break;
       case 'm': case 'l': out.push(`${n(c[1], 3)} ${n(c[2], 3)} ${c[0]}`); break;
       case 'c': out.push(`${c.slice(1).map((x) => n(x, 3)).join(' ')} c`); break;
+      case 'I': if (names.has(c[2])) out.push(`q ${c[1].map((x) => n(x, 6)).join(' ')} cm /${names.get(c[2])} Do Q`); break;
       case 'T': out.push(`BT /F1 1 Tf ${c[1].map((x, i) => n(x, i < 4 ? 6 : 3)).join(' ')} Tm ${pdfString(c[2])} Tj ET`); break;
       default: break;
     }
@@ -143,10 +146,16 @@ export function contentStream(page, unit = 1) {
 
 /**
  * pages: [Page]. meta: { title, subject }. Returns the file's bytes (Uint8Array). Objects: 1 catalog, 2 page tree, 3 font, 4 info,
- * then a page and its content for each page.
+ * then a page and its content for each page, then each distinct picture (and its alpha) as an image XObject.
+ * shortcut: a picture's pixels are written raw, not deflated (no sync deflate here); deflate them when a print file gets too big.
  */
 export function writePdf(pages, meta = {}) {
   const objs = [];
+  const pics = [...new Set(pages.flatMap((p) => p.cmds.filter((c) => c[0] === 'I').map((c) => c[2])))];
+  const names = new Map(pics.map((im, i) => [im, 'Im' + (i + 1)])), ids = new Map();
+  let nextId = 5 + 2 * pages.length;
+  for (const im of pics) { ids.set(im, nextId); nextId += im.a ? 2 : 1; }
+  const bin = (u8) => { const s = []; for (let i = 0; i < u8.length; i += 0x8000) s.push(String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000))); return s.join(''); };
   const kids = pages.map((_, i) => `${5 + 2 * i} 0 R`).join(' ');
   objs.push('<< /Type /Catalog /Pages 2 0 R >>');
   objs.push(`<< /Type /Pages /Kids [${kids}] /Count ${pages.length} >>`);
@@ -157,11 +166,17 @@ export function writePdf(pages, meta = {}) {
     // PDF 1.4 pages stop at 14400 pt (200 in): above that the page is drawn in units of `unit` points
     const unit = Math.max(1, Math.ceil(Math.max(p.w, p.h) * MM / 14400));
     if (unit > 1) v16 = true;
+    const on = [...new Set(p.cmds.filter((c) => c[0] === 'I').map((c) => c[2]))];
     objs.push(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${num(p.w * MM / unit, 3)} ${num(p.h * MM / unit, 3)}] ${unit > 1 ? `/UserUnit ${unit} ` : ''}` +
-      `/Resources << /Font << /F1 3 0 R >> >> /Contents ${6 + 2 * i} 0 R >>`);
-    const body = contentStream(p, unit);
+      `/Resources << /Font << /F1 3 0 R >>${on.length ? ` /XObject << ${on.map((im) => `/${names.get(im)} ${ids.get(im)} 0 R`).join(' ')} >>` : ''} >> /Contents ${6 + 2 * i} 0 R >>`);
+    const body = contentStream(p, unit, names);
     objs.push(`<< /Length ${body.length} >>\nstream\n${body}endstream`);
   });
+  for (const im of pics) {
+    const head = `<< /Type /XObject /Subtype /Image /Width ${im.w} /Height ${im.h} `, rgb = bin(im.rgb);
+    objs.push(`${head}/ColorSpace /DeviceRGB /BitsPerComponent 8${im.a ? ` /SMask ${ids.get(im) + 1} 0 R` : ''} /Length ${rgb.length} >>\nstream\n${rgb}\nendstream`);
+    if (im.a) { const a = bin(im.a); objs.push(`${head}/ColorSpace /DeviceGray /BitsPerComponent 8 /Length ${a.length} >>\nstream\n${a}\nendstream`); }
+  }
   let out = `%PDF-1.${v16 ? 6 : 4}\n%\xE2\xE3\xCF\xD3\n`;
   const at = [];
   objs.forEach((o, i) => { at.push(out.length); out += `${i + 1} 0 obj\n${o}\nendobj\n`; });

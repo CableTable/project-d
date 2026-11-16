@@ -458,6 +458,10 @@ function drawPage(src, o, plan, p, artBox) {
 
   const fulls = new Map();
   const fullFor = (m) => { let M = fulls.get(m); if (!M) { M = mmul(M0, mmul([F, 0, 0, F, -org[0], -org[1]], fl.mats[m])); fulls.set(m, M); } return M; };
+  for (const it of g.items) {                                                        // pictures first: under every line and text (TODO 305a); src.pics: px → { px, w, h, rgb, a } from pictures.js rawPixels
+    const img = it.k === 'i' && src.pics?.get(it.px);
+    if (img) page.image(mmul(fullFor(it.m), it.q), img);
+  }
   page.lineWidth(0.25); page.dash([]);
   for (const it of g.items) {
     const M = fullFor(it.m), sc = mscale(M);

@@ -98,6 +98,7 @@ import { fontForStyle, fontSubstitutions } from './fontsub.js';
 import { outlineOf } from './nestshape.js';
 import { partSource, readTitleBlock, withTitleBlock } from './pdf-export.js';
 import { readPdf, renderPdfPage, isPdf } from './pdf-read.js';
+import { preloadPictures, rawPixels } from './pictures.js';
 import { panelWidth } from './docker.js';
 
 const SVGNS = 'http://www.w3.org/2000/svg';
@@ -1236,10 +1237,11 @@ async function openPdf(name, buf, path = null, copies = null) {
     return;
   }
   const raw = r.doc, fl = flatten(raw);
+  await preloadPictures(fl.items);
   const base = baseName(name), dxfName = base + '.dxf';
   const doc = { name: dxfName, path: null, openPath: path, dirty: false, fromPdf: name, curLayer: Object.keys(raw.layers)[0], pdf: { name, bytes, pages: r.pages, page: r.page, hash }, ...tabFields(raw, fl) };
   addTab(doc);
-  note(`Opened ${name} as a drawing (page ${r.page} of ${r.pages}): ${raw.entities.length} entities, ${r.texts} texts, ${fmtSize(r.mm[0])} × ${fmtSize(r.mm[1])} mm. Not saved yet: Save writes ${base}${PS.sheetNumbers(doc.pdf).length > 1 ? `-sheet${r.page}` : ''}.dxf` + (fl.truncated ? '. Too big to show all of it' : ''));
+  note(`Opened ${name} as a drawing (page ${r.page} of ${r.pages}): ${raw.entities.length} entities, ${r.texts} texts, ${fmtSize(r.mm[0])} × ${fmtSize(r.mm[1])} mm. Not saved yet: Save writes ${base}${PS.sheetNumbers(doc.pdf).length > 1 ? `-sheet${r.page}` : ''}.dxf` + (fl.truncated ? '. Too big to show all of it' : '') + (r.stencils ? `. ${r.stencils} stencil pictures not shown` : ''));
   await balLoad(doc, path, name);
   return doc;
 }
@@ -3484,9 +3486,10 @@ function exportSource(selectionOnly = false, cut = true) {
   if (d.fl) return { name: d.name, path, fl, factor: d.factor, off: d.off, sheetW: state.sheetW, sheetH: state.sheetH, hide: [] };
   return null;
 }
-function exportPdf() {
-  const d = curDoc();
-  openExport({ source: (selectionOnly, cut) => { const src = exportSource(selectionOnly, cut); return src && { ...src, titleBlock: d.titleBlock }; }, sheet: () => ({ w: state.sheetW, h: state.sheetH }), readDrawing, note,
+async function exportPdf() {
+  const d = curDoc(), pics = new Map();               // the drawing's pictures as raw pixels for the file (TODO 305a); no await when there are none
+  for (const it of d?.fl?.items || []) if (it.k === 'i' && !pics.has(it.px)) { try { pics.set(it.px, { px: it.px, ...await rawPixels(it.px) }); } catch { /* that picture stays out of the file */ } }
+  openExport({ source: (selectionOnly, cut) => { const src = exportSource(selectionOnly, cut); return src && { ...src, titleBlock: d.titleBlock, pics }; }, sheet: () => ({ w: state.sheetW, h: state.sheetH }), readDrawing, note,
     setTitleBlock: (value) => { d.titleBlock = value; d.dirty = true; renderTabs(); } });
 }
 
@@ -3538,7 +3541,7 @@ async function autosaveNow() {
         if (page.lay && r.hasCopy && r.autoTab === tab && r.autoDxf === dxf && r.autoBalloons === balloons && r.autoUnit === unit) continue;                    // a layout: the same text, balloons, unit and tab index as the last copy
         const name = n == null ? page.name : `${d.pdf.name} sheet ${n}`;
         await RC.saveCopy({ id: r.rid, name, path: page.path || null, openPath: d.openPath || null, pdfPages: d.pdf?.pages || null, pdfHash: d.pdf?.hash || null, kind: page.lay ? 'layout' : 'drawing', dxf, t: Date.now(),
-          tab, sheet: n, balloons, unit, saved: !!page.saved, fromFile: !!d.fromFile, fromPdf: d.fromPdf || null, acceptedLoss: !!page.acceptedLoss });
+          tab, sheet: n, balloons, unit, saved: !!page.saved, fromFile: !!d.fromFile, fromPdf: d.fromPdf || null, acceptedLoss: !!page.acceptedLoss, pics: (raw?.entities || []).filter((e) => e.type === 'IMAGE' && e.r?.px) });
         r.hasCopy = true; r.autoTab = tab; r.autoBalloons = balloons; r.autoUnit = unit; if (page.lay) r.autoDxf = dxf;
         if (!page.lay) { r.autoEnts = raw?.entities; r.autoBlocks = raw?.blocks; r.autoLayers = raw?.layers; r.autoGroups = raw?.groups; r.autoLtypes = raw?.ltypes; r.autoHeader = raw?.header; r.autoTitle = titleBlock; }
         if (!state.docs.includes(d) || !PS.pageState(d, n)?.dirty || (d.pdf && !PS.sheetNumbers(d.pdf).includes(n))) await dropCopy({ recovery: r }); // closed, saved or deleted while writing
@@ -3570,6 +3573,7 @@ async function recoverOne(c, target = null) {
   try {
     const r = await readDrawing(new TextEncoder().encode(c.dxf).buffer);
     if (!r.ok) return false;
+    if (c.pics?.length) { r.doc.entities.push(...c.pics); r.result = flatten(r.doc); await preloadPictures(r.result.items); }       // the saved DXF has no IMAGEs (305a); at the end, so the groups' indexes stay
     const lay = c.kind === 'layout' ? LD.layoutFromRaw(r.doc, c.name) : null;
     const openPath = (target ? c.openPath : null) || (c.saved ? null : c.path); // a fallback drawing tab must not claim the PDF (openBytes would call it "already open")
     const doc = lay ? { name: c.name, path: c.path, openPath, dirty: true, lay, titleBlock: readTitleBlock(r.doc), fromFile: c.fromFile, saved: c.saved }
@@ -7201,7 +7205,9 @@ async function balSheet(d, n) {
       next = { ...next, bg: { name: P.name, mm: r.mmPerPx, x: 0, y: 0, visible: true, ...next.bg, bitmap: bm, w: bm.width, h: bm.height } };
     } else if (!next) {
       const r = await readPdf(new Uint8Array(P.bytes.slice(0)), { page: n });
-      next = { ...tabFields(r.doc, flatten(r.doc)), curLayer: Object.keys(r.doc.layers)[0], hist: Ed.createHistory(), name: baseName(P.name) + '.dxf', path: null, dirty: false };
+      const nfl = flatten(r.doc);
+      await preloadPictures(nfl.items);
+      next = { ...tabFields(r.doc, nfl), curLayer: Object.keys(r.doc.layers)[0], hist: Ed.createHistory(), name: baseName(P.name) + '.dxf', path: null, dirty: false };
     }
     PS.keepPage(d);
     if (P.picture) d.bg?.bitmap?.close();

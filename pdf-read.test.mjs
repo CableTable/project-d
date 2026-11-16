@@ -341,3 +341,41 @@ test('a v curve (no first control point) starts at the current point, also when 
   const b = R.pdfToDoc({ ops: ops2, text: [], view: [0, 0, 100, 100] }, OPS).doc.entities[0];
   assert.deepEqual(doc.entities[0].r.v.map(Number), b.r.v.map(Number));
 });
+
+// TODO 305a: a PDF with one 4 x 2 RGB picture under a turned, skewed ctm, a 1-colour stencil and a line
+const pictureBytes = () => {
+  const content = 'q 40 20 -20 30 100 10 cm /Im1 Do Q\nq 10 0 0 10 5 5 cm /Mk Do Q\n0 0 m 50 0 l S\n';
+  const rgb = ['ff0000', '00ff00', '0000ff', 'ffffff', '000000', 'ffff00', '00ffff', 'ff00ff'].join('') + '>';        // 8 pixels, top row first
+  const objects = ['<< /Type /Catalog /Pages 2 0 R >>', '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] /Resources << /XObject << /Im1 5 0 R /Mk 6 0 R >> >> /Contents 4 0 R >>',
+    `<< /Length ${content.length} >>\nstream\n${content}endstream`,
+    `<< /Type /XObject /Subtype /Image /Width 4 /Height 2 /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /ASCIIHexDecode /Length ${rgb.length} >>\nstream\n${rgb}\nendstream`,
+    '<< /Type /XObject /Subtype /Image /Width 8 /Height 1 /ImageMask true /BitsPerComponent 1 /Filter /ASCIIHexDecode /Length 3 >>\nstream\nAA>\nendstream'];
+  let pdf = '%PDF-1.4\n';
+  const offsets = objects.map((object, i) => { const at = pdf.length; pdf += `${i + 1} 0 obj\n${object}\nendobj\n`; return at; });
+  const xref = pdf.length;
+  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n` + offsets.map((n) => String(n).padStart(10, '0') + ' 00000 n \n').join('');
+  return new TextEncoder().encode(pdf + `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`);
+};
+test('TODO 305a: a picture becomes an IMAGE with its place from the ctm (to 0.01 mm), a stencil is counted and left out', async () => {
+  const r = await R.readPdf(pictureBytes(), { pdfjs });
+  assert.deepEqual([r.pictures, r.stencils, r.paths], [1, 1, 1]);
+  const [pic, line] = r.doc.entities;                                   // pictures come first: under the line
+  assert.deepEqual([pic.type, pic.layer, line.type], ['IMAGE', 'PDF pictures', 'LWPOLYLINE']);
+  assert.ok(r.doc.layers['PDF pictures'], 'its own layer');
+  const f = (c) => +pic.r.v[pic.r.c.indexOf(c)], PTMM = R.PT;
+  const mm = (v) => v * PTMM;
+  const near2 = (a, b, m) => assert.ok(Math.abs(a - b) < 0.01, `${m} ${a} !~ ${b}`);
+  near2(f(10), mm(100), 'insert x'); near2(f(20), mm(10), 'insert y');
+  near2(f(11) * f(13), mm(40), 'u x'); near2(f(21) * f(13), mm(20), 'u y');         // u, v are one pixel's sides (DXF): times the pixels = the picture's side
+  near2(f(12) * f(23), mm(-20), 'v x'); near2(f(22) * f(23), mm(30), 'v y');
+  assert.deepEqual([f(13), f(23)], [4, 2]);
+  assert.match(pic.r.px, /^data:image\/png;base64,/);
+  assert.ok(!pic.r.v.some((v) => v.includes('data:')), 'pixels are in r.px, never in the group codes');
+  const flat = D.flatten(r.doc), item = flat.items.find((it) => it.k === 'i');
+  assert.ok(item && item.px === pic.r.px && item.ops.length, 'drawing.js flattens it to a picture item with an outline');
+  const ix = D.pickIndex(flat, false), at = D.pickAt(ix, mm(100) + mm(20) * 0.5, mm(10) + mm(10) * 0.5, 0.01);       // on the bottom edge's middle (u/2 along)
+  assert.equal(at.ent?.it, flat.items.indexOf(item), 'the frame is pickable');
+  const w = W.writeDxf(r.doc);
+  assert.ok(!w.includes('data:image') && !/\nIMAGE\r?\n/.test(w), 'DXF Save leaves the picture out (305b writes it)');
+});

@@ -7,7 +7,8 @@ import { group, follow } from './groups.js';
 //
 //   flatten(readDxf(decodeDxf(bytes))) → { units, layers, items, mats, vports, boxes, left, truncated, endsEarly }
 //   an item, in drawing order: { k, m, L, ps, css, lw, dash | dpx, b, … }
-//     k   'p' a path (stroked, or filled with fill: 1) · 'h' a patterned hatch · 't' text · 'w' a wipeout · 'n' a point
+//     k   'p' a path (stroked, or filled with fill: 1) · 'h' a patterned hatch · 't' text · 'w' a wipeout · 'n' a point · 'i' a picture
+//         (px a PNG data URL, q [ux, uy, vx, vy, ix, iy]: the unit square, image top at y = 1, → drawing units; its ops are the outline)
 //     m   its matrix, mats[m] (a block's placement; 0 is none) · L its layers (its own, then the blocks' it sits in)
 //     e   the index of the top-level entity it was drawn from (a block's contents: the INSERT's)
 //     ps  on the sheet (paper space) · css its colour · lw its weight (1/100 mm)
@@ -18,6 +19,7 @@ import { group, follow } from './groups.js';
 
 import { fontForStyle } from './fontsub.js';
 import { pathCentre } from './snap.js';
+import { isPng } from './pictures.js';
 export { fontOfStyle } from './fontsub.js';
 
 export class DrawingError extends Error {}
@@ -600,6 +602,14 @@ export function flatten(doc, hidden = new Set()) {
           put({ k: 'w', ...base, ops, b: opsBox(ops) });
           break;
         }
+        case 'IMAGE': {                                   // a picture with pixels (r.px, TODO 305a): u, v are one pixel's sides, 13 / 23 its size in pixels; without pixels it stays undrawn
+          const w = num(f[13]), hh = num(f[23]);
+          if (!isPng(r.px) || !(w > 0 && hh > 0)) { skip('IMAGE'); break; }
+          const ix = num(f[10]), iy = num(f[20]), ux = num(f[11]) * w, uy = num(f[21]) * w, vx = num(f[12]) * hh, vy = num(f[22]) * hh;
+          const ops = lineOps([[ix, iy], [ix + ux, iy + uy], [ix + ux + vx, iy + uy + vy], [ix + vx, iy + vy]], true);
+          put({ k: 'i', ...base, ops, px: r.px, q: [ux, uy, vx, vy, ix, iy], b: opsBox(ops) });
+          break;
+        }
         case 'VIEWPORT': {
           if (depth || !e.ps) break;
           const id = num(f[69], 2), status = f[68] == null ? 1 : num(f[68]);
@@ -978,7 +988,7 @@ export function pickIndex(fl, paper, visible = () => true, extremeFrame = IDENT)
     const m = fl.mats[it.m];
     if (it.insertion) { const [x, y] = mapply(m, ...it.insertion); snaps.push({ x, y, kind: 'insertion', it: idx }); }
     if (it.k === 'n') { const [x, y] = mapply(m, it.x, it.y); snaps.push({ x, y, kind: 'node', it: idx }); return; }
-    if (it.k !== 'p' || it.fill) return;
+    if (it.k !== 'i' && (it.k !== 'p' || it.fill)) return;                  // a picture's frame picks and snaps like a closed outline
     const ops = it.ops, sim = similar(m), sc = mscale(m), flipped = m[0] * m[3] - m[1] * m[2] < 0;
     if (!it.ell && !it.spl) {
       const centre = pathCentre(ops);

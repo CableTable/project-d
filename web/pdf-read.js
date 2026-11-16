@@ -2,16 +2,18 @@
 // text content in, a DXF document in dxf-write.js's shape out) — pdf-read.test.mjs. pdf.js itself is vendored in
 // vendor/pdfjs/ (tools/vendor.mjs) and only loaded when a PDF is opened.
 //
-//   readPdf(bytes, { page, pdfjs })   → { doc, paths, texts, pages, page, mm: [w, h] }   (the drawing, in mm)
+//   readPdf(bytes, { page, pdfjs })   → { doc, paths, texts, pictures, stencils, pages, page, mm: [w, h] }   (the drawing, in mm; pictures are IMAGE entities)
 //   renderPdfPage(bytes, { page, dpi }) → { canvas, w, h, mmPerPx, pages }              (the page as a picture)
 //   pdfToDoc({ ops, text, view, rotate }, OPS) → { doc, paths, texts }                  (the pure part; rotate: the page's /Rotate)
-import { newDoc, addLayer, arc, lwpoly, text } from './dxf-write.js';
+import { newDoc, addLayer, arc, lwpoly, text, entity } from './dxf-write.js';
+import { toRgba, encodePng } from './pictures.js';
 import { rgbKey, rgbHex, cmykRgb } from './colour.js';
 import { fillHoles, edgeDist } from './fill.js';
 
 /** mm in one PDF point. */
 export const PT = 25.4 / 72;
-const CAP = 0.7;                                      // a text's capitals are about 0.7 of its font size
+const PICTURES = 'PDF pictures';                      // one layer for all the pictures, so one switch hides them
+const CAP = 0.7;                                     // a text's capitals are about 0.7 of its font size
 
 const textKey = (s) => s.normalize('NFKC').replace(/\s/g, '');
 
@@ -85,9 +87,11 @@ export function bezierArc(p0, p1, p2, p3) {
  * their colour on the outline. Outline colours get first-seen #RRGGBB layers, entities ByLayer; TEXT uses its fill colour.
  * paths counts emitted entities (one polyline = 1); text is TEXT at its place and size.
  * rotate: the page's /Rotate (clockwise degrees), so a portrait plotter page with /Rotate 90 comes out landscape, as it is shown.
+ * images: Map from a paintImageXObject's name (a paintInlineImageXObject's data object) → { w, h, px (PNG data URL) }; each painted one is an IMAGE
+ * on layer "PDF pictures" (pictures counts them); 1-colour stencil masks are not shown (stencils counts them).
  * OPS: pdf.js's operator numbers.
  */
-export function pdfToDoc({ ops, text: items = [], view = [0, 0, 0, 0], rotate = 0 }, OPS) {
+export function pdfToDoc({ ops, text: items = [], view = [0, 0, 0, 0], rotate = 0, images = new Map() }, OPS) {
   const doc = newDoc(4), ents = [];
   doc.layers = {};
   const layerFor = (rgb) => {
@@ -110,7 +114,8 @@ export function pdfToDoc({ ops, text: items = [], view = [0, 0, 0, 0], rotate = 
   let strokeColour = [0, 0, 0], fillColour = [0, 0, 0];
   let path = [];                                       // pieces of the path being built, already in mm
   let last = null, sub = null;                         // the current point and the sub-path's start, mm (kept across ops)
-  let paths = 0;
+  let paths = 0, stencils = 0;
+  const pics = [];
   const pieces = (list, filled, stroked) => {
     const first = ents.length, style = { layer: layerFor(stroked ? strokeColour : fillColour), ...(filled ? { fill: rgbKey(fillColour) } : {}) };
     let cur = null, start = null;
@@ -223,6 +228,14 @@ export function pdfToDoc({ ops, text: items = [], view = [0, 0, 0, 0], rotate = 
       if (path.length) pieces(path, filled, stroked);
       path = []; last = sub = null;
     } else if (fn === OPS.endPath) { path = []; last = sub = null; }            // a clip, or nothing
+    else if (fn === OPS.paintImageXObject || fn === OPS.paintInlineImageXObject) {
+      const img = images.get(a[0]);                                              // shortcut: the clip is ignored as for lines, a clipped picture shows whole
+      if (!img) continue;
+      if (!doc.layers[PICTURES]) addLayer(doc, PICTURES, { aci: 7 });
+      const o = P(0, 0, ctm), x = P(1, 0, ctm), y = P(0, 1, ctm);               // the unit square: u, v are one pixel's sides (DXF), group 13 the size in pixels
+      const pic = entity('IMAGE', [[10, o[0]], [20, o[1]], [30, 0], [11, (x[0] - o[0]) / img.w], [21, (x[1] - o[1]) / img.w], [31, 0], [12, (y[0] - o[0]) / img.h], [22, (y[1] - o[1]) / img.h], [32, 0], [13, img.w], [23, img.h]], { layer: PICTURES });
+      pic.r.px = img.px; pics.push(pic);
+    } else if (fn === OPS.paintImageMaskXObject || fn === OPS.paintImageMaskXObjectGroup || fn === OPS.paintImageMaskXObjectRepeat) stencils++;
   }
   let texts = 0;
   const textAt = new Map();
@@ -242,7 +255,8 @@ export function pdfToDoc({ ops, text: items = [], view = [0, 0, 0, 0], rotate = 
     for (const e of textAt.get(i) || []) doc.entities.push(e);
     if (i < ents.length) doc.entities.push(ents[i]);
   }
-  return { doc, paths, texts };
+  doc.entities.unshift(...pics);                       // under every line and text (render.js also paints pictures first)
+  return { doc, paths, texts, pictures: pics.length, stencils };
 }
 
 let pdfjsPromise = null;
@@ -261,11 +275,23 @@ async function loadPdfjs() {
 export async function readPdf(bytes, { page = 1, pdfjs = null } = {}) {
   const lib = pdfjs || await loadPdfjs();
   const data = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
-  const pdf = await lib.getDocument({ data, verbosity: 0 }).promise;
+  // no OffscreenCanvas / ImageDecoder: the pictures then come as plain pixels (data, kind), not a bitmap
+  const pdf = await lib.getDocument({ data, verbosity: 0, isOffscreenCanvasSupported: false, isImageDecoderSupported: false }).promise;
   try {
     const n = Math.min(Math.max(1, page), pdf.numPages), pg = await pdf.getPage(n);
     const [ops, tc] = await Promise.all([pg.getOperatorList(), pg.getTextContent()]);
-    const r = pdfToDoc({ ops, text: tc.items, view: pg.view, rotate: pg.rotate }, lib.OPS), w = (pg.view[2] - pg.view[0]) * PT, h = (pg.view[3] - pg.view[1]) * PT;
+    const images = new Map();
+    for (let i = 0; i < ops.fnArray.length; i++) {
+      const fn = ops.fnArray[i], a = ops.argsArray[i];
+      if (fn !== lib.OPS.paintImageXObject && fn !== lib.OPS.paintInlineImageXObject) continue;
+      if (images.has(a[0])) continue;
+      const store = typeof a[0] === 'string' && a[0].startsWith('g_') ? pg.commonObjs : pg.objs;
+      let data = a[0];
+      if (typeof data === 'string') { try { data = store.get(data); } catch { data = null; } }
+      const px = toRgba(data || {});
+      if (px) images.set(a[0], { w: px.w, h: px.h, px: await encodePng(px.w, px.h, px.rgba) });
+    }
+    const r = pdfToDoc({ ops, text: tc.items, view: pg.view, rotate: pg.rotate, images }, lib.OPS), w = (pg.view[2] - pg.view[0]) * PT, h = (pg.view[3] - pg.view[1]) * PT;
     return { ...r, pages: pdf.numPages, page: n, mm: Math.round(pg.rotate / 90) % 2 ? [h, w] : [w, h] };
   } finally { try { await pdf.destroy(); } catch { /* already gone */ } }
 }
