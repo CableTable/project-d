@@ -3404,7 +3404,7 @@ async function extractPart() {
   });
   if (!name) return;
   part.name = name;
-  const report = writeDxfWithReport(part.raw, { escapeUnicode: true });
+  const report = writeDxfWithReport(part.raw, { escapeUnicode: true, pictures: false });
   libCache.set(part.id, part);
   const ok = await libAdd({ id: part.id, name, w: part.w, h: part.h, dxf: report.text, thumb: thumbFor(part), source: part.src, t: Date.now() });
   d.savedAs = (d.savedAs || []).concat(sizeKey(part.w, part.h));
@@ -6028,7 +6028,7 @@ async function pasteClipboard(inPlace) {
 }
 async function finishLayoutPaste(g, inPlace = false) {
   const { d, parts, placed, part } = g, lay = d.lay, groups = {};
-  const report = part && writeDxfWithReport(part.raw, { escapeUnicode: true });
+  const report = part && writeDxfWithReport(part.raw, { escapeUnicode: true, pictures: false });
   const rec = part && { id: part.id, name: part.name, w: part.w, h: part.h, dxf: report.text, thumb: thumbFor(part), source: part.src, t: Date.now() };
   pushLay(d, null, '', `Paste ${placed.length}`);
   for (const [id, part] of Object.entries(parts)) if (!lay.parts[id]) lay.parts[id] = part;

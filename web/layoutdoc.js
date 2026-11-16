@@ -419,7 +419,7 @@ export function extractRaw(raw, sel) {
 }
 
 /** A part as a DXF text (the library keeps this). */
-export const partToDxf = (part) => writeDxf(part.raw, { escapeUnicode: true });
+export const partToDxf = (part) => writeDxf(part.raw, { escapeUnicode: true, pictures: false });
 
 /** A part from a DXF text (as partToDxf wrote it), or null if it has no extents or cannot be read. */
 export function partFromDxf(id, name, text) {

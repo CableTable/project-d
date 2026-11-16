@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readDxf, flatten } from './web/drawing.js';
-import { newDoc, entity, addBlock, insert, writeDxfWithReport } from './web/dxf-write.js';
+import { newDoc, entity, addBlock, insert, line, writeDxfWithReport, saveReportNote } from './web/dxf-write.js';
+import { extractRaw, makePart, partToDxf } from './web/layoutdoc.js';
 import { encodePng } from './web/pictures.js';
 
 const field = (r, c) => r.v[r.c.indexOf(c)];
@@ -26,6 +27,9 @@ test('TODO 305b: rotated picture round trips as IMAGE / IMAGEDEF and a sibling P
   assert.doesNotMatch(report.text, /data:image|base64/);
   const back = readDxf(report.text), image = back.entities[0];
   assert.equal(image.type, 'IMAGE');
+  const marker = image.r.v.indexOf('AcDbRasterImage');
+  assert.deepEqual(image.r.c.slice(marker, marker + 3), [100, 90, 10]);
+  assert.equal(image.r.v[marker + 1], '0');
   assert.equal(image.r.file, 'turned-img1.png');
   for (const code of [10, 20, 30, 11, 21, 31, 12, 22, 32, 13, 23]) assert.equal(+field(image.r, code), +field(pic.r, code), 'group ' + code);
   assert.equal(image.r.px, undefined, 'pixels come from the sibling, not DXF');
@@ -63,4 +67,20 @@ test('TODO 305b: rotated picture round trips as IMAGE / IMAGEDEF and a sibling P
   assert.ok(nested.blocks.Picture.entities[0].r.file);
   assert.notEqual(nested.blocks.Picture.entities[0].r.file, nested.entities[0].r.file);
   assert.equal(writeDxfWithReport(nested).pictures.length, 0, 'unresolved references do not invent PNG files');
+});
+
+test('TODO 305b: extracting a part skips pictures when sibling PNGs cannot be written', async () => {
+  const doc = newDoc(), pic = entity('IMAGE', [[10, 0], [20, 0], [11, 1], [21, 0], [12, 0], [22, 1], [13, 2], [23, 3]]);
+  pic.r.px = await encodePng(2, 3, new Uint8Array(24).fill(255));
+  addBlock(doc, 'Picture', [structuredClone(pic)]);
+  doc.entities = [line(0, 0, 10, 10), pic, insert('Picture', 20, 0)];
+  const part = makePart('extract', 'Extract', extractRaw(doc, new Set([0, 1, 2])), 1), before = structuredClone(part.raw);
+  const report = writeDxfWithReport(part.raw, { escapeUnicode: true, pictures: false });
+  assert.deepEqual(report.skipped, [{ type: 'IMAGE', count: 2 }]);
+  assert.match(saveReportNote(report), /2 objects not saved: IMAGE x2/);
+  assert.deepEqual(report.pictures, []);
+  assert.doesNotMatch(report.text, /IMAGE|IMAGEDEF|drawing-img1\.png/);
+  assert.equal(readDxf(report.text).entities[0].type, 'LINE');
+  assert.equal(partToDxf(part), report.text, 'the library writer also disables pictures');
+  assert.deepEqual(part.raw, before, 'extraction keeps the source pictures');
 });

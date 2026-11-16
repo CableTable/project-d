@@ -3,7 +3,7 @@
 //
 //   writeDxf(doc, opts) → string, CRLF lines.   opts: { escapeUnicode: true writes non-ASCII as \U+XXXX (R2000's own way); extents: [x0, y0, x1, y1] of model space, when the caller has them (flatten is slow on a big file) }
 //   unwritable(doc) → [{ type, count }]: what writeDxf leaves out (warn before overwriting a file)
-//   writeDxfWithReport(doc, opts) → { text, pictures: [{ name, px }], tables, skipped }: opts.name is the final DXF file name
+//   writeDxfWithReport(doc, opts) → { text, pictures: [{ name, px }], tables, skipped }: opts.name is the final DXF file name; pictures: false skips IMAGEs when the caller cannot write PNGs
 //   Export opts: units ('mm', 'in', 'unitless'), scale (> 0), precision (0–8); transforms a deep copy.
 //
 // The document (drawing.js): { header: { $NAME: string | [x, y] }, layers: { NAME: { aci, tc, off, frozen, lt, lw } },
@@ -142,7 +142,7 @@ export function saveReportNote({ tables, skipped, unreadLabels = [] }) {
 }
 
 /** Convert tables only in the saved copy, and count unsupported objects where they are filtered out. */
-function prepareSave(doc, includeFills = true) {
+function prepareSave(doc, includeFills = true, pictures = true) {
   const sourceBlocks = doc.blocks || {}, renamed = new Map(), taken = new Set(Object.keys(sourceBlocks).map((n) => n.toLowerCase()));
   const field = (e, c, fallback = '') => e.r.v[e.r.c.indexOf(c)]?.trim() ?? fallback;
   let next = 1, tables = 0;
@@ -168,7 +168,7 @@ function prepareSave(doc, includeFills = true) {
         const rot = Math.atan2(+field(e, 21, '0'), +field(e, 11, '1')) * 180 / Math.PI;
         e = insert(normal, +field(e, 10, '0'), +field(e, 20, '0'), { ...e, rot });
         tables++;
-      } else if (!SUPPORTED.has(e.type) && !(e.type === 'IMAGE' && isPng(e.r.px))) { add(e.type); continue; }
+      } else if (!SUPPORTED.has(e.type) && !(pictures && e.type === 'IMAGE' && isPng(e.r.px))) { add(e.type); continue; }
       else if (normal && (e.type === 'INSERT' || e.type === 'DIMENSION')) {
         const v = e.r.v.slice(); v[e.r.c.indexOf(2)] = normal;
         e = { ...e, r: { ...e.r, v } };
@@ -310,7 +310,7 @@ export function writeDxfWithReport(doc, opts = {}) {
   if (!Number.isFinite(factor) || factor <= 0) throw new Error('Cannot convert these drawing units or scale');
   // Only export options need a deep copy; ordinary Save keeps its existing fast path.
   if (units !== undefined || opts.scale !== undefined || opts.precision !== undefined) doc = structuredClone(doc);
-  const prepared = prepareSave(doc);
+  const prepared = prepareSave(doc, true, opts.pictures !== false);
   const unreadLabels = new Set();
   doc = prepared.doc;
   if (factor !== 1 || unitChange) {
@@ -512,7 +512,8 @@ function writePreparedDxf(doc, opts) {
       pictures.push({ name, px: r.px });
       images.push({ def, reactor, image: h, name, w: get(13), h: get(23), u: Math.hypot(get(11), get(21), get(31)), v: Math.hypot(get(12), get(22), get(32)) });
       spec = spec.filter(([c]) => ![90, 70, 280, 281, 282, 283, 71, 91, 14, 24, 290].includes(c));
-      spec.push([90, 0], [340, def], [70, 3], [280, 0], [281, 50], [282, 50], [283, 0], [360, reactor],
+      spec = insertAfterMarker(spec, [90, 0]);
+      spec.push([340, def], [70, 3], [280, 0], [281, 50], [282, 50], [283, 0], [360, reactor],
         [71, 1], [91, 2], [14, -0.5], [24, -0.5], [14, get(13) - 0.5], [24, get(23) - 0.5]);
     }
     record(o, spec, r.type);
