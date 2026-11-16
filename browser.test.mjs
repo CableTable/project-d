@@ -9385,7 +9385,7 @@ try {
     assert.deepEqual(heads.slice(0, 7), ['Selected parts', 'Arrange', 'Group and lock', 'Rotate', 'Mirror', 'Duplicate', 'Nudge']);
     assert.deepEqual(await page.locator('[data-testid=sec-arrange] .section-body button').evaluateAll((bs) => bs.map((b) => b.getAttribute('aria-label'))),
       ['Align left', 'Align centre', 'Align right', 'Align top', 'Align middle', 'Align bottom', 'Distribute horizontally', 'Distribute vertically', 'Centre on page']);
-    assert.deepEqual(await t('arrange-rel').locator('option').allTextContents(), ['Selection', 'Sheet', 'First selected']);
+    assert.deepEqual(await t('arrange-rel').locator('option').allTextContents(), ['Selection', 'Sheet', 'First selected', 'Last selected', 'Point...']);
     assert.equal(await t('arrange-rel').inputValue(), 'selection');
     // the bar and the panel say what is selected
     assert.equal(await t('placed-name').textContent(), '3 parts selected');
@@ -29927,7 +29927,7 @@ try {
     }
     const raw = doc97i2(); raw.entities.pop();
     await open97c(raw, 'centre281-drawing.dxf');
-    await click(140, 100); assert.equal(await t('sec-arrange').isVisible(), false, 'drawing: one object selected hides Arrange');
+    await click(140, 100); assert.equal(await t('sec-arrange').isVisible(), true, 'TODO 291: one object can align to a point');
     for (const compare of [false, true]) {
       if (compare) await typeCmd('compare');
       await key97c('Control+a'); await t('ptab-drawing').click();
@@ -30006,6 +30006,82 @@ try {
     await closeTabs(/./); await menuItem('View', 'Theme: light'); assert.deepEqual(errors, []);
   });
 
+  await step('TODO 291: Last selected and Point align in every tab, snapped click, typed point, Esc and one Undo', async () => {
+    const shotDir = 'shots-291'; mkdirSync(shotDir, { recursive: true });
+    const pointPrompt = 'Align: click the point (snaps on), or type X,Y';
+    for (const tab of ['drawing', 'layout']) {
+      const raw = doc97i2(); raw.entities.pop();
+      const lay = layout97i2(); lay.placed.pop();
+      await open97c(tab === 'layout' ? layoutRaw(lay) : raw, `align291-${tab}.dxf`);
+      await key97c('Control+a');
+      const boxes = async () => {
+        const saved = await savedDoc();
+        if (tab !== 'layout') return boxes97i2(saved);
+        const layout = layoutFromRaw(saved);
+        return layout.placed.map((p) => placedBox(layout.parts[p.partId], p));
+      };
+      const before = await boxes(), labels = await histLabels();
+      await t('arrange-rel').selectOption('last'); await t('align-left').click();
+      assert.deepEqual((await boxes()).map((b) => b[0]), [220, 220], 'first left meets last left');
+      assert.deepEqual((await boxes())[1], before[1], 'last stays put');
+      await key97c('Control+z'); assert.deepEqual(await boxes(), before);
+      await t('arrange-rel').selectOption('point');
+      const pendingLabels = await histLabels();
+      await t('align-left').click(); assert.equal(await said(/^Align: click the point \(snaps on\), or type X,Y$/), pointPrompt);
+      await key97c('Escape'); assert.deepEqual(await boxes(), before); assert.deepEqual(await histLabels(), pendingLabels);
+      if (await t('tog-snap').getAttribute('aria-pressed') !== 'true') await t('tog-snap').click();
+      await t('align-left').click(); assert.equal(await said(/^Align: click the point \(snaps on\), or type X,Y$/), pointPrompt);
+      if (tab === 'drawing') for (const theme of ['light', 'dark']) {
+        await menuItem('View', 'Theme: ' + theme); await t('arrange-rel').scrollIntoViewIfNeeded(); await frames();
+        await page.waitForFunction(() => document.querySelector('[data-testid=cmd-fade]').textContent.includes('Align: click the point'));
+        const path = `${shotDir}/align-point-${theme}.png`;
+        await page.screenshot({ path }); assert.ok(readFileSync(path).length > 1000);
+      }
+      await click(181, 101);
+      for (const b of await boxes()) approx(b[0], 180, .001, 'click snaps to the first line endpoint');
+      assert.deepEqual((await histLabels()).slice(labels.length), [tab === 'layout' ? 'Align left 2 parts' : 'Align left']);
+      await key97c('Control+z'); assert.deepEqual(await boxes(), before);
+      await t('align-left').click(); assert.equal(await said(/^Align: click the point \(snaps on\), or type X,Y$/), pointPrompt);
+      await typeCmd('150,250');
+      for (const b of await boxes()) approx(b[0], 150, .001, 'typed point X');
+      await key97c('Control+z'); assert.deepEqual(await boxes(), before);
+      await key97c('Escape'); await click(140, 100);
+      await t('align-top').click(); assert.equal(await said(/^Align: click the point \(snaps on\), or type X,Y$/), pointPrompt);
+      await typeCmd('150,250');
+      approx((await boxes())[0][3], 250, .001, 'one object aligns to point Y');
+      await key97c('Control+z');
+      await key97c('ArrowRight');
+      assert.ok((await boxes())[0][0] > before[0][0], 'source still edits after alignment');
+      await t('arrange-rel').selectOption('selection'); await closeTabs(/./);
+    }
+    const raw = doc97i2(); raw.entities.pop();
+    await open97c(raw, 'align291-compare.dxf'); await typeCmd('compare'); await key97c('Control+a');
+    await t('arrange-rel').selectOption('point'); await t('align-left').click();
+    assert.equal(await said(/^Align: click the point \(snaps on\), or type X,Y$/), pointPrompt); await key97c('Escape');
+    await t('arrange-rel').selectOption('last'); await t('align-left').click();
+    const sourceTab = page.locator('.dtab').filter({ has: page.locator('.tname', { hasText: /^align291-compare(?:-edited)*\.dxf$/ }) });
+    await sourceTab.click();
+    assert.deepEqual(boxes97i2(await savedDoc()).map((b) => b[0]), [220, 220]);
+    await key97c('Control+z'); assert.deepEqual(boxes97i2(await savedDoc()), boxes97i2(raw));
+    await page.locator('.dtab').filter({ has: page.locator('.tname', { hasText: /^Compare$/ }) }).click(); await key97c('Control+a');
+    await t('arrange-rel').selectOption('point'); await t('align-left').click();
+    assert.equal(await said(/^Align: click the point \(snaps on\), or type X,Y$/), pointPrompt); await typeCmd('150,250');
+    await sourceTab.click();
+    assert.deepEqual(boxes97i2(await savedDoc()).map((b) => b[0]), [150, 150]);
+    await key97c('Control+z'); assert.deepEqual(boxes97i2(await savedDoc()), boxes97i2(raw));
+    await t('arrange-rel').selectOption('selection'); await closeTabs(/./);
+    await open97c(doc97i2(), 'distribute291.dxf'); await key97c('Control+a');
+    const before = boxes97i2(await savedDoc());
+    await t('arrange-rel').selectOption('point'); await t('distribute-horizontal').click();
+    await said(/the selection; Point uses Selection for Distribute/);
+    const after = boxes97i2(await savedDoc());
+    assert.deepEqual(after[0], before[0]); assert.deepEqual(after[2], before[2]);
+    approx(after[1][0] - after[0][2], after[2][0] - after[1][2], .001, 'equal gaps');
+    await key97c('Control+z'); assert.deepEqual(boxes97i2(await savedDoc()), before);
+    await t('arrange-rel').selectOption('selection'); await closeTabs(/./);
+    await menuItem('View', 'Theme: light'); assert.deepEqual(errors, []);
+  });
+
   await step('TODO 97i2: Drawings align left three lines, one Undo restores, no-op note and light/dark panel', async () => {
     await open97c(doc97i2(), 'arrange97i2.dxf'); await key97c('Control+a');
     assert.equal(await t('sec-arrange').isVisible(), true);
@@ -30081,7 +30157,7 @@ try {
     await open97c(layoutRaw(layout97i2()), 'relative97i2-layout.dxf'); await key97c('Control+a');
     await t('arrange-rel').selectOption('sheet');
     await open97c(doc97i2(), 'relative97i2.dxf'); await key97c('Control+a');
-    assert.deepEqual(await t('arrange-rel').locator('option').allTextContents(), ['Selection', 'First selected']);
+    assert.deepEqual(await t('arrange-rel').locator('option').allTextContents(), ['Selection', 'First selected', 'Last selected', 'Point...']);
     assert.equal(await t('arrange-rel').inputValue(), 'selection');
     await t('align-left').click();
     assert.equal(await prompt(), '3 objects aligned left to the selection');
@@ -30090,7 +30166,7 @@ try {
     assert.equal(await prompt(), '3 objects aligned right to the first selected');
     assert.deepEqual(lineEnds97c(await savedDoc()), [[100, 100, 180, 100], [140, 180, 180, 220], [120, 300, 180, 340]]);
     await key97c('Control+z'); await typeCmd('compare'); await key97c('Control+a');
-    assert.deepEqual(await t('arrange-rel').locator('option').allTextContents(), ['Selection', 'First selected']);
+    assert.deepEqual(await t('arrange-rel').locator('option').allTextContents(), ['Selection', 'First selected', 'Last selected', 'Point...']);
     await t('arrange-rel').selectOption('selection'); await closeTabs(/./); assert.deepEqual(errors, []);
   });
 

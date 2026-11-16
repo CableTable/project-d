@@ -46,6 +46,10 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Centre on first**: Lines up the centres of the selected objects horizontally and vertically with the first selected object, which stays put. A group counts as one object. Type `center` or `centre` in Drawings, Layouts or Compare; one Undo restores the selection's positions. Relative to is ignored and stays as it was.
 
+**Last selected**: The Relative to choice that aligns against the last selected object's bounding box, leaving that object where it is. A group counts as one object. Distribute uses the selection span.
+
+**Align to a point**: Choose Relative to Point..., press an Align button, then click a snapped point or type X,Y. The chosen edge or centre meets that point's X or Y. Works with one object; Esc cancels and one Undo restores the move.
+
 **Command bar**: The floating input near the cursor for commands, coordinates and clickable options, with full history available through F2. Where: `DECISIONS.md`, Command bar. Avoid: Fixed bottom command line.
 **Cursor field**: One editable or read-only box by the cursor or on the drawing beside the segment: Length and Angle take typing (Tab switches), Δx and Δy show live. Before the first point the editable fields are absolute X and Y; comma switches later chain points to coordinate entry. Rectangle and Rounded rectangle use Width and Height at the other corner, signed toward the cursor. Where: `DECISIONS.md`, Dynamic input (TODO 69), Dynamic input fields on the drawing (TODO 155t). Avoid: Command bar.
 **Dynamic input**: The tag beside the cursor during point prompts showing length, angle, Δx and Δy (absolute X and Y before the first point; Width and Height at a rectangle's other corner), where typed numbers go instead of the command bar; F12 or DYN turns it on and off. Where: `DECISIONS.md`, Dynamic input (TODO 69); `TODO.md`, item 69. Avoid: Cursor tag, Live numbers.

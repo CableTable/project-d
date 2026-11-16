@@ -93,6 +93,35 @@ test('align relative to the sheet and to the first selected', () => {
   assert.deepEqual(f2.map((d) => d.dy), [10, 40, 0]);
 });
 
+test('TODO 291: last selected stays put for all six alignments', () => {
+  const before = structuredClone(B);
+  const expected = [[650, 260, 0], [580, 285, 0], [510, 310, 0], [10, 40, 0], [20, 45, 0], [30, 50, 0]];
+  A.ALIGN_HOW.forEach((how, i) => {
+    const deltas = A.alignDeltas(B, how, 'last');
+    assert.deepEqual(deltas.map((d) => i < 3 ? d.dx : d.dy), expected[i], how);
+    assert.deepEqual(deltas.at(-1), { dx: 0, dy: 0 }, 'last stays put');
+  });
+  assert.deepEqual(B, before);
+});
+
+test('TODO 291: a point is a zero-size frame for all six alignments, including one object', () => {
+  const before = structuredClone(B), point = [0, -25];
+  const expected = [[-90, -480, -740], [-240, -535, -820], [-390, -590, -900], [-235, -205, -245], [-175, -150, -195], [-115, -95, -145]];
+  A.ALIGN_HOW.forEach((how, i) => {
+    const deltas = A.alignDeltas(B, how, 'point', null, 0, point);
+    assert.deepEqual(deltas, expected[i].map((v) => ({ dx: i < 3 ? v : 0, dy: i < 3 ? 0 : v })), how);
+    assert.deepEqual(A.alignDeltas([B[0]], how, 'point', null, 0, point), [deltas[0]], 'one object');
+  });
+  assert.deepEqual(A.alignDeltas([], 'left', 'point', null, 0, point), []);
+  assert.deepEqual(B, before); assert.deepEqual(point, [0, -25]);
+});
+
+test('TODO 291: Last selected and Point distribute over the selection span on both axes', () => {
+  for (const axis of ['x', 'y']) for (const rel of ['last', 'point']) {
+    assert.deepEqual(A.distributeDeltas(B, axis, rel, [0, 0, 1000, 700]), A.distributeDeltas(B, axis));
+  }
+});
+
 test('align gives no -0', () => {
   const d = A.alignDeltas(B, 'left');
   assert.ok(Object.is(d[0].dx, 0) && Object.is(d[0].dy, 0));

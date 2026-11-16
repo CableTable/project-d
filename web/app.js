@@ -268,6 +268,7 @@ const state = {
   gapMm: 0.01,      // Tiny gaps (TODO 46): the tolerance in mm (remembered on this PC); each drawing opts into rings with Show
   gapMethod: 'average',   // Join gaps (TODO 121): a key of Ed.JOIN_METHODS (remembered on this PC)
   setlen: null,                    // Set length in progress: { pts: [[x, y] drawing units], hover, measured (mm) }
+  arrangePoint: null,              // Pending Align point: { d, how }
   txoWait: false, mod: null, modDoc: null, offDist: 10,   // Offset / Trim / Mirror in progress (newMod), its tab, and the Offset distance in mm (remembered)
   draw: null, drawDoc: null,       // the drawing tool in progress (draw.js createTool), and the tab it works on
   drawCfg: { radius: 5 },          // the rounded rectangle's corner radius (mm), remembered on this PC
@@ -1114,6 +1115,7 @@ function showDoc() {
   state.gapSel = null; gapSig = ''; hideMenu();
   if (state.eatteditAsk || state.attdispAsk || state.orthoAsk) { state.eatteditAsk = state.attdispAsk = null; state.orthoAsk = false; ui.cmdUI.escape(); } // a tab switch ends a pending command wait like Esc
   state.mode = 'select'; state.pivot = centrePivot(); state.rotCopy = false; pdrag = null;
+  state.arrangePoint = null;
   state.setlen = null; gripEnd(); trackClear(); if (state.mod && state.modDoc !== (editable() || curDoc())) { state.mod = newMod(state.mod.kind); state.modDoc = editable() || curDoc(); if (curLay()) curDoc().factor = 1; } if (state.draw && state.drawDoc !== (editable() || curLay() && curDoc())) { state.draw = DR.createTool(state.draw.kind, state.drawCfg); state.drawDoc = editable() || curLay() && curDoc(); state.drawHover = null; } state.meas = state.tool === 'measure' ? { pts: [], hover: null } : null; state.dim = state.tool === 'dimension' ? newDim() : null; state.ldr = state.tool === 'leader' ? newLdr() : null; state.bal = state.tool === 'balloon' ? { tip: null, hover: null } : null; state.balDrag = null; state.dimDrag = null; hideRubber();
   syncFields(); renderTabs(); applyKind(); update();
   if (view.fitted) fit(); else applyView();
@@ -1478,6 +1480,7 @@ function setDimType(type) {
 }
 
 function setTool(id) {
+  state.arrangePoint = null;
   if (state.paste) cancelPaste();
   state.orthoAsk = false;
   state.attdispAsk = null;
@@ -1879,7 +1882,7 @@ function buildPlacedPanel() {
   ui.ppLock = h('span', { class: 'chip lockchip', hidden: true, 'data-testid': 'pp-lock' }, icon(ICONS.lock, { size: 12, width: 1.8, cap: 'round', join: 'round' }), 'Locked');
   ui.members = h('ol', { class: 'members', 'data-testid': 'members', hidden: true });
   const ibtn = (kind, how, label) => h('button', { class: 'ib', type: 'button', 'data-testid': `${kind}-${how}`, 'aria-label': label, title: label, onclick: () => arrange(kind, how) }, icon(ICONS[how], { size: 18, cap: 'round', join: 'round' }));
-  ui.relSel = select([['selection', 'Selection'], ['sheet', 'Sheet'], ['first', 'First selected']], state.arrangeRel, setArrangeRel, { 'data-testid': 'arrange-rel', 'aria-label': 'Relative to' });
+  ui.relSel = select([['selection', 'Selection'], ['sheet', 'Sheet'], ['first', 'First selected'], ['last', 'Last selected'], ['point', 'Point...']], state.arrangeRel, setArrangeRel, { 'data-testid': 'arrange-rel', 'aria-label': 'Relative to' });
   ui.centreOnPage = h('button', { class: 'btn sm', type: 'button', 'data-testid': 'centre-on-page', 'aria-label': 'Centre on page', onclick: () => runCommand(CB.resolve('cp')) }, 'Centre on page');
   const gb = (id, text, ic, fn, title) => { const b = h('button', { class: 'btn sm', type: 'button', 'data-testid': id, title, onclick: fn }, icon(ICONS[ic], { size: 16, cap: 'round', join: 'round' }), text); ui[id] = b; return b; };
   ui.pivotRows = [labelled('Pivot', ui.pivotSel, 'field'), labelled('Pivot X (mm)', px, 'field'), labelled('Pivot Y (mm)', py, 'field')];
@@ -2548,25 +2551,27 @@ function setPivotText(axis, text) {
 
 // ---- Arrange (TODO 36, TODO 97i2): a group is one object in every tab ----
 const ARRANGE_PROMPT = 'Align or distribute [Left / Centre on first / Right / Top / Middle / Bottom / Horizontal / Vertical]:';
-/** Align or distribute the selected objects, relative to the selection, the sheet or the first selected. */
-function arrange(kind, how) {
+/** Align or distribute the selected objects using the Relative to frame. */
+function arrange(kind, how, point = null) {
   const lay = curLay(), d = !lay && editable(), center = kind === 'center', page = kind === 'page';
   if (page && !lay) { note('a drawing has no page'); return; }
   if (d && moveLocked(d, d.sel, 'align')) return;
   const items = lay ? selItems().map((x) => ({ ...x, g: x.p.g, box: boxOf(x) })) : d ? [...d.sel].map((i) => ({ i, g: groupOf(d.raw.groups, i), box: OB.boxOf(d.fl, [i])?.map((v) => v * d.factor) })).filter((x) => x.box) : [];
   const needCenter = 'Center: select two or more objects; the first selected stays put';
-  if (items.length < (page ? 1 : 2)) { note(page ? 'Centre on page: select one or more objects first' : center ? needCenter : lay ? 'Arrange: select two or more parts first (Shift-click, or drag a box round them)' : 'Arrange: select two or more objects first (Shift-click, or drag a box round them)'); return; }
+  const pointAlign = kind === 'align' && state.arrangeRel === 'point';
+  if (items.length < (page || pointAlign ? 1 : 2)) { note(page ? 'Centre on page: select one or more objects first' : center ? needCenter : lay ? 'Arrange: select two or more parts first (Shift-click, or drag a box round them)' : 'Arrange: select two or more objects first (Shift-click, or drag a box round them)'); return; }
   if (lay && items.some((x) => x.p.lock)) { note(LOCKED); return; }
   const rel = page ? 'sheet' : center ? 'first' : !lay && state.arrangeRel === 'sheet' ? 'selection' : state.arrangeRel, sheet = lay ? [0, 0, lay.s.sheetW, lay.s.sheetH] : null;
   const objs = A.objectsOf(items);
-  const boxes = objs.map((o) => o.box), relName = { selection: 'the selection', sheet: 'the sheet', first: 'the first selected' }[rel];
+  const boxes = objs.map((o) => o.box), relName = { selection: 'the selection', sheet: 'the sheet', first: 'the first selected', last: 'the last selected', point: kind === 'align' ? 'the point' : 'the selection; Point uses Selection for Distribute' }[rel];
   let deltas, extra = '';
   if (center) {
     if (objs.length < 2) { note(needCenter); return; }
     deltas = A.centreOnFirstDeltas(boxes);
   } else if (kind === 'align' || page) {
-    if (objs.length < 2 && rel !== 'sheet') { note(lay ? 'Align: that is one object (a group). Pick Relative to: Sheet, or select another part' : 'Align: that is one object (a group). Select another object'); return; }
-    deltas = A.alignDeltas(boxes, page ? 'page' : how, rel, sheet, 0);
+    if (objs.length < 2 && rel !== 'sheet' && rel !== 'point') { note(lay ? 'Align: that is one object (a group). Pick Relative to: Sheet, or select another part' : 'Align: that is one object (a group). Select another object'); return; }
+    if (pointAlign && !point) { setTool('select'); state.arrangePoint = { d: d || curDoc(), how }; renderCommand(); return; }
+    deltas = A.alignDeltas(boxes, page ? 'page' : how, rel, sheet, 0, point);
   } else {
     if (objs.length < 3) { note('Distribute needs three or more objects (a group counts as one)'); return; }
     const r = A.distributeDeltas(boxes, how === 'horizontal' ? 'x' : 'y', rel, sheet);
@@ -2575,7 +2580,7 @@ function arrange(kind, how) {
   const per = A.spreadToItems(objs, deltas, items.length);
   const label = page ? 'Centre on page' : center ? 'Centre on first' : (kind === 'align' ? 'Align ' : 'Distribute ') + how;
   const message = (name) => page ? `${name} centred on the sheet` : center ? `${objs.length} objects centred on the first selected` : kind === 'align' ? `${name} aligned ${how} to ${relName}` : `${name} distributed ${how}ly with equal gaps${extra} (${relName})`;
-  const unchanged = 'Already ' + (center || page ? 'centred' : kind === 'align' ? 'aligned' : 'evenly spaced') + ' (nothing moved)';
+  const unchanged = 'Already ' + (center || page ? 'centred' : kind === 'align' ? 'aligned' : 'evenly spaced') + ' (nothing moved)' + (kind === 'distribute' && rel === 'point' ? '; Point uses Selection for Distribute' : '');
   if (d) {
     try {
       const next = A.moveByDeltas(d.raw, items.map((x) => x.i), per.map(({ dx, dy }) => ({ dx: dx / d.factor, dy: dy / d.factor })));
@@ -2592,8 +2597,17 @@ function arrange(kind, how) {
   if (!r) { note(unchanged); return; }
   afterEdit(r, message(r.name));
 }
-/** The Relative to select: Selection, Sheet or First selected (remembered for the session). */
-function setArrangeRel(v) { state.arrangeRel = A.REL.includes(v) ? v : 'selection'; renderProps(); renderEdit(); }
+/** Finish a snapped or typed Align point in drawing units (the Arrange model uses mm). */
+function arrangeAtPoint(d, p, shift = false, typed = false) {
+  const pending = state.arrangePoint;
+  if (!pending || pending.d !== d) return;
+  const q = typed ? p : pickPoint(d, p, [], shift);
+  state.arrangePoint = null; trackStop();
+  arrange('align', pending.how, q.slice(0, 2).map((v) => v * (d.lay ? 1 : d.factor)));
+  paintOverlay();
+}
+/** The Relative to choice is remembered for the session; each Point alignment asks again. */
+function setArrangeRel(v) { state.arrangePoint = null; state.arrangeRel = A.REL.includes(v) ? v : 'selection'; renderProps(); renderEdit(); renderCommand(); }
 
 // ---- Group, Ungroup, Lock, Unlock (TODO 37) ----
 /** Changes the flags (group, lock) of the selected parts, in one undo step: fn(placement) → the new placement. */
@@ -4227,6 +4241,7 @@ function buildCommand() {
 }
 /** A command is on (a tool, a grip, a rotate, …): its name and what it asks for, for the bar. Null when nothing is running. */
 function activeCmd() {
+  if (state.arrangePoint) return { label: 'ALIGN', prompt: 'Align: click the point (snaps on), or type X,Y', takes: () => false };
   if (state.paste) return { label: 'PASTE', prompt: 'Paste: follows the cursor, click to place (Esc cancels):', takes: () => false };
   if (state.eatteditAsk) return { label: 'EATTEDIT', prompt: 'Select a block:', takes: () => false };
   if (state.attdispAsk) {
@@ -4241,7 +4256,7 @@ function activeCmd() {
 }
 
 /** The function that takes a picked or typed point for the point tool that is on (Set length, Measure, Dimension, Leader, Balloon, Mirror), or null. */
-const pointToolAction = () => state.setlen ? lengthPoint : state.tool === 'measure' ? measurePoint
+const pointToolAction = () => state.arrangePoint ? arrangeAtPoint : state.setlen ? lengthPoint : state.tool === 'measure' ? measurePoint
   : state.dim ? dimensionPoint : state.ldr && !textEditing() ? ldrPoint
     : state.bal ? balClick : (modLive() || layModLive()) && state.mod.kind === 'mirror' && ['p1', 'p2'].includes(state.mod.stage) ? mirrorPoint : null;
 
@@ -4271,7 +4286,7 @@ function cmdEnter(raw) {
   if (layModLive() && modTyped(curDoc(), raw)) return;
   if (state.tool === 'text' && (editable() || curLay()) && !textEditing()) { textTyped(raw); return; }
   if (dimAutoLive() && dimAutoTyped(raw)) return;
-  const d = state.tool === 'measure' || layModLive() ? measureTarget() : pointTarget(), pointAction = pointToolAction();
+  const d = state.arrangePoint?.d || (state.tool === 'measure' || layModLive() ? measureTarget() : pointTarget()), pointAction = pointToolAction();
   if (d && pointAction) {
     const f = d.lay ? 1 : d.factor, inp = DR.parseInput(raw, drawingUnit());
     if (inp.kind === 'xy' || inp.kind === 'polar') {
@@ -5108,6 +5123,7 @@ function attachCanvasEvents() {
     if (state.paste && e.button === 0) { e.preventDefault(); if (pasteMove(e)) placePaste(); return; }
     if (state.eatteditAsk && e.button === 0) { attributePick(e, true); e.preventDefault(); return; }
     if (state.orthoAsk || state.attdispAsk) return;
+    if (e.button === 0 && state.arrangePoint) { const d = state.arrangePoint.d; arrangeAtPoint(d, toDrawing(d, e.clientX, e.clientY), e.shiftKey); return; }
     if (e.button === 0 && state.zwin) { lrub = { x: e.clientX, y: e.clientY, moved: false, zoom: true }; capture(c, e); return; }       // Zoom Window: the left button drags the box
     const rl = e.target.closest && e.target.closest('.ruler'), gh0 = e.target.closest && e.target.closest('[data-guide]');
     if (e.button === 0 && rl && !rl.classList.contains('corner')) { guideDown(e, rl.dataset.axis === 'top' ? 'y' : 'x', null); if (gdrag) { capture(c, e); } return; }
@@ -5168,6 +5184,7 @@ function attachCanvasEvents() {
     }
     if (state.paste) { pasteMove(e); return; }
     const p = local(e);
+    if (state.arrangePoint) { const d = state.arrangePoint.d; pickPoint(d, toDrawing(d, e.clientX, e.clientY), [], e.shiftKey, true); paintOverlay(); return; }
     if (gdrag) guideMove(e);
     if (state.sheetDrag) sheetMove(e);
     if (pdrag) placedMove(e);
@@ -5290,6 +5307,7 @@ function attachCanvasEvents() {
 
 // ---- keeping the panels in step with the layout ----
 function renderCommand() {
+  if (state.arrangePoint) { ui.hist.textContent = 'Command: ALIGN'; ui.prompt.textContent = activeCmd().prompt; return; }
   if (state.paste) { ui.hist.textContent = 'Command: PASTE'; ui.prompt.textContent = activeCmd().prompt; return; }
   if (state.eatteditAsk) { ui.hist.textContent = 'Command: EATTEDIT'; ui.prompt.textContent = activeCmd().prompt; return; }
   if (state.attdispAsk) { ui.hist.textContent = 'Command: ATTDISP'; ui.prompt.textContent = activeCmd().prompt; return; }
@@ -10712,6 +10730,7 @@ function editKey(e) {
   if (e.key === 'F2' && !e.ctrlKey && !e.altKey && !e.shiftKey) { e.preventDefault(); ui.cmdUI.toggleHistory(); return; }
   const d = editable();
   if (e.key === 'Escape') {
+    if (state.arrangePoint) { e.preventDefault(); state.arrangePoint = null; trackClear(); ui.cmdUI.escape(); note('Align cancelled'); paintOverlay(); return; }
     if (state.paste) { e.preventDefault(); ui.cmdUI.escape(); cancelPaste(); return; }
     if (state.eatteditAsk) { e.preventDefault(); state.eatteditAsk = null; ui.cmdUI.escape(); renderCommand(); return; }
     if (state.attdispAsk) { e.preventDefault(); state.attdispAsk = null; ui.cmdUI.escape(); renderCommand(); return; }
@@ -11077,10 +11096,10 @@ function renderPropsPanel(d) {
   ui.dupGapLabel.firstChild.textContent = `Distance (${dupUnit})`;
   ui.dupGap.setAttribute('aria-label', `Distance between copies in ${dupUnit}`);
   ui.dupHelp.textContent = 'Distance is edge to edge.' + (lay ? ' Copies off the sheet are still placed.' : '');
-  ui.placedSecs[1].hidden = state.panel === 'library' || (lay ? selIdxs().length : d?.sel.size || 0) < (lay ? 1 : 2);
+  ui.placedSecs[1].hidden = state.panel === 'library' || (lay ? selIdxs().length : d?.sel.size || 0) < 1;
   ui.centreOnPage.disabled = !lay;
   ui.centreOnPage.title = lay ? 'Centre the selection as one block on the whole sheet (CP)' : 'a drawing has no page';
-  setSelect(ui.relSel, [['selection', 'Selection'], ...(lay ? [['sheet', 'Sheet']] : []), ['first', 'First selected']], !lay && state.arrangeRel === 'sheet' ? 'selection' : state.arrangeRel);
+  setSelect(ui.relSel, [['selection', 'Selection'], ...(lay ? [['sheet', 'Sheet']] : []), ['first', 'First selected'], ['last', 'Last selected'], ['point', 'Point...']], !lay && state.arrangeRel === 'sheet' ? 'selection' : state.arrangeRel);
   ui.propSec.hidden = !show;
   if (!show) return;
   if (lay) d = propDoc();
