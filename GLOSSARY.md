@@ -162,6 +162,8 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Nest**: The packed arrangement of parts produced by Auto-nest, also the command name that opens its dialog. Where: `DECISIONS.md`, Auto-nest method and UI.
 
+**Centre on page**: The layout command that moves the selection as one block until its bounding-box centre meets the whole sheet's centre, ignoring grippers. Where: Arrange section, Arrange menu, typed `cp`.
+
 **Nudge**: Moves selected placed parts, drawing objects or Compare snapshots with the arrow keys by a chosen mm step, or ten times that step with Shift. Where: `DECISIONS.md`, Nudge.
 
 **Nudge step**: The shared positive distance in mm used by arrow keys on drawings, layouts and Compare, remembered on this PC. Set it in the Part tab / panel or with `NU` / `NUDGE` at the command bar. Where: `DECISIONS.md`, Nudge command.

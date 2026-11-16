@@ -53,6 +53,22 @@ test('unionBox', () => {
   assert.equal(A.unionBox([]), null);
 });
 
+test('TODO 281: centre the selection as one block on the whole sheet', () => {
+  const sheet = [0, 0, 1000, 700];
+  for (const boxes of [[], [[10, 20, 110, 60]], B, [[-100, -80, 1200, 900]], [[450, 300, 550, 400]], [[100, 200, 100, 200]]]) {
+    const before = structuredClone(boxes), deltas = A.alignDeltas(boxes, 'page', 'sheet', sheet);
+    assert.equal(deltas.length, boxes.length);
+    assert.deepEqual(boxes, before, 'inputs unchanged');
+    if (!boxes.length) continue;
+    const moved = boxes.map((b, i) => b.map((v, axis) => v + (axis % 2 ? deltas[i].dy : deltas[i].dx)));
+    const union = A.unionBox(moved);
+    near((union[0] + union[2]) / 2, 500); near((union[1] + union[3]) / 2, 350);
+    assert.ok(deltas.every((d) => d.dx === deltas[0].dx && d.dy === deltas[0].dy), 'spacing kept');
+    assert.ok(deltas.every((d) => !Object.is(d.dx, -0) && !Object.is(d.dy, -0)));
+    assert.deepEqual(A.alignDeltas(moved, 'page', 'sheet', sheet), boxes.map(() => ({ dx: 0, dy: 0 })));
+  }
+});
+
 test('align relative to the selection: left, centre, right', () => {
   assert.deepEqual(A.alignDeltas(B, 'left').map((d) => d.dx), [0, -390, -650]);
   assert.deepEqual(A.alignDeltas(B, 'right').map((d) => d.dx), [510, 310, 0]);

@@ -4028,7 +4028,7 @@ try {
   }, { needs: ['a DXF opens on a drawing tab (no sheet); Add to layout makes a layout tab and the part fills Step and repeat'] });
 
   await step('layout: menu bar, rail tools in order, layers', async () => {
-    assert.deepEqual(await page.locator('.menubar .menu').allTextContents(), ['File', 'Edit', 'View', 'Draw', 'Modify', 'Format', 'Layout', 'Tools', 'Help']);
+    assert.deepEqual(await page.locator('.menubar .menu').allTextContents(), ['File', 'Edit', 'View', 'Draw', 'Modify', 'Arrange', 'Format', 'Layout', 'Tools', 'Help']);
     const labels = await page.locator('nav[aria-label=Tools] button').evaluateAll((b) => b.map((x) => x.getAttribute('aria-label')));
     assert.equal(labels.length, 21); assert.equal(labels[0], 'Select'); assert.equal(labels.at(-1), 'Measure');
     assert.equal(labels[labels.indexOf('Offset') - 1], 'Move');
@@ -9256,7 +9256,7 @@ try {
   await step('TODO 36: Shift-click adds and removes parts; a rubber band selects the parts fully inside; the pick-order numbers, the box and its readout, the Arrange section', async () => {
     await threeParts();
     assert.equal(await t('pp-name').textContent(), 'Plate A');
-    assert.equal(await page.locator('[data-testid=sec-arrange]').isVisible(), false, 'one part selected: no Arrange section');
+    assert.equal(await page.locator('[data-testid=sec-arrange]').isVisible(), true, 'one part selected: Centre on page is available');
     assert.equal(await t('bar-group').isDisabled(), true);
     // Shift-click adds
     await click(150, 450, { shift: true });
@@ -9267,7 +9267,7 @@ try {
     assert.match(await t('cmd-hist').textContent(), /^Command: SELECT {3}2 parts selected \(Shift-click adds or removes a part\)$/);
     // ... and takes a part out
     await click(150, 450, { shift: true });
-    assert.equal(await page.locator('[data-testid=sec-arrange]').isVisible(), false, 'back to one part');
+    assert.equal(await page.locator('[data-testid=sec-arrange]').isVisible(), true, 'back to one part: Centre on page is available');
     assert.equal(await t('pp-name').textContent(), 'Plate A');
     // a rubber band from empty sheet selects what is fully inside
     await dragMm([40, 600], [650, 200]);
@@ -9284,7 +9284,7 @@ try {
     const heads = await page.locator('[data-docker=drawing] > section.placedsec:not([hidden]) h2.sec').allTextContents();
     assert.deepEqual(heads.slice(0, 7), ['Selected parts', 'Arrange', 'Group and lock', 'Rotate', 'Mirror', 'Duplicate', 'Nudge']);
     assert.deepEqual(await page.locator('[data-testid=sec-arrange] .section-body button').evaluateAll((bs) => bs.map((b) => b.getAttribute('aria-label'))),
-      ['Align left', 'Align centre', 'Align right', 'Align top', 'Align middle', 'Align bottom', 'Distribute horizontally', 'Distribute vertically']);
+      ['Align left', 'Align centre', 'Align right', 'Align top', 'Align middle', 'Align bottom', 'Distribute horizontally', 'Distribute vertically', 'Centre on page']);
     assert.deepEqual(await t('arrange-rel').locator('option').allTextContents(), ['Selection', 'Sheet', 'First selected']);
     assert.equal(await t('arrange-rel').inputValue(), 'selection');
     // the bar and the panel say what is selected
@@ -29678,6 +29678,80 @@ try {
     const [x, y, xx, yy] = [10, 20, 11, 21].map((c) => fieldOf(e, c));
     return [Math.min(x, xx), Math.min(y, yy), Math.max(x, xx), Math.max(y, yy)];
   });
+  await step('TODO 281: Centre on page centres the selection on the sheet', async () => {
+    await menuItem('View', 'Theme: light');
+    const boxes = async () => {
+      const lay = layoutFromRaw(await savedDoc());
+      return lay.placed.map((p) => placedBox(lay.parts[p.partId], p));
+    };
+    for (const kind of ['one', 'two', 'group', 'mixed']) {
+      const lay = newLayout('Centre on page 281'), raw = newDoc(4);
+      addEntities(raw, dxfPoly([[0, 0], [100, 0], [100, 60], [0, 60]], true));
+      lay.s = { ...lay.s, sheetW: 1000, sheetH: 700, gripLeft: 70, gripBottom: 90, gripRight: 10, gripTop: 20 };
+      lay.parts.plate = makePart('plate', 'Plate', raw);
+      lay.placed = [{ partId: 'plate', x: 100, y: 200, rot: 0 }];
+      if (kind !== 'one') lay.placed.push({ partId: 'plate', x: 350, y: 320, rot: 90 });
+      if (kind === 'group') lay.placed.forEach((p) => { p.g = 'pair'; });
+      if (kind === 'mixed') {
+        lay.parts.line = objectPart('line', 'Loose line', dxfLine(600, 100, 640, 140), raw.layers);
+        lay.placed.push(objectPlacement(lay.parts.line));
+      }
+      await open97c(layoutRaw(lay), `centre281-${kind}.dxf`); await key97c('Control+a');
+      await t('ptab-drawing').click();
+      assert.equal(await t('centre-on-page').isVisible(), true);
+      await t('arrange-rel').selectOption('first');
+      const before = await boxes(), labels = await histLabels();
+      await cmdLine().fill('cp'); await page.keyboard.press('Escape');
+      assert.deepEqual(await boxes(), before, 'Esc before submitting leaves the selection alone');
+      assert.deepEqual(await histLabels(), labels);
+      if (kind === 'one') await t('centre-on-page').click();
+      else if (kind === 'two') await menuItem('Arrange', 'Centre on page');
+      else await typeCmd('cp');
+      const after = await boxes();
+      for (const axis of [0, 1]) {
+        const lo = Math.min(...after.map((b) => b[axis])), hi = Math.max(...after.map((b) => b[axis + 2]));
+        approx((lo + hi) / 2, axis ? 350 : 500, .001, 'whole sheet centre, ignoring grippers');
+      }
+      for (let i = 0; i < after.length; i++) for (let axis = 0; axis < 4; axis++) approx(after[i][axis] - before[i][axis], after[0][axis] - before[0][axis], .001, 'one block keeps spacing');
+      assert.equal(await t('arrange-rel').inputValue(), 'first', 'Relative to unchanged');
+      assert.deepEqual((await histLabels()).slice(labels.length), ['Centre on page']);
+      await typeCmd('cp'); assert.equal(await said(/^Already centred \(nothing moved\)$/), 'Already centred (nothing moved)');
+      assert.deepEqual((await histLabels()).slice(labels.length), ['Centre on page'], 'no-op adds no Undo');
+      if (kind === 'two') for (const theme of ['light', 'dark']) {
+        await menuItem('View', 'Theme: ' + theme); await t('centre-on-page').scrollIntoViewIfNeeded(); await frames();
+        const path = `${shotDir}/todo281-arrange-${theme}.png`;
+        await page.screenshot({ path }); assert.ok(readFileSync(path).length > 1000);
+      }
+      await key97c('Control+z'); assert.deepEqual(await boxes(), before, 'one Undo restores every selected object');
+      await typeCmd('cp');
+      await key97c('ArrowRight');
+      const edited = await boxes();
+      assert.ok(edited[0][0] > after[0][0], 'centred source remains editable');
+      await key97c('Control+z'); assert.deepEqual(await boxes(), after, 'Undo source edit');
+      await t('grp-lock').click();
+      const lockedLabels = await histLabels();
+      await typeCmd('cp'); assert.match(await prompt(), LOCKED_MSG);
+      assert.deepEqual(await boxes(), after, 'locked objects and groups refuse');
+      assert.deepEqual(await histLabels(), lockedLabels, 'refusal adds no Undo');
+    }
+    const raw = doc97i2(); raw.entities.pop();
+    await open97c(raw, 'centre281-drawing.dxf');
+    for (const compare of [false, true]) {
+      if (compare) await typeCmd('compare');
+      await key97c('Control+a'); await t('ptab-drawing').click();
+      assert.equal(await t('centre-on-page').isDisabled(), true);
+      assert.equal(await t('centre-on-page').getAttribute('title'), 'a drawing has no page');
+      await page.locator('[data-menu=Arrange]').click();
+      const item = page.getByRole('menuitem', { name: 'Centre on page', exact: true });
+      assert.equal(await item.isDisabled(), true); assert.equal(await item.getAttribute('title'), 'a drawing has no page');
+      await key97c('Escape');
+      const labels = await histLabels();
+      await typeCmd('cp'); assert.equal(await said(/^a drawing has no page$/), 'a drawing has no page');
+      assert.deepEqual(await histLabels(), labels);
+      if (!compare) assert.deepEqual(boxes97i2(await savedDoc()), boxes97i2(raw));
+    }
+    await closeTabs(/./); await menuItem('View', 'Theme: light'); assert.deepEqual(errors, []);
+  });
   await step('TODO 265: center on first in drawing, layout and Compare, groups, one Undo and guards', async () => {
     const need = 'Center: select two or more objects; the first selected stays put';
     for (const tab of ['drawing', 'layout', 'Compare', 'group']) {
@@ -29744,7 +29818,7 @@ try {
     await open97c(doc97i2(), 'arrange97i2.dxf'); await key97c('Control+a');
     assert.equal(await t('sec-arrange').isVisible(), true);
     assert.deepEqual(await t('sec-arrange').locator('.section-body button').evaluateAll((bs) => bs.map((b) => b.getAttribute('aria-label'))),
-      ['Align left', 'Align centre', 'Align right', 'Align top', 'Align middle', 'Align bottom', 'Distribute horizontally', 'Distribute vertically']);
+      ['Align left', 'Align centre', 'Align right', 'Align top', 'Align middle', 'Align bottom', 'Distribute horizontally', 'Distribute vertically', 'Centre on page']);
     await t('arrange-rel').selectOption('selection');
     mkdirSync('shots-97i2', { recursive: true });
     for (const theme of ['light', 'dark']) {

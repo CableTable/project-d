@@ -68,6 +68,7 @@ const TABLE = [
   ['rotate', 'Edit', 'Turn selected objects or a layout part about a pivot', ['r', 'ro'], ''],
   ['align', 'Edit', 'Move, turn and scale objects so source points meet destination points', ['al'], 'draw'],
   ['center', 'Edit', 'Centre on first selected object on both axes', ['centre'], ''],
+  ['centreonpage', 'Layout', 'Centre the selection as one block on the whole sheet', ['cp'], ''],
   ['nest', 'Layout', 'Auto-nest mixed parts', ['n'], ''],
   ['step', 'Layout', 'Step and repeat the chosen part', ['sr'], 'layout'],
   ['group', 'Layout', 'Group the selected objects or parts', ['g'], '', 'Ctrl+G'],
