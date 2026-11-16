@@ -316,7 +316,7 @@ function emptyDoc() {
 }
 state.docs.push(emptyDoc());
 const view = { scale: 1, ox: -80, oy: -80, fitted: true };
-let shownDoc = null;
+let shownDoc = state.docs[0];       // the tab the global view belongs to (showDoc saves it when another becomes active)
 let layout = null;                  // the step-and-repeat grid of the open layout (layout.js stepRepeat; count 0 = none)
 let placedNow = [];                 // every placed part of the open layout (layoutdoc.js placedAll): grid copies, then loose ones
 const ui = {};
