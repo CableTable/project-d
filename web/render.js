@@ -142,7 +142,7 @@ function paintPictures(c, fl, off, T, vr, hide) {
   for (const it of shownItems(fl)) {
     if (it.k !== 'i' || !itemVisible(it, off) || (hide && hide.has(it.e)) || (vr && outsideView(it.b, 0, vr))) continue;
     const img = pictureBitmap(it.px);
-    if (!img) continue;                                                      // still loading: pictures.js repaints when it is
+    if (!img) continue;                                                      // not loaded: preloadPictures runs where pictures come in, so this is rare
     const [ux, uy, vx, vy, ix, iy] = it.q;
     c.setTransform(...mmul(mmul(T, fl.mats[it.m]), [ux, uy, -vx, -vy, ix + vx, iy + vy]));
     c.drawImage(img, 0, 0, 1, 1);

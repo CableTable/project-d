@@ -7750,6 +7750,112 @@ try {
     await page.locator('[data-tool=step]').click();
   });
 
+  // a 288 × 144 pt page: a red picture, a blue one turned 30°, a 1-colour stencil (left out), and a thick line across the red one
+  const picturesPdf = () => {
+    const content = 'q 100 0 0 60 20 40 cm /Red Do Q\nq 52 30 -15 26 170 30 cm /Blue Do Q\nq 10 0 0 10 240 100 cm /Mk Do Q\n0 0 0 RG 6 w 0 70 m 288 70 l S\n';
+    const hex = (c) => c.repeat(4) + '>';
+    const objects = ['<< /Type /Catalog /Pages 2 0 R >>', '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+      '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 288 144] /Resources << /XObject << /Red 5 0 R /Blue 6 0 R /Mk 7 0 R >> >> /Contents 4 0 R >>',
+      `<< /Length ${content.length} >>\nstream\n${content}endstream`,
+      ...[hex('dc2828'), hex('2850dc')].map((d) => `<< /Type /XObject /Subtype /Image /Width 2 /Height 2 /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /ASCIIHexDecode /Length ${d.length} >>\nstream\n${d}\nendstream`),
+      '<< /Type /XObject /Subtype /Image /Width 8 /Height 1 /ImageMask true /BitsPerComponent 1 /Filter /ASCIIHexDecode /Length 3 >>\nstream\nAA>\nendstream'];
+    let pdf = '%PDF-1.4\n';
+    const offsets = objects.map((object, i) => { const at = pdf.length; pdf += `${i + 1} 0 obj\n${object}\nendobj\n`; return at; });
+    const xref = pdf.length;
+    pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n` + offsets.map((n) => String(n).padStart(10, '0') + ' 00000 n \n').join('') + `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+    return { name: 'pictures.pdf', mimeType: 'application/pdf', buffer: Buffer.from(pdf) };
+  };
+
+  await step('TODO 305a: pictures in a vector PDF are IMAGE objects: under the lines, F9 hides them, click / window / crossing select, Delete and Undo, PDF preview, light, dark, 1024 px', async () => {
+    await t('picker').setInputFiles(picturesPdf());
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on').textContent.startsWith('pictures.dxf'), null, { timeout: 60000 });
+    assert.match(await t('cmd-prompt').textContent(), /Opened pictures\.pdf as a drawing \(page 1 of 1\): .*1 stencil pictures not shown/);
+    assert.ok((await page.locator('.layer .nm').allTextContents()).includes('PDF pictures'));
+    // the canvas colour at a drawing point (mm, y up), [r, g, b]
+    const colour = async (x, y) => {
+      const p = await at(x, y);
+      return t('drawing').evaluate((c, p) => { const r = c.getBoundingClientRect(), k = c.width / r.width; return [...c.getContext('2d').getImageData(Math.round((p.x - r.x) * k), Math.round((p.y - r.y) * k), 1, 1).data]; }, p);
+    };
+    const near = (c, want) => c.slice(0, 3).every((v, i) => Math.abs(v - want[i]) < 12);
+    const waitColour = async (x, y, ok, why) => {
+      const end = Date.now() + 8000; let c = await colour(x, y);
+      while (!ok(c) && Date.now() < end) { await page.waitForTimeout(50); c = await colour(x, y); }
+      assert.ok(ok(c), `${why}: ${c}`);
+    };
+    const RED = [0xdc, 0x28, 0x28], BLUE = [0x28, 0x50, 0xdc];
+    const redAt = [24.7, 17.6], lineAt = [24.7, 24.7], blueAt = [66.5, 20.46];     // mm: inside the red picture, on the line across it, the middle of the blue one
+    await waitColour(...redAt, (c) => near(c, RED), 'the red picture is drawn');
+    await waitColour(...blueAt, (c) => near(c, BLUE), 'the blue picture, turned 30°, is drawn');
+    const dark = async (x, y) => { for (let d = -1.5; d <= 1.5; d += 0.1) { const c = await colour(x, y + d); if (c[0] < 80 && c[1] < 80 && c[2] < 80 && c[3] > 200) return true; } return false; };
+    assert.ok(await dark(...lineAt), 'the line is drawn over the picture (a dark pixel across it, none of the picture)');
+    await page.screenshot({ path: shotDir + '/305a-light.png' });
+    await menuItem('View', 'Theme: dark'); await page.waitForTimeout(150);
+    await page.screenshot({ path: shotDir + '/305a-dark.png' });
+    await page.setViewportSize({ width: 1024, height: 700 }); await page.waitForTimeout(250);
+    await page.screenshot({ path: shotDir + '/305a-1024.png' });
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await menuItem('View', 'Theme: light'); await page.waitForTimeout(250);
+    // F9: Wireframe draws no pictures, F9 again brings them back
+    await page.keyboard.press('F9');
+    await waitColour(...redAt, (c) => !near(c, RED) && !near(c, BLUE), 'Wireframe hides the pictures');
+    await page.keyboard.press('F9');
+    await waitColour(...redAt, (c) => near(c, RED), 'F9 again shows them');
+    // click inside the red picture selects it; Delete takes it away, Undo brings it back
+    await click(...redAt); await waitSel('1 selected');
+    await page.keyboard.press('Delete');
+    await waitColour(...redAt, (c) => !near(c, RED), 'Delete removes the picture');
+    await waitSel('0 selected');
+    await page.keyboard.press('Control+z');
+    await waitColour(...redAt, (c) => near(c, RED), 'Undo brings it back');
+    await page.keyboard.press('Escape');
+    // a window round the turned picture takes it alone; a crossing over one corner of the red one takes that alone
+    const drag = async (a, b) => { const p = await at(...a), q = await at(...b); await page.mouse.move(p.x, p.y); await page.mouse.down(); await page.mouse.move(q.x, q.y, { steps: 6 }); await page.mouse.up(); };
+    await drag([52, 8], [82, 33]); await waitSel('1 selected');
+    await page.keyboard.press('Escape'); await waitSel('0 selected');
+    await drag([46, 5], [40, 16]); await waitSel('1 selected');
+    await page.keyboard.press('Delete');
+    await waitColour(...redAt, (c) => !near(c, RED), 'the crossing took the red picture');
+    await page.keyboard.press('Control+z');
+    await waitColour(...redAt, (c) => near(c, RED), 'Undo again');
+    await page.keyboard.press('Escape');
+    // the PDF dialog's preview draws them too
+    await openPdf();
+    assert.ok((await t('pdf-preview').evaluate((c, RED) => { const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let n = 0; for (let i = 0; i < d.length; i += 4) if (Math.abs(d[i] - RED[0]) < 20 && Math.abs(d[i + 1] - RED[1]) < 20 && Math.abs(d[i + 2] - RED[2]) < 20) n++; return n; }, RED)) > 100, 'the PDF preview shows the red picture');
+    const file = await downloaded(() => t('pdf-go').click());                       // and the file: both pictures, packed
+    assert.equal((file.text.match(/\/Subtype \/Image/g) || []).length, 2, 'two picture objects in the file');
+    assert.equal((file.text.match(/\/Filter \/FlateDecode/g) || []).length, 2);
+    assert.equal((file.text.match(/ Do Q/g) || []).length, 2);
+    await dialog.waitFor({ state: 'detached' });
+    await page.locator('.tabs .dtab.on .x').click();
+    if (await page.locator('.tabs .dtab', { hasText: 'sample-copy.dxf' }).count()) {          // not there when only this step runs
+      await page.locator('.tabs .dtab', { hasText: 'sample-copy.dxf' }).click();
+      await page.locator('[data-tool=step]').click();
+    }
+  });
+
+  await step('TODO 305a recovery: an unsaved PDF drawing comes back after a restart with its pictures', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    try {
+      const p = await context.newPage(), q = (id) => panelControl(p, p.getByTestId(id));
+      p.on('pageerror', (e) => errors.push(String(e)));
+      const redInk = () => q('drawing').evaluate((c) => { const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let n = 0; for (let i = 0; i < d.length; i += 4) if (Math.abs(d[i] - 0xdc) < 12 && Math.abs(d[i + 1] - 0x28) < 12 && Math.abs(d[i + 2] - 0x28) < 12) n++; return n; });
+      const redWhen = async (ok) => { for (let i = 0; i < 100; i++) { const n = await redInk(); if (ok(n)) return n; await p.waitForTimeout(100); } throw new Error('waiting for the red picture'); };
+      await p.goto(URL_ + '?autosave=300'); await q('count').waitFor({ state: 'attached' });
+      await q('picker').setInputFiles(picturesPdf());
+      await p.waitForFunction(() => document.querySelector('.tabs .dtab.on').textContent.startsWith('pictures.dxf'), null, { timeout: 60000 });
+      await redWhen((n) => n > 500);
+      await q('drawing-unit').click(); await p.locator('[data-unit="ft-in"]').click();         // a change: a clean PDF tab is not copied
+      let pics = 0;
+      for (let i = 0; i < 60 && pics !== 2; i++) { pics = await p.evaluate(async () => (await (await import('./recovery.js')).loadCopies())[0]?.pics?.length || 0); if (pics !== 2) await p.waitForTimeout(100); }
+      assert.equal(pics, 2, 'the copy holds both pictures');
+      await p.reload(); await q('recover-dialog').waitFor(); await q('recover-ok').click();
+      await q('recover-dialog').waitFor({ state: 'detached' });
+      await p.waitForFunction(() => document.querySelector('[data-testid=cmd-prompt]').textContent.startsWith('Recovered'));
+      assert.equal(await p.locator('.dtab.on .dot').count(), 1, 'recovered unsaved');
+      assert.ok(await redWhen((n) => n > 500) > 500, 'the red picture is back');
+    } finally { await context.close(); }
+  });
+
   await step('TODO 245: Compare Measure Keep uses the moved source drawing points', async () => {
     for (const [unit, factor] of [[4, 1], [1, 25.4]]) {
       const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });

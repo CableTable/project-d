@@ -13,7 +13,7 @@ import { fillHoles, edgeDist } from './fill.js';
 /** mm in one PDF point. */
 export const PT = 25.4 / 72;
 const PICTURES = 'PDF pictures';                      // one layer for all the pictures, so one switch hides them
-const CAP = 0.7;                                     // a text's capitals are about 0.7 of its font size
+const CAP = 0.7;                                      // a text's capitals are about 0.7 of its font size
 
 const textKey = (s) => s.normalize('NFKC').replace(/\s/g, '');
 
@@ -287,7 +287,10 @@ export async function readPdf(bytes, { page = 1, pdfjs = null } = {}) {
       if (images.has(a[0])) continue;
       const store = typeof a[0] === 'string' && a[0].startsWith('g_') ? pg.commonObjs : pg.objs;
       let data = a[0];
-      if (typeof data === 'string') { try { data = store.get(data); } catch { data = null; } }
+      if (typeof data === 'string') data = await new Promise((done) => {                // a packed (Flate) picture can still be on its way when the list is ready: wait for it, but not for ever
+        const give = setTimeout(() => done(null), 10000);
+        try { store.get(data, (d) => { clearTimeout(give); done(d); }); } catch { clearTimeout(give); done(null); }
+      });
       const px = toRgba(data || {});
       if (px) images.set(a[0], { w: px.w, h: px.h, px: await encodePng(px.w, px.h, px.rgba) });
     }

@@ -64,7 +64,7 @@ export function pictureBitmap(px) { const img = load(px); return img.complete &&
 export async function preloadPictures(items) {
   await Promise.all([...new Set(items.filter((it) => it.k === 'i').map((it) => it.px))].map((px) => load(px).decode().catch(() => {})));
 }
-/** A picture as raw pixels for the PDF file: { w, h, rgb, a (null when nothing is transparent) }. */
+/** A picture's pixels for the PDF file: { w, h, rgb, a (null when nothing is transparent), flate: true } (rgb and a are deflated: a big picture is 17 M pixels). */
 export async function rawPixels(px) {
   const img = load(px); await img.decode();
   const c = document.createElement('canvas'); c.width = img.naturalWidth; c.height = img.naturalHeight;
@@ -72,5 +72,5 @@ export async function rawPixels(px) {
   const { data } = g.getImageData(0, 0, c.width, c.height), n = c.width * c.height, rgb = new Uint8Array(n * 3), a = new Uint8Array(n);
   let clear = false;
   for (let i = 0; i < n; i++) { rgb[i * 3] = data[i * 4]; rgb[i * 3 + 1] = data[i * 4 + 1]; rgb[i * 3 + 2] = data[i * 4 + 2]; a[i] = data[i * 4 + 3]; if (a[i] !== 255) clear = true; }
-  return { w: c.width, h: c.height, rgb, a: clear ? a : null };
+  return { w: c.width, h: c.height, rgb: await deflate(rgb), a: clear ? await deflate(a) : null, flate: true };
 }

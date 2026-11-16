@@ -38,14 +38,18 @@ test('TODO 305a: encodePng writes an RGB PNG when opaque, RGBA when not; isPng t
 test('TODO 305a: the PDF writer puts a picture (with alpha) on the page; pdf.js reads it back where it was put', async () => {
   const img = { w: 2, h: 1, rgb: Uint8Array.of(255, 0, 0, 0, 255, 0), a: Uint8Array.of(255, 128) };
   const page = new P.Page(100, 50);
+  const packed = { w: 2, h: 1, rgb: zlib.deflateSync(img.rgb), a: zlib.deflateSync(img.a), flate: true };       // what rawPixels hands over: deflated
   page.image([40, 0, 0, 20, 10, 5], img); page.image([20, 0, 0, 10, 60, 5], img);                  // the same picture twice: one XObject
+  page.image([30, 0, 0, 15, 10, 30], packed);
   const bytes = P.writePdf([page]), text = Buffer.from(bytes).toString('latin1');
-  assert.equal((text.match(/\/Subtype \/Image/g) || []).length, 2, 'the picture and its alpha, once');
+  assert.equal((text.match(/\/Subtype \/Image/g) || []).length, 4, 'each picture and its alpha, once');
+  assert.equal((text.match(/\/Filter \/FlateDecode/g) || []).length, 2, 'only the packed one says so');
   assert.match(text, /\/SMask \d+ 0 R/);
-  assert.equal((text.match(/ Do Q/g) || []).length, 2);
+  assert.equal((text.match(/ Do Q/g) || []).length, 3);
   const r = await R.readPdf(bytes, { pdfjs });
-  assert.equal(r.pictures, 2);
-  const [a, b] = r.doc.entities, f = (e, c) => +e.r.v[e.r.c.indexOf(c)];
+  assert.equal(r.pictures, 3);
+  const [a, b, c] = r.doc.entities, f = (e, c) => +e.r.v[e.r.c.indexOf(c)];
+  assert.ok(Math.abs(f(c, 10) - 10) < 0.01 && Math.abs(f(c, 11) * f(c, 13) - 30) < 0.01, 'the deflated one is read back');
   for (const [e, x, w] of [[a, 10, 40], [b, 60, 20]]) {
     assert.ok(Math.abs(f(e, 10) - x) < 0.01 && Math.abs(f(e, 20) - 5) < 0.01, 'insert');
     assert.ok(Math.abs(f(e, 11) * f(e, 13) - w) < 0.01, 'width');

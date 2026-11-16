@@ -116,7 +116,7 @@ export class Page {
   clip(evenOdd = false) { this.cmds.push([evenOdd ? 'W*' : 'W']); }
   /** WinAnsi text (see winAnsi) with a text matrix [a b c d e f]: glyph space is one em, so it carries the size. */
   text(tm, coded) { if (coded) this.cmds.push(['T', tm, coded]); }
-  /** A picture { w, h, rgb (w*h*3 bytes, top row first), a (w*h alpha bytes or null) }, its unit square (top row at y = 1) put on the page by m = [a b c d e f] (mm). */
+  /** A picture { w, h, rgb (w*h*3 bytes, top row first), a (w*h alpha bytes or null), flate (rgb and a are deflated) }, its unit square (top row at y = 1) put on the page by m = [a b c d e f] (mm). */
   image(m, img) { this.cmds.push(['I', m, img]); }
 }
 
@@ -147,7 +147,7 @@ export function contentStream(page, unit = 1, names = new Map()) {
 /**
  * pages: [Page]. meta: { title, subject }. Returns the file's bytes (Uint8Array). Objects: 1 catalog, 2 page tree, 3 font, 4 info,
  * then a page and its content for each page, then each distinct picture (and its alpha) as an image XObject.
- * shortcut: a picture's pixels are written raw, not deflated (no sync deflate here); deflate them when a print file gets too big.
+ * A picture's rgb / a are written as given: raw, or already deflated when it says flate (pictures.js rawPixels does that; no sync deflate here).
  */
 export function writePdf(pages, meta = {}) {
   const objs = [];
@@ -173,9 +173,9 @@ export function writePdf(pages, meta = {}) {
     objs.push(`<< /Length ${body.length} >>\nstream\n${body}endstream`);
   });
   for (const im of pics) {
-    const head = `<< /Type /XObject /Subtype /Image /Width ${im.w} /Height ${im.h} `, rgb = bin(im.rgb);
-    objs.push(`${head}/ColorSpace /DeviceRGB /BitsPerComponent 8${im.a ? ` /SMask ${ids.get(im) + 1} 0 R` : ''} /Length ${rgb.length} >>\nstream\n${rgb}\nendstream`);
-    if (im.a) { const a = bin(im.a); objs.push(`${head}/ColorSpace /DeviceGray /BitsPerComponent 8 /Length ${a.length} >>\nstream\n${a}\nendstream`); }
+    const head = `<< /Type /XObject /Subtype /Image /Width ${im.w} /Height ${im.h} `, rgb = bin(im.rgb), z = im.flate ? ' /Filter /FlateDecode' : '';       // flate: rgb and a are already deflated (pictures.js rawPixels)
+    objs.push(`${head}/ColorSpace /DeviceRGB /BitsPerComponent 8${im.a ? ` /SMask ${ids.get(im) + 1} 0 R` : ''}${z} /Length ${rgb.length} >>\nstream\n${rgb}\nendstream`);
+    if (im.a) { const a = bin(im.a); objs.push(`${head}/ColorSpace /DeviceGray /BitsPerComponent 8${z} /Length ${a.length} >>\nstream\n${a}\nendstream`); }
   }
   let out = `%PDF-1.${v16 ? 6 : 4}\n%\xE2\xE3\xCF\xD3\n`;
   const at = [];

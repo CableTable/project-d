@@ -283,7 +283,7 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **HATCH**: A DXF filled boundary using either solid colour or a line pattern, left out of cutter export. Where: `web/drawing.js`, `DECISIONS.md`, Cutter-safe DXF.
 
-**IMAGE**: A DXF image reference that still counts as an entity even when the app draws nothing for it. Where: `DECISIONS.md`, Layer and entity counts. Avoid: The app's imported background picture.
+**IMAGE**: A DXF image reference that still counts as an entity even when the app draws nothing for it; one that carries pixels (`r.px`, a PNG data URL; a picture cut from a vector PDF on the layer `PDF pictures`) is drawn under every line and text, picked by its frame, and left out of the saved DXF (TODO 305a; 305b writes it). Where: `DECISIONS.md`, Layer and entity counts; "PDF pictures (TODO 305a)". Avoid: The app's imported background picture.
 
 **INSERT**: A DXF placement of a named block with position, scale and rotation. Where: `web/drawing.js`, `web/dxf-write.js`. Avoid: A copy of every member as separate top-level entities.
 
