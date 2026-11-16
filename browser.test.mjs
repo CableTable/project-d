@@ -30027,8 +30027,15 @@ try {
     await page.route('**/app.js', route294); await page.reload();
     const pick = (ids) => page.evaluate((ids) => window.pick294(ids), ids);
     const probe = () => page.evaluate(() => window.probe294());
-    const typed = async (id, value) => { await t(id).fill(value); await t(id).press('Enter'); await frames(); };
-    const box = async (expected) => (await probe()).box.forEach((v, i) => approx(v, expected[i], .00001));
+    const valueIs = (id, value) => page.waitForFunction(({ id, value }) => document.querySelector(`[data-testid=${id}]`).value === value, { id, value });
+    const typed = async (id, value) => {
+      await t(id).fill(value); await t(id).press('Enter');
+      await page.waitForFunction((id) => { const n = document.querySelector(`[data-testid=${id}]`); return document.activeElement !== n && n.value === n.defaultValue; }, id);
+    };
+    const box = async (expected) => {
+      await page.waitForFunction((expected) => window.probe294().box?.every((v, i) => Math.abs(v - expected[i]) < .00001), expected);
+      (await probe()).box.forEach((v, i) => approx(v, expected[i], .00001));
+    };
     try {
       for (const compare of [false, true]) for (const units of [4, 1]) {
         const raw = newDoc(units);
@@ -30042,6 +30049,7 @@ try {
         if (compare) await typeCmd('compare');
         for (const id of ['sel-x', 'sel-y', 'sel-rotation', 'sel-scale']) assert.equal(await t(id).isVisible(), false);
         await pick([0]); await box([20, 30, 60, 50]);
+        await valueIs('sel-x', units === 1 ? '20.000"' : '20.00');
         assert.equal(await t('sel-x').inputValue(), units === 1 ? '20.000"' : '20.00');
         await typed('sel-x', '10'); await box([10, 30, 50, 50]);
         assert.equal((await probe()).labels.at(-1), 'Move');
@@ -30049,13 +30057,13 @@ try {
         await key97c('Control+z'); await pick([0]); await box([10, 30, 50, 50]);
         const moved = await probe();
         await typed('sel-rotation', '90'); await box([20, 20, 40, 60]);
-        assert.equal(await t('sel-rotation').inputValue(), '0');
+        await valueIs('sel-rotation', '0'); assert.equal(await t('sel-rotation').inputValue(), '0');
         assert.equal((await probe()).labels.at(-1), 'Rotate');
         const turned = (await probe()).raw.entities[0];
         approx(fieldOf(turned, 10), 40, .00001, 'CCW first vertex X'); approx(fieldOf(turned, 20), 20, .00001, 'CCW first vertex Y');
         await key97c('Control+z'); await pick([0]); assert.deepEqual((await probe()).raw.entities, moved.raw.entities);
         await typed('sel-scale', '200'); await box([-10, 20, 70, 60]);
-        assert.equal(await t('sel-scale').inputValue(), '100'); assert.equal((await probe()).labels.at(-1), 'Scale');
+        await valueIs('sel-scale', '100'); assert.equal(await t('sel-scale').inputValue(), '100'); assert.equal((await probe()).labels.at(-1), 'Scale');
         assert.deepEqual((await probe()).raw.entities[1], moved.raw.entities[1], 'unpicked object unchanged');
         await key97c('Control+z'); await pick([0]); assert.deepEqual((await probe()).raw.entities, moved.raw.entities);
         const before = await probe();
@@ -30098,6 +30106,104 @@ try {
       assert.deepEqual(errors, []);
     } finally {
       await page.unroute('**/app.js', route294); await page.reload();
+      await page.waitForSelector('[data-testid=count]', { state: 'attached' });
+    }
+  });
+
+  await step('TODO 294c: top bar Mirror H / V, outline width and Layouts Scale %, Undo and 1024 light / dark', async () => {
+    await closeTabs(/./);
+    const route294c = (route) => route.fulfill({ contentType: 'text/javascript', body: readFileSync('web/app.js', 'utf8') + `
+      window.pick294c = (ids) => setSel(editable(), new Set(ids));
+      window.probe294c = () => { const d = curDoc(); return d.lay
+        ? { box: selBox(), placed: d.lay.placed, labels: layHist(d).labels().past }
+        : { raw: editable().raw, box: OB.boxOf(editable().fl, [...editable().sel]), labels: editable().hist.labels().past }; };
+    ` });
+    await page.route('**/app.js', route294c); await page.reload();
+    const pick = (ids) => page.evaluate((ids) => window.pick294c(ids), ids);
+    const probe = () => page.evaluate(() => window.probe294c());
+    const valueIs = (id, value) => page.waitForFunction(({ id, value }) => document.querySelector(`[data-testid=${id}]`).value === value, { id, value });
+    const typed = async (id, value) => { await t(id).fill(value); await t(id).press('Enter'); await valueIs(id, '100'); };
+    const box = async (expected) => {
+      await page.waitForFunction((expected) => window.probe294c().box?.every((v, i) => Math.abs(v - expected[i]) < .00001), expected);
+      (await probe()).box.forEach((v, i) => approx(v, expected[i], .00001));
+    };
+    const fitShots = async (id, name) => {
+      await page.setViewportSize({ width: 1024, height: 700 });
+      if (id === 'selbar') await menuItem('View', 'Zoom Selection');
+      for (const theme of ['light', 'dark']) {
+        await menuItem('View', 'Theme: ' + theme); await frames();
+        const path = `${shotDir}/todo294c-${name}-1024-${theme}.png`;
+        await page.screenshot({ path }); assert.ok(readFileSync(path).length > 1000);
+        const overflow = await t(id).evaluate((n) => {
+          const r = n.getBoundingClientRect();
+          return [r.right > innerWidth ? `bar right ${r.right}` : '', n.scrollWidth > n.clientWidth ? `scroll ${n.scrollWidth} > ${n.clientWidth}` : '',
+            ...[...n.querySelectorAll('input, select, button')].filter((c) => c.getBoundingClientRect().width).flatMap((c) => {
+              const b = c.getBoundingClientRect(); return b.left >= r.left && b.right <= r.right + 1 && b.top >= r.top && b.bottom <= r.bottom ? [] : [c.dataset.testid || c.textContent];
+            })].filter(Boolean);
+        });
+        assert.deepEqual(overflow, [], name + ' fits at 1024');
+      }
+      await page.setViewportSize({ width: 1440, height: 900 });
+    };
+    try {
+      for (const compare of [false, true]) {
+        const raw = newDoc(4), layer = 'Cut with a full layer name for the tooltip';
+        addLayer(raw, layer);
+        addEntities(raw, dxfPoly([[20, 30], [60, 30], [30, 50]], { closed: true, layer }), dxfLine(200, 200, 220, 200));
+        await open97c(raw, `bar294c-${compare}.dxf`);
+        if (compare) await typeCmd('compare');
+        assert.equal(await t('sel-mirror-x').count(), 1, 'Mirror H exists in the shared top bar');
+        for (const id of ['sel-mirror-x', 'sel-mirror-y', 'sel-width']) assert.equal(await t(id).isVisible(), false);
+        await pick([0]); const before = await probe();
+        assert.equal(await t('sel-layer').getAttribute('title'), 'layer ' + layer);
+        for (const [axis, x, y] of [['x', 60, 30], ['y', 20, 50]]) {
+          await t('sel-mirror-' + axis).click();
+          await page.waitForFunction((label) => window.probe294c().labels.at(-1) === label, 'Mirror ' + axis.toUpperCase());
+          const after = await probe();
+          approx(fieldOf(after.raw.entities[0], 10), x, .00001); approx(fieldOf(after.raw.entities[0], 20), y, .00001);
+          assert.equal(after.raw.entities.length, before.raw.entities.length, 'Erase Yes keeps the entity count');
+          assert.deepEqual(after.raw.entities[1], before.raw.entities[1]);
+          await key97c('Control+z'); await pick([0]); assert.deepEqual((await probe()).raw.entities, before.raw.entities, 'one Undo restores mirror');
+        }
+        await t('sel-width').selectOption('0.5'); await valueIs('sel-width', '0.5');
+        assert.equal(fieldOf((await probe()).raw.entities[0], 43), .5);
+        assert.equal((await probe()).labels.at(-1), 'Outline width → 0.50 mm');
+        await key97c('Control+z'); await pick([0]); assert.deepEqual((await probe()).raw.entities, before.raw.entities);
+        await t('sel-width').selectOption('custom');
+        const custom = page.getByRole('dialog', { name: 'Custom line width', exact: true }).getByRole('textbox');
+        await custom.fill('0.37'); await custom.press('Enter'); await valueIs('sel-width', '0.37');
+        assert.equal(fieldOf((await probe()).raw.entities[0], 43), .37);
+        await key97c('Control+z'); await pick([0]); assert.deepEqual((await probe()).raw.entities, before.raw.entities);
+        await typed('sel-scale', '50%'); await box([30, 35, 50, 45]);
+        await key97c('Control+z'); await pick([0]);
+        await typed('sel-scale', '1"'); assert.deepEqual((await probe()).raw.entities, before.raw.entities, 'length suffix is not a percentage');
+        await fitShots('selbar', compare ? 'compare' : 'drawing');
+        if (compare) await page.locator('.dtab').filter({ has: page.locator('.tname', { hasText: /^bar294c-true/ }) }).click();
+        await t('ptab-objects').click(); await page.locator('.or.layer').filter({ has: page.locator('[data-act=lock]') }).filter({ hasText: layer }).locator('[data-act=lock]').click();
+        if (compare) await page.locator('.dtab').filter({ has: page.locator('.tname', { hasText: /^Compare$/ }) }).click();
+        await pick([0, 1]); const locked = await probe();
+        for (const axis of ['x', 'y']) { await t('sel-mirror-' + axis).click(); assert.match(await said(/locked.*mirror/), /locked/); assert.deepEqual(await probe(), locked); }
+        await t('sel-width').selectOption('0.5'); await said(/locked.*outline width/); assert.deepEqual(await probe(), locked);
+        await closeTabs(/./);
+      }
+      await freshLayoutWithPlate(); await partTab();
+      const before = await probe(), b = before.box;
+      await typed('pscale', '200'); await box([(3 * b[0] - b[2]) / 2, (3 * b[1] - b[3]) / 2, (3 * b[2] - b[0]) / 2, (3 * b[3] - b[1]) / 2]);
+      assert.equal((await probe()).labels.at(-1), 'Scale');
+      await key97c('Control+z'); await partTab(); await box(b); assert.deepEqual((await probe()).placed, before.placed);
+      await typed('pscale', '50%'); await box([(3 * b[0] + b[2]) / 4, (3 * b[1] + b[3]) / 4, (b[0] + 3 * b[2]) / 4, (b[1] + 3 * b[3]) / 4]);
+      await key97c('Control+z'); await partTab(); await box(b);
+      for (const value of ['1"', '0', '-2', 'Infinity']) { await typed('pscale', value); assert.deepEqual((await probe()).placed, before.placed); }
+      await t('pscale').fill('200'); await t('pscale').press('Escape'); assert.deepEqual((await probe()).placed, before.placed);
+      await t('px').fill('100'); await t('px').press('Enter'); await partTab();
+      assert.equal((await probe()).labels.at(-1), 'Move Plate A', 'source remains editable after scaling');
+      assert.equal(await t('part-ribbon').getByRole('combobox', { name: /width/i }).count(), 0, 'no width on Layouts');
+      await fitShots('part-ribbon', 'layout');
+      await menuItem('Layout', 'Lock'); await partTab(); assert.equal(await t('pscale').isDisabled(), true);
+      assert.deepEqual(errors, []);
+    } finally {
+      await page.setViewportSize({ width: 1440, height: 900 });
+      await page.unroute('**/app.js', route294c); await page.reload();
       await page.waitForSelector('[data-testid=count]', { state: 'attached' });
     }
   });

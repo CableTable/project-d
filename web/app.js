@@ -1392,6 +1392,7 @@ function buildPartRibbon() {
   ui.px = pfield({ 'data-lockable': '1', 'data-testid': 'px', 'aria-label': 'X', title: xyTitle('X') }, () => showBox(0), (t) => setBoxPos('x', t));
   ui.py = pfield({ 'data-lockable': '1', 'data-testid': 'py', 'aria-label': 'Y', title: xyTitle('Y') }, () => showBox(1), (t) => setBoxPos('y', t));
   ui.pa = pfield({ 'data-lockable': '1', 'data-testid': 'pa', 'aria-label': 'Angle', title: 'Angle in degrees, anticlockwise. The part turns about its pivot (the centre unless you moved it). Type a value and press Enter' }, showAngle, setAngleText);
+  ui.pscale = pfield({ 'data-lockable': '1', 'data-testid': 'pscale', 'aria-label': 'Scale %', title: 'Uniform scale about the selection box centre; resets to 100%' }, () => '100', setScaleText);
   ui.barNudge = pfield({ 'data-testid': 'nudge-step', 'aria-label': 'Nudge step in mm', title: 'How far an arrow key moves the part, in mm (Shift + arrow: 10 times this)' }, showNudge, setNudgeText);
   const mirror = (axis, id) => {
     const b = ribbonButton('Mirror ' + axis.toUpperCase(), TOOLS.find((t) => t.id === 'mirror').svg, () => mirrorSel(axis), { command: 'm' + axis, description: axis === 'x' ? 'Mirror X: flip the part left to right about its centre' : 'Mirror Y: flip the part top to bottom about its centre' });
@@ -1401,7 +1402,7 @@ function buildPartRibbon() {
   const gbtn = (id, label, svg, action) => { const b = ribbonButton(label, svg, action); delete b.ribbonSync; b.dataset.testid = id; ui[id] = b; return b; };
   ui.pfields = h('div', { class: 'ribbon-page' },
     ribbonGroup('Position', ribbonStack(ribbonField('Name', ui.partName), ribbonField('X mm', ui.px), ribbonField('Y mm', ui.py)),
-      ribbonStack(sizeField('W', 'pw', 'w'), sizeField('H', 'ph', 'h'))),
+      ribbonStack(sizeField('W', 'pw', 'w'), sizeField('H', 'ph', 'h'), ribbonField('Scale %', ui.pscale))),
     ribbonGroup('Rotate', ribbonStack(ribbonField('Angle', ui.pa), ribbonField('Pivot', ui.partPivot = select([['centre', 'Centre'], ['bl', 'Bottom-left'], ['custom', 'Custom']], 'centre', setPivotKind, { 'aria-label': 'Part pivot' })),
       ribbonButton('Rotate 90°', '<path d="M20 12a8 8 0 1 1-3-6M20 4v5h-5"/>', () => setAngleText(selItems().length > 1 ? '90' : String((selectedPlaced()?.p.rot || 0) + 90)), { small: true, enabled: () => !selItems().some((x) => x.p.lock) }))),
     ribbonGroup('Mirror', mirror('x', 'bar-mirror-x'), mirror('y', 'bar-mirror-y')),
@@ -1436,7 +1437,13 @@ function buildSelbar() {
       else if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
     });
     return labelled(label, input);
-  }));
+  }), ...['x', 'y'].map((axis) => h('button', { class: 'btn sm', type: 'button', 'data-testid': 'sel-mirror-' + axis, title: axis === 'x' ? 'Flip left to right about the selection box centre' : 'Flip top to bottom about the selection box centre', onclick: () => selectionMirror(axis) }, axis === 'x' ? 'Mirror H' : 'Mirror V')),
+  labelled('Width', ui.selWidth = h('select', { class: 'fld', 'data-testid': 'sel-width', 'aria-label': 'Outline width', onchange: (e) => {
+    const d = editable();
+    if (!d || moveLocked(d, d.sel, 'change outline width on')) { renderEdit(); return; }
+    if (e.target.value === 'custom') ribbonCustomWidth(ui.selWidth);
+    else propWidthSet(['ByLayer', 'Hairline'].includes(e.target.value) ? e.target.value : PL.parseMm(e.target.value));
+  } })));
   return ui.selbar = h('div', { class: 'propbar selbar', hidden: true, 'data-testid': 'selbar' },
     ui.selName, ui.selLayer, ui.selTransforms, h('span', { class: 'lbl sizelbl', title: 'Resize the selection, or the whole drawing when nothing is selected, about its bottom-left' }, 'Size'), size('W', 'sel-w', 'w'), size('H', 'sel-h', 'h'), sizePadlock('size-padlock'),
     ui.selContour = h('span', { class: 'lbl ctlabel', hidden: true, 'data-testid': 'sel-contour' }),
@@ -2431,6 +2438,13 @@ function setAngleText(text, copy = false) {
   const r = editSelected((part, pl, c) => (c.many ? PL.rotateAbout(part, pl, [c.cx, c.cy], v) : PL.setAngleAbout(part, pl, pivotPoint(part, pl), v)), { copy, label: copy ? 'Copy and turn' : 'Turn' });
   if (r && r.many) afterEdit(r, `${r.name} ${copy ? 'copied and turned' : 'turned'} by ${+v.toFixed(2)}° about the middle of the selection`);
   else if (r) afterEdit(r, `${r.part.name} ${copy ? 'copied and turned' : 'turned'} to ${+r.next.rot.toFixed(2)}° about ${fmt(pivotPoint(r.part, r.next)[0])}, ${fmt(pivotPoint(r.part, r.next)[1])}`);
+  return '';
+}
+function setScaleText(text) {
+  const k = Number(text.trim().replace(/%$/, '').trim()) / 100;
+  if (!(k >= 1e-4 && k <= 1e4)) return 'The scale factor must be between 0.0001 and 10000';
+  const r = editSelected((part, pl, c) => PL.scaleAbout(part, pl, [c.cx, c.cy], k), { label: 'Scale', labelSelection: false });
+  if (r) afterEdit(r, 'Selection scaled. Ctrl+Z takes it back');
   return '';
 }
 function mirrorSel(axis) {
@@ -6519,8 +6533,8 @@ function selectionTyped(input, kind) {
   if (!b) return;
   try {
     const position = kind === 'x' || kind === 'y';
-    const value = position ? PL.parseMm(input.value, drawingUnit()) : kind === 'rotation' ? PL.parseAngle(input.value) : DU.parse(input.value);
-    if (value == null || kind === 'scale' && value <= 0) { note(kind === 'scale' ? 'Scale: type a percentage above 0' : position ? 'Type a coordinate in the drawing unit' : 'Rotation: type an angle in degrees'); return; }
+    const value = position ? PL.parseMm(input.value, drawingUnit()) : kind === 'rotation' ? PL.parseAngle(input.value) : Number(input.value.trim().replace(/%$/, '').trim());
+    if (value == null || !Number.isFinite(value) || kind === 'scale' && value <= 0) { note(kind === 'scale' ? 'Scale: type a percentage above 0' : position ? 'Type a coordinate in the drawing unit' : 'Rotation: type an angle in degrees'); return; }
     const delta = position ? value / d.factor - b[kind === 'x' ? 0 : 1] : kind === 'scale' ? value / 100 - 1 : value;
     if (Math.abs(delta) < 1e-9) return;
     if (kind === 'scale') {
@@ -6538,6 +6552,25 @@ function selectionTyped(input, kind) {
     note(label + ': selection changed. Ctrl+Z takes it back');
   } catch (error) { note(error.message); }
   finally { renderEdit(); }
+}
+function selectionMirror(axis) {
+  const d = editable(), selection = d?.sel.size && new Set(d.sel), b = selection && OB.boxOf(d.fl, [...selection]);
+  if (!b || moveLocked(d, selection, 'mirror')) return;
+  const a = [(b[0] + b[2]) / 2, (b[1] + b[3]) / 2], end = [a[0] + (axis === 'y' ? 1 : 0), a[1] + (axis === 'x' ? 1 : 0)];
+  let blocks = d.raw.blocks;
+  try {
+    const entities = d.raw.entities.map((ent, i) => {
+      if (!selection.has(i)) return ent;
+      const r = MD.mirrorEntity(ent, a, end, blocks);
+      if (!r.ent) throw new Error('Mirror: ' + r.skip);
+      if (r.blocks) blocks = r.blocks;
+      return r.ent;
+    });
+    view.fitted = false;
+    if (!commit(d, { entities, blocks, groups: d.raw.groups }, 'Mirror ' + axis.toUpperCase())) return;
+    setSel(d, selection);
+    note('Selection mirrored. Ctrl+Z takes it back');
+  } catch (error) { note(error.message); }
 }
 function sizeTyped(input, axis) {
   input.blur();
@@ -11253,11 +11286,11 @@ function propCommit(d, label, fn, all = false, widthOnly = false) {
   return repl.size;
 }
 let recentWidths = [];
-function ribbonCustomWidth() {
-  renderRibbon();                       // Custom… is an action; the list keeps showing the selection's width.
-  const value = ui.ribbonWidth.value, r = ui.ribbonWidth.getBoundingClientRect();
+function ribbonCustomWidth(control = ui.ribbonWidth) {
+  renderEdit();                       // Custom… is an action; the list keeps showing the selection's width.
+  const value = control.value, r = control.getBoundingClientRect();
   const field = numField('Line width (mm)', 'ribbon-width-custom', { value: Number.isFinite(PL.parseMm(value)) ? value : '', onEnter: (raw) => {
-    hideMenu(); propWidthSet(PL.parseMm(raw), true); ui.ribbonWidth.focus();
+    hideMenu(); propWidthSet(PL.parseMm(raw), true); control.focus();
   } });
   const menu = popMenu(r.left, r.bottom, [field]);
   menu.setAttribute('role', 'dialog'); menu.setAttribute('aria-label', 'Custom line width');
@@ -11834,6 +11867,10 @@ function outlinesOf(d) {
 /** The property bar for the selection and the list of outlines (drawing tab). */
 function renderSelection(d) {
   const outs = outlinesOf(d), n = d.sel.size;
+  ui.selLayer.title = n ? 'layer ' + d.raw.entities[[...d.sel][0]].layer : '';
+  const widths = propEnts(d, true).map(([, ent]) => PR.widthKey(ent, d.factor));
+  const width = widths.length && widths.every((v) => v === widths[0]) ? widths[0] ?? '' : '';
+  setSelect(ui.selWidth, [['', '*varies*'], ...PR.widthOptions(width, recentWidths)], String(width));
   ui.outList.replaceChildren(...(outs ? outs.map((o, k) => h('button', { class: 'orow', type: 'button', 'data-outline': k + 1, onclick: () => setSel(d, new Set(o.set)) },
     h('span', { class: 'nm' }, 'Outline ' + (k + 1)), h('span', { class: 'lbl mono' }, `${fmtSize(o.w)} × ${fmtSize(o.h)}`),
     (d.savedAs || []).includes(sizeKey(o.w, o.h)) ? h('span', { class: 'chip' }, 'saved') : null)) : [h('span', { class: 'lbl' }, 'Reading the drawing…')]));
