@@ -2571,7 +2571,7 @@ function arrange(kind, how, point = null) {
   } else if (kind === 'align' || page) {
     if (objs.length < 2 && rel !== 'sheet' && rel !== 'point') { note(lay ? 'Align: that is one object (a group). Pick Relative to: Sheet, or select another part' : 'Align: that is one object (a group). Select another object'); return; }
     if (pointAlign && !point) { setTool('select'); state.arrangePoint = { d: d || curDoc(), how }; renderCommand(); return; }
-    deltas = A.alignDeltas(boxes, page ? 'page' : how, rel, sheet, 0, point);
+    deltas = A.alignDeltas(boxes, page ? 'page' : how, rel, sheet, 0, point, A.lastObjectOf(objs));
   } else {
     if (objs.length < 3) { note('Distribute needs three or more objects (a group counts as one)'); return; }
     const r = A.distributeDeltas(boxes, how === 'horizontal' ? 'x' : 'y', rel, sheet);

@@ -39,22 +39,27 @@ export function objectsOf(items) {
   return out;
 }
 
+/** Index of the object holding the last-picked item: a group counts at its last-picked member (objectsOf places it at its first). */
+export function lastObjectOf(objs) {
+  return objs.reduce((k, o, i) => o.members.at(-1) > objs[k].members.at(-1) ? i : k, 0);
+}
+
 /** The frame to line up with: selection, sheet, first / last selected box, or a zero-size point frame. */
-function frameOf(boxes, rel, sheet, first, point) {
+function frameOf(boxes, rel, sheet, first, point, last) {
   if (rel === 'sheet' && sheet) return sheet;
   if (rel === 'first' && boxes[first]) return boxes[first];
-  if (rel === 'last') return boxes[boxes.length - 1];
+  if (rel === 'last') return boxes[last];
   if (rel === 'point' && point) return [point[0], point[1], point[0], point[1]];
   return unionBox(boxes);
 }
 
 /**
  * How far each box moves to line up: how is left, centre, right (along X), top, middle or bottom (along Y), or page (one block, both axes).
- * rel: 'selection', 'sheet' ([0, 0, W, H]), 'first' (index `first`), 'last' (last box), or 'point' ([x, y]).
+ * rel: 'selection', 'sheet' ([0, 0, W, H]), 'first' (index `first`), 'last' (index `last`, default the last box), or 'point' ([x, y]).
  * → [{ dx, dy }] per box (no -0).
  */
-export function alignDeltas(boxes, how, rel = 'selection', sheet = null, first = 0, point = null) {
-  const f = frameOf(boxes, rel, sheet, first, point);
+export function alignDeltas(boxes, how, rel = 'selection', sheet = null, first = 0, point = null, last = boxes.length - 1) {
+  const f = frameOf(boxes, rel, sheet, first, point, last);
   if (!f) return [];
   const fx = (f[0] + f[2]) / 2, fy = (f[1] + f[3]) / 2;
   if (how === 'page') {

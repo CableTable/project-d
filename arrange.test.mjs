@@ -104,6 +104,13 @@ test('TODO 291: last selected stays put for all six alignments', () => {
   assert.deepEqual(B, before);
 });
 
+test('TODO 291 fix: a group sits at its last-picked member, so it is the last object when a line is picked between', () => {
+  const items = [{ g: 'G', box: [0, 0, 10, 10] }, { box: [50, 0, 60, 10] }, { g: 'G', box: [20, 0, 30, 10] }];
+  const objs = A.objectsOf(items);
+  const deltas = A.alignDeltas(objs.map((o) => o.box), 'left', 'last', null, 0, null, A.lastObjectOf(objs));
+  assert.deepEqual(deltas, [{ dx: 0, dy: 0 }, { dx: -50, dy: 0 }], 'the group stays, the line moves');
+});
+
 test('TODO 291: a point is a zero-size frame for all six alignments, including one object', () => {
   const before = structuredClone(B), point = [0, -25];
   const expected = [[-90, -480, -740], [-240, -535, -820], [-390, -590, -900], [-235, -205, -245], [-175, -150, -195], [-115, -95, -145]];
