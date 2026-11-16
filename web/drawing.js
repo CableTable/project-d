@@ -948,7 +948,16 @@ function curveExtremes(points, closed, refine, period) {
  * middles, centres, points), in the drawing's own coordinates, on a grid for quick lookups.
  */
 export function pickIndex(fl, paper, visible = () => true, extremeFrame = IDENT) {
-  const pieces = [], snaps = [];
+  // Spline segments already live in ops: retain an item/op address, not another object and four boxed coordinates per segment.
+  const stored = [], snaps = [], stride = fl.items.length;
+  const pieces = new Proxy(stored, { get(target, key, receiver) {
+    const value = Reflect.get(target, key, receiver);
+    if (key === 'length' || typeof value !== 'number') return value;
+    const idx = value % stride, op = Math.floor(value / stride), it = fl.items[idx], ops = it.ops, m = fl.mats[it.m];
+    const a = mapply(m, ops[op - 2], ops[op - 1]);
+    const b = ops[op] === 9 ? mapply(m, ops[1], ops[2]) : mapply(m, ops[op + 1], ops[op + 2]);
+    return { t: 's', it: idx, x1: a[0], y1: a[1], x2: b[0], y2: b[1], curve: true };
+  } });
   for (const { p: [x, y], start, end } of fl.insertions || []) {
     for (let it = start; it < end; it++) if (!!fl.items[it].ps === !!paper && visible(it)) {
       snaps.push({ x, y, kind: 'insertion', it });
@@ -974,15 +983,16 @@ export function pickIndex(fl, paper, visible = () => true, extremeFrame = IDENT)
       period ??= points.length - (closed && Math.hypot(points[0][0] - points.at(-1)[0], points[0][1] - points.at(-1)[1]) < 1e-9 ? 1 : 0);
       for (const [x, y] of curveExtremes(points.map(([x, y], i) => [a * x + c * y, b * x + d * y, params ? params[i] : i]), closed, refine, period)) extremes.push([(d * x - c * y) / det, (a * y - b * x) / det]);
     };
-    const seg = (a, b) => {
+    const seg = (a, b, op) => {
       if (Math.hypot(b[0] - a[0], b[1] - a[1]) < 1e-12) return;
-      pieces.push({ t: 's', it: idx, x1: a[0], y1: a[1], x2: b[0], y2: b[1], curve });
+      if (it.spl) stored.push(op * stride + idx);
+      else pieces.push({ t: 's', it: idx, x1: a[0], y1: a[1], x2: b[0], y2: b[1], curve });
       if (!curve) snaps.push({ x: (a[0] + b[0]) / 2, y: (a[1] + b[1]) / 2, kind: 'mid', it: idx });
     };
     for (let i = 0; i < ops.length; justMoved = ops[i] === 0, i += ops[i] === 2 ? 7 : ops[i] === 9 ? 1 : 3) {
       const op = ops[i];
       if (op === 0) { cur = first = mapply(m, ops[i + 1], ops[i + 2]); if (curve) curvePoints.push(cur); snaps.push({ x: cur[0], y: cur[1], kind: 'end', it: idx }); }
-      else if (op === 1) { const p = mapply(m, ops[i + 1], ops[i + 2]); if (cur) seg(cur, p); cur = p; if (curve) curvePoints.push(p); else snaps.push({ x: p[0], y: p[1], kind: 'end', it: idx }); }
+      else if (op === 1) { const p = mapply(m, ops[i + 1], ops[i + 2]); if (cur) seg(cur, p, i); cur = p; if (curve) curvePoints.push(p); else snaps.push({ x: p[0], y: p[1], kind: 'end', it: idx }); }
       else if (op === 2) {
         const [cx, cy, r, a0, a1, cw] = ops.slice(i + 1, i + 7);
         const [s, sw] = arcSweep(a0, a1, cw), full = sw > TAU - 1e-6;
@@ -1017,7 +1027,7 @@ export function pickIndex(fl, paper, visible = () => true, extremeFrame = IDENT)
           const c = mapply(m, cx, cy); snaps.push({ x: c[0], y: c[1], kind: 'centre', it: idx });
         }
         cur = pe;
-      } else { if (cur && first) seg(cur, first); cur = first; closed = true; }
+      } else { if (cur && first) seg(cur, first, i); cur = first; closed = true; }
     }
     if (curve) { if (closed) snaps.splice(s0, 1); else if (cur) snaps.push({ x: cur[0], y: cur[1], kind: 'end', it: idx }); }   // a closed curve has no end; an open one, its last point
     if (it.ell) {

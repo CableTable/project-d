@@ -166,6 +166,63 @@ try {
   const shotDir = shard ? join(shotRoot, `shard-${shard.index}-of-${shard.count}`) : shotRoot;
   if (shard || process.argv.includes('--shots')) process.env.SHOTS_DIR = shotDir; // Older screenshot steps read the environment directly.
   mkdirSync(shotDir, { recursive: true });
+  await step('TODO 303: a 130k-entity cm drawing peaks under 1.5x its first-draw heap in 90 s', async () => {
+    const ctx = await browser.newContext();
+    try {
+      const p = await ctx.newPage(), cdp = await ctx.newCDPSession(p), faults = [];
+      p.on('pageerror', (e) => faults.push(String(e)));
+      p.on('dialog', (dialog) => dialog.accept());
+      await p.route('**/app.js', (route) => {
+        const src = readFileSync('web/app.js', 'utf8');
+        const body = src.replace('c.dataset.drawn = drawn || 0;', `c.dataset.drawn = drawn || 0;
+          if (d?.raw?.entities.length >= 130000 && !window.t303Drawn) { window.t303Drawn = true; debugger; }`);
+        assert.notEqual(body, src, 'first-draw probe installed');
+        return route.fulfill({ contentType: 'text/javascript', body: body + `
+          window.t303State = () => ({ dirty: curDoc().dirty, indexed: !!curDoc().ed, entities: curDoc().raw.entities.length });
+          window.t303Autosave = async () => {
+            await autosaveNow(); const clean = (await RC.loadCopies()).length;
+            curDoc().dirty = true; await autosaveNow();
+            const copies = await RC.loadCopies();
+            return { clean, copies: copies.length, entities: copies[0]?.dxf.match(/\\r?\\n(?:LINE|LWPOLYLINE|SPLINE|TEXT)\\r?\\n/g)?.length };
+          };` });
+      });
+      await cdp.send('Performance.enable'); await cdp.send('Debugger.enable');
+      const heap = async () => (await cdp.send('Performance.getMetrics')).metrics.find((m) => m.name === 'JSHeapUsedSize').value;
+      const firstDraw = new Promise((resolve, reject) => cdp.once('Debugger.paused', async () => {
+        try { const value = await heap(); await cdp.send('Debugger.resume'); resolve(value); } catch (e) { reject(e); }
+      }));
+      await p.goto(URL_); await p.getByTestId('count').waitFor({ state: 'attached' });
+      {
+        const doc = newDoc(5), ents = [];
+        for (let i = 0; i < 130880; i++) {
+          const x = i % 400, y = Math.floor(i / 400);
+          switch (i % 4) {
+            case 0: ents.push(dxfLine(x, y, x + .8, y + .5)); break;
+            case 1: ents.push(dxfPoly([[x, y], [x + .8, y], [x + .8, y + .6]], { closed: true })); break;
+            case 2: ents.push(entity('SPLINE', [[70, 0], [71, 3], [72, 8], [73, 4], ...[0, 0, 0, 0, 1, 1, 1, 1].map((v) => [40, v]), [10, x], [20, y], [10, x + .2], [20, y + .8], [10, x + .6], [20, y - .8], [10, x + .8], [20, y]])); break;
+            default: ents.push(dxfText(x, y, .2, 'T' + i));
+          }
+        }
+        addEntities(doc, ents);
+        await p.getByTestId('picker').setInputFiles({ name: 'todo303-cm.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(doc)) });
+      }
+      await p.waitForFunction(() => window.t303Drawn, null, { timeout: 120000 });
+      const first = await firstDraw, samples = [first], start = performance.now();
+      console.log(`TODO 303 first-draw JSHeapUsedSize=${first}`);
+      for (let seconds = 5; seconds <= 90; seconds += 5) {
+        await new Promise((r) => setTimeout(r, Math.max(0, start + seconds * 1000 - performance.now())));
+        samples.push(await heap()); console.log(`TODO 303 +${seconds}s JSHeapUsedSize=${samples.at(-1)}`);
+      }
+      const peak = Math.max(...samples), status = await p.evaluate(() => window.t303State());
+      console.log(`TODO 303 FIRST=${first} PEAK=${peak} ratio=${(peak / first).toFixed(3)} ${JSON.stringify(status)}`);
+      assert.equal(status.indexed, true, 'warm built the edit index');
+      assert.equal(status.dirty, false, 'cm conversion alone needs no autosave copy');
+      assert.deepEqual(faults, []);
+      assert.ok(peak <= first * 1.5, `PEAK ${peak} exceeds 1.5x first draw ${first}`);
+      assert.deepEqual(await p.evaluate(() => window.t303Autosave()), { clean: 0, copies: 1, entities: 130880 });
+      console.log(`TODO 303 autosave: clean=0 copies, dirty=1 copy / 130880 entities; JSHeapUsedSize=${await heap()}`);
+    } finally { await ctx.close(); }
+  });
   await step('TODO 222c: dimensions in the drawing unit', async () => {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
     try {

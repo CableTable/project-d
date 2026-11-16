@@ -338,6 +338,29 @@ test('TODO 234: an INSERT named like an Object.prototype member is skipped when 
   }
 });
 
+test('TODO 303: indexed spline segments share ops and preserve transformed picks, seams and array callers', () => {
+  const fl = { mats: [[2, .5, -.25, 3, 10, -20]], items: [
+    { k: 'p', m: 0, ps: false, ops: [0, 0, 0, 1, 1, 2], b: [9.5, -20, 12, -13.5] },
+    { k: 'p', m: 0, ps: false, spl: 1, ops: [0, 0, 0, 1, 1, 2, 1, 1, 2, 1, 3, 0, 9], b: [9.5, -20, 16, -13.5] },
+    { k: 'p', m: 0, ps: false, spl: 1, ops: [0, 5, 0, 1, 6, 2, 1, 8, 0], b: [19.5, -17.5, 26, -11] }
+  ] };
+  const ix = D.pickIndex(fl, false), plain = D.pickIndex({ ...fl, items: fl.items.map((it) => ({ ...it, spl: 0 })) }, false);
+  const expected = plain.pieces.map((p) => ({ ...p, curve: p.it !== 0 }));
+  assert.equal(ix.pieces.length, 6, 'zero-length piece omitted, closed seam kept');
+  assert.deepEqual([...ix.pieces], expected, 'iteration decodes the same affine-transformed segments');
+  assert.deepEqual(ix.pieces.filter((p) => p.curve), expected.filter((p) => p.curve), 'snapCandidates uses filter');
+  assert.equal(typeof Object.getOwnPropertyDescriptor(ix.pieces, '1').value, 'number', 'spline backing entries retain addresses, not coordinate objects');
+  for (const p of expected) {
+    const x = (p.x1 + p.x2) / 2, y = (p.y1 + p.y2) / 2;
+    const own = (i) => i === p.it;
+    const hit = D.pickAt(ix, x, y, .01, own), reference = D.pickAt(plain, x, y, .01, own);
+    assert.deepEqual(hit.near, reference.near, 'nearest pick is unchanged');
+    assert.deepEqual(hit.ent, { ...reference.ent, curve: p.it !== 0 });
+    assert.deepEqual(D.piecesNear(ix, x, y, .01, own).map((p) => p.near), D.piecesNear(plain, x, y, .01, own).map((p) => p.near));
+    assert.equal(D.pickAt(ix, x, y, .01, () => false).ent, null, 'hidden items remain unpickable');
+  }
+});
+
 test('spline cache: cached flatten equals cold flatten after edits and undo', async () => {
   const { offsetEntity } = await import('./web/modify.js');
   const { stretchEntities } = await import('./web/stretch.js');
