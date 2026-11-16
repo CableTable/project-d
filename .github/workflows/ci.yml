@@ -266,19 +266,33 @@ jobs:
     # workflow_dispatch too: that's how the merge job's merges release.
     if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    # One release at a time, so the `.2` tag pick of a second release that day cannot race.
+    concurrency:
+      group: release
+      cancel-in-progress: false
     permissions:
       contents: write
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the whole history and every tag: the previous release's commits are listed
       - uses: actions/download-artifact@v4
         with:
           name: ProjectD-exe
           path: dist
       - name: Publish the release
         run: |
-          tag="v0.1.${{ github.run_number }}"
-          gh release create "$tag" dist/ProjectD.exe --repo "${{ github.repository }}" --target "${{ github.sha }}" --title "Project D $tag" --notes "Portable ProjectD.exe (no installer, no admin). Built from ${{ github.sha }}."
+          git tag --list > "$RUNNER_TEMP/tags.txt"
+          tag=$(node tools/release-notes.mjs tag "$RUNNER_TEMP/tags.txt")
+          # The notes list the `TODO <id>` commits since the latest release (a failed lookup lists none).
+          prev=$(gh release view --repo "${{ github.repository }}" --json tagName --jq .tagName || true)
+          : > "$RUNNER_TEMP/subjects.txt"
+          if [ -n "$prev" ]; then git log --format=%s "$prev..${{ github.sha }}" > "$RUNNER_TEMP/subjects.txt" || true; fi
+          added=$(node tools/release-notes.mjs notes "$RUNNER_TEMP/subjects.txt" TODO.md)
+          { echo "Portable ProjectD.exe (no installer, no admin). Built from ${{ github.sha }}."; if [ -n "$added" ]; then echo; echo "$added"; fi; } > "$RUNNER_TEMP/notes.md"
+          gh release create "$tag" dist/ProjectD.exe --repo "${{ github.repository }}" --target "${{ github.sha }}" --title "Project D $tag" --notes-file "$RUNNER_TEMP/notes.md"
 
   # Auto-merge (as in Project R): a PR labelled `automerge` is merged here once test and
   # build pass, only the commit that was tested; then main is built and released.
