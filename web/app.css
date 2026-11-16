@@ -508,7 +508,7 @@ select.fld { font-family: var(--sans); }
 .selbar .name { flex-shrink: 0; }
 .selbar > label, .sel-transforms, .selbar > .btn { flex-shrink: 0; }
 @media (max-width: 1250px) {
-  .selbar { gap: 4px; padding: 0 8px; }
+  .selbar { gap: 4px; padding: 0 20px 0 8px; }   /* 20 px kept clear on the right: with a wider font the layer label (min-width 0, ellipsis) gives way first */
   .selbar .fld { width: 56px; }
   .sel-transforms { gap: 4px; }
   .sel-transforms .lbl.inline { gap: 4px; }
@@ -529,6 +529,9 @@ select.fld { font-family: var(--sans); }
   .selbar.multi-selection .sel-transforms [data-testid=sel-scale] { width: 40px; }
   .selbar.multi-selection .sel-transforms .btn { font-size: 0; padding: 3px; }
   .selbar.multi-selection .sel-transforms .btn svg { display: block; }
+  /* Font-proof at 1024: the part name and the field labels take fixed widths and cut with an ellipsis (the name keeps its full-text title) */
+  [data-testid=part-ribbon] .name { width: 0; min-width: 0; flex-grow: 1; }
+  [data-testid=part-ribbon] .ribbon-field > span { width: 50px; overflow: hidden; text-overflow: ellipsis; }
   [data-testid=part-ribbon].multi-selection .ribbon-big { width: 28px; }
   [data-testid=part-ribbon].multi-selection .ribbon-big svg { width: 24px; height: 24px; }
   [data-testid=part-ribbon].multi-selection .ribbon-field input { width: 60px; }
