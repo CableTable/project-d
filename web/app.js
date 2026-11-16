@@ -5720,7 +5720,12 @@ function shapeSelection(op) {
     return lwpoly(ring, op === 'boundary' ? { closed: true, layer: curLayerName(d.vlay || d) } : { closed: true, layer: src.layer, lt: src.lt, aci: src.aci, tc: src.tc, lw: src.lw, lts: src.lts, hidden: src.hidden, ps: src.ps });
   }), at = kept.entities.length;
   const had = lay ? new Set(Object.keys(lay.parts)) : null;
-  if (!commit(d, { entities: [...kept.entities, ...made], groups: swapGroups(d.raw.groups, d.raw.entities.length, SH.ringsOf(op, found.loops, r, gone)), blocks: kept.blocks }, name)) return;
+  let groups = swapGroups(d.raw.groups, d.raw.entities.length, SH.ringsOf(op, found.loops, r, gone));
+  for (const piece of new Set(r.pieces)) {      // a shape with holes that no group took over stays one object (TODO 288a)
+    const rings = r.rings.flatMap((_, k) => (r.pieces[k] === piece ? [at + k] : []));
+    if (rings.length > 1 && !rings.some((i) => groupOf(groups, i))) groups = groupDrawing(groups, rings);
+  }
+  if (!commit(d, { entities: [...kept.entities, ...made], groups, blocks: kept.blocks }, name)) return;
   if (lay) { selectMany(placedNow.flatMap((p, k) => (p.src === 'loose' && !had.has(p.partId) ? [k] : []))); update(); }      // the new objects; commit's update() has made placedNow
   else setSel(d, new Set(made.map((_, i) => at + i)));
   note(`${name}: ${r.operands.length} outlines → ${made.length + r.untouched.length} outline${made.length + r.untouched.length === 1 ? '' : 's'}, area ${DU.formatArea(r.area * d.factor * d.factor, drawingUnit())}` + skipped + (op === 'trim' && !keep ? '. The cutters stay' : '') + (op === 'boundary' ? '. The originals stay. Ctrl+Z removes the boundary' : keep ? '. The originals stay. Ctrl+Z removes the result' : '. Ctrl+Z puts the originals back'));

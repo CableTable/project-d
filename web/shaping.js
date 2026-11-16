@@ -5,7 +5,7 @@
 // as closed polylines. The boolean maths is the vendored polygon-clipping (MIT, web/vendor/polygon-clipping).
 //
 //   operandsOf(loops)            → [{ poly: [outer, ...holes], loops: [loop indexes], area }]   the shapes the loops make
-//   shape(op, loops, target)     → { rings, sources, area, operands, target, untouched } | { error }; sources indexes operands for each ring;
+//   shape(op, loops, target)     → { rings, sources, area, operands, target, untouched } | { error }; sources indexes operands for each ring; pieces: rings with the same number are one shape with holes;
 //                                 untouched: the operands Simplify leaves as they are (nothing in front overlaps them)
 //                                 target input: the loop index Trim cuts (-1 = the largest shape)
 //   OPS                          → { label, run(polys, target), target?, each? } (each runs once per source operand)
@@ -70,21 +70,23 @@ function run(o, loops, target) {
   let t = operands.findIndex((x) => x.loops.includes(target));
   if (t < 0) t = operands.reduce((best, x, i) => (x.area > operands[best].area ? i : best), 0);
   if (o.target) t = o.target(operands);
-  const polys = operands.map((x) => x.poly), rings = [], sources = [];
+  const polys = operands.map((x) => x.poly), rings = [], sources = [], pieces = [];
   const targets = o.each ? operands.map((_, i) => i) : [t];
   let area = 0;
   const untouched = [];                                             // an each-op leaves an outline nothing in front overlaps as it is (its own entity)
   for (const source of targets) {
     if (o.each && !polys.slice(source + 1).some((f) => pc.intersection(polys[source], f).length)) { untouched.push(source); area += operands[source].area; continue; }
     for (const poly of o.run(polys, source)) {
+      const piece = pieces.length;
       poly.forEach((r, k) => {
         const ring = r.slice(0, -1);                                // pc closes each ring by repeating its first point
         if (ring.length < 3) return;
         rings.push(ring);
         sources.push(source);
+        pieces.push(piece);
         area += k ? -ringArea(ring) : ringArea(ring);
       });
     }
   }
-  return { rings, sources, area, operands, target: t, untouched };
+  return { rings, sources, pieces, area, operands, target: t, untouched };
 }

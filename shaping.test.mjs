@@ -28,6 +28,13 @@ test('trim takes the target minus every other outline; with no target it is the 
   assert.equal(S.operandsOf([big, sq(5, 5, 4)]).length, 2);          // a nested pair alone is two shapes (TODO 288a); with a third shape it is a hole again (next test)
 });
 
+test('pieces: the rings of one shape with holes share a number, separate pieces differ (TODO 288a fix)', () => {
+  const t = S.shape('trim', [sq(0, 0, 100), sq(40, 40, 20)], 0);   // a nested pair: the outer gets a hole
+  assert.equal(t.rings.length, 2); assert.deepEqual(t.pieces, [t.pieces[0], t.pieces[0]]);
+  const w = S.shape('weld', [sq(0, 0, 10), sq(50, 0, 10)]);          // two separate shapes
+  assert.equal(w.rings.length, 2); assert.notEqual(w.pieces[0], w.pieces[1]);
+});
+
 test('a square with a hole is one shape; welding it keeps the hole, trimming a square off its corner cuts into the ring', () => {
   const ring = [sq(0, 0, 20), sq(5, 5, 10)];
   assert.equal(S.operandsOf([...ring, sq(40, 0, 5)]).length, 2);

@@ -24478,7 +24478,6 @@ try {
     await closeTabs(/./);
     const doc = newDoc();
     addEntities(doc, dxfPoly([[100, 100], [200, 100], [200, 200], [100, 200]], { closed: true }), dxfPoly([[130, 130], [150, 130], [150, 150], [130, 150]], { closed: true }));
-    doc.groups = [{ members: [0, 1], name: '', description: '', unnamed: true, selectable: true }];   // both squares are one group (a group of one dissolves): the big one's rings stay in it
     await t('picker').setInputFiles({ name: 'shaping-288a.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(doc)) });
     await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'shaping-288a.dxf');
     await page.keyboard.press('Control+a');                          // no last pick: the largest outline is the target
@@ -24486,11 +24485,11 @@ try {
     await said(/^Trim: 2 outlines → 2 outlines, area 9600\.00 mm²\. The cutters stay\. Ctrl\+Z puts the originals back$/);
     let saved = await savedDoc();
     assert.equal(saved.entities.length, 3, 'the cutter stays, the big square became 2 rings');
-    assert.deepEqual(saved.groups.map((g) => [...g.members].sort()), [[0, 1, 2]], 'the cutter and the 2 rings are the one group');
+    assert.deepEqual(saved.groups.map((g) => [...g.members].sort()), [[1, 2]], 'the 2 rings (plain drawing, no group before) are one new group; the cutter is not in it');
     await page.screenshot({ path: shotDir + '/shaping-nested-trim-light.png' });
     await page.keyboard.press('Control+z');
     saved = await savedDoc();
-    assert.equal(saved.entities.length, 2, 'Undo brings both squares back'); assert.deepEqual(saved.groups.map((g) => [...g.members].sort()), [[0, 1]]);
+    assert.equal(saved.entities.length, 2, 'Undo brings both squares back'); assert.equal((saved.groups || []).length, 0, 'Undo takes the new group away too');
     await page.keyboard.press('Control+a');
     await typeCmd('weld');
     await said(/^Weld: 2 outlines → 1 outline, area 10000\.00 mm²\. Ctrl\+Z puts the originals back$/);
