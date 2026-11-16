@@ -4541,7 +4541,7 @@ function buildStatus() {
   ui.coords = h('span', { class: 'mono coords', 'data-testid': 'coords', style: 'white-space:pre' }, 'X 0.00   Y 0.00 mm');
   loadTrack();
   try { state.snapPreview = localStorage.getItem('pd-snap-preview') === 'true'; } catch { /* defaults if storage is blocked */ }
-  const TITLES = { SNAP: 'Snap (F3): on/off. Right-click: snap types', GRID: 'Grid (F7): show/hide the drawing grid', ORTHO: 'Ortho (F8): keep picked points straight along X or Y from the first point (Shift does it for one pick)',
+  const TITLES = { SNAP: 'Snap (F3 or Alt+Z): on/off. Right-click: snap types', GRID: 'Grid (F7): show/hide the drawing grid', ORTHO: 'Ortho (F8): keep picked points straight along X or Y from the first point (Shift does it for one pick)',
     POLAR: 'Polar tracking (F10): picks lock onto the angles of the increment from the last point. Right-click: the increment', OTRACK: 'Object snap tracking (F11): hover on a snap point to acquire it, then line up with it', DYN: 'Dynamic input (F12): type in fields by the cursor in Line, Polyline, Rectangle, Circle, Ellipse, Arc, Measure, Dimension, Set length, Move, Copy, Rotate and Scale' };
   ui.tog = {};
   const toggles = [['GRID', false], ['SNAP', true], ['ORTHO', false], ['POLAR', state.polar.on], ['OTRACK', state.otrack], ['DYN', state.dynamicInput]].map(([t, on]) => {
@@ -5200,6 +5200,8 @@ function attachCanvasEvents() {
       pdrag.skipSnap = true;
       if (pdrag.pointer) placedMove(pdrag.pointer);
     }
+    const eg = state.entityDrag;
+    if (e.key === 'Alt' && eg?.last) { eg.skipSnap = true; moveSelectionTo(eg, eg.last); }
   }, true);
   document.addEventListener('keyup', (e) => {
     if (e.key === 'Alt') { if (suppressAltUp) e.preventDefault(); suppressAltUp = false; }
@@ -6312,7 +6314,8 @@ function dragGrabPoint(d, point, sel) {
 function moveSelectionTo(g, e) {
   if (g.d !== editable() || g.raw !== g.d.raw.entities) { state.entityDrag = null; return false; }
   if (moveLocked(g.d, g.sel)) { state.entityDrag = null; paintOverlay(); return false; }
-  const p = snapPoint(g.d, toDrawing(g.d, e.clientX, e.clientY), g.sel, [], g.from);
+  g.last = e; g.skipSnap ||= e.altKey;                       // Alt pressed in the drag: this drop snaps to no object (as on a layout)
+  const free = toDrawing(g.d, e.clientX, e.clientY), p = g.skipSnap ? free : snapPoint(g.d, free, g.sel, [], g.from);
   Object.assign(g, dragTarget(g.from, p, g.d.factor, e.shiftKey || state.ortho));
   const gs = guideTarget().s;
   const box = !p[2] && state.snap && ribbon.guideSnap && gs.guidesShow && gs.guides.length && OB.boxOf(g.d.fl, g.sel), f = g.d.factor, straight = e.shiftKey || state.ortho;
@@ -10931,6 +10934,7 @@ function editKey(e) {
     const chipName = { F3: 'SNAP', F7: 'GRID', F8: 'ORTHO' }[e.key];
     if (chipName) { e.preventDefault(); ui.tog[chipName].click(); return; }
   }
+  if (e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey && e.key.toLowerCase() === 'z' && !inField && !e.target?.isContentEditable) { e.preventDefault(); ui.tog.SNAP.click(); return; }       // Alt+Z: SNAP on / off like F3 (Corel's key)
   if (e.key === 'F12' && !e.ctrlKey && !e.altKey && !e.shiftKey) { e.preventDefault(); dynamicInputSet(!state.dynamicInput); return; }
   if ((e.key === 'F10' || e.key === 'F11') && !e.ctrlKey && !e.altKey && !e.shiftKey) { e.preventDefault(); if (e.key === 'F10') polarSet(!state.polar.on); else otrackSet(!state.otrack); return; }
   if (e.key === 'F2' && !e.ctrlKey && !e.altKey && !e.shiftKey) { e.preventDefault(); ui.cmdUI.toggleHistory(); return; }
@@ -12491,14 +12495,15 @@ function cmpDown(e) {
   const p0 = sheetAt(e.clientX, e.clientY), m0 = [...item.offset], mode0 = c.mode;
   const grab = cmpSnap(item, m0, p0), g = grab ? [grab.x, grab.y] : p0;
   c.moving = true;
-  let moved = false, manual = false;
+  let moved = false, manual = false, free = false, last = null;       // free: Alt was pressed in this drag, so this drop snaps to no object (guides stay)
   const move = (ev) => {
     if (!moved && Math.hypot(ev.clientX - e.clientX, ev.clientY - e.clientY) <= 4) return;
+    last = ev; free ||= ev.altKey;
     manual = cmpManual(c) || manual;
     const p = sheetAt(ev.clientX, ev.clientY);
     let o = [m0[0] + p[0] - p0[0], m0[1] + p[1] - p0[1]];
-    const q = [g[0] + o[0] - m0[0], g[1] + o[1] - m0[1]], drop = target && cmpSnap(target, target.offset, q);
-    c.snap = drop || (grab ? { x: q[0], y: q[1], kind: grab.kind } : null);
+    const q = [g[0] + o[0] - m0[0], g[1] + o[1] - m0[1]], drop = !free && target && cmpSnap(target, target.offset, q);
+    c.snap = free ? null : drop || (grab ? { x: q[0], y: q[1], kind: grab.kind } : null);
     if (drop) o = [o[0] + drop.x - q[0], o[1] + drop.y - q[1]];
     const hit = snapGuideBox(item.box.map((v, i) => v + o[i % 2]));
     o = [o[0] + hit.dx, o[1] + hit.dy];
@@ -12511,7 +12516,10 @@ function cmpDown(e) {
     else if (moved) { cmpMoved(d); if (manual) note('Line-up set to Manual'); }
     else if (source) clickSelect(source, p, e.shiftKey); else cmpEdit();
   };
-  const key = (ev) => { if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); up(ev); } };
+  const key = (ev) => {
+    if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); up(ev); }
+    else if (ev.key === 'Alt' && last) { free = true; move(last); }
+  };
   window.addEventListener('pointermove', move); window.addEventListener('pointerup', up); window.addEventListener('pointercancel', up);
   window.addEventListener('keydown', key, true);
   return true;

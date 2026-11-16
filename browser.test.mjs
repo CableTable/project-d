@@ -13521,6 +13521,53 @@ try {
       await menuItem('View', 'Theme: ' + theme); await closeTabs(/drag-(snap|line)/);
     }
   });
+  await step('TODO 298: Alt pressed mid-drag drops free; Alt+Z toggles SNAP like F3 on Drawings, Layouts and Compare', async () => {
+    const raw = newDoc(4), a = [20.1234, 20.4321], b = [100.9876, 60.8765];
+    addBlock(raw, 'DragLine', [dxfLine(...a, a[0] + 40, a[1])]);
+    addEntities(raw, dxfInsert('DragLine', 0, 0), dxfLine(...b, b[0], b[1] + 40));
+    await openGrips(writeDxf(raw), 'drag-298.dxf');
+    const snapOn = await t('tog-snap').getAttribute('aria-pressed');
+    const setChip = async (on) => { if (await t('tog-snap').getAttribute('aria-pressed') !== String(on)) await t('tog-snap').click(); };
+    const chip = () => t('tog-snap').getAttribute('aria-pressed');
+    const altZ = async () => { await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Alt+z'); await frames(); };
+    const xOff = async () => fieldOf((await savedDoc()).entities[0], 10);
+    const undo = async () => { await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z'); };
+    const drag = async (alt) => {
+      await click(a[0] + 12, a[1]); await waitSel('1 selected');
+      const p = await at(a[0], a[1]), q = await at(b[0], b[1]);
+      await page.mouse.move(p.x + 1, p.y + .5); await page.mouse.down();
+      await page.mouse.move(q.x + 2, q.y + 1, { steps: 6 }); await frames();
+      if (alt) { await page.keyboard.down('Alt'); await frames(); }
+      await page.mouse.up(); await page.keyboard.up('Alt');
+      const off = await xOff(); await undo();
+      return Math.abs(a[0] + off - b[0]) < 1e-9;
+    };
+    try {
+      await setChip(true);
+      assert.equal(await drag(false), true, 'the drag lands exactly on the corner');
+      assert.equal(await drag(true), false, 'Alt pressed mid-drag: the drop is free');
+      await altZ(); assert.equal(await chip(), 'false', 'Alt+Z turns SNAP off');
+      assert.equal(await drag(false), false, 'SNAP off: the drag lands free');
+      await altZ(); assert.equal(await chip(), 'true', 'Alt+Z turns SNAP on again');
+      assert.equal(await drag(false), true, 'SNAP on again: the drag snaps');
+      await cmdLine().focus(); await page.keyboard.press('Alt+z');
+      assert.equal(await chip(), 'true', 'Alt+Z in the command line does nothing');
+      await page.keyboard.press('Escape');
+      await typeCmd('compare'); await t('cmp-item').first().waitFor();
+      await altZ(); assert.equal(await chip(), 'false', 'Compare: Alt+Z turns SNAP off');
+      await altZ(); assert.equal(await chip(), 'true', 'Compare: Alt+Z turns SNAP on');
+      const lay = newLayout('Alt Z 298'), plate = addEntities(newDoc(4), dxfPoly([[0, 0], [100, 0], [100, 60], [0, 60]], { closed: true }));
+      lay.parts.plate = makePart('plate', 'Plate', plate); lay.placed = [{ partId: 'plate', x: 200, y: 200, rot: 0 }];
+      await t('picker').setInputFiles({ name: 'altz-298.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
+      await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'altz-298.dxf');
+      await altZ(); assert.equal(await chip(), 'false', 'Layout: Alt+Z turns SNAP off');
+      await altZ(); assert.equal(await chip(), 'true', 'Layout: Alt+Z turns SNAP on');
+      console.log('298: Alt mid-drag drops free, Alt+Z toggles SNAP (Drawings, Compare, Layout), not in the command line');
+    } finally {
+      await page.mouse.up(); await page.keyboard.up('Alt');
+      await setChip(snapOn === 'true'); await closeTabs(/./);
+    }
+  });
   await step('command messages: an error sits above the visible hint with a selection and grips on', async () => {
     await openGrips();
     await click(70, 30); await gripWhen(3);
