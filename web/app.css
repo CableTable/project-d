@@ -517,6 +517,7 @@ select.fld { font-family: var(--sans); }
   .sel-transforms [data-testid=sel-width] { width: 76px; }
   .selbar .btn { padding-inline: 6px; font-size: 11px; }
   .selbar .sizelbl { display: none; }
+  .selbar .selection-commands .ib { width: 20px; }   /* 15 buttons: 60 px of slack at 1024 so wider CI fonts still fit */
   .selbar .name, .selbar [data-testid=sel-layer] { max-width: 70px; }
   .selbar.multi-selection .name, .selbar.multi-selection [data-testid=sel-layer], .selbar.multi-selection .area, .selbar.multi-selection .ctlabel { display: none; }
   .selbar.multi-selection, .selbar.multi-selection .sel-transforms { gap: 2px; }
