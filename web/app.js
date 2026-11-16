@@ -372,10 +372,21 @@ function flagInvalid(input, bad) {
   if (bad) input.setAttribute('aria-invalid', 'true'); else input.removeAttribute('aria-invalid');
 }
 const clearInvalid = (input) => { input.addEventListener('focus', () => flagInvalid(input, false)); };
+const SIZE_KEYS = ['sheetW', 'sheetH', ...Object.values(GRIP_KEYS)];     // the numbers shown in the ribbon and in the strip on the right panel
 const MAX_SHEET = 100000;              // mm: a sheet side above this is refused (1e308 made invalid SVG)
+/** The limits of the sheet and gripper fields (grippers never add up past the sheet). The ribbon and the strip on the right panel share them. */
+const SIZE_FIELDS = {
+  sheetW: ['Width', { min: 1, cap: () => MAX_SHEET, floor: () => Math.max(1, state.gripLeft + state.gripRight) }],
+  sheetH: ['Height', { min: 1, cap: () => MAX_SHEET, floor: () => Math.max(1, state.gripTop + state.gripBottom) }],
+  gripTop: ['Top', { cap: () => state.sheetH - state.gripBottom }],
+  gripRight: ['Right', { cap: () => state.sheetW - state.gripLeft }],
+  gripBottom: ['Bottom', { cap: () => state.sheetH - state.gripTop }],
+  gripLeft: ['Left', { cap: () => state.sheetW - state.gripRight }],
+};
+const sheetField = (key, strip) => numField(SIZE_FIELDS[key][0], key, strip ? { ...SIZE_FIELDS[key][1], slot: 'strip_' + key } : SIZE_FIELDS[key][1]);
 function numField(label, key, opts = {}) {
   const caption = key === 'sheetW' ? 'W mm' : key === 'sheetH' ? 'H mm' : label;
-  const input = h('input', { class: 'fld', type: 'text', inputmode: 'decimal', value: String(opts.value ?? state[key]), 'data-key': key });
+  const input = h('input', { class: 'fld', type: 'text', inputmode: 'decimal', value: String(opts.value ?? state[key]), 'data-key': opts.slot || key });
   if (opts.onEnter) {
     input.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); opts.onEnter(input.value); }
@@ -407,14 +418,16 @@ function numField(label, key, opts = {}) {
     state[key] = opts.int ? Math.floor(v) : v;
     if (key === 'sheetW' || key === 'sheetH') ui.preset.value = presetFor(state.sheetW, state.sheetH);
     touch(); update();
+    if (SIZE_KEYS.includes(key)) syncFields();      // the strip on the right panel and the ribbon fields show the same numbers
   });
   input.addEventListener('change', () => {
     const why = curLay() ? refusal() : '';
     if ((key === 'sheetW' || key === 'sheetH') && curLay() && !Number.isInteger(state[key])) { const was = state[key]; state[key] = Math.round(was); touch(); update(); note(`Sheet ${key === 'sheetW' ? 'width' : 'height'} ${was} rounded to whole mm: ${state[key]}`); }
     input.value = String(state[key]); flagInvalid(input, why); if (why) note(why);
+    if (SIZE_KEYS.includes(key)) syncFields();
   });
   clearInvalid(input);
-  ui[key] = input;
+  ui[opts.slot || key] = input;
   return h('label', { class: 'field' }, caption, input);
 }
 
@@ -908,6 +921,7 @@ function applyKind() {
   ui.canvas.classList.toggle('part', !lay);
   renderWorkArea();
   for (const sec of [ui.partsSec, ui.stepSec, ui.stepFoot, ui.gapSec]) sec.hidden = !lay || lib;
+  ui.sizeStrip.hidden = !lay;
   ui.layersSec.hidden = lib; ui.libSec.hidden = !lib;
   if (state.ptab === 'library' && !lib) state.ptab = 'drawing';
   if (state.ptab === 'step' && !lay) state.ptab = 'drawing';
@@ -1641,7 +1655,7 @@ function buildPanel() {
     if (p && p.w && curLay()) {
       pushLay(curDoc(), laySnap(curLay() && curDoc().lay), 'sheetsize', 'Sheet size');
       state.sheetW = p.w; state.sheetH = p.h;
-      ui.sheetW.value = String(p.w); ui.sheetH.value = String(p.h);
+      syncFields();
       touch(); update(true);
     }
   }, { 'data-testid': 'preset' });
@@ -1654,11 +1668,9 @@ function buildPanel() {
 
   ui.sheetSec = h('div', { class: 'ribbon-page', 'data-testid': 'sheet-panel' },
     ribbonGroup('Sheet', ribbonStack(ribbonField('Size', ui.preset),
-      numField('Width', 'sheetW', { min: 1, cap: () => MAX_SHEET, floor: () => Math.max(1, state.gripLeft + state.gripRight) }),
-      numField('Height', 'sheetH', { min: 1, cap: () => MAX_SHEET, floor: () => Math.max(1, state.gripTop + state.gripBottom) })),
+      sheetField('sheetW'), sheetField('sheetH')),
       ui.sheetSelBtn = ribbonButton('Select sheet', '<rect x="3" y="4" width="18" height="16"/>', () => selectSheet(!sheetSelOn()), { small: true, description: 'Or click the sheet edge. Drag a side handle to resize.', pressed: sheetSelOn })),
-    ribbonGroup('Grippers, mm', ribbonStack(numField('Top', GRIP_KEYS.top, { cap: () => state.sheetH - state.gripBottom }), numField('Right', GRIP_KEYS.right, { cap: () => state.sheetW - state.gripLeft }),
-      numField('Bottom', GRIP_KEYS.bottom, { cap: () => state.sheetH - state.gripTop })), ribbonStack(numField('Left', GRIP_KEYS.left, { cap: () => state.sheetW - state.gripRight }))),
+    ribbonGroup('Grippers, mm', ribbonStack(sheetField(GRIP_KEYS.top), sheetField(GRIP_KEYS.right), sheetField(GRIP_KEYS.bottom)), ribbonStack(sheetField(GRIP_KEYS.left))),
     ribbonGroup('Marks', check('crop', 'Crop marks'), check('reg', 'Reg marks')),
       ribbonGroup('Guides', ...[['y', '+ Horizontal'], ['x', '+ Vertical']].map(([axis, label]) => ribbonButton(label, axis === 'y' ? '<path d="M3 12h18" stroke-dasharray="3 2"/><path d="M12 5v4M10 7h4"/>' : '<path d="M12 3v18" stroke-dasharray="3 2"/><path d="M17 10h4M19 8v4"/>', () => addTypedGuide(axis, ui.ribbonGuide))), ribbonStack(ribbonField('x or y', ui.ribbonGuide = h('input', { class: 'fld', 'aria-label': 'Guide position in mm', oninput: (e) => flagInvalid(e.target, false) })))),
     ribbonGroup('Parts', ribbonButton('Fit', '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>', fit), ribbonTool('nest'),
@@ -1757,8 +1769,10 @@ function buildPanel() {
     const next = e.key === 'Home' ? 0 : e.key === 'End' ? enabled.length - 1 : (i + (e.key === 'ArrowRight' ? 1 : -1) + enabled.length) % enabled.length;
     enabled[next].click(); enabled[next].focus();
   });
+  // sheet size and grippers (mm), pinned above the docker tabs on every layout tab; the same numbers and limits as the ribbon's Sheet page
+  ui.sizeStrip = h('div', { class: 'size-strip', role: 'group', 'aria-label': 'Sheet size and grippers, mm', 'data-testid': 'size-strip', hidden: true }, SIZE_KEYS.map((k) => sheetField(k, true)));
   ui.panelEl = h('aside', { class: 'panel', 'aria-label': 'Properties' },
-    buildPanelResize(), h('div', { class: 'panel-top' }, tabsEl, ui.panelHide), ui.panelScroll);
+    buildPanelResize(), ui.sizeStrip, h('div', { class: 'panel-top' }, tabsEl, ui.panelHide), ui.panelScroll);
   ui.panelShow = h('button', { class: 'panel-show', type: 'button', title: 'Show panel', 'aria-label': 'Show panel', 'data-testid': 'panel-show', onclick: toggleProps }, icon('<path d="M15 6l-6 6 6 6M5 4v16"/>', { size: 14 }));
   return h('div', { class: 'docker' }, ui.panelEl, ui.panelShow);
 }
@@ -1888,7 +1902,7 @@ function buildPlacedPanel() {
 
 /** Puts the open layout's fields (size, grippers, marks, gaps, rotate, align, rows, columns) in step with the layout that is open. */
 function syncFields() {
-  for (const k of ['sheetW', 'sheetH', ...Object.values(GRIP_KEYS), 'gapX', 'gapY', 'rows', 'cols']) if (ui[k] && document.activeElement !== ui[k]) ui[k].value = String(state[k]);
+  for (const k of [...SIZE_KEYS, 'gapX', 'gapY', 'rows', 'cols']) for (const el of [ui[k], ui['strip_' + k]]) if (el && document.activeElement !== el) el.value = String(state[k]);
   ui.cropCheck.checked = state.crop; ui.regCheck.checked = state.reg;
   ui.rotate.value = state.rotate; ui.align.value = state.align; ui.preset.value = presetFor(state.sheetW, state.sheetH);
 }

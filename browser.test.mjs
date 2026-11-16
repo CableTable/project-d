@@ -4141,6 +4141,63 @@ try {
     assert.equal((await readout()).count, N0); assert.equal(await page.locator('.grip-band').count(), 1);
   }, { needs: ['preset, gripper sides and top-left align: the count and the first position follow'] });
 
+  await step('TODO 282a: page and gripper sizes stay visible on the right panel', async () => {
+    const SIDES = ['sheetW', 'sheetH', 'gripTop', 'gripRight', 'gripBottom', 'gripLeft'];
+    const strip = (k) => panelControl(page, page.locator(`[data-key=strip_${k}]`));
+    const rib = (k) => panelControl(page, page.locator(`[data-key=${k}]`));
+    const both = async (k) => { await layoutTab(); return [await strip(k).inputValue(), await rib(k).inputValue()]; };
+    const prompt = () => t('cmd-prompt').textContent();
+    await layoutTab(); await t('ptab-step').click();
+    // pinned: the panel scrolled to the bottom, the strip is still on screen, above the docker tabs
+    await page.locator('.panel-scroll').evaluate((e) => { e.scrollTop = e.scrollHeight; });
+    const box = await t('size-strip').boundingBox(), tabs = await page.locator('.panel .panel-top').boundingBox();
+    assert.ok(await t('size-strip').isVisible() && box.y >= 0 && box.y + box.height <= tabs.y + 1, 'strip on screen, above the docker tabs');
+    assert.deepEqual(await page.locator('.size-strip input').evaluateAll((l) => l.map((i) => i.dataset.key)), SIDES.map((k) => 'strip_' + k));
+    for (const k of SIDES) { const [s, r] = await both(k); assert.equal(s, r, k + ': the strip shows what the ribbon shows'); }
+    assert.equal(await both('sheetW').then((v) => v[0]), '1000');
+    // an edit in the strip: the ribbon field and the sheet follow
+    await strip('sheetW').fill('900');
+    assert.equal(await rib('sheetW').inputValue(), '900');
+    assert.equal(await page.locator('rect.sheet').evaluate((r) => +r.getAttribute('width')), 900);
+    await strip('gripLeft').fill('12');
+    assert.equal(await rib('gripLeft').inputValue(), '12');
+    assert.equal(await page.locator('.grip-band[data-edge=left]').count(), 1, 'the left gripper is drawn');
+    // an edit in the ribbon: the strip follows
+    await layoutTab(); await rib('sheetH').fill('650'); await rib('gripTop').fill('7');
+    assert.deepEqual([await strip('sheetH').inputValue(), await strip('gripTop').inputValue()], ['650', '7']);
+    // a gripper sum over the sheet is refused the same way as in the ribbon
+    await strip('gripTop').fill('700'); await strip('gripTop').blur();
+    const stripWhy = await prompt();
+    assert.match(stripWhy, /Top can be \d+ mm at most/);
+    assert.equal(await strip('gripTop').inputValue(), '7', 'the strip field reverts'); assert.equal(await rib('gripTop').inputValue(), '7');
+    await layoutTab(); await rib('gripTop').fill('700'); await rib('gripTop').blur();
+    assert.equal(await prompt(), stripWhy, 'same words in the ribbon');
+    await strip('sheetW').fill('10'); await strip('sheetW').blur();
+    assert.match(await prompt(), /Width must be \d+ mm or more/);
+    assert.equal(await strip('sheetW').inputValue(), '900');
+    // Undo puts back the typed sizes, in the strip and in the ribbon
+    const undo = async () => { await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z'); };
+    await undo();
+    assert.deepEqual(await both('gripTop'), ['0', '0']);
+    for (let i = 0; i < 3; i++) await undo();
+    assert.deepEqual([await both('sheetW'), await both('gripLeft'), await both('sheetH')], [['1000', '1000'], ['0', '0'], ['700', '700']]);
+    // light and dark shots; at 900 x 700 and 1024 x 700 the strip fits in the panel and the panel in the window
+    for (const [name, size, theme] of [['light', [900, 700], 'light'], ['dark', [900, 700], 'dark'], ['1024', [1024, 700], 'light']]) {
+      await page.evaluate((x) => { document.documentElement.dataset.theme = x; }, theme);
+      await page.setViewportSize({ width: size[0], height: size[1] });
+      const r = await t('size-strip').evaluate((e) => ({ rows: new Set([...e.querySelectorAll('input')].map((i) => Math.round(i.getBoundingClientRect().top))).size, over: e.scrollWidth > e.clientWidth, h: e.getBoundingClientRect().height, right: e.getBoundingClientRect().right, panel: e.closest('aside').getBoundingClientRect().right }));
+      assert.ok(r.rows <= 2 && !r.over && r.h < 70 && r.right <= size[0] && r.panel <= size[0], `${name}: strip fits ${JSON.stringify(r)}`);
+      await page.screenshot({ path: shotDir + `/s282a-strip-${name}.png` });
+    }
+    await page.evaluate(() => { document.documentElement.dataset.theme = 'light'; });
+    await page.setViewportSize({ width: 1440, height: 900 });
+    // no strip on a drawing tab; back on the layout it is there again
+    await page.locator('.tabs .dtab[data-kind=drawing]').first().click();
+    assert.equal(await t('size-strip').isVisible(), false, 'hidden on a drawing tab');
+    await page.locator('.tabs .dtab[data-kind=layout]').first().click();
+    assert.equal(await t('size-strip').isVisible(), true);
+  }, { needs: ['gripper: any sides at once, 0 = none, the parts keep clear of each'] });
+
   await step('extra gap: click a gap, type mm; the grid shifts, the count follows, the panel lists it with a ×', async () => {
     const gaps = t('gap-list');
     assert.equal(await gaps.locator('.gaprow').count(), 0);

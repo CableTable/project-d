@@ -277,6 +277,10 @@ select.fld { font-family: var(--sans); }
 .docker-folded > .sec .section-toggle svg, .docker-folded > .layers-head .section-toggle svg { transform: rotate(-90deg); }
 .panel .layers-head > .sec { flex: 1; }
 .panel .layers-head > .tog { flex-shrink: 0; }
+.size-strip { display: flex; flex-wrap: wrap; gap: 2px 4px; padding: 4px 6px; background: var(--panel); border-bottom: 1px solid var(--line); flex-shrink: 0; }
+.size-strip[hidden] { display: none; }
+.size-strip .field { flex: 1 1 40px; min-width: 0; gap: 1px; font-size: 10.5px; }
+.size-strip .fld { width: 100%; min-width: 0; height: 20px; padding: 0 4px; box-sizing: border-box; font-size: 12px; }
 .panel-resize { position: absolute; left: -4px; top: 0; bottom: 0; width: 7px; cursor: col-resize; touch-action: none; z-index: 5; }
 .panel-resize::before { content: ''; position: absolute; left: 2px; top: calc(50% - 17px); height: 34px; width: 2px; background: var(--line2); box-shadow: 3px 0 var(--line2); border-radius: 2px; }
 .panel-resize:hover, .panel-resize:focus-visible { background: var(--sel); outline: 1px solid var(--accent); }
