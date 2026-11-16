@@ -1812,23 +1812,24 @@ try {
         dxfCircle(100, 35, 20, { layer: 'Target', lt: 'DASHED' }), dxfEllipse(165, 35, 25, 0, .7),
         dxfLine(10, 90, 60, 90), dxfLine(60, 90, 60, 120), dxfLine(60, 120, 10, 120), dxfLine(10, 120, 10, 90));
       await open(writeDxf(raw), 'fill148c.dxf'); await p.keyboard.press('Escape');
-      await swatch('aci:1').click({ button: 'right' });
+      await swatch('aci:1').click();
       await p.locator('[data-ribbon-tab=Home]').click();
       await p.locator('[data-panel=Properties]').getByRole('button', { name: 'Fill', exact: true }).click();
       await click(35, 35); assert.equal(fills(await save())[0], 'aci:1');
       await undo(); assert.equal(fills(await save())[0], null, 'one Undo per tool fill');
       await click(35, 105); assert.match(await q('cmd-hist').textContent(), /Not one closed outline: Join first/);
       await p.keyboard.press('Escape'); await p.locator('.coords').click(); await p.keyboard.press('Control+a');
-      await swatch('aci:3').click({ button: 'right' });
+      await swatch('aci:3').click();
       assert.match(await q('cmd-prompt').textContent(), /open shapes.*skipped/);
       assert.deepEqual(fills(await save()).slice(0, 3), Array(3).fill('aci:3'));
       await q('no-fill').click(); assert.ok(fills(await save()).every((v) => v === null));
       await undo(); assert.equal(fills(await save())[0], 'aci:3', 'No fill is one Undo');
       await p.locator('.coords').click(); await p.keyboard.press('Control+a');
-      await q('no-fill').click({ button: 'right' }); assert.equal(fills(await save())[0], null);
+      await q('no-fill').click({ button: 'right' }); assert.equal(fills(await save())[0], 'aci:3', 'right click on No fill does nothing');
+      await q('no-fill').click(); assert.equal(fills(await save())[0], null);
       await p.keyboard.press('Escape'); await click(10, 35);
       await q('prop-fill').click(); await q('colour-hex').fill('#ff8800'); await q('colour-ok').click();
-      await swatch('aci:5').click();
+      await swatch('aci:5').click({ button: 'right' });
       await p.locator('[data-panel=Properties]').getByRole('button', { name: 'Eyedropper', exact: true }).click();
       await click(35, 35); await click(100, 35); await click(165, 35);
       const copied = readDxf(await save());
@@ -1908,7 +1909,7 @@ try {
       addEntities(raw, dxfPoly([[10, 10], [150, 10], [150, 100], [10, 100]], { closed: true, layer }),
         dxfCircle(40, 40, 16, { layer }), dxfCircle(110, 60, 22, { layer }), dxfCircle(110, 60, 7, { layer }));
       await open(writeDxf(raw), 'holes148e.dxf');
-      await p.locator('[data-swatch-group=standard] [data-colour="aci:1"]').click({ button: 'right' });
+      await p.locator('[data-swatch-group=standard] [data-colour="aci:1"]').click();
       await command('fill'); await click(20, 20); await p.keyboard.press('Escape');
       await expectRed(20, 20, true); await expectRed(40, 40, false);
       await expectRed(123, 60, false); await expectRed(110, 60, true);
@@ -2043,7 +2044,7 @@ try {
     finally { await context.close(); }
   });
 
-  await step('TODO 148b: swatch strip visibility, remembered View tick, selection Undo, current colour, recents and saved removal', async () => {
+  await step('TODO 148b: swatch strip visibility, remembered View tick, selection Undo, current colour (right click = line colour), recents and saved removal', async () => {
     const context = await browser.newContext({ viewport: { width: 1024, height: 768 }, colorScheme: 'light' });
     const p = await context.newPage(), q = (id) => panelControl(p, p.getByTestId(id));
     p.on('pageerror', (e) => errors.push(String(e)));
@@ -2089,13 +2090,13 @@ try {
       const doc = newDoc(4); addEntities(doc, dxfLine(10, 10, 110, 110));
       await open(doc, 'swatch-strip.dxf'); await selectAll();
       const before = (await save()).entities;
-      await swatch('standard', 'aci:1').click();
+      await swatch('standard', 'aci:1').click({ button: 'right' });
       assert.equal(await q('prop-colour').inputValue(), 'aci:1'); await recent('aci:1');
       assert.equal((await save()).entities[0].aci, 1);
       await p.keyboard.press('Control+z');
       assert.deepEqual((await save()).entities, before, 'one Undo restores the selected line');
       await p.keyboard.press('Escape');
-      await swatch('standard', 'aci:5').click();
+      await swatch('standard', 'aci:5').click({ button: 'right' });
       await p.locator('[data-ribbon-tab=Home]').click();
       assert.equal(await p.getByRole('combobox', { name: 'Ribbon colour', exact: true }).inputValue(), 'aci:5');
       await recent('aci:5');
@@ -2110,7 +2111,7 @@ try {
       assert.equal(await swatch('saved', 'tc:16746496').getAttribute('title'), '#FF8800');
       await q('layer-colour').first().click(); await q('colour-hex').fill('#1188ff'); await q('colour-ok').click();
       await recent('tc:1149183');
-      await swatch('saved', 'tc:16746496').click(); await recent('tc:16746496');
+      await swatch('saved', 'tc:16746496').click({ button: 'right' }); await recent('tc:16746496');
       assert.equal(await q('prop-colour').inputValue(), 'tc:16746496');
       for (const theme of ['light', 'dark']) {
         await p.locator('[data-ribbon-tab=View]').click();
@@ -2123,7 +2124,6 @@ try {
       }
       await p.locator('[data-menu=View]').click();
       await p.getByRole('menuitemcheckbox', { name: /Theme: follow system/ }).click();
-      const oldRecents = await group('recent').locator('button').evaluateAll((els) => els.map((el) => el.dataset.colour));
       const saved = swatch('saved', 'tc:16746496');
       await saved.evaluate((el) => el.addEventListener('contextmenu', (e) => { window.stripContextPrevented = e.defaultPrevented; }, { once: true }));
       await saved.click({ button: 'right' });
@@ -2133,6 +2133,8 @@ try {
       assert.equal(await q('ctx-menu').count(), 0);
       await swatch('recent', 'tc:16746496').click({ button: 'right', modifiers: ['Alt'] });
       assert.equal(await q('ctx-menu').count(), 0);
+      // Alt + right click on a standard or recent swatch is a plain right click (line colour) and moves it to the recents: read them after.
+      const oldRecents = await group('recent').locator('button').evaluateAll((els) => els.map((el) => el.dataset.colour));
       await saved.click({ button: 'right', modifiers: ['Alt'] });
       await p.getByRole('menuitem', { name: 'Remove from Swatches', exact: true }).click();
       await saved.waitFor({ state: 'detached' });
@@ -2143,7 +2145,7 @@ try {
       const rowsBefore = await q('part-rows').locator('.prow').count();
       await p.locator('[data-group=parts] [data-i="0"] .part-hit').click({ force: true });
       for (const i of [1, 2]) await p.locator(`[data-group=parts] [data-i="${i}"] .part-hit`).click({ force: true, modifiers: ['Shift'] });
-      await swatch('standard', 'aci:3').click();
+      await swatch('standard', 'aci:3').click({ button: 'right' });
       assert.equal(await q('part-rows').locator('.prow').count(), rowsBefore + 1, 'several selected placements add just one Parts entry');
       const recoloured = layoutFromRaw(await save());
       assert.equal(Object.keys(recoloured.parts).length, 2, 'one saved coloured copy per source part');
@@ -2166,9 +2168,9 @@ try {
       });
       await p.reload(); await q('swatch-strip').waitFor();
       await open(doc, 'blocked-storage.dxf'); await selectAll();
-      await swatch('standard', 'aci:1').click(); await recent('aci:1');
+      await swatch('standard', 'aci:1').click({ button: 'right' }); await recent('aci:1');
       assert.equal((await save()).entities[0].aci, 1, 'strip still recolours when localStorage throws');
-      await p.keyboard.press('Escape'); await swatch('standard', 'aci:5').click(); await recent('aci:5');
+      await p.keyboard.press('Escape'); await swatch('standard', 'aci:5').click({ button: 'right' }); await recent('aci:5');
       assert.equal(await p.getByRole('combobox', { name: 'Ribbon colour', exact: true }).inputValue(), 'aci:5', 'current colour still works without storage');
     } catch (e) {
       await p.screenshot({ path: `${shotDir}/todo148b-failure.png` }); throw e;
@@ -2201,7 +2203,7 @@ try {
       await q('picker').setInputFiles({ name: 'grey296.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(doc)) });
       await p.waitForFunction(() => document.querySelector('.dtab.on .tname')?.textContent === 'grey296.dxf');
       await p.locator('.coords').click(); await p.keyboard.press('Control+a');
-      await p.locator('[data-swatch-group=standard] [data-colour="tc:1710618"]').click({ button: 'right' });
+      await p.locator('[data-swatch-group=standard] [data-colour="tc:1710618"]').click();
       await p.locator('.coords').click();
       const [dl] = await Promise.all([p.waitForEvent('download'), p.keyboard.press('Control+s')]);
       assert.equal(readDxf(readFileSync(await dl.path(), 'utf8')).entities[0].fill, 'tc:1710618', 'Grey 90% fills the shape as a true colour');
@@ -13366,7 +13368,7 @@ try {
       await menuItem('View', 'Theme: ' + theme);
       await openGrips(writeDxf(doc), `todo297-${theme}.dxf`);
       await click(45, 30); await gripWhen(3);
-      await swatch('aci:1').click(); await frames();
+      await swatch('aci:1').click({ button: 'right' }); await frames();
       assert.equal(await t('prop-colour').inputValue(), 'aci:1');
       await waitSel('1 selected'); await gripWhen(3);
       let line = await pixels(35, 30, 55);
@@ -13383,10 +13385,10 @@ try {
       await click(45, 30); await page.keyboard.down('Shift');
       try { await click(20, 80); } finally { await page.keyboard.up('Shift'); }
       await waitSel('2 selected');
-      await swatch('aci:1').click(); await frames();
+      await swatch('aci:1').click({ button: 'right' }); await frames();
       assert.ok(has(await pixels(70, 80), [0, 255, 0]), 'selected rectangle keeps its own fill, without accent fill');
       assert.ok(has(await pixels(35, 30, 55), [255, 0, 0]), 'line still shows red while both objects are selected');
-      await swatch('aci:5').click({ button: 'right' }); await frames();
+      await swatch('aci:5').click(); await frames();
       assert.ok(has(await pixels(70, 80), [0, 0, 255]), 'a fill colour change appears while the rectangle stays selected');
       await waitSel('2 selected');
       await page.screenshot({ path: `${shotDir}/todo297-${theme}.png` });
@@ -13397,7 +13399,7 @@ try {
       await t('picker').setInputFiles({ name, mimeType: 'text/plain', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
       await page.waitForFunction((name) => document.querySelector('.dtab.on .tname')?.textContent === name, name);
       const hit = (i) => page.locator(`[data-group=parts] [data-i="${i}"] .part-hit`);
-      await hit(0).click({ force: true }); await swatch('aci:1').click(); await frames();
+      await hit(0).click({ force: true }); await swatch('aci:1').click({ button: 'right' }); await frames();
       const boxes = () => page.locator('[data-group=tools] .sel-box').evaluateAll((els) => els.map((el) => {
         const c = getComputedStyle(el); return { fill: c.fill, dash: c.strokeDasharray };
       }));
@@ -24684,7 +24686,7 @@ try {
     await menuItem('View', 'Theme: light'); await closeTabs(/./);
   });
 
-  await step('TODO 257: right-click Combined fill, shared copies, holes, ByLayer, locks, layout and Compare Undo', async () => {
+  await step('TODO 257: left-click Combined fill (was right-click, TODO 295), shared copies, holes, ByLayer, locks, layout and Compare Undo', async () => {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
     const p = await context.newPage(), q = (id) => panelControl(p, p.getByTestId(id));
     p.on('pageerror', (e) => errors.push(String(e)));
@@ -24716,7 +24718,7 @@ try {
     const swatch = async (colour) => {
       // The strip has literal colours only; probe ByLayer through its shared handler.
       if (colour === 'bylayer') await p.evaluate(() => window.byLayer257());
-      else await p.locator(`[data-swatch-group=standard] [data-colour="${colour}"]`).click({ button: 'right' });
+      else await p.locator(`[data-swatch-group=standard] [data-colour="${colour}"]`).click();
     };
     const raw = () => p.evaluate(() => window.raw257());
     const block = (d, i = 0) => d.blocks[d.entities[i].r.v[d.entities[i].r.c.indexOf(2)]];
@@ -24751,7 +24753,7 @@ try {
       await open(fixture(), 'fill257.dxf'); await click(20, 60);
       await swatch('aci:5');
       let d = await raw();
-      assert.equal(colour(d), 'aci:5', 'right-click recolours the Combined HATCH');
+      assert.equal(colour(d), 'aci:5', 'left-click recolours the Combined HATCH');
       assert.equal(colour(d, 1), 'aci:1', 'the shared drawing copy keeps its fill');
       assert.notEqual(d.entities[0].r.v[d.entities[0].r.c.indexOf(2)], 'Combined 1', 'copy-on-write gives the selected INSERT a new block');
       assert.equal(block(d).entities[0].type, 'HATCH');
@@ -24763,7 +24765,7 @@ try {
       await key('Control+z'); await click(20, 60); await swatch('aci:5'); await key('Control+k');
       d = await raw(); assert.ok(d.entities.filter((e) => e.type !== 'INSERT').every((e) => e.fill === 'aci:5'), 'Break Apart keeps the new colour');
       await key('Control+z');
-      await q('no-fill').click({ button: 'right' });
+      await q('no-fill').click();
       assert.equal(colour(await raw()), null, 'No fill removes the block HATCH');
       await key('Control+z'); assert.equal(colour(await raw()), 'aci:5');
 
@@ -24788,7 +24790,7 @@ try {
       assert.ok(green(await pixel(30, 30)), 'layout ByLayer uses Target green');
       await key('Control+z'); await click(20, 60); await swatch('aci:5'); await key('Control+k');
       assert.ok((await raw()).entities.filter((e) => e.type !== 'INSERT').every((e) => e.fill === 'aci:5'), 'layout Break Apart keeps the colour');
-      await key('Control+z'); await q('no-fill').click({ button: 'right' }); assert.equal(colour(await raw()), null);
+      await key('Control+z'); await q('no-fill').click(); assert.equal(colour(await raw()), null);
       await swatch('aci:1'); assert.equal(colour(await raw()), 'aci:1', 'layout creates a missing HATCH');
       await key('Control+z'); assert.equal(colour(await raw()), null, 'one Undo removes the created layout HATCH');
       await key('Control+z'); assert.equal(colour(await raw()), 'aci:5');
@@ -24804,6 +24806,103 @@ try {
       await p.locator('.dtab').filter({ has: p.locator('.tname', { hasText: /^compare257.dxf$/ }) }).click();
       assert.equal(colour(await raw()), 'aci:1', 'Compare Undo reached its drawing');
       assert.deepEqual(errors, []);
+    } finally { await context.close(); }
+  });
+
+  await step('TODO 295: palette left click = fill, right click = line colour on a Drawing and a Layout; nothing selected; No fill; Alt + right click removes a saved swatch', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    const p = await context.newPage(), q = (id) => panelControl(p, p.getByTestId(id));
+    p.on('pageerror', (e) => errors.push(String(e)));
+    await p.route('**/app.js', (route) => route.fulfill({ contentType: 'text/javascript', body: readFileSync('web/app.js', 'utf8') + '\n      window.raw295 = () => propDoc().raw;' }));
+    const swatch = (group, key) => p.locator(`[data-swatch-group=${group}] [data-colour="${key}"]`);
+    const left = (key, modifiers) => swatch('standard', key).click({ modifiers });
+    const right = (key, modifiers) => swatch('standard', key).click({ button: 'right', modifiers });
+    const selectAll = async () => { await p.locator('.coords').click(); await p.keyboard.press('Control+a'); };
+    const open = async (raw, name) => {
+      await q('picker').setInputFiles({ name, mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(raw)) });
+      await p.waitForFunction((name) => document.querySelector('.dtab.on .tname')?.textContent === name, name);
+    };
+    const save = async () => {
+      await p.locator('.coords').click(); await p.waitForTimeout(1100);       // Blink drops downloads faster than 1 s apart after 10
+      const [dl] = await Promise.all([p.waitForEvent('download'), p.keyboard.press('Control+s')]);
+      return readFileSync(await dl.path(), 'utf8');
+    };
+    const rect = async () => readDxf(await save()).entities[0];
+    const noted = (re) => p.waitForFunction((src) => new RegExp(src).test(document.querySelector('[data-testid=cmd-hist]')?.textContent + document.querySelector('[data-testid=cmd-prompt]')?.textContent), re.source);
+    const click = async (x, y) => {
+      const pt = await p.evaluate(([x, y]) => {
+        const svg = document.querySelector('.canvas > svg'), h = +document.querySelector('rect.sheet').getAttribute('height');
+        const pt = new DOMPoint(x, h - y).matrixTransform(svg.getScreenCTM()); return { x: pt.x, y: pt.y };
+      }, [x, y]);
+      await p.mouse.click(pt.x, pt.y);
+    };
+    const command = async (text) => {
+      if (await q('cmd-input').isVisible()) await q('cmd-input').fill(text);
+      else { await p.locator('.coords').click(); await p.keyboard.type(text); }
+      await p.keyboard.press('Enter');
+    };
+    try {
+      await p.goto(URL_); await q('count').waitFor({ state: 'attached' });
+      const doc = newDoc(4); addEntities(doc, dxfPoly([[10, 10], [60, 10], [60, 60], [10, 60]], { closed: true, aci: 3 }));
+      await open(doc, 'palette295.dxf'); await selectAll();
+      await left('aci:1');
+      let e = await rect(); assert.equal(e.fill, 'aci:1', 'left click = fill'); assert.equal(e.aci, 3, 'line colour unchanged');
+      await right('aci:5');
+      e = await rect(); assert.equal(e.aci, 5, 'right click = line colour'); assert.equal(e.fill, 'aci:1', 'fill unchanged');
+      await p.keyboard.press('Escape');
+      await left('aci:2'); await noted(/Current fill colour: Colour 2/);
+      await p.locator('[data-ribbon-tab=Home]').click();
+      await p.locator('[data-panel=Properties]').getByRole('button', { name: 'Fill', exact: true }).click();
+      await click(35, 35);
+      assert.equal((await rect()).fill, 'aci:2', 'nothing selected: left click set the current fill the Fill tool uses');
+      await p.keyboard.press('Escape');
+      await right('aci:1'); await noted(/Current colour: Red\. New objects use this colour/);
+      await command('L'); await command('150,150'); await command('180,180'); await p.keyboard.press('Escape'); await p.keyboard.press('Escape');
+      const drawn = readDxf(await save()).entities;
+      assert.equal(drawn.length, 2); assert.equal(drawn[1].aci, 1, 'nothing selected: right click set the colour for new objects');
+      await selectAll();
+      await q('no-fill').click({ button: 'right' });
+      assert.equal((await rect()).fill, 'aci:2', 'right click on No fill does nothing');
+      await q('no-fill').click();
+      assert.equal((await rect()).fill || null, null, 'left click on No fill clears');
+      // Alt + right click on a saved swatch removes it first, and recolours nothing.
+      await q('prop-swatch').click(); await q('colour-hex').fill('#ff8800');
+      await q('colour-add').click(); await p.waitForFunction(() => document.querySelector('[data-testid=colour-status]').textContent === 'Added to Swatches');
+      await q('colour-ok').click();
+      const saved = swatch('saved', 'tc:16746496'); await saved.waitFor();
+      const colourBefore = await rect();
+      await saved.click({ button: 'right', modifiers: ['Alt'] });
+      await p.getByRole('menuitem', { name: 'Remove from Swatches', exact: true }).click();
+      await saved.waitFor({ state: 'detached' });
+      assert.deepEqual(await rect(), colourBefore, 'Alt + right click recoloured nothing');
+
+      const src = newDoc(4); addEntities(src, dxfPoly([[20, 20], [120, 20], [120, 100], [20, 100]], { closed: true, aci: 3 }));
+      const lay = newLayout('Palette 295'); lay.layers = src.layers;
+      const part = objectPart('ring', 'Rectangle', src.entities[0], src.layers, src.header, src.blocks);
+      lay.parts.ring = part; lay.placed.push(objectPlacement(part));
+      await open(layoutRaw(lay), 'palette295-layout.dxf');
+      const first = async () => (await p.evaluate(() => window.raw295())).entities[0];
+      await click(20, 60);
+      await left('aci:1');
+      e = await first(); assert.equal(e.fill, 'aci:1', 'layout: left click = fill'); assert.equal(e.aci, 3, 'layout: line colour unchanged');
+      await right('aci:5');
+      e = await first(); assert.equal(e.aci, 5, 'layout: right click = part line colour'); assert.equal(e.fill, 'aci:1', 'layout: fill unchanged');
+      await q('no-fill').click({ button: 'right' });
+      assert.equal((await first()).fill, 'aci:1', 'layout: right click on No fill does nothing');
+      await q('no-fill').click();
+      assert.equal((await first()).fill || null, null, 'layout: left click on No fill clears');
+      await click(300, 160);       // empty sheet: deselects
+      await left('aci:3'); await noted(/Current fill colour: Green/);
+      await right('aci:2'); await noted(/Current colour: Colour 2\. New objects use this colour/);
+      assert.equal((await first()).aci, 5, 'layout: nothing selected recolours nothing');
+      for (const theme of ['light', 'dark']) {
+        await p.locator('[data-menu=View]').click(); await p.getByRole('menuitemcheckbox', { name: new RegExp('Theme: ' + theme + '\\b') }).click();
+        assert.equal(await p.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'fits');
+        await p.screenshot({ path: `${shotDir}/todo295-palette-${theme}.png` });
+      }
+      assert.deepEqual(errors, []);
+    } catch (err) {
+      await p.screenshot({ path: `${shotDir}/todo295-failure.png` }); throw err;
     } finally { await context.close(); }
   });
 

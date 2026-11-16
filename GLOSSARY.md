@@ -443,7 +443,7 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Title block**: The optional 22 mm box at the bottom of a fitted/check PDF print. Its file name, scale, part / size / page, date and footnote can be edited in PDF / Print; Reset restores automatic text. Turning it off gives its space to the drawing. Settings belong to the file. Avoid: Job strip (the separate label on a 1:1 sheet or tile).
 
-**Swatch**: One square colour box. Left click sets the selected objects' line colour, right click their fill colour.
+**Swatch**: One square colour box. Left click sets the selected objects' fill colour, right click their line colour (CorelDRAW; TODO 295).
 
 **Colour picker**: The shared dialog opened from Properties, ribbon, Layers and Contour colour boxes. Edits a draft through HSB, RGB, simple-formula CMYK or hex; OK applies it and Cancel discards it. Add to Swatches remembers a colour on this PC.
 

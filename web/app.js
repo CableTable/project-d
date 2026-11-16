@@ -615,16 +615,16 @@ function renderSwatchStrip() {
   const scroll = ui.stripScroll.scrollTop;
   const active = document.activeElement, key = active?.dataset.colour, group = active?.parentElement.dataset.swatchGroup;
   ui.stripScroll.replaceChildren(h('button', { type: 'button', class: 'strip-swatch no-fill', title: 'No fill', 'aria-label': 'No fill', 'data-testid': 'no-fill',
-    onclick: () => applyFill(null), oncontextmenu: (e) => { e.preventDefault(); e.stopPropagation(); applyFill(null); } }), ...stripGroups(strip.saved, strip.recent).map(({ group, swatches: list }) =>
+    onclick: () => applyFill(null), oncontextmenu: (e) => { e.preventDefault(); e.stopPropagation(); } }), ...stripGroups(strip.saved, strip.recent).map(({ group, swatches: list }) =>
     h('div', { class: 'strip-group', role: 'group', 'aria-label': group + ' colours', 'data-swatch-group': group }, list.map(({ key, title, id }) =>
       h('button', { type: 'button', class: 'strip-swatch', title, 'aria-label': title, 'data-colour': key, style: 'background:' + colourCss(key),
-        onclick: () => applyStripColour(key), oncontextmenu: (e) => {
+        onclick: () => applyFill(key), oncontextmenu: (e) => {   // left = fill, right = line colour (CorelDRAW, TODO 295)
           e.preventDefault(); e.stopPropagation(); hideMenu();
           if (e.altKey && group === 'saved') popMenu(e.clientX, e.clientY, [['Remove from Swatches', async () => {
             try { await swatches.del(id); await loadSwatches(); }
             catch { note('Could not remove the swatch on this PC. Try again.'); }
           }]]);
-          else applyFill(key);
+          else applyStripColour(key);
         }
       })) )));
   ui.stripScroll.scrollTop = scroll; showStripArrows();
