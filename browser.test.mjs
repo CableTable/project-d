@@ -29730,12 +29730,13 @@ try {
       await key97c('Control+z'); assert.deepEqual(await boxes(), after, 'Undo source edit');
       await t('grp-lock').click();
       const lockedLabels = await histLabels();
-      await typeCmd('cp'); assert.match(await prompt(), LOCKED_MSG);
+      await typeCmd('cp'); await said(LOCKED_MSG);
       assert.deepEqual(await boxes(), after, 'locked objects and groups refuse');
       assert.deepEqual(await histLabels(), lockedLabels, 'refusal adds no Undo');
     }
     const raw = doc97i2(); raw.entities.pop();
     await open97c(raw, 'centre281-drawing.dxf');
+    await click(140, 100); assert.equal(await t('sec-arrange').isVisible(), false, 'drawing: one object selected hides Arrange');
     for (const compare of [false, true]) {
       if (compare) await typeCmd('compare');
       await key97c('Control+a'); await t('ptab-drawing').click();

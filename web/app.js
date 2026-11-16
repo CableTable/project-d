@@ -11014,7 +11014,7 @@ function setSelect(sel, options, current) {
 }
 function renderPropsPanel(d) {
   const lay = curLay(), show = !!d || !!lay;
-  ui.placedSecs[1].hidden = state.panel === 'library' || (lay ? selIdxs().length : d?.sel.size || 0) < 1;
+  ui.placedSecs[1].hidden = state.panel === 'library' || (lay ? selIdxs().length : d?.sel.size || 0) < (lay ? 1 : 2);
   ui.centreOnPage.disabled = !lay;
   ui.centreOnPage.title = lay ? 'Centre the selection as one block on the whole sheet (CP)' : 'a drawing has no page';
   setSelect(ui.relSel, [['selection', 'Selection'], ...(lay ? [['sheet', 'Sheet']] : []), ['first', 'First selected']], !lay && state.arrangeRel === 'sheet' ? 'selection' : state.arrangeRel);
