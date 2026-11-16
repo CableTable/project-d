@@ -8785,6 +8785,16 @@ try {
     await page.locator('[data-group=parts] .part-hit').first().click({ force: true });
     const q = await partPoint(0.5);
     await page.mouse.click(q.x, q.y);
+    const controls = async () => (await page.waitForFunction(() => {
+      const arrow = document.querySelector('[data-group=tools] [data-rot="0"]'), pivot = document.querySelector('[data-group=tools] [data-pivot]');
+      if (!arrow || !pivot) return null;
+      const m = arrow.getScreenCTM(), p = arrow.getPointAtLength(arrow.getTotalLength() / 2), b = pivot.getBoundingClientRect();
+      if (!m || !b.width || !b.height) return null;
+      const a = { x: m.a * p.x + m.c * p.y + m.e, y: m.b * p.x + m.d * p.y + m.f }, pv = { x: b.x + b.width / 2, y: b.y + b.height / 2 };
+      if (document.elementFromPoint(a.x, a.y)?.closest('[data-rot]') !== arrow || document.elementFromPoint(pv.x, pv.y)?.closest('[data-pivot]') !== pivot) return null;
+      return { a, pv };
+    })).jsonValue();
+    await controls();
     assert.equal(await page.locator('[data-group=tools] [data-rot]').count(), 4, 'four turn arrows');
     assert.equal(await page.locator('[data-group=tools] [data-pivot]').count(), 1);
     assert.equal(await page.locator('[data-group=tools] .grip-sq').count(), 0, 'the handles give way to the arrows');
@@ -8792,7 +8802,7 @@ try {
     assert.match(await prompt(), /^Angle <0\.00>: \[Pivot \/ Copy \/ Reference \/ Esc\]:?$/);
     // turn by hand: drag a corner arrow 20° anticlockwise about the pivot
     const turn = async (deg, keys = [], shot = '') => {
-      const a = await arrowPoint(0), pv = await pivotPx(), r = Math.hypot(a.x - pv.x, a.y - pv.y), a0 = Math.atan2(a.y - pv.y, a.x - pv.x);
+      const { a, pv } = await controls(), r = Math.hypot(a.x - pv.x, a.y - pv.y), a0 = Math.atan2(a.y - pv.y, a.x - pv.x);
       const to = (d) => ({ x: pv.x + r * Math.cos(a0 - d * Math.PI / 180), y: pv.y + r * Math.sin(a0 - d * Math.PI / 180) });
       for (const k of keys) await page.keyboard.down(k);
       await page.mouse.move(a.x, a.y); await page.mouse.down();
@@ -8804,9 +8814,13 @@ try {
       for (const k of keys.slice().reverse()) await page.keyboard.up(k);
       return label;
     };
-    const label = await turn(20, [], 'light');
+    const beforeTurn = await t('pa').inputValue(), label = await turn(20, [], 'light');
     assert.match(label, /^\d+\.\d°$/, 'the angle by the pivot, e.g. 20.0°');
-    approx(await angleNow(), 20, 3, 'turned by about 20°'); approx(parseFloat(label), await angleNow(), 0.06);
+    const angle = await (await page.waitForFunction((before) => {
+      const value = document.querySelector('[data-testid=pa]').value;
+      return value !== before && Number(value.replace('°', ''));
+    }, beforeTurn)).jsonValue();
+    approx(angle, 20, 3, 'turned by about 20°'); approx(parseFloat(label), angle, 0.06);
     assert.match(await prompt(), /^Plate A turned to [\d.]+°/);
     assert.equal(await page.locator('[data-group=tools] [data-rot]').count(), 4, 'still in rotate mode');
     await menuItem('View', 'Theme: dark'); await page.waitForTimeout(150);
