@@ -2841,7 +2841,7 @@ try {
     const expected = {
       Drawing: { drawing: ['Properties', 'Guides', 'Drawing scale', 'Tiny gaps', 'Duplicates', 'Outlines in this drawing'], objects: [], layers: ['Layers'], library: ['Parts'], step: null },
       Layout: { drawing: ['Properties', 'Parts on this layout', 'Guides'], objects: [], layers: ['Layers'], library: ['Parts'], step: ['Step and repeat', 'Extra gaps'] },
-      'Layout selected': { drawing: ['Selected part', 'Properties', 'Parts on this layout', 'Guides', 'Group and lock', 'Rotate', 'Mirror', 'Duplicate', 'Nudge'], objects: [], layers: ['Layers'], library: ['Parts'], step: ['Step and repeat', 'Extra gaps'] },
+      'Layout selected': { drawing: ['Selected part', 'Properties', 'Parts on this layout', 'Guides', 'Arrange', 'Group and lock', 'Rotate', 'Mirror', 'Duplicate', 'Nudge'], objects: [], layers: ['Layers'], library: ['Parts'], step: ['Step and repeat', 'Extra gaps'] },
       Compare: { drawing: ['Properties', 'Guides', 'Compare', 'Differences'], objects: [], layers: ['Layers'], library: ['Parts'], step: null },
     };
     const audit = async (kind) => {
@@ -8767,9 +8767,9 @@ try {
     assert.ok(!/Build B/.test(await page.locator('body').innerHTML()), 'no "Build B" placeholder wording left');
     assert.equal(await t('bar-mirror-x').textContent(), 'Mirror X'); assert.equal(await t('bar-mirror-y').textContent(), 'Mirror Y');
     assert.equal(await t('nudge-step').inputValue(), '1.0');
-    // the right panel: Selected part, Group and lock, Rotate, Mirror, Duplicate, Nudge, above the layout settings (Arrange only with 2+ parts selected)
+    // the right panel: Selected part, Arrange, Group and lock, Rotate, Mirror, Duplicate, Nudge, above the layout settings (TODO 281: Arrange at 1+ part on a layout)
     const heads = await page.locator('[data-docker=drawing] > section.placedsec:not([hidden]) h2.sec').allTextContents();
-    assert.deepEqual(heads, ['Selected part', 'Group and lock', 'Rotate', 'Mirror', 'Duplicate', 'Nudge']);
+    assert.deepEqual(heads, ['Selected part', 'Arrange', 'Group and lock', 'Rotate', 'Mirror', 'Duplicate', 'Nudge']);
     assert.equal(await t('pp-name').textContent(), 'Plate A');
     assert.equal(await t('pp-size').textContent(), '100 × 60');
     assert.equal(await t('pp-x').inputValue(), '450.00');
@@ -9470,7 +9470,7 @@ try {
     // (the parts moved above, so click a part's own middle: TODO 262, a click on empty sheet now clears)
     await click((live[0][0] + live[0][2]) / 2, (live[0][1] + live[0][3]) / 2);
     assert.notEqual(await t('pp-name').textContent(), '3 parts');
-    assert.equal(await page.locator('[data-testid=sec-arrange]').isVisible(), false);
+    assert.equal(await page.locator('[data-testid=sec-arrange]').isVisible(), true, 'TODO 281: one part on a layout keeps Arrange (Centre on page)');
   });
 
   // ---- TODO 37: Group, Ungroup, Lock, Unlock ----
