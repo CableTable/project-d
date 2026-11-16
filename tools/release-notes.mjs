@@ -23,8 +23,8 @@ export function addedLines(subjects, todoText) {
   const seen = new Set();
   const lines = [];
   for (const s of [...subjects].reverse()) {
-    const m = /^TODO (\d+[a-z]*)\b(?: fix\d*)?:?\s*(.*)/.exec(s);
-    if (!m || /\bticked\b/.test(s) || seen.has(m[1])) continue;
+    const m = /^TODO (\d+[a-z0-9]*)\b(?: fix\d*)?:?\s*(.*)/.exec(s);
+    if (!m || /^TODO [\w ,+]+ ticked\b/.test(s) || seen.has(m[1])) continue;
     seen.add(m[1]);
     lines.push(`${m[1]} ${titles.get(m[1]) ?? m[2]}`.trim());
   }

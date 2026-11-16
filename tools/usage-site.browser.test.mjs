@@ -670,7 +670,7 @@ test('TODO 287a: Latest exe card shows the version, IST date and added list as p
       }
       await page.evaluate((r) => window.__emit('release', r), release);
       await page.locator('#signout').click();
-      assert.equal(await page.locator('#release').isVisible(), false);
+      await page.locator('#release').waitFor({ state: 'hidden' });
       assert.equal(await page.locator('#release-card').textContent(), '');
       assert.deepEqual(errors, []);
     } finally { await context.close(); }

@@ -27,6 +27,16 @@ test('addedLines: a row still `[ ]` is listed when its commit is in the range; n
   assert.deepEqual(addedLines(['Session 48 fix: x', 'TODO 300 ticked (CI green)'], TODO), []);
 });
 
+test('addedLines: ids like 219e2c and 219d1 are listed; only Rook\'s tick form is skipped', () => {
+  const log = [
+    'TODO 303 ticked (CI 1 green)', // tick form: skipped
+    'TODO 303 ticked, 219e2c done (CI 2 green)', // tick form with several ids: skipped
+    'TODO 219d1: parts ticked and unticked stay in sync', // a feature subject with the word: listed
+    'TODO 219e2c fix: move file',
+  ];
+  assert.deepEqual(addedLines(log, TODO), ['219e2c move file', '219d1 parts ticked and unticked stay in sync']);
+});
+
 test('releaseTag: the IST date, .2 and .3 when that day has a tag', () => {
   const now = new Date('2026-11-15T20:00:00Z'); // 01:30 IST on the 16th
   assert.equal(releaseTag(['v0.1.360'], now), 'v2026.11.16');
