@@ -3590,7 +3590,7 @@ async function recoverOne(c, target = null) {
       doc.hist = Ed.createHistory();
       if ((c.sheet ?? 1) === target.pdf.page) { Object.assign(target, PS.pageFields(doc), { titleBlock: doc.titleBlock }); dropPageCaches(target); }
       else { const states = target.pdf.states || (target.pdf.states = new Map()); states.set(c.sheet ?? 1, PS.pageFields(doc)); }
-      if (doc.balloons) target.balloons = PS.restoreBalloons(balOf(target), doc.balloons, c.sheet ?? 1);
+      if (doc.balloons) target.balloons = PS.restoreBalloons(balOf(target), doc.balloons, c.sheet ?? 1, true);
       if (DU.UNITS.includes(c.unit)) { target.drawingUnit = c.unit; target.unitsDirty = true; }
       return true;
     }
@@ -6437,7 +6437,7 @@ function restore(d, st, drawn, layerNames, index) {
   const layerTableChanged = st.layers && st.layers !== d.raw.layers;
   if (st.layers) d.raw.layers = st.layers;                      // the layer table is replaced, never edited, when a layer is added or changed by hand
   if (st.ltypes) d.raw.ltypes = st.ltypes;
-  if ('bl' in st) d.balloons = d.pdf ? PS.restoreBalloons(balOf(d), st.bl || BAL.EMPTY, d.pdf.page) : st.bl;
+  if ('bl' in st) d.balloons = d.pdf ? PS.restoreBalloons(balOf(d), st.bl || BAL.EMPTY, d.pdf.page, st.blSize) : st.bl;
   if (!groupsChanged && !attributesChanged && !layerTableChanged && st.entities === d.raw.entities && st.blocks === d.raw.blocks) {       // only the balloons (or the background's size) changed: nothing to flatten again
     restoreBg(d, st);
     d.dirty = true; if (cmpDoc()) cmpRefresh(d); showDoc(); return;
@@ -6489,6 +6489,7 @@ function dropLinePoint(d) {
 /** d.hist.undo / redo: a step made by a grip edit (`grip`) hands back the opposite step with the selection too; every other step as before. */
 function stepHist(d, dir, snapshot = d.lay ? laySnap(d.lay) : snapshotOf(d)) {
   const cur = { ...snapshot, ...(!d.lay && { sel: [...(d.sel || [])] }) }, st = (d.lay ? layHist(d) : d.hist)[dir](cur);
+  cur.blSize = st?.blSize;
   if (d.lay && dir === 'undo' && layHist(d).labels().future[0]?.startsWith('Paste ')) cur.lsel = [];       // Redo of a paste leaves no selection, as on a drawing.
   if (st?.grip) { cur.grip = true; if (d.lay) cur.lsel = st.lsel; else cur.sel = st.sel; }
   else { delete cur.grip; if (!d.lay) delete cur.sel; }
@@ -7021,7 +7022,7 @@ function balTexts(d) {
 
 /** A balloon change as ONE labelled undo step (the set is immutable, so the history keeps the old one); sel: the balloon selected afterwards. */
 function balApply(d, set, label, sel = state.balSel) {
-  pushHistory(d, snapshotOf(d), label);
+  pushHistory(d, { ...snapshotOf(d), blSize: label === 'Balloon size' }, label);
   d.balloons = set; d.dirty = true; state.balSel = sel;
   renderTabs(); renderEdit(); renderCommand(); paintOverlay();
 }

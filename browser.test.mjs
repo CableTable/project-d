@@ -18047,8 +18047,11 @@ try {
     await size.fill('10'); await size.press('Enter'); await size.blur();
     assert.deepEqual(await radii(), [5], '10 mm diameter is drawn with a 5 mm radius');
     await page.keyboard.press('Control+z');
+    await page.waitForFunction(() => document.querySelector('[data-testid=bal-size]').value === '');
     assert.equal(await size.inputValue(), ''); assert.deepEqual(await radii(), auto, 'one Undo restores Auto');
-    await page.keyboard.press('Control+y'); assert.equal(await size.inputValue(), '10');
+    await page.keyboard.press('Control+y');
+    await page.waitForFunction(() => document.querySelector('[data-testid=bal-size]').value === '10');
+    assert.equal(await size.inputValue(), '10');
     await page.locator('[data-tool=balloon]').click(); await balPlace([75, 13], [75, 35]);
     assert.deepEqual(await radii(), [5, 5], 'adding a balloon keeps the diameter');
     await page.locator('[data-tool=select]').click();
@@ -18060,6 +18063,7 @@ try {
     await page.locator('[data-tool=balloon]').click(); await balPlace([61, 62], [80, 80]);
     assert.deepEqual(await radii(), [5], 'the whole drawing shares the diameter');
     await page.locator('[data-tool=select]').click(); await page.keyboard.press('Control+z');
+    await page.waitForFunction(() => document.querySelector('[data-testid=bal-size]').value === '10');
     assert.equal(await size.inputValue(), '10'); assert.deepEqual(await radii(), []);
     await page.locator('[data-sheet="1"]').click();
     await page.waitForFunction(() => document.querySelector('[data-testid=sheet-chip]').textContent === 'Sheet 1 / 2');
@@ -18074,14 +18078,20 @@ try {
         await size.press('Escape');
         assert.equal(await page.locator('[data-tool=select].on').count(), 1, 'Escape stays inside the size field');
       } else await size.blur();
+      await page.waitForFunction(() => document.querySelector('[data-testid=bal-size]').value === '10');
       assert.equal(await size.inputValue(), '10'); assert.notEqual(await size.getAttribute('aria-invalid'), 'true');
     }
     await size.fill('10.1'); await size.dispatchEvent('change'); await size.blur();
     assert.deepEqual(await radii(), [5.05, 5.05], 'change applies a decimal diameter');
-    await page.keyboard.press('Control+z'); assert.equal(await size.inputValue(), '10');
+    await page.keyboard.press('Control+z');
+    await page.waitForFunction(() => document.querySelector('[data-testid=bal-size]').value === '10');
+    assert.equal(await size.inputValue(), '10');
     await size.fill(''); await size.press('Enter'); await size.blur();
+    await page.waitForFunction(() => document.querySelector('[data-testid=bal-size]').value === '');
     assert.equal(await size.inputValue(), ''); assert.deepEqual(await radii(), [auto[0], auto[0]], 'empty restores Auto');
-    await page.keyboard.press('Control+z'); assert.equal(await size.inputValue(), '10');
+    await page.keyboard.press('Control+z');
+    await page.waitForFunction(() => document.querySelector('[data-testid=bal-size]').value === '10');
+    assert.equal(await size.inputValue(), '10');
     // Editing a source balloon after sizing and undoing it must keep the drawing setting.
     await page.locator('[data-testid=bal-row][data-n="1"]').click();
     await t('bal-note').fill('after size'); await t('bal-note').press('Enter');
@@ -18136,6 +18146,24 @@ try {
     await size.fill(''); await size.press('Enter'); await size.blur();
     const pictureAuto = await downloadsUtf8(() => page.keyboard.press('Control+s'), 1);
     assert.equal('size' in JSON.parse(pictureAuto[0].text), false, 'resetting an empty picture to Auto is saved too');
+    await balOpen();
+    await page.locator('[data-sheet="2"]').click();
+    await page.waitForFunction(() => document.querySelector('[data-testid=sheet-chip]').textContent === 'Sheet 2 / 2');
+    await page.locator('[data-tool=balloon]').click(); await balPlace([61, 62], [80, 80]);
+    await page.locator('[data-tool=select]').click();
+    await page.locator('[data-sheet="1"]').click();
+    await page.waitForFunction(() => document.querySelector('[data-testid=sheet-chip]').textContent === 'Sheet 1 / 2');
+    await size.fill('10'); await size.press('Enter'); await size.blur();
+    await page.locator('[data-sheet="2"]').click();
+    await page.waitForFunction(() => document.querySelector('[data-testid=sheet-chip]').textContent === 'Sheet 2 / 2');
+    await page.keyboard.press('Control+z');
+    await page.waitForFunction(() => document.querySelector('[data-testid=bal-size]').value === '10');
+    assert.equal(await size.inputValue(), '10', 'Undo of a balloon placed before sizing on another sheet keeps size');
+    assert.deepEqual(await radii(), [], 'the sheet 2 balloon is undone');
+    const crossSheetSaved = await downloadsUtf8(() => page.keyboard.press('Control+s'), 2);
+    const crossSheetSidecar = JSON.parse(crossSheetSaved.find((x) => x.name === 'insp.pdballoons.json').text);
+    assert.equal(crossSheetSidecar.size, 10, 'the sidecar keeps size after cross-sheet Undo');
+    assert.deepEqual(crossSheetSidecar.items, []);
     await closeTabs(/./);
   });
 

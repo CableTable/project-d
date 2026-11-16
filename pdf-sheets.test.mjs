@@ -50,6 +50,10 @@ assert.equal(restoreBalloons(one, reset, 1).next, 3, 'Undo restores a next numbe
 console.log('ok PDF sheet state, dirty pages, deletion and balloon Undo');
 
 const sized = { ...both, size: 10 };
-assert.equal(restoreBalloons(sized, sized, 1).size, 10, 'TODO 306: PDF Undo keeps the diameter');
-assert.equal(restoreBalloons(sized, BAL.EMPTY, 1).size, null, 'TODO 306: Undo of size restores Auto');
-assert.equal(restoreBalloons(BAL.EMPTY, sized, 1).size, 10, 'TODO 306: Redo restores the diameter');
+assert.equal(restoreBalloons(sized, BAL.EMPTY, 2).size, 10, 'TODO 306: another sheet Undo keeps the current diameter over the old Auto snapshot');
+assert.equal(restoreBalloons(sized, BAL.EMPTY, 2).items.length, 1, 'TODO 306: the other sheet balloon is undone');
+assert.equal(restoreBalloons(sized, BAL.EMPTY, 2).items[0].sheet, 1);
+assert.equal(restoreBalloons(sized, both, 2).size, 10, 'TODO 306: another sheet Redo keeps the current diameter');
+assert.equal(restoreBalloons(sized, BAL.EMPTY, 1, true).size, null, 'TODO 306: flagged Undo of size restores Auto');
+assert.equal(restoreBalloons(BAL.EMPTY, sized, 1, true).size, 10, 'TODO 306: flagged Redo restores the diameter');
+console.log('ok TODO 306: sheet Undo and Redo keep current size; flagged size steps restore Auto and diameter');
