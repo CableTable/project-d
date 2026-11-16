@@ -1382,6 +1382,19 @@ function attachDrop() {
   });
 }
 
+function buildSelectionCommands() {
+  const button = (label, svg, action, title = label) => h('button', { class: 'ib', type: 'button', 'aria-label': label, title, onclick: action }, icon(svg, { size: 18, cap: 'round', join: 'round' }));
+  return h('div', { class: 'selection-commands', hidden: true },
+    h('div', { class: 'selection-shaping', role: 'group', 'aria-label': 'Shaping' }, ...['weld', 'trim', 'intersect', 'simplify', 'boundary', 'frontminus', 'backminus'].map((op) => button(SH.OPS[op].label,
+      { weld: '<path d="M3 5h12v4h6v12H9v-4H3z"/>', trim: TOOLS.find((t) => t.id === 'trim').svg,
+        intersect: '<path d="M3 5h12v12H3zM9 9h12v12H9z"/><path d="M9 9h6v8H9z" fill="currentColor"/>',
+        simplify: '<path d="M3 5h12v4H9v8H3zM9 9h12v12H9z"/>', boundary: '<path d="M3 5h12v4h6v12H9v-4H3z" stroke-dasharray="3 2"/>',
+        frontminus: '<path d="M15 9h6v12H9v-4h6z"/>', backminus: '<path d="M3 5h12v4H9v8H3z"/>' }[op], () => shapeSelection(op), SH.OPS[op].label + ': ' + SHAPING_TITLE[op]))),
+    h('div', { class: 'selection-arrange', role: 'group', 'aria-label': 'Align and distribute' },
+      ...['left', 'centre', 'right', 'top', 'middle', 'bottom'].map((how) => button('Align ' + how, ICONS[how], () => arrange('align', how))),
+      ...['horizontal', 'vertical'].map((how) => button('Distribute ' + how + 'ly', ICONS[how], () => arrange('distribute', how)))));
+}
+
 /**
  * On a layout tab: the selected placed part with its place and turn on the sheet. X, Y (the lower-left of the part's box) and Angle are
  * typed; W and H are read-only. Mirror X / Mirror Y, and the Nudge step the arrow keys use.
@@ -1409,7 +1422,8 @@ function buildPartRibbon() {
     ribbonGroup('Nudge', ...[['left', 'Left', 'M19 12H5m6-6-6 6 6 6'], ['up', 'Up', 'M12 19V5m-6 6 6-6 6 6'], ['down', 'Down', 'M12 5v14m-6-6 6 6 6-6'], ['right', 'Right', 'M5 12h14m-6-6 6 6-6 6']].map(([dir, label, path]) => ribbonButton(label, '<path d="' + path + '"/>', () => nudgeSel(dir), { enabled: () => !selItems().some((x) => x.p.lock) })), ribbonStack(ribbonField('Step mm', ui.barNudge))),
     ribbonGroup('Arrange', gbtn('bar-group', 'Group', ICONS.group, () => (wholeGroup() ? ungroupSel() : groupSel())),
       gbtn('bar-lock', 'Lock', ICONS.lock, () => lockSel(!selItems().every((x) => x.p.lock)))),
-    ribbonGroup('Copy', ribbonButton('Duplicate', '<rect x="3" y="3" width="12" height="12"/><rect x="9" y="9" width="12" height="12"/>', duplicate)));
+    ribbonGroup('Copy', ribbonButton('Duplicate', '<rect x="3" y="3" width="12" height="12"/><rect x="9" y="9" width="12" height="12"/>', duplicate)),
+    ui.partCommands = buildSelectionCommands());
   ui.partRibbon = h('div', { class: 'ribbon-page', 'data-testid': 'part-ribbon' }, ui.pfields);
   ui.ribbonCache.append(ui.partRibbon);
 }
@@ -1437,7 +1451,7 @@ function buildSelbar() {
       else if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
     });
     return labelled(label, input);
-  }), ...['x', 'y'].map((axis) => h('button', { class: 'btn sm', type: 'button', 'data-testid': 'sel-mirror-' + axis, title: axis === 'x' ? 'Flip left to right about the selection box centre' : 'Flip top to bottom about the selection box centre', onclick: () => selectionMirror(axis) }, axis === 'x' ? 'Mirror H' : 'Mirror V')),
+  }), ...['x', 'y'].map((axis) => h('button', { class: 'btn sm', type: 'button', 'data-testid': 'sel-mirror-' + axis, 'aria-label': axis === 'x' ? 'Mirror H' : 'Mirror V', title: axis === 'x' ? 'Flip left to right about the selection box centre' : 'Flip top to bottom about the selection box centre', onclick: () => selectionMirror(axis) }, icon(TOOLS.find((t) => t.id === 'mirror').svg, { size: 16 }), axis === 'x' ? 'Mirror H' : 'Mirror V')),
   labelled('Width', ui.selWidth = h('select', { class: 'fld', 'data-testid': 'sel-width', 'aria-label': 'Outline width', onchange: (e) => {
     const d = editable();
     if (!d || moveLocked(d, d.sel, 'change outline width on')) { renderEdit(); return; }
@@ -1445,7 +1459,7 @@ function buildSelbar() {
     else propWidthSet(['ByLayer', 'Hairline'].includes(e.target.value) ? e.target.value : PL.parseMm(e.target.value));
   } })));
   return ui.selbar = h('div', { class: 'propbar selbar', hidden: true, 'data-testid': 'selbar' },
-    ui.selName, ui.selLayer, ui.selTransforms, h('span', { class: 'lbl sizelbl', title: 'Resize the selection, or the whole drawing when nothing is selected, about its bottom-left' }, 'Size'), size('W', 'sel-w', 'w'), size('H', 'sel-h', 'h'), sizePadlock('size-padlock'),
+    ui.selName, ui.selLayer, ui.selTransforms, ui.selCommands = buildSelectionCommands(), h('span', { class: 'lbl sizelbl', title: 'Resize the selection, or the whole drawing when nothing is selected, about its bottom-left' }, 'Size'), size('W', 'sel-w', 'w'), size('H', 'sel-h', 'h'), sizePadlock('size-padlock'),
     ui.selContour = h('span', { class: 'lbl ctlabel', hidden: true, 'data-testid': 'sel-contour' }),
     ui.selArea = h('span', { class: 'lbl area', 'data-testid': 'sel-area', title: 'Area of the closed outlines (holes taken off) and the length of every line and arc selected' }),
     ui.barKeep = h('button', { class: 'btn', type: 'button', 'data-testid': 'bar-keep', onclick: keepSelection }, 'Keep only'),
@@ -5407,6 +5421,8 @@ function renderProps() {
   const items = p ? selItems() : [], many = items.length > 1, whole = many && wholeGroup();
   const locked = items.length > 0 && items.some((x) => x.p.lock), allLocked = items.length > 0 && items.every((x) => x.p.lock);
   ui.pfields.hidden = !p;
+  ui.partCommands.hidden = !many;
+  ui.partRibbon.classList.toggle('multi-selection', many);
   ui.partPivot.value = state.pivot.kind;
   ui.partName.textContent = many ? (whole ? `Group of ${items.length}` : `${items.length} parts selected`) : part ? part.name : '';
   ui.partName.title = ui.partName.textContent;
@@ -11867,6 +11883,8 @@ function outlinesOf(d) {
 /** The property bar for the selection and the list of outlines (drawing tab). */
 function renderSelection(d) {
   const outs = outlinesOf(d), n = d.sel.size;
+  ui.selCommands.hidden = n < 2;
+  ui.selbar.classList.toggle('multi-selection', n >= 2);
   ui.selLayer.title = n ? 'layer ' + d.raw.entities[[...d.sel][0]].layer : '';
   const widths = propEnts(d, true).map(([, ent]) => PR.widthKey(ent, d.factor));
   const width = widths.length && widths.every((v) => v === widths[0]) ? widths[0] ?? '' : '';

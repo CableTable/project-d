@@ -496,6 +496,14 @@ select.fld { font-family: var(--sans); }
 .selbar { flex-wrap: nowrap; gap: 8px; }
 .sel-transforms { display: inline-flex; align-items: center; gap: 8px; }
 .sel-transforms .fld { width: 56px; }
+.sel-transforms .btn svg { display: none; }
+.selection-commands, .selection-shaping, .selection-arrange { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
+.selection-commands[hidden] { display: none; }
+.selection-commands .ib { width: 24px; height: 26px; }
+.selection-arrange { border-left: 1px solid var(--line2); padding-left: 3px; margin-left: 2px; }
+[data-testid=part-ribbon] .selection-commands { padding: 3px; align-items: start; }
+[data-testid=part-ribbon] .selection-shaping, [data-testid=part-ribbon] .selection-arrange { display: grid; grid-template-rows: repeat(3, 24px); grid-auto-flow: column; }
+[data-testid=part-ribbon] .selection-commands .ib { height: 24px; }
 .selbar .name, .selbar [data-testid=sel-layer] { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; max-width: 120px; }
 .selbar .name { flex-shrink: 0; }
 .selbar > label, .sel-transforms, .selbar > .btn { flex-shrink: 0; }
@@ -510,6 +518,19 @@ select.fld { font-family: var(--sans); }
   .selbar .btn { padding-inline: 6px; font-size: 11px; }
   .selbar .sizelbl { display: none; }
   .selbar .name, .selbar [data-testid=sel-layer] { max-width: 70px; }
+  .selbar.multi-selection .name, .selbar.multi-selection [data-testid=sel-layer], .selbar.multi-selection .area, .selbar.multi-selection .ctlabel { display: none; }
+  .selbar.multi-selection, .selbar.multi-selection .sel-transforms { gap: 2px; }
+  .selbar.multi-selection > label .fld { width: 44px; }
+  .selbar.multi-selection .sel-transforms .lbl.inline { font-size: 0; gap: 0; }
+  .selbar.multi-selection .sel-transforms .fld { width: 36px; font-size: 11px; padding-inline: 3px; }
+  .selbar.multi-selection .sel-transforms [data-testid=sel-width] { width: 65px; }
+  .selbar.multi-selection .sel-transforms [data-testid=sel-x], .selbar.multi-selection .sel-transforms [data-testid=sel-y] { width: 44px; }
+  .selbar.multi-selection .sel-transforms [data-testid=sel-scale] { width: 40px; }
+  .selbar.multi-selection .sel-transforms .btn { font-size: 0; padding: 3px; }
+  .selbar.multi-selection .sel-transforms .btn svg { display: block; }
+  [data-testid=part-ribbon].multi-selection .ribbon-big { width: 28px; }
+  [data-testid=part-ribbon].multi-selection .ribbon-big svg { width: 24px; height: 24px; }
+  [data-testid=part-ribbon].multi-selection .ribbon-field input { width: 60px; }
 }
 .pop { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); box-shadow: 0 8px 24px rgba(0, 0, 0, .28); }
 .ctxmenu { position: fixed; z-index: 60; min-width: 190px; padding: 4px 0; display: flex; flex-direction: column; }

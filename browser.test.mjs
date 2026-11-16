@@ -30208,6 +30208,121 @@ try {
     }
   });
 
+  await step('TODO 294b: top bar Shaping and Arrange with 2+ picked, Undo, refusals and 1024 light / dark', async () => {
+    await closeTabs(/./);
+    const route294b = (route) => route.fulfill({ contentType: 'text/javascript', body: readFileSync('web/app.js', 'utf8') + `
+      window.pick294b = (ids) => { if (curLay()) { selectMany(ids); update(); } else setSel(editable(), new Set(ids)); };
+      window.probe294b = () => { const d = editable(); return curLay()
+        ? { raw: LD.objectDoc(curLay()).raw, placed: curLay().placed, labels: layHist(curDoc()).labels().past }
+        : { raw: d.raw, labels: d.hist.labels().past }; };
+    ` });
+    await page.route('**/app.js', route294b); await page.reload();
+    const pick = (ids) => page.evaluate((ids) => window.pick294b(ids), ids);
+    const probe = () => page.evaluate(() => window.probe294b());
+    const labels = ['Weld', 'Trim', 'Intersect', 'Simplify', 'Create boundary', 'Front minus back', 'Back minus front',
+      'Align left', 'Align centre', 'Align right', 'Align top', 'Align middle', 'Align bottom', 'Distribute horizontally', 'Distribute vertically'];
+    const open = async (raw, kind, name) => {
+      if (kind === 'layout') {
+        const lay = newLayout(name);
+        raw.entities.forEach((ent, i) => { const id = 'o' + i; lay.parts[id] = objectPart(id, 'Object ' + i, ent, raw.layers); lay.placed.push(objectPlacement(lay.parts[id])); });
+        await open97c(layoutRaw(lay), name + '.dxf');
+        await page.locator('[data-ribbon-tab=Part]').click();
+      } else { await open97c(raw, name + '.dxf'); if (kind === 'compare') await typeCmd('compare'); }
+    };
+    try {
+      for (const kind of ['drawing', 'compare', 'layout']) {
+        const bar = t(kind === 'layout' ? 'part-ribbon' : 'selbar'), commands = bar.locator('.selection-commands');
+        const raw = newDoc(4);
+        addEntities(raw, dxfPoly([[100, 100], [140, 100], [140, 140], [100, 140]], { closed: true }),
+          dxfPoly([[120, 120], [160, 120], [160, 160], [120, 160]], { closed: true }));
+        await open(raw, kind, 'weld294b-' + kind);
+        assert.equal(await commands.count(), 1, 'selection commands exist on ' + kind);
+        for (const ids of [[], [0], [0, 1]]) {
+          await pick(ids); assert.equal(await commands.isVisible(), ids.length >= 2);
+        }
+        assert.deepEqual(await commands.getByRole('button').evaluateAll((bs) => bs.map((b) => b.getAttribute('aria-label'))), labels);
+        const before = await probe();
+        await commands.getByRole('button', { name: 'Weld', exact: true }).click(); await frames();
+        const welded = await probe();
+        assert.equal(welded.raw.entities.length, 1, 'two squares become one outline');
+        assert.match(await said(/area 2800\.00/), /area 2800\.00/);
+        assert.deepEqual(welded.labels.slice(before.labels.length), ['Weld']);
+        await key97c('Control+z'); await pick([0, 1]);
+        assert.deepEqual((await probe()).raw.entities, before.raw.entities, 'one Undo restores both squares');
+        await closeTabs(/./);
+
+        const lines = newDoc(4); addLayer(lines, 'Cut');
+        addEntities(lines, dxfLine(100, 100, 180, 100, { layer: 'Cut' }), dxfLine(220, 180, 260, 220), dxfLine(350, 300, 410, 340));
+        await open(lines, kind, 'align294b-' + kind); await pick([0, 1, 2]);
+        await t('arrange-rel').selectOption('selection');
+        const original = await probe();
+        await commands.getByRole('button', { name: 'Align left', exact: true }).click(); await frames();
+        assert.deepEqual(lineEnds97c((await probe()).raw), [[100, 100, 180, 100], [100, 180, 140, 220], [100, 300, 160, 340]]);
+        assert.deepEqual((await probe()).labels.slice(original.labels.length), [kind === 'layout' ? 'Align left 3 parts' : 'Align left']);
+        await key97c('Control+z'); await pick([0, 1, 2]);
+        assert.deepEqual((await probe()).raw.entities, original.raw.entities, 'one Undo restores three lines');
+        await commands.getByRole('button', { name: 'Distribute horizontally', exact: true }).click(); await frames();
+        const distributed = await probe(), ends = lineEnds97c(distributed.raw);
+        approx(ends[1][0] - ends[0][2], ends[2][0] - ends[1][2], .001);
+        assert.deepEqual(distributed.labels.slice(original.labels.length), [kind === 'layout' ? 'Distribute horizontal 3 parts' : 'Distribute horizontal']);
+        await key97c('Control+z'); await pick([0, 1, 2]);
+        assert.deepEqual((await probe()).raw.entities, original.raw.entities);
+        await t('arrange-rel').selectOption('point');
+        await commands.getByRole('button', { name: 'Align left', exact: true }).click(); await key97c('Escape');
+        assert.deepEqual((await probe()).raw.entities, original.raw.entities, 'Esc cancels point alignment');
+        await t('arrange-rel').selectOption('selection');
+        await pick([0, 1, 2]);
+        if (kind === 'layout') await page.locator('[data-ribbon-tab=Part]').click();
+        const x = t(kind === 'layout' ? 'px' : 'sel-x');
+        await x.fill('110'); await x.press('Enter'); await frames();
+        assert.equal(fieldOf((await probe()).raw.entities[0], 10), 110, 'source remains editable after the commands');
+        await key97c('Control+z'); await pick([0, 1, 2]);
+        if (kind === 'layout') await page.locator('[data-ribbon-tab=Part]').click();
+        await page.setViewportSize({ width: 1024, height: 700 });
+        for (const theme of ['light', 'dark']) {
+          await menuItem('View', 'Theme: ' + theme); await frames();
+          const overflow = await bar.evaluate((n) => {
+            const r = n.getBoundingClientRect();
+            return [r.right > innerWidth + 1 ? `bar outside viewport: ${r.right}` : '', n.scrollWidth > n.clientWidth + 1 ? `bar scrolls: ${n.scrollWidth} > ${n.clientWidth}` : '',
+              ...[...n.querySelectorAll('input, select, button')].filter((c) => c.getBoundingClientRect().width).flatMap((c) => {
+                const b = c.getBoundingClientRect(); return b.left >= r.left && b.right <= r.right + 1 && b.top >= r.top && b.bottom <= r.bottom + 1 ? [] : [c.dataset.testid || c.getAttribute('aria-label')];
+              })].filter(Boolean);
+          });
+          const path = `${shotDir}/todo294b-${kind}-1024-${theme}.png`;
+          await page.screenshot({ path }); assert.ok(readFileSync(path).length > 1000);
+          assert.deepEqual(overflow, [], kind + ' fits at 1024');
+        }
+        await page.setViewportSize({ width: 1440, height: 900 });
+        // The top bar must produce the existing command's exact refusal, without an edit.
+        if (kind === 'compare') await page.locator('.dtab').filter({ has: page.locator('.tname', { hasText: /^align294b-compare/ }) }).click();
+        if (kind === 'layout') await menuItem('Layout', 'Lock');
+        else { await t('ptab-objects').click(); await page.locator('.or.layer[data-layer=Cut] [data-act=lock]').click(); }
+        if (kind === 'compare') await page.locator('.dtab').filter({ has: page.locator('.tname', { hasText: /^Compare$/ }) }).click();
+        await pick([0, 1, 2]); const locked = await probe();
+        for (const [label, menu] of [['Weld', true], ['Align left', false]]) {
+          if (menu) await menuItem('Modify', 'Shaping: Weld'); else await t('align-left').click();
+          const message = await prompt();
+          if (kind === 'layout') await page.locator('[data-ribbon-tab=Part]').click();
+          await commands.getByRole('button', { name: label, exact: true }).click();
+          assert.equal(await said(/./), message); assert.deepEqual(await probe(), locked);
+        }
+        if (kind === 'compare') {
+          await t('cmp-eye').first().click(); assert.equal(await bar.isVisible(), false);
+          await t('cmp-eye').first().click();
+          const [chooser] = await Promise.all([page.waitForEvent('filechooser'), t('cmp-add-file').click()]);
+          await chooser.setFiles({ name: 'detached294b.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(lines)) });
+          await t('cmp-name-2').click(); assert.equal(await bar.isVisible(), false, 'disk snapshots keep their read-only restriction');
+        }
+        await closeTabs(/./);
+      }
+      assert.deepEqual(errors, []);
+    } finally {
+      await page.setViewportSize({ width: 1440, height: 900 });
+      await page.unroute('**/app.js', route294b); await page.reload();
+      await page.waitForSelector('[data-testid=count]', { state: 'attached' });
+    }
+  });
+
   await step('TODO 285: Ctrl+D duplicates a line on a drawing tab', async () => {
     await closeTabs(/./);
     const route285 = (route) => route.fulfill({ contentType: 'text/javascript', body: readFileSync('web/app.js', 'utf8') + `
