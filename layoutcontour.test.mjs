@@ -30,13 +30,30 @@ test('TODO 199: layout part warnings keep the failed join reason', () => {
   assert.equal(LC.stoppedWarning([{ stopped: null }]), '');
 });
 
-test('the outer outline only: a hole is left alone, a part with no closed outline says so', () => {
+test('the outer outline only: a hole is left alone, a part with no closed outline uses its chains', () => {
   const r = LC.partContour(plate(), CFG);
   assert.equal(r.kind, 'ok');
   assert.equal(r.res.made, 1, 'one ring, not one for the hole');
   const d = newDoc(4);
   addEntities(d, line(0, 0, 50, 0, { layer: 'OUT' }), line(50, 0, 50, 30, { layer: 'OUT' }));
-  assert.equal(LC.partContour(LD.makePart('o', 'open', d, 1), CFG).kind, 'open');
+  assert.equal(LC.partContour(LD.makePart('o', 'open', d, 1), CFG).kind, 'ok');
+});
+
+test('TODO 289: all open layout chains, end cache keys and closed-part precedence', () => {
+  const d = newDoc(4);
+  addEntities(d, line(0, 0, 50, 0), line(0, 30, 50, 30));
+  const part = LD.makePart('o', 'open', d, 2);
+  for (const ends of ['butt', 'round', 'square']) {
+    const cfg = { ...CFG, dist: 2, ends, dir: 'inside' }, r = LC.partContour(part, cfg, 2);
+    assert.equal(r.res.made, 2);
+    assert.equal(LC.partContour(part, cfg, 2), r);
+    const cp = LC.contourPart(part, r.res, STYLE);
+    near(cp.w, ends === 'butt' ? 100 : 102);
+    assert.equal(cp.raw.entities.filter((e) => e.type === 'ARC').length, ends === 'round' ? 4 : 0);
+  }
+  addEntities(d, rect(100, 0, 50, 50));
+  const mixed = LC.partContour(LD.makePart('m', 'mixed', d, 1), CFG);
+  assert.equal(mixed.res.made, 1, 'largest closed loop still wins');
 });
 
 test('the contour part is the ring: outside 10 mm grows the box by 10, inside shrinks it', () => {

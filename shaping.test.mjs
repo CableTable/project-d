@@ -25,13 +25,20 @@ test('trim takes the target minus every other outline; with no target it is the 
   const r = S.shape('trim', [s1, big, s2]);                          // the big one is the target
   assert.equal(r.target, 1); near(r.area, 400 - 8 - 8);
   assert.equal(r.rings.length, 1);
-  assert.equal(S.operandsOf([big, sq(5, 5, 4)]).length, 1);          // a cutter wholly inside the target is its hole, not a cutter
+  assert.equal(S.operandsOf([big, sq(5, 5, 4)]).length, 2);          // a nested pair alone is two shapes (TODO 288a); with a third shape it is a hole again (next test)
+});
+
+test('pieces: the rings of one shape with holes share a number, separate pieces differ (TODO 288a fix)', () => {
+  const t = S.shape('trim', [sq(0, 0, 100), sq(40, 40, 20)], 0);   // a nested pair: the outer gets a hole
+  assert.equal(t.rings.length, 2); assert.deepEqual(t.pieces, [t.pieces[0], t.pieces[0]]);
+  const w = S.shape('weld', [sq(0, 0, 10), sq(50, 0, 10)]);          // two separate shapes
+  assert.equal(w.rings.length, 2); assert.notEqual(w.pieces[0], w.pieces[1]);
 });
 
 test('a square with a hole is one shape; welding it keeps the hole, trimming a square off its corner cuts into the ring', () => {
   const ring = [sq(0, 0, 20), sq(5, 5, 10)];
-  assert.equal(S.operandsOf(ring).length, 1);
-  near(S.operandsOf(ring)[0].area, 300);
+  assert.equal(S.operandsOf([...ring, sq(40, 0, 5)]).length, 2);
+  near(S.operandsOf([...ring, sq(40, 0, 5)])[0].area, 300);
   const w = S.shape('weld', [...ring, sq(18, 0, 10)]);
   near(w.area, 300 + 80); assert.equal(w.rings.length, 2);         // the hole stays
   const t = S.shape('trim', [...ring, sq(-5, -5, 10)], 0);
@@ -79,7 +86,8 @@ test('shared vertices and equal squares', () => {
   near(S.shape('weld', [sq(0, 0, 10), sq(0, 0, 10)]).area, 100);
   near(S.shape('intersect', [sq(0, 0, 10), sq(0, 0, 10)]).area, 100);
   assert.equal(S.shape('trim', [sq(0, 0, 10), sq(0, 0, 10)], 0).rings.length, 0);
-  assert.equal(S.operandsOf([sq(0, 0, 10), sq(0, 0, 5, 10)]).length, 1);   // one inside the other, edges shared: a hole
+  assert.equal(S.operandsOf([sq(0, 0, 10), sq(0, 0, 5, 10)]).length, 2);   // one inside the other, edges shared: a nested pair, two shapes
+  assert.equal(S.operandsOf([sq(0, 0, 10), sq(0, 0, 5, 10), sq(30, 0, 5)]).length, 2);   // with a third shape the inner one is a hole
 });
 
 test('circle against a square, within the chord tolerance', () => {
@@ -95,7 +103,6 @@ test('three outlines intersect to the area common to all', () => {
 
 test('fewer than two shapes, and an unknown operation, are errors', () => {
   assert.match(S.shape('weld', [sq(0, 0, 10)]).error, /at least 2/);
-  assert.match(S.shape('weld', [sq(0, 0, 20), sq(5, 5, 10)]).error, /at least 2/);
   assert.match(S.shape('nope', [sq(0, 0, 1), sq(0, 0, 1)]).error, /Unknown/);
 });
 
@@ -174,12 +181,41 @@ test('Create boundary: overlapping squares in either order give one union; disjo
 
 test('new operations keep the even-odd hole rule and shared failure note', () => {
   for (const op of ['simplify', 'frontminus', 'backminus', 'boundary']) {
-    assert.match(S.shape(op, [sq(0, 0, 20), sq(5, 5, 10)]).error, /count as its holes/);
     assert.match(S.shape(op, [sq(0, 0, 10), { pts: [] }]).error, /Shaping failed/);
     const r = S.shape(op, [sq(0, 0, 20), sq(5, 5, 10), sq(18, 0, 10)]);
     near(r.area, { simplify: 380, frontminus: 80, backminus: 280, boundary: 380 }[op]);
     if (op === 'simplify' || op === 'boundary') assert.equal(r.rings.length, 2);   // the big one with its hole; the far square is untouched by Simplify
   }
+});
+
+// TODO 288a: one outline wholly inside another (a nested pair, nothing else) = two shapes; standard area maths, drawing order = list order
+const outer = sq(0, 0, 20), inner = sq(5, 5, 10);
+test('nested pair: Weld is the outer outline, Create boundary too', () => {
+  for (const op of ['weld', 'boundary']) { const r = S.shape(op, [outer, inner]); assert.equal(r.error, undefined); near(r.area, 400); assert.equal(r.rings.length, 1); }
+});
+test('nested pair: Trim with the outer as target cuts a hole (2 rings, one source); with the inner as target nothing is left', () => {
+  const r = S.shape('trim', [outer, inner], 0);
+  near(r.area, 300); assert.equal(r.rings.length, 2); assert.deepEqual(r.sources, [0, 0]);
+  const e = S.shape('trim', [outer, inner], 1);
+  assert.equal(e.error, undefined); assert.equal(e.rings.length, 0); near(e.area, 0);
+});
+test('nested pair: Intersect is the inner outline', () => {
+  const r = S.shape('intersect', [outer, inner]); near(r.area, 100); assert.equal(r.rings.length, 1);
+});
+test('nested pair: Simplify gives the back one a hole and keeps the front one; an inner one at the back is covered', () => {
+  const r = S.shape('simplify', [outer, inner]);
+  assert.equal(r.rings.length, 2); assert.deepEqual(r.sources, [0, 0]); assert.deepEqual(r.untouched, [1]); near(r.area, 400);
+  const c = S.shape('simplify', [inner, outer]);
+  assert.equal(c.rings.length, 0); assert.deepEqual(c.untouched, [1]); near(c.area, 400);
+});
+test('nested pair: Front minus back and Back minus front are the area maths, empty when the inner one is cut', () => {
+  const f = S.shape('frontminus', [inner, outer]), b = S.shape('backminus', [outer, inner]);
+  for (const r of [f, b]) { near(r.area, 300); assert.equal(r.rings.length, 2); }
+  for (const r of [S.shape('frontminus', [outer, inner]), S.shape('backminus', [inner, outer])]) { assert.equal(r.error, undefined); assert.equal(r.rings.length, 0); near(r.area, 0); }
+});
+test('a part with a hole and a separate shape: Weld keeps the hole', () => {
+  const r = S.shape('weld', [outer, inner, sq(30, 0, 5)]);
+  near(r.area, 300 + 25); assert.equal(r.rings.length, 3);
 });
 
 test('drawing entity order wins over selection order and loop discovery order', () => {

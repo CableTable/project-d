@@ -809,7 +809,7 @@ function meetPoint(Pa, A, Pb, B, far) {
 
 const deg360 = (a) => { let v = a * 180 / Math.PI % 360; if (v < 0) v += 360; return v; };
 /** The properties a new piece takes from `src` (layer, colour, line type). */
-const like = (s) => ({ layer: s.layer, lt: s.lt, aci: s.aci, tc: s.tc, lw: s.lw, lts: s.lts, ps: s.ps });
+const like = (s) => ({ layer: s.layer, lt: s.lt, aci: s.aci, tc: s.tc, lw: s.lw, cap: s.cap, join: s.join, scaleWithObject: s.scaleWithObject, lts: s.lts, ps: s.ps });
 const lineEntity = (src, p, q) => line(p[0], p[1], q[0], q[1], like(src));
 const arcEntity = (src, c, R, a0, a1) => arc(c[0], c[1], R, deg360(a0), deg360(a1), like(src));
 const BEZIER_PIECES = 12;
@@ -936,7 +936,7 @@ const text = (n) => String(+n.toPrecision(15));
 // per type: the x codes that are points (moved about the anchor) and vectors (only scaled), and the codes that are lengths
 export const SPEC = {
   LINE: { pts: [10, 11] }, POINT: { pts: [10] }, CIRCLE: { pts: [10], len: [39, 40] }, ARC: { pts: [10], len: [39, 40] },
-  ELLIPSE: { pts: [10], vec: [11] }, LWPOLYLINE: { pts: [10], len: [38, 39, 40, 41, 43] }, POLYLINE: { pts: [], len: [39, 40, 41], z: [30] },
+  ELLIPSE: { pts: [10], vec: [11] }, IMAGE: { pts: [10], vec: [11, 12] }, LWPOLYLINE: { pts: [10], len: [38, 39, 40, 41, 43] }, POLYLINE: { pts: [], len: [39, 40, 41], z: [30] },
   VERTEX: { pts: [10], len: [40, 41] }, SPLINE: { pts: [10, 11] }, SOLID: { pts: [10, 11, 12, 13], len: [39] }, TRACE: { pts: [10, 11, 12, 13], len: [39] },
   '3DFACE': { pts: [10, 11, 12, 13] }, TEXT: { pts: [10, 11], len: [39, 40] }, ATTRIB: { pts: [10, 11], len: [39, 40] }, ATTDEF: { pts: [10, 11], len: [39, 40] },
   MTEXT: { pts: [10], len: [40, 41, 42, 43] }, INSERT: { pts: [10], len: [44, 45] },

@@ -16,7 +16,7 @@ export function moveByDeltas(raw, indexes, deltas) {
 }
 
 export const ALIGN_HOW = ['left', 'centre', 'right', 'top', 'middle', 'bottom'];
-export const REL = ['selection', 'sheet', 'first'];
+export const REL = ['selection', 'sheet', 'first', 'last', 'point'];
 
 /** The box that holds all of these boxes, or null when there are none. */
 export function unionBox(boxes) {
@@ -39,22 +39,33 @@ export function objectsOf(items) {
   return out;
 }
 
-/** The frame to line up with: the union of the boxes (selection), the sheet [0, 0, W, H], or the first selected box. */
-function frameOf(boxes, rel, sheet, first) {
+/** Index of the object holding the last-picked item: a group counts at its last-picked member (objectsOf places it at its first). */
+export function lastObjectOf(objs) {
+  return objs.reduce((k, o, i) => o.members.at(-1) > objs[k].members.at(-1) ? i : k, 0);
+}
+
+/** The frame to line up with: selection, sheet, first / last selected box, or a zero-size point frame. */
+function frameOf(boxes, rel, sheet, first, point, last) {
   if (rel === 'sheet' && sheet) return sheet;
   if (rel === 'first' && boxes[first]) return boxes[first];
+  if (rel === 'last') return boxes[last];
+  if (rel === 'point' && point) return [point[0], point[1], point[0], point[1]];
   return unionBox(boxes);
 }
 
 /**
- * How far each box moves to line up: how is left, centre, right (along X), top, middle or bottom (along Y).
- * rel: 'selection' (the box round all of them), 'sheet' (sheet = [0, 0, W, H]) or 'first' (the box at index `first`, which stays).
+ * How far each box moves to line up: how is left, centre, right (along X), top, middle or bottom (along Y), or page (one block, both axes).
+ * rel: 'selection', 'sheet' ([0, 0, W, H]), 'first' (index `first`), 'last' (index `last`, default the last box), or 'point' ([x, y]).
  * → [{ dx, dy }] per box (no -0).
  */
-export function alignDeltas(boxes, how, rel = 'selection', sheet = null, first = 0) {
-  const f = frameOf(boxes, rel, sheet, first);
+export function alignDeltas(boxes, how, rel = 'selection', sheet = null, first = 0, point = null, last = boxes.length - 1) {
+  const f = frameOf(boxes, rel, sheet, first, point, last);
   if (!f) return [];
   const fx = (f[0] + f[2]) / 2, fy = (f[1] + f[3]) / 2;
+  if (how === 'page') {
+    const b = unionBox(boxes);
+    return boxes.map(() => ({ dx: (fx - (b[0] + b[2]) / 2) || 0, dy: (fy - (b[1] + b[3]) / 2) || 0 }));
+  }
   return boxes.map((b) => {
     let dx = 0, dy = 0;
     if (how === 'left') dx = f[0] - b[0];
@@ -76,7 +87,7 @@ export function centreOnFirstDeltas(boxes) {
 /**
  * Equal gaps between the boxes along an axis ('x' left to right, 'y' bottom to top), in their current order. The span is the
  * outer edges of the selection (the first and last stay put) or, relative to the sheet, the sheet's whole width / height
- * (the first box touches the near edge, the last the far one). "First selected" uses the selection's span too: with equal gaps
+ * (the first box touches the near edge, the last the far one). First / Last selected and Point use the selection's span: with equal gaps
  * there is no other sensible place for the rest to go (DECISIONS.md).
  * → { deltas: [{ dx, dy }], gap } (gap in mm, negative when the boxes overlap), or null with fewer than 3 boxes.
  */

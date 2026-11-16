@@ -9,7 +9,7 @@ export const RESERVED = {
   'Ctrl+C': 'Reserved for Copy inside the app.', 'Ctrl+V': 'Reserved for Paste inside the app.',
   'Ctrl+Shift+V': 'Reserved for Paste in place inside the app.',
   Esc: 'Reserved for cancel / close / clear selection.', Delete: 'Reserved for deleting the selection.',
-  'Ctrl+D': 'Reserved for Duplicate in a layout.',
+  'Ctrl+D': 'Reserved for Duplicate.',
   F2: 'Reserved for command history.', F10: 'Reserved for polar tracking.', F11: 'Reserved for object snap tracking.',
   F3: 'Reserved for Snap.', F7: 'Reserved for Grid.', F8: 'Reserved for Ortho.', F9: 'Reserved for Wireframe.', F12: 'Reserved for Dynamic input.',
   F5: 'Reserved for the desktop reload guard.', 'Ctrl+R': 'Reserved for the desktop reload guard.',

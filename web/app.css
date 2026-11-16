@@ -106,6 +106,9 @@ a { color: var(--accenttext); } a:hover { color: var(--text); }
   .ribbon-body[data-contents='drawingHome'] .ribbon-small { gap: 3px; padding-inline: 3px; }
   .ribbon-body[data-contents='drawingHome'] .ribbon-field select { width: 84px; }
   .ribbon-body[data-contents='drawingHome'] [data-panel='Layers'] .ribbon-groupbody { flex-direction: column; }
+  [data-testid=part-ribbon] .ribbon-group { padding-inline: 3px; }
+  [data-testid=part-ribbon] .ribbon-gtitle { margin-inline: -3px; }
+  [data-testid=part-ribbon] .ribbon-big { width: 44px; }
 }
 
 /* menu bar */
@@ -143,7 +146,7 @@ a { color: var(--accenttext); } a:hover { color: var(--text); }
 .propbar { display: flex; align-items: center; flex-wrap: wrap; gap: 14px; height: 40px; padding: 0 12px; background: var(--ribbon); border-bottom: 1px solid var(--line); flex-shrink: 0; }
 .propbar .name { font-weight: 600; }
 .propbar .unit { margin-left: auto; }
-@media (max-width: 1150px) { .propbar { gap: 10px; } .propbar .unit { display: none; } }   /* the status bar says mm too; keeps the bar on one line at 1024 */
+@media (max-width: 1150px) { .propbar { gap: 10px; } .propbar .unit, .selbar .area { display: none; } }   /* the status bar says mm too; the area text no longer fits next to the 294c fields (its tooltip is gone with it); keeps the bar on one line at 1024 */
 .lbl { font-size: 12px; color: var(--muted); }
 label.inline { display: flex; align-items: center; gap: 6px; }
 .fld { height: 28px; border: 1px solid var(--line2); border-radius: var(--r); background: var(--field); color: var(--text); font-family: var(--mono); font-size: 12px; padding: 0 8px; width: 100%; min-width: 0; }
@@ -154,7 +157,14 @@ select.fld { font-family: var(--sans); }
 
 /* body */
 .main { flex: 1; min-height: 180px; display: flex; } /* Keep floating panel controls reachable above an expanded Balloons dock. */
-.swatch-strip { width: 30px; flex: 0 0 30px; min-height: 0; overflow-y: auto; scrollbar-width: none; padding: 4px; border-left: 1px solid var(--line); background: var(--panel); }
+.swatch-strip { width: 30px; flex: 0 0 30px; min-height: 0; display: flex; flex-direction: column; padding: 4px; border-left: 1px solid var(--line); background: var(--panel); }
+.swatch-strip[hidden] { display: none; }
+.strip-scroll { flex: 1; min-height: 0; overflow-y: auto; scrollbar-width: none; }
+.strip-arrow { flex: 0 0 auto; width: 21px; height: 14px; padding: 0; border: 1px solid var(--muted); background: var(--field); color: var(--text); font-size: 8px; line-height: 1; cursor: pointer; }
+.strip-arrow[hidden] { display: none; }
+.strip-arrow:hover, .strip-arrow:focus-visible { outline: 2px solid var(--accent); outline-offset: 0; }
+.strip-arrow:first-child { margin-bottom: 2px; }
+.strip-arrow:last-child { margin-top: 2px; }
 .strip-group { display: flex; flex-direction: column; gap: 2px; }
 .strip-group + .strip-group { border-top: 1px solid var(--line); margin-top: 5px; padding-top: 5px; }
 .strip-swatch { width: 21px; height: 20px; flex-shrink: 0; padding: 0; border: 1px solid var(--muted); cursor: pointer; }
@@ -277,6 +287,10 @@ select.fld { font-family: var(--sans); }
 .docker-folded > .sec .section-toggle svg, .docker-folded > .layers-head .section-toggle svg { transform: rotate(-90deg); }
 .panel .layers-head > .sec { flex: 1; }
 .panel .layers-head > .tog { flex-shrink: 0; }
+.size-strip { display: flex; flex-wrap: wrap; gap: 2px 4px; padding: 4px 6px; background: var(--panel); border-bottom: 1px solid var(--line); flex-shrink: 0; }
+.size-strip[hidden] { display: none; }
+.size-strip .field { flex: 1 1 40px; min-width: 0; gap: 1px; font-size: 10.5px; }
+.size-strip .fld { width: 100%; min-width: 0; height: 20px; padding: 0 4px; box-sizing: border-box; font-size: 12px; }
 .panel-resize { position: absolute; left: -4px; top: 0; bottom: 0; width: 7px; cursor: col-resize; touch-action: none; z-index: 5; }
 .panel-resize::before { content: ''; position: absolute; left: 2px; top: calc(50% - 17px); height: 34px; width: 2px; background: var(--line2); box-shadow: 3px 0 var(--line2); border-radius: 2px; }
 .panel-resize:hover, .panel-resize:focus-visible { background: var(--sel); outline: 1px solid var(--accent); }
@@ -479,6 +493,49 @@ select.fld { font-family: var(--sans); }
 .orow:hover { border-color: var(--accent); }
 .orow .nm { flex: 1; }
 .selbar .fld { width: 76px; }
+.selbar { flex-wrap: nowrap; gap: 8px; }
+.sel-transforms { display: inline-flex; align-items: center; gap: 8px; }
+.sel-transforms .fld { width: 56px; }
+.sel-transforms .btn svg { display: none; }
+.selection-commands, .selection-shaping, .selection-arrange { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
+.selection-commands[hidden] { display: none; }
+.selection-commands .ib { width: 24px; height: 26px; }
+.selection-arrange { border-left: 1px solid var(--line2); padding-left: 3px; margin-left: 2px; }
+[data-testid=part-ribbon] .selection-commands { padding: 3px; align-items: start; }
+[data-testid=part-ribbon] .selection-shaping, [data-testid=part-ribbon] .selection-arrange { display: grid; grid-template-rows: repeat(3, 24px); grid-auto-flow: column; }
+[data-testid=part-ribbon] .selection-commands .ib { height: 24px; }
+.selbar .name, .selbar [data-testid=sel-layer] { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; max-width: 120px; }
+.selbar .name { flex-shrink: 0; }
+.selbar > label, .sel-transforms, .selbar > .btn { flex-shrink: 0; }
+@media (max-width: 1250px) {
+  .selbar { gap: 4px; padding: 0 20px 0 8px; }   /* 20 px kept clear on the right: with a wider font the layer label (min-width 0, ellipsis) gives way first */
+  .selbar .fld { width: 56px; }
+  .sel-transforms { gap: 4px; }
+  .sel-transforms .lbl.inline { gap: 4px; }
+  .sel-transforms .fld { width: 44px; }
+  .sel-transforms [data-testid=sel-x], .sel-transforms [data-testid=sel-y] { width: 48px; }
+  .sel-transforms [data-testid=sel-width] { width: 76px; }
+  .selbar .btn { padding-inline: 6px; font-size: 11px; }
+  .selbar .sizelbl { display: none; }
+  .selbar .selection-commands .ib { width: 20px; }   /* 15 buttons: 60 px of slack at 1024 so wider CI fonts still fit */
+  .selbar .name, .selbar [data-testid=sel-layer] { max-width: 70px; }
+  .selbar.multi-selection .name, .selbar.multi-selection [data-testid=sel-layer], .selbar.multi-selection .area, .selbar.multi-selection .ctlabel { display: none; }
+  .selbar.multi-selection, .selbar.multi-selection .sel-transforms { gap: 2px; }
+  .selbar.multi-selection > label .fld { width: 44px; }
+  .selbar.multi-selection .sel-transforms .lbl.inline { font-size: 0; gap: 0; }
+  .selbar.multi-selection .sel-transforms .fld { width: 36px; font-size: 11px; padding-inline: 3px; }
+  .selbar.multi-selection .sel-transforms [data-testid=sel-width] { width: 65px; }
+  .selbar.multi-selection .sel-transforms [data-testid=sel-x], .selbar.multi-selection .sel-transforms [data-testid=sel-y] { width: 44px; }
+  .selbar.multi-selection .sel-transforms [data-testid=sel-scale] { width: 40px; }
+  .selbar.multi-selection .sel-transforms .btn { font-size: 0; padding: 3px; }
+  .selbar.multi-selection .sel-transforms .btn svg { display: block; }
+  /* Font-proof at 1024: the part name and the field labels take fixed widths and cut with an ellipsis (the name keeps its full-text title) */
+  [data-testid=part-ribbon] .name { width: 0; min-width: 0; flex-grow: 1; }
+  [data-testid=part-ribbon] .ribbon-field > span { width: 50px; overflow: hidden; text-overflow: ellipsis; }
+  [data-testid=part-ribbon].multi-selection .ribbon-big { width: 28px; }
+  [data-testid=part-ribbon].multi-selection .ribbon-big svg { width: 24px; height: 24px; }
+  [data-testid=part-ribbon].multi-selection .ribbon-field input { width: 60px; }
+}
 .pop { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); box-shadow: 0 8px 24px rgba(0, 0, 0, .28); }
 .ctxmenu { position: fixed; z-index: 60; min-width: 190px; padding: 4px 0; display: flex; flex-direction: column; }
 .mi { padding: 6px 12px; display: block; width: 100%; text-align: left; background: none; border: 0; color: var(--text); font: inherit; cursor: pointer; }
@@ -884,6 +941,8 @@ button.cswatch, button.ribbon-swatch { padding: 0; cursor: pointer; }
 .baldock.collapsed .baldrag { cursor: default; }
 .balhead { display: flex; align-items: center; gap: 8px; padding: 0 12px 6px; flex-wrap: wrap; }
 .balhead .fld { width: 120px; }
+.balhead .balsize { width: 58px; }
+.balsize[aria-invalid='true'] { border-color: #dc2626; outline: 1px solid #dc2626; }
 .balhead .iconbtn { width: 26px; padding: 0; justify-content: center; }
 .balscroll { flex: 1; min-height: 0; overflow: auto; border-top: 1px solid var(--line); }
 .baldock.collapsed .balscroll { display: none; }
@@ -1061,7 +1120,7 @@ kbd { font: 500 11px var(--mono); padding: 1px 5px; border: 1px solid var(--line
 .status .cb-hint { margin-left: 8px; margin-right: 6px; white-space: nowrap; }
 @media (max-width: 1280px) { .status .cb-hint, .status .cb-echo-text { display: none; } }       /* narrow: the echo is its icon only */
 @media (max-width: 1400px) { .status { gap: 2px; } .status .lbl + .lbl, .status .tool-chip { margin-left: 6px; } .status .tool-chip { padding: 1px 4px; } .status .tog { padding: 0 4px; } }       /* narrow: leave room for Snap preview and the PDF sheet chip with wider fonts */
-@media (max-width: 1100px) { .status { gap: 1px; padding: 0 4px; } .status .lbl + .lbl, .status .tool-chip { margin-left: 0; } .status .tog { padding: 0 3px; } .status .cb-echo { display: none; } .status .coords { min-width: 160px; } }       /* Leave room for Snap preview, DYN and the PDF sheet chip; typing still opens the bar. */
+@media (max-width: 1100px) { .status { gap: 1px; padding: 0 4px; } .status .lbl + .lbl, .status .tool-chip { margin-left: 0; } .status .tog { padding: 0 3px; } .status .cb-echo { display: none; } .status .coords { min-width: 160px; } .status .layer-info { flex-shrink: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; } }       /* Leave room for Snap preview, DYN and the PDF sheet chip; typing still opens the bar. */
 
 /* TODO 34: R12 Shortcuts, using the same tokens as the mock-up. */
 .sc-back { background: color-mix(in srgb, var(--canvas) 75%, transparent); }

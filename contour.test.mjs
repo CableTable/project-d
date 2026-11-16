@@ -48,6 +48,43 @@ test('TODO 200: a 10 m rectangle whose bottom edge dips 0.04 mm keeps the dip po
 
 const lShape = poly([[0, 0], [100, 0], [100, 40], [40, 40], [40, 100], [0, 100]]);
 const closed = (loop) => loop.every((s, i) => { const p = loop[(i + loop.length - 1) % loop.length]; return Math.hypot(s.p0[0] - p.p1[0], s.p0[1] - p.p1[1]) < 1e-6; });
+test('TODO 289: open chains make closed outlines with three ends, steps and mixed picks', () => {
+  for (const ends of ['butt', 'round', 'square']) for (const outward of [false, true]) {
+    const chain = [C.seg([0, 0], [10, 0])], before = JSON.stringify(chain);
+    const r = C.contour([], { chains: [chain], dist: 2, steps: 2, outward, ends });
+    assert.equal(r.made, 2, ends);
+    assert.equal(JSON.stringify(chain), before, 'source kept');
+    r.steps.forEach(([loop], i) => {
+      const d = 2 * (i + 1);
+      assert.ok(closed(loop));
+      near(C.loopArea(loop), 20 * d + (ends === 'round' ? PI * d * d : ends === 'square' ? 4 * d * d : 0), ends);
+      assert.equal(loop.filter((s) => s.b).length, ends === 'round' ? 2 : 0);
+    });
+  }
+  const a = C.seg([0, 0], [10, 0]), b = C.seg([10, 0], [10, 10]);
+  const built = C.buildLoops([b, a, ...rect(30, 0, 20, 20)]);
+  assert.equal(built.open, 2);
+  assert.equal(built.chains.length, 1);
+  for (const corners of ['sharp', 'rounded']) {
+    const r = C.contour(built.loops, { chains: built.chains, dist: 2, steps: 1, outward: false, corners });
+    assert.equal(r.made, 2);
+    assert.ok(r.steps[0].every(closed));
+    near(C.loopArea(r.steps[0][0]), 256, 'closed loop goes inside');
+  }
+  const arc = [C.seg([10, 0], [0, 10], BU)];
+  for (const ends of ['butt', 'round', 'square']) {
+    const r = C.contour([], { chains: [arc, C.reverseLoop(arc)], dist: 2, steps: 1, ends });
+    assert.equal(r.made, 2);
+    assert.ok(r.steps[0].every(closed));
+    near(C.loopArea(r.steps[0][0]), C.loopArea(r.steps[0][1]));
+  }
+});
+test('TODO 289: self-crossing open outlines refuse the step, keeping earlier steps', () => {
+  const chains = [[C.seg([0, 0], [20, 0]), C.seg([20, 0], [20, 5]), C.seg([20, 5], [0, 5])]];
+  const r = C.contour([], { chains, dist: 2, steps: 3, ends: 'round' });
+  assert.equal(r.made, 1);
+  assert.deepEqual(r.stopped, { step: 2, why: 'it would close up' });
+});
 const off = (loop, t, corners = 'sharp') => { const r = C.offsetLoop(loop, t, { corners }); assert.ok(r.ok, 'offset ' + t + ' failed: ' + r.why); assert.ok(closed(r.loop), 'the result is closed'); return r.loop; };
 
 test('TODO 200: short in-line edges and a tiny step survive; a narrow slot still closes up', () => {

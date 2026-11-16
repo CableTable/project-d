@@ -22,7 +22,9 @@ export function scaleEntities(raw, selection, base, factor, copy = false) {
   let blocks = next.blocks;
   const done = new Set();
   const one = (e, anchor) => {
-    let r = scaleRecord(e.type, e.r, anchor, factor, e.flip);
+    let r = scaleRecord(e.type, e.r, anchor, factor, e.flip, e.scaleWithObject);
+    const lw = e.scaleWithObject && e.lw > 0 ? Math.max(1, Math.round(e.lw * factor)) : e.lw;
+    if (lw > 32767) throw new Error('Scaled outline width exceeds 327.67 mm');
     let name = field(r, 2);
     const kept = e.type === 'INSERT' && (DIM_BLOCK.test(name) || LDR_BLOCK.test(name));
     if (e.type === 'ACAD_TABLE' && ownBlock(blocks, name)) {
@@ -40,8 +42,8 @@ export function scaleEntities(raw, selection, base, factor, copy = false) {
       if (e.type === 'DIMENSION' ? ((+field(r, 70) || 0) & 7) !== 6 : DIM_BLOCK.test(name)) entities = relabel(entities, factor);
       blocks = { ...blocks, [name]: { ...b, base: local ? b.base.map((v) => v * factor) : b.base, entities } };
     }
-    return { ...e, r, kids: e.kids?.map((kid) => scaleRecord(kid.type, kid, anchor, factor,
-      kid.type === 'VERTEX' ? e.flip : +field(kid, 230) < 0)) };
+    return { ...e, lw, r, kids: e.kids?.map((kid) => scaleRecord(kid.type, kid, anchor, factor,
+      kid.type === 'VERTEX' ? e.flip : +field(kid, 230) < 0, e.scaleWithObject)) };
   };
   const copies = next.entities.slice(raw.entities.length).map((e) => one(e, base));
   let k = 0;
@@ -49,7 +51,7 @@ export function scaleEntities(raw, selection, base, factor, copy = false) {
   return { entities, blocks, ...(copy && next.groups ? { groups: next.groups } : {}) };
 }
 
-function scaleRecord(type, r, base, factor, flip) {
+function scaleRecord(type, r, base, factor, flip, scaleWidths) {
   const c = r.c.slice(), v = r.v.slice(), anchor = flip && (OCS.has(type) || type === 'VERTEX') ? [-base[0], base[1]] : base;
   const set = (code, value) => { const k = c.indexOf(code); if (k < 0) { c.push(code); v.push(text(value)); } else v[k] = text(value); };
   const length = (k) => { v[k] = text(+r.v[k] * factor); };
@@ -94,7 +96,7 @@ function scaleRecord(type, r, base, factor, flip) {
     const pts = ['ACAD_TABLE', 'WIPEOUT', 'IMAGE', 'VIEWPORT'].includes(type) ? [10] : SPEC[type]?.pts;
     if (!pts) throw new Error('Cannot scale ' + type);
     const vec = type === 'ELLIPSE' ? [11] : type === 'SPLINE' ? [12, 13] : ['WIPEOUT', 'IMAGE'].includes(type) ? [11, 12] : [];
-    const lens = ['LWPOLYLINE', 'POLYLINE', 'VERTEX'].includes(type) ? [] : type === 'VIEWPORT' ? [40, 41] : SPEC[type]?.len || [];
+    const lens = ['LWPOLYLINE', 'POLYLINE', 'VERTEX'].includes(type) ? scaleWidths ? [40, 41, 43] : [] : type === 'VIEWPORT' ? [40, 41] : SPEC[type]?.len || [];
     for (let k = 0; k < r.c.length; k++) {
       const code = r.c[k];
       if (pts.includes(code) || vec.includes(code)) pair(k, vec.includes(code));

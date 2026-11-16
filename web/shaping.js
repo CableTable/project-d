@@ -1,11 +1,11 @@
 // shaping.js — Shaping like CorelDRAW (TODO 122): boolean operations on closed outlines, pure (no DOM, no files): shaping.test.mjs.
 //
 // An outline is a closed loop of points [x, y] (edit.js outlineLoops flattens arcs and circles). Loops nested inside each other (even-odd) are one
-// shape with holes, so a washer is one operand, not two. A result is a list of closed rings: a shape with holes is several rings, which the caller draws
+// shape with holes, so a washer is one operand, not two, unless that leaves fewer than 2 shapes: then every loop is its own shape. A result is a list of closed rings: a shape with holes is several rings, which the caller draws
 // as closed polylines. The boolean maths is the vendored polygon-clipping (MIT, web/vendor/polygon-clipping).
 //
 //   operandsOf(loops)            → [{ poly: [outer, ...holes], loops: [loop indexes], area }]   the shapes the loops make
-//   shape(op, loops, target)     → { rings, sources, area, operands, target, untouched } | { error }; sources indexes operands for each ring;
+//   shape(op, loops, target)     → { rings, sources, area, operands, target, untouched } | { error }; sources indexes operands for each ring; pieces: rings with the same number are one shape with holes;
 //                                 untouched: the operands Simplify leaves as they are (nothing in front overlaps them)
 //                                 target input: the loop index Trim cuts (-1 = the largest shape)
 //   OPS                          → { label, run(polys, target), target?, each? } (each runs once per source operand)
@@ -24,6 +24,8 @@ export function operandsOf(loops) {
   const out = new Map();
   pts.forEach((r, i) => { if (holders[i].length % 2 === 0) out.set(i, { poly: [r], loops: [i], area: a[i] }); });
   pts.forEach((r, i) => { if (holders[i].length % 2) { const o = out.get(holders[i][0]); o.poly.push(r); o.loops.push(i); o.area -= a[i]; } });
+  // the holes would leave one shape (a nested pair): then each loop is its own shape, so one outline can be cut out of / welded with the other (TODO 288a)
+  if (out.size < 2 && pts.length > 1) return pts.map((r, i) => ({ poly: [r], loops: [i], area: a[i] }));
   return [...out.values()];
 }
 
@@ -64,25 +66,27 @@ function run(o, loops, target) {
   // Selection order and closed-loop discovery order need not be drawing order; a chain takes its frontmost entity's position.
   const order = (o) => loops[o.loops[0]].ents ? Math.max(...loops[o.loops[0]].ents) : o.loops[0];
   operands.sort((a, b) => order(a) - order(b));
-  if (operands.length < 2) return { error: `${o.label} needs at least 2 closed outlines` + (loops.length > 1 ? ' (outlines inside another one count as its holes)' : ''), operands };
+  if (operands.length < 2) return { error: `${o.label} needs at least 2 closed outlines`, operands };
   let t = operands.findIndex((x) => x.loops.includes(target));
   if (t < 0) t = operands.reduce((best, x, i) => (x.area > operands[best].area ? i : best), 0);
   if (o.target) t = o.target(operands);
-  const polys = operands.map((x) => x.poly), rings = [], sources = [];
+  const polys = operands.map((x) => x.poly), rings = [], sources = [], pieces = [];
   const targets = o.each ? operands.map((_, i) => i) : [t];
   let area = 0;
   const untouched = [];                                             // an each-op leaves an outline nothing in front overlaps as it is (its own entity)
   for (const source of targets) {
     if (o.each && !polys.slice(source + 1).some((f) => pc.intersection(polys[source], f).length)) { untouched.push(source); area += operands[source].area; continue; }
     for (const poly of o.run(polys, source)) {
+      const piece = pieces.length;
       poly.forEach((r, k) => {
         const ring = r.slice(0, -1);                                // pc closes each ring by repeating its first point
         if (ring.length < 3) return;
         rings.push(ring);
         sources.push(source);
+        pieces.push(piece);
         area += k ? -ringArea(ring) : ringArea(ring);
       });
     }
   }
-  return { rings, sources, area, operands, target: t, untouched };
+  return { rings, sources, pieces, area, operands, target: t, untouched };
 }

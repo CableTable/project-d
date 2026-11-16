@@ -7,16 +7,19 @@ import { group, follow } from './groups.js';
 //
 //   flatten(readDxf(decodeDxf(bytes))) → { units, layers, items, mats, vports, boxes, left, truncated, endsEarly }
 //   an item, in drawing order: { k, m, L, ps, css, lw, dash | dpx, b, … }
-//     k   'p' a path (stroked, or filled with fill: 1) · 'h' a patterned hatch · 't' text · 'w' a wipeout · 'n' a point
+//     k   'p' a path (stroked, or filled with fill: 1) · 'h' a patterned hatch · 't' text · 'w' a wipeout · 'n' a point · 'i' a picture
+//         (px a PNG data URL, q [ux, uy, vx, vy, ix, iy]: the unit square, image top at y = 1, → drawing units; its ops are the outline)
 //     m   its matrix, mats[m] (a block's placement; 0 is none) · L its layers (its own, then the blocks' it sits in)
 //     e   the index of the top-level entity it was drawn from (a block's contents: the INSERT's)
 //     ps  on the sheet (paper space) · css its colour · lw its weight (1/100 mm)
 //     widthFromTop whether its lineweight follows the top-level entity (through ByBlock)
+//     cap 'butt' / 'round' / 'square', join 'miter' / 'round' / 'bevel' (miter limit 10)
 //     dash a line type in its own units (on, off, on, off …) · dpx one in screen pixels · b its box [x0, y0, x1, y1]
 //   a path's ops: 0 x y (move) · 1 x y (line) · 2 cx cy r a0 a1 cw (arc; cw 1 = clockwise) · 9 (close)
 
 import { fontForStyle } from './fontsub.js';
 import { pathCentre } from './snap.js';
+import { isPng } from './pictures.js';
 export { fontOfStyle } from './fontsub.js';
 
 export class DrawingError extends Error {}
@@ -71,6 +74,12 @@ export function readDxf(text) {
   }
   doc.endsEarly = endsEarly || !C.some((c, i) => i > last && c === 0 && V[i].trim() === 'EOF');   // no EOF after the last section
   doc.groups = readGroups(objects, doc.entities);
+  const imageFiles = new Map(objects.filter((r) => r.type === 'IMAGEDEF').map((r) => {
+    const f = firsts(r); return [(f[5] || '').trim().toUpperCase(), f[1]?.trim()];
+  }));
+  for (const e of [...doc.entities, ...Object.values(doc.blocks).flatMap((b) => b.entities)]) {
+    if (e.type === 'IMAGE') e.r.file = imageFiles.get((firsts(e.r)[340] || '').trim().toUpperCase());
+  }
   restoreDimensionInserts(doc);
   const before = doc.entities;
   linkFills(doc);
@@ -213,10 +222,18 @@ const OCS = new Set(['CIRCLE', 'ARC', 'LWPOLYLINE', 'POLYLINE', 'TEXT', 'ATTRIB'
 
 /** An entity's own properties (layer, colour, line type, weight…) and its raw pairs. */
 function entity(r, kids) {
-  const e = { type: r.type, layer: '0', lt: null, aci: 256, tc: null, lw: -1, lts: 1, hidden: false, ps: false, flip: false, r, kids };
-  let own = true, nx = 0, ny = 0, nz = 1;
+  const e = { type: r.type, layer: '0', lt: null, aci: 256, tc: null, lw: -1, cap: 'butt', join: 'miter', scaleWithObject: false, lts: 1, hidden: false, ps: false, flip: false, r, kids };
+  let own = true, nx = 0, ny = 0, nz = 1, app = '';
   for (let k = 0; k < r.c.length; k++) {
     const c = r.c[k], v = r.v[k];
+    if (c === 1001) app = v.trim().toUpperCase();
+    if (app === 'PROJECTD' && c === 1000 && v.trim() === 'LINE_ENDS_V1' &&
+      r.c.slice(k + 1, k + 4).every((code) => code === 1070) && r.c.length >= k + 4) {
+      const [cap, join, scale] = r.v.slice(k + 1, k + 4).map((s) => s.trim());
+      if (/^[012]$/.test(cap) && /^[012]$/.test(join) && /^[01]$/.test(scale)) {
+        e.cap = ['butt', 'round', 'square'][+cap]; e.join = ['miter', 'round', 'bevel'][+join]; e.scaleWithObject = scale === '1';
+      }
+    }
     if (c === 210) nx = num(v); else if (c === 220) ny = num(v); else if (c === 230) nz = num(v, 1);
     if (c === 100) { if (v.trim() !== 'AcDbEntity') own = false; continue; }
     if (!own) continue;
@@ -456,12 +473,13 @@ export function flatten(doc, hidden = new Set()) {
       const L = ctx.L ? [own, ...ctx.L.filter((x) => x !== own)] : [own];
       const css = e.tc != null ? rgbCss(e.tc) : e.aci === 0 ? ctx.css || '#ffffff'
         : e.aci === 256 || e.aci === 257 || e.aci == null ? lay.css : ACI[Math.abs(e.aci)] || lay.css;
+      const exact = css === '#ffffff' && (e.tc != null || (e.aci == null || e.aci >= 256) && doc.layers[lay.name]?.tc === 0xffffff);
       const lw = e.lw === -2 ? ctx.lw ?? 25 : e.lw === -1 ? lay.lw : e.lw === -3 ? 25 : e.lw;
       const ltName = (e.lt || 'BYLAYER').toUpperCase();
       const lt = ltName === 'BYLAYER' ? lay.lt : ltName === 'BYBLOCK' ? ctx.lt || '' : ltName;
       let m = ctx.m;
       if (e.flip) { mats.push(mmul(mats[ctx.m], FLIP)); m = mats.length - 1; }
-      const base = { m, L, e: top, ps: ctx.ps != null ? ctx.ps : e.ps ? 1 : 0, css, lw, widthFromTop: depth === 0 || e.lw === -2 && ctx.widthFromTop, ...dashOf(lt, e.lts) };
+      const base = { m, L, e: top, ps: ctx.ps != null ? ctx.ps : e.ps ? 1 : 0, css, lw, cap: e.cap || 'butt', join: e.join || 'miter', ...(exact ? { exact: true } : {}), widthFromTop: depth === 0 || e.lw === -2 && ctx.widthFromTop, ...dashOf(lt, e.lts) };
       const put = (it) => {
         if (items.length >= MAX_ITEMS) { truncated = true; return; }
         if (!it.b) return;
@@ -590,6 +608,14 @@ export function flatten(doc, hidden = new Set()) {
           put({ k: 'w', ...base, ops, b: opsBox(ops) });
           break;
         }
+        case 'IMAGE': {                                   // a picture with pixels (r.px, TODO 305a): u, v are one pixel's sides, 13 / 23 its size in pixels; without pixels it stays undrawn
+          const w = num(f[13]), hh = num(f[23]);
+          if (!isPng(r.px) || !(w > 0 && hh > 0)) { skip('IMAGE'); break; }
+          const ix = num(f[10]), iy = num(f[20]), ux = num(f[11]) * w, uy = num(f[21]) * w, vx = num(f[12]) * hh, vy = num(f[22]) * hh;
+          const ops = lineOps([[ix, iy], [ix + ux, iy + uy], [ix + ux + vx, iy + uy + vy], [ix + vx, iy + vy]], true);
+          put({ k: 'i', ...base, ops, px: r.px, q: [ux, uy, vx, vy, ix, iy], b: opsBox(ops) });
+          break;
+        }
         case 'VIEWPORT': {
           if (depth || !e.ps) break;
           const id = num(f[69], 2), status = f[68] == null ? 1 : num(f[68]);
@@ -640,7 +666,7 @@ export function patchWidths(fl, entities, keys, factor = 1, reshape = new Set())
     if (poly && reshape.has(it.e) && !it.attachedFill) {
       if (rebuilt.has(it.e)) continue;
       rebuilt.add(it.e);
-      const base = { k: 'p', m: it.m, L: it.L, e: it.e, ps: it.ps, css: it.css, lw, widthFromTop: true, dash: it.dash, dpx: it.dpx };
+      const base = { k: 'p', m: it.m, L: it.L, e: it.e, ps: it.ps, css: it.css, lw, cap: it.cap, join: it.join, widthFromTop: true, dash: it.dash, dpx: it.dpx };
       const put = (item) => { item.b = worldBox(fl.mats[item.m], item.b); items.push(item); };
       const path = (ops, extra) => { if (ops.length > 3) put({ ...base, ops, ...extra, b: opsBox(ops, extra?.w ? extra.w / 2 : 0) }); };
       if (ent.type === 'LWPOLYLINE') lwpoly(ent, firsts(ent.r), base, path, put);
@@ -947,7 +973,16 @@ function curveExtremes(points, closed, refine, period) {
  * middles, centres, points), in the drawing's own coordinates, on a grid for quick lookups.
  */
 export function pickIndex(fl, paper, visible = () => true, extremeFrame = IDENT) {
-  const pieces = [], snaps = [];
+  // Spline segments already live in ops: retain an item/op address, not another object and four boxed coordinates per segment.
+  const stored = [], snaps = [], stride = fl.items.length;
+  const pieces = new Proxy(stored, { get(target, key, receiver) {
+    const value = Reflect.get(target, key, receiver);
+    if (key === 'length' || typeof value !== 'number') return value;
+    const idx = value % stride, op = Math.floor(value / stride), it = fl.items[idx], ops = it.ops, m = fl.mats[it.m];
+    const a = mapply(m, ops[op - 2], ops[op - 1]);
+    const b = ops[op] === 9 ? mapply(m, ops[1], ops[2]) : mapply(m, ops[op + 1], ops[op + 2]);
+    return { t: 's', it: idx, x1: a[0], y1: a[1], x2: b[0], y2: b[1], curve: true };
+  } });
   for (const { p: [x, y], start, end } of fl.insertions || []) {
     for (let it = start; it < end; it++) if (!!fl.items[it].ps === !!paper && visible(it)) {
       snaps.push({ x, y, kind: 'insertion', it });
@@ -959,7 +994,7 @@ export function pickIndex(fl, paper, visible = () => true, extremeFrame = IDENT)
     const m = fl.mats[it.m];
     if (it.insertion) { const [x, y] = mapply(m, ...it.insertion); snaps.push({ x, y, kind: 'insertion', it: idx }); }
     if (it.k === 'n') { const [x, y] = mapply(m, it.x, it.y); snaps.push({ x, y, kind: 'node', it: idx }); return; }
-    if (it.k !== 'p' || it.fill) return;
+    if (it.k !== 'i' && (it.k !== 'p' || it.fill)) return;                  // a picture's frame picks and snaps like a closed outline
     const ops = it.ops, sim = similar(m), sc = mscale(m), flipped = m[0] * m[3] - m[1] * m[2] < 0;
     if (!it.ell && !it.spl) {
       const centre = pathCentre(ops);
@@ -973,15 +1008,16 @@ export function pickIndex(fl, paper, visible = () => true, extremeFrame = IDENT)
       period ??= points.length - (closed && Math.hypot(points[0][0] - points.at(-1)[0], points[0][1] - points.at(-1)[1]) < 1e-9 ? 1 : 0);
       for (const [x, y] of curveExtremes(points.map(([x, y], i) => [a * x + c * y, b * x + d * y, params ? params[i] : i]), closed, refine, period)) extremes.push([(d * x - c * y) / det, (a * y - b * x) / det]);
     };
-    const seg = (a, b) => {
+    const seg = (a, b, op) => {
       if (Math.hypot(b[0] - a[0], b[1] - a[1]) < 1e-12) return;
-      pieces.push({ t: 's', it: idx, x1: a[0], y1: a[1], x2: b[0], y2: b[1], curve });
+      if (it.spl) stored.push(op * stride + idx);
+      else pieces.push({ t: 's', it: idx, x1: a[0], y1: a[1], x2: b[0], y2: b[1], curve });
       if (!curve) snaps.push({ x: (a[0] + b[0]) / 2, y: (a[1] + b[1]) / 2, kind: 'mid', it: idx });
     };
     for (let i = 0; i < ops.length; justMoved = ops[i] === 0, i += ops[i] === 2 ? 7 : ops[i] === 9 ? 1 : 3) {
       const op = ops[i];
       if (op === 0) { cur = first = mapply(m, ops[i + 1], ops[i + 2]); if (curve) curvePoints.push(cur); snaps.push({ x: cur[0], y: cur[1], kind: 'end', it: idx }); }
-      else if (op === 1) { const p = mapply(m, ops[i + 1], ops[i + 2]); if (cur) seg(cur, p); cur = p; if (curve) curvePoints.push(p); else snaps.push({ x: p[0], y: p[1], kind: 'end', it: idx }); }
+      else if (op === 1) { const p = mapply(m, ops[i + 1], ops[i + 2]); if (cur) seg(cur, p, i); cur = p; if (curve) curvePoints.push(p); else snaps.push({ x: p[0], y: p[1], kind: 'end', it: idx }); }
       else if (op === 2) {
         const [cx, cy, r, a0, a1, cw] = ops.slice(i + 1, i + 7);
         const [s, sw] = arcSweep(a0, a1, cw), full = sw > TAU - 1e-6;
@@ -1016,7 +1052,7 @@ export function pickIndex(fl, paper, visible = () => true, extremeFrame = IDENT)
           const c = mapply(m, cx, cy); snaps.push({ x: c[0], y: c[1], kind: 'centre', it: idx });
         }
         cur = pe;
-      } else { if (cur && first) seg(cur, first); cur = first; closed = true; }
+      } else { if (cur && first) seg(cur, first, i); cur = first; closed = true; }
     }
     if (curve) { if (closed) snaps.splice(s0, 1); else if (cur) snaps.push({ x: cur[0], y: cur[1], kind: 'end', it: idx }); }   // a closed curve has no end; an open one, its last point
     if (it.ell) {

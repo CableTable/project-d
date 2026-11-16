@@ -41,6 +41,14 @@ test('TODO 265: center and centre resolve in every tab without a key', () => {
   }
 });
 
+test('TODO 281: cp resolves in every tab and leaves P as Polyline', () => {
+  for (const tab of ['draw', 'layout', 'compare']) {
+    const cmd = CB.resolve('cp', tab);
+    assert.equal(cmd?.name, 'centreonpage'); assert.equal(cmd.where, ''); assert.equal(cmd.key, '');
+    assert.equal(CB.resolve('p', tab).name, 'polyline');
+  }
+});
+
 test('every name and alias is lower case, and no command repeats a word on the same tab', () => {
   for (const tab of ['draw', 'layout']) {
     const seen = new Map();

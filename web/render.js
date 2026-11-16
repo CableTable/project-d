@@ -7,6 +7,7 @@ import { viewOrigin } from './view-origin.js';
 import { drawingPreviewBox, overlayBox } from './preview.js';
 import { outsideView, subPixel, skipPoint, maxScale } from './perf.js';
 import { SNAP_NAME } from './snap.js';
+import { pictureBitmap } from './pictures.js';
 
 const SHEETS = { light: { bg: '#ffffff', fg: '#1b1d22' }, dark: { bg: '#000000', fg: '#e8e8ec' } };
 /** The canvas font of a text item: its style's font (Standard, Arial-like or Mono), bold when its MTEXT font code says so. */
@@ -75,7 +76,7 @@ export function paintDrawing(canvas, o) {
   if (o.previewBounds && o.keep) o.previewBounds(drawingPreviewBox(o));       // a kept pass is a ghost: the whole flattened preview
   const k0 = scale * dpr, V = [k0, 0, 0, k0, -ox * k0, -oy * k0];
   const k = k0 * factor;                                   // pixels in one drawing unit
-  c.lineJoin = 'round'; c.lineCap = 'round';
+  c.lineJoin = 'miter'; c.lineCap = 'butt'; c.miterLimit = 10;
   const col = o.tint ? () => o.tint : (css, exact) => exact ? css : ink(css, dark);          // exact: a fill with its own colour keeps it
   const sheetBg = dark ? SHEETS.dark.bg : SHEETS.light.bg;
   if (o.slots) {
@@ -135,12 +136,27 @@ function wireStroke(c, dpr) {
   c.save(); c.setTransform(1, 0, 0, 1, 0, 0); c.lineWidth = dpr; c.stroke(); c.restore();
 }
 
+/** The pictures (IMAGE items with pixels, TODO 305a), full opacity: the unit square, its top row at y = 1, through the item's q and matrix. */
+function paintPictures(c, fl, off, T, vr, hide) {
+  c.imageSmoothingQuality = 'high';
+  for (const it of shownItems(fl)) {
+    if (it.k !== 'i' || !itemVisible(it, off) || (hide && hide.has(it.e)) || (vr && outsideView(it.b, 0, vr))) continue;
+    const img = pictureBitmap(it.px);
+    if (!img) continue;                                                      // not loaded: preloadPictures runs where pictures come in, so this is rare
+    const [ux, uy, vx, vy, ix, iy] = it.q;
+    c.setTransform(...mmul(mmul(T, fl.mats[it.m]), [ux, uy, -vx, -vy, ix + vx, iy + vy]));
+    c.drawImage(img, 0, 0, 1, 1);
+  }
+}
+
 /** The shown items through T (drawing units → canvas pixels), k pixels per unit; vr culls to the view (drawing units), or null. */
 function paintItems(c, fl, off, T, k, vr, dpr, col, sheetBg, hide, factor, wireframe) {
   const mats = fl.mats;
-  let cur = -1, kk = k, pxPerUnit = 0, open = false, pc = null, pw = 0, pd = null, origin = [0, 0], drawn = 0, run = 0;
+  let cur = -1, kk = k, pxPerUnit = 0, open = false, pc = null, pw = 0, pd = null, cap = null, join = null, origin = [0, 0], drawn = 0, run = 0;
   const flush = () => { if (open) { if (wireframe) wireStroke(c, dpr); else c.stroke(); } open = false; };
+  if (!wireframe) paintPictures(c, fl, off, T, vr, hide);                   // under every line and text; Wireframe hides them like the background
   for (const it of shownItems(fl)) {
+    if (it.k === 'i') continue;
     const b = it.b;
     const pad = it.k === 'p' && !it.fill ? strokeWidth(it, factor, mscale(mats[it.m])) / factor / 2 : 0;
     if (vr && outsideView(b, pad, vr)) continue;
@@ -154,11 +170,13 @@ function paintItems(c, fl, off, T, k, vr, dpr, col, sheetBg, hide, factor, wiref
       const lw = wireframe ? dpr / kk : Math.max(strokeWidth(it, factor, kk / k) * k / factor, 1.2 * dpr) / kk;
       const dash = wireframe ? null : it.dash && it.dash.reduce((a, x) => a + x, 0) * kk > 4 * dpr ? it.dash : it.dpx ? it.dpx : null;
       const css = col(it.css);
+      const nextCap = it.cap || 'butt', nextJoin = it.join || 'miter';
       // shortcut: 5000 is a guess; one open path of 96k splines is the unverified cause of a blank laptop canvas (T87), retest with Untitled-1.dxf
-      if (!open || css !== pc || lw !== pw || dash !== pd || ++run > 5000) {
+      if (!open || css !== pc || lw !== pw || dash !== pd || nextCap !== cap || nextJoin !== join || ++run > 5000) {
         run = 1;
         flush();
         c.strokeStyle = css; c.lineWidth = lw; c.setLineDash(dash === it.dpx && dash ? dash.map((x) => x * dpr / kk) : dash || []);
+        c.lineCap = cap = nextCap; c.lineJoin = join = nextJoin; c.miterLimit = 10;
         c.beginPath(); open = true; pc = css; pw = lw; pd = dash;
       }
       trace(c, it.ops, origin, dash ? 0 : pxPerUnit);
@@ -186,8 +204,9 @@ function highlight(c, items, mats, T, k, dpr, accent, wireframe) {
   for (const it of items) {
     if (it.m !== cur) { cur = it.m; const M = mats[cur], V = mmul(T, M); origin = viewOrigin(V); c.setTransform(...V.slice(0, 4), ...mapply(V, ...origin)); kk = k * mscale(M) || k; pxPerUnit = maxScale(V); }
     c.lineWidth = 2.6 * dpr / kk;
+    c.lineCap = it.cap || 'butt'; c.lineJoin = it.join || 'miter'; c.miterLimit = 10;
     c.beginPath();
-    if (it.k === 'p' || (wireframe && it.ops)) { c.setLineDash([6 * dpr / kk, 6 * dpr / kk]); trace(c, it.ops, origin, pxPerUnit); c.stroke(); }
+    if (it.k === 'p' || it.k === 'i' || (wireframe && it.ops)) { c.setLineDash([6 * dpr / kk, 6 * dpr / kk]); trace(c, it.ops, origin, pxPerUnit); c.stroke(); }
     else { c.setLineDash([]); c.strokeRect(it.b[0] - origin[0], it.b[1] - origin[1], it.b[2] - it.b[0], it.b[3] - it.b[1]); }
   }
 }
@@ -196,6 +215,7 @@ function highlight(c, items, mats, T, k, dpr, accent, wireframe) {
 export function drawDimPreview(c, g, T, dpr, accent) {
   c.setTransform(1, 0, 0, 1, 0, 0);
   c.strokeStyle = accent; c.fillStyle = accent; c.lineWidth = 1.4 * dpr; c.setLineDash([]);
+  c.lineCap = 'round'; c.lineJoin = 'round';           // as before 293a; set here, not left by the last paint (a kept base and a full paint must match)
   c.globalAlpha = g.ghost ? 0.5 : 1;                                   // Automatic dimension's hover preview is faint
   const P = (x, y) => mapply(T, x, y);
   c.beginPath();
@@ -226,6 +246,7 @@ export const SNAP_MARK_SIZE = 6;                   // 155p: AutoSnapMarkerSize 6
 export function drawMarks(c, pts, T, dpr, accent, snapCol = '#00c000') {
   c.setTransform(1, 0, 0, 1, 0, 0);
   c.strokeStyle = accent; c.fillStyle = accent; c.lineWidth = 1.6 * dpr; c.setLineDash([]);
+  c.lineCap = 'round'; c.lineJoin = 'round';
   const placed = pts.filter((p) => !p[3]).map(([x, y]) => mapply(T, x, y));
   if (placed.length > 1) { c.beginPath(); c.setLineDash([6 * dpr, 4 * dpr]); c.moveTo(placed[0][0], placed[0][1]); c.lineTo(placed[1][0], placed[1][1]); c.stroke(); c.setLineDash([]); }
   const r = 7 * dpr;
@@ -304,6 +325,7 @@ function drawHatch(c, it, kk, dpr, colOf, origin, pxPerUnit) {
   let tint = !it.fam.length;
   c.save();
   c.beginPath(); trace(c, it.ops, origin, pxPerUnit); c.clip('evenodd');
+  c.lineCap = 'butt'; c.lineJoin = 'miter'; c.miterLimit = 10;
   c.strokeStyle = col; c.lineWidth = dpr / kk;
   for (const f of it.fam) {
     const dx = Math.cos(f.a), dy = Math.sin(f.a), nx = -dy, ny = dx, sp = f.ox * nx + f.oy * ny;

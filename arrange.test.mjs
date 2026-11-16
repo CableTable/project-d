@@ -53,6 +53,22 @@ test('unionBox', () => {
   assert.equal(A.unionBox([]), null);
 });
 
+test('TODO 281: centre the selection as one block on the whole sheet', () => {
+  const sheet = [0, 0, 1000, 700];
+  for (const boxes of [[], [[10, 20, 110, 60]], B, [[-100, -80, 1200, 900]], [[450, 300, 550, 400]], [[100, 200, 100, 200]]]) {
+    const before = structuredClone(boxes), deltas = A.alignDeltas(boxes, 'page', 'sheet', sheet);
+    assert.equal(deltas.length, boxes.length);
+    assert.deepEqual(boxes, before, 'inputs unchanged');
+    if (!boxes.length) continue;
+    const moved = boxes.map((b, i) => b.map((v, axis) => v + (axis % 2 ? deltas[i].dy : deltas[i].dx)));
+    const union = A.unionBox(moved);
+    near((union[0] + union[2]) / 2, 500); near((union[1] + union[3]) / 2, 350);
+    assert.ok(deltas.every((d) => d.dx === deltas[0].dx && d.dy === deltas[0].dy), 'spacing kept');
+    assert.ok(deltas.every((d) => !Object.is(d.dx, -0) && !Object.is(d.dy, -0)));
+    assert.deepEqual(A.alignDeltas(moved, 'page', 'sheet', sheet), boxes.map(() => ({ dx: 0, dy: 0 })));
+  }
+});
+
 test('align relative to the selection: left, centre, right', () => {
   assert.deepEqual(A.alignDeltas(B, 'left').map((d) => d.dx), [0, -390, -650]);
   assert.deepEqual(A.alignDeltas(B, 'right').map((d) => d.dx), [510, 310, 0]);
@@ -75,6 +91,42 @@ test('align relative to the sheet and to the first selected', () => {
   assert.deepEqual(f.map((d) => d.dx), [390, 0, -260], 'the first selected (index 1) stays');
   const f2 = A.alignDeltas(B, 'top', 'first', null, 2);
   assert.deepEqual(f2.map((d) => d.dy), [10, 40, 0]);
+});
+
+test('TODO 291: last selected stays put for all six alignments', () => {
+  const before = structuredClone(B);
+  const expected = [[650, 260, 0], [580, 285, 0], [510, 310, 0], [10, 40, 0], [20, 45, 0], [30, 50, 0]];
+  A.ALIGN_HOW.forEach((how, i) => {
+    const deltas = A.alignDeltas(B, how, 'last');
+    assert.deepEqual(deltas.map((d) => i < 3 ? d.dx : d.dy), expected[i], how);
+    assert.deepEqual(deltas.at(-1), { dx: 0, dy: 0 }, 'last stays put');
+  });
+  assert.deepEqual(B, before);
+});
+
+test('TODO 291 fix: a group sits at its last-picked member, so it is the last object when a line is picked between', () => {
+  const items = [{ g: 'G', box: [0, 0, 10, 10] }, { box: [50, 0, 60, 10] }, { g: 'G', box: [20, 0, 30, 10] }];
+  const objs = A.objectsOf(items);
+  const deltas = A.alignDeltas(objs.map((o) => o.box), 'left', 'last', null, 0, null, A.lastObjectOf(objs));
+  assert.deepEqual(deltas, [{ dx: 0, dy: 0 }, { dx: -50, dy: 0 }], 'the group stays, the line moves');
+});
+
+test('TODO 291: a point is a zero-size frame for all six alignments, including one object', () => {
+  const before = structuredClone(B), point = [0, -25];
+  const expected = [[-90, -480, -740], [-240, -535, -820], [-390, -590, -900], [-235, -205, -245], [-175, -150, -195], [-115, -95, -145]];
+  A.ALIGN_HOW.forEach((how, i) => {
+    const deltas = A.alignDeltas(B, how, 'point', null, 0, point);
+    assert.deepEqual(deltas, expected[i].map((v) => ({ dx: i < 3 ? v : 0, dy: i < 3 ? 0 : v })), how);
+    assert.deepEqual(A.alignDeltas([B[0]], how, 'point', null, 0, point), [deltas[0]], 'one object');
+  });
+  assert.deepEqual(A.alignDeltas([], 'left', 'point', null, 0, point), []);
+  assert.deepEqual(B, before); assert.deepEqual(point, [0, -25]);
+});
+
+test('TODO 291: Last selected and Point distribute over the selection span on both axes', () => {
+  for (const axis of ['x', 'y']) for (const rel of ['last', 'point']) {
+    assert.deepEqual(A.distributeDeltas(B, axis, rel, [0, 0, 1000, 700]), A.distributeDeltas(B, axis));
+  }
 });
 
 test('align gives no -0', () => {

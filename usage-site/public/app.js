@@ -387,6 +387,20 @@ function queueHeadline({ kind, id, out, state }) {
   return (text + todoTitle(base)).replace(/\b(?=[0-9a-f]*\d)[0-9a-f]{8,}\b/gi, (hex) => hex.slice(0, 7));
 }
 
+// The "Latest exe" card from the `release` doc (`gh release view --json tagName,publishedAt,body`); no doc or no tag hides it. The body's first line is the build note, the rest lists what the exe added.
+function drawRelease(value) {
+  const section = document.getElementById('release'), card = document.getElementById('release-card');
+  card.replaceChildren();
+  section.hidden = typeof value?.tagName !== 'string' || !value.tagName;
+  if (section.hidden) return;
+  const published = new Date(value.publishedAt), added = String(value.body || '').split(/\r?\n/).slice(1).filter((l) => l.trim());
+  card.append(el('h3', null, value.tagName), el('p', 'ud-muted', isNaN(published) ? '' : IST.format(published) + ' IST'));
+  if (!added.length) { card.append(el('p', 'ud-muted', 'No TODO items listed.')); return; }
+  const list = el('ul');
+  added.forEach((line) => list.append(el('li', null, line)));
+  card.append(list);
+}
+
 function draw() {
   const times = data.limits.map((r) => Date.parse(r.as_of)).filter(Number.isFinite);
   document.getElementById('asof').textContent = times.length ? IST.format(new Date(Math.max(...times))) + ' IST' : '\u2014';
@@ -472,11 +486,11 @@ if (Object.values(firebaseConfig).some((v) => v.includes('<'))) {
   onAuthStateChanged(auth, (user) => {
     stopListening(); allowed = false; currentStatus = {};
     data = { limits: [], history: [], runs: [], analysis: [], tickets: [], tokens: [], queue: [] }; queueUpdated = ''; queueNext = [];
-    drawTodo([]); drawTickets(); drawQueue(); drawRookStuck();
+    drawTodo([]); drawTickets(); drawQueue(); drawRookStuck(); drawRelease();
     draw(); finishUpdate(user ? 'Loading…' : 'Sign in to see usage.');
     dashboard.hidden = pageTabs.hidden = true; signin.hidden = !!user; signout.hidden = !user; showStatus();
     if (!user) return;
-    for (const name of ['limits', 'history', 'runs', 'analysis', 'todo', 'tickets', 'queue', 'tokens', 'rook', 'status']) {
+    for (const name of ['limits', 'history', 'runs', 'analysis', 'todo', 'tickets', 'queue', 'tokens', 'rook', 'release', 'status']) {
       subscriptions.push(onSnapshot(doc(db, 'usage', name), { includeMetadataChanges: true }, (snapshot) => {
         if (snapshot.metadata.fromCache) return;
         allowed = true; dashboard.hidden = pageTabs.hidden = false;
@@ -486,6 +500,7 @@ if (Object.values(firebaseConfig).some((v) => v.includes('<'))) {
         if (name === 'status') currentStatus = value;
         else if (name === 'todo') drawTodo(value.sections || []);
         else if (name === 'rook') drawRookStuck(value);
+        else if (name === 'release') drawRelease(value);
         else data[name] = (value[name === 'analysis' ? 'items' : 'rows'] || []).map((r) => (r.agent === 'Pip' ? { ...r, agent: 'Bishop' } : r)); // rows uploaded before the rename
         if (name === 'tickets') drawTickets();
         if (name === 'queue') { queueUpdated = value.updated || ''; queueNext = Array.isArray(value.next) ? value.next : []; }

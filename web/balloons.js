@@ -1,6 +1,6 @@
 // balloons.js — inspection balloons (TODO 29, mock-ups R9a and R9c), pure (no DOM): balloons.test.mjs.
 //
-// A set is immutable: { items, next, seq }. An item is { id, n, sheet, tip: [x, y], c: [x, y], dim, tp, tm, note } in mm on the
+// A set is immutable: { items, next, seq, size } (size: diameter mm, null = Auto). An item is { id, n, sheet, tip: [x, y], c: [x, y], dim, tp, tm, note } in mm on the
 // sheet (y up): the arrow's tip on the feature, the circle's centre c, the number n (the next one goes up by itself), the sheet
 // (page) it is on, and the table's typed cells. Items stay in placement order; the table sorts them for showing.
 //
@@ -13,7 +13,7 @@ import { arrowHead } from './edit.js';
 import { LH } from './text.js';
 
 export const KIND = 'project-d-balloons';
-export const EMPTY = Object.freeze({ items: Object.freeze([]), next: 1, seq: 1 });
+export const EMPTY = Object.freeze({ items: Object.freeze([]), next: 1, seq: 1, size: null });
 const MAX_ITEMS = 5000, MAX_TEXT = 200, MAX_NO = 999999, MAX_SHEET = 9999;
 
 const pt = (p) => Array.isArray(p) && p.length === 2 && p.every((v) => typeof v === 'number' && Number.isFinite(v));
@@ -22,11 +22,18 @@ const int = (v, lo, hi) => (Number.isInteger(v) && v >= lo && v <= hi ? v : null
 
 /** A typed number: a whole number from 1, or null. */
 export const parseNo = (text) => (/^\s*\d{1,6}\s*$/.test(String(text)) && +text >= 1 ? +text : null);
+const validSize = (v) => typeof v === 'number' && v >= 2 && v <= 100 && Math.round(v * 10) / 10 === v;
+/** A typed diameter (2–100 mm, at most one decimal); empty = Auto, invalid = no change. */
+export function setSize(set, text) {
+  const raw = String(text).trim();
+  if (!raw) return { ...set, size: null };
+  return /^\d+(?:\.\d)?$/.test(raw) && validSize(+raw) ? { ...set, size: +raw } : null;
+}
 
 /** A balloon at c with its arrow on tip; it takes the next number, and the next goes up by one. */
 export function add(set, { tip, c, sheet = 1 }) {
   const it = { id: set.seq, n: set.next, sheet, tip: [tip[0], tip[1]], c: [c[0], c[1]], dim: '', tp: '', tm: '', note: '' };
-  return { items: [...set.items, it], next: set.next + 1, seq: set.seq + 1 };
+  return { ...set, items: [...set.items, it], next: set.next + 1, seq: set.seq + 1 };
 }
 
 /** The item with its fields changed (n, tip, c, dim, tp, tm, note); the set is unchanged when there is no such item. */
@@ -93,6 +100,7 @@ export const isSidecar = (name) => /\.pdballoons\.json$/i.test(name);
 
 export function encode(set, meta = {}) {
   return JSON.stringify({ kind: KIND, v: 1, source: str(meta.source), pages: meta.pages || 1, next: set.next,
+    ...(set.size != null ? { size: set.size } : {}),
     items: set.items.map(({ n, sheet, tip, c, dim, tp, tm, note }) => ({ n, sheet, tip, c, dim, tp, tm, note })) }, null, 1) + '\n';
 }
 
@@ -110,7 +118,7 @@ export function decode(text) {
   }
   dropped += Math.max(0, o.items.length - MAX_ITEMS);
   const top = items.reduce((m, it) => Math.max(m, it.n), 0), next = int(o.next, 1, MAX_NO) || top + 1;
-  return { set: { items, next, seq: items.length + 1 }, dropped };
+  return { set: { items, next, seq: items.length + 1, size: validSize(o.size) ? o.size : null }, dropped };
 }
 
 // ---- the table as CSV (also what Excel is given) ----

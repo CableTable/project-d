@@ -623,3 +623,56 @@ test('Usage site: remembered TODO sub-steps, tabs, tickets, forecasts and safe r
     } finally { await context.close(); }
   });
 });
+
+test('TODO 287a: Latest exe card shows the version, IST date and added list as plain text; no release doc hides it', async (t) => {
+  const shotDir = process.env.SHOTS_DIR || 'shots-287a';
+  mkdirSync(shotDir, { recursive: true });
+  const browser = await chromium.launch(process.env.CHROME ? { executablePath: process.env.CHROME } : {});
+  t.after(() => browser.close());
+  // What `gh release view --json tagName,publishedAt,body` gives for a release built by tools/release-notes.mjs.
+  const release = { tagName: 'v2026.11.16.2', publishedAt: '2026-11-15T20:00:00Z', body: 'Portable ProjectD.exe (no installer, no admin). Built from abc123.\n\n300 Big drawing opens\n287a <img src=x onerror=alert(1)> is plain text' };
+  for (const colorScheme of ['light', 'dark']) {
+    const context = await browser.newContext({ viewport: { width: 390, height: 844 }, colorScheme });
+    try {
+      await context.addInitScript(() => { window.__docs = {}; });
+      await context.route('**/*', (route) => {
+        const url = new URL(route.request().url());
+        if (url.hostname === 'usage.test') {
+          const name = url.pathname === '/' ? 'index.html' : url.pathname.slice(1);
+          assert.ok(['index.html', 'app.js', 'app.css', 'firebase-config.js', 'token-chart.js', 'usage-window.js'].includes(name));
+          return route.fulfill({ body: readFileSync(new URL('../usage-site/public/' + name, import.meta.url)), contentType: name.endsWith('.html') ? 'text/html' : name.endsWith('.css') ? 'text/css' : 'text/javascript' });
+        }
+        const body = url.pathname.endsWith('firebase-app.js') ? 'export const initializeApp = () => ({});'
+          : url.pathname.endsWith('firebase-auth.js') ? authModule : url.pathname.endsWith('firebase-firestore.js') ? storeModule : '';
+        return route.fulfill({ body, contentType: body ? 'text/javascript' : 'text/css' });
+      });
+      const page = await context.newPage(), errors = [];
+      page.on('pageerror', (e) => errors.push(e.message));
+      await page.goto('http://usage.test/');
+      await page.locator('#dashboard').waitFor();
+      assert.equal(await page.locator('#release').isVisible(), false); // No uploaded release doc yet.
+      for (const width of [390, 1280]) {
+        await page.setViewportSize({ width, height: 900 });
+        await page.evaluate((r) => window.__emit('release', r), release);
+        assert.equal(await page.locator('#release').isVisible(), true);
+        assert.equal(await page.locator('#release h2').textContent(), 'Latest exe');
+        assert.equal(await page.locator('#release-card h3').textContent(), 'v2026.11.16.2');
+        assert.match(await page.locator('#release-card .ud-muted').textContent(), /^Mon,? 16 Nov,? 01:30 IST$/); // 20:00 UTC is 01:30 IST the next day
+        assert.deepEqual(await page.locator('#release-card li').allTextContents(), ['300 Big drawing opens', '287a <img src=x onerror=alert(1)> is plain text']);
+        assert.equal(await page.locator('#release img').count(), 0);
+        assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+        await page.screenshot({ path: `${shotDir}/release-${width}-${colorScheme}.png`, fullPage: true });
+        await page.evaluate(() => window.__emit('release', { tagName: 'v0.1.360', publishedAt: '2026-11-15T10:00:00Z', body: 'Portable ProjectD.exe (no installer, no admin). Built from def456.' }));
+        assert.equal(await page.locator('#release-card li').count(), 0);
+        assert.equal(await page.locator('#release-card p').last().textContent(), 'No TODO items listed.');
+        await page.evaluate(() => window.__emit('release', {}));
+        assert.equal(await page.locator('#release').isVisible(), false);
+      }
+      await page.evaluate((r) => window.__emit('release', r), release);
+      await page.locator('#signout').click();
+      await page.locator('#release').waitFor({ state: 'hidden' });
+      assert.equal(await page.locator('#release-card').textContent(), '');
+      assert.deepEqual(errors, []);
+    } finally { await context.close(); }
+  }
+});

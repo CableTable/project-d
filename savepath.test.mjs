@@ -10,7 +10,7 @@ const fake = (files, answer) => {
 };
 
 await test('plain names strip only known extensions, case-insensitively, keeping decimal and unknown suffixes', () => {
-  for (const ext of ['dxf', 'dwg', 'pdf', 'cdr', 'svg', 'png', 'jpg', 'tif']) {
+  for (const ext of ['dxf', 'dwg', 'pdf', 'ai', 'cdr', 'svg', 'png', 'jpg', 'tif']) {
     for (const suffix of [ext, ext.toUpperCase(), ext[0].toUpperCase() + ext.slice(1)]) {
       assert.equal(baseName('Bracket 1.5.' + suffix), 'Bracket 1.5');
     }

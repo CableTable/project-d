@@ -6,6 +6,7 @@ import { fitBase, zoomAt, panBy, paintView, FIT } from './pdf-view.js';
 import { baseName, saveDefault, withExt } from './savepath.js';
 import { planPdf, freePdfName, DEFAULT_OPTIONS, tileGrid, scaleText, titleBlockTexts, cleanTitleBlock, readTitleBlock, PAPERS, PART_BORDER, marginsOf, OFFICE_MARGINS, MARGIN_MAX, parseScale, percentText, PageCapError } from './pdf-export.js';
 import { batchPdfSource } from './pdf-source.js';
+import { pictureBitmap } from './pictures.js';
 
 /** Shared by PDF dialogs: the drawing/layout and Part settings keep their existing split, even without storage. */
 export function rememberPdfSettings(part, value) {
@@ -64,11 +65,11 @@ export function paintPage(canvas, page, box, colours, view, margins) {
   c.setTransform(...V);
   c.fillStyle = colours.paper; c.fillRect(0, 0, page.w, page.h);
   c.strokeStyle = colours.line; c.lineWidth = 1 / k; c.strokeRect(0, 0, page.w, page.h);
-  c.lineJoin = 'round'; c.lineCap = 'round';
+  c.lineJoin = 'miter'; c.lineCap = 'butt'; c.miterLimit = 10;
   c.beginPath();
-  let st = { stroke: colours.film, fill: colours.film, width: 0.25, dash: [] };
+  let st = { stroke: colours.film, fill: colours.film, width: 0.25, dash: [], cap: 0, join: 0, miter: 10 };
   const stack = [];
-  const apply = () => { c.strokeStyle = st.stroke; c.fillStyle = st.fill; c.lineWidth = Math.max(st.width, 0.9 / k); c.setLineDash(st.dash); };
+  const apply = () => { c.strokeStyle = st.stroke; c.fillStyle = st.fill; c.lineWidth = Math.max(st.width, 0.9 / k); c.setLineDash(st.dash); c.lineCap = ['butt', 'round', 'square'][st.cap]; c.lineJoin = ['miter', 'round', 'bevel'][st.join]; c.miterLimit = st.miter; };
   c.save(); c.beginPath(); c.rect(0, 0, page.w, page.h); c.clip(); c.beginPath();      // nothing outside the page
   for (const cmd of page.cmds) {
     switch (cmd[0]) {
@@ -77,6 +78,9 @@ export function paintPage(canvas, page, box, colours, view, margins) {
       case 'RG': st.stroke = css(cmd.slice(1)); break;
       case 'rg': st.fill = css(cmd.slice(1)); break;
       case 'w': st.width = cmd[1]; break;
+      case 'J': st.cap = cmd[1]; break;
+      case 'j': st.join = cmd[1]; break;
+      case 'M': st.miter = cmd[1]; break;
       case 'd': st.dash = cmd[1]; break;
       case 'm': c.moveTo(cmd[1], cmd[2]); break;
       case 'l': c.lineTo(cmd[1], cmd[2]); break;
@@ -85,6 +89,11 @@ export function paintPage(canvas, page, box, colours, view, margins) {
       case 'S': apply(); c.stroke(); c.beginPath(); break;
       case 'f': case 'f*': apply(); c.fill(cmd[0] === 'f*' ? 'evenodd' : 'nonzero'); c.beginPath(); break;
       case 'W': case 'W*': c.clip(cmd[0] === 'W*' ? 'evenodd' : 'nonzero'); c.beginPath(); break;
+      case 'I': {                                                                          // a picture: its unit square, top row at y = 1 (page y is up here)
+        const img = pictureBitmap(cmd[2].px), m = cmd[1];
+        if (img) { c.save(); c.transform(m[0], m[1], -m[2], -m[3], m[4] + m[2], m[5] + m[3]); c.drawImage(img, 0, 0, 1, 1); c.restore(); }
+        break;
+      }
       case 'T': {
         c.save(); apply();
         c.transform(...cmd[1]); c.scale(0.01, -0.01);

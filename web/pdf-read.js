@@ -2,20 +2,24 @@
 // text content in, a DXF document in dxf-write.js's shape out) — pdf-read.test.mjs. pdf.js itself is vendored in
 // vendor/pdfjs/ (tools/vendor.mjs) and only loaded when a PDF is opened.
 //
-//   readPdf(bytes, { page, pdfjs })   → { doc, paths, texts, pages, page, mm: [w, h] }   (the drawing, in mm)
+//   readPdf(bytes, { page, pdfjs })   → { doc, paths, texts, pictures, stencils, pages, page, mm: [w, h] }   (the drawing, in mm; pictures are IMAGE entities)
 //   renderPdfPage(bytes, { page, dpi }) → { canvas, w, h, mmPerPx, pages }              (the page as a picture)
 //   pdfToDoc({ ops, text, view, rotate }, OPS) → { doc, paths, texts }                  (the pure part; rotate: the page's /Rotate)
-import { newDoc, addEntities, arc, lwpoly, text } from './dxf-write.js';
+import { newDoc, addLayer, arc, lwpoly, text, entity } from './dxf-write.js';
+import { toRgba, encodePng } from './pictures.js';
+import { rgbKey, rgbHex, cmykRgb } from './colour.js';
+import { fillHoles, edgeDist } from './fill.js';
 
 /** mm in one PDF point. */
 export const PT = 25.4 / 72;
+const PICTURES = 'PDF pictures';                      // one layer for all the pictures, so one switch hides them
 const CAP = 0.7;                                      // a text's capitals are about 0.7 of its font size
 
 const textKey = (s) => s.normalize('NFKC').replace(/\s/g, '');
 
 /** pdf.js extracts searchable text even when Tr is 3 (invisible) or 7 (clip only). */
 function paintedText(items, glyphs) {
-  if (!glyphs.length || glyphs.every((g) => g.paint)) return items;
+  if (!glyphs.length) return items;
   if (glyphs.every((g) => !g.paint)) return [];
   const source = glyphs.map((g) => g.char).join('');
   let cursor = 0;
@@ -25,22 +29,24 @@ function paintedText(items, glyphs) {
     if (!key || at < 0) return [it];
     cursor = at + key.length;
     const part = glyphs.slice(at, cursor);
-    if (part.every((g) => g.paint)) return [it];
+    if (part.every((g) => g.paint && g.layer === part[0].layer && g.position === part[0].position)) return [{ ...it, layer: part[0].layer, position: part[0].position }];
     if (part.every((g) => !g.paint)) return [];
     // A single extracted item can span Tr changes: split it at the original glyph advances.
     const chars = it.str.normalize('NFKC').split(''), runs = [], widths = [0];
     for (const g of part) widths.push(widths.at(-1) + g.width);
     const total = widths.at(-1), fraction = (n) => total > 0 ? widths[n] / total : n / part.length;
-    let n = 0, start = 0, first = 0, paint = part[0].paint;
+    let n = 0, start = 0, first = 0, paint = part[0].paint, layer = part[0].layer, position = part[0].position;
     const emit = (end) => {
       if (!paint) return;
       const transform = it.transform.slice(), shift = (it.width || 0) * fraction(first), norm = Math.hypot(transform[0], transform[1]) || 1;
       transform[4] += shift * transform[0] / norm; transform[5] += shift * transform[1] / norm;
-      runs.push({ ...it, str: chars.slice(start, end).join(''), transform, width: (it.width || 0) * (fraction(n) - fraction(first)) });
+      runs.push({ ...it, layer, position, str: chars.slice(start, end).join(''), transform, width: (it.width || 0) * (fraction(n) - fraction(first)) });
     };
     for (let i = 0; i < chars.length; i++) {
       if (!textKey(chars[i])) continue;
-      if (part[n].paint !== paint) { emit(i); start = i; first = n; paint = part[n].paint; }
+      if (part[n].paint !== paint || part[n].layer !== layer || part[n].position !== position) {
+        emit(i); start = i; first = n; paint = part[n].paint; layer = part[n].layer; position = part[n].position;
+      }
       n++;
     }
     emit(chars.length);
@@ -77,13 +83,25 @@ export function bezierArc(p0, p1, p2, p3) {
 /**
  * pdf.js's operator list ({ fnArray, argsArray }), text items and the page's view [x0, y0, x1, y1] (points) → a drawing
  * in mm with the page's bottom-left at 0,0. Contiguous straight and short-polyline curve pieces of one painted path join
- * within 1e-6 mm; circular Béziers stay ARCs. Only h / rectangles close polylines; fills stay unfilled. paths counts
- * emitted entities (one polyline = 1); text is TEXT at its place and size.
+ * within 1e-6 mm; stroke-only circular Béziers stay ARCs. Fills close subpaths, flatten curves within 0.01 mm and keep
+ * their colour on the outline. Outline colours get first-seen #RRGGBB layers, entities ByLayer; TEXT uses its fill colour.
+ * paths counts emitted entities (one polyline = 1); text is TEXT at its place and size.
  * rotate: the page's /Rotate (clockwise degrees), so a portrait plotter page with /Rotate 90 comes out landscape, as it is shown.
+ * images: Map from a paintImageXObject's name (a paintInlineImageXObject's data object) → { w, h, px (PNG data URL) }; each painted one is an IMAGE
+ * on layer "PDF pictures" (pictures counts them); 1-colour stencil masks are not shown (stencils counts them).
  * OPS: pdf.js's operator numbers.
  */
-export function pdfToDoc({ ops, text: items = [], view = [0, 0, 0, 0], rotate = 0 }, OPS) {
+export function pdfToDoc({ ops, text: items = [], view = [0, 0, 0, 0], rotate = 0, images = new Map() }, OPS) {
   const doc = newDoc(4), ents = [];
+  doc.layers = {};
+  const layerFor = (rgb) => {
+    const name = rgbHex(rgb).toUpperCase();
+    if (!doc.layers[name]) {
+      const key = rgbKey(rgb);
+      addLayer(doc, name, key.startsWith('tc:') ? { tc: +key.slice(3) } : { aci: +key.slice(4) });
+    }
+    return name;
+  };
   const ox = view[0], oy = view[1], rot90 = ((Math.round(rotate / 90) % 4) + 4) % 4;
   const W = (view[2] - view[0]) * PT, H = (view[3] - view[1]) * PT;
   const P = (x, y, m) => {
@@ -93,15 +111,18 @@ export function pdfToDoc({ ops, text: items = [], view = [0, 0, 0, 0], rotate = 
   let ctm = [1, 0, 0, 1, 0, 0];
   const stack = [], glyphs = [];
   let textMode = 0;
+  let strokeColour = [0, 0, 0], fillColour = [0, 0, 0];
   let path = [];                                       // pieces of the path being built, already in mm
   let last = null, sub = null;                         // the current point and the sub-path's start, mm (kept across ops)
-  let paths = 0;
-  const pieces = (list) => {
+  let paths = 0, stencils = 0;
+  const pics = [];
+  const pieces = (list, filled, stroked) => {
+    const first = ents.length, style = { layer: layerFor(stroked ? strokeColour : fillColour), ...(filled ? { fill: rgbKey(fillColour) } : {}) };
     let cur = null, start = null;
     let chain = [];
-    const flush = (closed = false) => {
+    const flush = (closed = filled) => {
       if (closed && chain.length > 2 && Math.hypot(chain.at(-1)[0] - chain[0][0], chain.at(-1)[1] - chain[0][1]) <= 1e-6) chain.pop(); // a repeated start would be a zero-length side
-      if (chain.length > 1) { ents.push(lwpoly(chain, { closed })); paths++; }
+      if (chain.length > 1) { ents.push(lwpoly(chain, { ...style, closed })); paths++; }
       chain = [];
     };
     const join = (pts) => {
@@ -111,18 +132,18 @@ export function pdfToDoc({ ops, text: items = [], view = [0, 0, 0, 0], rotate = 
     };
     for (const it of list) {
       if (it.k === 'm') {
-        if (chain.length && Math.hypot(chain.at(-1)[0] - it.p[0], chain.at(-1)[1] - it.p[1]) > 1e-6) flush();
+        if (chain.length && (filled || Math.hypot(chain.at(-1)[0] - it.p[0], chain.at(-1)[1] - it.p[1]) > 1e-6)) flush();
         cur = start = it.p; continue;
       }
       if (it.k === 'h') {
         if (cur && start) {
           const closed = chain.length > 0 && Math.hypot(chain[0][0] - start[0], chain[0][1] - start[1]) <= 1e-6;
           if (!closed && Math.hypot(cur[0] - start[0], cur[1] - start[1]) > 1e-9) join([cur, start]);
-          flush(closed);
+          flush(filled || closed);
         }
         cur = start; continue;
       }
-      if (it.k === 'r') { flush(); ents.push(lwpoly(it.pts, { closed: true })); paths++; cur = start = it.pts[0]; continue; }
+      if (it.k === 'r') { flush(); ents.push(lwpoly(it.pts, { ...style, closed: true })); paths++; cur = start = it.pts[0]; continue; }
       if (!cur) { cur = start = it.k === 'l' ? it.p : it.p3; continue; }
       if (it.k === 'l') {
         if (Math.hypot(it.p[0] - cur[0], it.p[1] - cur[1]) > 1e-9) join([cur, it.p]);
@@ -130,7 +151,16 @@ export function pdfToDoc({ ops, text: items = [], view = [0, 0, 0, 0], rotate = 
       } else if (it.k === 'c') {
         const a = bezierArc(cur, it.p1, it.p2, it.p3);
         // shortcut: arcs break the chain, join them as lwpoly bulges (dxf-write.js:74) once flatten draws bulges in a test
-        if (a && a.a0 !== a.a1) { flush(); ents.push(arc(a.cx, a.cy, a.r, a.a0, a.a1)); paths++; }
+        if (!filled && a && a.a0 !== a.a1) { flush(); ents.push(arc(a.cx, a.cy, a.r, a.a0, a.a1, style)); paths++; }
+        else if (filled) {
+          const pts = [cur], mid = (p, q) => [(p[0] + q[0]) / 2, (p[1] + q[1]) / 2];
+          const flatten = (p0, p1, p2, p3) => {
+            if (Math.max(edgeDist(p1, [p0, p3]), edgeDist(p2, [p0, p3])) <= 0.01) { pts.push(p3); return; }
+            const a = mid(p0, p1), b = mid(p1, p2), c = mid(p2, p3), d = mid(a, b), e = mid(b, c), f = mid(d, e);
+            flatten(p0, a, d, f); flatten(f, e, c, p3);
+          };
+          flatten(cur, it.p1, it.p2, it.p3); join(pts);
+        }
         else {
           const len = Math.hypot(it.p1[0] - cur[0], it.p1[1] - cur[1]) + Math.hypot(it.p2[0] - it.p1[0], it.p2[1] - it.p1[1]) + Math.hypot(it.p3[0] - it.p2[0], it.p3[1] - it.p2[1]);
           const n = Math.max(4, Math.min(64, Math.ceil(len / 0.5))), pts = [cur];
@@ -142,22 +172,38 @@ export function pdfToDoc({ ops, text: items = [], view = [0, 0, 0, 0], rotate = 
       }
     }
     flush();
+    if (filled) {
+      // fillHoles cuts nested outlines, but an inner fill would paint the hole back in.
+      const holes = fillHoles(ents.slice(first)), depth = new Map();
+      for (const inner of holes.values()) for (const e of inner) depth.set(e, (depth.get(e) || 0) + 1);
+      for (const [e, n] of depth) if (n % 2) delete e.fill;
+    }
   };
   const { fnArray, argsArray } = ops;
   for (let i = 0; i < fnArray.length; i++) {
     const fn = fnArray[i], a = argsArray[i];
-    if (fn === OPS.save) stack.push([ctm, textMode]);
-    else if (fn === OPS.restore) { if (stack.length) [ctm, textMode] = stack.pop(); }
+    if (fn === OPS.save) stack.push([ctm, textMode, strokeColour, fillColour]);
+    else if (fn === OPS.restore) { if (stack.length) [ctm, textMode, strokeColour, fillColour] = stack.pop(); }
     else if (fn === OPS.transform) ctm = mul(a, ctm);
-    else if (fn === OPS.paintFormXObjectBegin) { stack.push([ctm, textMode]); if (a && a[0]) ctm = mul(a[0], ctm); }
-    else if (fn === OPS.paintFormXObjectEnd) { if (stack.length) [ctm, textMode] = stack.pop(); }
+    else if (fn === OPS.paintFormXObjectBegin) { stack.push([ctm, textMode, strokeColour, fillColour]); if (a && a[0]) ctm = mul(a[0], ctm); }
+    else if (fn === OPS.paintFormXObjectEnd) { if (stack.length) [ctm, textMode, strokeColour, fillColour] = stack.pop(); }
+    // pdf.js normalizes RGB ops to byte channels (Uint8ClampedArray), including g/G, k/K and sc/scn.
+    else if (fn === OPS.setStrokeRGBColor) strokeColour = Array.from(a);
+    else if (fn === OPS.setFillRGBColor) fillColour = Array.from(a);
+    else if ([OPS.setStrokeGray, OPS.setFillGray, OPS.setStrokeCMYKColor, OPS.setFillCMYKColor,
+      OPS.setStrokeColor, OPS.setFillColor, OPS.setStrokeColorN, OPS.setFillColorN].includes(fn) && a && [1, 3, 4].includes(a.length) && Array.from(a).every(Number.isFinite)) {
+      const rgb = a.length === 4 ? cmykRgb(Array.from(a, (n) => n * 100)) : (a.length === 1 ? [a[0], a[0], a[0]] : Array.from(a)).map((n) => Math.round(255 * Math.max(0, Math.min(1, n))));
+      if ([OPS.setStrokeGray, OPS.setStrokeCMYKColor, OPS.setStrokeColor, OPS.setStrokeColorN].includes(fn)) strokeColour = rgb;
+      else fillColour = rgb;
+    }
     else if (fn === OPS.setTextRenderingMode) textMode = a[0];
     else if (fn === OPS.showText) {
       for (const g of a[0]) {
         if (typeof g === 'number') { if (glyphs.length) glyphs.at(-1).width -= g; continue; }
         const s = textKey(g.unicode || '');
         if (!s) { if (glyphs.length) glyphs.at(-1).width += g.width || 0; continue; }
-        for (let j = 0; j < s.length; j++) glyphs.push({ char: s[j], paint: (textMode & 3) !== 3, width: (g.width || 0) / s.length });
+        const paint = (textMode & 3) !== 3, layer = paint ? layerFor(fillColour) : null;
+        for (let j = 0; j < s.length; j++) glyphs.push({ char: s[j], paint, layer, position: ents.length, width: (g.width || 0) / s.length });
       }
     }
     else if (fn === OPS.constructPath) {
@@ -178,10 +224,21 @@ export function pdfToDoc({ ops, text: items = [], view = [0, 0, 0, 0], rotate = 
     } else if (fn === OPS.stroke || fn === OPS.closeStroke || fn === OPS.fill || fn === OPS.eoFill || fn === OPS.fillStroke || fn === OPS.eoFillStroke ||
       fn === OPS.closeFillStroke || fn === OPS.closeEOFillStroke) {
       if (fn === OPS.closeStroke || fn === OPS.closeFillStroke || fn === OPS.closeEOFillStroke) path.push({ k: 'h' });
-      pieces(path); path = []; last = sub = null;
+      const filled = fn !== OPS.stroke && fn !== OPS.closeStroke, stroked = fn !== OPS.fill && fn !== OPS.eoFill;
+      if (path.length) pieces(path, filled, stroked);
+      path = []; last = sub = null;
     } else if (fn === OPS.endPath) { path = []; last = sub = null; }            // a clip, or nothing
+    else if (fn === OPS.paintImageXObject || fn === OPS.paintInlineImageXObject) {
+      const img = images.get(a[0]);                                              // shortcut: the clip is ignored as for lines, a clipped picture shows whole
+      if (!img) continue;
+      if (!doc.layers[PICTURES]) addLayer(doc, PICTURES, { aci: 7 });
+      const o = P(0, 0, ctm), x = P(1, 0, ctm), y = P(0, 1, ctm);               // the unit square: u, v are one pixel's sides (DXF), group 13 the size in pixels
+      const pic = entity('IMAGE', [[10, o[0]], [20, o[1]], [30, 0], [11, (x[0] - o[0]) / img.w], [21, (x[1] - o[1]) / img.w], [31, 0], [12, (y[0] - o[0]) / img.h], [22, (y[1] - o[1]) / img.h], [32, 0], [13, img.w], [23, img.h]], { layer: PICTURES });
+      pic.r.px = img.px; pics.push(pic);
+    } else if (fn === OPS.paintImageMaskXObject || fn === OPS.paintImageMaskXObjectGroup || fn === OPS.paintImageMaskXObjectRepeat) stencils++;
   }
   let texts = 0;
+  const textAt = new Map();
   for (const it of paintedText(items, glyphs)) {
     const s = String(it.str || '').replace(/\s+$/, '');
     if (!s.trim() || !it.transform) continue;
@@ -189,11 +246,17 @@ export function pdfToDoc({ ops, text: items = [], view = [0, 0, 0, 0], rotate = 
     if (!(size > 0)) continue;
     const rot = Math.atan2(t[1], t[0]) * 180 / Math.PI, [x, y] = P(0, 0, [1, 0, 0, 1, t[4], t[5]]);
     const r = rot - rot90 * 90;
-    ents.push(text(x, y, size * PT * CAP, s, { rot: Math.abs(r) < 1e-6 ? 0 : r }));
+    const position = it.position ?? ents.length;
+    if (!textAt.has(position)) textAt.set(position, []);
+    textAt.get(position).push(text(x, y, size * PT * CAP, s, { layer: it.layer || layerFor([0, 0, 0]), rot: Math.abs(r) < 1e-6 ? 0 : r }));
     texts++;
   }
-  addEntities(doc, ents);
-  return { doc, paths, texts };
+  for (let i = 0; i <= ents.length; i++) {
+    for (const e of textAt.get(i) || []) doc.entities.push(e);
+    if (i < ents.length) doc.entities.push(ents[i]);
+  }
+  doc.entities.unshift(...pics);                       // under every line and text (render.js also paints pictures first)
+  return { doc, paths, texts, pictures: pics.length, stencils };
 }
 
 let pdfjsPromise = null;
@@ -212,11 +275,26 @@ async function loadPdfjs() {
 export async function readPdf(bytes, { page = 1, pdfjs = null } = {}) {
   const lib = pdfjs || await loadPdfjs();
   const data = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
-  const pdf = await lib.getDocument({ data, verbosity: 0 }).promise;
+  // no OffscreenCanvas / ImageDecoder: the pictures then come as plain pixels (data, kind), not a bitmap
+  const pdf = await lib.getDocument({ data, verbosity: 0, isOffscreenCanvasSupported: false, isImageDecoderSupported: false }).promise;
   try {
     const n = Math.min(Math.max(1, page), pdf.numPages), pg = await pdf.getPage(n);
     const [ops, tc] = await Promise.all([pg.getOperatorList(), pg.getTextContent()]);
-    const r = pdfToDoc({ ops, text: tc.items, view: pg.view, rotate: pg.rotate }, lib.OPS), w = (pg.view[2] - pg.view[0]) * PT, h = (pg.view[3] - pg.view[1]) * PT;
+    const images = new Map();
+    for (let i = 0; i < ops.fnArray.length; i++) {
+      const fn = ops.fnArray[i], a = ops.argsArray[i];
+      if (fn !== lib.OPS.paintImageXObject && fn !== lib.OPS.paintInlineImageXObject) continue;
+      if (images.has(a[0])) continue;
+      const store = typeof a[0] === 'string' && a[0].startsWith('g_') ? pg.commonObjs : pg.objs;
+      let data = a[0];
+      if (typeof data === 'string') data = await new Promise((done) => {                // a packed (Flate) picture can still be on its way when the list is ready: wait for it, but not for ever
+        const give = setTimeout(() => done(null), 10000);
+        try { store.get(data, (d) => { clearTimeout(give); done(d); }); } catch { clearTimeout(give); done(null); }
+      });
+      const px = toRgba(data || {});
+      if (px) images.set(a[0], { w: px.w, h: px.h, px: await encodePng(px.w, px.h, px.rgba) });
+    }
+    const r = pdfToDoc({ ops, text: tc.items, view: pg.view, rotate: pg.rotate, images }, lib.OPS), w = (pg.view[2] - pg.view[0]) * PT, h = (pg.view[3] - pg.view[1]) * PT;
     return { ...r, pages: pdf.numPages, page: n, mm: Math.round(pg.rotate / 90) % 2 ? [h, w] : [w, h] };
   } finally { try { await pdf.destroy(); } catch { /* already gone */ } }
 }

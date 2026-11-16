@@ -23,7 +23,7 @@ import { followDimensions } from './linked-dimensions.js';
 import { isDimPart, dimName, isSettled, bakeBlock, turnedTag, freeBlockName } from './layoutdim.js';
 import { cleanGuides } from './guides.js';
 import { TITLE_BLOCK } from './pdf-export.js';
-import { colourKey, withColour } from './props.js';
+import { colourKey, withColour, widthKey, withWidth } from './props.js';
 
 export const LAYOUT_BLOCK = 'PD_LAYOUT';
 const CHUNK = 200;
@@ -91,6 +91,11 @@ function bakeObject(part, p, withBlocks = false) {
   const had = Object.keys(mini.blocks).length;
   try {
     const r = explodeInsert(insert('O', p.x, p.y, { layer: e.layer, rot: p.rot || 0, ...(sx !== 1 || sy !== 1 ? { sx, sy } : {}) }), mini);
+    const width = widthKey(e);
+    if (r.entities.length === 1 && typeof width === 'number' && ['LWPOLYLINE', 'POLYLINE'].includes(e.type)) {
+      r.entities[0] = withWidth(r.entities[0], e.scaleWithObject ? width * k : width) || r.entities[0];
+    }
+    if (e.scaleWithObject && e.lw > 0) r.entities = r.entities.map((ent) => ({ ...ent, lw: Math.max(1, Math.round(e.lw * k)) }));
     return Object.keys(r.blocks).length === had ? r.entities : null;       // a block Explode had to make (a sheared array) is not in the objects' drawing
   } catch { return null; }
 }
@@ -414,7 +419,7 @@ export function extractRaw(raw, sel) {
 }
 
 /** A part as a DXF text (the library keeps this). */
-export const partToDxf = (part) => writeDxf(part.raw, { escapeUnicode: true });
+export const partToDxf = (part) => writeDxf(part.raw, { escapeUnicode: true, pictures: false });
 
 /** A part from a DXF text (as partToDxf wrote it), or null if it has no extents or cannot be read. */
 export function partFromDxf(id, name, text) {

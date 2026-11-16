@@ -6,6 +6,8 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 ## App
 
+**PDF-compatible Illustrator file**: An `.ai` saved with Illustrator's Create PDF Compatible File option. Open imports its PDF artwork as a drawing, with one layer per outline colour; Save writes a DXF. Where: `DECISIONS.md`, Illustrator and PDF colours (TODO 300).
+
 **Context tab**: A ribbon tab shown for the current selection, such as Part when placed parts are selected on a layout. Where: `web/app.js`.
 
 **Docker tab**: One of Properties, Objects, Layers, Parts library and Step and repeat across the right panel. Only the active tab shows its name; its sections fold. The panel can be resized or hidden, with settings remembered on this PC. Where: `web/app.js`, `web/docker.js`; `DECISIONS.md`, R19 pick: Option A.
@@ -44,6 +46,10 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Centre on first**: Lines up the centres of the selected objects horizontally and vertically with the first selected object, which stays put. A group counts as one object. Type `center` or `centre` in Drawings, Layouts or Compare; one Undo restores the selection's positions. Relative to is ignored and stays as it was.
 
+**Last selected**: The Relative to choice that aligns against the last selected object's bounding box, leaving that object where it is. A group counts as one object. Distribute uses the selection span.
+
+**Align to a point**: Choose Relative to Point..., press an Align button, then click a snapped point or type X,Y. The chosen edge or centre meets that point's X or Y. Works with one object; Esc cancels and one Undo restores the move.
+
 **Command bar**: The floating input near the cursor for commands, coordinates and clickable options, with full history available through F2. Where: `DECISIONS.md`, Command bar. Avoid: Fixed bottom command line.
 **Cursor field**: One editable or read-only box by the cursor or on the drawing beside the segment: Length and Angle take typing (Tab switches), Δx and Δy show live. Before the first point the editable fields are absolute X and Y; comma switches later chain points to coordinate entry. Rectangle and Rounded rectangle use Width and Height at the other corner, signed toward the cursor. Where: `DECISIONS.md`, Dynamic input (TODO 69), Dynamic input fields on the drawing (TODO 155t). Avoid: Command bar.
 **Dynamic input**: The tag beside the cursor during point prompts showing length, angle, Δx and Δy (absolute X and Y before the first point; Width and Height at a rectangle's other corner), where typed numbers go instead of the command bar; F12 or DYN turns it on and off. Where: `DECISIONS.md`, Dynamic input (TODO 69); `TODO.md`, item 69. Avoid: Cursor tag, Live numbers.
@@ -55,7 +61,7 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Compare snapshot**: A copy of a drawing tab, Parts library part or disk file taken when added to Compare. A snapshot from an open drawing tab keeps its tab id: edits on the picked snapshot use that drawing's coordinates, file and Undo, and refresh its artwork and the Differences list. Closing the source tab leaves a plain copy; library and disk snapshots are read-only. The list lasts only for that Compare tab and is not saved with a drawing. Where: `web/compare-list.js`.
 
-**Contour**: Makes one or more new outlines inside or outside a closed outline at repeated distances, with sharp or rounded corners, on the Contour layer. Where: `DECISIONS.md`, Contour tool and Contour colour and line style. Avoid: Trace.
+**Contour**: Makes one or more new outlines inside or outside a closed outline, or closed outlines around an open chain, at repeated distances, with sharp or rounded corners, on the Contour layer. **End** chooses Butt (across the endpoint), Round (a semicircle) or Square (extended by the contour distance) for open chains. Where: `DECISIONS.md`, Contour tool, Contour colour and line style, and Contour of an open line. Avoid: Trace.
 **Extend tool**: Lengthens a drawing line to the nearest boundary edge ahead: pick the boundary edges (Enter alone = every line, arc, circle and polyline), then click near the end to move; the other end stays. One Undo per extend; repeats until Esc. Modify menu, Home / Modify ribbons, EX / EXTEND. Arcs and polylines follow in TODO 66i. Where: `web/extend.js`, `web/app.js`; `DECISIONS.md`, Copy, Rotate, Scale, Fillet, Extend (TODO 66b–66h).
 
 **Array tool**: Makes a Rectangular grid or Polar ring of plain copies of selected drawing objects, in one Undo step. The 10000-object cap includes the originals and selection size. Esc adds nothing. Where: `web/array.js`, `web/app.js`; `DECISIONS.md`, Array on a drawing (TODO 75).
@@ -159,6 +165,8 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 **Micro piece**: An entity whose own path length is at most the Join gaps tolerance and whose end is within that tolerance of an entity longer than the tolerance. Join gaps removes these pieces before joining, reports the count and restores them with the joins in one Undo. A lone tiny entity stays. Where: `web/edit.js`; `DECISIONS.md`, Join gaps: micro pieces.
 
 **Nest**: The packed arrangement of parts produced by Auto-nest, also the command name that opens its dialog. Where: `DECISIONS.md`, Auto-nest method and UI.
+
+**Centre on page**: The layout command that moves the selection as one block until its bounding-box centre meets the whole sheet's centre, ignoring grippers. Where: Arrange section, Arrange menu, typed `cp`.
 
 **Nudge**: Moves selected placed parts, drawing objects or Compare snapshots with the arrow keys by a chosen mm step, or ten times that step with Shift. Where: `DECISIONS.md`, Nudge.
 
@@ -275,7 +283,7 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **HATCH**: A DXF filled boundary using either solid colour or a line pattern, left out of cutter export. Where: `web/drawing.js`, `DECISIONS.md`, Cutter-safe DXF.
 
-**IMAGE**: A DXF image reference that still counts as an entity even when the app draws nothing for it. Where: `DECISIONS.md`, Layer and entity counts. Avoid: The app's imported background picture.
+**IMAGE**: A DXF image reference that still counts as an entity even when the app draws nothing for it; one that carries pixels (`r.px`, a PNG data URL; a picture cut from a vector PDF on the layer `PDF pictures`) is drawn under every line and text and picked by its frame. DXF Save / Export writes the pixels as `<dxf name>-img<k>.png` beside the DXF, with IMAGE / IMAGEDEF references in the text. Desktop Open draws readable sibling PNGs; a browser picker leaves the references undrawn. Where: `DECISIONS.md`, Layer and entity counts; "PDF pictures (TODO 305a)"; "PDF pictures in DXF (TODO 305b)". Avoid: The app's imported background picture.
 
 **INSERT**: A DXF placement of a named block with position, scale and rotation. Where: `web/drawing.js`, `web/dxf-write.js`. Avoid: A copy of every member as separate top-level entities.
 
@@ -290,6 +298,8 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 **Line type**: The solid, dashed or dotted pattern of a stroke. Where: `DECISIONS.md`, Contour colour and line style. Avoid: Outline width.
 
 **Line width**: The physical outline thickness, edited in mm and saved through DXF lineweights or polyline widths. Where: `DECISIONS.md`, Line width. Avoid: A line's length.
+
+**Line ends and corners**: An object's stroke ends (Butt / Round / Square) and corners (Miter / Round / Bevel), including dash ends. Default Butt / Miter, miter limit 10; the entity's Scale with object flag defaults off. Saved in PROJECTD DXF xdata. Properties UI and scaling behavior follow in TODO 293b. Where: `DECISIONS.md`, Line ends and corners; `web/drawing.js`, `web/dxf-write.js`.
 
 **LWPOLYLINE**: A lightweight DXF polyline holding connected straight or bulged arc segments, including rectangles drawn here. Where: `DECISIONS.md`, Drawing tools: how they work; `web/drawing.js`.
 

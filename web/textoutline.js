@@ -213,7 +213,7 @@ export function outlineEntities(items, raw, fontOf, tol) {
       x: it.x + r.x * c - l.y * s, y: it.y + r.x * s + l.y * c }))) : [it];
     const polys = runs.flatMap((r) => textPolys(r, fontOf(r), tol, missing));
     if (polys.length) { done.add(it.e); from.set(it.e, [...(from.get(it.e) || []), ...polys.map((_, k) => ents.length + k)]); }       // a blank text has no outlines: it stays
-    for (const p of polys) ents.push(lwpoly(p, { closed: true, layer: e.layer, lt: e.lt, aci: e.aci, tc: e.tc, lw: e.lw, lts: e.lts, hidden: e.hidden, ps: e.ps }));
+    for (const p of polys) ents.push(lwpoly(p, { closed: true, layer: e.layer, lt: e.lt, aci: e.aci, tc: e.tc, lw: e.lw, cap: e.cap, join: e.join, scaleWithObject: e.scaleWithObject, lts: e.lts, hidden: e.hidden, ps: e.ps }));
   }
   return { ents, texts: done.size, done, from, missing: [...missing], notes: [...notes] };
 }
