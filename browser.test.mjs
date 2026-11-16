@@ -6267,7 +6267,7 @@ try {
         await pick(80, 80);
         await pick(120, 100); await count(1);
         await pick(120, 100, 'right'); await q('ctx-menu').waitFor();
-        assert.deepEqual(await p.getByRole('menuitem').allTextContents(), ['Select connected', 'Extract part…', 'Keep only this', 'DuplicateCtrl+D', 'GroupCtrl+G', 'UngroupCtrl+Shift+G', 'Measure from here', 'Delete']);
+        assert.deepEqual(await p.getByRole('menuitem').allTextContents(), ['Select connected', 'Extract part…', 'Keep only this', 'DuplicateCtrl+D', 'GroupCtrl+G', 'UngroupCtrl+Shift+G', 'Close', 'Measure from here', 'Delete']);
         await p.screenshot({ path: `${shotDir}/155c-fixes-menu-${theme}.png` });
         await p.keyboard.press('Escape');
         await p.locator('[data-tool=contour]').click();
@@ -8099,7 +8099,7 @@ try {
     const p = await at(50, 0);
     await shotBoth('extract-menu', async () => { await page.mouse.click(p.x, p.y, { button: 'right' }); await page.waitForSelector('[data-testid=ctx-menu]'); }, async () => { await page.keyboard.press('Escape'); });
     await page.mouse.click(p.x, p.y, { button: 'right' });
-    assert.deepEqual(await ctxItems(), ['Extract part…', 'Keep only this', 'Select connected', 'DuplicateCtrl+D', 'GroupCtrl+G', 'UngroupCtrl+Shift+G', 'Measure from here', 'Delete']);
+    assert.deepEqual(await ctxItems(), ['Extract part…', 'Keep only this', 'Select connected', 'DuplicateCtrl+D', 'GroupCtrl+G', 'UngroupCtrl+Shift+G', 'Close', 'Measure from here', 'Delete']);
     await page.getByRole('menuitem', { name: 'Extract part…' }).click();
     await nameDlg.waitFor();
     assert.equal(await nameDlg.getAttribute('aria-label'), 'Extract part');
@@ -25458,7 +25458,7 @@ try {
         await p.screenshot({ path: shotDir + '/s15-92-summary-' + theme + '.png' });
         await p.locator('[data-menu=Tools]').click(); await p.getByRole('menuitem', { name: 'Preflight', exact: false }).click();
         assert.equal(await q('preflight-gaps-count').textContent(), '51', 'Preflight uses the same annotation filter');
-        await p.getByRole('button', { name: 'Close', exact: true }).click();
+        await p.getByTestId('preflight-close').click();       // the ribbon has a Close button too (TODO 290)
         await q('gap-join').click();
         await p.waitForFunction(() => document.querySelector('[data-testid=gap-count]').textContent === '0');
         await p.keyboard.press('Control+z');
@@ -29229,6 +29229,65 @@ try {
     const doc = await savedDoc();
     assert.deepEqual(types97d(doc), ['LWPOLYLINE', 'LINE', 'LINE']);
     assert.deepEqual(lineEnds97c(doc), [[100, 200, 200, 200], [200, 200, 260, 200]]); assert.deepEqual(doc.groups.map((g) => g.members), [[1, 2]]);
+    await closeTabs(/./); assert.deepEqual(errors, []);
+  });
+
+  await step('TODO 290: Close turns an L of two lines into one closed polyline (straight, noted), Undo restores both; Extend runs the ends to their crossing', async () => {
+    const raw = newDoc(4);
+    addEntities(raw, dxfLine(100, 100, 100, 200, { aci: 3 }), dxfLine(100, 200, 200, 200));
+    await open97c(raw, 'close290.dxf');
+    await key97c('Control+a'); await typeCmd('close');
+    const text = await prompt(), doc = await savedDoc();
+    assert.deepEqual(types97d(doc), ['LWPOLYLINE']); assert.equal(fieldOf(doc.entities[0], 70), 1, 'closed flag'); assert.equal(fieldOf(doc.entities[0], 90), 3); assert.equal(doc.entities[0].aci, 3, 'the first line colour');
+    assert.match(text, /Closed 2 objects into 1 closed polyline\. ends do not meet ahead: closed straight/);
+    assert.equal((await histLabels()).at(-1), 'Close');
+    await key97c('Control+z'); assert.deepEqual(types97d(await savedDoc()), ['LINE', 'LINE'], 'one Undo brings both lines back');
+    await closeTabs(/./);
+    const open = newDoc(4);       // a triangle open at its apex: the two side lines, run on, cross at (200, 300)
+    addEntities(open, dxfLine(100, 100, 300, 100), dxfLine(100, 100, 160, 220), dxfLine(300, 100, 240, 220));
+    await open97c(open, 'close290-extend.dxf');
+    await key97c('Control+a'); await typeCmd('cl');
+    const msg = await prompt(), tri = await savedDoc();
+    assert.deepEqual(types97d(tri), ['LWPOLYLINE']); assert.equal(fieldOf(tri.entities[0], 90), 3, 'the ends meet at the crossing: three corners'); assert.doesNotMatch(msg, /do not meet/);
+    await key97c('Control+z');
+    await key97c('Escape'); await typeCmd('close'); await said(/\[Extend \/ Straight\] <Extend>/);
+    await typeCmd('straight'); await said(/<Straight>/);
+    await click(200, 100); await click(130, 160); await click(270, 160); await key97c('Enter');
+    const flat = await savedDoc();
+    assert.deepEqual(types97d(flat), ['LWPOLYLINE']); assert.equal(fieldOf(flat.entities[0], 90), 4, 'Straight keeps the gap as a fourth corner');
+    await key97c('Control+z'); await typeCmd('close'); await typeCmd('extend'); await key97c('Escape');       // the option is remembered on this PC: back to the default
+    await closeTabs(/./);
+    const lay = newLayout('Close layout');
+    lay.parts.a = objectPart('a', 'Up', dxfLine(100, 100, 100, 180), newDoc(4).layers);
+    lay.parts.b = objectPart('b', 'Over', dxfLine(100, 180, 180, 180), newDoc(4).layers);
+    lay.placed = [objectPlacement(lay.parts.a), objectPlacement(lay.parts.b)];
+    await open97c(layoutRaw(lay), 'layout290.dxf');
+    await page.locator('[data-ribbon-tab=Home]').click();
+    const close = page.locator('.ribbon-body [data-panel=Modify]').getByRole('button', { name: 'Close', exact: true });
+    assert.equal(await close.isEnabled(), true);
+    await key97c('Escape'); await close.click(); await click(100, 140); await click(140, 180); await key97c('Enter');
+    await said(/Closed 2 objects into 1 closed polyline/);
+    assert.equal(layoutFromRaw(await savedDoc()).placed.length, 1); await key97c('Control+z'); assert.equal(layoutFromRaw(await savedDoc()).placed.length, 2);
+    const cmp = newDoc(4); addEntities(cmp, dxfLine(100, 100, 100, 200), dxfLine(100, 200, 200, 200));
+    await open97c(cmp, 'compare290.dxf'); await typeCmd('compare');
+    await page.locator('[data-ribbon-tab=Home]').click();
+    await page.locator('.ribbon-body [data-panel=Modify]').getByRole('button', { name: 'Close', exact: true }).click();
+    await click(100, 150); await click(150, 200); await key97c('Enter'); await key97c('Escape');
+    await page.locator('.dtab').filter({ has: page.locator('.tname', { hasText: /^compare290(?:-edited)*\.dxf$/ }) }).click();
+    assert.deepEqual(types97d(await savedDoc()), ['LWPOLYLINE'], 'Compare edits the source file'); await key97c('Control+z'); assert.equal((await savedDoc()).entities.length, 2);
+    await closeTabs(/./); assert.deepEqual(errors, []);
+  });
+
+  await step('TODO 290: Close refuses a single line and ignores a closed outline, with a note and no Undo step', async () => {
+    const raw = newDoc(4);
+    addEntities(raw, dxfLine(100, 100, 200, 100), dxfLine(100, 200, 200, 200), dxfCircle(300, 150, 30));
+    await open97c(raw, 'close290-refuse.dxf');
+    const steps = (await histLabels()).length;
+    const p = await at(150, 100); await page.mouse.click(p.x, p.y, { button: 'right' });       // right-click an open object: Close is in its menu
+    assert.ok((await ctxItems()).includes('Close')); await page.getByRole('menuitem', { name: 'Close', exact: true }).click();
+    await said(/a single line has no area to close/);
+    await key97c('Escape'); await click(330, 150); await typeCmd('close'); await said(/already closed/);
+    assert.equal((await histLabels()).length, steps, 'nothing closed makes no undo step'); assert.equal((await savedDoc()).entities.length, 3);
     await closeTabs(/./); assert.deepEqual(errors, []);
   });
 

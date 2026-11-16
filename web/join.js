@@ -15,7 +15,7 @@ const dist = (a, b) => Math.hypot(b[0] - a[0], b[1] - a[1]);
 const norm360 = (t) => ((t % 360) + 360) % 360;
 
 /** { sh, path } for an entity that can be joined, else { reason }. */
-function classify(e) {
+export function classify(e) {
   if (e?.type === 'ELLIPSE' || e?.type === 'SPLINE') return { reason: 'ellipses and splines are not joined' };
   if (!['LINE', 'ARC', 'LWPOLYLINE', 'CIRCLE'].includes(e?.type)) return { reason: 'only lines, arcs and polylines are joined' };
   if (e.type !== 'LINE' && (Math.abs(get(e.r, 210) ?? 0) > 1e-9 || Math.abs(get(e.r, 220) ?? 0) > 1e-9 || (get(e.r, 230) ?? 1) < 0)) return { reason: 'mirrored or tilted objects are not joined' };
@@ -50,7 +50,7 @@ function merged(src, items, close) {
   return { used, sh: { t: 'arc', c: s.c, r: s.r, a0: norm360(s.a0 + lo), a1: norm360(s.a0 + hi) } };
 }
 
-const flip = (segs) => segs.map((g) => ({ a: [g.b[0], g.b[1], 0, ...(g.a.length > 3 ? [g.a[4], g.a[3]] : [])], b: [g.a[0], g.a[1]], bulge: -g.bulge })).reverse();
+export const flip = (segs) => segs.map((g) => ({ a: [g.b[0], g.b[1], 0, ...(g.a.length > 3 ? [g.a[4], g.a[3]] : [])], b: [g.a[0], g.a[1]], bulge: -g.bulge })).reverse();
 
 /** Pieces touching end to end, from the source outwards: { used, sh } or null when nothing touches the source. */
 function chained(src, items) {
