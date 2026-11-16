@@ -4196,6 +4196,7 @@ try {
     assert.equal(await t('size-strip').isVisible(), false, 'hidden on a drawing tab');
     await page.locator('.tabs .dtab[data-kind=layout]').first().click();
     assert.equal(await t('size-strip').isVisible(), true);
+    await t('ptab-step').click();       // a drawing tab moved the docker to Drawing; the next steps use the Step and repeat panel
   }, { needs: ['gripper: any sides at once, 0 = none, the parts keep clear of each'] });
 
   await step('extra gap: click a gap, type mm; the grid shifts, the count follows, the panel lists it with a ×', async () => {
