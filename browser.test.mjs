@@ -21472,6 +21472,8 @@ try {
       assert.equal(await dialog.getByRole('button', { name: 'Save', exact: true }).isDisabled(), true);
       await key('Contour').click(); await p.keyboard.press('Control+s');
       assert.match(await dialog.locator('.sc-status').textContent(), /Reserved for Save/);
+      await key('Contour').click(); await p.keyboard.press('Control+d');
+      assert.match(await dialog.locator('.sc-status').textContent(), /Ctrl\+D cannot be assigned to .+\. Reserved for Duplicate\.$/);
       assert.equal(await key('Contour').textContent(), 'Ctrl+G');
       await shot('C');
       await dialog.getByRole('button', { name: 'Swap alias clash' }).click();
