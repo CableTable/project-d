@@ -4412,7 +4412,7 @@ function buildStatus() {
   return h('div', { class: 'status' }, ui.fontNote = h('span', { class: 'font-note', hidden: true, 'data-testid': 'font-note' }), ui.cmdUI.echo, ui.cmdUI.hint, ui.coords, toggles, ui.wireframe, ui.workArea, ui.toolChip, ui.sheetChip, h('span', { class: 'gap' }),
     ui.entities = h('span', { class: 'lbl', 'data-testid': 'entities' }),
     ui.units = h('span', { class: 'lbl', 'data-testid': 'units' }),
-    ui.layerInfo = h('span', { class: 'lbl', 'data-testid': 'layer-info' }), ui.drawingUnit = h('button', { class: 'tog', type: 'button', 'data-testid': 'drawing-unit', 'aria-label': 'Drawing unit', title: 'Choose the drawing unit (UNITS)', onclick: chooseUnits }, 'mm'),
+    ui.layerInfo = h('span', { class: 'lbl layer-info', 'data-testid': 'layer-info' }), ui.drawingUnit = h('button', { class: 'tog', type: 'button', 'data-testid': 'drawing-unit', 'aria-label': 'Drawing unit', title: 'Choose the drawing unit (UNITS)', onclick: chooseUnits }, 'mm'),
     h('label', { class: 'lbl dp', title: 'Decimal places in dimensions' }, 'Dim ',
       ui.dp = h('select', { class: 'dp-sel', 'data-testid': 'decimals', 'aria-label': 'Decimal places in dimensions' },
         [0, 1, 2, 3, 4].map((n) => h('option', { value: String(n) }, n ? '0.' + '0'.repeat(n) : '0')))));
@@ -4466,7 +4466,7 @@ function renderStatus() {
     const names = [...new Set([...d.sel].map((e) => d.raw.entities[e] && d.raw.entities[e].layer).filter((n) => n != null))];
     layer = names.length === 1 ? names[0] : names.length + ' layers';
   }
-  ui.layerInfo.textContent = 'Layer: ' + layer;
+  ui.layerInfo.textContent = ui.layerInfo.title = 'Layer: ' + layer;
 }
 
 // ---- drawing the sheet ----
