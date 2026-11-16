@@ -28,5 +28,5 @@ export function withoutSheet(pdf, n) {
 export function restoreBalloons(current, saved, sheet) {
   const others = current.items.filter((it) => it.sheet !== sheet);
   const items = [...others, ...saved.items.filter((it) => it.sheet === sheet)];
-  return { items, next: Math.max(saved.next, ...others.map((it) => it.n + 1)), seq: Math.max(current.seq, saved.seq) };
+  return { ...saved, items, next: Math.max(saved.next, ...others.map((it) => it.n + 1)), seq: Math.max(current.seq, saved.seq) };
 }

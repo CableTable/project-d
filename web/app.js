@@ -3661,7 +3661,7 @@ async function save(forceAs) {
   const d = curDoc();
   if (!d) return;
   if (!d.raw && !d.lay) { note('Nothing to save yet: open a DXF first'); return; }
-  if (!d.lay && d.bg && !d.raw.entities.length && (balOf(d).items.length || d.unitsDirty)) {          // a picture alone saves its sidecars
+  if (!d.lay && d.bg && !d.raw.entities.length && (balOf(d).items.length || balOf(d).size != null || d.balSaved?.size != null || d.unitsDirty)) {          // a picture alone saves its sidecars
     try { await unitsSave(d, d.openPath, d.unitsName || d.name); }
     catch (err) { note('Saving the drawing unit failed: ' + (err.message || err)); return; }
     if (await balSave(d) !== false) { d.dirty = false; renderTabs(); }
@@ -7001,8 +7001,9 @@ function showDimStyle() {
 // ---- Inspection balloons (TODO 29, balloons.js; mock-ups R9a and R9c Option B): numbered circles with a leader, a docked table, a sidecar file ----
 // A balloon is not in the DXF. d.balloons (an immutable set) is undone with the drawing's own history and saved in <name>.pdballoons.json next to the
 // file (a PDF is never rewritten). Coordinates are mm on the sheet, y up. A multi-page PDF is one tab; its page is the balloon's sheet (d.pdf).
-/** The circle's radius in mm: 3.5, or 1.6 % of the page's longest side on a big one (an A1 scan), so it reads at the same size on any page. */
+/** The circle's radius in mm: half the typed diameter, or Auto (3.5 / 1.6 % of the page's longest side). */
 function balR(d) {
+  if (balOf(d).size != null) return balOf(d).size / 2;
   const bs = [d.bg ? Ed.bgBox(d.bg) : null, d.box].filter(Boolean);
   return Math.max(3.5, 0.016 * Math.max(0, ...bs.map((b) => Math.max(b[2] - b[0], b[3] - b[1]))));
 }
@@ -7313,7 +7314,7 @@ const balPath = (d) => d.balloonPath || (d.path ? BAL.sidecarPath(d.path) : null
 /** Writes the sidecar if the balloons changed since it was read or written. ask: the app may ask where (for a file with no path yet). */
 async function balSave(d, ask = true) {
   const set = balOf(d), t = window.__TAURI__;
-  if (set === d.balSaved || (!set.items.length && !d.balSaved)) return;
+  if (set === d.balSaved || (!set.items.length && set.size == null && !d.balSaved)) return;
   const text = BAL.encode(set, { source: d.balName || d.name, pages: d.pdf ? d.pdf.pages : 1 });
   try {
     if (t && t.fs && t.fs.writeTextFile) {
@@ -7380,6 +7381,28 @@ function buildBalloonPanel() {
 }
 function buildBalloonDock() {
   ui.balCount = h('span', { class: 'chip', 'data-testid': 'bal-count' }, '0');
+  ui.balSize = h('input', { class: 'fld balsize', type: 'text', inputmode: 'decimal', autocomplete: 'off', 'aria-label': 'Size Ø', 'data-testid': 'bal-size', placeholder: 'Auto', title: 'Balloon circle diameter in mm for this drawing; empty = Auto' });
+  const resetSize = () => {
+    const d = editable();
+    ui.balSize.value = d ? balOf(d).size ?? '' : '';
+    ui.balSize.removeAttribute('aria-invalid');
+  };
+  const applySize = () => {
+    const d = editable();
+    if (!d) return;
+    const set = BAL.setSize(balOf(d), ui.balSize.value);
+    if (!set) { ui.balSize.setAttribute('aria-invalid', 'true'); return; }
+    ui.balSize.removeAttribute('aria-invalid');
+    if (set.size !== (balOf(d).size ?? null)) balApply(d, set, 'Balloon size');
+  };
+  ui.balSize.addEventListener('change', applySize);
+  ui.balSize.addEventListener('blur', resetSize);
+  ui.balSize.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === 'Escape') {
+      e.preventDefault(); e.stopPropagation();
+      if (e.key === 'Escape') resetSize(); else applySize();
+    }
+  });
   ui.balFilter = h('select', { class: 'fld', 'aria-label': 'Sheet filter', 'data-testid': 'bal-filter' });
   ui.balFilter.addEventListener('change', () => { state.balDock.sheet = ui.balFilter.value; renderBalloons(); });
   ui.balRows = h('tbody', { 'data-testid': 'bal-rows' });
@@ -7396,6 +7419,7 @@ function buildBalloonDock() {
   ui.balDock = h('section', { class: 'baldock', hidden: true, 'aria-label': 'Balloons', 'data-testid': 'bal-dock' }, handle,
     h('div', { class: 'balhead' }, h('h2', { class: 'sec' }, 'Balloons'), ui.balCount, h('label', { class: 'row lbl' }, 'Show', ui.balFilter), h('span', { class: 'lbl balhint' }, 'Click a row to zoom to its balloon'), h('span', { style: 'flex:1' }),
       h('button', { class: 'btn sm', type: 'button', 'data-testid': 'bal-renumber', title: 'Number them 1 to n, sheet by sheet, in the order placed (one undo step)', onclick: balRenumber }, 'Renumber'),
+      h('label', { class: 'row lbl' }, 'Size Ø', ui.balSize),
       h('button', { class: 'btn sm', type: 'button', 'data-testid': 'bal-csv', onclick: () => balExport(false) }, 'Export CSV'),
       h('button', { class: 'btn sm', type: 'button', 'data-testid': 'bal-excel', title: 'A CSV that Excel opens (not an .xlsx)', onclick: () => balExport(true) }, 'Export Excel'), ui.balCollapse),
     h('div', { class: 'balscroll' }, h('table', { class: 'bt' }, h('thead', null, h('tr', null, ['No.', 'Dimension', 'Tol +', 'Tol −', 'Sheet', 'Note'].map((x) => h('th', null, x)))), ui.balRows)));
@@ -7411,6 +7435,10 @@ function renderBalloons() {
   const sel = d && balSelItem(d), tool = state.tool === 'balloon', show = !!d && (set.items.length > 0 || tool), P = d && d.pdf;
   const sheets = P ? PS.sheetNumbers(P) : Array.from({ length: Math.max(1, ...set.items.map((it) => it.sheet)) }, (_, i) => i + 1);
   ui.balDock.hidden = !show;
+  if (ui.balSize !== document.activeElement) {
+    ui.balSize.value = set.size ?? '';
+    ui.balSize.removeAttribute('aria-invalid');
+  }
   ui.balDock.classList.toggle('collapsed', state.balDock.collapsed);
   ui.balDock.style.height = state.balDock.collapsed ? '' : state.balDock.h + 'px';
   ui.balCollapse.replaceChildren(icon(state.balDock.collapsed ? '<path d="M6 15l6-6 6 6"/>' : '<path d="M6 9l6 6 6-6"/>', { size: 14, width: 2, cap: 'round', join: 'round' }));

@@ -2,9 +2,33 @@
 const { test } = await import('node:test');
 const assert = (await import('node:assert/strict')).default;
 const B = await import('./web/balloons.js');
+import { setSize } from './web/balloons.js';
 
 const place = (set, tip, c, sheet = 1) => B.add(set, { tip, c, sheet });
 const nums = (set) => set.items.map((it) => it.n);
+
+test('TODO 306: typed diameter, Auto, sidecars and every set edit keep the drawing size', () => {
+  const sized = setSize(B.EMPTY, ' 10.0 ');
+  assert.equal(sized.size, 10);
+  assert.equal(B.EMPTY.size, null, 'size changes are immutable for Undo');
+  for (const value of ['2', '2.1', '8.2', '99.9', '100']) assert.equal(setSize(sized, value).size, +value);
+  for (const value of ['abc', '500', '1.9', '0', '-2', '2.25', '1e1', 'Infinity']) assert.equal(setSize(sized, value), null, value);
+  assert.equal(setSize(sized, ' ').size, null, 'empty is Auto');
+  const added = place(sized, [0, 0], [20, 0]);
+  for (const edited of [added, B.update(added, 1, { note: 'changed' }), B.remove(added, 1), B.setNext(added, 7), B.renumber(added)]) assert.equal(edited.size, 10);
+  const encoded = B.encode(added);
+  assert.equal(JSON.parse(encoded).size, 10);
+  assert.deepEqual(B.decode(encoded).set, added);
+  assert.equal('size' in JSON.parse(B.encode(setSize(added, ''))), false, 'Auto is omitted');
+  const old = JSON.parse(encoded); delete old.size;
+  assert.equal(B.decode(JSON.stringify(old)).set.size, null, 'old sidecars are Auto');
+  for (const size of [null, '10', 'abc', 1.9, 100.1, 2.25, {}, false]) {
+    const decoded = B.decode(JSON.stringify({ ...old, size }));
+    assert.equal(decoded.set.size, null, JSON.stringify(size));
+    assert.equal(decoded.dropped, 0, 'bad size is Auto, not a dropped balloon');
+  }
+  assert.equal(B.csv(B.rows(added)), B.csv(B.rows(setSize(added, ''))), 'CSV rows do not depend on diameter');
+});
 
 test('the next number goes up by itself; a typed number restarts the count from there', () => {
   let s = place(B.EMPTY, [10, 10], [20, 20]);

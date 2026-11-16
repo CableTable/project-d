@@ -18033,6 +18033,112 @@ try {
   };
   let balJson = null;
 
+  await step('TODO 306: balloon size typed for the drawing, Undo, saved in the sidecar, Auto default', async () => {
+    await balOpen();
+    await page.locator('[data-tool=balloon]').click(); await frames();
+    await balPlace([101, 62], [130, 80]);
+    await page.locator('[data-tool=select]').click();
+    const size = t('bal-size'), circles = page.locator('[data-testid=balloon] .bal-c');
+    await size.waitFor({ timeout: 1500 });
+    assert.equal(await size.inputValue(), ''); assert.equal(await size.getAttribute('placeholder'), 'Auto');
+    assert.equal(await size.getAttribute('title'), 'Balloon circle diameter in mm for this drawing; empty = Auto');
+    const radii = async () => { await frames(); return circles.evaluateAll((cs) => cs.map((c) => Number(c.getAttribute('r')))); };
+    const auto = await radii(); assert.equal(auto.length, 1);
+    await size.fill('10'); await size.press('Enter'); await size.blur();
+    assert.deepEqual(await radii(), [5], '10 mm diameter is drawn with a 5 mm radius');
+    await page.keyboard.press('Control+z');
+    assert.equal(await size.inputValue(), ''); assert.deepEqual(await radii(), auto, 'one Undo restores Auto');
+    await page.keyboard.press('Control+y'); assert.equal(await size.inputValue(), '10');
+    await page.locator('[data-tool=balloon]').click(); await balPlace([75, 13], [75, 35]);
+    assert.deepEqual(await radii(), [5, 5], 'adding a balloon keeps the diameter');
+    await page.locator('[data-tool=select]').click();
+    await page.keyboard.press('Control+z'); assert.deepEqual(await radii(), [5], 'Undo on a two-page PDF keeps size');
+    await page.keyboard.press('Control+y'); assert.deepEqual(await radii(), [5, 5]);
+    await page.locator('[data-sheet="2"]').click();
+    await page.waitForFunction(() => document.querySelector('[data-testid=sheet-chip]').textContent === 'Sheet 2 / 2');
+    assert.equal(await size.inputValue(), '10');
+    await page.locator('[data-tool=balloon]').click(); await balPlace([61, 62], [80, 80]);
+    assert.deepEqual(await radii(), [5], 'the whole drawing shares the diameter');
+    await page.locator('[data-tool=select]').click(); await page.keyboard.press('Control+z');
+    assert.equal(await size.inputValue(), '10'); assert.deepEqual(await radii(), []);
+    await page.locator('[data-sheet="1"]').click();
+    await page.waitForFunction(() => document.querySelector('[data-testid=sheet-chip]').textContent === 'Sheet 1 / 2');
+    assert.deepEqual(await radii(), [5, 5]);
+    for (const bad of ['abc', '500', '1.9', '2.25']) {
+      await size.fill(bad); await size.press('Enter');
+      assert.equal(await size.getAttribute('aria-invalid'), 'true', bad);
+      assert.deepEqual(await radii(), [5, 5], 'invalid typing changes nothing');
+      if (bad === 'abc') {
+        const border = await size.evaluate((el) => getComputedStyle(el).borderColor);
+        assert.equal(border, 'rgb(220, 38, 38)', 'invalid field is red');
+        await size.press('Escape');
+        assert.equal(await page.locator('[data-tool=select].on').count(), 1, 'Escape stays inside the size field');
+      } else await size.blur();
+      assert.equal(await size.inputValue(), '10'); assert.notEqual(await size.getAttribute('aria-invalid'), 'true');
+    }
+    await size.fill('10.1'); await size.dispatchEvent('change'); await size.blur();
+    assert.deepEqual(await radii(), [5.05, 5.05], 'change applies a decimal diameter');
+    await page.keyboard.press('Control+z'); assert.equal(await size.inputValue(), '10');
+    await size.fill(''); await size.press('Enter'); await size.blur();
+    assert.equal(await size.inputValue(), ''); assert.deepEqual(await radii(), [auto[0], auto[0]], 'empty restores Auto');
+    await page.keyboard.press('Control+z'); assert.equal(await size.inputValue(), '10');
+    // Editing a source balloon after sizing and undoing it must keep the drawing setting.
+    await page.locator('[data-testid=bal-row][data-n="1"]').click();
+    await t('bal-note').fill('after size'); await t('bal-note').press('Enter');
+    await page.keyboard.press('Control+z'); assert.deepEqual(await radii(), [5, 5]);
+    const csv = (await downloadsUtf8(() => t('bal-csv').click(), 1))[0];
+    const excel = (await downloadsUtf8(() => t('bal-excel').click(), 1))[0];
+    assert.equal(csv.text.split('\r\n')[0], 'No.,Dimension,Tol +,Tol -,Sheet,Note');
+    assert.equal(excel.text, '\ufeff' + csv.text, 'Excel remains the same CSV with a BOM');
+    const saved = await downloadsUtf8(() => page.keyboard.press('Control+s'), 2);
+    const sidecar = saved.find((x) => x.name === 'insp.pdballoons.json');
+    assert.equal(JSON.parse(sidecar.text).size, 10);
+    await balOpen([{ name: sidecar.name, mimeType: 'application/json', buffer: Buffer.from(sidecar.text) }]);
+    assert.equal(await size.inputValue(), '10'); assert.deepEqual(await radii(), [5, 5], 'Save and reopen keeps diameter');
+    // Another drawing starts at Auto; tab switches refresh the shared field.
+    const other = newDoc(4); addEntities(other, dxfLine(0, 0, 50, 50));
+    await t('picker').setInputFiles({ name: 'size-other.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(other)) });
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'size-other.dxf');
+    await page.locator('[data-tool=balloon]').click(); assert.equal(await size.inputValue(), '');
+    await size.fill('20'); await size.press('Enter'); await size.blur();
+    const emptySaved = await downloadsUtf8(() => page.keyboard.press('Control+s'), 2);
+    const emptySize = JSON.parse(emptySaved.find((x) => x.name === 'size-other.pdballoons.json').text);
+    assert.equal(emptySize.size, 20); assert.deepEqual(emptySize.items, [], 'size is saved before placing any balloon');
+    await page.locator('.tabs .dtab').filter({ hasText: /^insp\.dxf/ }).click();
+    assert.equal(await size.inputValue(), '10');
+    await page.locator('.tabs .dtab').filter({ hasText: /^size-other-edited\.dxf/ }).click();
+    assert.equal(await size.inputValue(), '20');
+    await page.locator('.tabs .dtab').filter({ hasText: /^insp\.dxf/ }).click();
+    await page.locator('[data-tool=select]').click();
+    await page.setViewportSize({ width: 1024, height: 768 }); await frames();
+    for (const theme of ['light', 'dark']) {
+      await menuItem('View', 'Theme: ' + theme); await frames();
+      assert.equal(await size.inputValue(), '10');
+      assert.ok(await page.locator('.balhead').evaluate((el) => el.scrollWidth <= el.clientWidth + 1), 'header fits at 1024');
+      for (const control of [size, t('bal-renumber'), t('bal-csv'), t('bal-excel'), t('bal-collapse')]) {
+        const b = await control.boundingBox(); assert.ok(b.x >= 0 && b.x + b.width <= 1024 && b.height > 0, 'header controls stay visible');
+      }
+      await page.screenshot({ path: shotDir + '/306-size-1024-' + theme + '.png' });
+    }
+    await menuItem('View', 'Theme: light'); await page.setViewportSize({ width: 1440, height: 900 });
+    const old = JSON.parse(sidecar.text); delete old.size;
+    await balOpen([{ name: sidecar.name, mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(old)) }]);
+    assert.equal(await size.inputValue(), ''); assert.deepEqual(await radii(), [auto[0], auto[0]], 'an old sidecar opens as Auto');
+    await closeTabs(/./);
+    page.once('dialog', (dlg) => dlg.accept());
+    await t('picker').setInputFiles('fixtures/text-only.pdf');
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on').textContent.startsWith('text-only.pdf'), null, { timeout: 60000 });
+    await page.locator('[data-tool=balloon]').click();
+    await size.fill('8.2'); await size.press('Enter'); await size.blur();
+    const pictureSaved = await downloadsUtf8(() => page.keyboard.press('Control+s'), 1);
+    assert.equal(pictureSaved[0].name, 'text-only.pdballoons.json');
+    assert.equal(JSON.parse(pictureSaved[0].text).size, 8.2, 'a picture with no balloons saves its size alone');
+    await size.fill(''); await size.press('Enter'); await size.blur();
+    const pictureAuto = await downloadsUtf8(() => page.keyboard.press('Control+s'), 1);
+    assert.equal('size' in JSON.parse(pictureAuto[0].text), false, 'resetting an empty picture to Auto is saved too');
+    await closeTabs(/./);
+  });
+
   await step('balloons: the Balloon tool (B) sits beside Leader; two clicks make a balloon, the next number goes up by itself, a number typed at the command line restarts the count', async () => {
     await balOpen();
     assert.equal(await page.locator('[data-tool=balloon]').getAttribute('title'), 'Balloon (B)');
