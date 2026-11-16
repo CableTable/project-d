@@ -132,6 +132,8 @@ try {
   if (process.env.SLOWRAF) await page.addInitScript(() => { const r = window.requestAnimationFrame.bind(window); window.requestAnimationFrame = (f) => r(() => setTimeout(() => f(performance.now()), 150)); });
   // THROTTLE=6 slows the CPU 6x (CDP) to mimic a slow CI runner and expose timing-dependent steps
   if (process.env.THROTTLE) await (await ctx.newCDPSession(page)).send('Emulation.setCPUThrottlingRate', { rate: Number(process.env.THROTTLE) });
+  // WIDEFONT=0.6 matches CI Linux font widths (S48 294b/c took 4 rounds); an init script, so it survives reloads and new pages
+  if (process.env.WIDEFONT) await ctx.addInitScript((px) => document.addEventListener('DOMContentLoaded', () => { const s = document.createElement('style'); s.textContent = `* { letter-spacing: ${px}px !important; }`; document.head.append(s); }), process.env.WIDEFONT);
   // POLAR and OTRACK start off here: the older steps pick free points at any angle; the tracking steps switch them on
   await page.addInitScript(() => { try { localStorage.setItem('pd-track', JSON.stringify({ polar: false, inc: 15, otrack: false })); } catch { /* ignore */ } });
   const errors = [];
