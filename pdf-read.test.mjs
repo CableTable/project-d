@@ -8,6 +8,8 @@ const E = await import('./web/edit.js');
 const W = await import('./web/dxf-write.js');
 const P = await import('./web/pdf-write.js');
 const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
+const F = await import('./web/fill.js');
+const C = await import('./web/colour.js');
 
 const near = (a, b, m, eps = 1e-3) => assert.ok(Math.abs(a - b) <= eps * (1 + Math.abs(b)), `${m || ''} ${a} !~ ${b}`);
 const read = () => R.readPdf(new Uint8Array(fs.readFileSync('fixtures/vector.pdf')), { pdfjs });
@@ -15,18 +17,126 @@ const pdfPath = (codes, coords, paint = pdfjs.OPS.stroke) => R.pdfToDoc({ ops: {
   fnArray: [pdfjs.OPS.constructPath, paint], argsArray: [[codes, coords], null],
 } }, pdfjs.OPS);
 
+const colourDoc = (...operations) => R.pdfToDoc({ ops: {
+  fnArray: operations.map(([name]) => pdfjs.OPS[name]), argsArray: operations.map(([, args = null]) => args),
+} }, pdfjs.OPS).doc;
+const triangle = ['constructPath', [[pdfjs.OPS.moveTo, pdfjs.OPS.lineTo, pdfjs.OPS.lineTo], [0, 0, 20, 0, 20, 20]]];
+
+test('TODO 300: stroke, fill and fill+stroke keep colours on first-seen ByLayer outlines', () => {
+  const doc = colourDoc(['setStrokeRGBColor', new Uint8ClampedArray([255, 0, 0])], triangle, ['stroke'],
+    ['setFillRGBColor', [0, 255, 0]], triangle, ['fill'], triangle, ['fillStroke'],
+    ['setFillRGBColor', [255, 255, 255]], triangle, ['fill']);
+  assert.deepEqual(Object.keys(doc.layers), ['#FF0000', '#00FF00', '#FFFFFF']);
+  assert.deepEqual(Object.values(doc.layers).map((l) => [l.aci, l.tc]), [[1, null], [3, null], [7, 0xffffff]]);
+  assert.deepEqual(doc.entities.map((e) => [e.layer, e.aci, e.tc, e.fill]), [
+    ['#FF0000', 256, null, undefined], ['#00FF00', 256, null, 'aci:3'],
+    ['#FF0000', 256, null, 'aci:3'], ['#FFFFFF', 256, null, 'tc:16777215'],
+  ]);
+  assert.deepEqual(doc.entities.map(F.closedOutline), [false, true, true, true]);
+  for (const raw of [doc, D.readDxf(W.writeDxf(doc))]) {
+    const white = D.flatten(raw).items.filter((it) => it.css === '#ffffff');
+    assert.equal(white.length, 2, 'white fill and outline both survive');
+    assert.ok(white.every((it) => it.exact), 'true-colour white must not turn black in the light theme');
+  }
+});
+
+test('TODO 300: q/Q and form scopes restore stroke and fill; gray, CMYK and sc/scn components', () => {
+  const doc = colourDoc(['setStrokeGray', [0.5]], triangle, ['stroke'], ['save'],
+    ['setStrokeCMYKColor', [0, 1, 1, 0]], ['setFillGray', [0.25]], triangle, ['fillStroke'], ['restore'], triangle, ['fillStroke'],
+    ['paintFormXObjectBegin', [null]], ['setFillCMYKColor', [1, 0, 0, 0]], triangle, ['fill'], ['paintFormXObjectEnd'], triangle, ['fill'],
+    ['setStrokeColor', [0, 1, 0]], triangle, ['stroke'], ['setFillColorN', [0, 0, 0, 0]], triangle, ['fill'],
+    ['setStrokeColorN', [0.75]], triangle, ['stroke']);
+  assert.deepEqual(doc.entities.map((e) => e.layer), ['#808080', '#FF0000', '#808080', '#00FFFF', '#000000', '#00FF00', '#FFFFFF', '#BFBFBF']);
+  assert.deepEqual(doc.entities.slice(1, 5).map((e) => e.fill), [C.rgbKey([64, 64, 64]), 'tc:0', 'aci:4', 'tc:0']);
+});
+
+const circlePath = (radius) => {
+  const k = radius * 0.5522847498, { moveTo: m, curveTo: c } = pdfjs.OPS;
+  return { codes: [m, c, c, c, c], coords: [radius, 0, radius, k, k, radius, 0, radius,
+    -k, radius, -radius, k, -radius, 0, -radius, -k, -k, -radius, 0, -radius, k, -radius, radius, -k, radius, 0] };
+};
+test('TODO 300: a filled circle stays one closed shape within 0.01 mm of its cubic', () => {
+  const { codes, coords } = circlePath(1000), { doc } = pdfPath(codes, coords, pdfjs.OPS.fill);
+  assert.equal(doc.entities.length, 1);
+  assert.ok(F.closedOutline(doc.entities[0])); assert.equal(doc.entities[0].fill, 'tc:0');
+  const boundary = F.boundary(doc.entities[0]), k = 0.5522847498;
+  for (let i = 1; i < 97; i++) {
+    const t = i / 97, u = 1 - t;
+    const p = [u ** 3 + 3 * u * u * t + 3 * u * t * t * k, 3 * u * u * t * k + 3 * u * t * t + t ** 3].map((n) => n * 1000 * R.PT);
+    assert.ok(F.edgeDist(p, boundary) <= 0.01, 'curve to outline distance at ' + t);
+  }
+});
+test('TODO 300: compound fill and eoFill keep a ring hole, including after Save to DXF', () => {
+  const outer = circlePath(50), inner = circlePath(20);
+  for (const paint of [pdfjs.OPS.fill, pdfjs.OPS.eoFill, pdfjs.OPS.eoFillStroke]) {
+    const { doc } = pdfPath([...outer.codes, ...inner.codes], [...outer.coords, ...inner.coords], paint);
+    assert.equal(doc.entities.length, 2); assert.ok(doc.entities.every(F.closedOutline));
+    for (const raw of [doc, D.readDxf(W.writeDxf(doc))]) {
+      assert.equal(raw.entities.length, 2); assert.equal(raw.entities[0].fill, 'tc:0');
+      const fills = D.flatten(raw).items.filter((it) => it.attachedFill);
+      assert.equal(fills.length, 1, 'inner subpath must not paint over the hole');
+      assert.equal(F.containsFill(fills[0].ops, [0, 0]), false);
+      assert.equal(F.containsFill(fills[0].ops, [30 * R.PT, 0]), true);
+    }
+  }
+});
+test('TODO 300: text follows its fill colour and first-seen layer, including a mixed-colour text item', () => {
+  const { OPS } = pdfjs, glyph = (unicode) => ({ unicode, width: 500 });
+  const { doc } = R.pdfToDoc({ ops: {
+    fnArray: [OPS.setFillRGBColor, OPS.showText, OPS.save, OPS.setFillRGBColor, OPS.showText, OPS.restore, OPS.showText, OPS.constructPath, OPS.stroke],
+    argsArray: [[255, 0, 0], [[glyph('A')]], null, [0, 0, 255], [[glyph('B')]], null, [[glyph('C')]], triangle[1], null],
+  }, text: [{ str: 'ABC', width: 30, transform: [10, 0, 0, 10, 0, 0] }] }, OPS);
+  assert.deepEqual(Object.keys(doc.layers), ['#FF0000', '#0000FF', '#000000']);
+  assert.deepEqual(D.flatten(doc).layers.map((l) => l.name), Object.keys(doc.layers), 'displayed layers also follow first-seen paint order');
+  assert.deepEqual(doc.entities.filter((e) => e.type === 'TEXT').map((e) => [e.r.v[e.r.c.indexOf(1)], e.layer]),
+    [['A', '#FF0000'], ['B', '#0000FF'], ['C', '#FF0000']]);
+});
+test('TODO 300: non-PDF Illustrator bytes are rejected by the unchanged signature check', () => {
+  assert.equal(R.isPdf(new TextEncoder().encode('%!PS-Adobe-3.0\n%%Creator: Illustrator')), false);
+  assert.equal(R.isPdf(new TextEncoder().encode('prefix%PDF-1.6')), false);
+});
+
+const colourPdf = (content) => {
+  const objects = ['<< /Type /Catalog /Pages 2 0 R >>', '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 140 110] /Resources << >> /Contents 4 0 R >>',
+    `<< /Length ${content.length} >>\nstream\n${content}endstream`];
+  let pdf = '%PDF-1.4\n';
+  const offsets = objects.map((object, i) => { const at = pdf.length; pdf += `${i + 1} 0 obj\n${object}\nendobj\n`; return at; });
+  const xref = pdf.length;
+  pdf += 'xref\n0 5\n0000000000 65535 f \n' + offsets.map((n) => String(n).padStart(10, '0') + ' 00000 n \n').join('');
+  return new TextEncoder().encode(pdf + `trailer\n<< /Size 5 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`);
+};
+test('TODO 300: real PDF colours use pdf.js byte RGB arguments; filled shapes round-trip', async () => {
+  const bytes = colourPdf('1 0 0 RG\n10 10 m 110 10 l S\n0 1 0 rg\n10 30 m 50 30 l 50 60 l f\nq\n0 0 1 RG\n70 30 40 30 re B\nQ\n10 80 m 110 80 l S\n');
+  const { doc } = await R.readPdf(bytes, { pdfjs });
+  assert.deepEqual(Object.keys(doc.layers), ['#FF0000', '#00FF00', '#0000FF']);
+  assert.deepEqual(doc.entities.map((e) => [e.layer, e.fill]), [
+    ['#FF0000', undefined], ['#00FF00', 'aci:3'], ['#0000FF', 'aci:3'], ['#FF0000', undefined],
+  ]);
+  const back = D.readDxf(W.writeDxf(doc));
+  assert.deepEqual(back.entities.map((e) => [e.layer, e.fill]), doc.entities.map((e) => [e.layer, e.fill]));
+});
+
+test('TODO 300: real g/G, k/K and sc/scn operators normalize into coloured outlines', async () => {
+  const bytes = colourPdf('0.5 G 0 0 m 20 0 l S\n0.25 g 0 0 20 20 re f\n0 0 0 0 K 0 30 m 20 30 l S\n1 1 1 1 k 30 0 20 20 re f\n/DeviceRGB CS 0 1 0 SC 0 40 m 20 40 l S\n/DeviceRGB cs 0 0 1 scn 60 0 20 20 re f\n');
+  const { doc } = await R.readPdf(bytes, { pdfjs });
+  // DeviceCMYK is already converted by pdf.js's colour profile before the operator list reaches us.
+  assert.deepEqual(doc.entities.map((e) => e.layer), ['#808080', '#404040', '#FFFFFF', '#06060C', '#00FF00', '#0000FF']);
+  assert.deepEqual(doc.entities.filter((e) => e.fill).map((e) => e.fill), [C.rgbKey([64, 64, 64]), C.rgbKey([6, 6, 12]), 'aci:5']);
+});
+
 test('TODO 272a: three contiguous lines become one open polyline, even back at the start', () => {
   const { moveTo: m, lineTo: l } = pdfjs.OPS;
   const { doc, paths } = pdfPath([m, l, l, l], [0, 0, 10, 0, 10, 10, 0, 0]);
   assert.equal(paths, 1);
-  assert.deepEqual(doc.entities, [W.lwpoly([[0, 0], [10 * R.PT, 0], [10 * R.PT, 10 * R.PT], [0, 0]])]);
+  assert.deepEqual(doc.entities, [W.lwpoly([[0, 0], [10 * R.PT, 0], [10 * R.PT, 10 * R.PT], [0, 0]], { layer: '#000000' })]);
 });
 
-test('TODO 272a: h closes joined lines; fills remain unfilled and paint operations stay separate', () => {
+test('TODO 272a: h closes joined lines; fills keep their colour and paint operations stay separate', () => {
   const { moveTo: m, lineTo: l, closePath: h, fill, stroke, constructPath } = pdfjs.OPS;
   const { doc, paths } = pdfPath([m, l, l, h], [0, 0, 10, 0, 10, 10], fill);
   assert.equal(paths, 1);
-  assert.deepEqual(doc.entities, [W.lwpoly([[0, 0], [10 * R.PT, 0], [10 * R.PT, 10 * R.PT]], { closed: true })]);
+  assert.deepEqual(doc.entities, [W.lwpoly([[0, 0], [10 * R.PT, 0], [10 * R.PT, 10 * R.PT]], { closed: true, layer: '#000000', fill: 'tc:0' })]);
   const separate = R.pdfToDoc({ ops: { fnArray: [constructPath, stroke, constructPath, stroke],
     argsArray: [[[m, l], [0, 0, 10, 0]], null, [[m, l], [10, 0, 20, 0]], null] } }, pdfjs.OPS);
   assert.equal(separate.paths, 2);
@@ -36,7 +146,7 @@ test('TODO 272a fix: m l l l(start) h closes without a repeated point', async ()
   const { moveTo: m, lineTo: l, closePath: h } = pdfjs.OPS;
   const { doc, paths } = pdfPath([m, l, l, l, h], [0, 0, 10, 0, 10, 10, 0, 0]);
   assert.equal(paths, 1);
-  assert.deepEqual(doc.entities, [W.lwpoly([[0, 0], [10 * R.PT, 0], [10 * R.PT, 10 * R.PT]], { closed: true })]);
+  assert.deepEqual(doc.entities, [W.lwpoly([[0, 0], [10 * R.PT, 0], [10 * R.PT, 10 * R.PT]], { closed: true, layer: '#000000' })]);
   const r = (await import('./web/modify.js')).offsetEntity(doc.entities[0], 0.5, [3, 1]);
   assert.ok(!r.error, r.error);
 });
@@ -60,7 +170,7 @@ test('TODO 272a: line-arc-line emits polyline, ARC, polyline; h never closes acr
     assert.equal(paths, 3);
     assert.deepEqual(doc.entities.map((e) => e.type), ['LWPOLYLINE', 'ARC', 'LWPOLYLINE']);
     assert.equal(+doc.entities[2].r.v[doc.entities[2].r.c.indexOf(70)], 0);
-    assert.deepEqual(doc.entities[2], W.lwpoly([[0, 10 * R.PT], [0, 20 * R.PT], ...(close ? [[20 * R.PT, 0]] : [])]));
+    assert.deepEqual(doc.entities[2], W.lwpoly([[0, 10 * R.PT], [0, 20 * R.PT], ...(close ? [[20 * R.PT, 0]] : [])], { layer: '#000000' }));
   }
 });
 

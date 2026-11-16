@@ -95,7 +95,7 @@ import { loadFont } from './fontload.js';
 import { fontForStyle, fontSubstitutions } from './fontsub.js';
 import { outlineOf } from './nestshape.js';
 import { partSource, readTitleBlock, withTitleBlock } from './pdf-export.js';
-import { readPdf, renderPdfPage, isPdf } from './pdf-read.js';
+import { readPdf, renderPdfPage } from './pdf-read.js';
 import { panelWidth } from './docker.js';
 
 const SVGNS = 'http://www.w3.org/2000/svg';
@@ -1154,7 +1154,9 @@ async function openBytes(name, buf, path = null) {
     note(`${name} is already open: here is its tab` + (state.docs[same].dirty ? ' (with unsaved changes)' : ''));
     return;
   }
-  if (/\.pdf$/i.test(name) || (!/\.dxf$/i.test(name) && buf.byteLength && isPdf(buf))) { await openPdf(name, buf, path); return; }
+  const header = new Uint8Array(ArrayBuffer.isView(buf) ? buf.buffer : buf, buf.byteOffset || 0, Math.min(buf.byteLength, 1024));
+  if (/\.pdf$/i.test(name) || new TextDecoder('latin1').decode(header).includes('%PDF')) { await openPdf(name, buf, path); return; }
+  if (/\.ai$/i.test(name)) { note(name + ": this .ai has no PDF part. In Illustrator: Save As .ai with 'Create PDF Compatible File' on, or Save a Copy as PDF."); return; }
   const dwg = /\.dwg$/i.test(name);
   if (!dwg && !/\.dxf$/i.test(name)) { note(name + ': Opens DXF or PDF; pictures go in as a background (Background…)'); return; }
   if (dwg && !(buf = await dwgBytes(name, path, buf))) return;
@@ -1198,7 +1200,7 @@ async function openPdf(name, buf, path = null, copies = null) {
   }
   const raw = r.doc, fl = flatten(raw);
   const base = baseName(name), dxfName = base + '.dxf';
-  const doc = { name: dxfName, path: null, openPath: path, dirty: false, fromPdf: name, pdf: { name, bytes, pages: r.pages, page: r.page, hash }, ...tabFields(raw, fl) };
+  const doc = { name: dxfName, path: null, openPath: path, dirty: false, fromPdf: name, curLayer: Object.keys(raw.layers)[0], pdf: { name, bytes, pages: r.pages, page: r.page, hash }, ...tabFields(raw, fl) };
   addTab(doc);
   note(`Opened ${name} as a drawing (page ${r.page} of ${r.pages}): ${raw.entities.length} entities, ${r.texts} texts, ${fmtSize(r.mm[0])} × ${fmtSize(r.mm[1])} mm. Not saved yet: Save writes ${base}${PS.sheetNumbers(doc.pdf).length > 1 ? `-sheet${r.page}` : ''}.dxf` + (fl.truncated ? '. Too big to show all of it' : ''));
   await balLoad(doc, path, name);
@@ -1226,7 +1228,7 @@ async function openFile() {
   const t = window.__TAURI__;
   if (!t || !t.dialog || !t.dialog.open) { ui.picker.value = ''; ui.picker.click(); return; }
   try {
-    const picked = await t.dialog.open({ multiple: false, filters: [{ name: 'Drawings', extensions: ['dxf', 'dwg', 'pdf'] }] });
+    const picked = await t.dialog.open({ multiple: false, filters: [{ name: 'Drawings', extensions: ['dxf', 'dwg', 'pdf', 'ai'] }] });
     const path = Array.isArray(picked) ? picked[0] : picked;
     if (path) await openPath(String(path));
   } catch (err) {
@@ -1250,10 +1252,6 @@ async function openPath(path, recent = false) {
   if (!t || !t.fs || !t.fs.readFile) return;
   try {
     if (!(await bigOk([{ name, size: await pathSize(path) }])).length) return;
-    if (!/\.(dxf|pdf)$/i.test(name)) {                                       // a .dwg is converted from its path; other names are refused
-      if (recent && t.fs.exists && !(await t.fs.exists(path))) throw new Error('not found');   // a DXF's readFile fails by itself; the helper's error would not say "moved"
-      await openBytes(name, new ArrayBuffer(0), path); return;
-    }
     await openBytes(name, await t.fs.readFile(path), path);
   } catch (err) {
     let missing = false;
@@ -1566,7 +1564,7 @@ function buildCanvas() {
   // the opened drawing: a canvas over the sheet, same view (applyView), drawn at true size
   ui.dcanvas = h('canvas', { class: 'drawing-layer', 'data-testid': 'drawing' });
   ui.gridDisplay = h('div', { class: 'drawing-grid', hidden: true, 'aria-hidden': 'true', 'data-testid': 'drawing-grid' });
-  ui.picker = h('input', { type: 'file', accept: '.dxf,.dwg,.pdf,.json', hidden: true, 'data-testid': 'picker', multiple: true });
+  ui.picker = h('input', { type: 'file', accept: '.dxf,.dwg,.pdf,.ai,.json', hidden: true, 'data-testid': 'picker', multiple: true });
   ui.picker.addEventListener('change', async () => { const files = [...ui.picker.files]; ui.picker.value = ''; for (const f of balFirst(await bigOk(files))) await openPicked(f); });   // emptied, so the same file can be picked again
   ui.bgPicker = h('input', { type: 'file', accept: '.png,.jpg,.jpeg,.pdf', hidden: true, 'data-testid': 'bg-picker' });
   ui.bgPicker.addEventListener('change', async () => {
@@ -7014,7 +7012,7 @@ async function balSheet(d, n) {
       next = { ...next, bg: { name: P.name, mm: r.mmPerPx, x: 0, y: 0, visible: true, ...next.bg, bitmap: bm, w: bm.width, h: bm.height } };
     } else if (!next) {
       const r = await readPdf(new Uint8Array(P.bytes.slice(0)), { page: n });
-      next = { ...tabFields(r.doc, flatten(r.doc)), hist: Ed.createHistory(), name: baseName(P.name) + '.dxf', path: null, dirty: false };
+      next = { ...tabFields(r.doc, flatten(r.doc)), curLayer: Object.keys(r.doc.layers)[0], hist: Ed.createHistory(), name: baseName(P.name) + '.dxf', path: null, dirty: false };
     }
     PS.keepPage(d);
     if (P.picture) d.bg?.bitmap?.close();

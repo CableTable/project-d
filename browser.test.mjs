@@ -7371,6 +7371,79 @@ try {
     assert.deepEqual(await tabNames(), before.slice(0, -1), 'test tabs are closed');
   });
 
+  await step('TODO 300: Illustrator picker and drop keep colour layers and fills; non-PDF AI opens nothing', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const p = await context.newPage();
+    p.on('pageerror', (e) => errors.push(String(e)));
+    try {
+      await p.goto(URL_ + '?autosave=86400000');
+      const picker = p.getByTestId('picker'), prompt = p.getByTestId('cmd-prompt');
+      assert.ok((await picker.getAttribute('accept')).split(',').includes('.ai'));
+      await picker.setInputFiles('fixtures/colours.ai');
+      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'colours.dxf');
+      assert.deepEqual(await p.locator('.layer .nm').allTextContents(), ['#FF0000', '#00FF00', '#0000FF']);
+      const [download] = await Promise.all([p.waitForEvent('download'), p.keyboard.press('Control+s')]);
+      const doc = readDxf(readFileSync(await download.path(), 'utf8'));
+      assert.equal(doc.entities.length, 4);
+      assert.equal(doc.entities[1].fill, 'aci:3');
+      assert.equal(doc.entities[2].layer, '#0000FF'); assert.equal(doc.entities[2].fill, 'aci:3');
+      for (const theme of ['light', 'dark']) {
+        await p.locator('[data-menu=View]').click();
+        await p.getByRole('menuitemcheckbox', { name: new RegExp('Theme: ' + theme + '\\b') }).click();
+        await p.screenshot({ path: `${shotDir}/todo300-${theme}.png` });
+      }
+      const names = await p.locator('.dtab .tname').allTextContents();
+      const noPdf = "%!PS-Adobe-3.0\n%%Creator: Illustrator";
+      await picker.setInputFiles({ name: 'legacy.ai', mimeType: 'application/postscript', buffer: Buffer.from(noPdf) });
+      const note = "legacy.ai: this .ai has no PDF part. In Illustrator: Save As .ai with 'Create PDF Compatible File' on, or Save a Copy as PDF.";
+      await p.waitForFunction((note) => document.querySelector('[data-testid=cmd-prompt]').textContent === note, note);
+      assert.deepEqual(await p.locator('.dtab .tname').allTextContents(), names);
+      const bytes = [...readFileSync('fixtures/colours.ai')];
+      await p.evaluate((bytes) => {
+        const dt = new DataTransfer(); dt.items.add(new File([new Uint8Array(bytes)], 'dropped.ai'));
+        window.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true }));
+      }, bytes);
+      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'dropped.dxf');
+      assert.deepEqual(await p.locator('.layer .nm').allTextContents(), ['#FF0000', '#00FF00', '#0000FF']);
+      // Any extension follows its bytes, and a complete signature must fit inside the first 1024 bytes.
+      for (const [offset, name, opens] of [[1020, 'prefixed.ai', true], [8, 'disguised.dxf', true], [1021, 'late.ai', false]]) {
+        const before = await p.locator('.dtab .tname').allTextContents();
+        await picker.setInputFiles({ name, mimeType: 'application/octet-stream', buffer: Buffer.concat([Buffer.alloc(offset, 32), Buffer.from(bytes)]) });
+        if (opens) await p.waitForFunction((name) => document.querySelector('.dtab.on .tname').textContent === name, name.replace(/\.[^.]+$/, '.dxf'));
+        else {
+          await p.waitForFunction(() => document.querySelector('[data-testid=cmd-prompt]').textContent.startsWith('late.ai: this .ai has no PDF part.'));
+          assert.deepEqual(await p.locator('.dtab .tname').allTextContents(), before);
+        }
+      }
+      assert.match(await prompt.textContent(), /no PDF part/);
+      await p.evaluate((bytes) => {
+        window.__aiFilters = null; window.__aiPick = 'C:/jobs/native.ai';
+        window.__TAURI__ = { dialog: { open: async (options) => { window.__aiFilters = options.filters; return window.__aiPick; } },
+          fs: { readFile: async () => new Uint8Array([0, ...bytes, 0]).subarray(1, bytes.length + 1) } };
+      }, bytes);
+      await p.getByTestId('open').click();
+      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'native.dxf');
+      assert.ok((await p.evaluate(() => window.__aiFilters))[0].extensions.includes('ai'));
+      await p.evaluate(() => { window.__aiPick = 'C:/jobs/pdf-bytes.dwg'; });
+      await p.getByTestId('open').click();
+      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'pdf-bytes.dxf');
+      assert.deepEqual(await p.locator('.layer .nm').allTextContents(), ['#FF0000', '#00FF00', '#0000FF']);
+      const white = new Page(80, 50); white.strokeColor([1, 1, 1]); white.rect(10, 10, 60, 30); white.stroke();
+      await picker.setInputFiles({ name: 'white.ai', mimeType: 'application/pdf', buffer: Buffer.from(writePdf([white])) });
+      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'white.dxf');
+      for (const theme of ['light', 'dark']) {
+        await p.locator('[data-menu=View]').click();
+        await p.getByRole('menuitemcheckbox', { name: new RegExp('Theme: ' + theme + '\\b') }).click();
+        await p.waitForFunction(() => {
+          const canvas = document.querySelector('[data-testid=drawing]'), pixels = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
+          let white = 0;
+          for (let i = 0; i < pixels.length; i += 4) if (pixels[i] === 255 && pixels[i + 1] === 255 && pixels[i + 2] === 255 && pixels[i + 3] > 0) white++;
+          return white > 100;
+        });
+      }
+    } finally { await context.close(); }
+  });
+
   await step('PDF: a vector PDF opens as a drawing (mm, page corner at 0,0), the outline is one click, Keep only, size, Save writes a DXF', async () => {
     await t('picker').setInputFiles('fixtures/vector.pdf');
     await page.waitForFunction(() => document.querySelector('.tabs .dtab.on').textContent.startsWith('vector.dxf'), null, { timeout: 60000 });

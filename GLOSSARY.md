@@ -6,6 +6,8 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 ## App
 
+**PDF-compatible Illustrator file**: An `.ai` saved with Illustrator's Create PDF Compatible File option. Open imports its PDF artwork as a drawing, with one layer per outline colour; Save writes a DXF. Where: `DECISIONS.md`, Illustrator and PDF colours (TODO 300).
+
 **Context tab**: A ribbon tab shown for the current selection, such as Part when placed parts are selected on a layout. Where: `web/app.js`.
 
 **Docker tab**: One of Properties, Objects, Layers, Parts library and Step and repeat across the right panel. Only the active tab shows its name; its sections fold. The panel can be resized or hidden, with settings remembered on this PC. Where: `web/app.js`, `web/docker.js`; `DECISIONS.md`, R19 pick: Option A.

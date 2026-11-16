@@ -456,12 +456,13 @@ export function flatten(doc, hidden = new Set()) {
       const L = ctx.L ? [own, ...ctx.L.filter((x) => x !== own)] : [own];
       const css = e.tc != null ? rgbCss(e.tc) : e.aci === 0 ? ctx.css || '#ffffff'
         : e.aci === 256 || e.aci === 257 || e.aci == null ? lay.css : ACI[Math.abs(e.aci)] || lay.css;
+      const exact = css === '#ffffff' && (e.tc != null || (e.aci == null || e.aci >= 256) && doc.layers[lay.name]?.tc === 0xffffff);
       const lw = e.lw === -2 ? ctx.lw ?? 25 : e.lw === -1 ? lay.lw : e.lw === -3 ? 25 : e.lw;
       const ltName = (e.lt || 'BYLAYER').toUpperCase();
       const lt = ltName === 'BYLAYER' ? lay.lt : ltName === 'BYBLOCK' ? ctx.lt || '' : ltName;
       let m = ctx.m;
       if (e.flip) { mats.push(mmul(mats[ctx.m], FLIP)); m = mats.length - 1; }
-      const base = { m, L, e: top, ps: ctx.ps != null ? ctx.ps : e.ps ? 1 : 0, css, lw, widthFromTop: depth === 0 || e.lw === -2 && ctx.widthFromTop, ...dashOf(lt, e.lts) };
+      const base = { m, L, e: top, ps: ctx.ps != null ? ctx.ps : e.ps ? 1 : 0, css, lw, ...(exact ? { exact: true } : {}), widthFromTop: depth === 0 || e.lw === -2 && ctx.widthFromTop, ...dashOf(lt, e.lts) };
       const put = (it) => {
         if (items.length >= MAX_ITEMS) { truncated = true; return; }
         if (!it.b) return;
