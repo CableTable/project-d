@@ -8871,13 +8871,24 @@ try {
     assert.match(await t('cmd-hist').textContent(), /^Command: ROTATE {3}Pivot: [\d.]+, [\d.]+$/);
     assert.match(await prompt(), /^Angle <0\.00>: \[Pivot \/ Copy \/ Reference \/ Esc\]:?$/);
     // turn by hand: drag a corner arrow 20° anticlockwise about the pivot
+    let drag = null; // the last drag's pixels, named in a red turn check (TODO 302: CI read 180.14 for 20)
+    const why = (start) => ` [start pa ${start}, ` + (drag ? `pivot ${drag.pv.x.toFixed(1)},${drag.pv.y.toFixed(1)}, arrow ${drag.a.x.toFixed(1)},${drag.a.y.toFixed(1)}, drag ${drag.a.x.toFixed(1)},${drag.a.y.toFixed(1)} -> ${drag.end.x.toFixed(1)},${drag.end.y.toFixed(1)}` : 'no drag') + ']';
+    // waits (5 s) for pa to leave `start`; a turn that never came reads the unchanged value so the check below names it
+    const paAfter = async (start) => {
+      try { return await (await page.waitForFunction((before) => {
+        const value = document.querySelector('[data-testid=pa]').value;
+        return value !== before && Number(value.replace('°', ''));
+      }, start, { timeout: 5000 })).jsonValue(); } catch { return Number(start.replace('°', '')); }
+    };
     const turn = async (deg, keys = [], shot = '') => {
       const { a, pv } = await controls(), r = Math.hypot(a.x - pv.x, a.y - pv.y), a0 = Math.atan2(a.y - pv.y, a.x - pv.x);
       const to = (d) => ({ x: pv.x + r * Math.cos(a0 - d * Math.PI / 180), y: pv.y + r * Math.sin(a0 - d * Math.PI / 180) });
+      drag = { a, pv, end: to(deg), start: await t('pa').inputValue() };
       for (const k of keys) await page.keyboard.down(k);
       await page.mouse.move(a.x, a.y); await page.mouse.down();
       for (let i = 1; i <= 4; i++) await page.mouse.move(to(deg * i / 4).x, to(deg * i / 4).y);
-      await page.waitForFunction(() => document.querySelectorAll('[data-group=tools] .ghost').length === 1 && document.querySelectorAll('[data-group=tools] .rot-label').length === 1);
+      await page.waitForFunction(() => document.querySelectorAll('[data-group=tools] .ghost').length === 1 && document.querySelectorAll('[data-group=tools] .rot-label').length === 1)
+        .catch((e) => { throw new Error(`no ghost or angle label while dragging ${deg}°: ${e.message.split('\n')[0]}` + why(drag.start)); });
       const label = await page.locator('[data-group=tools] .rot-label').textContent();
       if (shot) await page.screenshot({ path: `${shotDir}/s12-placing-turning-${shot}.png` });
       await page.mouse.up();
@@ -8886,17 +8897,16 @@ try {
     };
     const beforeTurn = await t('pa').inputValue(), label = await turn(20, [], 'light');
     assert.match(label, /^\d+\.\d°$/, 'the angle by the pivot, e.g. 20.0°');
-    const angle = await (await page.waitForFunction((before) => {
-      const value = document.querySelector('[data-testid=pa]').value;
-      return value !== before && Number(value.replace('°', ''));
-    }, beforeTurn)).jsonValue();
-    approx(angle, 20, 3, 'turned by about 20°'); approx(parseFloat(label), angle, 0.06);
+    const angle = await paAfter(beforeTurn);
+    approx(angle, 20, 3, 'turned by about 20°' + why(beforeTurn)); approx(parseFloat(label), angle, 0.06, 'label vs pa' + why(beforeTurn));
     assert.match(await prompt(), /^Plate A turned to [\d.]+°/);
     assert.equal(await page.locator('[data-group=tools] [data-rot]').count(), 4, 'still in rotate mode');
     await menuItem('View', 'Theme: dark'); await page.waitForTimeout(150);
+    const beforeShift = await t('pa').inputValue();
     await turn(23, ['Shift'], 'dark');
     await menuItem('View', 'Theme: light'); await page.waitForTimeout(100);
-    assert.equal((await angleNow()) % 15, 0, 'Shift: a multiple of 15°, got ' + await angleNow());
+    const shifted = await paAfter(beforeShift);
+    assert.equal(shifted % 15, 0, 'Shift: a multiple of 15°, got ' + shifted + why(beforeShift));
     // drag the pivot: it becomes Custom
     const pv = await pivotPx(), pw = await rectOf(t('drawing'));
     await page.mouse.move(pv.x, pv.y); await page.mouse.down(); await page.mouse.move(pv.x + 60, pv.y + 40, { steps: 3 }); await page.mouse.up();
@@ -8906,9 +8916,9 @@ try {
     assert.match(await t('cmd-hist').textContent(), new RegExp(`Pivot: ${pvx.toFixed(2)}, ${pvy.toFixed(2)}`));
     void pw;
     // a typed angle turns to it about the pivot (the pivot does not move)
-    const before = await angleNow();
+    const before = await t('pa').inputValue();
     await cmdLine().fill('75'); await cmdLine().press('Enter');
-    assert.equal(await angleNow(), 75);
+    assert.equal(await paAfter(before), 75, 'typed 75 turns the part (was ' + before + ')');
     assert.equal(Number(await t('rot-px').inputValue()), pvx);
     void before;
     await cmdLine().fill('abc'); await cmdLine().press('Enter');
