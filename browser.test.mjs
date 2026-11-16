@@ -16800,6 +16800,29 @@ try {
     const bar = await page.locator('.tabsrow').evaluate((n) => { const r = n.getBoundingClientRect(); return [...n.children].every((c) => c.getBoundingClientRect().right <= r.right + 1); });
     assert.ok(bar, 'the tab bar overflows at 1024');
     await page.screenshot({ path: `${shotDir}/compare-1024-light.png` });
+    // TODO 294a: exercise the shared selection bar, with one object picked in both tabs.
+    await closeTabs(/./);
+    const raw294 = newDoc(4);
+    addEntities(raw294, dxfPoly([[20, 30], [60, 30], [60, 50], [20, 50]], { closed: true }));
+    await t('picker').setInputFiles({ name: 'fit294a.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(raw294)) });
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'fit294a.dxf');
+    for (const compare of [false, true]) {
+      if (compare) await menuItem('File', 'Compare drawings…');
+      await page.locator('[data-tool=select]').click(); await page.keyboard.press('Control+a');
+      for (const theme of ['light', 'dark']) {
+        await menuItem('View', 'Theme: ' + theme); await frames();
+        assert.equal(await t('sel-x').isVisible(), true);
+        assert.ok(await t('selbar').evaluate((n) => {
+          const r = n.getBoundingClientRect();
+          return n.scrollWidth <= n.clientWidth && [...n.children].filter((c) => c.getBoundingClientRect().width).every((c) => {
+            const b = c.getBoundingClientRect(); return b.left >= r.left && b.right <= r.right + 1 && b.top >= r.top && b.bottom <= r.bottom;
+          });
+        }), 'selection bar fits one row at 1024');
+        const path = `${shotDir}/todo294a-${compare ? 'compare' : 'drawing'}-1024-${theme}.png`;
+        await page.screenshot({ path }); assert.ok(readFileSync(path).length > 1000);
+      }
+    }
+    await menuItem('View', 'Theme: light');
     await page.setViewportSize({ width: 1440, height: 900 });
     await closeTabs(/./);
   });
@@ -29993,6 +30016,90 @@ try {
     await page.getByRole('menuitem', { name: /^Align/ }).click();
     assert.equal(await prompt(), 'Select objects:'); await key97c('Escape');
     await closeTabs(/./); assert.deepEqual(errors, []);
+  });
+
+  await step('TODO 294a: selection X / Y, relative rotation and centred Scale %, locks and Compare source edits', async () => {
+    await closeTabs(/./);
+    const route294 = (route) => route.fulfill({ contentType: 'text/javascript', body: readFileSync('web/app.js', 'utf8') + `
+      window.pick294 = (ids) => setSel(editable(), new Set(ids));
+      window.probe294 = () => { const d = editable(); return { raw: d.raw, box: OB.boxOf(d.fl, [...d.sel]), labels: d.hist.labels().past }; };
+    ` });
+    await page.route('**/app.js', route294); await page.reload();
+    const pick = (ids) => page.evaluate((ids) => window.pick294(ids), ids);
+    const probe = () => page.evaluate(() => window.probe294());
+    const typed = async (id, value) => { await t(id).fill(value); await t(id).press('Enter'); await frames(); };
+    const box = async (expected) => (await probe()).box.forEach((v, i) => approx(v, expected[i], .00001));
+    try {
+      for (const compare of [false, true]) for (const units of [4, 1]) {
+        const raw = newDoc(units);
+        addLayer(raw, 'Cut'); addLayer(raw, 'Other');
+        addEntities(raw, dxfPoly([[20, 30], [60, 30], [60, 50], [20, 50]], { closed: true, layer: 'Cut' }),
+          dxfLine(200, 200, 220, 200, { layer: 'Other' }));
+        const name = `position294a-${compare}-${units}.dxf`;
+        const source = page.locator('.dtab').filter({ has: page.locator('.tname', { hasText: new RegExp('^position294a-' + compare + '-' + units + '(?:-edited)*\\.dxf$') }) });
+        const compareTab = page.locator('.dtab').filter({ has: page.locator('.tname', { hasText: /^Compare$/ }) });
+        await open97c(raw, name);
+        if (compare) await typeCmd('compare');
+        for (const id of ['sel-x', 'sel-y', 'sel-rotation', 'sel-scale']) assert.equal(await t(id).isVisible(), false);
+        await pick([0]); await box([20, 30, 60, 50]);
+        assert.equal(await t('sel-x').inputValue(), units === 1 ? '20.000"' : '20.00');
+        await typed('sel-x', '10'); await box([10, 30, 50, 50]);
+        assert.equal((await probe()).labels.at(-1), 'Move');
+        await typed('sel-y', '-5'); await box([10, -5, 50, 15]);
+        await key97c('Control+z'); await pick([0]); await box([10, 30, 50, 50]);
+        const moved = await probe();
+        await typed('sel-rotation', '90'); await box([20, 20, 40, 60]);
+        assert.equal(await t('sel-rotation').inputValue(), '0');
+        assert.equal((await probe()).labels.at(-1), 'Rotate');
+        const turned = (await probe()).raw.entities[0];
+        approx(fieldOf(turned, 10), 40, .00001, 'CCW first vertex X'); approx(fieldOf(turned, 20), 20, .00001, 'CCW first vertex Y');
+        await key97c('Control+z'); await pick([0]); assert.deepEqual((await probe()).raw.entities, moved.raw.entities);
+        await typed('sel-scale', '200'); await box([-10, 20, 70, 60]);
+        assert.equal(await t('sel-scale').inputValue(), '100'); assert.equal((await probe()).labels.at(-1), 'Scale');
+        assert.deepEqual((await probe()).raw.entities[1], moved.raw.entities[1], 'unpicked object unchanged');
+        await key97c('Control+z'); await pick([0]); assert.deepEqual((await probe()).raw.entities, moved.raw.entities);
+        const before = await probe();
+        for (const [id, value] of [['sel-x', 'bad'], ['sel-y', 'Infinity'], ['sel-rotation', 'bad'], ['sel-scale', '0'], ['sel-scale', '-2']]) {
+          await typed(id, value); assert.deepEqual(await probe(), before, 'invalid input adds no edit');
+        }
+        await t('sel-rotation').fill('45'); await t('sel-rotation').press('Escape'); await frames();
+        assert.deepEqual((await probe()).raw.entities, before.raw.entities, 'Esc before submitting leaves the drawing alone');
+        await pick([0, 1]); const many = await probe(), b = many.box;
+        await typed('sel-scale', '200'); await box([(3 * b[0] - b[2]) / 2, (3 * b[1] - b[3]) / 2, (3 * b[2] - b[0]) / 2, (3 * b[3] - b[1]) / 2]);
+        await key97c('Control+z'); await pick([0]);
+        if (compare) await source.click();
+        await t('ptab-objects').click(); await page.locator('.or.layer[data-layer=Cut] [data-act=lock]').click();
+        if (compare) await compareTab.click();
+        await pick([0]);
+        const locked = await probe();
+        for (const [id, value, message] of [['sel-x', '30', /locked.*move/], ['sel-y', '30', /locked.*move/], ['sel-rotation', '90', /locked.*rotate/], ['sel-scale', '200', /Unlock the affected layers/]]) {
+          await typed(id, value); assert.match(await t('cmd-prompt').textContent(), message); assert.deepEqual(await probe(), locked);
+        }
+        if (compare) await source.click();
+        await page.locator('.or.layer[data-layer=Cut] [data-act=lock]').click();
+        if (compare) await compareTab.click();
+        await pick([0]);
+        await typed('sel-x', '15'); await box([15, 30, 55, 50]);
+        if (compare) {
+          await source.click();
+          await pick([0]); await box([15, 30, 55, 50]);
+          await compareTab.click();
+          await t('cmp-eye').first().click();
+          assert.equal(await t('selbar').isVisible(), false, 'hidden snapshots cannot edit the source');
+          await t('cmp-eye').first().click();
+          assert.equal(await t('sel-x').isVisible(), true);
+          const [chooser] = await Promise.all([page.waitForEvent('filechooser'), t('cmp-add-file').click()]);
+          await chooser.setFiles({ name: 'detached294a.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(raw)) });
+          await t('cmp-name-2').click();
+          assert.equal(await t('selbar').isVisible(), false, 'disk snapshots retain the existing read-only bar restriction');
+        }
+        await closeTabs(/./);
+      }
+      assert.deepEqual(errors, []);
+    } finally {
+      await page.unroute('**/app.js', route294); await page.reload();
+      await page.waitForSelector('[data-testid=count]', { state: 'attached' });
+    }
   });
 
   await step('TODO 285: Ctrl+D duplicates a line on a drawing tab', async () => {

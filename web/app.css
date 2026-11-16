@@ -490,6 +490,20 @@ select.fld { font-family: var(--sans); }
 .orow:hover { border-color: var(--accent); }
 .orow .nm { flex: 1; }
 .selbar .fld { width: 76px; }
+.selbar { flex-wrap: nowrap; gap: 8px; }
+.sel-transforms { display: inline-flex; align-items: center; gap: 8px; }
+.sel-transforms .fld { width: 56px; }
+.selbar .name, .selbar [data-testid=sel-layer] { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; max-width: 120px; }
+.selbar .name { flex-shrink: 0; }
+.selbar > label, .sel-transforms, .selbar > .btn { flex-shrink: 0; }
+@media (max-width: 1250px) {
+  .selbar { gap: 6px; padding: 0 8px; }
+  .selbar .fld { width: 56px; }
+  .sel-transforms { gap: 6px; }
+  .sel-transforms .fld { width: 48px; }
+  .sel-transforms [data-testid=sel-x], .sel-transforms [data-testid=sel-y] { width: 56px; }
+  .selbar .name, .selbar [data-testid=sel-layer] { max-width: 84px; }
+}
 .pop { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); box-shadow: 0 8px 24px rgba(0, 0, 0, .28); }
 .ctxmenu { position: fixed; z-index: 60; min-width: 190px; padding: 4px 0; display: flex; flex-direction: column; }
 .mi { padding: 6px 12px; display: block; width: 100%; text-align: left; background: none; border: 0; color: var(--text); font: inherit; cursor: pointer; }

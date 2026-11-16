@@ -1423,8 +1423,22 @@ function buildSelbar() {
   };
   ui.selName = h('span', { class: 'name', 'data-testid': 'sel-name' });
   ui.selLayer = h('span', { class: 'lbl', 'data-testid': 'sel-layer' });
+  ui.selTransforms = h('span', { class: 'sel-transforms', hidden: true }, ...[
+    ['X', 'x', 'Lower-left X of the selection box, in the drawing unit'],
+    ['Y', 'y', 'Lower-left Y of the selection box, in the drawing unit'],
+    ['Rot °', 'rotation', 'Rotation in degrees, anticlockwise about the selection box centre; relative, resets to 0'],
+    ['Scale %', 'scale', 'Uniform scale about the selection box centre; resets to 100%']
+  ].map(([label, kind, title]) => {
+    const input = ui['sel-' + kind] = h('input', { class: 'fld', type: 'text', inputmode: 'decimal', 'data-testid': 'sel-' + kind, 'aria-label': title, title });
+    input.addEventListener('change', () => selectionTyped(input, kind));
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); input.value = input.defaultValue; input.blur(); }
+      else if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
+    });
+    return labelled(label, input);
+  }));
   return ui.selbar = h('div', { class: 'propbar selbar', hidden: true, 'data-testid': 'selbar' },
-    ui.selName, ui.selLayer, h('span', { class: 'lbl sizelbl', title: 'Resize the selection, or the whole drawing when nothing is selected, about its bottom-left' }, 'Size'), size('W', 'sel-w', 'w'), size('H', 'sel-h', 'h'), sizePadlock('size-padlock'),
+    ui.selName, ui.selLayer, ui.selTransforms, h('span', { class: 'lbl sizelbl', title: 'Resize the selection, or the whole drawing when nothing is selected, about its bottom-left' }, 'Size'), size('W', 'sel-w', 'w'), size('H', 'sel-h', 'h'), sizePadlock('size-padlock'),
     ui.selContour = h('span', { class: 'lbl ctlabel', hidden: true, 'data-testid': 'sel-contour' }),
     ui.selArea = h('span', { class: 'lbl area', 'data-testid': 'sel-area', title: 'Area of the closed outlines (holes taken off) and the length of every line and arc selected' }),
     ui.barKeep = h('button', { class: 'btn', type: 'button', 'data-testid': 'bar-keep', onclick: keepSelection }, 'Keep only'),
@@ -6497,6 +6511,33 @@ function sizePadlock(id) {
 function resizeBox(d) {
   if (!d.sel.size) return sizeBox(d);
   return Ed.resizeItemsBox(d.raw, d.hl, d.factor);
+}
+/** Typed selection transforms share Move / Rotate / Resize's geometry and source-document commit. */
+function selectionTyped(input, kind) {
+  input.blur();
+  const d = editable(), selection = d?.sel.size && new Set(d.sel), b = selection && OB.boxOf(d.fl, [...selection]);
+  if (!b) return;
+  try {
+    const position = kind === 'x' || kind === 'y';
+    const value = position ? PL.parseMm(input.value, drawingUnit()) : kind === 'rotation' ? PL.parseAngle(input.value) : DU.parse(input.value);
+    if (value == null || kind === 'scale' && value <= 0) { note(kind === 'scale' ? 'Scale: type a percentage above 0' : position ? 'Type a coordinate in the drawing unit' : 'Rotation: type an angle in degrees'); return; }
+    const delta = position ? value / d.factor - b[kind === 'x' ? 0 : 1] : kind === 'scale' ? value / 100 - 1 : value;
+    if (Math.abs(delta) < 1e-9) return;
+    if (kind === 'scale') {
+      if ([...selection].some((i) => lockedEnt(d, i))) { note('Unlock the affected layers in Objects before resizing'); return; }
+    } else if (moveLocked(d, selection, position ? 'move' : 'rotate')) return;
+    const cx = (b[0] + b[2]) / 2, cy = (b[1] + b[3]) / 2;
+    const next = position ? Ed.moveEntities(d.raw, selection, kind === 'x' ? delta : 0, kind === 'y' ? delta : 0)
+      : kind === 'rotation' ? rotateEntities(d.raw, selection, [cx, cy], value)
+      : Ed.resizeAbout(d.raw, value / 100, value / 100, cx, cy, spaceOf(d.fl), selection);
+    if (next.skipped && Object.keys(next.skipped).length) { note('Cannot resize this selection: some objects do not support scaling'); return; }
+    const label = position ? 'Move' : kind === 'rotation' ? 'Rotate' : 'Scale';
+    view.fitted = false;
+    if (!commit(d, followDimensions(d.raw, next, d.factor), label)) return;
+    setSel(d, selection);
+    note(label + ': selection changed. Ctrl+Z takes it back');
+  } catch (error) { note(error.message); }
+  finally { renderEdit(); }
 }
 function sizeTyped(input, axis) {
   input.blur();
@@ -11938,6 +11979,7 @@ function renderEdit() {
   renderPropsPanel(on ? d : null);
   if (ui.matchHint) { ui.matchHint.hidden = !state.match; if (state.match) ui.matchHint.textContent = 'Match properties · source: ' + matchWords(state.match.d.raw.entities[state.match.src]) + ' · click what should change · Esc ends'; }
   const tb = textBarOn(d);
+  ui.selTransforms.hidden = !on || !d.sel.size;
   ui.selbar.hidden = !on || tb;                             // always there on a drawing tab (or the text bar in its place), so the drawing does not jump when something is picked
   ui.textbar.hidden = !tb; if (tb) renderTextBar();
   ui.canvas.classList.toggle('texttool', on && state.tool === 'text');
@@ -11970,6 +12012,11 @@ function renderEdit() {
     ui.ldrStyle.textContent = `Style: ${state.dimStyles.cur}. Note lands ${LR.sideOf(sl.model.pts) > 0 ? 'right' : 'left'}.`;
   }
   const put = (input, v) => { if (document.activeElement !== input) input.value = v; };
+  const selectionBox = n && OB.boxOf(d.fl, [...d.sel]);
+  for (const [kind, value] of [['x', selectionBox ? lengthText(selectionBox[0] * d.factor) : ''], ['y', selectionBox ? lengthText(selectionBox[1] * d.factor) : ''], ['rotation', '0'], ['scale', '100']]) {
+    const input = ui['sel-' + kind];
+    put(input, value); input.defaultValue = value;
+  }
   ui.sizeLabel.textContent = n ? 'Selection' : sizeTarget(d) === 'bg' ? 'Background' : 'Whole drawing';
   for (const id of ['size-padlock', 'panel-size-padlock']) {
     const button = document.querySelector('[data-testid=' + id + ']');
