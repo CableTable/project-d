@@ -1,7 +1,7 @@
 // shaping.js — Shaping like CorelDRAW (TODO 122): boolean operations on closed outlines, pure (no DOM, no files): shaping.test.mjs.
 //
 // An outline is a closed loop of points [x, y] (edit.js outlineLoops flattens arcs and circles). Loops nested inside each other (even-odd) are one
-// shape with holes, so a washer is one operand, not two. A result is a list of closed rings: a shape with holes is several rings, which the caller draws
+// shape with holes, so a washer is one operand, not two, unless that leaves fewer than 2 shapes: then every loop is its own shape. A result is a list of closed rings: a shape with holes is several rings, which the caller draws
 // as closed polylines. The boolean maths is the vendored polygon-clipping (MIT, web/vendor/polygon-clipping).
 //
 //   operandsOf(loops)            → [{ poly: [outer, ...holes], loops: [loop indexes], area }]   the shapes the loops make
@@ -24,6 +24,8 @@ export function operandsOf(loops) {
   const out = new Map();
   pts.forEach((r, i) => { if (holders[i].length % 2 === 0) out.set(i, { poly: [r], loops: [i], area: a[i] }); });
   pts.forEach((r, i) => { if (holders[i].length % 2) { const o = out.get(holders[i][0]); o.poly.push(r); o.loops.push(i); o.area -= a[i]; } });
+  // the holes would leave one shape (a nested pair): then each loop is its own shape, so one outline can be cut out of / welded with the other (TODO 288a)
+  if (out.size < 2 && pts.length > 1) return pts.map((r, i) => ({ poly: [r], loops: [i], area: a[i] }));
   return [...out.values()];
 }
 
@@ -64,7 +66,7 @@ function run(o, loops, target) {
   // Selection order and closed-loop discovery order need not be drawing order; a chain takes its frontmost entity's position.
   const order = (o) => loops[o.loops[0]].ents ? Math.max(...loops[o.loops[0]].ents) : o.loops[0];
   operands.sort((a, b) => order(a) - order(b));
-  if (operands.length < 2) return { error: `${o.label} needs at least 2 closed outlines` + (loops.length > 1 ? ' (outlines inside another one count as its holes)' : ''), operands };
+  if (operands.length < 2) return { error: `${o.label} needs at least 2 closed outlines`, operands };
   let t = operands.findIndex((x) => x.loops.includes(target));
   if (t < 0) t = operands.reduce((best, x, i) => (x.area > operands[best].area ? i : best), 0);
   if (o.target) t = o.target(operands);
