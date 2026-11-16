@@ -11491,7 +11491,7 @@ const loadContourCfg = () => {
   return cfg;
 };
 const saveContourCfg = () => { const c = state.contourCfg; try { localStorage.setItem(CT_SAVED, JSON.stringify({ dir: c.dir, dist: c.dist, steps: c.steps, corners: c.corners, ends: c.ends, colour: c.colour, lt: c.lt })); } catch { /* storage may be blocked */ } };
-const contourWords = (c = state.contourCfg, dist = fmt1, tail = '') => `${c.dir === 'inside' ? 'Inside' : 'Outside'} · ${dist(c.dist)} mm · ${c.steps} step${c.steps === 1 ? '' : 's'} · ${c.corners === 'rounded' ? 'Rounded' : 'Sharp'}${tail}`;
+const contourWords = (c = state.contourCfg, dist = fmt1, tail = '') => `${c.dir === 'inside' && !ui.ct_dir[0].disabled ? 'Inside' : 'Outside'} · ${dist(c.dist)} mm · ${c.steps} step${c.steps === 1 ? '' : 's'} · ${c.corners === 'rounded' ? 'Rounded' : 'Sharp'}${tail}`;
 const contourCommandText = () => contourWords(state.contourCfg, (v) => v.toFixed(2), ' corners');
 
 function buildContourPanel() {
@@ -11608,7 +11608,7 @@ function contourCompute(d) {
   const cfg = state.contourCfg, an = contourLoops(d);
   if (!d.sel.size) return { kind: 'none', an };
   if (an.big) return { kind: 'big', an };
-  if (an.partial || (!an.loops.length && !an.chains.length)) return { kind: 'open', an };
+  if ((an.partial && !an.loops.length) || (!an.loops.length && !an.chains.length)) return { kind: 'open', an };
   const res = CT.contour(an.loops, { chains: an.chains, dist: cfg.dist / d.factor, steps: cfg.steps, outward: cfg.dir === 'outside', corners: cfg.corners, ends: cfg.ends });
   return { kind: 'ok', an, res };
 }
@@ -11624,13 +11624,13 @@ function layContourCompute(lay) {
     onlyOpen: all.every((r) => !r.c.loop) && all.some((r) => r.c.chains.length) };
   const stopped = LC.stoppedWarning(all.flatMap((r) => r.c.res ? [r.c.res] : [])), skipped = all.filter((r) => r.c.kind === 'open').length;
   const warn = [stopped, skipped && `${skipped} part${skipped === 1 ? ' has' : 's have'} no outline and ${skipped === 1 ? 'is' : 'are'} left out`].filter(Boolean).join('. ');
-  if (!rows.length) return { kind: 'open', rows, an, warn };
+  if (!rows.length) return { kind: 'open', rows, an, warn, noOutline: all.every((r) => r.c.kind === 'open') };
   return { kind: 'ok', rows, made: rows.reduce((n, r) => n + r.c.res.made, 0), an, res: rows[0].c.res,
     polys: rows.flatMap((r) => LC.sheetLoops(r.x.part, r.x.p, r.c.res, lay.s.sheetH)),
     warn };
 }
 const layContourHint = (cc, made) => cc.kind === 'none' ? 'Select placed parts on the layout: click one, or drag a box round several.'
-  : cc.kind === 'open' ? 'Nothing to make with these values.'
+  : cc.kind === 'open' ? (cc.noOutline ? 'That selection has no closed outline to follow.' : 'Nothing to make with these values.')
   : `Apply adds a contour (${made} outline${made === 1 ? '' : 's'}) to ${cc.rows.length} part${cc.rows.length === 1 ? '' : 's'}, attached to it. Applying again replaces it.`;
 
 /** Shows or hides the Contour panel and brings it, the preview and the top bar up to date (called with every change of the drawing tab). */
@@ -11652,11 +11652,11 @@ function renderContour() {
   if (document.activeElement !== ui['contour-dist']) ui['contour-dist'].value = fmt1(cfg.dist);
   if (document.activeElement !== ui['contour-steps']) ui['contour-steps'].value = String(cfg.steps);
   ui.ctLive.checked = cfg.live;
-  ui.selContour.textContent = 'Contour: ' + contourWords();
   const cc = lay ? layContourCompute(lay) : contourCompute(d), res = cc.kind === 'ok' ? cc.res : null;
   const onlyOpen = cc.an?.onlyOpen ?? (!!cc.an?.chains?.length && !cc.an.loops.length);
   ui.ct_dir[0].disabled = onlyOpen;
   if (onlyOpen) ui.ct_dir.forEach((b, i) => { b.classList.toggle('on', i === 1); b.setAttribute('aria-pressed', String(i === 1)); });
+  ui.selContour.textContent = 'Contour: ' + contourWords();
   if (d) d.cRes = res && cfg.live ? { polys: res.steps.flatMap((st) => st.map((l) => CT.loopPoints(l, 3))) } : null;
   state.layCt = lay && res && cfg.live ? cc.polys : null;
   const made = res ? (cc.made ?? res.made) : 0;
@@ -11666,7 +11666,7 @@ function renderContour() {
     : cc.an.partial ? 'Only part of an outline is selected: right-click → Select connected.'
     : cc.kind === 'open' ? 'No outline to follow.'
     : made ? `Apply makes ${made} new outline${made === 1 ? '' : 's'} on the layer Contour. The part itself is not changed.` : 'Nothing to make with these values.';
-  const nearlyClosed = !lay && cc.an.chains.some((c) => Math.hypot(c[0].p0[0] - c[c.length - 1].p1[0], c[0].p0[1] - c[c.length - 1].p1[1]) < 2 * cfg.dist / d.factor);
+  const nearlyClosed = !lay && cc.an.chains.some((c) => (c.length > 1 || c[0].b) && Math.hypot(c[0].p0[0] - c[c.length - 1].p1[0], c[0].p0[1] - c[c.length - 1].p1[1]) < 2 * cfg.dist / d.factor);
   const warn = [lay ? (cc.warn || '') : res && res.stopped ? `Step ${res.stopped.step} ${res.stopped.why.slice(3)}: made ${made}.` : res && res.dropped ? `${res.dropped} hole${res.dropped === 1 ? '' : 's'} closed up on the way.` : '', nearlyClosed ? 'Nearly closed: join the gap to contour it as a shape.' : ''].filter(Boolean).join(' ');
   ui.ctWarn.hidden = !warn; ui.ctWarn.textContent = warn;
   // Reduced opacity distinguishes preview contours from applied geometry.
@@ -11686,7 +11686,7 @@ function renderContour() {
   }
   renderCommand();
   ui.hintPill.hidden = !(cfg.live && made);
-  if (cfg.live && made) ui.hintPill.textContent = `Preview: ${made} outline${made === 1 ? '' : 's'} ${cfg.dir === 'inside' ? 'inside' : 'outside'}, ${cfg.corners} corners`;
+  if (cfg.live && made) ui.hintPill.textContent = `Preview: ${made} outline${made === 1 ? '' : 's'} ${cfg.dir === 'inside' && !onlyOpen ? 'inside' : 'outside'}, ${cfg.corners} corners`;
   paintOverlay();
 }
 
