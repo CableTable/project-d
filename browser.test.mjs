@@ -8095,7 +8095,7 @@ try {
     assert.equal(await t('sel-layer').textContent(), 'layer 0');
     assert.equal(await t('sel-w').inputValue(), '100.00'); assert.equal(await t('sel-h').inputValue(), '60.00');
     assert.equal(await t('sel-area').textContent(), 'Area 5914.16 mm² · Perimeter 302.82 mm', 'TODO 31: 100 × 60, r 10, less its two small gaps');
-    assert.deepEqual(await page.locator('[data-testid=selbar] .btn').allTextContents(), ['Keep only', 'Extract part…']);
+    assert.deepEqual(await page.locator('[data-testid=selbar] [data-testid^=bar-]').allTextContents(), ['Keep only', 'Extract part…']);
     const p = await at(50, 0);
     await shotBoth('extract-menu', async () => { await page.mouse.click(p.x, p.y, { button: 'right' }); await page.waitForSelector('[data-testid=ctx-menu]'); }, async () => { await page.keyboard.press('Escape'); });
     await page.mouse.click(p.x, p.y, { button: 'right' });
