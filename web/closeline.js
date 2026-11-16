@@ -49,7 +49,11 @@ export function closeEntities(entities, { ends = 'extend' } = {}) {
     let best = null;
     for (let i = 0; i < chains.length; i++) for (let j = i + 1; j < chains.length; j++) {
       const a = chains[i], b = chains[j], ha = a[0].a, ta = a[a.length - 1].b, hb = b[0].a, tb = b[b.length - 1].b;
-      for (const c of [[dist(ta, hb), i, false, j, false], [dist(ta, tb), i, false, j, true], [dist(ha, hb), i, true, j, false], [dist(ha, tb), j, false, i, false]]) if (!best || c[0] < best.c[0]) best = { c, i, j };
+      // the 6th value is the closing gap: with two chains left the bridge is chosen by bridge + closing gap, so parallel lines are not crossed
+      for (const c of [[dist(ta, hb), i, false, j, false, dist(tb, ha)], [dist(ta, tb), i, false, j, true, dist(hb, ha)], [dist(ha, hb), i, true, j, false, dist(ta, tb)], [dist(ha, tb), j, false, i, false, dist(ta, hb)]]) {
+        const cost = c[0] + (chains.length === 2 ? c[5] : 0);
+        if (!best || cost < best.cost || cost === best.cost && c[0] < best.c[0]) best = { c, i, j, cost };
+      }
     }
     const [, p, fp, q, fq] = best.c;
     chains[best.i] = glue(fp ? flip(chains[p]) : chains[p], fq ? flip(chains[q]) : chains[q]);

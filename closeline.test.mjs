@@ -52,6 +52,16 @@ test('two separate objects with far gaps: nearest ends first, then the last gap;
   assert.deepEqual(xy(result), [[0, 15], [0, 5], [0, 0], [10, 0], [10, 5], [10, 15]], 'the nearest pair (equal gaps: the first) first; the last gap closes the ring'); assert.equal(result.layer, 'Cut');
 });
 
+test('two parallel lines offset sideways close as a trapezoid, never a bow-tie, either way round and either end mode', () => {
+  const area = (r) => { const p = xy(r); return Math.abs(p.reduce((s, q, k) => s + q[0] * p[(k + 1) % p.length][1] - p[(k + 1) % p.length][0] * q[1], 0) / 2); };
+  for (const ends of ['extend', 'straight']) for (const [ents, want] of [
+    [[line(0, 0, 100, 0), line(150, 50, 260, 50)], 5250], [[line(0, 0, 100, 0), line(260, 50, 150, 50)], 5250],
+    [[line(0, 0, 100, 0), line(150, 50, 250, 50)], 5000], [[line(0, 0, 100, 0), line(250, 50, 150, 50)], 5000]]) {
+    const { result, why } = closeEntities(ents, { ends });
+    assert.ok(result, `${ends}: ${why}`); assert.equal(area(result), want, `${ends}: ${JSON.stringify(xy(result))}`);
+  }
+});
+
 test('refused: one straight line, pieces on one line, ellipses, closed objects, nothing', () => {
   assert.equal(closeEntities([line(0, 0, 10, 0)]).why, ONE_LINE);
   assert.equal(closeEntities([line(0, 0, 10, 0), line(20, 0, 30, 0)]).why, FLAT);
