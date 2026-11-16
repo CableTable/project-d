@@ -1,6 +1,6 @@
 // layoutcontour.js — pure: Contour on a placed part of a layout (TODO 147, T53) (no DOM) — layoutcontour.test.mjs.
 //
-// A part's contour follows its outer outline only (its biggest closed loop; holes and inside features are left alone). The rings
+// A part's contour follows its biggest closed loop (holes and inside features left alone), or all open chains if no loop exists. The rings
 // of one run become one new part (all steps), placed on the sheet exactly where the source part's outline is, with the same turn
 // and mirror, so the app can group the two and they travel together. The geometry stays in the source part's own drawing units.
 import * as Ed from './edit.js';
@@ -13,10 +13,10 @@ import { addLayer } from './dxf-write.js';
 
 const loops = new WeakMap(), results = new WeakMap();
 
-/** The part's outer outline in its drawing units: { loop (its biggest closed loop, or null), open (pieces left open when there is none) }. Kept per part. */
+/** The part's outer outline in its drawing units: { loop (biggest closed loop, or null), open (open piece count), chains }. Kept per part. */
 export function outerLoop(part) {
   if (loops.has(part)) return loops.get(part);
-  const out = { loop: null, open: 0 };
+  const out = { loop: null, open: 0, chains: [] };
   try {
     const ed = Ed.makeIndex(part.raw, part.fl, part.off || new Set()), ents = [];
     for (let e = 0; e < ed.byEnt.length; e++) if (ed.byEnt[e]) ents.push(e);
@@ -24,6 +24,7 @@ export function outerLoop(part) {
     const segs = CT.segmentsFromItems(ed, ents, (e) => e.layer === Ed.DIM_LAYER || e.type === 'DIMENSION', tol);
     const r = CT.buildLoops(segs, tol);
     out.open = r.open;
+    out.chains = r.chains;
     for (const l of r.loops) if (!out.loop || Math.abs(CT.loopArea(l)) > Math.abs(CT.loopArea(out.loop))) out.loop = l;
   } catch { /* an unreadable part has no outline */ }
   loops.set(part, out);
@@ -31,19 +32,19 @@ export function outerLoop(part) {
 }
 
 /**
- * The contour of a part for cfg { dist (mm), steps, dir ('inside' | 'outside'), corners ('sharp' | 'rounded') }:
- * { kind: 'ok' | 'open' (no closed outline) | 'none' (nothing to make with these values), loop, open, res (CT.contour's result) }. Kept per part, placement scale and values.
+ * The contour of a part for cfg { dist (mm), steps, dir ('inside' | 'outside'), corners ('sharp' | 'rounded'), ends }:
+ * { kind: 'ok' | 'open' (no outline) | 'none' (nothing to make with these values), loop, open, chains, res }. Kept per part, placement scale and values.
  */
 export function partContour(part, cfg, sc = 1) {
-  const key = [cfg.dist, cfg.steps, cfg.dir, cfg.corners, sc].join('|');
+  const key = [cfg.dist, cfg.steps, cfg.dir, cfg.corners, cfg.ends, sc].join('|');
   let byKey = results.get(part);
   if (!byKey) results.set(part, byKey = new Map());
   if (byKey.has(key)) return byKey.get(key);
-  const { loop, open } = outerLoop(part);
-  let out = { kind: 'open', loop: null, open, res: null };
-  if (loop) {
-    const res = CT.contour([loop], { dist: cfg.dist / ((part.factor || 1) * sc), steps: cfg.steps, outward: cfg.dir === 'outside', corners: cfg.corners });
-    out = { kind: res.made ? 'ok' : 'none', loop, open, res };
+  const { loop, open, chains } = outerLoop(part);
+  let out = { kind: 'open', loop: null, open, chains, res: null };
+  if (loop || chains.length) {
+    const res = CT.contour(loop ? [loop] : [], { chains: loop ? [] : chains, dist: cfg.dist / ((part.factor || 1) * sc), steps: cfg.steps, outward: cfg.dir === 'outside', corners: cfg.corners, ends: cfg.ends });
+    out = { kind: res.made ? 'ok' : 'none', loop, open, chains, res };
   }
   byKey.set(key, out);
   return out;

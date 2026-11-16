@@ -233,7 +233,7 @@ const state = {
   lref: null,                            // Rotate Reference on a placed part: { step: 'ref' | 'new', value } (typed degrees)
   rotCopy: false,                        // the command line's Copy: the next typed angle turns a copy
   layCt: null,                           // Contour on a layout: the preview rings (sheet mm, y up) or null
-  contourCfg: null,                      // Contour's last values (loaded in init): { dir: 'inside' | 'outside', dist (mm), steps, corners: 'sharp' | 'rounded', live }
+  contourCfg: null,                      // Contour's last values: { dir, dist (mm), steps, corners, ends: 'butt' | 'round' | 'square', live }
   rulers: true,                          // mm rulers along the top and left of the canvas (View → Rulers; remembered on this PC)
   guideDrag: null,                       // a guide being dragged out of a ruler or along the sheet: see gdrag
   nudge: 1, dupAxis: 'x', dupGap: 5, dupCount: 3, arrangeRel: 'selection',   // the arrow-key step (mm, remembered on this PC) and the Duplicate section's last values
@@ -11477,11 +11477,12 @@ const contourKey = (d) => PR.effectiveColour(PR.withColour({ layer: CONTOUR_LAYE
 const contourColour = (d) => colourCss(contourKey(d));
 const CT_SAVED = 'pd-contour';
 const loadContourCfg = () => {
-  const cfg = { dir: 'outside', dist: 5, steps: 1, corners: 'sharp', colour: 'bylayer', lt: 'BYLAYER', live: true };
+  const cfg = { dir: 'outside', dist: 5, steps: 1, corners: 'sharp', ends: 'round', colour: 'bylayer', lt: 'BYLAYER', live: true };
   try {
     const v = JSON.parse(localStorage.getItem(CT_SAVED) || 'null');
     if (v && (v.dir === 'inside' || v.dir === 'outside')) cfg.dir = v.dir;
     if (v && v.corners === 'rounded') cfg.corners = 'rounded';
+    if (v && ['butt', 'round', 'square'].includes(v.ends)) cfg.ends = v.ends;
     if (v && validColourKey(v.colour)) cfg.colour = v.colour;
     if (v && CT_STYLES.some((st) => st.key === v.lt)) cfg.lt = v.lt;
     if (v && Number.isFinite(+v.dist) && +v.dist > 0 && +v.dist <= 10000) cfg.dist = +v.dist;
@@ -11489,7 +11490,7 @@ const loadContourCfg = () => {
   } catch { /* storage may be blocked or hold something else */ }
   return cfg;
 };
-const saveContourCfg = () => { const c = state.contourCfg; try { localStorage.setItem(CT_SAVED, JSON.stringify({ dir: c.dir, dist: c.dist, steps: c.steps, corners: c.corners, colour: c.colour, lt: c.lt })); } catch { /* storage may be blocked */ } };
+const saveContourCfg = () => { const c = state.contourCfg; try { localStorage.setItem(CT_SAVED, JSON.stringify({ dir: c.dir, dist: c.dist, steps: c.steps, corners: c.corners, ends: c.ends, colour: c.colour, lt: c.lt })); } catch { /* storage may be blocked */ } };
 const contourWords = (c = state.contourCfg, dist = fmt1, tail = '') => `${c.dir === 'inside' ? 'Inside' : 'Outside'} · ${dist(c.dist)} mm · ${c.steps} step${c.steps === 1 ? '' : 's'} · ${c.corners === 'rounded' ? 'Rounded' : 'Sharp'}${tail}`;
 const contourCommandText = () => contourWords(state.contourCfg, (v) => v.toFixed(2), ' corners');
 
@@ -11542,6 +11543,7 @@ function buildContourPanel() {
       segs('Direction', 'Direction', [['inside', 'Inside'], ['outside', 'Outside']], 'dir'),
       h('div', { class: 'grid2' }, field('Distance (mm)', 'contour-dist', setContourDist, 'Distance in mm'), field('Steps', 'contour-steps', setContourSteps, 'Steps')),
       segs('Corners', 'Corners', [['sharp', 'Sharp'], ['rounded', 'Rounded']], 'corners'),
+      segs('End', 'End', [['butt', 'Butt'], ['round', 'Round'], ['square', 'Square']], 'ends'),
       h('div', { class: 'row' }, h('span', { class: 'lbl ctlbl' }, 'Colour'), h('div', { class: 'cswatches', role: 'group', 'aria-label': 'Colour' }, ui.ctColours, ui.ctCustomColour)),
       h('div', { class: 'row' }, h('span', { class: 'lbl ctlbl' }, 'Line style'), h('div', { class: 'ctstyles', role: 'group', 'aria-label': 'Line style' }, ui.ctStyles)),
       h('div', { class: 'row' }, ui.ctLive, h('label', { for: 'contour-live', style: 'flex:1' }, 'Live preview on the sheet')),
@@ -11597,17 +11599,17 @@ function contourLoops(d) {
   if (d.cAn && d.cAn.ed === d.ed && d.cAn.sig === sig) return d.cAn;
   const ed = edIndex(d), tol = Ed.chainTol(drawBox(d.fl), d.factor);
   const segs = d.sel.size > 4000 ? null : CT.segmentsFromItems(ed, d.sel, (e) => e.layer === Ed.DIM_LAYER || e.type === 'DIMENSION', tol);
-  const r = segs ? CT.buildLoops(segs, tol) : { loops: [], open: 0 };
+  const r = segs ? CT.buildLoops(segs, tol) : { loops: [], open: 0, chains: [] };
   const partial = !!segs && CT.partialOutline(ed, d.sel, tol);
-  return (d.cAn = { ed: d.ed, sig, loops: r.loops, open: r.open, partial, big: !segs, n: segs ? segs.length : 0 });
+  return (d.cAn = { ed: d.ed, sig, loops: r.loops, chains: r.chains, open: r.open, partial, big: !segs, n: segs ? segs.length : 0 });
 }
 /** The contour for the selection and the panel's values: { kind: 'none' | 'big' | 'open' | 'ok', an, res (CT.contour's result) }. */
 function contourCompute(d) {
   const cfg = state.contourCfg, an = contourLoops(d);
   if (!d.sel.size) return { kind: 'none', an };
   if (an.big) return { kind: 'big', an };
-  if (!an.loops.length) return { kind: 'open', an };
-  const res = CT.contour(an.loops, { dist: cfg.dist / d.factor, steps: cfg.steps, outward: cfg.dir === 'outside', corners: cfg.corners });
+  if (an.partial || (!an.loops.length && !an.chains.length)) return { kind: 'open', an };
+  const res = CT.contour(an.loops, { chains: an.chains, dist: cfg.dist / d.factor, steps: cfg.steps, outward: cfg.dir === 'outside', corners: cfg.corners, ends: cfg.ends });
   return { kind: 'ok', an, res };
 }
 
@@ -11617,14 +11619,18 @@ function layContourCompute(lay) {
   const cfg = state.contourCfg, all = selItems().filter((x) => !x.p.ct).map((x) => ({ x, c: LC.partContour(x.part, cfg, x.p.sc || 1) }));
   if (!all.length) return { kind: 'none', rows: [] };
   const rows = all.filter((r) => r.c.kind === 'ok');
-  if (!rows.length) return { kind: 'open', rows, an: { loops: [], open: 0 } };
-  const stopped = LC.stoppedWarning(rows.map((r) => r.c.res)), skipped = all.length - rows.length;
-  return { kind: 'ok', rows, made: rows.reduce((n, r) => n + r.c.res.made, 0), an: { loops: [rows[0].c.loop], open: 0 }, res: rows[0].c.res,
+  const first = (rows[0] || all[0]).c;
+  const an = { loops: first.loop ? [first.loop] : [], chains: first.loop ? [] : first.chains, open: 0,
+    onlyOpen: all.every((r) => !r.c.loop) && all.some((r) => r.c.chains.length) };
+  const stopped = LC.stoppedWarning(all.flatMap((r) => r.c.res ? [r.c.res] : [])), skipped = all.filter((r) => r.c.kind === 'open').length;
+  const warn = [stopped, skipped && `${skipped} part${skipped === 1 ? ' has' : 's have'} no outline and ${skipped === 1 ? 'is' : 'are'} left out`].filter(Boolean).join('. ');
+  if (!rows.length) return { kind: 'open', rows, an, warn };
+  return { kind: 'ok', rows, made: rows.reduce((n, r) => n + r.c.res.made, 0), an, res: rows[0].c.res,
     polys: rows.flatMap((r) => LC.sheetLoops(r.x.part, r.x.p, r.c.res, lay.s.sheetH)),
-    warn: [stopped, skipped && `${skipped} part${skipped === 1 ? ' has' : 's have'} no closed outline and ${skipped === 1 ? 'is' : 'are'} left out`].filter(Boolean).join('. ') };
+    warn };
 }
 const layContourHint = (cc, made) => cc.kind === 'none' ? 'Select placed parts on the layout: click one, or drag a box round several.'
-  : cc.kind === 'open' ? 'That selection has no closed outline to follow.'
+  : cc.kind === 'open' ? 'Nothing to make with these values.'
   : `Apply adds a contour (${made} outline${made === 1 ? '' : 's'}) to ${cc.rows.length} part${cc.rows.length === 1 ? '' : 's'}, attached to it. Applying again replaces it.`;
 
 /** Shows or hides the Contour panel and brings it, the preview and the top bar up to date (called with every change of the drawing tab). */
@@ -11642,11 +11648,15 @@ function renderContour() {
   ui.ctStyles.forEach((b, i) => b.setAttribute('aria-pressed', String(CT_STYLES[i].key === cfg.lt)));
   ui.ct_dir.forEach((b) => { const v = b.dataset.testid.slice(8) === cfg.dir; b.classList.toggle('on', v); b.setAttribute('aria-pressed', String(v)); });
   ui.ct_corners.forEach((b) => { const v = b.dataset.testid.slice(8) === cfg.corners; b.classList.toggle('on', v); b.setAttribute('aria-pressed', String(v)); });
+  ui.ct_ends.forEach((b) => { const v = b.dataset.testid.slice(8) === cfg.ends; b.classList.toggle('on', v); b.setAttribute('aria-pressed', String(v)); });
   if (document.activeElement !== ui['contour-dist']) ui['contour-dist'].value = fmt1(cfg.dist);
   if (document.activeElement !== ui['contour-steps']) ui['contour-steps'].value = String(cfg.steps);
   ui.ctLive.checked = cfg.live;
   ui.selContour.textContent = 'Contour: ' + contourWords();
   const cc = lay ? layContourCompute(lay) : contourCompute(d), res = cc.kind === 'ok' ? cc.res : null;
+  const onlyOpen = cc.an?.onlyOpen ?? (!!cc.an?.chains?.length && !cc.an.loops.length);
+  ui.ct_dir[0].disabled = onlyOpen;
+  if (onlyOpen) ui.ct_dir.forEach((b, i) => { b.classList.toggle('on', i === 1); b.setAttribute('aria-pressed', String(i === 1)); });
   if (d) d.cRes = res && cfg.live ? { polys: res.steps.flatMap((st) => st.map((l) => CT.loopPoints(l, 3))) } : null;
   state.layCt = lay && res && cfg.live ? cc.polys : null;
   const made = res ? (cc.made ?? res.made) : 0;
@@ -11654,23 +11664,25 @@ function renderContour() {
   ui.ctHint.textContent = lay ? layContourHint(cc, made) : cc.kind === 'none' ? 'Select a closed outline: right-click an edge → Select connected, or drag a box.'
     : cc.kind === 'big' ? 'That selection is too big for a contour. Pick one outline.'
     : cc.an.partial ? 'Only part of an outline is selected: right-click → Select connected.'
-    : cc.kind === 'open' ? `That is not a closed outline (${cc.an.open} piece${cc.an.open === 1 ? '' : 's'} left open). Join the tiny gaps, or pick a closed one.`
+    : cc.kind === 'open' ? 'No outline to follow.'
     : made ? `Apply makes ${made} new outline${made === 1 ? '' : 's'} on the layer Contour. The part itself is not changed.` : 'Nothing to make with these values.';
-  const warn = lay ? (cc.warn || '') : res && res.stopped ? `Step ${res.stopped.step} ${res.stopped.why.slice(3)}: made ${made}.` : res && res.dropped ? `${res.dropped} hole${res.dropped === 1 ? '' : 's'} closed up on the way.` : '';
+  const nearlyClosed = !lay && cc.an.chains.some((c) => Math.hypot(c[0].p0[0] - c[c.length - 1].p1[0], c[0].p0[1] - c[c.length - 1].p1[1]) < 2 * cfg.dist / d.factor);
+  const warn = [lay ? (cc.warn || '') : res && res.stopped ? `Step ${res.stopped.step} ${res.stopped.why.slice(3)}: made ${made}.` : res && res.dropped ? `${res.dropped} hole${res.dropped === 1 ? '' : 's'} closed up on the way.` : '', nearlyClosed ? 'Nearly closed: join the gap to contour it as a shape.' : ''].filter(Boolean).join(' ');
   ui.ctWarn.hidden = !warn; ui.ctWarn.textContent = warn;
   // Reduced opacity distinguishes preview contours from applied geometry.
   ui.ctPreview.style.setProperty('--ct-colour', contourColour(d || curDoc()));
   ui.ctPreview.style.setProperty('--ct-dash', contourStyle().dash.join(' ') || 'none');
-  const loops = cc.an ? cc.an.loops.map((l) => CT.loopPoints(l, 6)) : [], outs = res ? res.steps.flatMap((st) => st.map((l) => CT.loopPoints(l, 4))) : [];
-  const all = [...loops, ...outs].flat();
+  const loops = cc.an ? cc.an.loops.map((l) => CT.loopPoints(l, 6)) : [], chains = cc.an ? (cc.an.chains || []).map((c) => [...CT.loopPoints(c, 6), c[c.length - 1].p1]) : [], outs = res ? res.steps.flatMap((st) => st.map((l) => CT.loopPoints(l, 4))) : [];
+  const all = [...loops, ...chains, ...outs].flat();
   if (!all.length) ui.ctPreview.replaceChildren();
   else {
     const x0 = Math.min(...all.map((p) => p[0])), x1 = Math.max(...all.map((p) => p[0])), y0 = Math.min(...all.map((p) => p[1])), y1 = Math.max(...all.map((p) => p[1]));
     const k = Math.min(220 / Math.max(x1 - x0, 1e-9), 70 / Math.max(y1 - y0, 1e-9)), ox = 120 - k * (x0 + x1) / 2, oy = 45 + k * (y0 + y1) / 2;
-    const path = (pts) => 'M' + pts.map((p) => `${(ox + k * p[0]).toFixed(1)} ${(oy - k * p[1]).toFixed(1)}`).join('L') + 'Z';
+    const path = (pts, close = true) => 'M' + pts.map((p) => `${(ox + k * p[0]).toFixed(1)} ${(oy - k * p[1]).toFixed(1)}`).join('L') + (close ? 'Z' : '');
     ui.ctPreview.replaceChildren(
       ...(cfg.live ? outs.map((p) => s('path', { class: 'ct-out', d: path(p) })) : []),
-      ...loops.map((p) => s('path', { class: 'ct-orig', d: path(p) })));
+      ...loops.map((p) => s('path', { class: 'ct-orig', d: path(p) })),
+      ...chains.map((p) => s('path', { class: 'ct-orig', d: path(p, false) })));
   }
   renderCommand();
   ui.hintPill.hidden = !(cfg.live && made);
@@ -11684,7 +11696,7 @@ function applyContour() {
   const d = editable();
   if (!d) return;
   const cc = contourCompute(d), cfg = state.contourCfg;
-  if (cc.kind !== 'ok' || !cc.res.made) { note('Contour: nothing to apply. Pick a closed outline first'); return; }
+  if (cc.kind !== 'ok' || !cc.res.made) { note('Contour: nothing to apply. Pick an outline first'); return; }
   const res = cc.res, ents = [];
   const ltypes = cfg.lt !== 'BYLAYER' && !d.raw.ltypes[cfg.lt] ? { ...d.raw.ltypes, [cfg.lt]: { pattern: contourStyle().dash.map((x, i) => (i % 2 ? -x : x) / d.factor), contour: true } } : d.raw.ltypes;
   for (const st of res.steps) for (const l of st) ents.push(...CT.toEntities(l, CONTOUR_LAYER));
@@ -11702,7 +11714,7 @@ function applyContour() {
  * A contour the part already has (its ct is the part's cid) is replaced, wherever it is now (Ungroup does not matter). A copy of a part gets a cid of its own (fresh), so it keeps its contour. */
 function applyLayContour() {
   const d = curDoc(), lay = curLay(), cfg = state.contourCfg, cc = layContourCompute(lay);
-  if (cc.kind !== 'ok') { note('Contour: nothing to apply. Select placed parts with a closed outline first'); return; }
+  if (cc.kind !== 'ok') { note('Contour: nothing to apply. Select placed parts with an outline first'); return; }
   const g = startGesture(d, `Contour ${cfg.dir} ${fmtSize(cfg.dist)} mm × ${cc.made}`);
   gMark(g);
   const idxs = gLooseMany(g, cc.rows.map((r) => r.x.i)), style = contourStyle();

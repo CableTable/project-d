@@ -6280,7 +6280,7 @@ try {
         await q('contour-close').click();
       }
       await pick(280, 100); await p.locator('[data-tool=contour]').click();
-      assert.match(await q('contour-hint').textContent(), /not a closed outline.*Join the tiny gaps/);
+      assert.match(await q('contour-hint').textContent(), /^Apply makes 1 new outline/);
       await q('contour-close').click();
       for (const [x, y, name] of [[120, 100, 'Horizontal edge'], [100, 120, 'Vertical edge']]) {
         await pick(80, 80);
@@ -10126,6 +10126,96 @@ try {
   const ctCfg = () => page.evaluate(() => JSON.parse(localStorage.getItem('pd-contour')));
   const ctPanel = (id) => page.locator(`[data-testid=contour-panel] [data-testid=${id}]`);
   const entCount = async () => Number((await t('entities').textContent()).replace(/\D+/g, ''));
+  await step('TODO 289: open line Contour Round, Butt and Square; closed result, one Undo, Compare and Layouts', async () => {
+    await closeTabs(/./);
+    const doc = newDoc(4);
+    addEntities(doc, dxfLine(100, 100, 200, 100));
+    const open = async (name, raw = doc) => {
+      await t('picker').setInputFiles({ name, mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(raw)) });
+      await page.waitForFunction((name) => document.querySelector('.dtab.on .tname').textContent === name, name);
+    };
+    const configure = async () => {
+      await page.keyboard.press('Escape'); await page.keyboard.press('Control+a');
+      await page.locator('[data-tool=contour]').click();
+      await t('contour-dist').fill('2'); await t('contour-dist').press('Enter');
+      await t('contour-steps').fill('1'); await t('contour-steps').press('Enter');
+      assert.equal(await ctPanel('contour-inside').isDisabled(), true);
+    };
+    const C = await import('./web/contour.js'), E = await import('./web/edit.js');
+    const checkOutline = (raw, ends) => {
+      const ids = raw.entities.flatMap((e, i) => e.layer === 'Contour' ? [i] : []);
+      const r = C.buildLoops(C.segmentsFromItems(E.makeIndex(raw, flatten(raw)), ids));
+      assert.equal(r.open, 0); assert.equal(r.loops.length, 1, 'one closed shape');
+      assert.equal(raw.entities.filter((e) => e.layer === 'Contour' && e.type === 'ARC').length, ends === 'round' ? 2 : 0);
+    };
+    await open('line289.dxf');
+    await configure();
+    assert.equal(await ctPanel('contour-round').getAttribute('aria-pressed'), 'true', 'Round default');
+    for (const ends of ['round', 'butt', 'square']) {
+      if (await t('contour-panel').isHidden()) await configure();
+      await ctPanel('contour-' + ends).click();
+      assert.equal((await ctCfg()).ends, ends);
+      assert.equal(await t('contour-preview').locator('.ct-out').count(), 1);
+      if (ends === 'round') await shotBoth('todo289-round');
+      await t('contour-apply').click();
+      const raw = await savedDoc();
+      assert.deepEqual(lineEnds(raw.entities[0]), [100, 100, 200, 100], 'original kept');
+      await checkOutline(raw, ends);
+      await t('contour-close').click(); await page.keyboard.press('Control+z');
+      await page.waitForFunction(() => /^Undo/.test(document.querySelector('[data-testid=cmd-prompt]').textContent));
+      assert.equal(await entCount(), 1, 'one Undo removes the outline');
+    }
+    await configure();
+    assert.equal(await ctPanel('contour-square').getAttribute('aria-pressed'), 'true', 'end remembered on reopen');
+    const remembered = await ctx.newPage();
+    await remembered.goto(URL_);
+    await panelControl(remembered, remembered.getByTestId('picker')).setInputFiles({ name: 'remember289.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(doc)) });
+    await remembered.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'remember289.dxf');
+    await remembered.locator('[data-tool=contour]').click();
+    assert.equal(await remembered.getByTestId('contour-square').getAttribute('aria-pressed'), 'true', 'end loaded on a new page');
+    await remembered.close();
+    await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
+    assert.equal(await entCount(), 1, 'Esc cancels preview');
+    await open('other289.dxf');
+    await page.locator('[data-menu=File]').click();
+    await page.getByRole('menuitem', { name: 'Compare drawings…', exact: true }).click();
+    await t('cmp-name-1').click();
+    await configure(); await ctPanel('contour-round').click();
+    await t('contour-apply').click();
+    assert.match(await prompt(), /^Contour: 1 new outline/);
+    await t('contour-close').click();
+    await page.keyboard.press('Control+z');
+    await page.locator('.dtab').filter({ has: page.locator('.tname', { hasText: 'line289' }) }).click();
+    assert.equal(await entCount(), 1, 'Compare Undo uses source drawing');
+    const lay = newLayout('Open 289');
+    const diagonal = newDoc(4);
+    addEntities(diagonal, dxfLine(100, 100, 200, 150));
+    lay.parts.open289 = makePart('open289', 'Open line', diagonal, 1);
+    assert.ok(lay.parts.open289, 'layout part has extents');
+    lay.placed = [{ partId: 'open289', x: 100, y: 300, rot: 0, mirrorX: false, mirrorY: false }];
+    await open('layout289.dxf', layoutRaw(lay)); await configure();
+    await t('contour-apply').click();
+    const saved = layoutFromRaw(await savedDoc()), ct = saved.placed.find((p) => p.ct);
+    assert.ok(ct); assert.equal(saved.placed.length, 2);
+    await checkOutline(saved.parts[ct.partId].raw, 'round');
+    await t('contour-close').click(); await page.keyboard.press('Control+z');
+    assert.equal(await nParts(), 1, 'one Undo removes layout contour');
+    const mixed = newDoc(4);
+    addEntities(mixed, dxfLine(100, 100, 103, 100), dxfPoly([[200, 100], [220, 100], [220, 120], [200, 120]], { closed: true }));
+    await open('mixed289.dxf', mixed);
+    await page.keyboard.press('Escape'); await page.keyboard.press('Control+a');
+    await page.locator('[data-tool=contour]').click();
+    assert.equal(await ctPanel('contour-inside').isEnabled(), true, 'mixed pick keeps Inside');
+    await ctPanel('contour-inside').click();
+    assert.equal(await t('contour-preview').locator('.ct-out').count(), 2);
+    assert.match(await t('contour-warn').textContent(), /Nearly closed: join the gap to contour it as a shape/);
+    assert.equal(await t('contour-apply').isEnabled(), true, 'near-end note does not refuse');
+    await t('contour-close').click();
+    for (const theme of ['light', 'dark']) assert.ok(readFileSync(`${shotDir}/s12-todo289-round-${theme}.png`).length > 1000);
+    await closeTabs(/./);
+    await page.evaluate(() => localStorage.removeItem('pd-contour'));
+  });
+
   await step('TODO 200: contour inside next to a short in-line piece', async () => {
     await closeTabs(/./);
     const doc = newDoc(4);
@@ -10233,7 +10323,7 @@ try {
     // what is on it: the preview, Direction, Distance, Steps, Corners, the live-preview box, the hint, Close, Apply
     assert.equal(await t('contour-preview').count(), 1);
     assert.deepEqual(await ctPanel('contour-inside').evaluateAll((b) => b.map((x) => x.textContent)), ['Inside']);
-    assert.deepEqual(await t('contour-panel').locator('.seg').allTextContents(), ['Inside', 'Outside', 'Sharp', 'Rounded']);
+    assert.deepEqual(await t('contour-panel').locator('.seg').allTextContents(), ['Inside', 'Outside', 'Sharp', 'Rounded', 'Butt', 'Round', 'Square']);
     assert.deepEqual(await t('contour-panel').locator('label.field').allTextContents().then((r) => r.map((x) => x.trim())), ['Distance (mm)', 'Steps']);
     assert.equal(await t('contour-live').isChecked(), true);
     assert.equal(await t('contour-panel').locator('label[for=contour-live]').textContent(), 'Live preview on the sheet');
@@ -10284,10 +10374,10 @@ try {
     await t('contour-steps').fill('2.5'); await t('contour-steps').press('Enter');
     assert.match(await prompt(), /^Steps must be a whole number from 1 to 100/); assert.equal(await t('contour-steps').inputValue(), '3');
     // it remembers Inside / Outside, the distance, the steps and Sharp / Rounded, on this PC (his call)
-    assert.deepEqual(await ctCfg(), { dir: 'outside', dist: 10, steps: 3, corners: 'rounded', colour: 'bylayer', lt: 'BYLAYER' });
+    assert.deepEqual(await ctCfg(), { dir: 'outside', dist: 10, steps: 3, corners: 'rounded', ends: 'round', colour: 'bylayer', lt: 'BYLAYER' });
     const p2 = await ctx.newPage();
     await p2.goto(URL_); await p2.waitForSelector('[data-testid=count]', { state: 'attached' });
-    assert.deepEqual(await p2.evaluate(() => JSON.parse(localStorage.getItem('pd-contour'))), { dir: 'outside', dist: 10, steps: 3, corners: 'rounded', colour: 'bylayer', lt: 'BYLAYER' });
+    assert.deepEqual(await p2.evaluate(() => JSON.parse(localStorage.getItem('pd-contour'))), { dir: 'outside', dist: 10, steps: 3, corners: 'rounded', ends: 'round', colour: 'bylayer', lt: 'BYLAYER' });
     await panelControl(p2, p2.locator('[data-testid=picker]')).setInputFiles({ name: 'shapes.dxf', mimeType: 'text/plain', buffer: Buffer.from(shapesDoc(), 'latin1') });
     await p2.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'shapes.dxf');
     await p2.locator('[data-tool=contour]').click();
@@ -10304,10 +10394,10 @@ try {
     // The extra style rows make the panel taller: move it left to uncover the open outline.
     const canvas = await rectOf(t('canvas'));
     await page.mouse.move(box1.x + 60, box1.y + 12); await page.mouse.down(); await page.mouse.move(canvas.x + 60, canvas.y + 12, { steps: 4 }); await page.mouse.up();
-    // an outline that is not closed says so
+    // An open chain now makes closed outlines (TODO 289).
     await clickConnected(550, 100); await waitSel('2 selected');
-    assert.match(await t('contour-hint').textContent(), /^That is not a closed outline \(2 pieces left open\)\. Join the tiny gaps, or pick a closed one\.$/);
-    assert.equal(await t('contour-apply').isDisabled(), true);
+    assert.match(await t('contour-hint').textContent(), /^Apply makes 3 new outlines/);
+    assert.equal(await t('contour-apply').isDisabled(), false);
     // Close puts the Select tool back; Esc with nothing selected does too
     await t('contour-close').click();
     assert.equal(await t('contour-panel').isVisible(), false); assert.equal(await t('tool-chip').textContent(), 'Tool: Select');
@@ -10403,7 +10493,7 @@ try {
     await cmdLine().fill('steps 1'); await page.keyboard.press('Enter');
     await cmdLine().fill('apply'); await page.keyboard.press('Enter');
     assert.equal(await entCount(), base + 2 + 1, 'apply from the command line: one more circle');
-    assert.deepEqual(await ctCfg(), { dir: 'outside', dist: 7, steps: 1, corners: 'sharp', colour: 'bylayer', lt: 'BYLAYER' });
+    assert.deepEqual(await ctCfg(), { dir: 'outside', dist: 7, steps: 1, corners: 'sharp', ends: 'round', colour: 'bylayer', lt: 'BYLAYER' });
     await t('contour-close').click();
     // picking an outline of the new layer works like any other (they are ordinary entities)
     await click(300, 103); await waitSel('1 selected');

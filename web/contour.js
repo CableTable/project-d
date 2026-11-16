@@ -1,11 +1,11 @@
-// contour.js — pure: Contour (TODO 35): offset a closed outline of lines and arcs inward or outward, in steps, with sharp or rounded
+// contour.js — pure: Contour (TODO 35, 289): offset closed outlines or outline open chains, in steps, with sharp or rounded
 // corners (no DOM) — contour.test.mjs.
 //
 // An outline is a loop of segments { p0: [x, y], p1: [x, y], b }: from p0 to p1, b = the bulge (tan of a quarter of the sweep; 0 for a
 // line, > 0 turning anticlockwise, < 0 clockwise), as in an LWPOLYLINE. Everything is in one unit (drawing units); y is up.
 //
 //   segmentsFromItems(ed, ents, skip, tol)   the lines and arcs the entities draw, omitting pieces shorter than the joining tolerance
-//   buildLoops(segs, tol)         joins them end to end into closed loops (and counts what stays open)
+//   buildLoops(segs, tol)         joins them into closed loops and open chains (also counts the open pieces)
 //   offsetLoop(loop, t, opts)     one loop moved by t (+ outward, − inward), or why not
 //   contour(loops, opts)          all the loops, `steps` times: { steps: [[loop, …], …], made, stopped, dropped }
 //   toEntities(loop, layer)       dxf-write entities (LINE, ARC, or one CIRCLE) for a loop
@@ -142,7 +142,7 @@ export function segmentsFromItems(ed, ents, skip = () => false, tol = 1e-4) {
 }
 
 /**
- * Joins segments end to end (ends within tol) into closed loops. → { loops: [[seg, …]], open: number of segments in pieces that did not close }.
+ * Joins segments end to end (ends within tol). → { loops, chains: open paths, open: number of open segments }.
  * Every loop is turned anticlockwise (loopArea > 0).
  */
 export function buildLoops(segs, tol = 1e-6) {
@@ -159,7 +159,7 @@ export function buildLoops(segs, tol = 1e-6) {
     }
     return out;
   };
-  const loops = [];
+  const loops = [], chains = [];
   let open = 0;
   for (let i = 0; i < segs.length; i++) {
     if (used[i]) continue;
@@ -178,9 +178,12 @@ export function buildLoops(segs, tol = 1e-6) {
       for (let k = 0; k < fixed.length; k++) fixed[k].p0 = fixed[(k + fixed.length - 1) % fixed.length].p1;
       const area = loopArea(fixed);
       if (Math.abs(area) > 1e-12) loops.push(area < 0 ? reverseLoop(fixed) : fixed);
-    } else open += path.length;
+    } else {
+      open += path.length;
+      chains.push(path.map((s, k) => ({ ...s, p0: k ? path[k - 1].p1 : s.p0 })));
+    }
   }
-  return { loops, open };
+  return { loops, open, chains };
 }
 
 // ---------------------------------------------------------------- offset
@@ -236,6 +239,7 @@ const extent = (s) => (s.b ? Math.abs(sweepOf(s)) : dist(s.p0, s.p1));
  * opts: { corners: 'sharp' | 'rounded' }. → { ok: true, loop } or { ok: false, why }.
  */
 export function offsetLoop(loop, t, opts = {}) {
+  const open = opts.open;
   const rounded = opts.corners === 'rounded', limit = opts.miter || MITER_LIMIT, area0 = loopArea(loop), size = loop.reduce((m, s) => Math.max(m, dist(s.p0, s.p1)), Math.max(Math.abs(t), 1e-9));   // not Math.max(...): a dense loop overflows the stack
   const tolJ = 1e-9 * size + 1e-12;
   const inLine = (a, b) => {
@@ -250,7 +254,7 @@ export function offsetLoop(loop, t, opts = {}) {
     if (inLine(prev, s)) joined[joined.length - 1] = seg(prev.p0, s.p1);
     else joined.push(s);
   }
-  if (joined.length > 1 && inLine(joined[joined.length - 1], joined[0])) {
+  if (!open && joined.length > 1 && inLine(joined[joined.length - 1], joined[0])) {
     joined[0] = seg(joined.pop().p0, joined[0].p1);
   }
   // 1. every segment moved; an arc that runs out of radius is gone (its place is kept as a corner about its centre)
@@ -261,7 +265,7 @@ export function offsetLoop(loop, t, opts = {}) {
     else pieces.push({ gone: true, c: arcOf(s).c, src: s });
   });
   const live = pieces.filter((p) => !p.gone);
-  if (live.length < 2 && !(live.length === 1 && live[0].b && Math.abs(sweepOf(live[0])) > 0)) return { ok: false, why: 'it would close up' };
+  if ((open && live.length !== pieces.length) || (!open && live.length < 2 && !(live.length === 1 && live[0].b && Math.abs(sweepOf(live[0])) > 0))) return { ok: false, why: 'it would close up' };
   // the pieces in order, each with the original corner that follows it (the centre of a gone arc between two pieces stands in for it)
   const ring = [];
   for (let i = 0; i < pieces.length; i++) {
@@ -274,6 +278,7 @@ export function offsetLoop(loop, t, opts = {}) {
   let n = ring.length;
   // 2. the corner after each piece
   const corner = (i, round) => {
+    if (open && i === n - 1) return { kind: 'end' };
     const A = ring[i], B = ring[(i + 1) % n], ua = endTan(A), ub = startTan(B), cr = crs(ua, ub), dt = dot(ua, ub);
     const P = A.p1, Q = B.p0;
     if (Math.abs(cr) <= 2e-5 && dt > 0 && dist(P, Q) <= 1e-6 * size + 3e-5 * Math.abs(t)) return { kind: 'cont', X: mul(add(P, Q), 0.5) };     // smooth: a file keeps 6 decimals
@@ -292,7 +297,7 @@ export function offsetLoop(loop, t, opts = {}) {
   };
   const joins = ring.map((_, i) => corner(i, rounded));
   const growth = (i) => {
-    const s = ring[i], jin = joins[(i + n - 1) % n], jout = joins[i];
+    const s = ring[i], jin = open && i === 0 ? {} : joins[(i + n - 1) % n], jout = joins[i];
     return (jin.X ? grow(s, jin.X, false) : 0) + (jout.X ? grow(s, jout.X, true) : 0);
   };
   // Retry only the two corners beside a piece lost to rounding, before emitting any neighbours. A piece still eaten (the offset of a short piece
@@ -306,7 +311,7 @@ export function offsetLoop(loop, t, opts = {}) {
       joins[prev] = corner(prev, false); joins[i] = corner(i, false);
     }
     if (extent(ring[i]) + growth(i) > tolJ * 10) continue;
-    if (n <= 3) return { ok: false, why: 'it would close up' };                // a triangle losing a side is a sliver: closed up
+    if (n <= 3 || (open && (i === 0 || i === n - 1))) return { ok: false, why: 'it would close up' };                // a triangle losing a side is a sliver: closed up
     ring[prev].V = ring[i].V;
     ring.splice(i, 1); joins.splice(i, 1); n--;
     const p = i === 0 ? n - 1 : prev;                                           // prev's index after the splice (it shifts when i was 0)
@@ -316,7 +321,7 @@ export function offsetLoop(loop, t, opts = {}) {
   const out = [];
   for (let i = 0; i < n; i++) {
     let s = { p0: ring[i].p0, p1: ring[i].p1, b: ring[i].b };
-    const jin = joins[(i + n - 1) % n], jout = joins[i], orig = s;
+    const jin = open && i === 0 ? {} : joins[(i + n - 1) % n], jout = joins[i], orig = s;
     const ext = growth(i);
     if (jin.X) s = { ...s, p0: jin.X };
     if (jout.X) s = { ...s, p1: jout.X };
@@ -326,11 +331,12 @@ export function offsetLoop(loop, t, opts = {}) {
     else if (jout.kind === 'bevel') out.push({ p0: jout.P, p1: jout.Q, b: 0 });
   }
   // the pieces meet: each starts where the one before ends
-  for (let i = 0; i < out.length; i++) {
+  for (let i = open ? 1 : 0; i < out.length; i++) {
     const prev = out[(i + out.length - 1) % out.length];
     if (dist(prev.p1, out[i].p0) > 1e-6 * size) return { ok: false, why: 'it could not be joined' };
     out[i] = { ...out[i], p0: prev.p1 };
   }
+  if (open) return { ok: true, loop: out.filter((s) => dist(s.p0, s.p1) > 1e-12 || s.b) };
   const area = loopArea(out);
   if (!(area > 0) || (t < 0 && area >= area0) || (t > 0 && area <= area0)) return { ok: false, why: 'it would close up' };
   const res = out.filter((s) => dist(s.p0, s.p1) > 1e-12 || s.b);
@@ -405,11 +411,11 @@ export function loopPoints(loop, deg = 3) {
 /**
  * The contour of some closed loops: `steps` outlines, step k moved k × dist from the original (outward or inward), each from the original
  * loops (so rounded corners grow with the step). A loop inside another (a hole) moves the other way, so the shape as a whole grows or shrinks.
- * opts: { dist (> 0), steps (≥ 1), outward (bool), corners ('sharp' | 'rounded') }.
+ * opts: { dist (> 0), steps (≥ 1), outward (bool), corners ('sharp' | 'rounded'), chains, ends ('butt' | 'round' | 'square') }.
  * → { steps: [[loop, …], …] (the steps that could be made), made, stopped: null | { step, why }, dropped } — dropped: holes that closed up.
  */
 export function contour(loops, opts) {
-  const { dist: d, steps: n, outward, corners } = opts;
+  const { dist: d, steps: n, outward, corners, chains = [], ends = 'round' } = opts;
   const oriented = loops.map((l) => (loopArea(l) < 0 ? reverseLoop(l) : l));
   const depth = oriented.map((l, i) => oriented.reduce((c, m, j) => c + (j !== i && Math.abs(loopArea(m)) > Math.abs(loopArea(l)) && inside(l[0].p0, m) ? 1 : 0), 0));
   const res = { steps: [], made: 0, stopped: null, dropped: 0 };
@@ -425,10 +431,35 @@ export function contour(loops, opts) {
       res.stopped = { step: k, why: r.why };
       return res;
     }
+    for (const chain of chains) {
+      const r = openOutline(chain, d * k, { corners, ends });
+      if (!r.ok) { res.stopped = { step: k, why: r.why }; return res; }
+      step.push(r.loop);
+    }
     if (!step.length) { res.stopped = { step: k, why: 'it would close up' }; return res; }
     res.steps.push(step); res.made += step.length;
   }
   return res;
+}
+
+/** Both offset sides, joined at the original ends. Self-crossing steps await union in TODO 289b. */
+function openOutline(chain, d, opts) {
+  const right = offsetLoop(chain, d, { corners: opts.corners, open: true });
+  const left = offsetLoop(reverseLoop(chain), d, { corners: opts.corners, open: true });
+  if (!right.ok) return right;
+  if (!left.ok) return left;
+  const cap = (a, b, tangent) => {
+    if (opts.ends === 'round') return [seg(a, b, 1)];
+    if (opts.ends !== 'square') return [seg(a, b)];
+    const u = mul(tangent, d), p = add(a, u), q = add(b, u);
+    return [seg(a, p), seg(p, q), seg(q, b)];
+  };
+  const R = right.loop, L = left.loop;
+  const loop = [...R, ...cap(R[R.length - 1].p1, L[0].p0, endTan(chain[chain.length - 1])),
+    ...L, ...cap(L[L.length - 1].p1, R[0].p0, mul(startTan(chain[0]), -1))];
+  // shortcut: overlapping sides are refused until TODO 289b adds outline union.
+  if (selfCrosses(loop, 1e-6 * chain.reduce((m, s) => Math.max(m, dist(s.p0, s.p1)), d)) || loopArea(loop) <= 0) return { ok: false, why: 'it would close up' };
+  return { ok: true, loop };
 }
 
 // ---------------------------------------------------------------- into the drawing
