@@ -12130,12 +12130,13 @@ function cmpGlow(c, out) {
 }
 
 /** A Compare side's snap index: the editor's own snap points and pick grid (edit.js snapPick), built once per side. */
+const cmpSnaps = new WeakMap();                                                             // off the side itself: snapshotOf structuredClones the sides, and the index holds a Proxy
 const cmpSnapEd = (sd) => {
-  if (!sd.sn) {
+  if (!cmpSnaps.has(sd)) {
     const vis = Uint8Array.from(sd.fl.items, (it) => (itemVisible(it, sd.off) ? 1 : 0));
-    sd.sn = { ix: pickIndex(sd.fl, spaceOf(sd.fl) === 1, (i) => vis[i] === 1), items: sd.fl.items, vis };
+    cmpSnaps.set(sd, { ix: pickIndex(sd.fl, spaceOf(sd.fl) === 1, (i) => vis[i] === 1), items: sd.fl.items, vis });
   }
-  return sd.sn;
+  return cmpSnaps.get(sd);
 };
 /** The snap near sheet point p (mm) on a side drawn at offset o (follows the SNAP button): { x, y (mm), kind } or null. */
 function cmpSnap(sd, o, p) {
