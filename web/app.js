@@ -95,7 +95,7 @@ import { loadFont } from './fontload.js';
 import { fontForStyle, fontSubstitutions } from './fontsub.js';
 import { outlineOf } from './nestshape.js';
 import { partSource, readTitleBlock, withTitleBlock } from './pdf-export.js';
-import { readPdf, renderPdfPage } from './pdf-read.js';
+import { readPdf, renderPdfPage, isPdf } from './pdf-read.js';
 import { panelWidth } from './docker.js';
 
 const SVGNS = 'http://www.w3.org/2000/svg';
@@ -1154,8 +1154,7 @@ async function openBytes(name, buf, path = null) {
     note(`${name} is already open: here is its tab` + (state.docs[same].dirty ? ' (with unsaved changes)' : ''));
     return;
   }
-  const header = new Uint8Array(ArrayBuffer.isView(buf) ? buf.buffer : buf, buf.byteOffset || 0, Math.min(buf.byteLength, 1024));
-  if (/\.pdf$/i.test(name) || new TextDecoder('latin1').decode(header).includes('%PDF')) { await openPdf(name, buf, path); return; }
+  if (/\.pdf$/i.test(name) || (!/\.dxf$/i.test(name) && buf.byteLength && isPdf(buf))) { await openPdf(name, buf, path); return; }
   if (/\.ai$/i.test(name)) { note(name + ": this .ai has no PDF part. In Illustrator: Save As .ai with 'Create PDF Compatible File' on, or Save a Copy as PDF."); return; }
   const dwg = /\.dwg$/i.test(name);
   if (!dwg && !/\.dxf$/i.test(name)) { note(name + ': Opens DXF or PDF; pictures go in as a background (Background…)'); return; }
@@ -1252,6 +1251,10 @@ async function openPath(path, recent = false) {
   if (!t || !t.fs || !t.fs.readFile) return;
   try {
     if (!(await bigOk([{ name, size: await pathSize(path) }])).length) return;
+    if (!/\.(dxf|pdf|ai)$/i.test(name)) {                                   // a .dwg is converted from its path; other names are refused
+      if (recent && t.fs.exists && !(await t.fs.exists(path))) throw new Error('not found');   // a DXF's readFile fails by itself; the helper's error would not say "moved"
+      await openBytes(name, new ArrayBuffer(0), path); return;
+    }
     await openBytes(name, await t.fs.readFile(path), path);
   } catch (err) {
     let missing = false;

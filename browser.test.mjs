@@ -7377,7 +7377,7 @@ try {
     p.on('pageerror', (e) => errors.push(String(e)));
     try {
       await p.goto(URL_ + '?autosave=86400000');
-      const picker = p.getByTestId('picker'), prompt = p.getByTestId('cmd-prompt');
+      const picker = p.getByTestId('picker');
       assert.ok((await picker.getAttribute('accept')).split(',').includes('.ai'));
       await picker.setInputFiles('fixtures/colours.ai');
       await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'colours.dxf');
@@ -7405,17 +7405,15 @@ try {
       }, bytes);
       await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'dropped.dxf');
       assert.deepEqual(await p.locator('.layer .nm').allTextContents(), ['#FF0000', '#00FF00', '#0000FF']);
-      // Any extension follows its bytes, and a complete signature must fit inside the first 1024 bytes.
-      for (const [offset, name, opens] of [[1020, 'prefixed.ai', true], [8, 'disguised.dxf', true], [1021, 'late.ai', false]]) {
+      // A PDF is told by its first four bytes, never inside a .dxf: a .dxf holding PDF bytes is read as a DXF (and refused), a .ai with the signature later has no PDF part.
+      let seen = '';
+      for (const [offset, name, start] of [[0, 'disguised.dxf', 'disguised.dxf: '], [8, 'late.ai', 'late.ai: this .ai has no PDF part.']]) {
         const before = await p.locator('.dtab .tname').allTextContents();
         await picker.setInputFiles({ name, mimeType: 'application/octet-stream', buffer: Buffer.concat([Buffer.alloc(offset, 32), Buffer.from(bytes)]) });
-        if (opens) await p.waitForFunction((name) => document.querySelector('.dtab.on .tname').textContent === name, name.replace(/\.[^.]+$/, '.dxf'));
-        else {
-          await p.waitForFunction(() => document.querySelector('[data-testid=cmd-prompt]').textContent.startsWith('late.ai: this .ai has no PDF part.'));
-          assert.deepEqual(await p.locator('.dtab .tname').allTextContents(), before);
-        }
+        seen = await (await p.waitForFunction((start) => { const s = document.querySelector('[data-testid=cmd-prompt]').textContent; return s.startsWith(start) && s; }, start)).jsonValue();
+        assert.deepEqual(await p.locator('.dtab .tname').allTextContents(), before);
       }
-      assert.match(await prompt.textContent(), /no PDF part/);
+      assert.match(seen, /no PDF part/);
       await p.evaluate((bytes) => {
         window.__aiFilters = null; window.__aiPick = 'C:/jobs/native.ai';
         window.__TAURI__ = { dialog: { open: async (options) => { window.__aiFilters = options.filters; return window.__aiPick; } },
@@ -7424,10 +7422,6 @@ try {
       await p.getByTestId('open').click();
       await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'native.dxf');
       assert.ok((await p.evaluate(() => window.__aiFilters))[0].extensions.includes('ai'));
-      await p.evaluate(() => { window.__aiPick = 'C:/jobs/pdf-bytes.dwg'; });
-      await p.getByTestId('open').click();
-      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'pdf-bytes.dxf');
-      assert.deepEqual(await p.locator('.layer .nm').allTextContents(), ['#FF0000', '#00FF00', '#0000FF']);
       const white = new Page(80, 50); white.strokeColor([1, 1, 1]); white.rect(10, 10, 60, 30); white.stroke();
       await picker.setInputFiles({ name: 'white.ai', mimeType: 'application/pdf', buffer: Buffer.from(writePdf([white])) });
       await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'white.dxf');
