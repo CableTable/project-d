@@ -422,7 +422,7 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
 - [x] 265. **`center` command: centre a selection on the first selected object** (S, T81).
 - [x] 266. **Bigger PDF / Print dialog** (S, T84).
 - [ ] 267. **Auto nest "Free angles": random angles, best kept, time limit** (L, T85).
-- [ ] 268. **Tab right-click "Duplicate" (drawing, Compare, layout)** (M, T86).
+- [x] 268. (`2d43c7c` + fix `9d62663`, Knight build, King review rv-268fix1 ship, 2 Lows held runs49/lows.txt; grill `rook-hq/runs49/grill-268.md`; suite pending) **Tab right-click "Duplicate" (drawing, Compare, layout)** (M, T86).
 - [ ] 269. **Kit reviews may run `node -e` probes** (S, tool ticket, KIT, Knight; retro45 #1): `reviewerArgs` (`rook-kit/rook-launch.mjs:192-196`) adds `Bash(node -e:*)` for `KIT` only; KIT case beside the deepEquals at `project.test.mjs:69` and `rook-launch.test.mjs:722`. Evidence: 9 kit reviews had `node -e` denied (`rv-F0`..`rv-F5bfix`).
 - [x] 270. **Recovery copy keeps balloons, unit, groups** (M, audit R2; grill `rook-hq/runs46/grill-270.md`; built Knight `bcc0c61`, King ship, 2 Lows held in `runs46/lows.txt`; picked HEAD~1 of the tick, suite pending).
 - [x] 271. **Recover re-opens the source PDF / picture** (M, audit R9, his "build" 2026-11-14 01:12; grill `rook-hq/runs46/grill-R9.md`; after 270).
