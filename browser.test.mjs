@@ -325,7 +325,8 @@ try {
         const value = document.querySelector('[data-testid=cmd-input]').value;
         return value === 'open' && value;
       })).jsonValue(), 'open');
-      await p.keyboard.press('Escape');
+      await p.keyboard.press('Escape'); await q('cmd-input').waitFor({ state: 'hidden' });
+      assert.equal(await q('start-screen').isVisible(), true, 'Esc shuts the bar and Start stays');
       for (const command of ['line', 'mv', 'dli', 'textoutlines', 'step', 'ortho']) {
         await type(command);
         await p.waitForFunction(() => document.querySelector('[data-testid=cmd-prompt]').textContent.includes('Open or start a drawing first'));
@@ -389,6 +390,7 @@ try {
       await type('line'); await type('0,0'); await type('40,20');
       await p.keyboard.press('Escape'); await p.keyboard.press('Escape');
       assert.equal(await q('entities').textContent(), 'Entities 1');
+      await p.keyboard.press('Control+a'); await p.keyboard.press('Control+c');
       await p.locator('[data-menu=Edit]').click();
       assert.equal(await p.getByRole('menuitem', { name: 'Undo', exact: true }).isEnabled(), true);
       await p.keyboard.press('Escape'); await q('start-tab').click();
@@ -396,7 +398,16 @@ try {
       for (const name of ['Undo', 'Redo', 'Delete', 'Cut', 'Paste in place', 'Select all']) assert.equal(await p.getByRole('menuitem', { name, exact: true }).isDisabled(), true);
       await p.keyboard.press('Escape'); await p.keyboard.press('Control+z');
       assert.equal(await q('entities').textContent(), 'Entities 1', 'Ctrl+Z on Start leaves the drawing unchanged');
+      await p.keyboard.press('Control+Shift+V'); await p.keyboard.press('Control+v');
+      assert.equal(await q('start-screen').isVisible(), true, 'paste keys on Start leave Start shown');
+      assert.equal(await (await p.waitForFunction(() => {
+        const text = document.querySelector('[data-testid=entities]').textContent;
+        return text === 'Entities 1' && text;
+      })).jsonValue(), 'Entities 1', 'paste keys on Start leave the drawing unchanged');
       await p.locator('.tabs .dtab.on').click();
+      await p.locator('[data-menu=Edit]').click();
+      for (const name of ['Cut', 'Paste in place', 'Select all']) assert.equal(await p.getByRole('menuitem', { name, exact: true }).isEnabled(), true, name + ' back on after Start');
+      await p.keyboard.press('Escape');
       await p.keyboard.press('Control+z');
       assert.equal(await (await p.waitForFunction(() => {
         const text = document.querySelector('[data-testid=entities]').textContent;

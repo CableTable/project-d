@@ -11065,6 +11065,12 @@ function editKey(e) {
   if (e.key === 'F12' && !e.ctrlKey && !e.altKey && !e.shiftKey) { e.preventDefault(); dynamicInputSet(!state.dynamicInput); return; }
   if ((e.key === 'F10' || e.key === 'F11') && !e.ctrlKey && !e.altKey && !e.shiftKey) { e.preventDefault(); if (e.key === 'F10') polarSet(!state.polar.on); else otrackSet(!state.otrack); return; }
   if (e.key === 'F2' && !e.ctrlKey && !e.altKey && !e.shiftKey) { e.preventDefault(); ui.cmdUI.toggleHistory(); return; }
+  if (!ui.startScreen.hidden) {       // the Start screen: a typed letter opens the command bar (open / compare) and Esc shuts it; no other key reaches the hidden drawing
+    if (e.key === 'Escape') { if (!inField || e.target === ui.cmd) ui.cmdUI.escape(); return; }
+    const seed = CB.keyOpensBar(e, { inField: !!inField || !!e.target?.isContentEditable, dialog: !!document.querySelector('.pop-back, .pdlg-back, dialog[open]'), active: !!activeCmd() });
+    if (seed != null) { e.preventDefault(); ui.cmdUI.open(seed); }
+    return;
+  }
   const d = editable();
   if (e.key === 'Escape') {
     if (state.distributeRect) { e.preventDefault(); state.distributeRect = null; ui.cmdUI.escape(); note('Distribute cancelled'); paintOverlay(); return; }
@@ -11122,7 +11128,6 @@ function editKey(e) {
   const mod = e.ctrlKey || e.metaKey, k = e.key.toLowerCase();
   const dialog = !!document.querySelector('.pop-back, .pdlg-back, dialog[open]'), seed = CB.keyOpensBar(e, { dialog, active: !!activeCmd() });
   if (seed != null) { e.preventDefault(); ui.cmdUI.open(seed); return; }       // a letter or digit typed on the drawing starts the command bar
-  if (!ui.startScreen.hidden) return;
   if (state.grip && (e.key === 'Enter' || e.key === ' ') && !mod && !e.altKey && !dialog && !(e.target.closest && e.target.closest('button, a'))) { e.preventDefault(); gripCycle(); return; }       // Space / Enter on a hot grip: the next grip mode
   if ((e.key === 'Enter' || e.key === ' ') && !mod && !e.altKey && !dialog && dimAutoLive() && !(e.target.closest && e.target.closest('button, a'))) { e.preventDefault(); dimAutoEnd(); return; }       // Automatic dimension repeats until Enter, Space or Esc
   if (state.grip && mod && !e.altKey && (k === 'y' || k === 'z')) { e.preventDefault(); undoCurrent(k === 'y' || e.shiftKey); return; }       // in a grip run Undo / Redo are the run's own (see undoCurrent)
