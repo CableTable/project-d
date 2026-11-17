@@ -14140,11 +14140,11 @@ try {
     assert.equal(await arrows.count(), 4); await gripWhen(0);
     await turn(23, true); sameGeometry(await savedDoc(), rotateEntities(multiple, new Set([0, 1]), [70, 55], 30));
     await page.keyboard.press('Control+z'); sameGeometry(await savedDoc(), multiple);
-    for (const selector of ['[data-layer=f0]', '.or.layer[data-layer="0"] [data-act=vis]']) {
+    for (const selector of ['.or.layer[data-file-layer="0"] [data-act=vis]', '.or.layer[data-layer="0"] [data-act=vis]']) {
       const history = await histLabels();
       await page.keyboard.press('Control+a'); await click(45, 30); await frames();
       const a = await arrow();
-      await page.locator(selector.startsWith('.or') ? '[data-tab=objects]' : '[data-tab=layers]').click();
+      await page.locator('[data-tab=objects]').click();
       const eye = panelControl(page, page.locator(selector));
       await eye.click(); await frames();
       assert.equal(await arrows.count(), 0, 'a layer toggle ends rotate mode');
