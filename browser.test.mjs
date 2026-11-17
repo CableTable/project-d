@@ -77,6 +77,12 @@ function panelControl(page, locator) {
       if (pane) {
         const tab = page.locator(`[data-tab=${pane}]`);
         if (await tab.getAttribute('aria-selected') !== 'true') await tab.click();
+        const guide = await target.evaluate((el) => ({ toggle: el.matches('[data-testid=guides-panel] .section-toggle'), inTree: !!el.closest('.guide-node') }));
+        if (guide.inTree) {
+          if (await page.getByTestId('obj-layout').getAttribute('aria-expanded') === 'false') await page.getByTestId('obj-layout').click();
+          if (guide.toggle && key === 'click') return page.getByTestId('obj-guides').click(...args);
+          if (await page.getByTestId('obj-guides').getAttribute('aria-expanded') === 'false') await page.getByTestId('obj-guides').click();
+        }
         const sections = await target.evaluate((el) => {
           const keys = [];
           for (let p = el.parentElement; p; p = p.parentElement) if (p.classList.contains('docker-folded') && !p.querySelector('.section-toggle')?.contains(el)) keys.unshift(p.dataset.section);
@@ -3133,13 +3139,13 @@ try {
       await q('drawing-panel').waitFor();
       assert.equal(await panel.getAttribute('aria-label'), 'Right panel');
       assert.equal(await p.getByRole('tablist', { name: 'Panel tab' }).getAttribute('aria-orientation'), 'vertical');
-      assert.deepEqual(await p.locator('.ptab-name').allTextContents(), ['Properties', 'Objects', 'Layers', 'Library', 'Step']);
+      assert.deepEqual(await p.locator('.ptab-name').allTextContents(), ['Properties', 'Objects', 'Library', 'Step']);
       const r = await panel.boundingBox(), tabs = await p.locator('.ptabs').boundingBox(), body = await p.locator('.panel-scroll').boundingBox();
       assert.ok(Math.abs(tabs.x + tabs.width - r.x - r.width) <= 1 && tabs.x >= body.x + body.width && tabs.width <= 26, 'strip sits on the right edge');
       assert.equal(await q('ptab-drawing').evaluate((e) => getComputedStyle(e).writingMode), 'vertical-rl');
       assert.equal(await q('ptab-step').isDisabled(), true);
       await q('ptab-drawing').focus();
-      for (const [key, id] of [['ArrowDown', 'ptab-objects'], ['ArrowDown', 'ptab-layers'], ['ArrowUp', 'ptab-objects'], ['ArrowRight', 'ptab-layers'], ['ArrowLeft', 'ptab-objects'], ['End', 'panel-library'], ['Home', 'ptab-drawing']]) {
+      for (const [key, id] of [['ArrowDown', 'ptab-objects'], ['ArrowDown', 'panel-library'], ['ArrowUp', 'ptab-objects'], ['ArrowRight', 'panel-library'], ['ArrowLeft', 'ptab-objects'], ['End', 'panel-library'], ['Home', 'ptab-drawing']]) {
         await p.keyboard.press(key); assert.equal(await q(id).getAttribute('aria-selected'), 'true');
         assert.equal(await q(id).evaluate((e) => e === document.activeElement), true);
       }
@@ -3173,8 +3179,8 @@ try {
       await p.keyboard.press('Escape'); await p.keyboard.press('Escape');
       assert.equal(await q('ptab-step').isDisabled(), false);
       assert.ok((await q('size-strip').boundingBox()).y < (await p.locator('.panel-top').boundingBox()).y);
-      assert.deepEqual(await titles(), ['Properties', 'Parts on this layout', 'Guides', 'Extra gaps']);
-      for (const id of ['ptab-objects', 'ptab-layers', 'panel-library', 'ptab-step', 'ptab-drawing']) {
+      assert.deepEqual(await titles(), ['Properties', 'Parts on this layout', 'Extra gaps']);
+      for (const id of ['ptab-objects', 'panel-library', 'ptab-step', 'ptab-drawing']) {
         await q(id).click(); await fit(290); await fit(220);
         assert.equal(await p.locator('.panel-title').textContent(), await q(id).textContent());
       }
@@ -3245,8 +3251,8 @@ try {
       await p.goto(URL_); await q('count').waitFor({ state: 'attached' });
       await q('picker').setInputFiles('fixtures/outline.dxf');
       await q('drawing-panel').waitFor({ state: 'visible' });
-      assert.deepEqual(await p.locator('.ptab').evaluateAll((els) => els.map((e) => e.getAttribute('aria-label'))), ['Properties', 'Objects', 'Layers', 'Parts library', 'Step and repeat']);
-      assert.deepEqual(await p.locator('.ptab-name:visible').allTextContents(), ['Properties', 'Objects', 'Layers', 'Library', 'Step']);
+      assert.deepEqual(await p.locator('.ptab').evaluateAll((els) => els.map((e) => e.getAttribute('aria-label'))), ['Properties', 'Objects', 'Parts library', 'Step and repeat']);
+      assert.deepEqual(await p.locator('.ptab-name:visible').allTextContents(), ['Properties', 'Objects', 'Library', 'Step']);
       for (const button of await p.locator('.ptab').all()) assert.equal(await button.getAttribute('title'), await button.getAttribute('aria-label'));
       await q('ptab-drawing').focus(); await p.keyboard.press('ArrowRight');
       assert.equal(await q('ptab-objects').getAttribute('aria-selected'), 'true');
@@ -3254,7 +3260,7 @@ try {
       await p.keyboard.press('Home'); assert.equal(await q('ptab-drawing').getAttribute('aria-selected'), 'true');
       await q('ptab-objects').click(); assert.equal(await q('objects-panel').isVisible(), true);
       assert.equal(await q('props-panel').isVisible(), false);
-      await q('ptab-layers').click(); assert.equal(await q('layer-add').isVisible(), true);
+      await q('ptab-objects').click(); assert.equal(await q('layer-add').isVisible(), true);
       await q('ptab-drawing').click();
       assert.equal(await fold('drawing-panel').getAttribute('aria-expanded'), 'false');
       await fold('drawing-panel').click();
@@ -3299,7 +3305,7 @@ try {
       assert.deepEqual(await p.locator('[data-docker=library] > section:visible .section-title').allTextContents(), ['Parts']);
       await q('ptab-drawing').click();
       await q('ptab-step').click(); await capture('step'); await q('ptab-drawing').click();
-      await q('new-layout').click(); await fold('guides-panel').click();
+      await q('new-layout').click(); await q('ptab-objects').click(); await q('obj-guides').click();
       await q('guide-position').fill('120'); await q('guide-add-h').click();
       await q('guide-position').fill('-35'); await q('guide-add-v').click();
       assert.deepEqual(await q('guide-pos').evaluateAll((els) => els.map((e) => e.value)), ['120.00', '-35.00']);
@@ -3317,7 +3323,7 @@ try {
         await input.fill('');
       }
       await capture('guides');
-      await fold('guides-panel').click(); await fold('parts-panel').click();
+      await q('obj-guides').click(); await q('ptab-drawing').click(); await fold('parts-panel').click();
       await q('ptab-step').click(); assert.equal(await q('step-panel').isVisible(), true); assert.equal(await q('parts-panel').isVisible(), false);
       await q('ptab-drawing').click(); await p.locator('.rail [data-tool=step]').click();
       assert.equal(await q('ptab-step').getAttribute('aria-selected'), 'true', 'rail opens Step and repeat');
@@ -3345,10 +3351,10 @@ try {
       await p.waitForFunction((name) => document.querySelector('.dtab.on .tname').textContent === name, name);
     };
     const expected = {
-      Drawing: { drawing: ['Properties', 'Select', 'Guides', 'Drawing scale', 'Outlines in this drawing', 'Tiny gaps', 'Duplicates'], objects: [], layers: ['Layers'], library: ['Parts'], step: null },
-      Layout: { drawing: ['Properties', 'Select', 'Parts on this layout', 'Guides', 'Extra gaps'], objects: [], layers: ['Layers'], library: ['Parts'], step: ['Step and repeat'] },
-      'Layout selected': { drawing: ['Selected part', 'Properties', 'Select', 'Arrange', 'Transform', 'Rotate', 'Mirror', 'Nudge', 'Duplicate', 'Group and lock'], objects: [], layers: ['Layers'], library: ['Parts'], step: ['Step and repeat'] },
-      Compare: { drawing: ['Properties', 'Select', 'Guides', 'Compare', 'Differences'], objects: [], layers: ['Layers'], library: ['Parts'], step: null },
+      Drawing: { drawing: ['Properties', 'Select', 'Guides', 'Drawing scale', 'Outlines in this drawing', 'Tiny gaps', 'Duplicates'], objects: [], library: ['Parts'], step: null },
+      Layout: { drawing: ['Properties', 'Select', 'Parts on this layout', 'Extra gaps'], objects: ['Guides'], library: ['Parts'], step: ['Step and repeat'] },
+      'Layout selected': { drawing: ['Selected part', 'Properties', 'Select', 'Arrange', 'Transform', 'Rotate', 'Mirror', 'Nudge', 'Duplicate', 'Group and lock'], objects: ['Guides'], library: ['Parts'], step: ['Step and repeat'] },
+      Compare: { drawing: ['Properties', 'Select', 'Guides', 'Compare', 'Differences'], objects: [], library: ['Parts'], step: null },
     };
     const audit = async (kind) => {
       for (const [tab, sections] of Object.entries(expected[kind])) {
@@ -3356,13 +3362,13 @@ try {
         assert.equal(await button.isDisabled(), sections === null, `${kind}/${tab}: availability`);
         if (sections === null) continue;
         await button.click();
-        assert.deepEqual(await titles(), sections, `${kind}/${tab}: all visible section titles`);
-        if (tab === 'objects' || tab === 'layers') {
+        assert.deepEqual(await titles(), tab === 'objects' ? [] : sections, `${kind}/${tab}: all visible section titles`);
+        if (tab === 'objects') {
           assert.deepEqual(await p.locator(`[data-docker=${tab}] .sec`).allTextContents(), sections, `${kind}/${tab}: no foreign sections, even hidden`);
-          assert.equal(await q(tab === 'objects' ? 'obj-tree' : 'layer-search').isVisible(), true);
+          assert.equal(await q('obj-tree').isVisible(), true);
         }
       }
-      console.log(`205: ${kind} all five panel tabs match the section table`);
+      console.log(`205: ${kind} all four panel tabs match the section table`);
     };
     try {
       await p.goto(URL_); await q('count').waitFor({ state: 'attached' });
@@ -4379,7 +4385,7 @@ try {
     try {
       await p.goto(URL_); await q('new-tab').waitFor();
       await q('picker').setInputFiles('fixtures/outline.dxf');
-      await q('ptab-layers').click(); await p.locator('.layer.current').waitFor(); await q('ptab-drawing').click();
+      await q('ptab-objects').click(); await p.locator('.layer.current').waitFor(); await q('ptab-drawing').click();
       for (const mode of ['light', 'dark']) {
         await theme(mode);
         const c = await tokens();
@@ -4866,7 +4872,7 @@ try {
   });
 
   await step('layers panel lists the file\'s layers; toggling one hides it', async () => {
-    await t('ptab-layers').click();
+    await t('ptab-objects').click();
     assert.deepEqual((await page.locator('.layer .nm').allTextContents()).includes('Parts'), false, 'a drawing tab: only the file\'s layers');
     const names = await page.locator('.layer .nm').allTextContents();
     for (const n of ['OUTLINE', 'HOLES', 'CENTRE', 'NOTES', 'DIMS', 'HATCH']) assert.ok(names.includes(n), n);
@@ -4937,7 +4943,7 @@ try {
   });
 
   await step('many layers: the panel still fits, only the layers list scrolls', async () => {
-    await t('ptab-layers').click();
+    await t('ptab-objects').click();
     await t('picker').setInputFiles('fixtures/many-layers.dxf');
     await page.waitForSelector('.tabs .dtab:has-text("many-layers.dxf")');
     await page.waitForFunction(() => document.querySelectorAll('.layer').length >= 30);
@@ -5877,7 +5883,7 @@ try {
       await p.locator('.dtab', { hasText: 'first214c.dxf' }).click(); await compare();
       await q('ptab-drawing').click(); await q('cmp-lineup-manual').click();
       for (const n of [1, 2]) {
-        await q('cmp-name-' + n).click(); await q('ptab-layers').click();
+        await q('cmp-name-' + n).click(); await q('ptab-objects').click();
         await p.locator('[data-file-layer]', { hasText: 'Hidden' }).locator('.vis').click();
         await q('ptab-drawing').click();
       }
@@ -7014,6 +7020,7 @@ try {
   await step('view: a DXF opens on its own drawing tab: only Drawing scale, Outlines and Layers; no sheet, grippers or step and repeat; no Part | Layout switch', async () => {
     await t('picker').setInputFiles('fixtures/outline.dxf');
     await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'outline.dxf');
+    await t('ptab-drawing').click();
     await inkedWhen((n) => n > 150);
     assert.equal(await t('mode-part').count(), 0); assert.equal(await t('mode-layout').count(), 0);
     assert.equal(await vis('drawing-panel'), true); assert.equal(await vis('outlines-panel'), true);
@@ -7396,7 +7403,7 @@ try {
       return readDxf(readFileSync(await download.path(), 'utf8'));
     };
     const dock = (id) => q('ptab-' + id).click();
-    const pick = async (n) => { await dock('drawing'); await q('cmp-name-' + n).click(); await dock('layers'); };
+    const pick = async (n) => { await dock('drawing'); await q('cmp-name-' + n).click(); await dock('objects'); };
     const rows = () => p.locator('[data-file-layer]');
     const hiddenRows = () => p.locator('[data-file-layer].hidden-layer');
     const compareMenu = async () => { await p.locator('[data-menu=File]').click(); await p.getByRole('menuitem', { name: 'Compare drawings…', exact: true }).click(); };
@@ -7412,7 +7419,7 @@ try {
     };
     try {
       await p.goto(URL_); await p.locator('[data-tool=select]').waitFor();
-      await compareMenu(); await dock('layers');
+      await compareMenu(); await dock('objects');
       assert.equal(await q('layers-empty').textContent(), 'Pick a drawing', 'no snapshot picked');
       assert.equal(await q('layer-add').isVisible(), false, 'Compare has no + Add layer');
       await tab('Compare').locator('.x').click();
@@ -7421,10 +7428,10 @@ try {
       await q('name-input').fill('Part 156c2'); await q('name-ok').click(); await q('name-dialog').waitFor({ state: 'detached' });
       await open('two-156c2.dxf');
       await tab('one-156c2.dxf').click(); await compareMenu();
-      await dock('drawing'); await q('cmp-name-2').click(); await q('cmp-run').click(); await dock('layers');
+      await dock('drawing'); await q('cmp-name-2').click(); await q('cmp-run').click(); await dock('objects');
       assert.deepEqual(await rows().locator('.nm').allTextContents(), ['Plate', 'Notes'], 'the picked snapshot lists its layers');
       assert.equal(await q('layer-add').isVisible(), false, 'Compare has no + Add layer');
-      await dock('drawing'); await q('cmp-eye').first().click(); await dock('layers');                  // snapshot 1 hidden: only snapshot 2 paints
+      await dock('drawing'); await q('cmp-eye').first().click(); await dock('objects');                  // snapshot 1 hidden: only snapshot 2 paints
       assert.ok(await inkAt(40, 30) > 0, 'Notes line shows');
       await rows().nth(1).locator('.vis').click();
       assert.equal(await hiddenRows().count(), 1);
@@ -7444,7 +7451,7 @@ try {
       await p.locator('[data-tool=select]').click(); await click(40, 20);
       await dock('drawing'); await p.locator('[data-tool=contour]').click(); await q('contour-apply').click();
       assert.match(await q('cmd-prompt').textContent(), /^Contour: 1 new outline/);
-      await q('contour-close').click(); await dock('layers');
+      await q('contour-close').click(); await dock('objects');
       assert.deepEqual(await rows().locator('.nm').allTextContents(), ['Plate', 'Notes', 'Contour'], 'the snapshot is refreshed with the new layer');
       await tab('two-156c2.dxf').click();
       const contoured = (await saveDoc()).entities.filter((e) => e.layer === 'Contour').length;
@@ -7469,7 +7476,7 @@ try {
       await tab('Compare').click(); await pick(2); await dock('drawing');
       await p.locator('[data-tool=contour]').click(); await p.keyboard.press('Escape');
       assert.match(await p.locator('[data-tool=select]').getAttribute('class'), /on/, 'Esc ends Contour');
-      await dock('layers'); assert.deepEqual(await names(), ['Plate', 'Notes'], 'nothing was added');
+      await dock('objects'); assert.deepEqual(await names(), ['Plate', 'Notes'], 'nothing was added');
       // a hidden layer stays hidden by name when an edit empties the layer before it
       await rows().nth(1).locator('.vis').click();
       await p.locator('[data-tool=select]').click(); await click(40, 20); await p.keyboard.press('Delete');
@@ -13236,7 +13243,7 @@ try {
     await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'shapes.dxf');
     assert.equal(await page.locator('[data-testid=layer-current]').count(), 1);
     assert.equal(await page.locator('.layer.current .nm').textContent(), '0');
-    await t('ptab-layers').click(); await page.locator('.layer', { hasText: 'Open' }).click();
+    await t('ptab-objects').click(); await page.locator('.layer', { hasText: 'Open' }).click();
     assert.equal(await page.locator('.layer.current .nm').textContent(), 'Open');
     assert.match((await t('cmd-hist').textContent()) + (await prompt()), /Current layer: Open/);
     await page.locator('[data-tool=circle]').click();
@@ -13282,7 +13289,7 @@ try {
     await t('layer-colour').last().click();
     await t('colour-hex').fill('#ff0000'); await t('colour-ok').click();
     assert.equal(await page.locator('.layer.current [data-testid=layer-name]').inputValue(), 'Cut line');
-    for (const th of ['light', 'dark']) { await page.evaluate((x) => { document.documentElement.dataset.theme = x; }, th); await page.locator('.layers').screenshot({ path: `${shotDir}/s15-addlayer-${th}.png` }); }
+    for (const th of ['light', 'dark']) { await page.evaluate((x) => { document.documentElement.dataset.theme = x; }, th); await page.locator('[data-testid=objects-panel]').screenshot({ path: `${shotDir}/s15-addlayer-${th}.png` }); }
     await page.evaluate(() => { delete document.documentElement.dataset.theme; });
     await page.locator('[data-tool=circle]').click();
     assert.match(await t('cmd-hist').textContent(), /layer Cut line/);
@@ -13675,7 +13682,7 @@ try {
     await closeTabs(/./);
     await t('picker').setInputFiles({ name: 'shapes.dxf', mimeType: 'text/plain', buffer: Buffer.from(shapesDoc(), 'latin1') });
     await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'shapes.dxf');
-    await t('ptab-layers').click(); await page.locator('.layer', { hasText: 'Open' }).click();
+    await t('ptab-objects').click(); await page.locator('.layer', { hasText: 'Open' }).click();
     await page.locator('[data-tool=text]').click();
     await typeCmd('height 8');
     assert.match(await t('cmd-hist').textContent(), /^Command: TEXT   Height 8\.00 · Standard · Left · layer Open/);
@@ -19535,7 +19542,7 @@ try {
     const doc0 = newDoc(4);
     addEntities(doc0, dxfLine(20, 30, 220, 30), dxfLine(20, 70, 220, 70), dxfLine(80, 10, 80, 90), dxfLine(160, 10, 160, 90));
     await openGrips(writeDxf(doc0), 'trim-cap.dxf');
-    await t('ptab-layers').click();
+    await t('ptab-objects').click();
     for (let i = 0; i < 101; i++) await t('layer-add').click();
     await t('ptab-drawing').click();
     assert.equal((await histLabels()).length, 101, 'the history is full: 100 steps (the cap) and the current state');
@@ -22035,18 +22042,104 @@ try {
   const isDim = (loc) => loc.evaluate((e) => e.classList.contains('dim'));
   const openObjects = async () => { await openGrips(objDoc(), 'objects.dxf'); await t('ptab-objects').click(); await t('objects-panel').waitFor(); };
 
-  await step('Objects tab: five docker tabs; Objects lists the layers and, for the open one, its objects with short labels; the footer counts', async () => {
+  await step('TODO 282b2: Objects tab shows layers and objects in one tree', async () => {
+    await menuItem('View', 'Theme: light');
+    await openObjects();
+    assert.equal(await t('ptab-layers').count(), 0);
+    assert.deepEqual(await page.locator('.ptab-name').allTextContents(), ['Properties', 'Objects', 'Library', 'Step']);
+    assert.equal(await t('obj-search').count(), 1);
+    assert.equal(await t('layer-search').count(), 0);
+    assert.deepEqual(await oLayers(), ['Cut', 'Engrave', '0']);
+    assert.equal(await oLayer('Cut').getAttribute('aria-level'), '1');
+    assert.equal(await oRow('Circle Ø40').getAttribute('aria-level'), '2');
+    for (const row of [oLayer('Cut'), oRow('Circle Ø40')]) {
+      assert.equal(await row.locator('[data-act=vis]').count(), 1);
+      assert.equal(await row.locator('[data-act=lock]').count(), 1);
+    }
+    await oRow('Circle Ø40').click(); assert.equal(await t('obj-selected').textContent(), '1 selected');
+    await oRow('Circle Ø40').locator('[data-act=lock]').click();
+    assert.equal(await oLayer('Cut').locator('[data-act=lock]').getAttribute('aria-label'), 'Unlock');
+    await oLayer('Cut').locator('[data-act=lock]').click();
+    await oLayer('Engrave').click();
+    assert.equal(await page.locator('.layer.current').getAttribute('data-layer'), 'Engrave');
+    await t('obj-search').fill('engr'); assert.deepEqual(await oLayers(), ['Engrave']);
+    await t('layer-add').click();
+    assert.equal(await t('obj-search').inputValue(), '');
+    assert.equal(await page.locator('.layer.current [data-testid=layer-name]').inputValue(), 'Layer1');
+    assert.equal(await page.locator('.layer.current [data-testid=layer-name]').evaluate((e) => e === document.activeElement && e.selectionEnd === e.value.length), true);
+    await page.locator('.layer.current [data-testid=layer-name]').press('Enter');
+    await page.keyboard.press('Control+z'); assert.equal(await t('layer-name').count(), 0);
+    const shots = async (kind) => {
+      for (const theme of ['light', 'dark']) {
+        await menuItem('View', 'Theme: ' + theme); await frames();
+        assert.equal(await t('layer-add').isVisible(), kind !== 'compare', `${kind}: Add layer at the tree foot`);
+        await page.screenshot({ path: `${shotDir}/todo282b2-${kind}-${theme}.png` });
+      }
+      await menuItem('View', 'Theme: light');
+    };
+    await shots('drawing');
+    const lay = newLayout('Tree layout'); lay.parts.a = makePart('a', 'Bracket', readDxf(objDoc()));
+    lay.placed.push({ partId: 'a', x: 20, y: 20, rot: 0 });
+    lay.s.guides = [{ axis: 'x', mm: 80 }];
+    await openGrips(writeDxf(layoutRaw(lay)), 'tree-layout.dxf'); await t('ptab-objects').click();
+    const root = t('obj-layout'), part = page.locator('.or[data-part]'), guides = t('obj-guides');
+    assert.equal(await root.locator('.onm').textContent(), 'tree-layout.dxf');
+    assert.equal(await root.getAttribute('aria-level'), '1');
+    for (const row of [part, page.locator('.layer[data-layer-name=Parts]'), guides]) assert.equal(await row.getAttribute('aria-level'), '2');
+    await root.locator('.onm').click(); assert.equal(await part.count(), 0);
+    await root.locator('.onm').click(); assert.equal(await part.count(), 1);
+    await part.click(); await page.locator('.or[data-place]').click();
+    assert.equal(await t('obj-selected').textContent(), '1 selected');
+    await page.locator('.or[data-place] [data-act=lock]').click();
+    assert.equal(await page.locator('.or[data-place] [data-act=lock]').getAttribute('aria-label'), 'Unlock');
+    await page.locator('.or[data-place] [data-act=lock]').click();
+    await guides.click(); assert.equal(Number(await t('guide-pos').inputValue()), 80);
+    await t('guide-pos').fill('90'); await t('guide-pos').press('Enter');
+    assert.equal(Number(await t('guide-pos').inputValue()), 90);
+    await guides.locator('[data-act=vis]').click(); assert.equal(await guides.locator('[data-act=vis]').getAttribute('aria-label'), 'Show');
+    await guides.locator('[data-act=vis]').click();
+    await guides.locator('[data-act=lock]').click(); assert.equal(await guides.locator('[data-act=lock]').getAttribute('aria-label'), 'Unlock');
+    await guides.locator('[data-act=lock]').click();
+    await t('layer-add').click();
+    assert.equal(await page.locator('.layer.current [data-testid=layer-name]').inputValue(), 'Layer1');
+    await page.locator('.layer.current [data-testid=layer-name]').fill('Layout ink');
+    await page.locator('.layer.current [data-testid=layer-name]').press('Enter');
+    assert.equal(await page.locator('.layer.current').getAttribute('data-layer-name'), 'Layout ink');
+    const inkLayer = page.locator('.layer[data-layer-name="Layout ink"]');
+    await inkLayer.locator('[data-act=vis]').click(); assert.equal(await isDim(inkLayer), true);
+    await inkLayer.locator('[data-act=vis]').click(); assert.equal(await isDim(inkLayer), false);
+    await inkLayer.locator('[data-act=lock]').click(); assert.equal(await inkLayer.locator('[data-act=lock]').getAttribute('aria-label'), 'Unlock');
+    await inkLayer.locator('[data-act=lock]').click();
+    await t('obj-search').fill('guides'); assert.equal(await part.count(), 0); assert.equal(await guides.count(), 1);
+    await t('obj-search').press('Escape'); assert.equal(await part.count(), 1);
+    await shots('layout');
+    await t('picker').setInputFiles({ name: 'compare-tree.dxf', mimeType: 'text/plain', buffer: Buffer.from(objDoc(), 'latin1') });
+    await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'compare-tree.dxf');
+    await menuItem('File', 'Compare drawings…'); await t('ptab-objects').click();
+    assert.ok(await oLayer('Cut').count()); assert.ok(await page.locator('.or.obj[data-e]').count());
+    assert.equal(await t('layer-add').isVisible(), false);
+    await oLayer('Cut').locator('[data-act=vis]').click(); assert.equal(await isDim(oLayer('Cut')), true);
+    await oLayer('Cut').locator('[data-act=vis]').click();
+    await oRow('Circle Ø40').click(); assert.equal(await t('obj-selected').textContent(), '1 selected');
+    await oLayer('Cut').click({ button: 'right' }); await page.getByRole('menuitem', { name: 'Hide', exact: true }).click();
+    assert.equal(await isDim(oLayer('Cut')), true);
+    await oLayer('Cut').locator('[data-act=vis]').click();
+    await shots('compare');
+    await t('ptab-drawing').click(); await closeTabs(/./);
+  });
+
+  await step('Objects tab: four docker tabs; Objects lists the layers and, for the open one, its objects with short labels; the footer counts', async () => {
     await openGrips(objDoc(), 'objects.dxf');
     assert.equal(await t('objects-panel').isVisible(), false, 'Drawing is the tab at first');
-    assert.equal(await page.locator('.layers-rows').isVisible(), false, 'Layers has its own tab');
-    await t('ptab-layers').click(); assert.equal(await page.locator('.layers-rows').isVisible(), true);
+    assert.equal(await page.locator('.layers-rows').isVisible(), false, 'the tree is on Objects');
+    await t('ptab-objects').click(); assert.equal(await page.locator('.layers-rows').isVisible(), true);
     await t('ptab-objects').click(); await t('objects-panel').waitFor();
     assert.equal(await t('ptab-objects').getAttribute('aria-selected'), 'true'); assert.equal(await t('ptab-drawing').getAttribute('aria-selected'), 'false');
-    assert.equal(await page.locator('.layers-rows').isVisible(), false, 'the Drawing sections are not shown');
-    assert.deepEqual(await oLayers(), ['Cut', 'Engrave']);
+    assert.equal(await t('drawing-panel').isVisible(), false, 'the Drawing sections are not shown');
+    assert.deepEqual(await oLayers(), ['Cut', 'Engrave', '0']);
     assert.deepEqual(await oRows(), ['Rectangle 100.0 × 60.0', 'Circle Ø40', 'Line 100.0'], 'the first layer is open; Engrave is closed');
     assert.equal(await oLayer('Engrave').getAttribute('aria-expanded'), 'false');
-    assert.match(await t('obj-count').textContent(), /^4 objects · 2 layers$/);
+    assert.match(await t('obj-count').textContent(), /^4 objects · 3 layers$/);
     assert.equal(await t('obj-selected').textContent(), '0 selected');
     await oLayer('Engrave').click();
     assert.deepEqual(await oRows(), ['Rectangle 100.0 × 60.0', 'Circle Ø40', 'Line 100.0', "Text 'REV A'"]);
@@ -22068,7 +22161,7 @@ try {
     await t('ptab-objects').click();
     const objN = Object.fromEntries(await page.locator('[data-testid=obj-tree] .or.layer').evaluateAll((rs) => rs.map((r) => [r.dataset.layer, r.querySelector('.ocnt').textContent])));
     await t('ptab-drawing').click();
-    const layN = Object.fromEntries(await page.locator('.layer[data-file-layer]').evaluateAll((rs) => rs.map((r) => [r.querySelector('.nm').textContent, r.querySelector('.lbl').textContent])));
+    const layN = Object.fromEntries(await page.locator('.layer[data-layer-name]').evaluateAll((rs) => rs.map((r) => [r.querySelector('.nm').textContent, r.querySelector('.lbl').textContent])));
     assert.equal(layN.NOTES, '7', 'the IMAGE draws nothing but is an entity of the file');
     for (const [name, n] of Object.entries(objN)) assert.equal(layN[name], n, name);
     await t('ptab-objects').click();
@@ -22217,7 +22310,7 @@ try {
     await page.getByRole('menuitem', { name: 'Rename…' }).click();
     await t('name-input').fill('Outline'); await t('name-ok').click();
     await page.waitForFunction(() => document.querySelector('.or.layer .onm').textContent === 'Outline');
-    assert.deepEqual(await oLayers(), ['Outline', 'Engrave']);
+    assert.deepEqual(await oLayers(), ['Outline', 'Engrave', '0']);
     assert.equal(await page.locator('.layers-rows .layer', { hasText: 'Outline' }).count(), 1, 'the Layers section follows');
     await page.keyboard.press('Control+z');
     await page.waitForFunction(() => document.querySelector('.or.layer .onm').textContent === 'Cut');
@@ -22229,7 +22322,7 @@ try {
     await openGrips(writeDxf(doc), 'many.dxf');
     await t('ptab-objects').click();
     assert.equal(await page.locator('[data-testid=obj-tree] .or.obj').count(), 500);
-    assert.match(await t('obj-count').textContent(), /^620 objects · 1 layer$/);
+    assert.match(await t('obj-count').textContent(), /^620 objects · 2 layers$/);
     await page.locator('.or.more').click();
     assert.equal(await page.locator('[data-testid=obj-tree] .or.obj').count(), 620);
     assert.equal(await page.locator('.or.more').count(), 0);
@@ -27443,7 +27536,7 @@ try {
       await pixels('part click');
       await stale('part layer off', () => p.evaluate(() => window.p7b1Layer(true)));
       await stale('part layers all on', () => p.evaluate(() => window.p7b1Layer(false)));
-      await p.getByTestId('ptab-layers').click(); await frame();
+      await p.getByTestId('ptab-objects').click(); await frame();
       for (const label of ['Parts hidden in Layers', 'Parts shown in Layers']) await stale(label, async () => {
         await p.locator('.layers-rows [data-layer=parts]').click(); await p.evaluate(() => window.p7b1Paint());
       });
@@ -28799,63 +28892,63 @@ try {
     addEntities(doc, dxfLine(0, 0, 100, 0, { layer: 'Outer wall' }), dxfLine(0, 10, 100, 10, { layer: 'Inner Wall' }), dxfLine(0, 20, 100, 20, { layer: 'Door' }));
     await openGrips(writeDxf(doc), 'walls.dxf');
     const names = () => page.locator('.layers-rows .layer .nm').allTextContents();
-    await t('ptab-layers').click();
+    await t('ptab-objects').click();
     assert.deepEqual(await names(), ['Outer wall', 'Inner Wall', 'Door', '0']);
     const cur = await page.locator('.layer.current .nm').textContent();
-    await t('layer-search').fill('wall');
+    await t('obj-search').fill('wall');
     assert.deepEqual(await names(), ['Outer wall', 'Inner Wall'], 'any part of the name, either case');
-    await t('layer-search').fill('WALL ');
+    await t('obj-search').fill('WALL ');
     assert.deepEqual(await names(), ['Outer wall', 'Inner Wall']);
-    await t('layer-search').fill('o*');
+    await t('obj-search').fill('o*');
     assert.deepEqual(await names(), [], 'no wildcards');
-    await t('layer-search').fill('wall');
-    for (const th of ['light', 'dark']) { await page.evaluate((x) => { document.documentElement.dataset.theme = x; }, th); await page.locator('.layers').screenshot({ path: `${shotDir}/k77-layer-search-${th}.png` }); }
+    await t('obj-search').fill('wall');
+    for (const th of ['light', 'dark']) { await page.evaluate((x) => { document.documentElement.dataset.theme = x; }, th); await page.locator('[data-testid=objects-panel]').screenshot({ path: `${shotDir}/k77-layer-search-${th}.png` }); }
     await page.evaluate(() => { delete document.documentElement.dataset.theme; });
     // hiding a layer through the filtered list: the filter stays, the state is only the layer's
     await page.locator('.layers-rows .layer', { hasText: 'Outer wall' }).locator('.vis').click();
     assert.deepEqual(await names(), ['Outer wall', 'Inner Wall'], 'the filter survives the list re-rendering');
-    assert.equal(await t('layer-search').inputValue(), 'wall');
+    assert.equal(await t('obj-search').inputValue(), 'wall');
     await page.locator('.layers-rows .layer', { hasText: 'Outer wall' }).locator('.vis').click();
     // Esc clears and shows all; the current layer is as before
-    await t('layer-search').press('Escape');
-    assert.equal(await t('layer-search').inputValue(), '');
+    await t('obj-search').press('Escape');
+    assert.equal(await t('obj-search').inputValue(), '');
     assert.deepEqual(await names(), ['Outer wall', 'Inner Wall', 'Door', '0']);
     assert.equal(await page.locator('.layer.current .nm').textContent(), cur, 'current layer unchanged');
     assert.equal(await page.locator('.layers-rows .layer.hidden-layer').count(), 0, 'nothing left hidden');
     // + Add while filtered: the new row is shown
-    await t('layer-search').fill('wall');
+    await t('obj-search').fill('wall');
     await t('layer-add').click();
-    assert.equal(await t('layer-search').inputValue(), '');
+    assert.equal(await t('obj-search').inputValue(), '');
     assert.equal(await t('layer-name').inputValue(), 'Layer1');
     await t('layer-name').press('Enter');
     await page.keyboard.press('Control+z');
     // per tab: another tab has its own (empty) filter
-    await t('layer-search').fill('door');
+    await t('obj-search').fill('door');
     assert.deepEqual(await names(), ['Door']);
     await t('picker').setInputFiles({ name: 'objects2.dxf', mimeType: 'text/plain', buffer: Buffer.from(objDoc(), 'latin1') });
     await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'objects2.dxf');
     await page.waitForFunction(() => document.querySelector('[data-testid=gap-count]') && document.querySelector('[data-testid=gap-count]').textContent !== '…');
-    assert.equal(await t('layer-search').inputValue(), '', 'a new tab starts unfiltered');
+    assert.equal(await t('obj-search').inputValue(), '', 'a new tab starts unfiltered');
     // switching away and back keeps each tab's filter; with the cursor still in the box (Ctrl+Tab) the box shows the new tab's text
-    await t('layer-search').fill('cut');
+    await t('obj-search').fill('cut');
     await page.keyboard.press('Control+Tab');
     await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'walls.dxf');
-    assert.equal(await t('layer-search').inputValue(), 'door', 'Ctrl+Tab with the cursor in the box: the box shows the other tab\'s filter');
+    assert.equal(await t('obj-search').inputValue(), 'door', 'Ctrl+Tab with the cursor in the box: the box shows the other tab\'s filter');
     assert.deepEqual(await names(), ['Door'], 'the first tab still shows only Door');
     await page.keyboard.press('Control+Tab');
-    assert.equal(await t('layer-search').inputValue(), 'cut');
+    assert.equal(await t('obj-search').inputValue(), 'cut');
     assert.deepEqual(await names(), ['Cut']);
     // Objects: layers are matched by name too, and the box follows the tab as well
     await t('ptab-objects').click(); await t('objects-panel').waitFor();
     await t('obj-search').fill('ENGR');
     assert.deepEqual(await oLayers(), ['Engrave']);
     await page.keyboard.press('Control+Tab');
-    assert.equal(await t('obj-search').inputValue(), '', 'the first tab has its own (empty) Objects search');
+    assert.equal(await t('obj-search').inputValue(), 'door', 'the first tab keeps its shared tree search');
     await page.keyboard.press('Control+Tab');
     assert.equal(await t('obj-search').inputValue(), 'ENGR');
     await t('obj-search').press('Escape');
     assert.equal(await t('obj-search').inputValue(), '');
-    assert.deepEqual(await oLayers(), ['Cut', 'Engrave']);
+    assert.deepEqual(await oLayers(), ['Cut', 'Engrave', '0']);
     await t('ptab-drawing').click();
   });
 
@@ -29780,7 +29873,8 @@ try {
     await t('ptab-drawing').click();
     await page.keyboard.press('Escape');      // grill-282b F9: Guides hide with a selection
     if (!await t('guide-add-h').isVisible()) await t('guides-panel').locator('.section-toggle').first().click();      // the Guides fold starts closed
-    const measure = (inDialog) => page.evaluate((inDialog) => {       // the dialog covers the layout panel: the nest buttons and the others are measured apart
+    await t('ptab-drawing').click();
+    const measure = (inDialog, guides = false) => page.evaluate(([inDialog, guides]) => {       // the dialog covers the layout panel: the nest buttons and the others are measured apart
       const mid = (r, ax) => ax === 'x' ? r.x + r.width / 2 : r.y + r.height / 2;
       const one = (btn, words) => {
         const svg = btn.querySelector('svg'), r = btn.getBoundingClientRect();
@@ -29791,17 +29885,22 @@ try {
         return { dx: 0, dy: mid(s, 'y') - mid(range.getBoundingClientRect(), 'y') };
       };
       const q = (sel) => document.querySelector(sel), zoom = (n) => q(`.zoombox [aria-label="${n}"]`);
-      return inDialog ? { 'nest −': one(q('[data-testid=nest-minus-0]')), 'nest +': one(q('[data-testid=nest-plus-0]')) } : {
+      return inDialog ? { 'nest −': one(q('[data-testid=nest-minus-0]')), 'nest +': one(q('[data-testid=nest-plus-0]')) } : guides ? {
+        '+ Horizontal': one(q('[data-testid=guide-add-h]'), true), '+ Vertical': one(q('[data-testid=guide-add-v]'), true),
+      } : {
         'tab +': one(q('[data-testid=new-tab]')), 'zoom −': one(zoom('Zoom out')), 'zoom +': one(zoom('Zoom in')),
         '+ New layout': one(q('[data-testid=new-layout]'), true), '+ Add from library': one(q('[data-testid=add-from-library]'), true),
-        '+ Horizontal': one(q('[data-testid=guide-add-h]'), true), '+ Vertical': one(q('[data-testid=guide-add-v]'), true),
       };
-    }, inDialog);
+    }, [inDialog, guides]);
     for (const [id, name] of [['add-from-library', '+ Add from Parts library'], ['guide-add-h', '+ Horizontal'], ['guide-add-v', '+ Vertical']]) {
+      await t(id === 'add-from-library' ? 'ptab-drawing' : 'ptab-objects').click();
       assert.equal(await page.getByRole('button', { name, exact: true }).getAttribute('data-testid'), id, `${id} keeps its accessible name "${name}"`);
     }
+    await t('ptab-drawing').click();
     const check = async (theme, inDialog) => {
-      for (const [name, m] of Object.entries(await measure(inDialog))) {
+      const measurements = await measure(inDialog);
+      if (!inDialog) { await t('ptab-objects').click(); Object.assign(measurements, await measure(false, true)); await t('ptab-drawing').click(); }
+      for (const [name, m] of Object.entries(measurements)) {
         assert.ok(!m.error, `${theme} ${name}: ${m.error}`);
         assert.ok(Math.abs(m.dy) <= 0.5 && Math.abs(m.dx) <= 0.5, `${theme} ${name}: icon off centre by dx ${m.dx.toFixed(2)}, dy ${m.dy.toFixed(2)} px`);
       }
@@ -29816,7 +29915,7 @@ try {
       }
       if (inDialog) await t('nest-cancel').click();
     }
-    await t('ptab-layers').click();                      // the Layers panel sits on its own docker tab
+    await t('ptab-objects').click();
     for (const theme of ['light', 'dark']) {
       await page.evaluate((x) => { document.documentElement.dataset.theme = x; }, theme);
       await page.waitForTimeout(150);

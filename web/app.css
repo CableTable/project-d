@@ -324,10 +324,6 @@ select.fld { font-family: var(--sans); }
 .panel-show { margin: 4px; }
 .panel section { display: flex; flex-direction: column; gap: 6px; }
 .panel > section { flex-shrink: 0; }
-.panel section.layers { gap: 0; }
-.docker-pane[data-docker='layers'] { height: 100%; }
-.panel section.layers:not(.docker-folded) { flex: 1; min-height: 0; }
-.panel section.layers > .section-body { flex: 1; min-height: 0; overflow: hidden; }
 .panel .layers-rows { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
 .panel section.stepbox { background: var(--panel); }
 .sec { font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 0; }
@@ -1047,13 +1043,18 @@ button.cswatch, button.ribbon-swatch { padding: 0; cursor: pointer; }
 .omtop { padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; border-bottom: 1px solid var(--line); flex-shrink: 0; }
 .osr { display: flex; align-items: center; gap: 6px; height: 26px; box-sizing: border-box; border: 1px solid var(--line); border-radius: var(--r); background: var(--field); padding: 0 7px; color: var(--muted); }
 .osr:focus-within { border-color: var(--accent); color: var(--text); }
-.lsr { margin: 4px 10px 6px; }
 .osr input { flex: 1; min-width: 0; border: 0; background: none; color: inherit; font: 12px var(--mono); outline: 0; padding: 0; }
 .ofs { display: flex; gap: 4px; align-items: center; }
 .ofb { height: 20px; padding: 0 8px; border: 0; border-radius: var(--r); background: none; color: var(--muted); font: 600 11px var(--sans); display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
 .ofb.on { background: var(--sel); color: var(--accenttext); }
 .ofb[hidden] { display: none; }
 .otree { overflow-y: auto; padding: 4px 4px 0; flex: 1; min-height: 0; }
+.add-layer { margin: 4px 10px; align-self: flex-start; flex-shrink: 0; }
+.guide-node > section > .sec { display: none; }
+.guide-node > section { border: 0; }
+.or .lname { width: 0; }
+.or .swatch.pick { width: 10px; height: 10px; }
+.or .chp { padding: 1px 3px; font-size: 10px; }
 .or { display: flex; align-items: center; gap: 6px; height: 24px; padding: 0 6px 0 4px; border-radius: var(--r); white-space: nowrap; cursor: default; flex-shrink: 0; }
 .or:hover { background: var(--line); }
 .or.layer { font-weight: 600; margin-top: 2px; }

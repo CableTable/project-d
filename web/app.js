@@ -994,7 +994,7 @@ function applyKind() {
   renderWorkArea();
   for (const sec of [ui.partsSec, ui.stepSec, ui.stepFoot, ui.gapSec]) sec.hidden = !lay || lib;
   ui.sizeStrip.hidden = !lay;
-  ui.layersSec.hidden = lib; ui.libSec.hidden = !lib;
+  ui.libSec.hidden = !lib;
   if (state.ptab === 'library' && !lib) state.ptab = 'drawing';
   if (state.ptab === 'step' && !lay) state.ptab = 'drawing';
   renderDocker();
@@ -1825,7 +1825,6 @@ function buildPanel() {
   ui.pctSheet = h('span', { class: 'lbl of', 'data-testid': 'pct' }, '');
   ui.rotate = select([['best', 'Best fit'], ['0', '0°'], ['90', '90°']], state.rotate, (v) => { if (!curLay()) return; pushLay(curDoc(), null, 'set:rotate', 'Rotate'); state.rotate = v; touch(); update(); }, { 'data-testid': 'rotate' });
   ui.align = select([['centre', 'Centre'], ['topleft', 'Top-left']], state.align, (v) => { if (!curLay()) return; pushLay(curDoc(), null, 'set:align', 'Align'); state.align = v; touch(); update(); }, { 'data-testid': 'align' });
-  ui.layerRows = h('div', { class: 'layers-rows', style: 'display:flex;flex-direction:column;gap:6px' });
 
   // Fit to sheet: on = rows and columns are worked out; off = typed by hand (the grid may not fit)
   ui.fit = h('input', { type: 'checkbox', role: 'switch', class: 'swin', 'data-testid': 'fit-switch', 'aria-label': 'Fit to sheet' });
@@ -1844,7 +1843,6 @@ function buildPanel() {
   const tabs = [
     ['drawing', 'Properties'],
     ['objects', 'Objects'],
-    ['layers', 'Layers'],
     ['library', 'Parts library'],
     ['step', 'Step and repeat'],
   ];
@@ -1885,11 +1883,6 @@ function buildPanel() {
       h('span', { class: 'lbl' }, 'Click a gap between two rows or columns.'),
       ui.gapList = h('div', { class: 'gaplist', 'data-testid': 'gap-list' })),
     buildLibrary(),
-    ui.layersSec = h('section', { class: 'layers' },
-      h('div', { class: 'layers-head' }, h('h2', { class: 'sec' }, 'Layers'),
-        ui.layerAdd = h('button', { class: 'tog', type: 'button', 'aria-label': 'Add layer', 'data-testid': 'layer-add', title: 'Add a layer (Layer1, Layer2…): it becomes the current layer, and you can name it and pick its colour', onclick: addLayerNow }, domIcon('plus', 12), 'Add')),
-      h('div', { class: 'osr lsr' }, oIcon('<circle cx="11" cy="11" r="6"/><path d="M16 16l4 4"/>'), ui.layerSearch = h('input', { type: 'text', placeholder: 'Search layers…', 'aria-label': 'Search layers', 'data-testid': 'layer-search', autocomplete: 'off', spellcheck: 'false' })),
-      ui.layerRows),
     buildObjects());
   // Reuse the existing controls and their validation; only their docker and section containers change.
   ui.dockerPanes = Object.fromEntries(tabs.map(([id]) => [id, h('div', { class: 'docker-pane', 'data-docker': id })]));
@@ -1897,8 +1890,6 @@ function buildPanel() {
   ui.partJumps = buildPropertyJumps([['Arrange', 'sec-arrange', '⇅'], ['Transform', 'sec-transform', '↻'], ['Duplicate', 'sec-duplicate', '⧉'], ['Group/lock', 'sec-group', '⚿']]);
   ui.dockerPanes.drawing.append(ui.partJumps, ui.placedSecs[0], ui.propSec, ui.partsSec, ui.guideSec, ui.placedSecs[1], ui.partTransform, ui.placedSecs[5], ui.placedSecs[2], ui.gapSec, ui.drawSec, ui.outSec, ui.tinySec, ui.dupsSec, ui.balSelBox, ui.balNumBox, ui.cmpSec, ui.diffSec);
   ui.dockerPanes.objects.append(ui.objPanel);
-  ui.dockerPanes.layers.append(ui.layersSec);
-  layerSearchInit();
   ui.dockerPanes.library.append(ui.libSec);
   ui.dockerPanes.step.append(ui.stepSec, ui.stepFoot);
   ui.panelScroll.replaceChildren(...Object.values(ui.dockerPanes));
@@ -3080,7 +3071,7 @@ function setRulers(on) {
 function renderGuidePanel() {
   if (!ui.guideSec) return;
   const lay = guideTarget(), lib = state.panel === 'library';
-  ui.guideSec.hidden = !lay || lib || (curLay() ? selIdxs().length > 0 : !!editable()?.sel.size);
+  ui.guideSec.hidden = !lay || lib || (!curLay() && !!editable()?.sel.size);
   if (!lay || lib) return;
   const sig = lay.s.guides.map((q) => q.axis + q.mm).join(',');
   if (ui.guideSig !== sig || ui.guideLay !== lay) {
@@ -4059,8 +4050,10 @@ function addLayerNow() {
     const name = Ed.newLayerName([...Object.keys(LD.layersOf(d.lay)), ...LD.RESERVED_LAYERS]);
     pushLay(d, null, '', 'Add layer ' + name);
     d.lay.layers = { ...LD.layersOf(d.lay) }; addLayer(d.lay, name, { aci: 7 });
-    d.curLayer = name; d.dirty = true; d.layerQuery = '';
+    d.curLayer = name; d.dirty = true; (d.addedLayers ||= new Set()).add(name); omOf(d).query = '';
     renderLayers(); renderTabs(); renderCommand(); renderEdit();
+    const inp = ui.objTree.querySelector('.current [data-testid=layer-name]');
+    if (inp) { inp.focus(); inp.select(); }
     note(`Added ${name}: it is the current layer. New shapes go on it. Ctrl+Z takes it away`);
     return;
   }
@@ -4069,9 +4062,9 @@ function addLayerNow() {
   d.raw.layers = { ...d.raw.layers };
   addLayer(d.raw, name, { aci: 7 });
   (d.addedLayers || (d.addedLayers = new Set())).add(name);
-  d.curLayer = name; d.dirty = true; d.layerQuery = '';         // the new row must show
+  d.curLayer = name; d.dirty = true; omOf(d).query = '';         // the new row must show
   renderLayers(); renderTabs(); renderCommand(); renderEdit();
-  const inp = ui.layerRows.querySelector('[data-testid=layer-name]');
+  const inp = ui.objTree.querySelector('.current [data-testid=layer-name]');
   if (inp) { inp.focus(); inp.select(); }
   note(`Added ${name}: it is the current layer. Type a name and pick a colour, or press Enter to keep them. Ctrl+Z takes it away`);
 }
@@ -4080,10 +4073,11 @@ function addedName(d, l) {
   const input = h('input', { class: 'fld lname', type: 'text', value: l.name, 'aria-label': 'Layer name', 'data-testid': 'layer-name', spellcheck: 'false', maxlength: 255 });
   input.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') input.blur(); else if (e.key === 'Escape') { input.value = l.name; input.blur(); } });
   input.addEventListener('change', () => {
-    const v = input.value.trim(), why = Ed.layerNameProblem(v, allLayerNames(d), l.name);
+    const v = input.value.trim(), why = Ed.layerNameProblem(v, d.lay ? [...Object.keys(LD.layersOf(d.lay)), ...LD.RESERVED_LAYERS] : allLayerNames(d), l.name);
     if (why) { input.value = l.name; flagInvalid(input, true); note(why); return; }
     if (v === l.name) return;
-    d.raw.layers = Object.fromEntries(Object.entries(d.raw.layers).map(([k, def]) => [k === l.name ? v : k, def]));
+    const target = d.lay || d.raw;
+    target.layers = Object.fromEntries(Object.entries(d.lay ? LD.layersOf(d.lay) : d.raw.layers).map(([k, def]) => [k === l.name ? v : k, def]));
     d.addedLayers.delete(l.name); d.addedLayers.add(v);
     if (d.curLayer === l.name) d.curLayer = v;
     d.dirty = true; renderLayers(); renderTabs(); renderCommand(); renderEdit(); note(`Layer renamed to ${v}`);
@@ -4110,49 +4104,48 @@ function addedSwatch(d, l) {
 function searchEsc(input) {
   input.addEventListener('keydown', (e) => { if (e.key === 'Escape' && input.value) { e.stopPropagation(); input.value = ''; input.dispatchEvent(new Event('input')); } });
 }
-/** The Layers search: the filter is kept per tab (d.layerQuery) and only hides rows; it never touches a layer's state. */
-function layerSearchInit() {
-  ui.layerSearch.addEventListener('input', () => { const d = curDoc(); if (d) { d.layerQuery = ui.layerSearch.value; renderLayers(); } else ui.layerSearch.value = ''; });
-  searchEsc(ui.layerSearch);
-}
 function renderLayers() {
-  const d = curDoc(), q = d && d.layerQuery || '';
-  ui.layerAdd.hidden = !!d?.cmp;                                  // Compare draws onto the source drawing: new layers are made there
-  if (d?.cmp) { renderCmpLayers(d, q); return; }
-  if (ui.layerSearch.value !== q) ui.layerSearch.value = q;       // also while the box has focus (Ctrl+Tab to another tab): typed text is already in d.layerQuery
-  ui.layerRows.replaceChildren(...layerRows().filter((l) => OB.nameMatches(l.name, q)).map((l) => {
-    const isFile = l.fileLayer != null;
-    const hid = l.bg ? !d.bg.visible : isFile ? d.off.has(l.fileLayer) : l.id && state.hidden[l.id];
-    const label = hid ? 'Hidden' : l.eye === LOCK ? 'Locked' : 'Visible';
-    const ic = icon(hid ? EYE_OFF : l.eye, { size: 16, label });
-    const vis = h('button', { class: 'vis' + (l.live ? ' live' : ''), type: 'button', 'data-layer': isFile ? 'f' + l.fileLayer : l.id, disabled: !l.live, title: l.live ? 'Show / hide ' + l.name : null }, ic);
-    if (l.live) {
-      vis.addEventListener('click', () => {
-        if (l.bg) { d.bg.visible = !d.bg.visible; paintOverlay(); } else if (isFile) { if (d.off.has(l.fileLayer)) d.off.delete(l.fileLayer); else d.off.add(l.fileLayer); layersChanged(d); paintOverlay(); } else state.hidden[l.id] = !state.hidden[l.id];
-        renderLayers(); applyHidden(); renderStatus();       // (renderLayers also redraws the Objects tab)
-      });
-    }
-    const pick = isFile || l.added || l.zero || l.lay;
-    const row = h('div', { class: 'layer' + (l.on ? ' on' : '') + (hid ? ' hidden-layer' : '') + (l.cur ? ' current' : ''), 'data-file-layer': isFile ? l.fileLayer : null, 'data-layer-name': pick || l.cur ? l.name : null, title: pick || l.cur ? 'Click to make this the current layer: new shapes and text go on it' : null },
-      pick && !l.lay ? addedSwatch(d, l) : h('span', { class: 'swatch', 'aria-hidden': 'true', style: 'background:' + l.color }),
-      l.added ? addedName(d, l) : h('span', { class: 'nm' }, l.name), l.cur ? h('span', { class: 'chip', 'data-testid': 'layer-current' }, 'current') : null, l.chip ? h('span', { class: 'chip', 'data-testid': 'layer-new' }, l.chip) : null, h('span', { class: 'lbl mono' }, l.count), vis);
-    if (pick) row.addEventListener('click', (e) => { if (e.target.closest('.vis') || e.target.closest('input')) return; d.curLayer = l.name; renderLayers(); renderCommand(); renderEdit(); note(`Current layer: ${l.name}. New shapes and text go on it`); });
-    return row;
-  }));
-  if (state.ptab === 'objects') renderObjects();
+  objSigLast = null;
+  renderObjects();
 }
 
-/** Compare: the layers of the picked snapshot. On / off acts on that snapshot's own list; its source drawing keeps its own. */
-function renderCmpLayers(tab, q) {
-  if (ui.layerSearch.value !== q) ui.layerSearch.value = q;
-  const item = cmpSelected(tab.cmp);
-  if (!item) { ui.layerRows.replaceChildren(h('p', { style: 'color:var(--muted);font-size:12px;margin:0', 'data-testid': 'layers-empty' }, 'Pick a drawing')); return; }
-  ui.layerRows.replaceChildren(...item.fl.layers.map((l, i) => [l, i]).filter(([l]) => OB.nameMatches(l.name, q)).map(([l, i]) => {
-    const hid = item.off.has(i);
-    const vis = h('button', { class: 'vis live', type: 'button', 'data-layer': 'f' + i, title: 'Show / hide ' + l.name, onclick: () => cmpToggleLayer(tab, item.id, i) }, icon(hid ? EYE_OFF : EYE, { size: 16, label: hid ? 'Hidden' : 'Visible' }));
-    return h('div', { class: 'layer' + (hid ? ' hidden-layer' : ''), 'data-file-layer': i }, h('span', { class: 'swatch', 'aria-hidden': 'true', style: 'background:' + ink(l.css, isDark()) }), h('span', { class: 'nm' }, l.name), vis);
-  }));
+/** The layout's existing layer rows are siblings of its parts, never parents of them. */
+function layoutLayerRows(d, query) {
+  return layerRows().filter((l) => OB.nameMatches(l.name, query)).map((l) => {
+    const def = l.lay && LD.layersOf(d.lay)[l.name], hidden = l.id ? !!state.hidden[l.id] : !!(def?.off || def?.frozen), locked = !!(def?.flags & 4);
+    const vis = objBtn('vis', !hidden, hidden ? 'Show' : 'Hide', hidden ? EYE_OFF : EYE, ' vis live');
+    vis.dataset.layer = l.id || l.name;
+    vis.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (l.id) state.hidden[l.id] = !hidden;
+      else { pushLay(d, null, '', 'Layer visibility'); d.lay.layers = { ...LD.layersOf(d.lay), [l.name]: { ...def, off: !hidden, frozen: false } }; d.dirty = true; }
+      update();
+    });
+    const lock = objBtn('lock', locked, locked ? 'Unlock' : 'Lock', locked ? ICONS.lock : ICONS.unlock);
+    lock.disabled = !l.lay && l.id !== 'parts';
+    lock.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (l.id === 'parts') { lockObjectPlaces(placedNow.map((_, i) => i)); return; }
+      pushLay(d, null, '', 'Layer lock');
+      d.lay.layers = { ...LD.layersOf(d.lay), [l.name]: { ...def, flags: (def.flags || 0) ^ 4 } }; d.dirty = true; update();
+    });
+    const row = h('div', { class: 'or layer' + (l.cur ? ' cur current' : '') + (hidden ? ' dim hidden-layer' : ''), role: 'treeitem', 'aria-level': '2', 'data-layer-name': l.name, style: 'padding-left:20px' },
+      h('span', { class: 'swatch osw', style: 'background:' + l.color }),
+      !l.count && d.addedLayers?.has(l.name) ? addedName(d, l) : h('span', { class: 'onm nm' }, l.name), l.cur ? h('span', { class: 'chp', 'data-testid': 'layer-current' }, 'current') : null, h('span', { class: 'ocnt lbl mono' }, l.count), vis, lock);
+    row.addEventListener('click', (e) => {
+      e.stopPropagation(); if (!l.lay || e.target.closest('input')) return;
+      d.curLayer = l.name; renderLayers(); renderCommand(); renderEdit(); note(`Current layer: ${l.name}. New shapes and text go on it`);
+    });
+    return row;
+  });
 }
+
+function lockObjectPlaces(indexes) {
+  if (!indexes.length) return;
+  const on = !indexes.every((i) => placedNow[i].lock);
+  selectMany(indexes); lockSel(on);
+}
+
 function cmpToggleLayer(tab, id, i) {
   const item = tab.cmp.items.find((x) => x.id === id), off = new Set(item.off);
   if (!off.delete(i)) off.add(i);
@@ -4172,12 +4165,12 @@ const oIcon = (inner, size = 14) => icon(inner, { size, width: 1.7, cap: 'round'
 const omOf = (d) => d.om || (d.om = { open: null, openB: new Set(), show: new Map(), query: '', filter: 'all', openP: new Set() });
 
 function buildObjects() {
-  ui.objSearch = h('input', { type: 'text', placeholder: 'Search objects…', 'aria-label': 'Search objects', 'data-testid': 'obj-search', autocomplete: 'off', spellcheck: 'false' });
+  ui.objSearch = h('input', { type: 'text', placeholder: 'Search layers and objects…', 'aria-label': 'Search layers and objects', 'data-testid': 'obj-search', autocomplete: 'off', spellcheck: 'false' });
   ui.objSearch.addEventListener('input', () => { const d = curDoc(); if (d) { omOf(d).query = ui.objSearch.value; renderObjects(); } else ui.objSearch.value = ''; });
   searchEsc(ui.objSearch);
   const filt = (id, text) => (ui['objF' + id] = h('button', { class: 'ofb', type: 'button', 'data-testid': 'obj-filter-' + id, 'data-filter': id, 'aria-pressed': 'false', onclick: () => { const d = curDoc(); if (d) { omOf(d).filter = id; renderObjects(); } } }, text));
   ui.objToggle = h('button', { class: 'ofb', type: 'button', 'data-testid': 'obj-toggle', 'aria-label': 'Expand or collapse all', title: 'Expand or collapse all', onclick: objToggleAll });
-  ui.objTree = h('div', { class: 'otree', role: 'tree', 'aria-label': 'Objects', 'data-testid': 'obj-tree' });
+  ui.objTree = h('div', { class: 'otree layers-rows', role: 'tree', 'aria-label': 'Objects', 'data-testid': 'obj-tree' });
   ui.objTree.addEventListener('click', objClick);
   ui.objTree.addEventListener('contextmenu', objMenu);
   ui.objCount = h('span', { 'data-testid': 'obj-count' }); ui.objSelN = h('span', { 'data-testid': 'obj-selected' });
@@ -4186,6 +4179,7 @@ function buildObjects() {
       h('div', { class: 'osr' }, oIcon('<circle cx="11" cy="11" r="6"/><path d="M16 16l4 4"/>'), ui.objSearch),
       h('div', { class: 'ofs' }, filt('all', 'All'), filt('hidden', ''), filt('locked', ''), h('span', { style: 'flex:1' }), ui.objToggle)),
     ui.objTree,
+    ui.layerAdd = h('button', { class: 'btn sm add-layer', type: 'button', 'aria-label': 'Add layer', 'data-testid': 'layer-add', onclick: addLayerNow }, domIcon('plus', 12), 'Add layer'),
     h('div', { class: 'omfoot' }, ui.objCount, h('span', { style: 'flex:1' }), ui.objSelN));
 }
 
@@ -4204,15 +4198,15 @@ function setPtab(tab) {
 
 /** The tree for the tab that is open: a drawing's layers and objects, or a layout's parts. */
 function objOpts(d, om) {
-  return { factor: d.factor, off: d.off, hid: hidIdx(d) || new Set(), locked: d.locked || new Set(), curLayer: curLayerName(d), query: om.query, filter: om.filter, open: om.open, show: om.show, extra: d.addedLayers ? [...d.addedLayers] : [] };
+  return { factor: d.factor, off: d.off, hid: hidIdx(d) || new Set(), locked: d.locked || new Set(), curLayer: curLayerName(d), query: om.query, filter: om.filter, open: om.open, show: om.show, extra: layerRows().filter((l) => !l.bg).map((l) => l.name) };
 }
 function objBtn(act, on, label, inner, cls = '') {
   return h('button', { class: 'oa' + (on ? '' : ' off') + cls, type: 'button', 'data-act': act, 'aria-label': label, title: label }, oIcon(inner, 15));
 }
 /** What the Objects tree is made of, apart from which rows are picked: when it is the same as the last draw, a pick only re-marks the rows. */
 function objSig(d, dark) {
-  const om = omOf(d), sets = JSON.stringify([om.query, om.filter, dark, [...om.openP], [...(om.open || [])], [...om.openB], [...om.show]]);
-  if (d.lay) return { a: d, b: d.lay.parts, c: null, str: sets + JSON.stringify([Object.values(d.lay.parts).map((p) => p.name), [...(d.hiddenParts || [])], placedNow.map((p) => [p.partId, p.x, p.y, p.rot, p.lock, p.mirrorX, p.mirrorY])]) };
+  const om = omOf(d), sets = JSON.stringify([om.query, om.filter, dark, om.layoutClosed, om.guidesOpen, [...om.openP], [...(om.open || [])], [...om.openB], [...om.show]]);
+  if (d.lay) return { a: d, b: d.lay.parts, c: d.lay.layers, str: sets + JSON.stringify([d.lay.name, d.lay.s, state.hidden, d.curLayer, Object.values(d.lay.parts).map((p) => p.name), [...(d.hiddenParts || [])], placedNow.map((p) => [p.partId, p.x, p.y, p.rot, p.lock, p.mirrorX, p.mirrorY])]) };
   return { a: d, b: d.raw.entities, c: d.raw.layers, str: sets + JSON.stringify([[...d.off], [...(hidIdx(d) || [])], [...(d.locked || [])], curLayerName(d), d.factor, [...(d.addedLayers || [])]]) };
 }
 let objSigLast = null;
@@ -4226,8 +4220,11 @@ function markObjSel(d, reveal) {
   return true;
 }
 function renderObjects(reveal = false) {
-  if (!ui.objTree || state.ptab !== 'objects') return;
-  const d = curDoc(), lay = d && d.lay, ed = lay || d?.cmp ? null : editable(), dark = isDark();
+  if (!ui.objTree) return;
+  const tab = curDoc(), item = tab?.cmp && cmpSelected(tab.cmp), source = item && cmpSourceTab(item);
+  const d = item ? { ...source, raw: source?.raw || { ...item.raw, layers: {}, blocks: {} }, fl: item.fl, off: item.off, factor: item.factor, locked: source?.locked || item.locked, sel: source?.sel || new Set(), om: omOf(tab) } : tab;
+  const lay = d && d.lay, ed = item || (lay || tab?.cmp ? null : editable()), dark = isDark();
+  ui.layerAdd.hidden = !!tab?.cmp;
   const filterBtns = (hidden, locked) => {
     const f = d && d.om ? d.om.filter : 'all';
     ui.objFall.classList.toggle('on', f === 'all'); ui.objFhidden.classList.toggle('on', f === 'hidden'); ui.objFlocked.classList.toggle('on', f === 'locked');
@@ -4236,21 +4233,36 @@ function renderObjects(reveal = false) {
     ui.objFlocked.hidden = !!lay;
   };
   const rows = [];
-  const sig = lay || ed ? objSig(d, dark) : null;
+  const sig = !item && (lay || ed) ? objSig(d, dark) : null;
   if (sig && objSigLast && objSigLast.a === sig.a && objSigLast.b === sig.b && objSigLast.c === sig.c && objSigLast.str === sig.str && markObjSel(d, reveal)) return;
   objSigLast = sig;
+  if (!lay && ui.objTree.contains(ui.guideSec)) { ui.partsSec.after(ui.guideSec); applySectionFold(ui.guideSec); }
   if (lay) {
     const om = omOf(d), hp = d.hiddenParts || new Set(), parts = OB.partsTree(d.lay, placedNow, hp, om.query);
     if (ui.objSearch.value !== om.query) ui.objSearch.value = om.query;
     const shown = om.filter === 'hidden' ? parts.filter((p) => p.hidden) : parts, sel = new Set(selIdxs());
-    for (const p of shown) {
+    rows.push(h('div', { class: 'or', role: 'treeitem', 'aria-level': '1', 'aria-expanded': String(!om.layoutClosed), 'data-testid': 'obj-layout', 'data-layout': '' },
+      h('span', { class: 'otw' }, oIcon(om.layoutClosed ? CHEV_RIGHT : CHEV_DOWN, 12)), h('span', { class: 'onm' }, lay.name),
+      objBtn('vis', !state.hidden.parts, state.hidden.parts ? 'Show' : 'Hide', state.hidden.parts ? EYE_OFF : EYE), objBtn('lock', placedNow.length && placedNow.every((p) => p.lock), 'Lock / unlock layout parts', ICONS.lock)));
+    for (const p of om.layoutClosed ? [] : shown) {
       const open = !!om.query || om.openP.has(p.id);
-      rows.push(h('div', { class: 'or layer' + (p.hidden ? ' dim' : ''), 'data-part': p.id, role: 'treeitem', 'aria-expanded': String(open) },
+      rows.push(h('div', { class: 'or layer' + (p.hidden ? ' dim' : ''), 'data-part': p.id, role: 'treeitem', 'aria-level': '2', 'aria-expanded': String(open), style: 'padding-left:20px' },
         h('span', { class: 'otw' }, oIcon(open ? CHEV_DOWN : CHEV_RIGHT, 12)), h('span', { class: 'oti' }, oIcon(OBJ_ICONS.block)), h('span', { class: 'onm' }, p.name), h('span', { class: 'ocnt' }, p.count),
-        objBtn('vis', !p.hidden, p.hidden ? 'Show' : 'Hide', p.hidden ? EYE_OFF : EYE)));
-      if (open) for (const pl of p.places) rows.push(h('div', { class: 'or obj' + (sel.has(pl.k) ? ' sel' : '') + (p.hidden ? ' dim' : ''), 'data-place': pl.k, role: 'treeitem', style: 'padding-left:20px' },
-        h('span', { class: 'otw' }), h('span', { class: 'oti' }, oIcon(OBJ_ICONS.rect)), h('span', { class: 'onm' }, pl.label), pl.locked ? h('span', { class: 'chp w' }, 'locked') : null));
+        objBtn('vis', !p.hidden, p.hidden ? 'Show' : 'Hide', p.hidden ? EYE_OFF : EYE), objBtn('lock', p.places.every((pl) => pl.locked), 'Lock / unlock part', ICONS.lock)));
+      if (open) for (const pl of p.places) rows.push(h('div', { class: 'or obj' + (sel.has(pl.k) ? ' sel' : '') + (p.hidden ? ' dim' : ''), 'data-place': pl.k, role: 'treeitem', 'aria-level': '3', style: 'padding-left:36px' },
+        h('span', { class: 'otw' }), h('span', { class: 'oti' }, oIcon(OBJ_ICONS.rect)), h('span', { class: 'onm' }, pl.label),
+        objBtn('vis', !p.hidden, p.hidden ? 'Show' : 'Hide', p.hidden ? EYE_OFF : EYE), objBtn('lock', pl.locked, pl.locked ? 'Unlock' : 'Lock', pl.locked ? ICONS.lock : ICONS.unlock)));
     }
+    if (!om.layoutClosed) {
+      rows.push(...layoutLayerRows(d, om.query));
+      if (OB.nameMatches('Guides', om.query)) rows.push(h('div', { class: 'or', role: 'treeitem', 'aria-level': '2', 'aria-expanded': String(!!om.guidesOpen), 'data-testid': 'obj-guides', 'data-guides': '', style: 'padding-left:20px' },
+        h('span', { class: 'otw' }, oIcon(om.guidesOpen ? CHEV_DOWN : CHEV_RIGHT, 12)), h('span', { class: 'onm' }, 'Guides'), h('span', { class: 'ocnt' }, lay.s.guides.length),
+        objBtn('vis', lay.s.guidesShow, lay.s.guidesShow ? 'Hide' : 'Show', lay.s.guidesShow ? EYE : EYE_OFF), objBtn('lock', lay.s.guidesLock, lay.s.guidesLock ? 'Unlock' : 'Lock', lay.s.guidesLock ? ICONS.lock : ICONS.unlock)));
+    }
+    rows.push(h('div', { class: 'guide-node', role: 'group', hidden: om.layoutClosed || !om.guidesOpen || !OB.nameMatches('Guides', om.query) }, ui.guideSec));
+    ui.guideSec.classList.remove('docker-folded');
+    ui.guideSec.querySelector('.section-body').inert = false;
+    ui.guideSec.querySelector('.section-toggle').setAttribute('aria-expanded', String(!!om.guidesOpen));
     filterBtns(parts.filter((p) => p.hidden).length, 0);
     ui.objToggle.replaceChildren(oIcon(om.openP.size ? CHEV_DOWN : CHEV_RIGHT, 12));
     ui.objTree.replaceChildren(...(rows.length ? rows : [h('div', { class: 'omempty' }, parts.length || om.query ? 'Nothing matches.' : 'No parts on this layout yet.')]));
@@ -4259,7 +4271,7 @@ function renderObjects(reveal = false) {
   }
   if (!ed) {
     filterBtns(0, 0); ui.objSearch.value = '';
-    ui.objTree.replaceChildren(h('div', { class: 'omempty' }, 'Open a drawing to see its objects.'));
+    ui.objTree.replaceChildren(h('div', { class: 'omempty', 'data-testid': tab?.cmp ? 'layers-empty' : null }, tab?.cmp ? 'Pick a drawing' : 'Open a drawing to see its objects.'));
     ui.objCount.textContent = ''; ui.objSelN.textContent = '';
     return;
   }
@@ -4277,20 +4289,32 @@ function renderObjects(reveal = false) {
     if (again) tree = OB.buildTree(d.raw, d.fl, objOpts(d, om));
   }
   objLast = tree;
+  const layerMeta = new Map(layerRows().map((l) => [l.name, l]));
   for (const l of tree.layers) {
-    const sw = h('span', { class: 'osw' });
-    sw.style.background = l.css ? ink(l.css, dark) : 'var(--partline)';
-    rows.push(h('div', { class: 'or layer' + (l.cur ? ' cur' : '') + (l.hidden ? ' dim' : ''), 'data-layer': l.name, role: 'treeitem', 'aria-expanded': String(l.open) },
-      h('span', { class: 'otw' }, oIcon(l.open ? CHEV_DOWN : CHEV_RIGHT, 12)), sw, h('span', { class: 'onm' }, l.name), l.cur ? h('span', { class: 'chp', 'data-testid': 'obj-current' }, 'current') : null, h('span', { class: 'ocnt' }, l.count),
-      l.index >= 0 ? objBtn('vis', !l.hidden, l.hidden ? 'Show' : 'Hide', l.hidden ? EYE_OFF : EYE) : null, objBtn('lock', l.locked, l.locked ? 'Unlock' : 'Lock', l.locked ? ICONS.lock : ICONS.unlock, l.locked ? ' lk' : '')));
+    const meta = layerMeta.get(l.name), colour = l.css ? ink(l.css, dark) : meta?.color || 'var(--partline)';
+    const vis = objBtn('vis', !l.hidden, l.hidden ? 'Show' : 'Hide', l.hidden ? EYE_OFF : EYE, ' vis live');
+    if (l.index >= 0) vis.dataset.layer = 'f' + l.index;
+    else vis.disabled = true;
+    rows.push(h('div', { class: 'or layer' + (l.cur ? ' cur current' : '') + (l.hidden ? ' dim hidden-layer' : ''), 'data-layer': l.name, 'data-layer-name': l.name, 'data-file-layer': l.index >= 0 ? l.index : null, role: 'treeitem', 'aria-level': '1', 'aria-expanded': String(l.open) },
+      h('span', { class: 'otw', 'data-act': 'expand' }, oIcon(l.open ? CHEV_DOWN : CHEV_RIGHT, 12)), source || !item ? addedSwatch(source || d, { ...l, color: colour }) : h('span', { class: 'swatch osw', style: 'background:' + colour }),
+      !item && meta?.added ? addedName(d, l) : h('span', { class: 'onm nm' }, l.name), l.cur ? h('span', { class: 'chp', 'data-testid': 'layer-current' }, h('span', { 'data-testid': 'obj-current' }, 'current')) : null,
+      meta?.chip ? h('span', { class: 'chp', 'data-testid': 'layer-new' }, meta.chip) : null, h('span', { class: 'ocnt lbl mono' }, l.count), vis, objBtn('lock', l.locked, l.locked ? 'Unlock' : 'Lock', l.locked ? ICONS.lock : ICONS.unlock, l.locked ? ' lk' : '')));
     for (const r of l.rows) {
       const blockOpen = r.block && om.openB.has(r.e);
-      rows.push(h('div', { class: 'or obj' + (d.sel.has(r.e) ? ' sel' : '') + (r.hidden ? ' dim' : ''), 'data-e': r.e, 'data-layer-of': l.name, role: 'treeitem', style: 'padding-left:20px' },
+      const eye = objBtn('vis', !r.hidden, r.hidden ? 'Show' : 'Hide', r.hidden ? EYE_OFF : EYE);
+      eye.disabled = !!item && !source;
+      rows.push(h('div', { class: 'or obj' + (d.sel.has(r.e) ? ' sel' : '') + (r.hidden ? ' dim' : ''), 'data-e': r.e, 'data-layer-of': l.name, role: 'treeitem', 'aria-level': '2', style: 'padding-left:20px' },
         h('span', { class: 'otw', 'data-act': r.block ? 'block' : null }, r.block ? oIcon(blockOpen ? CHEV_DOWN : CHEV_RIGHT, 12) : null), h('span', { class: 'oti' }, oIcon(OBJ_ICONS[r.icon])), h('span', { class: 'onm' }, r.label),
-        r.locked ? h('span', { class: 'chp w' }, 'locked') : null, objBtn('vis', !r.hidden, r.hidden ? 'Show' : 'Hide', r.hidden ? EYE_OFF : EYE)));
-      if (blockOpen) { const m = OB.membersOf(d.raw, d.raw.entities[r.e], d.factor); for (const x of m.rows) rows.push(h('div', { class: 'or member dim0', 'data-e': r.e, style: 'padding-left:36px' }, h('span', { class: 'otw' }), h('span', { class: 'oti' }, oIcon(OBJ_ICONS[x.icon])), h('span', { class: 'onm' }, x.label))); if (m.more) rows.push(h('div', { class: 'or member', style: 'padding-left:36px' }, h('span', { class: 'onm ocnt' }, `+ ${m.more} more`))); }
+        r.locked ? h('span', { class: 'chp w' }, 'locked') : null, eye, objBtn('lock', r.locked, r.locked ? 'Unlock layer' : 'Lock layer', r.locked ? ICONS.lock : ICONS.unlock)));
+      if (blockOpen) { const m = OB.membersOf(d.raw, d.raw.entities[r.e], d.factor); for (const x of m.rows) rows.push(h('div', { class: 'or member dim0', 'data-e': r.e, role: 'treeitem', 'aria-level': '3', style: 'padding-left:36px' }, h('span', { class: 'otw' }), h('span', { class: 'oti' }, oIcon(OBJ_ICONS[x.icon])), h('span', { class: 'onm' }, x.label), objBtn('vis', !r.hidden, r.hidden ? 'Show block' : 'Hide block', r.hidden ? EYE_OFF : EYE), objBtn('lock', r.locked, r.locked ? 'Unlock layer' : 'Lock layer', r.locked ? ICONS.lock : ICONS.unlock))); if (m.more) rows.push(h('div', { class: 'or member', style: 'padding-left:36px' }, h('span', { class: 'onm ocnt' }, `+ ${m.more} more`))); }
     }
     if (l.more) rows.push(h('button', { class: 'or more', type: 'button', 'data-act': 'more', 'data-layer': l.name, style: 'padding-left:20px' }, `Show ${Math.min(OB.CAP, l.more)} more (${l.more} not listed)`));
+  }
+  if (!item && d.bg && OB.nameMatches('Background', om.query)) {
+    const vis = objBtn('vis', d.bg.visible, d.bg.visible ? 'Hide' : 'Show', d.bg.visible ? EYE : EYE_OFF, ' vis live'); vis.dataset.layer = 'bg';
+    vis.addEventListener('click', (e) => { e.stopPropagation(); d.bg.visible = !d.bg.visible; paintOverlay(); renderLayers(); });
+    const lock = objBtn('lock', true, 'Locked background', ICONS.lock); lock.disabled = true;
+    rows.push(h('div', { class: 'or layer', role: 'treeitem', 'aria-level': '1' }, h('span', { class: 'onm nm' }, 'Background'), vis, lock));
   }
   filterBtns(tree.hiddenN, tree.lockedN);
   ui.objToggle.replaceChildren(oIcon(om.open.size ? CHEV_DOWN : CHEV_RIGHT, 12));
@@ -4310,30 +4334,52 @@ function objToggleAll() {
 }
 
 function objClick(e) {
-  const d = curDoc(), row = e.target.closest('.or'), act = e.target.closest('[data-act]');
+  const tab = curDoc(), row = e.target.closest('.or'), act = e.target.closest('[data-act]');
+  const item = tab?.cmp && cmpSelected(tab.cmp), d = item ? cmpSourceTab(item) || item : tab;
   if (!d || !row) return;
-  const om = omOf(d), flip = (set, k) => (set.has(k) ? set.delete(k) : set.add(k));
+  if (e.target.closest('input, .swatch')) return;
+  const om = omOf(tab), flip = (set, k) => (set.has(k) ? set.delete(k) : set.add(k));
   if (d.lay) {
+    if (row.hasAttribute('data-layout')) {
+      if (act?.dataset.act === 'vis') { state.hidden.parts = !state.hidden.parts; update(); }
+      else if (act?.dataset.act === 'lock') lockObjectPlaces(placedNow.map((_, i) => i));
+      else { om.layoutClosed = !om.layoutClosed; renderObjects(); }
+      return;
+    }
+    if (row.hasAttribute('data-guides')) {
+      if (act?.dataset.act === 'vis') setGuidesShow(!d.lay.s.guidesShow);
+      else if (act?.dataset.act === 'lock') setGuidesLock(!d.lay.s.guidesLock);
+      else { om.guidesOpen = !om.guidesOpen; renderObjects(); }
+      return;
+    }
+    if (act?.dataset.act === 'lock') {
+      lockObjectPlaces(row.dataset.place != null ? [+row.dataset.place] : placedNow.flatMap((p, i) => p.partId === row.dataset.part ? [i] : [])); return;
+    }
     if (row.dataset.part) {
       if (act && act.dataset.act === 'vis') { const hp = d.hiddenParts || (d.hiddenParts = new Set()); flip(hp, row.dataset.part); drawSheet(); paintOverlay(); renderObjects(); note(hp.has(row.dataset.part) ? 'Part hidden: it is left out of print and PDF too. The saved file keeps it' : 'Part shown'); } else { flip(om.openP, row.dataset.part); renderObjects(); }
     } else if (row.dataset.place != null) {
-      selectMany([+row.dataset.place]); update();
+      if (act?.dataset.act === 'vis') {
+        const id = placedNow[+row.dataset.place].partId, hp = d.hiddenParts || (d.hiddenParts = new Set()); flip(hp, id); drawSheet(); paintOverlay(); renderObjects();
+      } else { selectMany([+row.dataset.place]); update(); }
     }
     return;
   }
   if (act && act.dataset.act === 'more') { om.show.set(act.dataset.layer, (om.show.get(act.dataset.layer) || OB.CAP) + OB.CAP); renderObjects(); return; }
   if (row.dataset.layer && !row.dataset.e) {
     const name = row.dataset.layer, idx = d.fl.layers.findIndex((l) => l.name === name);
-    if (act && act.dataset.act === 'vis') toggleLayerVis(d, idx);
+    if (act && act.dataset.act === 'vis') { if (item) cmpToggleLayer(tab, item.id, idx); else toggleLayerVis(d, idx); }
     else if (act && act.dataset.act === 'lock') toggleLayerLock(d, name);
     else {
       flip(om.open, name);
-      const ed = editable();       // a double-click's second click: the first rebuilt the rows, so the browser sends no dblclick; the click's detail still counts
-      if (e.detail === 2 && ed) { ed.curLayer = name; renderLayers(); renderCommand(); renderEdit(); note(`Current layer: ${name}. New shapes and text go on it`); } else renderObjects();
+      const ed = editable();
+      if (act?.dataset.act !== 'expand' && ed) { ed.curLayer = name; renderLayers(); renderCommand(); renderEdit(); note(`Current layer: ${name}. New shapes and text go on it`); } else renderObjects();
     }
     return;
   }
   const ent = +row.dataset.e;
+  if (!Number.isInteger(ent)) return;
+  if (act?.dataset.act === 'lock') { toggleLayerLock(d, d.raw.entities[ent].layer); return; }
+  if (item && !editable()) { cmpEdit('select'); return; }
   if (act && act.dataset.act === 'vis') objHide(d, [ent]);
   else if (act && act.dataset.act === 'block') { flip(om.openB, ent); renderObjects(); }
   else objSelect(d, [ent], e.shiftKey || e.ctrlKey || e.metaKey);
@@ -4346,7 +4392,7 @@ function toggleLayerVis(d, idx) {
 }
 function toggleLayerLock(d, name) {
   const lk = d.locked || (d.locked = new Set());
-  if (lk.has(name)) lk.delete(name); else { lk.add(name); if ([...d.sel].some((e) => lockedEnt(d, e))) { setSel(d, new Set([...d.sel].filter((e) => !lockedEnt(d, e)))); } }
+  if (lk.has(name)) lk.delete(name); else { lk.add(name); if (d.sel && [...d.sel].some((e) => lockedEnt(d, e))) { setSel(d, new Set([...d.sel].filter((e) => !lockedEnt(d, e)))); } }
   renderObjects();
   note(lk.has(name) ? `Layer ${name} locked: it is still drawn and snapped to, but cannot be picked or changed` : `Layer ${name} unlocked`);
 }
@@ -4405,11 +4451,12 @@ function moveToLayerMenu(d, x, y) {
   popMenu(x, y, [...new Set(allLayerNames(d))].map((n) => [n, () => propSet('layer', n)]));
 }
 function objMenu(e) {
-  const d = curDoc(), row = e.target.closest('.or');
+  const tab = curDoc(), d = tab?.cmp ? editable() : tab, row = e.target.closest('.or');
   if (!d || !row || row.classList.contains('more') || row.classList.contains('member')) return;
   e.preventDefault();
   const { clientX: x, clientY: y } = e, hid = hidIdx(d) || new Set(), sep = '-';
   if (d.lay) {
+    if (!row.dataset.part && row.dataset.place == null) return;
     const id = row.dataset.part || (row.dataset.place != null ? placedNow[+row.dataset.place].partId : null), hp = d.hiddenParts || (d.hiddenParts = new Set());
     if (row.dataset.place != null) { selectMany([+row.dataset.place]); update(); }
     popMenu(x, y, [
@@ -4421,16 +4468,18 @@ function objMenu(e) {
   }
   if (!editable()) return;
   if (row.dataset.layer && !row.dataset.e) {
-    const name = row.dataset.layer, l = objLast && objLast.layers.find((x) => x.name === name), idx = d.fl.layers.findIndex((q) => q.name === name), locked = !!(d.locked && d.locked.has(name)), hidden = idx >= 0 && d.off.has(idx);
+    const item = tab?.cmp && cmpSelected(tab.cmp), name = row.dataset.layer, l = objLast && objLast.layers.find((x) => x.name === name), idx = (item || d).fl.layers.findIndex((q) => q.name === name), locked = !!(d.locked && d.locked.has(name)), hidden = idx >= 0 && (item || d).off.has(idx);
     popMenu(x, y, [
       ['Select', () => objSelect(d, l ? l.ents : [], false), '', !!(l && l.ents.length)],
       ['Zoom to', () => objZoom(d, l ? l.ents : []), '', !!(l && l.ents.length)],
-      sep, [hidden ? 'Show' : 'Hide', () => toggleLayerVis(d, idx), '', idx >= 0], [locked ? 'Unlock' : 'Lock', () => toggleLayerLock(d, name)],
+      sep, [hidden ? 'Show' : 'Hide', () => item ? cmpToggleLayer(tab, item.id, idx) : toggleLayerVis(d, idx), '', idx >= 0], [locked ? 'Unlock' : 'Lock', () => toggleLayerLock(d, name)],
       sep, ['Rename…', () => renameLayerNow(d, name), '', name !== '0'],
       sep, ['Show all hidden', () => showAllHidden(d), '', d.off.size > 0 || hid.size > 0]]);
     return;
   }
-  const ent = +row.dataset.e, name = d.raw.entities[ent].layer, locked = !!(d.locked && d.locked.has(name));
+  const ent = +row.dataset.e;
+  if (!Number.isInteger(ent)) return;
+  const name = d.raw.entities[ent].layer, locked = !!(d.locked && d.locked.has(name));
   if (!d.sel.has(ent)) objSelect(d, [ent], false);
   const targets = d.sel.has(ent) ? [...d.sel] : [ent];
   popMenu(x, y, [
@@ -12298,7 +12347,7 @@ function renderEdit() {
     }
   }
   const selected = curLay() ? selIdxs().length > 0 : !!d?.sel?.size;
-  ui.guideSec.hidden = !guideTarget() || state.panel === 'library' || selected;
+  ui.guideSec.hidden = !guideTarget() || state.panel === 'library' || (!curLay() && selected);
   ui.partsSec.hidden = ui.gapSec.hidden = !curLay() || state.panel === 'library' || selected;
   ui.drawSec.hidden = ui.tinySec.hidden = ui.dupsSec.hidden = !!cmpDoc() || !on || selected;
   ui.outSec.hidden = !!cmpDoc() || !on;                    // stays with a selection: Extract part… needs one

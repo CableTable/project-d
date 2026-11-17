@@ -159,4 +159,11 @@ test('nameMatches (TODO 77): any part, ignores case, trims, no wildcards, empty 
   assert.ok(O.nameMatches('a*b', '*'));
 });
 
+test('TODO 282b2: searching keeps a matching empty layer available as the current layer', () => {
+  const { raw, fl } = sample();
+  const tree = O.buildTree(raw, fl, { extra: ['Layer1'], query: 'LAYER1' });
+  assert.deepEqual(tree.layers.map((l) => [l.name, l.count]), [['Layer1', 0]]);
+  assert.equal(O.buildTree(raw, fl, { extra: ['Layer1'], query: 'missing' }).layers.length, 0);
+});
+
 console.log(n + ' tests passed');

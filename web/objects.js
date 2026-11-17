@@ -107,7 +107,7 @@ export function buildTree(raw, fl, o = {}) {
     if (filter === 'hidden' && !layerHidden && !pool.length) continue;
     if (filter === 'locked' && !isLocked) continue;
     const found = q && !nameMatches(name, q) ? pool.filter((e) => nameMatches(labelOf(raw.entities[e], factor, raw.blocks), q)) : pool;
-    if (q && !found.length) continue;
+    if (q && !found.length && !nameMatches(name, q)) continue;
     const cap = Math.max(CAP, show.get(name) || 0), isOpen = !!q || open.has(name);
     const rows = isOpen ? found.slice(0, cap).map((e) => {
       const ent = raw.entities[e];

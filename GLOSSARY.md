@@ -12,7 +12,7 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Context tab**: A ribbon tab shown for the current selection, such as Part when placed parts are selected on a layout. Where: `web/app.js`.
 
-**Docker tab**: One of Properties, Objects, Layers, Library and Step down the right edge of the right panel, with rotated labels and the active tab blue. The title bar's >> folds the panel to that strip; a tab opens it again. X hides it; Show panel or Ctrl+1 brings it back. Width, visibility and folds are remembered on this PC. Where: `web/app.js`, `web/docker.js`; `DECISIONS.md`, TODO 282b1.
+**Docker tab**: One of Properties, Objects, Library and Step down the right edge of the right panel, with rotated labels and the active tab blue. The title bar's >> folds the panel to that strip; a tab opens it again. X hides it; Show panel or Ctrl+1 brings it back. Width, visibility and folds are remembered on this PC. Where: `web/app.js`, `web/docker.js`; `DECISIONS.md`, TODO 282b1 and 282b2.
 
 **Add to layout**: Takes the prepared drawing into a layout as a part at its true size. Where: `web/app.js`.
 
@@ -176,7 +176,7 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Nudge step**: The shared positive distance in mm used by arrow keys on drawings, layouts and Compare, remembered on this PC. Set it in the Part tab / panel or with `NU` / `NUDGE` at the command bar. Where: `DECISIONS.md`, Nudge command.
 
-**Objects tab**: The right-panel tree of layers and objects, or parts and their placements on a layout, used to find, select, hide and lock things. Where: `DECISIONS.md`, Objects tab. Avoid: A separate drawing tab; Object Manager is the older feature name.
+**Objects tab**: The right-panel tree of layers and objects on Drawings and Compare. On a layout, its parts and placements come first under the layout, followed by its layer rows and Guides node as siblings. One search box finds layers and objects; Add layer at the foot creates the current layer with its name ready to type. Where: `DECISIONS.md`, Objects tab and TODO 282b2. Avoid: A separate drawing tab; Object Manager is the older feature name.
 
 **Part**: A reusable piece of prepared drawing geometry at true size that can have many placements on a sheet. Where: `TODO.md`, items 4, 6 and 19; `web/layoutdoc.js`. Avoid: One placement of that part.
 
