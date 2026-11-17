@@ -1,6 +1,7 @@
 // layoutcontour.js — pure: Contour on a placed part of a layout (TODO 147, T53) (no DOM) — layoutcontour.test.mjs.
 //
-// A part's contour follows its biggest closed loop (holes and inside features left alone), or all open chains if no loop exists. The rings
+// A part's contour follows its biggest closed loop (holes and inside features left alone), or all open chains if no loop exists (an open
+// line whose sides overlap keeps its outer ring only, not the holes of the union). The rings
 // of one run become one new part (all steps), placed on the sheet exactly where the source part's outline is, with the same turn
 // and mirror, so the app can group the two and they travel together. The geometry stays in the source part's own drawing units.
 import * as Ed from './edit.js';
@@ -44,6 +45,8 @@ export function partContour(part, cfg, sc = 1) {
   let out = { kind: 'open', loop: null, open, chains, res: null };
   if (loop || chains.length) {
     const res = CT.contour(loop ? [loop] : [], { chains: loop ? [] : chains, dist: cfg.dist / ((part.factor || 1) * sc), steps: cfg.steps, outward: cfg.dir === 'outside', corners: cfg.corners, ends: cfg.ends });
+    res.steps = res.steps.map((st) => st.filter((l) => CT.loopArea(l) > 0));   // the spacing outline is the outer ring: the holes of a united open line (clockwise) are left out
+    res.made = res.steps.reduce((n, st) => n + st.length, 0);
     out = { kind: res.made ? 'ok' : 'none', loop, open, chains, res };
   }
   byKey.set(key, out);

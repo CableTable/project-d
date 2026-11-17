@@ -4,6 +4,7 @@ import * as C from './web/contour.js';
 import * as D from './web/drawing.js';
 import * as W from './web/dxf-write.js';
 import * as E from './web/edit.js';
+import pc from './web/vendor/polygon-clipping/polygon-clipping.js';
 
 let n = 0;
 function test(name, fn) { fn(); n++; console.log('ok', name); }
@@ -84,6 +85,37 @@ test('TODO 289: self-crossing open outlines refuse the step, keeping earlier ste
   const r = C.contour([], { chains, dist: 2, steps: 3, ends: 'round' });
   assert.equal(r.made, 1);
   assert.deepEqual(r.stopped, { step: 2, why: 'it would close up' });
+});
+test('TODO 289b: an open line whose sides overlap is united: a C gives an outer ring and a hole, a tight U one ring, a free line keeps its arcs', () => {
+  const run = (chain, dist, o = {}) => C.contour([], { chains: [chain], dist, steps: 1, outward: true, corners: 'sharp', ends: 'round', ...o });
+  const straight = (loop) => loop.every((s) => !s.b), open = (pts) => pts.slice(1).map((p, i) => C.seg(pts[i], p));
+  // the C: its two end caps overlap across the gap
+  const Cs = open([[4, 10], [0, 10], [0, 0], [10, 0], [10, 10], [6, 10]]), c = run(Cs, 2);
+  assert.equal(c.made, 2);
+  const [outer, hole] = c.steps[0];
+  assert.ok(C.loopArea(outer) > 0 && C.loopArea(hole) < 0, 'an outer ring and a hole');
+  near(C.loopArea(outer), 195.83, 'outer', 1e-4); near(C.loopArea(hole), -36.17, 'hole', 1e-3);
+  assert.ok(straight(outer) && straight(hole), 'straight pieces');
+  assert.ok(!C.selfCrosses(outer, 1e-6) && !C.selfCrosses(hole, 1e-6));
+  const r = 2, chordMax = 2 * Math.sqrt(2 * r * 0.01 * 2) + 1e-9;                        // the sagitta of a cap chord is at most 1% of d
+  const capEdges = [...outer, ...hole].filter((s) => [[6, 10], [4, 10]].some((q) => Math.abs(Math.hypot(s.p0[0] - q[0], s.p0[1] - q[1]) - r) < 1e-6 && Math.abs(Math.hypot(s.p1[0] - q[0], s.p1[1] - q[1]) - r) < 1e-6));
+  assert.ok(capEdges.length > 20 && capEdges.every((s) => Math.hypot(s.p1[0] - s.p0[0], s.p1[1] - s.p0[1]) <= chordMax), 'cap arcs are sampled finely');
+  // the polygon-clipping union accepts a self-crossing ring at all (a figure of eight)
+  assert.ok(pc.union([[[[0, 0], [4, 4], [4, 0], [0, 4], [0, 0]]]]).length === 2, 'two lobes');
+  // a tight U (inside width 2) with d = 1.2 > 1: the inner sides cross; one ring, no hole
+  const U = open([[0, 10], [0.1, 5], [0, 0], [2, 0], [1.9, 5], [2, 10]]), u = run(U, 1.2);
+  assert.equal(u.made, 1);
+  assert.ok(C.loopArea(u.steps[0][0]) > 0 && straight(u.steps[0][0]) && !C.selfCrosses(u.steps[0][0], 1e-6));
+  near(C.loopArea(u.steps[0][0]), 52.66, 'tight U', 1e-3);
+  // the same U with d = 0.5 does not cross: lines and arcs as before
+  const f = run(U, 0.5);
+  assert.equal(f.made, 1);
+  assert.equal(f.steps[0][0].filter((s) => s.b).length, 2, 'the two round ends stay arcs');
+  // a step that crosses keeps the earlier one as it was
+  const two = C.contour([], { chains: [U], dist: 0.5, steps: 3, outward: true, corners: 'sharp', ends: 'round' });
+  assert.equal(two.steps.length, 3); assert.equal(two.stopped, null);
+  assert.equal(two.steps[0][0].filter((s) => s.b).length, 2);
+  assert.equal(two.steps[2][0].filter((s) => s.b).length, 0, 'step 3 (d = 1.5) is the united outline');
 });
 const off = (loop, t, corners = 'sharp') => { const r = C.offsetLoop(loop, t, { corners }); assert.ok(r.ok, 'offset ' + t + ' failed: ' + r.why); assert.ok(closed(r.loop), 'the result is closed'); return r.loop; };
 

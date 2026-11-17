@@ -10588,6 +10588,34 @@ try {
     await closeTabs(/./);
     await page.evaluate(() => localStorage.removeItem('pd-contour'));
   });
+  await step('TODO 289b: Contour Round on a C-shaped open line whose ends overlap gives an outer outline and a hole, one Undo', async () => {
+    await closeTabs(/./);
+    const pts = [[140, 200], [100, 200], [100, 100], [200, 100], [200, 200], [160, 200]], doc = newDoc(4);
+    addEntities(doc, ...pts.slice(1).map((p, i) => dxfLine(pts[i][0], pts[i][1], p[0], p[1])));
+    await t('picker').setInputFiles({ name: 'c289b.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(doc)) });
+    await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'c289b.dxf');
+    await page.keyboard.press('Escape'); await page.keyboard.press('Control+a');
+    await page.locator('[data-tool=contour]').click();
+    await t('contour-dist').fill('20'); await t('contour-dist').press('Enter');
+    await t('contour-steps').fill('1'); await t('contour-steps').press('Enter');
+    await ctPanel('contour-round').click();
+    await page.waitForFunction(() => document.querySelectorAll('[data-testid=contour-preview] .ct-out').length === 2, null, { timeout: 8000 }).catch(() => {});
+    assert.equal(await t('contour-preview').locator('.ct-out').count(), 2, 'the preview has the outer outline and the hole');
+    await shotBoth('todo289b-c');
+    assert.equal(await t('contour-apply').isEnabled(), true, 'the overlapping outline applies');
+    await t('contour-apply').click(); await said(/^Contour: 2 new outlines/);
+    const raw = await savedDoc(), ids = raw.entities.flatMap((e, i) => e.layer === 'Contour' ? [i] : []);
+    assert.ok(ids.length > 40 && ids.every((i) => raw.entities[i].type === 'LINE'), 'straight pieces');
+    const C = await import('./web/contour.js'), E = await import('./web/edit.js');
+    const r = C.buildLoops(C.segmentsFromItems(E.makeIndex(raw, flatten(raw)), ids));
+    assert.equal(r.open, 0); assert.equal(r.loops.length, 2, 'an outer loop and a hole');
+    const [big, small] = r.loops.map((l) => Math.abs(C.loopArea(l))).sort((a, b) => b - a);
+    assert.ok(big > 15000 && small > 3000 && small < 4000, 'the unit test C at 10 times: outer area about 19600, hole about 3600');
+    await t('contour-close').click(); await page.keyboard.press('Control+z'); await said(/^Undo/);
+    assert.equal(await entCount(), 5, 'one Undo removes both outlines');
+    await closeTabs(/./);
+    await page.evaluate(() => localStorage.removeItem('pd-contour'));
+  });
 
   await step('TODO 200: contour inside next to a short in-line piece', async () => {
     await closeTabs(/./);
