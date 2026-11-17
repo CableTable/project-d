@@ -13347,11 +13347,14 @@ try {
       async () => { await page.keyboard.press('Control+a'); await page.keyboard.press('Delete'); await page.keyboard.press('Escape'); });
     // a corner being dragged
     await page.keyboard.press('Escape');
-    await page.locator('[data-tool=select]').click();
-    await click(40, 77);
     await shotBoth('text-drag', async () => {
-      const g = await handleBox(1), gx = g.x + g.width / 2, gy = g.y + g.height / 2;
+      await page.locator('[data-tool=select]').click();
+      await page.keyboard.press('Escape'); await click(40, 77);
+      await t('text-handle-1').waitFor({ state: 'visible' });
+      // The overlay replaces its handles on redraw; read the live handle's centre in one task.
+      const [gx, gy] = await page.evaluate(() => { const g = document.querySelector('[data-testid=text-handle-1]').getBoundingClientRect(); return [g.x + g.width / 2, g.y + g.height / 2]; });
       await page.mouse.move(gx, gy); await page.mouse.down(); await page.mouse.move(gx + 70, gy + 40, { steps: 4 }); await wait(150);
+      assert.equal(await page.locator('.tx-box.tx-new').count(), 1, 'the text resize preview is shown in each theme');
     }, async () => { await page.keyboard.press('Escape'); await page.mouse.up(); });
     // the 1024 px window: the bar fits on one line
     await page.setViewportSize({ width: 1024, height: 700 }); await wait(200);
