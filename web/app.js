@@ -60,7 +60,7 @@ import { filletEntities, filletPolylineShape, filletAllPolyline, chamferEntities
 import { breakEntity, breakAtPoint, breakWhy } from './break.js';
 import { lengthenEntity, lengthenInfo, lengthenWhy, CANNOT_LENGTHEN } from './lengthen.js';
 import { joinEntities, NO_TOUCH } from './join.js';
-import { closeEntities } from './closeline.js';
+import { closeEntities, joinFar } from './closeline.js';
 import { reverse } from './reverse.js';
 import { divideAt, measureAt } from './divide.js';
 import { alignTransform, alignMatrix, alignEntities, SAME_SRC, SAME_DST } from './align-points.js';
@@ -8336,7 +8336,7 @@ function modPrompt(d) {
   if (m.kind === 'lengthen') return { status: 'Command: LENGTHEN', input, prompt: lengthenPrompt(m) };
   if (m.kind === 'chamfer') return { status: 'Command: CHAMFER', input, prompt: chamferPrompt(m) };
   if (m.kind === 'break' || m.kind === 'breakatpoint') return { status: `Command: ${m.kind.toUpperCase()}`, prompt: m.stage === 'obj' ? 'Select object:' : m.kind === 'breakatpoint' ? 'Specify break point:' : m.stage === 'first' ? 'Specify first break point:' : m.first ? 'Specify second break point:' : 'Specify second break point or [First point]:' };
-  if (m.kind === 'join') return { status: `Command: JOIN   ${m.objs.length} selected`, prompt: m.stage === 'src' ? 'Select source object or multiple objects to join at once:' : `Select objects to join${m.objs[0]?.type === 'ARC' ? ' or [cLose]' : ''}:` };
+  if (m.kind === 'join') return { status: `Command: JOIN   ${m.objs.length} selected`, prompt: `${m.stage === 'src' ? 'Select source object or multiple objects to join at once' : `Select objects to join${m.objs[0]?.type === 'ARC' ? ' or [cLose]' : ''}`}, or Far ends [Off / Extend / Straight] <${joinFarEnds[0].toUpperCase() + joinFarEnds.slice(1)}>:` };
   if (m.kind === 'close') return { status: `Command: CLOSE   ${m.objs.length} selected`, input, prompt: `Select objects to close, then Enter, or [Extend / Straight] <${closeEnds === 'straight' ? 'Straight' : 'Extend'}>:` };
   if (m.kind === 'reverse') return { status: `Command: REVERSE   ${m.objs.length} selected`, prompt: 'Select objects:' };
   if (m.kind === 'align') return { status: `Command: ALIGN   ${m.sel?.size ?? d.sel.size} selected`, input, prompt: ALIGN_PROMPT[m.stage] };
@@ -8461,7 +8461,7 @@ function modTakes(c) {
   if ((modLive() || layModLive()) && m.kind === 'lengthen') return true;
   if ((modLive() || layModLive()) && m.kind === 'offset') return true;
   if ((modLive() || layModLive()) && (m.kind === 'break' || m.kind === 'breakatpoint')) return m.stage !== 'obj';
-  if ((modLive() || layModLive()) && m.kind === 'join') return JOIN_CLOSE.test(c) && m.objs[0]?.type === 'ARC';
+  if ((modLive() || layModLive()) && m.kind === 'join') return JOIN_FAR.test(c) || JOIN_CLOSE.test(c) && m.objs[0]?.type === 'ARC';
   if ((modLive() || layModLive()) && m.kind === 'close') return CLOSE_ENDS.test(c);
   if ((modLive() || layModLive()) && m.kind === 'fillet') return m.askR || m.askTrim || /^(r|radius)$/.test(c) || (m.stage === 'obj' && /^(u|undo|p|polyline|t|trim|m|multiple)$/.test(c));
   if ((modLive() || layModLive()) && ['move', 'copy', 'stretch', 'align'].includes(m.kind) && m.stage !== 'pick') return true;
@@ -8499,6 +8499,11 @@ function modTyped(d, raw) {
     return false;
   }
   if (m.kind === 'join') {
+    if (JOIN_FAR.test(c)) {
+      joinFarEnds = c[0] === 'o' ? 'off' : c[0] === 's' ? 'straight' : 'extend';
+      try { localStorage.setItem(JOIN_FAR_SAVED, joinFarEnds); } catch { /* applies for this session */ }
+      note(modPrompt(d).prompt); return true;
+    }
     if (!JOIN_CLOSE.test(c) || m.objs[0]?.type !== 'ARC') return false;
     joinRun(d, true); return true;
   }
@@ -9442,13 +9447,16 @@ const JOIN_CLOSE = /^(l|cl|close)$/;
 const CLOSE_ENDS = /^(e|ex|extend|s|st|straight)$/, CLOSE_ENDS_SAVED = 'pd-close-ends';
 let closeEnds = 'extend';       // Close's "Ends" option (TODO 290): 'extend' or 'straight', remembered on this PC
 try { if (localStorage.getItem(CLOSE_ENDS_SAVED) === 'straight') closeEnds = 'straight'; } catch { /* the default */ }
+const JOIN_FAR = /^(o|off|e|ex|extend|s|st|straight)$/, JOIN_FAR_SAVED = 'pd-join-far';
+let joinFarEnds = 'off';       // Join's "Far ends" option (TODO 290b): 'off' (touching ends only), 'extend' or 'straight', remembered on this PC
+try { const v = localStorage.getItem(JOIN_FAR_SAVED); if (v === 'extend' || v === 'straight') joinFarEnds = v; } catch { /* the default */ }
 /** Join (and Close, with `closing`: the picks become one closed polyline, far ends too): one undo step. */
 function joinRun(d, close = false, closing = false) {
-  const m = state.mod, all = d.raw.entities, have = new Set(all), ents = m.objs.filter((e) => have.has(e));
-  const { result, skipped, note: closeNote, why } = closing ? closeEntities(ents, { ends: closeEnds }) : joinEntities(ents, { close }), words = new Map();
+  const m = state.mod, all = d.raw.entities, have = new Set(all), ents = m.objs.filter((e) => have.has(e)), far = !closing && joinFarEnds !== 'off';
+  const { result, skipped, note: closeNote, why } = closing ? closeEntities(ents, { ends: closeEnds }) : far ? joinFar(ents, { ends: joinFarEnds, close }) : joinEntities(ents, { close }), words = new Map();
   for (const { reason } of skipped) words.set(reason, (words.get(reason) || 0) + 1);
   const left = [...words].map(([reason, n]) => reason === NO_TOUCH ? `${n} object${n === 1 ? '' : 's'} not joined: ${reason} (Join gaps can close them)` : `${n} skipped: ${reason}`).join('. ');
-  if (!result) { setTool('select'); note(closing ? `Close: ${ents.length ? why : 'nothing selected'}` : ents.length ? `Nothing joined. ${left}` : 'Join: nothing selected'); return; }
+  if (!result) { setTool('select'); note(closing ? `Close: ${ents.length ? why : 'nothing selected'}` : ents.length ? `Nothing joined. ${far && why ? why : left}` : 'Join: nothing selected'); return; }
   const gone = new Set(ents.filter((e) => !skipped.some((s) => s.entity === e))), source = ents.find((e) => gone.has(e)), at = all.indexOf(source), keep = new Map(), entities = [];
   all.forEach((e, i) => { if (i === at) { keep.set(i, [entities.length]); entities.push(result); } else if (!gone.has(e)) { keep.set(i, [entities.length]); entities.push(e); } });
   view.fitted = false;
@@ -9457,7 +9465,7 @@ function joinRun(d, close = false, closing = false) {
   if (d.vlay) { const i = layObjDoc(d.vlay).at.get(result); selectMany(placedNow.flatMap((q, k) => (q.src === 'loose' && q.i === i ? [k] : [])).flatMap(groupIdxs)); update(); }       // the old picks' indexes would point at other objects
   else setSel(d, new Set([keep.get(at)[0]]));
   if (closing) { note(`Closed ${gone.size} object${gone.size === 1 ? '' : 's'} into 1 closed polyline.${closeNote ? ' ' + closeNote + '.' : ''}${left ? ' ' + left + '.' : ''} Ctrl+Z takes it back`); return; }
-  note(`Joined ${gone.size} objects into 1 ${{ LINE: 'line', ARC: 'arc', CIRCLE: 'circle' }[result.type] || 'polyline'}.${left ? ' ' + left + '.' : ''} Ctrl+Z takes it back`);
+  note(`Joined ${gone.size} objects into 1 ${{ LINE: 'line', ARC: 'arc', CIRCLE: 'circle' }[result.type] || 'polyline'}.${far && closeNote ? ' ' + closeNote + '.' : ''}${left ? ' ' + left + '.' : ''} Ctrl+Z takes it back`);
 }
 /** Reverse (Enter, or a selection made first): lines, polylines and splines run the other way in place, one undo step. Locked ones and other kinds are counted as filtered out; nothing reversible changes nothing. */
 function reverseRun(d) {

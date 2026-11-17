@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { closeEntities, ALREADY, NOT_AHEAD, ONE_LINE, FLAT } from './web/closeline.js';
+import { closeEntities, joinFar, ALREADY, NOT_AHEAD, ONE_LINE, FLAT } from './web/closeline.js';
 import { line, arc, circle, lwpoly, ellipse } from './web/dxf-write.js';
 import { shapeOf } from './web/grips.js';
 
@@ -71,4 +71,33 @@ test('refused: one straight line, pieces on one line, ellipses, closed objects, 
   assert.equal(closeEntities([]).why, 'nothing selected');
   const mixed = closeEntities([lwpoly([[0, 0], [5, 0], [5, 5]], { closed: true }),line(0, 10, 0, 0), line(0, 0, 10, 0)]);
   assert.ok(mixed.result); assert.deepEqual(mixed.skipped.map((s) => s.reason), [ALREADY]);
+});
+
+test('join far ends Extend / Straight stays open, with the first object properties and no NO_TOUCH', () => {
+  const roof = () => [line(0, 0, 4, 9, own), line(6, 9, 10, 0)];
+  const e = joinFar(roof(), { ends: 'extend' });
+  assert.equal(e.result.type, 'LWPOLYLINE'); assert.ok(!shapeOf(e.result).closed); assert.deepEqual(xy(e.result), [[0, 0], [5, 11.25], [10, 0]]); assert.equal(e.note, ''); assert.equal(e.skipped.length, 0);
+  assert.deepEqual([e.result.layer, e.result.aci, e.result.lt], ['Cut', 3, 'DASHED']);
+  const s = joinFar(roof(), { ends: 'straight' });
+  assert.ok(!shapeOf(s.result).closed); assert.deepEqual(xy(s.result), [[0, 0], [4, 9], [6, 9], [10, 0]]);
+  const par = joinFar([line(0, 0, 0, 10), line(5, 10, 5, 0)]);              // parallel: no crossing, straight, with Close's note
+  assert.deepEqual(xy(par.result), [[0, 0], [0, 10], [5, 10], [5, 0]]); assert.equal(par.note, NOT_AHEAD);
+  const arcEnd = joinFar([arc(0, 0, 10, 0, 90), line(0, 20, -10, 30)]);       // an arc end: straight, and the arc keeps its bulge
+  assert.ok(Math.abs(shapeOf(arcEnd.result).pts[0][2] - Math.tan(Math.PI / 8)) < 1e-5); assert.equal(arcEnd.note, NOT_AHEAD);
+  const three = joinFar([line(0, 0, 10, 0), line(10, 5, 10, 15), line(0, 15, 0, 5)], { ends: 'straight' });
+  assert.equal(three.skipped.length, 0); assert.ok(!shapeOf(three.result).closed); assert.equal(shapeOf(three.result).pts.length, 6);
+  assert.equal(joinFar([line(0, 0, 10, 0)]).result, null);
+  assert.equal(joinFar(Array.from({ length: 301 }, (_, k) => line(k, 0, k + 0.5, 0))).why, 'more than 300 objects: pick fewer');
+});
+
+test('join far ends: the cost leaves out the closing gap, so the bridge is the nearest pair, not the one Close picks', () => {
+  const ents = () => [line(0, 0, 100, 0), line(250, 50, 150, 50)];
+  assert.deepEqual(xy(joinFar(ents(), { ends: 'straight' }).result), [[0, 0], [100, 0], [150, 50], [250, 50]], 'nearest ends, line stays open');
+  assert.deepEqual(xy(closeEntities(ents(), { ends: 'straight' }).result), [[0, 0], [100, 0], [250, 50], [150, 50]], 'Close: bridge + closing gap, a trapezoid');
+});
+
+test('join far ends with close: arcs of one circle become a circle, anything else runs the Close path', () => {
+  assert.equal(joinFar([arc(0, 0, 10, 0, 90), arc(0, 0, 10, 180, 270)], { close: true }).result.type, 'CIRCLE');
+  const c = joinFar([line(0, 0, 4, 9), line(6, 9, 10, 0)], { close: true }), k = closeEntities([line(0, 0, 4, 9), line(6, 9, 10, 0)]);
+  assert.deepEqual(xy(c.result), xy(k.result)); assert.ok(shapeOf(c.result).closed);
 });
