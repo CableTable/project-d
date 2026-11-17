@@ -5,11 +5,24 @@ import { decodeDxf, readDxf, flatten } from './web/drawing.js';
 import { mapply } from './web/drawing.js';
 import { buildTree } from './web/objects.js';
 import { makeDimension, addDimension } from './web/edit.js';
-import { unitFactor, convertedNote, spaceOf, shownItems, itemVisible, startHidden, entityCount, layerCounts, drawingBoxMm, placement, boxOnSheet, fitRect, cursorMm, fitsSheet, addRecent, removeRecent, closePrompt, BIG_FILE, bigFileAsk, backupPath } from './web/doc.js';
+import { unitFactor, convertedNote, spaceOf, shownItems, itemVisible, startHidden, entityCount, layerCounts, drawingBoxMm, placement, boxOnSheet, fitRect, cursorMm, fitsSheet, addRecent, removeRecent, closePrompt, BIG_FILE, bigFileAsk, backupPath, dupName } from './web/doc.js';
 
 const load = (f) => flatten(readDxf(decodeDxf(readFileSync(f))));
 let n = 0;
 const test = (name, fn) => { fn(); n++; console.log('ok', name); };
+
+test('TODO 268: duplicate tab names use the first free suffix before the extension', () => {
+  for (const [name, names, want] of [
+    ['a.dxf', ['a.dxf'], 'a (2).dxf'],
+    ['a (2).dxf', ['a.dxf', 'a (2).dxf'], 'a (3).dxf'],
+    ['a (4).dxf', ['a (4).dxf', 'A (2).DXF'], 'a (3).dxf'],
+    ['a.dxf', ['a (2).dxf', 'a (4).dxf'], 'a (3).dxf'],
+    ['Compare', ['Compare', 'Compare (2)'], 'Compare (3)'],
+    ['Layout 1', ['Layout 1'], 'Layout 1 (2)'],
+    ['part.v2.DXF', ['part.v2.DXF'], 'part.v2 (2).DXF'],
+    ['a (note).dxf', [], 'a (note) (2).dxf'],
+  ]) assert.equal(dupName(name, names), want);
+});
 
 test('TODO 308: backup names preserve the folder, extension and literal file name', () => {
   for (const [path, want] of [

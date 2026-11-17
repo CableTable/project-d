@@ -422,6 +422,153 @@ try {
       console.log('307b: Open/Remove/Copy success+failure, immediate Recent refresh, disabled tools, typed refusal/open/compare, Options/tabs; light/dark menu screenshots verified');
     } finally { await context.close(); }
   });
+  await step('TODO 268: tab right-click Duplicate copies drawing, Compare and layout tabs', async () => {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    mkdirSync('shots-268', { recursive: true });
+    try {
+      const p = await ctx.newPage(), q = (id) => p.getByTestId(id), faults = [];
+      p.on('pageerror', (e) => faults.push(String(e)));
+      await p.route('**/app.js', (route) => route.fulfill({ contentType: 'text/javascript', body: readFileSync('web/app.js', 'utf8') + `
+        let original268, before268;
+        const read268 = (d = curDoc()) => ({ name: d.name, path: d.path, dirty: d.dirty, tabId: d.tabId,
+          history: (d.lay ? layHist(d) : d.hist)?.labels(), selected: d.lay ? selIdxs() : [...(d.sel || [])],
+          raw: d.raw, lay: d.lay, balloons: d.balloons, guides: d.guideState, recovery: d.recovery,
+          view: d === shownDoc ? { ...view } : d.view });
+        window.t268 = {
+          read: () => read268(),
+          open: (s) => openBytes('a.dxf', new TextEncoder().encode(s), 'E:/268/a.dxf'),
+          prepare: async () => {
+            const d = curDoc(); original268 = d;
+            d.balloons = BAL.add(BAL.EMPTY, { tip: [10, 10], c: [20, 20] });
+            guideTarget(d).s.guides = [{ axis: 'x', pos: 45 }];
+            const c = document.createElement('canvas'); c.width = c.height = 2;
+            d.bg = { name: '268.png', bitmap: await createImageBitmap(c), w: 2, h: 2, mm: 1, x: 4, y: 5, visible: true };
+            d.hid = new Set([d.raw.entities[1]]); d.sel = new Set([0]);
+            pushHistory(d, snapshotOf(d), 'Fixture edit'); d.dirty = true;
+            d.saved = true; d.savedAs = ['fixture'];
+            Object.assign(view, { scale: 1.25, ox: -31, oy: 47, fitted: false }); applyView();
+            await autosaveNow(); before268 = read268();
+          },
+          original: () => ({ before: before268, after: read268(original268) }),
+          independent: () => { const d = curDoc(), o = original268; return {
+            raw: d.raw !== o.raw && d.raw.entities[0] !== o.raw.entities[0] && d.raw.layers !== o.raw.layers && d.raw.blocks !== o.raw.blocks,
+            sidecars: d.balloons !== o.balloons && d.guideState !== o.guideState && d.bg !== o.bg && d.bg.bitmap !== o.bg.bitmap,
+            hidden: d.hid.has(d.raw.entities[1]) && !d.hid.has(o.raw.entities[1]),
+            fresh: !d.recovery && !d.saved && !d.savedAs && !d.openPath && !d.balloonPath && !d.guideFile
+          }; },
+          autosave: async () => { await autosaveNow(); return RC.loadCopies(); },
+          saveCopy: async () => {
+            const writes = [], asks = [];
+            window.__TAURI__ = { dialog: { save: async (o) => { asks.push(o.defaultPath); return 'E:/268/copy.dxf'; } },
+              fs: { exists: async () => false, writeTextFile: async (path, text) => writes.push({ path, text }) } };
+            try { await save(); return { writes, asks, guides: localStore('pd-guides:', localStorage).get(curDoc().guideFile) }; }
+            finally { delete window.__TAURI__; }
+          },
+          big: () => { curDoc().sourceSize = BIG_FILE + 1; },
+          layoutCheck: () => { const i = state.doc, d = state.docs[i], o = state.docs[i - 1]; return {
+            settings: d.lay.s !== o.lay.s, placed: d.lay.placed !== o.lay.placed && d.lay.placed[0] !== o.lay.placed[0],
+            grids: d.lay.grids !== o.lay.grids, layers: d.lay.layers !== o.lay.layers,
+            parts: Object.keys(o.lay.parts).every((k) => o.lay.parts[k].obj ? d.lay.parts[k] !== o.lay.parts[k] : d.lay.parts[k] === o.lay.parts[k]),
+            hidden: d.hiddenParts !== o.hiddenParts, original: !o.dirty && !layHist(o).canUndo
+          }; },
+          compares: () => state.docs.filter((d) => d.cmp).map((d) => ({ name: d.name, selected: d.cmp.selected,
+            sources: [...d.cmp.sources.keys()], items: d.cmp.items.map((x) => ({ tabId: x.tabId, box: x.box })) })),
+          compareOwn: () => { const ds = state.docs.filter((d) => d.cmp); return ds[0].cmp !== ds[1].cmp && ds[0].cmp.sources !== ds[1].cmp.sources; }
+        };` }));
+      const read = () => p.evaluate(() => window.t268.read());
+      const tab = (name) => p.locator('.tabs .dtab').filter({ has: p.locator('.tname', { hasText: new RegExp('^' + name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$') }) });
+      const command = async (text) => {
+        if (!(await q('cmd-input').isVisible())) await q('cmd-echo').click();
+        await q('cmd-input').fill(text); await q('cmd-input').press('Enter');
+      };
+      const duplicate = async (name) => { await tab(name).click({ button: 'right' }); await p.getByRole('menuitem', { name: 'Duplicate', exact: true }).click(); };
+      const draw = async () => { await command('line'); await command('0,0'); await command('900,500'); await p.keyboard.press('Escape'); };
+      const fresh = async (name) => {
+        const d = await read(); assert.equal(d.name, name); assert.equal(d.path, null); assert.equal(d.dirty, true);
+        assert.deepEqual(d.history, { past: [], future: [] }); assert.deepEqual(d.selected, []);
+        const tabs = await p.locator('.tabs .tname').allTextContents();
+        assert.equal(tabs[tabs.indexOf(name) - 1], name.includes('a (') ? 'a.dxf' : name.replace(' (2)', ''), 'copy is right after original');
+      };
+      await p.goto(URL_ + '?autosave=86400000'); await q('count').waitFor({ state: 'attached' });
+      await tab('Drawing 1').click({ button: 'right' }); assert.equal(await q('ctx-menu').count(), 0);
+      await p.evaluate((s) => window.t268.open(s), writeDxf(addEntities(newDoc(4), [dxfLine(0, 0, 120, 80), dxfCircle(40, 40, 10)])));
+      await p.evaluate(() => window.t268.prepare());
+      for (const theme of ['light', 'dark']) {
+        await p.locator('[data-menu=View]').click();
+        await p.getByRole('menuitemcheckbox', { name: new RegExp('Theme: ' + theme + '\\b') }).click();
+        await tab('a.dxf').click({ button: 'right' });
+        assert.deepEqual(await q('ctx-menu').getByRole('menuitem').allTextContents(), ['Duplicate']);
+        const path = `shots-268/tab-menu-${theme}.png`; await p.screenshot({ path }); assert.ok(readFileSync(path).length > 1000);
+        await p.keyboard.press('Escape'); assert.equal(await q('ctx-menu').count(), 0);
+      }
+      await duplicate('a.dxf'); await fresh('a (2).dxf');
+      assert.deepEqual(await p.evaluate(() => window.t268.independent()), { raw: true, sidecars: true, hidden: true, fresh: true });
+      const { before, after } = await p.evaluate(() => window.t268.original());
+      const originalView = after.view; delete before.view; delete after.view;
+      assert.deepEqual(after, before, 'original artwork, history, selection, dirty flag and recovery entry unchanged');
+      const copied = await read();
+      for (const k of ['scale', 'ox', 'oy', 'fitted']) assert.equal(copied.view[k], originalView[k], 'active tab live view copied');
+      assert.notEqual(copied.tabId, before.tabId);
+      await p.keyboard.press('Control+z'); assert.deepEqual((await read()).raw, copied.raw, 'Undo starts empty');
+      await draw(); assert.equal((await read()).raw.entities.length, copied.raw.entities.length + 1);
+      await p.keyboard.press('Control+z'); assert.deepEqual((await read()).raw, copied.raw, 'one Undo removes only the new edit');
+      const autos = await p.evaluate(() => window.t268.autosave());
+      assert.deepEqual(autos.map((c) => [c.name, c.path]), [['a.dxf', 'E:/268/a.dxf'], ['a (2).dxf', null]]);
+      assert.notEqual(autos[0].id, autos[1].id);
+      await tab('a (2).dxf').focus(); await p.keyboard.press('Shift+F10');
+      await p.getByRole('menuitem', { name: 'Duplicate', exact: true }).press('Enter');
+      assert.equal((await read()).name, 'a (3).dxf', 'duplicating a duplicate advances the suffix');
+      // An inactive original supplies its saved view and does not become active when the menu is cancelled.
+      await tab('a.dxf').click({ button: 'right' }); await p.keyboard.press('Escape'); assert.equal((await read()).name, 'a (3).dxf');
+      await duplicate('a.dxf'); assert.equal((await read()).name, 'a (4).dxf');
+      const saved = await p.evaluate(() => window.t268.saveCopy());
+      assert.equal(saved.asks.length, 1, 'first Save asks for its own path');
+      assert.deepEqual(saved.writes.map((w) => w.path), ['E:/268/copy.dxf', 'E:/268/copy.pdballoons.json']);
+      assert.equal(JSON.parse(saved.writes[1].text).items.length, 1, 'copied balloons saved beside copy');
+      assert.deepEqual(saved.guides.guides, [{ axis: 'x', pos: 45 }], 'copied guides saved under new file key');
+      await p.evaluate(() => window.t268.big());
+      let warning = ''; p.once('dialog', async (d) => { warning = d.message(); await d.dismiss(); });
+      const count = await p.locator('.tabs .dtab').count(); await duplicate('copy.dxf');
+      assert.match(warning, /big drawings may open slowly/); assert.equal(await p.locator('.tabs .dtab').count(), count);
+      p.once('dialog', (d) => d.accept()); await duplicate('copy.dxf'); assert.equal((await read()).name, 'copy (2).dxf');
+
+      const raw = newDoc(4); addEntities(raw, [dxfLine(0, 0, 100, 50)]);
+      const part = makePart('268-part', 'Part', raw), loose = objectPart('268-obj', 'Line', dxfLine(30, 30, 80, 80), raw.layers);
+      const lay = newLayout('268-layout'); lay.parts = { [part.id]: part, [loose.id]: loose };
+      lay.placed = [{ partId: part.id, x: 20, y: 30, rot: 10, lock: true, g: '268-group' }, { ...objectPlacement(loose), g: '268-group' }];
+      lay.s.gridPart = part.id; lay.s.rows = 2; lay.s.cols = 2; lay.s.fit = false;
+      await q('picker').setInputFiles({ name: 'layout.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
+      await tab('layout.dxf').waitFor(); const originalLayout = (await read()).lay;
+      assert.ok(originalLayout.placed.every((p) => p.g === '268-group')); assert.equal(originalLayout.placed[0].lock, true);
+      await duplicate('layout.dxf'); await fresh('layout (2).dxf');
+      assert.deepEqual((await read()).lay, { ...originalLayout, name: 'layout (2).dxf' });
+      assert.ok(Object.values(await p.evaluate(() => window.t268.layoutCheck())).every(Boolean), 'layout state owned; library parts shared');
+      await p.keyboard.press('Control+z'); assert.deepEqual((await read()).lay, { ...originalLayout, name: 'layout (2).dxf' });
+
+      await tab('a.dxf').click(); await command('compare'); await p.keyboard.press('Escape');
+      await duplicate('Compare'); await fresh('Compare (2)');
+      assert.equal(await p.evaluate(() => window.t268.compareOwn()), true);
+      const links = await p.evaluate(() => window.t268.compares()); assert.equal(links[1].selected, null);
+      assert.deepEqual(links[0].items, links[1].items); assert.deepEqual(links[0].sources, links[1].sources);
+      await tab('a.dxf').click(); await draw();
+      await tab('Compare (2)').click();
+      const edited = await p.evaluate(() => window.t268.compares());
+      assert.notDeepEqual(edited[1].items[0].box, links[1].items[0].box, 'copy follows source edits live');
+      assert.deepEqual(edited[0].items, edited[1].items, 'both Compare tabs follow the same source');
+      p.once('dialog', (d) => d.accept()); await tab('a.dxf').locator('.x').click();
+      const detached = await p.evaluate(() => window.t268.compares());
+      assert.deepEqual(detached[0].items, detached[1].items); assert.equal(detached[1].items[0].tabId, null);
+      assert.equal(detached[1].sources.length, links[1].sources.length - 1);
+      const copies = await p.evaluate(() => window.t268.autosave());
+      assert.ok(copies.some((c) => c.name === 'layout (2).dxf')); assert.ok(copies.every((c) => !c.name.startsWith('Compare')));
+
+      await q('picker').setInputFiles('fixtures/three-sheets.pdf'); await q('bal-sheets').waitFor();
+      assert.equal(await p.locator('.dtab.on').getAttribute('data-kind'), 'pdf');
+      await p.locator('.dtab.on').click({ button: 'right' }); assert.equal(await q('ctx-menu').count(), 0, 'PDF menu suppressed');
+      assert.deepEqual(faults, []);
+      console.log('TODO 268 proof: all three kinds, deep copies, names, views, fresh Undo, autosave, live sources, source close, PDF exclusion and big-file Cancel pass');
+    } finally { await ctx.close(); }
+  });
   await step('TODO 304: drawings and PDF sheet tabs keep their own pan, zoom and Zoom Previous', async () => {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     try {

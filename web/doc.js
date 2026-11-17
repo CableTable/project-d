@@ -103,6 +103,15 @@ export function removeRecent(list, path) {
   return (Array.isArray(list) ? list : []).filter((p) => typeof p === 'string' && key(p) !== key(path));
 }
 
+/** First free duplicate number across all tab names, before the file extension. */
+export function dupName(name, names) {
+  const ext = name.match(/\.[^.]+$/)?.[0] || '', base = name.slice(0, name.length - ext.length).replace(/ \(\d+\)$/, '');
+  const used = new Set(names.map((n) => n.toLowerCase()));
+  let n = 2;
+  while (used.has(`${base} (${n})${ext}`.toLowerCase())) n++;
+  return `${base} (${n})${ext}`;
+}
+
 /** Files over this many bytes get a warning before they are opened (T273a). */
 export const BIG_FILE = 50 * 1024 * 1024;
 
