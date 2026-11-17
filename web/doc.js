@@ -94,8 +94,13 @@ export function fitsSheet(boxMm, sheetW, sheetH) {
 
 /** The recent-files list with `path` put first: no repeats (Windows paths match whatever the case), at most `max`. */
 export function addRecent(list, path, max = 8) {
+  return [path, ...removeRecent(list, path)].slice(0, max);
+}
+
+/** Remove a recent path using the same Windows path key as addRecent, preserving the remaining order. */
+export function removeRecent(list, path) {
   const key = (p) => String(p).replace(/\//g, '\\').toLowerCase();
-  return [path, ...(Array.isArray(list) ? list : []).filter((p) => typeof p === 'string' && key(p) !== key(path))].slice(0, max);
+  return (Array.isArray(list) ? list : []).filter((p) => typeof p === 'string' && key(p) !== key(path));
 }
 
 /** Files over this many bytes get a warning before they are opened (T273a). */

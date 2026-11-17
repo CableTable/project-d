@@ -5,7 +5,7 @@ import { decodeDxf, readDxf, flatten } from './web/drawing.js';
 import { mapply } from './web/drawing.js';
 import { buildTree } from './web/objects.js';
 import { makeDimension, addDimension } from './web/edit.js';
-import { unitFactor, convertedNote, spaceOf, shownItems, itemVisible, startHidden, entityCount, layerCounts, drawingBoxMm, placement, boxOnSheet, fitRect, cursorMm, fitsSheet, addRecent, closePrompt, BIG_FILE, bigFileAsk, backupPath } from './web/doc.js';
+import { unitFactor, convertedNote, spaceOf, shownItems, itemVisible, startHidden, entityCount, layerCounts, drawingBoxMm, placement, boxOnSheet, fitRect, cursorMm, fitsSheet, addRecent, removeRecent, closePrompt, BIG_FILE, bigFileAsk, backupPath } from './web/doc.js';
 
 const load = (f) => flatten(readDxf(decodeDxf(readFileSync(f))));
 let n = 0;
@@ -105,6 +105,16 @@ test('recent files: newest first, no repeats (any case or slash), at most 8', ()
   assert.equal(r[0], 'C:\\f9.dxf');
   assert.deepEqual(addRecent(['x', 5, null], 'y'), ['y', 'x']);
 });
+test('TODO 307b: removeRecent matches Windows case and slashes, keeps order and leaves its input alone', () => {
+  const list = ['C:\\jobs\\One.dxf', 'D:/two.dwg', 'c:/JOBS/one.DXF', 'E:/three.pdf'];
+  assert.deepEqual(removeRecent(list, 'c:/jobs/ONE.dxf'), ['D:/two.dwg', 'E:/three.pdf']);
+  assert.deepEqual(list, ['C:\\jobs\\One.dxf', 'D:/two.dwg', 'c:/JOBS/one.DXF', 'E:/three.pdf']);
+  assert.deepEqual(removeRecent(list, 'missing.dxf'), list);
+  assert.deepEqual(removeRecent(null, 'one.dxf'), []);
+  assert.deepEqual(removeRecent(['keep', null, 5, 'ONE'], 'one'), ['keep']);
+  assert.deepEqual(removeRecent(['C:/only.dxf'], 'c:\\ONLY.dxf'), []);
+});
+
 test('closePrompt: one name in quotes, or a count with the names listed', () => {
   assert.deepEqual(closePrompt(['a.dxf']), { title: 'Save changes to "a.dxf"?', names: [] });
   assert.deepEqual(closePrompt(['a.dxf', 'b layout']), { title: 'Save changes to 2 drawings?', names: ['a.dxf', 'b layout'] });

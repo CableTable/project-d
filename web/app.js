@@ -13,7 +13,7 @@ import { idbStore, localStore } from './idbstore.js';
 import { WORK_AREAS, workAreaDark } from './workarea.js';
 import { FOLDS, ribbonTabs, nextFold, doubleFold } from './ribbon.js';
 import { PRESETS, presetFor, stepRepeat, gridCellNote, GRIP_KEYS } from './layout.js';
-import { unitFactor, convertedNote, startHidden, entityCount, layerCounts, drawingBoxMm, fitRect, cursorMm, fitsSheet, spaceOf, boxOnSheet, itemVisible, addRecent, closePrompt, BIG_FILE, bigFileAsk, backupPath } from './doc.js';
+import { unitFactor, convertedNote, startHidden, entityCount, layerCounts, drawingBoxMm, fitRect, cursorMm, fitsSheet, spaceOf, boxOnSheet, itemVisible, addRecent, removeRecent, closePrompt, BIG_FILE, bigFileAsk, backupPath } from './doc.js';
 import * as Ed from './edit.js';
 import { follow as followGroups, remap as remapGroups, splice as spliceGroups, swap as swapGroups, copy as copyGroups, group as groupDrawing, ungroup as ungroupDrawing, groupOf, selectionOf, wholeGroup as wholeDrawingGroup } from './groups.js';
 import * as AD from './autodim.js';
@@ -491,6 +491,10 @@ function showStartScreen(on) {
   ui.startScreen.hidden = !on;
   ui.startTab.classList.toggle('on', on);
   ui.startTab.setAttribute('aria-pressed', String(on));
+  for (const b of Object.values(ui.toolBtns)) b.disabled = on;
+  railContour();
+  for (const b of ui.menuBtns) if (['Draw', 'Modify'].includes(b.dataset.menu)) b.disabled = on;
+  renderRibbon();
   if (!on) return;
   const items = recentItems();
   ui.startRecent.replaceChildren();
@@ -498,8 +502,14 @@ function showStartScreen(on) {
   ui.startRecent.append(h('h2', null, 'Recent files'));
   if (!items[0][4]) { ui.startRecent.append(h('p', null, 'No recent files yet')); return; }
   for (const [, action, , , path] of items) {
+    const open = async () => { await action(); showStartScreen(false); };
     ui.startRecent.append(h('button', { type: 'button', class: 'start-recent', title: path, 'data-testid': 'start-recent',
-      onclick: async () => { await action(); showStartScreen(false); } },
+      onclick: open, oncontextmenu: (e) => {
+        e.preventDefault();
+        popMenu(e.clientX, e.clientY, [['Open', open], ['Remove from list', () => forgetRecent(path)], ['Copy full path', async () => {
+          try { await navigator.clipboard.writeText(path); note('Full path copied'); } catch { note('Could not copy full path'); }
+        }]]);
+      } },
     h('strong', null, path.split(/[\\/]/).pop()), h('small', null, path.slice(0, Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))))));
   }
 }
@@ -736,7 +746,7 @@ function ribbonButton(label, svg, action, { small = false, enabled = () => true,
   const b = h('button', { type: 'button', class: small ? 'ribbon-small' : 'ribbon-big', title: commandTooltip(label, command, description),
     'aria-label': label, onclick: (e) => { if (e.currentTarget.dataset.held) { delete e.currentTarget.dataset.held; return; } action(e); closeRibbon(); renderRibbon(); } },
   icon(svg, { size: small ? 15 : 30, width: 1.5, cap: 'round', join: 'round' }), h('span', null, label));
-  b.ribbonSync = () => { b.title = commandTooltip(b.getAttribute('aria-label'), command, description); b.disabled = !enabled(); if (pressed) b.setAttribute('aria-pressed', String(pressed())); };
+  b.ribbonSync = () => { b.title = commandTooltip(b.getAttribute('aria-label'), command, description); b.disabled = !ui.startScreen?.hidden || !enabled(); if (pressed) b.setAttribute('aria-pressed', String(pressed())); };
   return b;
 }
 function ribbonTool(id, small = false) {
@@ -1349,7 +1359,8 @@ function rememberRecent(path) {
   try { localStorage.setItem('pd-recent', JSON.stringify(addRecent(recentList(), String(path)))); } catch { /* storage may be blocked */ }
 }
 function forgetRecent(path) {
-  try { localStorage.setItem('pd-recent', JSON.stringify(recentList().filter((p) => p !== path))); } catch { /* storage may be blocked */ }
+  try { localStorage.setItem('pd-recent', JSON.stringify(removeRecent(recentList(), path))); } catch { note('Could not update Recent files'); }
+  if (!ui.startScreen.hidden) showStartScreen(true);
 }
 /** Shared by File → Open, Explorer launches and Recent files. */
 async function openPath(path, recent = false) {
@@ -1564,7 +1575,7 @@ function buildRail() {
 /** In Compare a picked library part has no source drawing to add the outlines to: Contour is greyed. */
 function railContour() {
   const b = ui.toolBtns?.contour, item = cmpDoc() && cmpSelected(cmpDoc().cmp), part = !!item?.part && !editable(), closed = !!item && !item.part && !cmpSourceTab(item), t = TOOLS.find((x) => x.id === 'contour');
-  if (b) { b.disabled = part; b.title = part ? "Open the part's drawing to contour it" : closed ? `Open ${item.name} to edit` : commandTooltip(t.label, t.id, t.description); }
+  if (b) { b.disabled = !ui.startScreen?.hidden || part; b.title = part ? "Open the part's drawing to contour it" : closed ? `Open ${item.name} to edit` : commandTooltip(t.label, t.id, t.description); }
 }
 function paintRailTooltips() {
   for (const t of TOOLS) if (BUILT.has(t.id) && ui.toolBtns[t.id]) ui.toolBtns[t.id].title = commandTooltip(t.label, t.id, t.description);
@@ -4440,6 +4451,7 @@ function buildCommand() {
 }
 /** A command is on (a tool, a grip, a rotate, …): its name and what it asks for, for the bar. Null when nothing is running. */
 function activeCmd() {
+  if (!ui.startScreen.hidden) return null;
   if (state.distributeRect) return { label: 'DISTRIBUTE', prompt: state.distributeRect.prompt || 'Pick the rectangle', takes: () => false };
   if (state.arrangePoint) return { label: 'ALIGN', prompt: 'Align: click the point (snaps on), or type X,Y', takes: () => false };
   if (state.paste) return { label: 'PASTE', prompt: 'Paste: follows the cursor, click to place (Esc cancels):', takes: () => false };
@@ -4462,6 +4474,7 @@ const pointToolAction = () => state.arrangePoint ? arrangeAtPoint : state.setlen
 
 /** What was typed at the bar (or sent by a chip or a history line), in the command that is on or as a new command. */
 function cmdEnter(raw) {
+  if (!ui.startScreen.hidden) { runCommand(CB.resolve(raw.trim().toLowerCase(), curLay() ? 'layout' : 'draw', ownCommands)); return; }
   if (state.eatteditAsk) { renderCommand(); return; }
   if (state.attdispAsk) {
     const c = raw.trim().toLowerCase(), mode = { normal: 1, on: 2, off: 0 }[c], d = state.attdispAsk;
@@ -4593,6 +4606,7 @@ const DO = {
 function runCommand(cmd) {
   if (!cmd) return;
   const n = cmd.name, label = n[0].toUpperCase() + n.slice(1), lay = curLay();
+  if (!ui.startScreen.hidden && !['open', 'compare'].includes(n)) { note('Open or start a drawing first'); return; }
   if (cmd.where === 'layout' && !lay) { note(`${label} is on a layout tab: New layout, or Add to layout`); return; }
   if (cmd.where === 'draw' && lay && cmd.cat !== 'Draw' && n !== 'textoutlines' && n !== 'combine' && n !== 'explode' && n !== 'dimension' && !DIM_OF[n] && !LAY_MODS.includes(TOOL_OF[n] || n)) { note(`${label} works on a drawing tab: open a drawing first`); return; }
   if (DIM_OF[n]) { if (cmpDoc() && !cmpEdit()) return; if (dimTarget()) setDimType(DIM_OF[n]); else note('Dimensions work on a drawing tab or a layout: open one first'); }

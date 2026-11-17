@@ -287,6 +287,93 @@ try {
       console.log('307a: default/start/blank, launch wait, New/Open/Compare/Recent, tab reuse, last close, recovery; light/dark screenshots verified');
     } finally { await context.close(); }
   });
+  await step('TODO 307b: Start screen recent-row menu Open / Remove / Copy full path; tools greyed and typed drawing commands refused', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    try {
+      const p = await context.newPage(), q = (id) => p.getByTestId(id);
+      p.on('pageerror', (e) => errors.push(String(e)));
+      const paths = ['C:\\jobs\\<plate>.dxf', 'D:/older/outline.dxf'], dxf = readFileSync('fixtures/outline.dxf', 'utf8');
+      await p.addInitScript(({ paths, dxf }) => {
+        localStorage.setItem('pd-start-mode', 'start');
+        localStorage.setItem('pd-recent', JSON.stringify(paths));
+        window.startReads = []; window.startCopies = [];
+        window.__TAURI__ = {
+          event: { listen: async () => () => {} }, core: { invoke: async () => [] },
+          fs: { exists: async () => true, readFile: async (path) => { window.startReads.push(path); return new TextEncoder().encode(dxf); } },
+          dialog: { open: async () => 'E:/typed-open.dxf' },
+        };
+        Object.defineProperty(navigator, 'clipboard', { value: { writeText: async (path) => {
+          if (window.startCopyFails) throw new Error('clipboard denied');
+          window.startCopies.push(path);
+        } } });
+      }, { paths, dxf });
+      await p.goto(URL_ + '?autosave=86400000'); await q('start-screen').waitFor();
+      const rows = q('start-recent'), menu = q('ctx-menu');
+      const type = async (text) => {
+        if (!(await q('cmd-input').isVisible())) await q('cmd-echo').click();
+        await q('cmd-input').fill(text); await q('cmd-input').press('Enter');
+      };
+      const greyed = async () => {
+        assert.ok(await p.locator('.rail button').count());
+        assert.equal(await p.locator('.rail button:enabled').count(), 0, 'all rail tools disabled');
+        for (const name of ['Draw', 'Modify']) assert.equal(await p.locator(`[data-menu=${name}]`).isDisabled(), true);
+        assert.equal(await p.locator('.ribbon-body').getByRole('button', { name: 'Line', exact: true }).isDisabled(), true);
+      };
+      await greyed();
+      for (const command of ['line', 'mv', 'dli', 'textoutlines', 'step', 'ortho']) {
+        await type(command);
+        await p.waitForFunction(() => document.querySelector('[data-testid=cmd-prompt]').textContent.includes('Open or start a drawing first'));
+        assert.equal(await q('start-screen').isVisible(), true);
+      }
+      for (const theme of ['light', 'dark']) {
+        await p.locator('[data-menu=View]').click();
+        assert.equal(await p.locator('.dropdown').isVisible(), true, JSON.stringify(errors));
+        await p.getByRole('menuitemcheckbox', { name: new RegExp('Theme: ' + theme) }).click();
+        assert.equal(await p.locator('html').getAttribute('data-theme'), theme);
+        await rows.first().click({ button: 'right' });
+        assert.deepEqual(await menu.getByRole('menuitem').allTextContents(), ['Open', 'Remove from list', 'Copy full path']);
+        assert.deepEqual(await p.evaluate(() => window.startReads), [], 'right-click does not open');
+        const path = `${shotDir}/todo307b-start-menu-${theme}.png`;
+        await p.screenshot({ path }); assert.ok(readFileSync(path).length > 1000);
+        await p.keyboard.press('Escape'); assert.equal(await menu.count(), 0);
+      }
+      await rows.first().click({ button: 'right' }); await menu.getByRole('menuitem', { name: 'Copy full path', exact: true }).click();
+      await p.waitForFunction(() => /copied/i.test(document.querySelector('[data-testid=cmd-prompt]').textContent));
+      assert.deepEqual(await p.evaluate(() => window.startCopies), [paths[0]]);
+      await p.evaluate(() => { window.startCopyFails = true; });
+      await rows.first().click({ button: 'right' }); await menu.getByRole('menuitem', { name: 'Copy full path', exact: true }).click();
+      await p.waitForFunction(() => /could not copy/i.test(document.querySelector('[data-testid=cmd-prompt]').textContent));
+      assert.equal(await q('start-screen').isVisible(), true);
+      await rows.first().click({ button: 'right' }); await menu.getByRole('menuitem', { name: 'Remove from list', exact: true }).click();
+      assert.deepEqual(await rows.getAttribute('title'), paths[1]);
+      assert.deepEqual(await p.evaluate(() => JSON.parse(localStorage.getItem('pd-recent'))), [paths[1]]);
+      await p.locator('[data-menu=File]').click();
+      assert.equal(await p.getByRole('menuitem', { name: /<plate>/ }).count(), 0);
+      assert.equal(await p.getByRole('menuitem', { name: '1  outline.dxf', exact: true }).count(), 1);
+      await p.keyboard.press('Escape');
+      await rows.click({ button: 'right' }); await menu.getByRole('menuitem', { name: 'Open', exact: true }).click();
+      await q('start-screen').waitFor({ state: 'hidden' });
+      assert.deepEqual(await p.evaluate(() => window.startReads), [paths[1]]);
+      assert.equal(await p.locator('.tabs .dtab.on .tname').textContent(), 'outline.dxf');
+      assert.equal(await p.locator('[data-menu=Modify]').isEnabled(), true);
+      assert.equal(await p.locator('[data-tool=line]').isEnabled(), true);
+      await q('start-tab').click(); await greyed();
+      await type('open'); await q('start-screen').waitFor({ state: 'hidden' });
+      assert.equal(await p.locator('.tabs .dtab.on .tname').textContent(), 'typed-open.dxf');
+      await q('start-tab').click(); await type('compare'); await q('start-screen').waitFor({ state: 'hidden' });
+      assert.equal(await p.locator('.tabs .dtab.on .tname').textContent(), 'Compare');
+      await q('start-tab').click(); await p.locator('[data-menu=Tools]').click();
+      await p.getByRole('menuitem', { name: 'Options…', exact: true }).click();
+      await p.getByRole('dialog', { name: 'Options', exact: true }).waitFor(); await p.keyboard.press('Escape');
+      assert.equal(await q('start-screen').isVisible(), true);
+      await p.locator('.tabs .dtab').first().click();
+      assert.equal(await q('start-screen').isVisible(), false);
+      await q('start-tab').click(); await q('new-tab').click();
+      assert.equal(await q('start-screen').isVisible(), false);
+      assert.equal(await p.locator('[data-tool=line]').isEnabled(), true);
+      console.log('307b: Open/Remove/Copy success+failure, immediate Recent refresh, disabled tools, typed refusal/open/compare, Options/tabs; light/dark menu screenshots verified');
+    } finally { await context.close(); }
+  });
   await step('TODO 304: drawings and PDF sheet tabs keep their own pan, zoom and Zoom Previous', async () => {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     try {

@@ -611,8 +611,8 @@ select.fld { font-family: var(--sans); }
 .cutnote.bad .lbl { color: var(--muted); }
 
 /* not built yet: greyed but visible, with a "Not built yet" tooltip; a click only says so in the command line */
-.menu.off, .tool.off, .seg.off, .tog.off, .btn.off { opacity: .45; cursor: default; }
-.menu.off:hover, .tool.off:hover, .seg.off:hover { background: transparent; }
+.menu.off, .tool.off, .seg.off, .tog.off, .btn.off, .menu:disabled, .tool:disabled { opacity: .45; cursor: default; }
+.menu.off:hover, .tool.off:hover, .seg.off:hover, .menu:disabled:hover, .tool:disabled:hover { background: transparent; }
 .btn.off:hover { border-color: var(--line); }
 .tog.off:hover { color: var(--muted); }
 /* menu items: the shortcut sits at the right */
