@@ -2646,7 +2646,7 @@ function arrange(kind, how, point = null, rectangle = null) {
   if (lay && items.some((x) => x.p.lock)) { note(LOCKED); return; }
   const rel = page ? 'sheet' : center ? 'first' : !lay && state.arrangeRel === 'sheet' ? 'selection' : state.arrangeRel, sheet = lay ? [0, 0, lay.s.sheetW, lay.s.sheetH] : null;
   const objs = A.objectsOf(items);
-  const boxes = objs.map((o) => o.box), relName = { selection: 'the selection', sheet: 'the sheet', first: 'the first selected', last: 'the last selected', rectangle: 'the rectangle', point: kind === 'align' ? 'the point' : 'the selection; Point uses Selection for Distribute' }[rel];
+  const boxes = objs.map((o) => o.box), relName = { selection: 'the selection', sheet: 'the sheet', first: 'the first selected', last: 'the last selected', rectangle: kind === 'align' ? 'the selection; Rectangle is for Distribute' : 'the rectangle', point: kind === 'align' ? 'the point' : 'the selection; Point uses Selection for Distribute' }[rel];
   const edges = kind === 'distribute' && A.ALIGN_HOW.includes(how);
   let deltas, extra = '';
   if (center) {

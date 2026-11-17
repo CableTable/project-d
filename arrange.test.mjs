@@ -214,6 +214,11 @@ test('TODO 292: Rectangle and Sheet accept two objects and negative gaps, Select
   assert.equal(A.distributeDeltas(B.slice(0, 2), 'x', 'selection', null, 'left'), null);
 });
 
+test('TODO 292 fix: Align has no rectangle frame, Rectangle lines up to the selection (the note says so)', () => {
+  const b = [[0, 0, 10, 10], [50, 5, 60, 20]];
+  for (const how of A.ALIGN_HOW) assert.deepEqual(A.alignDeltas(b, how, 'rectangle'), A.alignDeltas(b, how, 'selection'));
+});
+
 test('groups are one object: members move together', () => {
   const items = [{ g: 'a', box: [0, 0, 10, 10] }, { g: null, box: [50, 0, 60, 10] }, { g: 'a', box: [20, 0, 30, 10] }];
   const objs = A.objectsOf(items);
