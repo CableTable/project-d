@@ -738,7 +738,7 @@ try {
         await pick('mm'); assert.equal(await length().inputValue(), '1219.20');
         await p.keyboard.press('Control+z'); await props(); assert.equal(await length().inputValue(), '1066.80');
         if (mode === 'Compare') {
-          await p.locator('.dtab').nth(sourceIndex).click();
+          await p.locator('.tabs .dtab').nth(sourceIndex).click();
           back = await saved(); assert.ok(Math.abs(lineEnds(back.entities.find((e) => e.type === 'LINE'))[2] - 1066.8) < 1e-6);
         }
       }
@@ -3621,6 +3621,8 @@ try {
         await page.waitForTimeout(60);
       }
     } finally { page.off('dialog', accept); }
+    // Closing the last tab now shows Start (307 Q4); these drawing flows leave it via New drawing (F2).
+    if (await t('start-screen').isVisible()) await t('start-new').click();
   };
   await step('TODO 141 / 142: Save and layout paste report table conversions and dropped types; Extract shows the source base name; saved tables reopen', async () => {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
