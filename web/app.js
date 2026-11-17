@@ -509,7 +509,7 @@ function buildStartScreen() {
   ui.startRecent = h('section', { class: 'start-recents', 'aria-label': 'Recent files' });
   ui.startScreen = h('section', { class: 'start-screen', hidden: true, 'data-testid': 'start-screen', 'aria-label': 'Start screen' },
     h('h1', null, 'Start'), h('div', { class: 'start-content' },
-      h('div', { class: 'start-actions' }, action('new', 'New drawing', () => {}), action('layout', 'New layout', newLayoutTab),
+      h('div', { class: 'start-actions' }, action('new', 'New drawing', () => { if (!curDoc().empty) addTab(emptyDoc()); }), action('layout', 'New layout', newLayoutTab),
         action('open', 'Open…', openFile), action('compare', 'Compare drawings…', cmpStart)), ui.startRecent));
   // The overlay's pointer events belong to its controls, not the drawing underneath.
   for (const name of ['pointerdown', 'pointermove', 'pointerup', 'click', 'dblclick', 'wheel', 'contextmenu']) ui.startScreen.addEventListener(name, (e) => e.stopPropagation());
