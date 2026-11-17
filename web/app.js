@@ -534,11 +534,11 @@ function buildMenus() {
     Edit: [['Undo', () => undoCurrent(), 'Ctrl+Z', () => ui.startScreen.hidden && (!!state.paste || !!state.grip || !!historyOf(curDoc())?.canUndo)],
       ['Redo', () => undoCurrent(true), 'Ctrl+Y', () => ui.startScreen.hidden && !!historyOf(curDoc())?.canRedo],
       ['Copy', copySelection, 'Ctrl+C', () => curLay() ? !!selItems().length : !!editable()?.sel.size],
-      ['Cut', cutSelection, null, () => !!editable()?.sel.size],
+      ['Cut', cutSelection, null, () => ui.startScreen.hidden && !!editable()?.sel.size],
       ['Paste', pasteSelection, 'Ctrl+V', () => !!clipboard && (!!cmpDoc() || !!curDoc()?.lay || !!editable())],
-      ['Paste in place', pasteInPlace, 'Ctrl+Shift+V', () => !!clipboard && (!!cmpDoc() || !!curDoc()?.lay || !!editable())],
+      ['Paste in place', pasteInPlace, 'Ctrl+Shift+V', () => ui.startScreen.hidden && !!clipboard && (!!cmpDoc() || !!curDoc()?.lay || !!editable())],
       ['Undo history…', showHistory, null, () => !!historyOf(curDoc())],
-      ['Select all', selectAll, 'Ctrl+A', () => !!editable() || !!curLay()],
+      ['Select all', selectAll, 'Ctrl+A', () => ui.startScreen.hidden && (!!editable() || !!curLay())],
       ['Delete', () => (curLay() ? deletePlaced() : deleteSelection()), 'Del', () => { const d = editable(); return ui.startScreen.hidden && (d ? d.sel.size > 0 : !!selectedPlaced()); }]],
     View: () => {
       const lay = guideTarget(), theme = document.documentElement.dataset.theme || 'system', tick = (on, text) => (on ? '✓ ' : '  ') + text;
@@ -11065,7 +11065,6 @@ function editKey(e) {
   if (e.key === 'F12' && !e.ctrlKey && !e.altKey && !e.shiftKey) { e.preventDefault(); dynamicInputSet(!state.dynamicInput); return; }
   if ((e.key === 'F10' || e.key === 'F11') && !e.ctrlKey && !e.altKey && !e.shiftKey) { e.preventDefault(); if (e.key === 'F10') polarSet(!state.polar.on); else otrackSet(!state.otrack); return; }
   if (e.key === 'F2' && !e.ctrlKey && !e.altKey && !e.shiftKey) { e.preventDefault(); ui.cmdUI.toggleHistory(); return; }
-  if (!ui.startScreen.hidden) return;
   const d = editable();
   if (e.key === 'Escape') {
     if (state.distributeRect) { e.preventDefault(); state.distributeRect = null; ui.cmdUI.escape(); note('Distribute cancelled'); paintOverlay(); return; }
@@ -11123,6 +11122,7 @@ function editKey(e) {
   const mod = e.ctrlKey || e.metaKey, k = e.key.toLowerCase();
   const dialog = !!document.querySelector('.pop-back, .pdlg-back, dialog[open]'), seed = CB.keyOpensBar(e, { dialog, active: !!activeCmd() });
   if (seed != null) { e.preventDefault(); ui.cmdUI.open(seed); return; }       // a letter or digit typed on the drawing starts the command bar
+  if (!ui.startScreen.hidden) return;
   if (state.grip && (e.key === 'Enter' || e.key === ' ') && !mod && !e.altKey && !dialog && !(e.target.closest && e.target.closest('button, a'))) { e.preventDefault(); gripCycle(); return; }       // Space / Enter on a hot grip: the next grip mode
   if ((e.key === 'Enter' || e.key === ' ') && !mod && !e.altKey && !dialog && dimAutoLive() && !(e.target.closest && e.target.closest('button, a'))) { e.preventDefault(); dimAutoEnd(); return; }       // Automatic dimension repeats until Enter, Space or Esc
   if (state.grip && mod && !e.altKey && (k === 'y' || k === 'z')) { e.preventDefault(); undoCurrent(k === 'y' || e.shiftKey); return; }       // in a grip run Undo / Redo are the run's own (see undoCurrent)

@@ -320,6 +320,12 @@ try {
         assert.equal(await p.locator('.ribbon-body').getByRole('button', { name: 'Line', exact: true }).isDisabled(), true);
       };
       await greyed();
+      await p.keyboard.type('open'); await q('cmd-input').waitFor({ state: 'visible' });
+      assert.equal(await (await p.waitForFunction(() => {
+        const value = document.querySelector('[data-testid=cmd-input]').value;
+        return value === 'open' && value;
+      })).jsonValue(), 'open');
+      await p.keyboard.press('Escape');
       for (const command of ['line', 'mv', 'dli', 'textoutlines', 'step', 'ortho']) {
         await type(command);
         await p.waitForFunction(() => document.querySelector('[data-testid=cmd-prompt]').textContent.includes('Open or start a drawing first'));
@@ -387,12 +393,15 @@ try {
       assert.equal(await p.getByRole('menuitem', { name: 'Undo', exact: true }).isEnabled(), true);
       await p.keyboard.press('Escape'); await q('start-tab').click();
       await p.locator('[data-menu=Edit]').click();
-      for (const name of ['Undo', 'Redo', 'Delete']) assert.equal(await p.getByRole('menuitem', { name, exact: true }).isDisabled(), true);
+      for (const name of ['Undo', 'Redo', 'Delete', 'Cut', 'Paste in place', 'Select all']) assert.equal(await p.getByRole('menuitem', { name, exact: true }).isDisabled(), true);
       await p.keyboard.press('Escape'); await p.keyboard.press('Control+z');
       assert.equal(await q('entities').textContent(), 'Entities 1', 'Ctrl+Z on Start leaves the drawing unchanged');
       await p.locator('.tabs .dtab.on').click();
       await p.keyboard.press('Control+z');
-      assert.equal(await q('entities').textContent(), 'Entities 0', 'Undo still works after leaving Start');
+      assert.equal(await (await p.waitForFunction(() => {
+        const text = document.querySelector('[data-testid=entities]').textContent;
+        return text === 'Entities 0' && text;
+      })).jsonValue(), 'Entities 0', 'Undo still works after leaving Start');
       console.log('307b: Open/Remove/Copy success+failure, immediate Recent refresh, disabled tools, typed refusal/open/compare, Options/tabs; light/dark menu screenshots verified');
     } finally { await context.close(); }
   });
