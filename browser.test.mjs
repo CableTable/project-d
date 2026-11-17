@@ -6791,6 +6791,7 @@ try {
     await page.waitForFunction(() => document.querySelector('.tabs .dtab.on').dataset.kind === 'layout');
     assert.equal(await vis('drawing-panel'), false); await layoutTab(); assert.equal(await vis('sheet-panel'), true);
     await t('ptab-step').click(); assert.equal(await vis('step-panel'), true); assert.equal(await vis('parts-panel'), false);
+    await page.keyboard.press('Escape');                   // board A2: a selected part hides Parts on this layout
     await t('ptab-drawing').click(); assert.equal(await vis('parts-panel'), true);
     assert.equal(await t('propbar').count(), 0);
     assert.equal(await t('ptab-drawing').getAttribute('aria-label'), 'Properties');

@@ -11122,7 +11122,7 @@ function buildDrawingSection() {
     h('div', { class: 'grid2' }, size('Width mm', 'dw', 'w'), size('Height mm', 'dh', 'h')));
   ui.drawSec = h('section', { class: 'drawbox', hidden: true, 'data-testid': 'drawing-panel' },
     h('div', { class: 'layers-head' }, h('h2', { class: 'sec' }, 'Drawing scale'),
-      h('span', { class: 'tools' },
+      ui.undoTools = h('span', { class: 'tools' },
         tog('Undo', 'undo', () => undoCurrent(), 'Undo (Ctrl+Z)'),
         tog('Redo', 'redo', () => undoCurrent(true), 'Redo (Ctrl+Y)'))),
     h('div', { class: 'unitrow' },
@@ -11343,7 +11343,7 @@ function buildPropsSection() {
   ui.propJumps = buildPropertyJumps([['General', 'props-general', '▤'], ['Outline', 'props-outline', '▭'], ['Fill', 'props-fill', '■'], ['Info', 'props-info', 'ⓘ']]);
   ui.propBody = h('div', { class: 'propbody' }, ui.propJumps, sec('General', 'general', ui.propCommon), sec('Outline', 'outline', ui.propWidth, ui.propLineEnds), ui.propFillSec, ui.propInfo);
   ui.propSec = h('section', { class: 'propbox', hidden: true, 'data-testid': 'props-panel' },
-    h('div', { class: 'layers-head' }, h('h2', { class: 'sec' }, 'Properties'), ui.propChip), ui.propEmpty, ui.propBody, sec('Select', 'select', ui.propButtons, ui.selRow));
+    ui.propHead = h('div', { class: 'layers-head' }, h('h2', { class: 'sec' }, 'Properties'), ui.propChip), ui.propEmpty, ui.propBody, sec('Select', 'select', ui.propButtons, ui.selRow));
   return ui.propSec;
 }
 
@@ -12219,6 +12219,8 @@ function renderEdit() {
   ui.outSec.hidden = !!cmpDoc() || !on;                    // stays with a selection: Extract part… needs one
   const sizeBody = (on && selected ? ui.propInfo : ui.drawSec).querySelector('.section-body');
   if (ui.drawSize.parentElement !== sizeBody) sizeBody.append(ui.drawSize);
+  const undoHead = on && selected ? ui.propHead : ui.drawSec.querySelector('.layers-head');   // Drawing scale hides with a selection; Undo / Redo stay reachable
+  if (ui.undoTools.parentElement !== undoHead) undoHead.append(ui.undoTools);
   for (const section of [ui.drawSec, ui.tinySec, ui.dupsSec]) applySectionFold(section);
   if (state.colourTool && (!on || state.colourTool.d !== d)) state.colourTool = null;
   if (state.match?.d.vlay === curDoc()) state.match.d = propDoc();

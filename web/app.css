@@ -356,8 +356,9 @@ select.fld { font-family: var(--sans); }
 .rubber { position: absolute; z-index: 3; pointer-events: none; border: 1px solid var(--partline); background: color-mix(in srgb, var(--box-window) 25%, transparent); }       /* 155r: SELECTIONAREAOPACITY 25; 157b: AutoCAD's white edge (the drawing's own contrast colour, so it shows on a light canvas too) */
 .canvas > .rubber.crossing { background: color-mix(in srgb, var(--crossing) 25%, transparent); border-style: dashed; }
 .drawbox .layers-head { gap: 2px; }
-.drawbox .layers-head .tog { margin-left: 0; }
+.drawbox .layers-head .tog, .propbox .layers-head .tools .tog { margin-left: 0; }
 .drawbox .tools { margin-left: auto; display: flex; gap: 2px; }
+.propbox .tools { display: flex; gap: 2px; }              /* 282b1: Undo / Redo move here while something is selected (Drawing scale hides) */
 .unitrow { display: flex; gap: 4px; margin: 2px 0 6px; }
 .unitrow .tog { border: 1px solid var(--line); }
 .btn.sm { height: 26px; padding: 0 10px; justify-content: center; }
@@ -798,7 +799,7 @@ input.cursor-field[aria-invalid='true'] { border-color: #dc2626; outline: 1px so
 
 /* Properties (TODO 24, 25; R5b Option B): the section at the top of the Drawing panel */
 .panel section.propbox { border-bottom: 1px solid var(--line); }
-.propbox .layers-head { display: flex; align-items: center; gap: 8px; }
+.propbox .layers-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .propbox .layers-head .chip { margin-left: auto; }
 .propbody, .propgeo { display: flex; flex-direction: column; gap: 6px; }
 .proprow { display: flex; align-items: center; gap: 8px; }
