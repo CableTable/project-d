@@ -8,6 +8,8 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **PDF-compatible Illustrator file**: An `.ai` saved with Illustrator's Create PDF Compatible File option. Open imports its PDF artwork as a drawing, with one layer per outline colour; Save writes a DXF. Where: `DECISIONS.md`, Illustrator and PDF colours (TODO 300).
 
+**Start screen**: The page the desktop app shows when it starts with no file, or when the last tab closes: New drawing, New layout, Open, Compare and Recent files. It covers the current tab and is not a drawing tab; the house button at the left of the tab strip shows it again. Options "At start" turns it off. Where: `rook-hq/runs49/grill-307.md` (TODO 307). Avoid: Home, Welcome screen (Home is the first ribbon tab).
+
 **Context tab**: A ribbon tab shown for the current selection, such as Part when placed parts are selected on a layout. Where: `web/app.js`.
 
 **Docker tab**: One of Properties, Objects, Layers, Library and Step down the right edge of the right panel, with rotated labels and the active tab blue. The title bar's >> folds the panel to that strip; a tab opens it again. X hides it; Show panel or Ctrl+1 brings it back. Width, visibility and folds are remembered on this PC. Where: `web/app.js`, `web/docker.js`; `DECISIONS.md`, TODO 282b1.
