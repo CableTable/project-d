@@ -12215,7 +12215,8 @@ function renderEdit() {
   const selected = curLay() ? selIdxs().length > 0 : !!d?.sel?.size;
   ui.guideSec.hidden = !guideTarget() || state.panel === 'library' || selected;
   ui.partsSec.hidden = ui.gapSec.hidden = !curLay() || state.panel === 'library' || selected;
-  ui.drawSec.hidden = ui.tinySec.hidden = ui.dupsSec.hidden = ui.outSec.hidden = !!cmpDoc() || !on || selected;
+  ui.drawSec.hidden = ui.tinySec.hidden = ui.dupsSec.hidden = !!cmpDoc() || !on || selected;
+  ui.outSec.hidden = !!cmpDoc() || !on;                    // stays with a selection: Extract part… needs one
   const sizeBody = (on && selected ? ui.propInfo : ui.drawSec).querySelector('.section-body');
   if (ui.drawSize.parentElement !== sizeBody) sizeBody.append(ui.drawSize);
   for (const section of [ui.drawSec, ui.tinySec, ui.dupsSec]) applySectionFold(section);

@@ -3012,9 +3012,9 @@ try {
       await q('drawing-panel').waitFor({ state: 'visible' });
       assert.equal(await fold('drawing-panel').getAttribute('aria-expanded'), 'true', 'open fold survives reload');
       await fold('drawing-panel').click();
-      await fold('outlines-panel').click(); await p.keyboard.press('Control+a'); await q('bar-extract').click();
+      await p.keyboard.press('Control+a'); await fold('outlines-panel').click(); await q('extract').click();
       await q('name-input').fill('<R19 bracket>'); await q('name-ok').click();
-      await q('name-dialog').waitFor({ state: 'detached' }); await p.keyboard.press('Escape'); await fold('outlines-panel').click();
+      await q('name-dialog').waitFor({ state: 'detached' }); await fold('outlines-panel').click();
       await q('panel-library').click();
       assert.deepEqual(await q('lib-list').locator('.cname').allTextContents(), ['<R19 bracket>'], 'part names stay literal text');
       assert.deepEqual(await p.locator('[data-docker=library] > section').evaluateAll((els) => els.map((e) => e.querySelector('.section-title').textContent)), ['Parts']);
