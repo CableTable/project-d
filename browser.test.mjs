@@ -77,6 +77,8 @@ function panelControl(page, locator) {
       if (pane) {
         const tab = page.locator(`[data-tab=${pane}]`);
         if (await tab.getAttribute('aria-selected') !== 'true') await tab.click();
+        // grill-282b Q6: Guides, Parts on this layout, Drawing scale, Tiny gaps... show with nothing selected; Esc clears the selection (a multi-selection takes two)
+        for (let i = 0; i < 3 && await target.evaluate((el) => !!el.closest('section[hidden]')); i++) await page.keyboard.press('Escape');
         const sections = await target.evaluate((el) => {
           const keys = [];
           for (let p = el.parentElement; p; p = p.parentElement) if (p.classList.contains('docker-folded') && !p.querySelector('.section-toggle')?.contains(el)) keys.unshift(p.dataset.section);
@@ -3051,7 +3053,7 @@ try {
       await q('panel-fold').click(); assert.equal(await q('size-strip').isVisible(), false);
       await q('ptab-drawing').click(); assert.equal(await q('size-strip').isVisible(), true);
       await p.locator('[data-i="0"] .part-hit').click({ force: true });
-      assert.deepEqual(await titles(), ['Selected part', 'Properties', 'Arrange', 'Transform', 'Duplicate', 'Group and lock']);
+      assert.deepEqual(await titles(), ['Selected part', 'Properties', 'Parts on this layout', 'Guides', 'Arrange', 'Transform', 'Duplicate', 'Group and lock']);      // grill-282b Q6: Parts and Guides are not nothing-selected-only
       for (const id of ['sec-rotate', 'sec-mirror', 'sec-nudge', 'sec-duplicate', 'sec-group']) await q(id).locator('.section-toggle').click();
       await fit(290); await fit(220);
       for (const theme of ['light', 'dark']) {
@@ -3217,7 +3219,7 @@ try {
     const expected = {
       Drawing: { drawing: ['Properties', 'Select', 'Guides', 'Drawing scale', 'Outlines in this drawing', 'Tiny gaps', 'Duplicates'], objects: [], layers: ['Layers'], library: ['Parts'], step: null },
       Layout: { drawing: ['Properties', 'Select', 'Parts on this layout', 'Guides', 'Extra gaps'], objects: [], layers: ['Layers'], library: ['Parts'], step: ['Step and repeat'] },
-      'Layout selected': { drawing: ['Selected part', 'Properties', 'Select', 'Arrange', 'Transform', 'Rotate', 'Mirror', 'Nudge', 'Duplicate', 'Group and lock'], objects: [], layers: ['Layers'], library: ['Parts'], step: ['Step and repeat'] },
+      'Layout selected': { drawing: ['Selected part', 'Properties', 'Select', 'Parts on this layout', 'Guides', 'Arrange', 'Transform', 'Rotate', 'Mirror', 'Nudge', 'Duplicate', 'Group and lock'], objects: [], layers: ['Layers'], library: ['Parts'], step: ['Step and repeat'] },
       Compare: { drawing: ['Properties', 'Select', 'Guides', 'Compare', 'Differences'], objects: [], layers: ['Layers'], library: ['Parts'], step: null },
     };
     const audit = async (kind) => {
@@ -9417,8 +9419,8 @@ try {
     assert.equal(await t('bar-mirror-x').textContent(), 'Mirror X'); assert.equal(await t('bar-mirror-y').textContent(), 'Mirror Y');
     assert.equal(await t('nudge-step').inputValue(), '1.0');
     // the right panel: Selected part, Arrange, Group and lock, Rotate, Mirror, Duplicate, Nudge, above the layout settings (TODO 281: Arrange at 1+ part on a layout)
-    const heads = await page.locator('[data-docker=drawing] > section.placedsec:not([hidden]) h2.sec').allTextContents();
-    assert.deepEqual(heads, ['Selected part', 'Arrange', 'Group and lock', 'Rotate', 'Mirror', 'Duplicate', 'Nudge']);
+    const heads = await page.locator('[data-docker=drawing] section.placedsec:not([hidden]) h2.sec').allTextContents();      // 282b Q6 (board A2): Rotate, Mirror, Nudge sit in Transform
+    assert.deepEqual(heads, ['Selected part', 'Arrange', 'Rotate', 'Mirror', 'Nudge', 'Duplicate', 'Group and lock']);
     assert.equal(await t('pp-name').textContent(), 'Plate A');
     assert.equal(await t('pp-size').textContent(), '100 × 60');
     assert.equal(await t('pp-x').inputValue(), '450.00');
@@ -9930,8 +9932,8 @@ try {
     assert.equal(await page.locator('[data-group=tools] .grip-sq rect').count(), 8);
     assert.equal(await t('members').locator('li').count(), 3);
     assert.equal(await t('hint-pill').textContent(), 'Rubber-band or Shift-click to select several parts · the number is the pick order');
-    const heads = await page.locator('[data-docker=drawing] > section.placedsec:not([hidden]) h2.sec').allTextContents();
-    assert.deepEqual(heads.slice(0, 7), ['Selected parts', 'Arrange', 'Group and lock', 'Rotate', 'Mirror', 'Duplicate', 'Nudge']);
+    const heads = await page.locator('[data-docker=drawing] section.placedsec:not([hidden]) h2.sec').allTextContents();      // 282b Q6 (board A2): Rotate, Mirror, Nudge sit in Transform
+    assert.deepEqual(heads.slice(0, 7), ['Selected parts', 'Arrange', 'Rotate', 'Mirror', 'Nudge', 'Duplicate', 'Group and lock']);
     assert.deepEqual(await page.locator('[data-testid=sec-arrange] .section-body button').evaluateAll((bs) => bs.map((b) => b.getAttribute('aria-label'))),
       ['Align left', 'Align centre', 'Align right', 'Align top', 'Align middle', 'Align bottom', 'Distribute horizontally', 'Distribute vertically', 'Distribute left edges', 'Distribute centre edges', 'Distribute right edges', 'Distribute top edges', 'Distribute middle edges', 'Distribute bottom edges', 'Centre on page']);
     assert.deepEqual(await t('arrange-rel').locator('option').allTextContents(), ['Selection', 'Sheet', 'First selected', 'Last selected', 'Point...', 'Rectangle']);
@@ -10152,7 +10154,7 @@ try {
     assert.match(await t('cmd-hist').textContent(), /^Command: SELECT {3}Group of 3 /);
     assert.equal(await t('hint-pill').textContent(), 'A group moves, turns and copies as one part · Ctrl+Shift+G ungroups');
     const heads = await page.locator('[data-docker=drawing] > section.placedsec:not([hidden]) h2.sec').allTextContents();
-    assert.deepEqual(heads.slice(0, 3), ['Selected group', 'Arrange', 'Group and lock']);
+    assert.deepEqual(heads.slice(0, 4), ['Selected group', 'Arrange', 'Duplicate', 'Group and lock']);      // 282b Q6 (board A2 order)
     assert.equal(await t('grp-group').isDisabled(), true); assert.equal(await t('grp-ungroup').isDisabled(), false);
     assert.equal(await t('grp-lock').isDisabled(), false); assert.equal(await t('grp-unlock').isDisabled(), true);
     // a click elsewhere selects the lone Dial; a click on a member selects the whole group

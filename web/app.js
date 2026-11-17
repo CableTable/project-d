@@ -3069,7 +3069,7 @@ function setRulers(on) {
 function renderGuidePanel() {
   if (!ui.guideSec) return;
   const lay = guideTarget(), lib = state.panel === 'library';
-  ui.guideSec.hidden = !lay || lib || (curLay() ? selIdxs().length > 0 : !!editable()?.sel.size);
+  ui.guideSec.hidden = !lay || lib;                          // grill-282b Q6: not a nothing-selected-only section (it goes to the Objects tree, 282b2)
   if (!lay || lib) return;
   const sig = lay.s.guides.map((q) => q.axis + q.mm).join(',');
   if (ui.guideSig !== sig || ui.guideLay !== lay) {
@@ -5963,6 +5963,8 @@ function pickGap(key) {
   const axis = key[0], after = Number(key.slice(1)), list = gapList(axis);
   state.gapSel = { axis, after };
   if (!list.some((e) => e.after === after)) list.push({ after, mm: 0 });
+  if (selIdxs().length) selectMany([]);                                  // 282b1: Extra gaps show with no part selected (grill-282b Q6)
+  if (state.ptab !== 'drawing' || docker.folded) setPtab('drawing');   // and on the Properties tab
   update();
   const inp = ui.gapList.querySelector(`[data-gap-field="${key}"]`);
   if (inp) { inp.focus(); inp.select(); }
@@ -12276,8 +12278,9 @@ function renderEdit() {
     }
   }
   const selected = curLay() ? selIdxs().length > 0 : !!d?.sel?.size;
-  ui.guideSec.hidden = !guideTarget() || state.panel === 'library' || selected;
-  ui.partsSec.hidden = ui.gapSec.hidden = !curLay() || state.panel === 'library' || selected;
+  ui.guideSec.hidden = !guideTarget() || state.panel === 'library';        // grill-282b Q6: Guides and Parts on this layout stay with a selection (Objects tree, 282b2)
+  ui.partsSec.hidden = !curLay() || state.panel === 'library';
+  ui.gapSec.hidden = !curLay() || state.panel === 'library' || selected;
   ui.drawSec.hidden = ui.tinySec.hidden = ui.dupsSec.hidden = !!cmpDoc() || !on || selected;
   ui.outSec.hidden = !!cmpDoc() || !on;                    // stays with a selection: Extract part… needs one
   const sizeBody = (on && selected ? ui.propInfo : ui.drawSec).querySelector('.section-body');
