@@ -329,7 +329,10 @@ try {
         await p.locator('[data-menu=View]').click();
         assert.equal(await p.locator('.dropdown').isVisible(), true, JSON.stringify(errors));
         await p.getByRole('menuitemcheckbox', { name: new RegExp('Theme: ' + theme) }).click();
-        assert.equal(await p.locator('html').getAttribute('data-theme'), theme);
+        assert.equal(await (await p.waitForFunction((theme) => {
+          const value = document.documentElement.dataset.theme;
+          return value === theme && value;
+        }, theme)).jsonValue(), theme);
         await rows.first().click({ button: 'right' });
         assert.deepEqual(await menu.getByRole('menuitem').allTextContents(), ['Open', 'Remove from list', 'Copy full path']);
         assert.deepEqual(await p.evaluate(() => window.startReads), [], 'right-click does not open');
@@ -345,7 +348,10 @@ try {
       await p.waitForFunction(() => /could not copy/i.test(document.querySelector('[data-testid=cmd-prompt]').textContent));
       assert.equal(await q('start-screen').isVisible(), true);
       await rows.first().click({ button: 'right' }); await menu.getByRole('menuitem', { name: 'Remove from list', exact: true }).click();
-      assert.deepEqual(await rows.getAttribute('title'), paths[1]);
+      assert.equal(await (await p.waitForFunction((path) => {
+        const title = document.querySelector('[data-testid=start-recent]')?.title;
+        return title === path && title;
+      }, paths[1])).jsonValue(), paths[1]);
       assert.deepEqual(await p.evaluate(() => JSON.parse(localStorage.getItem('pd-recent'))), [paths[1]]);
       await p.locator('[data-menu=File]').click();
       assert.equal(await p.getByRole('menuitem', { name: /<plate>/ }).count(), 0);
@@ -368,9 +374,25 @@ try {
       assert.equal(await q('start-screen').isVisible(), true);
       await p.locator('.tabs .dtab').first().click();
       assert.equal(await q('start-screen').isVisible(), false);
+      await q('start-tab').click(); await p.keyboard.press('Control+Tab');
+      await q('start-screen').waitFor({ state: 'hidden' });
+      assert.equal(await p.locator('.tabs .dtab.on .tname').textContent(), 'typed-open.dxf', 'Ctrl+Tab works from Start');
       await q('start-tab').click(); await q('new-tab').click();
       assert.equal(await q('start-screen').isVisible(), false);
       assert.equal(await p.locator('[data-tool=line]').isEnabled(), true);
+      await type('line'); await type('0,0'); await type('40,20');
+      await p.keyboard.press('Escape'); await p.keyboard.press('Escape');
+      assert.equal(await q('entities').textContent(), 'Entities 1');
+      await p.locator('[data-menu=Edit]').click();
+      assert.equal(await p.getByRole('menuitem', { name: 'Undo', exact: true }).isEnabled(), true);
+      await p.keyboard.press('Escape'); await q('start-tab').click();
+      await p.locator('[data-menu=Edit]').click();
+      for (const name of ['Undo', 'Redo', 'Delete']) assert.equal(await p.getByRole('menuitem', { name, exact: true }).isDisabled(), true);
+      await p.keyboard.press('Escape'); await p.keyboard.press('Control+z');
+      assert.equal(await q('entities').textContent(), 'Entities 1', 'Ctrl+Z on Start leaves the drawing unchanged');
+      await p.locator('.tabs .dtab.on').click();
+      await p.keyboard.press('Control+z');
+      assert.equal(await q('entities').textContent(), 'Entities 0', 'Undo still works after leaving Start');
       console.log('307b: Open/Remove/Copy success+failure, immediate Recent refresh, disabled tools, typed refusal/open/compare, Options/tabs; light/dark menu screenshots verified');
     } finally { await context.close(); }
   });

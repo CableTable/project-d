@@ -531,15 +531,15 @@ function buildMenus() {
   const menus = {
     File: () => [['Open…', openFile], ['New layout', newLayoutTab], ['Save', () => save(false), 'Ctrl+S'], ['Save As…', () => save(true), 'Ctrl+Shift+S'], ['Export DXF…', exportDxf], ['Export for cutter…', exportCutter], ['Compare drawings…', cmpStart], ['Import background…', () => ui.bgPicker.click()], ['Trace bitmap…', traceBitmap], ['PDF / Print…', exportPdf],
       ...recentItems()],
-    Edit: [['Undo', () => undoCurrent(), 'Ctrl+Z', () => !!state.paste || !!state.grip || !!historyOf(curDoc())?.canUndo],
-      ['Redo', () => undoCurrent(true), 'Ctrl+Y', () => !!historyOf(curDoc())?.canRedo],
+    Edit: [['Undo', () => undoCurrent(), 'Ctrl+Z', () => ui.startScreen.hidden && (!!state.paste || !!state.grip || !!historyOf(curDoc())?.canUndo)],
+      ['Redo', () => undoCurrent(true), 'Ctrl+Y', () => ui.startScreen.hidden && !!historyOf(curDoc())?.canRedo],
       ['Copy', copySelection, 'Ctrl+C', () => curLay() ? !!selItems().length : !!editable()?.sel.size],
       ['Cut', cutSelection, null, () => !!editable()?.sel.size],
       ['Paste', pasteSelection, 'Ctrl+V', () => !!clipboard && (!!cmpDoc() || !!curDoc()?.lay || !!editable())],
       ['Paste in place', pasteInPlace, 'Ctrl+Shift+V', () => !!clipboard && (!!cmpDoc() || !!curDoc()?.lay || !!editable())],
       ['Undo history…', showHistory, null, () => !!historyOf(curDoc())],
       ['Select all', selectAll, 'Ctrl+A', () => !!editable() || !!curLay()],
-      ['Delete', () => (curLay() ? deletePlaced() : deleteSelection()), 'Del', () => { const d = editable(); return d ? d.sel.size > 0 : !!selectedPlaced(); }]],
+      ['Delete', () => (curLay() ? deletePlaced() : deleteSelection()), 'Del', () => { const d = editable(); return ui.startScreen.hidden && (d ? d.sel.size > 0 : !!selectedPlaced()); }]],
     View: () => {
       const lay = guideTarget(), theme = document.documentElement.dataset.theme || 'system', tick = (on, text) => (on ? '✓ ' : '  ') + text;
       return [['Fit to window', fitView, 'Ctrl+0'], ['Zoom Window', zoomWindow, 'ZW'], ['Zoom Selection', zoomSelection, 'ZS', () => !!selectionBox()], ['Zoom Previous', zoomPrevious, 'ZP', () => !!curDoc()?.viewHist?.length],
@@ -4606,7 +4606,7 @@ const DO = {
 function runCommand(cmd) {
   if (!cmd) return;
   const n = cmd.name, label = n[0].toUpperCase() + n.slice(1), lay = curLay();
-  if (!ui.startScreen.hidden && !['open', 'compare'].includes(n)) { note('Open or start a drawing first'); return; }
+  if (!ui.startScreen.hidden && !['open', 'compare', 'nexttab', 'previoustab', 'closetab'].includes(n)) { note('Open or start a drawing first'); return; }
   if (cmd.where === 'layout' && !lay) { note(`${label} is on a layout tab: New layout, or Add to layout`); return; }
   if (cmd.where === 'draw' && lay && cmd.cat !== 'Draw' && n !== 'textoutlines' && n !== 'combine' && n !== 'explode' && n !== 'dimension' && !DIM_OF[n] && !LAY_MODS.includes(TOOL_OF[n] || n)) { note(`${label} works on a drawing tab: open a drawing first`); return; }
   if (DIM_OF[n]) { if (cmpDoc() && !cmpEdit()) return; if (dimTarget()) setDimType(DIM_OF[n]); else note('Dimensions work on a drawing tab or a layout: open one first'); }
@@ -11065,6 +11065,7 @@ function editKey(e) {
   if (e.key === 'F12' && !e.ctrlKey && !e.altKey && !e.shiftKey) { e.preventDefault(); dynamicInputSet(!state.dynamicInput); return; }
   if ((e.key === 'F10' || e.key === 'F11') && !e.ctrlKey && !e.altKey && !e.shiftKey) { e.preventDefault(); if (e.key === 'F10') polarSet(!state.polar.on); else otrackSet(!state.otrack); return; }
   if (e.key === 'F2' && !e.ctrlKey && !e.altKey && !e.shiftKey) { e.preventDefault(); ui.cmdUI.toggleHistory(); return; }
+  if (!ui.startScreen.hidden) return;
   const d = editable();
   if (e.key === 'Escape') {
     if (state.distributeRect) { e.preventDefault(); state.distributeRect = null; ui.cmdUI.escape(); note('Distribute cancelled'); paintOverlay(); return; }
