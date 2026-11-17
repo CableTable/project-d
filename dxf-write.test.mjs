@@ -451,3 +451,12 @@ test('a line type with text keeps its text (and its text style); layer names tha
   const names = Object.keys(reread(d).layers).map((k) => k.toLowerCase());
   assert.equal(names.filter((k) => k === 'cut').length, 1);
 });
+
+test('TODO 312: a 100 000-vertex polyline writes without a stack overflow and keeps every vertex row', () => {
+  const doc = W.newDoc();
+  doc.entities = [W.lwpoly(Array.from({ length: 100000 }, (_, i) => [i, i % 7]))];
+  let text;
+  assert.doesNotThrow(() => { text = W.writeDxf(doc); });
+  const back = D.readDxf(text);
+  assert.equal(back.entities[0].r.c.filter((c) => c === 10).length, 100000);
+});

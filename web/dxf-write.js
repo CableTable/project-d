@@ -254,7 +254,7 @@ function specific(r, parentFlags) {
       const res = [];
       markers.forEach(([m, codes], i) => {
         const part = codes ? out.filter((p) => codes.includes(p[0])) : out.filter((p) => !taken.has(p[0]));
-        if (i === 0 || part.length) res.push([100, m], ...part);
+        if (i === 0 || part.length) { res.push([100, m]); for (const p of part) res.push(p); }   // not push(...part): a 100 000-vertex polyline overflows the stack
       });
       return res;
     }
