@@ -23,7 +23,7 @@ export function operandsOf(loops) {
   const holders = pts.map((r, i) => pts.map((_, j) => j).filter((j) => j !== i && a[j] > a[i] && boxIn(i, j) && within(r, pts[j])).sort((x, y) => a[x] - a[y]));
   const out = new Map();
   pts.forEach((r, i) => { if (holders[i].length % 2 === 0) out.set(i, { poly: [r], loops: [i], area: a[i] }); });
-  pts.forEach((r, i) => { if (holders[i].length % 2) { const o = out.get(holders[i][0]); o.poly.push(r); o.loops.push(i); o.area -= a[i]; } });
+  pts.forEach((r, i) => { if (holders[i].length % 2) { const o = out.get(holders[i].find((j) => out.has(j))); o.poly.push(r); o.loops.push(i); o.area -= a[i]; } });
   // the holes would leave one shape (a nested pair): then each loop is its own shape, so one outline can be cut out of / welded with the other (TODO 288a)
   if (out.size < 2 && pts.length > 1) return pts.map((r, i) => ({ poly: [r], loops: [i], area: a[i] }));
   return [...out.values()];

@@ -626,7 +626,10 @@ export function trimRegion(ents, cutters, hit, limit = Infinity, makePath = path
     let pieces = bounds.slice(1).map((u, k) => [bounds[k], u]);
     const cut = pieces.map(([u0, u1]) => !!hit(subPath(P, u0, u1)));
     if (!cut.includes(true)) return;
-    preview.push(...pieces.filter((_, k) => cut[k]).map(([u0, u1]) => !cs.length ? shapeOf(ent, 1) : shapeOfPiece(subPath(P, u0, u1), P.type)).filter(Boolean).map((sh) => rebuilt(sh, ent)));
+    for (let k = 0; k < pieces.length; k++) if (cut[k]) {
+      const [u0, u1] = pieces[k], sh = !cs.length ? shapeOf(ent, 1) : shapeOfPiece(subPath(P, u0, u1), P.type);
+      if (sh) preview.push(rebuilt(sh, ent));
+    }
     const s = P.closed ? (cut.indexOf(true) + 1) % pieces.length : 0;           // a closed shape: start just after a cut piece, so no run wraps
     pieces = pieces.slice(s).concat(pieces.slice(0, s).map(([a, b]) => [a + n, b + n]));
     const keep = cut.slice(s).concat(cut.slice(0, s)).map((c) => !c), runs = [];

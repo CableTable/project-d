@@ -9,7 +9,7 @@ test('typed zoom levels accept trimmed percentages and decimals at 96 dpi', () =
 });
 
 test('typed zoom levels clamp both limits, including numbers beyond finite range', () => {
-  for (const text of ['0', '-150%', '0.00001']) assert.equal(zoomScale(text), .05);
+  assert.equal(zoomScale('0.00001'), .05);
   for (const text of ['99999999', '9'.repeat(400)]) assert.equal(zoomScale(text), 1000);
 });
 

@@ -144,7 +144,11 @@ function curveGrowth(pt, gap, segs) {
     for (let i = 0; i < n && !found; i++) {
       const ch = { a: pt(lo + i * dt), b: pt(lo + (i + 1) * dt), bulge: 0 }, hits = [];
       for (const s of live) for (const h of segInter(ch, s)) { const d = lo + (i + h.fs) * dt; if (d > 1e-9 && d < gap - 1e-9) hits.push({ d, s }); }
-      if (hits.length) found = { i, hits, d: Math.min(...hits.map((h) => h.d)) };
+      if (hits.length) {
+        let d = Infinity;
+        for (const h of hits) d = Math.min(d, h.d);
+        found = { i, hits, d };
+      }
     }
     if (!found) break;
     best = found.d; lo += found.i * dt; hi = lo + dt; live = found.hits.map((h) => h.s);

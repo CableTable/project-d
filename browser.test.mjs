@@ -28364,7 +28364,15 @@ try {
       near(centre(await viewBox()), centre(fitted));
       await menuItem('View', 'Zoom Previous'); near(await viewBox(), fitted);
       await enter('99999999'); assert.equal(await readout(), '26458%');
-      await enter('0'); assert.equal(await readout(), '1%');
+      await enter('0.00001'); assert.equal(await readout(), '1%');
+      for (const text of ['0', '-50%']) {
+        const before = await viewBox(), label = await readout();
+        await enter(text);
+        assert.equal(await input.isVisible(), true);
+        assert.equal(await input.getAttribute('aria-invalid'), 'true');
+        assert.equal(await readout(), label); near(await viewBox(), before);
+        await input.press('Escape');
+      }
       await enter(' 150% '); assert.equal(await readout(), '150%');
       await enter('37.5'); assert.equal(await readout(), '38%');
       const before = await viewBox(), beforeLabel = await readout();
@@ -28434,6 +28442,11 @@ try {
       await t('zoom').click(); await input.press('ArrowDown');
       const path = `shots-137/zoom-level-${theme}.png`;
       await page.screenshot({ path }); assert.ok(readFileSync(path).length > 0);
+      await input.press('Escape');
+      await enter('0');
+      mkdirSync('shots-253e', { recursive: true });
+      const invalidPath = `shots-253e/zoom-invalid-${theme}.png`;
+      await page.screenshot({ path: invalidPath }); assert.ok(readFileSync(invalidPath).length > 0);
       await input.press('Escape');
     }
     await page.evaluate(() => document.documentElement.dataset.theme = 'light');

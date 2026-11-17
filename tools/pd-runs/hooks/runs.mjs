@@ -275,8 +275,8 @@ export function paneRows(jobs, rows, now) {
   // a running wrapper of go-<name>.sh is the same job as the Bishop / Knight row named <name> or owning a run file its script writes
   // (job.files), while that row is live on screen; a queued / failed / cut off / done wrapper is its own news and stays
   const onScreen = view(rows).running.filter((r) => /^(running|testing)/.test(r.state));
-  const twin = (j, m) => j.state === 'running' && m.state === 'running' && [...(j.command ?? '').matchAll(/(?<![\w.-])go-([\w.-]+)\.sh/g)].some((x) => onScreen.some((r) => r.name === x[1])) ||
-    onScreen.some((r) => (r.files ?? []).some((f) => (j.files ?? []).includes(f)));
+  const twin = (j, m) => j.state === 'running' && m.state === 'running' && ([...(j.command ?? '').matchAll(/(?<![\w.-])go-([\w.-]+)\.sh/g)].some((x) => onScreen.some((r) => r.name === x[1])) ||
+    onScreen.some((r) => (r.files ?? []).some((f) => (j.files ?? []).includes(f))));
   return view([...mine.filter((m, i) => !twin(jobs[i], m)), ...rows]);
 }
 
