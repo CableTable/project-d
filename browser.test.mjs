@@ -2915,6 +2915,7 @@ try {
       await p.keyboard.press('Control+1'); assert.equal(await panel.isVisible(), false);
       await p.keyboard.press('Control+1'); assert.equal(await panel.isVisible(), true);
       await q('picker').setInputFiles({ name: 'panel-282b1.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(raw)) });
+      await q('drawing-panel').waitFor();
       const lay = newLayout('Panel layout'); lay.parts.a = makePart('a', 'Bracket', raw);
       lay.placed.push({ partId: 'a', x: 50, y: 50, rot: 0 });
       await q('picker').setInputFiles({ name: 'panel-layout.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
