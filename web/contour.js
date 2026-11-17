@@ -463,12 +463,13 @@ function openOutline(chain, d, opts) {
   const refused = { ok: false, why: 'it would close up' }, plain = () => (loopArea(loop) > 0 ? { ok: true, loops: [loop] } : refused);
   // The outline as straight pieces (arcs sampled so the chord gap is at most 1% of d), united by polygon-clipping. The ring's own area equals the
   // united area only when the sides do not overlap (a crossing at a sampled point, as in a symmetric C, escapes selfCrosses): then the outline stays as it is.
-  const ring = [];
+  // The ring is moved to the origin first (o = its first point): far away, rounding in the clipper and the area sums made a free outline look crossed.
+  const o = loop[0].p0, ring = [];
   for (const s of loop) {
-    ring.push(s.p0);
+    ring.push(sub(s.p0, o));
     if (!s.b) continue;
     const A = arcOf(s), phi = Math.min(Math.PI / 60, 2 * Math.acos(1 - Math.min(1, 0.01 * d / A.r))), n = Math.ceil(Math.abs(A.sweep) / phi);
-    for (let k = 1; k < n; k++) { const a = A.a0 + A.sweep * k / n; ring.push([A.c[0] + A.r * Math.cos(a), A.c[1] + A.r * Math.sin(a)]); }
+    for (let k = 1; k < n; k++) { const a = A.a0 + A.sweep * k / n; ring.push(sub([A.c[0] + A.r * Math.cos(a), A.c[1] + A.r * Math.sin(a)], o)); }
   }
   const straight = (pts) => pts.map((p, i) => seg(p, pts[(i + 1) % pts.length]));
   let polys;
@@ -477,7 +478,8 @@ function openOutline(chain, d, opts) {
   const own = Math.abs(loopArea(straight(ring))), united = rings.reduce((a, ls) => a + ls.reduce((b, l) => b + loopArea(l), 0), 0);
   if (Math.abs(united - own) <= 1e-9 * own) return plain();
   const loops = [];
-  for (const ls of rings) if (loopArea(ls[0]) > 0) loops.push(ls[0], ...ls.slice(1).filter((l) => loopArea(l) < 0));   // an outer ring runs anticlockwise, a hole clockwise: a ring that does not is dropped
+  const back = (l) => l.map((s) => seg(add(s.p0, o), add(s.p1, o)));
+  for (const ls of rings) if (loopArea(ls[0]) > 0) loops.push(back(ls[0]), ...ls.slice(1).filter((l) => loopArea(l) < 0).map(back));   // an outer ring runs anticlockwise, a hole clockwise: a ring that does not is dropped
   return loops.length ? { ok: true, loops } : refused;
 }
 

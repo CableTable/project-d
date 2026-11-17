@@ -10599,7 +10599,7 @@ try {
     await t('contour-dist').fill('20'); await t('contour-dist').press('Enter');
     await t('contour-steps').fill('1'); await t('contour-steps').press('Enter');
     await ctPanel('contour-round').click();
-    await page.waitForFunction(() => document.querySelectorAll('[data-testid=contour-preview] .ct-out').length === 2, null, { timeout: 8000 }).catch(() => {});
+    await page.waitForFunction(() => document.querySelectorAll('[data-testid=contour-preview] .ct-out').length === 2, null, { timeout: 8000 });
     assert.equal(await t('contour-preview').locator('.ct-out').count(), 2, 'the preview has the outer outline and the hole');
     await shotBoth('todo289b-c');
     assert.equal(await t('contour-apply').isEnabled(), true, 'the overlapping outline applies');

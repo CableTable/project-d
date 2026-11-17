@@ -117,6 +117,21 @@ test('TODO 289b: an open line whose sides overlap is united: a C gives an outer 
   assert.equal(two.steps[0][0].filter((s) => s.b).length, 2);
   assert.equal(two.steps[2][0].filter((s) => s.b).length, 0, 'step 3 (d = 1.5) is the united outline');
 });
+test('TODO 289b fix: far from the origin the union check gives the same answer as at the origin', () => {
+  const run = (chain, dist) => C.contour([], { chains: [chain], dist, steps: 1, outward: true, corners: 'sharp', ends: 'round' }).steps[0];
+  const shift = (chain, k) => chain.map((s) => C.seg([s.p0[0] + k, s.p0[1] + k], [s.p1[0] + k, s.p1[1] + k]));
+  const free = [C.seg([0, 0], [200, 0]), C.seg([200, 0], [200, 200])];
+  for (const k of [2e5, 1e6]) for (const d of [0.05, 1, 10]) {
+    const a = run(free, d), b = run(shift(free, k), d);
+    assert.equal(b.length, a.length, `one loop at ${k}, d ${d}`);
+    assert.equal(b[0].length, a[0].length, `same pieces at ${k}, d ${d}`);
+    assert.equal(b[0].filter((s) => s.b).length, 2, `the two round ends stay arcs at ${k}, d ${d}`);
+  }
+  const Cs = [[4, 10], [0, 10], [0, 0], [10, 0], [10, 10], [6, 10]].slice(1).map((p, i, a) => C.seg(i ? a[i - 1] : [4, 10], p));
+  const a = run(Cs, 2), b = run(shift(Cs, 2e5), 2);
+  assert.equal(b.length, 2, 'a C far away is still an outer ring and a hole');
+  near(C.loopArea(b[0]), C.loopArea(a[0]), 'outer', 1e-4); near(C.loopArea(b[1]), C.loopArea(a[1]), 'hole', 1e-3);
+});
 const off = (loop, t, corners = 'sharp') => { const r = C.offsetLoop(loop, t, { corners }); assert.ok(r.ok, 'offset ' + t + ' failed: ' + r.why); assert.ok(closed(r.loop), 'the result is closed'); return r.loop; };
 
 test('TODO 200: short in-line edges and a tiny step survive; a narrow slot still closes up', () => {
