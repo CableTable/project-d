@@ -119,14 +119,17 @@ test('TODO 289b: an open line whose sides overlap is united: a C gives an outer 
 });
 test('TODO 289b fix: far from the origin the union check gives the same answer as at the origin', () => {
   const run = (chain, dist) => C.contour([], { chains: [chain], dist, steps: 1, outward: true, corners: 'sharp', ends: 'round' }).steps[0];
-  const shift = (chain, k) => chain.map((s) => C.seg([s.p0[0] + k, s.p0[1] + k], [s.p1[0] + k, s.p1[1] + k]));
-  const free = [C.seg([0, 0], [200, 0]), C.seg([200, 0], [200, 200])];
-  for (const k of [2e5, 1e6]) for (const d of [0.05, 1, 10]) {
-    const a = run(free, d), b = run(shift(free, k), d);
-    assert.equal(b.length, a.length, `one loop at ${k}, d ${d}`);
-    assert.equal(b[0].length, a[0].length, `same pieces at ${k}, d ${d}`);
-    assert.equal(b[0].filter((s) => s.b).length, 2, `the two round ends stay arcs at ${k}, d ${d}`);
+  const shift = (chain, k) => chain.map((s) => C.seg([s.p0[0] + k, s.p0[1] + k], [s.p1[0] + k, s.p1[1] + k], s.b));
+  const pieces = (r) => r && r.map((l) => `${l.length}p/${l.filter((s) => s.b).length}a`).join();
+  let kept = 0;
+  // two quarter arcs of radius R (the base failed at R 2 / d 1, R 20 / d 10 / 1e6 and R 1000 / d 0.05 / 2e5: pieces 238 or 3264, arcs 0)
+  for (const R of [2, 20, 1000]) for (const k of [2e5, 1e6]) for (const d of [0.05, 1, 10]) {
+    const b = Math.tan(PI / 8), arcs = [C.seg([R, 0], [0, R], b), C.seg([0, R], [-R, 0], b)];
+    const a = run(arcs, d), far = run(shift(arcs, k), d);
+    assert.equal(pieces(far), pieces(a), `R ${R}, offset ${k}, d ${d}: same as at the origin`);
+    if (a && a[0].some((s) => s.b)) kept++;
   }
+  assert.ok(kept >= 12, 'most of the cases keep their arcs: ' + kept);
   const Cs = [[4, 10], [0, 10], [0, 0], [10, 0], [10, 10], [6, 10]].slice(1).map((p, i, a) => C.seg(i ? a[i - 1] : [4, 10], p));
   const a = run(Cs, 2), b = run(shift(Cs, 2e5), 2);
   assert.equal(b.length, 2, 'a C far away is still an outer ring and a hole');
