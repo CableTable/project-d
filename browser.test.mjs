@@ -127,6 +127,17 @@ try {
   await waitForServer();
   const exe = chromePath();
   browser = await chromium.launch(exe ? { executablePath: exe } : {});
+  const newContext = browser.newContext.bind(browser);
+  browser.newContext = async (...args) => {
+    const context = await newContext(...args);
+    await context.addInitScript(() => {
+      if (!localStorage.getItem('pd-test-start-initialized')) {
+        localStorage.setItem('pd-start-mode', 'blank');
+        localStorage.setItem('pd-test-start-initialized', '1');
+      }
+    });
+    return context;
+  };
   const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
   page = await ctx.newPage();
   if (process.env.SLOWRAF) await page.addInitScript(() => { const r = window.requestAnimationFrame.bind(window); window.requestAnimationFrame = (f) => r(() => setTimeout(() => f(performance.now()), 150)); });
@@ -168,6 +179,109 @@ try {
   const shotDir = shard ? join(shotRoot, `shard-${shard.index}-of-${shard.count}`) : shotRoot;
   if (shard || process.argv.includes('--shots')) process.env.SHOTS_DIR = shotDir; // Older screenshot steps read the environment directly.
   mkdirSync(shotDir, { recursive: true });
+  await step('TODO 307a: the exe starts on a Start screen with New / Open / Recent; a recent row opens in a new tab; Blank drawing restores the old start', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    try {
+      const p = await context.newPage(), q = (id) => p.getByTestId(id);
+      p.on('pageerror', (e) => errors.push(String(e)));
+      await p.goto(URL_ + '?autosave=86400000');
+      await q('new-tab').waitFor();
+      await p.evaluate(() => localStorage.removeItem('pd-start-mode'));
+      const dxf = readFileSync('fixtures/outline.dxf', 'utf8');
+      await p.addInitScript((dxf) => {
+        window.startReads = [];
+        window.__TAURI__ = {
+          event: { listen: async () => () => {} },
+          core: { invoke: async (name) => {
+            if (name === 'take_launch_files') {
+              await new Promise((resolve) => { window.releaseStartLaunch = resolve; });
+              return JSON.parse(sessionStorage.getItem('start-launch') || '[]');
+            }
+          } },
+          fs: { exists: async () => false, readFile: async (path) => { window.startReads.push(path); return new TextEncoder().encode(dxf); } },
+          dialog: { open: async () => sessionStorage.getItem('start-open') },
+        };
+      }, dxf);
+      const reload = async () => {
+        await p.reload();
+        await p.waitForFunction(() => !!window.releaseStartLaunch);
+        assert.equal(await q('start-screen').isVisible(), false, 'no Start flash before launch files arrive');
+        await p.evaluate(() => window.releaseStartLaunch());
+      };
+      await reload(); await q('start-screen').waitFor();
+      assert.equal(await p.locator('.tabs .tname').textContent(), 'Drawing 1');
+      assert.equal(await q('start-tab').getAttribute('aria-pressed'), 'true');
+      assert.equal(await q('start-tab').textContent(), 'Start');
+      assert.equal(await q('start-screen').getByText('No recent files yet', { exact: true }).count(), 1);
+      assert.deepEqual(await q('start-screen').getByRole('button').allTextContents(), ['New drawing', 'New layout', 'Open…', 'Compare drawings…']);
+      await q('start-new').click();
+      assert.equal(await q('start-screen').isVisible(), false);
+      assert.equal(await p.locator('.tabs .dtab').count(), 1, 'New drawing uses the empty drawing');
+      await q('start-tab').click(); await p.locator('.tabs .dtab').click();
+      assert.equal(await q('start-screen').isVisible(), false, 'drawing tab leaves Start');
+      const paths = ['C:\\new\\<plate>.dxf', 'E:/older/outline.dxf'];
+      await p.evaluate((paths) => localStorage.setItem('pd-recent', JSON.stringify(paths)), paths);
+      await q('start-tab').click();
+      const rows = q('start-screen').getByTestId('start-recent');
+      assert.deepEqual(await rows.locator('strong').allTextContents(), ['<plate>.dxf', 'outline.dxf']);
+      assert.deepEqual(await rows.locator('small').allTextContents(), ['C:\\new', 'E:/older']);
+      assert.equal(await rows.first().getAttribute('title'), paths[0]);
+      assert.equal(await rows.locator('plate').count(), 0, 'file names stay text');
+      for (const theme of ['light', 'dark']) {
+        await p.emulateMedia({ colorScheme: theme });
+        const path = `${shotDir}/todo307a-start-${theme}.png`;
+        await p.screenshot({ path }); assert.ok(readFileSync(path).length > 1000);
+      }
+      await rows.first().click();
+      await p.waitForFunction(() => document.querySelector('.tabs .tname')?.textContent === '<plate>.dxf');
+      assert.equal(await q('start-screen').isVisible(), false);
+      assert.equal(await p.locator('.tabs .dtab').count(), 1, 'recent uses untouched empty tab');
+      await q('start-tab').click(); await rows.nth(1).click();
+      await p.waitForFunction(() => document.querySelectorAll('.tabs .dtab').length === 2);
+      assert.equal(await p.locator('.tabs .dtab.on .tname').textContent(), 'outline.dxf', 'recent opens a new tab beside a drawing');
+      assert.deepEqual(await p.evaluate(() => window.startReads), paths);
+      await q('start-tab').click(); await q('start-layout').click();
+      assert.equal(await p.locator('.tabs .dtab.on').getAttribute('data-kind'), 'layout');
+      assert.equal(await q('start-screen').isVisible(), false);
+      await q('start-tab').click(); await q('start-compare').click();
+      assert.match(await p.locator('.tabs .dtab.on').textContent(), /Compare/);
+      assert.equal(await q('start-screen').isVisible(), false);
+      await p.evaluate(() => sessionStorage.setItem('start-open', 'E:/opened.dxf'));
+      await q('start-tab').click(); await q('start-open').click();
+      await p.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname')?.textContent === 'opened.dxf');
+      assert.equal(await q('start-screen').isVisible(), false);
+      await p.locator('[data-menu=Tools]').click(); await p.getByRole('menuitem', { name: 'Options…', exact: true }).click();
+      await p.getByLabel('At start:').selectOption('blank');
+      assert.equal(await p.evaluate(() => localStorage.getItem('pd-start-mode')), 'blank');
+      await p.getByRole('dialog', { name: 'Options', exact: true }).getByRole('button', { name: 'Close', exact: true }).click();
+      await reload();
+      assert.equal(await q('start-screen').isVisible(), false);
+      assert.equal(await p.locator('.tabs .tname').textContent(), 'Drawing 1');
+      await p.locator('[data-menu=Tools]').click(); await p.getByRole('menuitem', { name: 'Options…', exact: true }).click();
+      await p.getByLabel('At start:').selectOption('start'); await p.keyboard.press('Escape');
+      assert.equal(await p.evaluate(() => localStorage.getItem('pd-start-mode')), 'start');
+      await reload(); await q('start-screen').waitFor();
+      await q('start-new').click(); await p.locator('.tabs .x').click(); await q('start-screen').waitFor();
+      await p.evaluate(() => sessionStorage.setItem('start-launch', JSON.stringify([['E:/launched.dxf', null]])));
+      await reload();
+      await p.waitForFunction(() => document.querySelector('.tabs .tname')?.textContent === 'launched.dxf');
+      assert.equal(await q('start-screen').isVisible(), false, 'launch file keeps the drawing visible');
+      await p.evaluate(async (dxf) => {
+        sessionStorage.removeItem('start-launch');
+        await (await import('./recovery.js')).saveCopy({ id: 'start-recovery', name: 'Recovered drawing', kind: 'drawing', dxf, t: Date.now() });
+      }, dxf);
+      await reload(); await q('recover-dialog').waitFor(); await q('recover-ok').click();
+      await q('recover-dialog').waitFor({ state: 'detached' });
+      await p.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname')?.textContent === 'Recovered drawing');
+      assert.equal(await p.locator('.tabs .dtab.on .tname').textContent(), 'Recovered drawing');
+      assert.equal(await q('start-screen').isVisible(), false);
+      await p.evaluate(async () => { await (await import('./recovery.js')).clearCopies(); delete window.__TAURI__; });
+      await q('start-tab').click();
+      assert.equal(await q('start-screen').getByText('Recent files show in the desktop app', { exact: true }).count(), 1);
+      assert.equal(await rows.count(), 0);
+      console.log('307a: default/start/blank, launch wait, New/Open/Compare/Recent, tab reuse, last close, recovery; light/dark screenshots verified');
+    } finally { await context.close(); }
+  });
   await step('TODO 304: drawings and PDF sheet tabs keep their own pan, zoom and Zoom Previous', async () => {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     try {

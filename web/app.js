@@ -473,6 +473,49 @@ function recentItems() {
   return list.map((p, i) => [`${i + 1}  ${p.split(/[\\/]/).pop()}`, () => openPath(p, true), null, null, p, i === 0]);
 }
 
+function startMode() {
+  try { return localStorage.getItem('pd-start-mode') === 'blank' ? 'blank' : 'start'; } catch { return 'start'; }
+}
+function showOptions() {
+  const mode = select([['start', 'Start screen'], ['blank', 'Blank drawing']], startMode(), (value) => {
+    try { localStorage.setItem('pd-start-mode', value); } catch { note('Could not remember At start'); }
+  });
+  const close = () => { back.remove(); document.removeEventListener('keydown', onKey, true); ui.menuBtns.find((b) => b.dataset.menu === 'Tools').focus(); };
+  const onKey = (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); } };
+  const back = h('div', { class: 'pop-back' }, h('div', { class: 'pop-dialog', role: 'dialog', 'aria-label': 'Options' },
+    h('strong', null, 'Options'), labelled('At start:', mode),
+    h('button', { class: 'btn', type: 'button', onclick: close }, 'Close')));
+  document.body.append(back); document.addEventListener('keydown', onKey, true); mode.focus();
+}
+function showStartScreen(on) {
+  ui.startScreen.hidden = !on;
+  ui.startTab.classList.toggle('on', on);
+  ui.startTab.setAttribute('aria-pressed', String(on));
+  if (!on) return;
+  const items = recentItems();
+  ui.startRecent.replaceChildren();
+  if (!items.length) { ui.startRecent.append(h('p', null, 'Recent files show in the desktop app')); return; }
+  ui.startRecent.append(h('h2', null, 'Recent files'));
+  if (!items[0][4]) { ui.startRecent.append(h('p', null, 'No recent files yet')); return; }
+  for (const [, action, , , path] of items) {
+    ui.startRecent.append(h('button', { type: 'button', class: 'start-recent', title: path, 'data-testid': 'start-recent',
+      onclick: async () => { await action(); showStartScreen(false); } },
+    h('strong', null, path.split(/[\\/]/).pop()), h('small', null, path.slice(0, Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))))));
+  }
+}
+function buildStartScreen() {
+  const action = (id, label, run) => h('button', { class: 'btn', type: 'button', 'data-testid': 'start-' + id,
+    onclick: async () => { await run(); showStartScreen(false); } }, label);
+  ui.startRecent = h('section', { class: 'start-recents', 'aria-label': 'Recent files' });
+  ui.startScreen = h('section', { class: 'start-screen', hidden: true, 'data-testid': 'start-screen', 'aria-label': 'Start screen' },
+    h('h1', null, 'Start'), h('div', { class: 'start-content' },
+      h('div', { class: 'start-actions' }, action('new', 'New drawing', () => {}), action('layout', 'New layout', newLayoutTab),
+        action('open', 'Open…', openFile), action('compare', 'Compare drawings…', cmpStart)), ui.startRecent));
+  // The overlay's pointer events belong to its controls, not the drawing underneath.
+  for (const name of ['pointerdown', 'pointermove', 'pointerup', 'click', 'dblclick', 'wheel', 'contextmenu']) ui.startScreen.addEventListener(name, (e) => e.stopPropagation());
+  return ui.startScreen;
+}
+
 function buildMenus() {
   // an item: [text, action, shortcut hint (shown, and only a hint for a key that is really bound), enabled? (a function, asked when the menu opens)]
   const menus = {
@@ -518,7 +561,7 @@ function buildMenus() {
   menus.Help = [['About Project D…', showAbout]];
   menus.Format = [['Dimension style…', showDimStyle]];
   menus.Arrange = () => [['Centre on page', () => runCommand(CB.resolve('cp')), 'CP', () => !!curLay(), curLay() ? 'Centre the selection as one block on the whole sheet' : 'a drawing has no page']];
-  menus.Tools = [['Preflight…', showPreflight, 'Drawing checks'], ['Shortcuts…', showShortcuts, 'Aliases + keys']];
+  menus.Tools = [['Preflight…', showPreflight, 'Drawing checks'], ['Shortcuts…', showShortcuts, 'Aliases + keys'], ['Options…', showOptions]];
   menus.Layout = [['New layout', newLayoutTab], ['Add to layout', addToLayout], ['Parts library', () => showLibrary()], ['Extract part…', () => extractPart()],
     ['Duplicate', duplicate, 'Ctrl+D', () => !!selectedPlaced() || !!editable()?.sel.size], ['Mirror X', () => mirrorSel('x'), null, () => !!selectedPlaced()], ['Mirror Y', () => mirrorSel('y'), null, () => !!selectedPlaced()],
     ['Group', groupSel, 'Ctrl+G', () => selIdxs().length > 1 && !wholeGroup()], ['Ungroup', ungroupSel, 'Ctrl+Shift+G', () => selItems().some((x) => x.p.g)],
@@ -916,6 +959,8 @@ function buildTabs() {
     return b;
   });
   return h('div', { class: 'tabsrow' },
+    ui.startTab = h('button', { class: 'dtab', type: 'button', 'data-testid': 'start-tab', 'aria-pressed': 'false', onclick: () => showStartScreen(true) },
+      icon('<path d="M3 10l9-7 9 7M5 9v12h14V9M9 21v-8h6v8"/>', { size: 14 }), 'Start'),
     ui.tabs,
     h('button', { class: 'dtab', type: 'button', 'aria-label': 'New drawing', 'data-testid': 'new-tab', onclick: () => addTab(emptyDoc()) }, domIcon('plus', 14)),
     h('button', { class: 'dtab', type: 'button', 'aria-label': 'New layout', 'data-testid': 'new-layout', onclick: newLayoutTab }, domIcon('plus', 14), 'New layout'),
@@ -1056,9 +1101,11 @@ async function closeTab(d) {
   }
   PS.pageStates(d).forEach(dropCopy);
   state.docs.splice(i, 1);
-  if (!state.docs.length) state.docs.push(emptyDoc());
+  const lastClosed = !state.docs.length;
+  if (lastClosed) state.docs.push(emptyDoc());
   state.doc = Math.min(state.doc > i ? state.doc - 1 : state.doc, state.docs.length - 1);
   showDoc();
+  if (lastClosed) showStartScreen(true);
 }
 
 async function saveDirtyPages(d) {
@@ -1109,6 +1156,7 @@ function cycleTab(step) {
 
 /** The active tab changed: its drawing, layers and status, and Fit if the view is still fitted. */
 function showDoc() {
+  showStartScreen(false);
   const changed = shownDoc !== curDoc();
   if (changed) {
     // Callers have already changed state.doc; the global view still belongs to shownDoc.
@@ -1324,21 +1372,25 @@ async function openPath(path, recent = false) {
 
 async function attachLaunchFiles() {
   const t = window.__TAURI__;
-  if (!t?.event?.listen || !t?.core?.invoke) return;
+  if (!t?.event?.listen || !t?.core?.invoke) return true;
   let pending = Promise.resolve();
+  let hadFiles = false;
   const drain = () => {
     pending = pending.then(async () => {
-      for (const [path, error] of await t.core.invoke('take_launch_files')) {
+      const files = await t.core.invoke('take_launch_files');
+      if (files.length) hadFiles = true;
+      for (const [path, error] of files) {
         if (error) note('Open failed: ' + error);
         else await openPath(path);
       }
-    }).catch((err) => note('Open failed: ' + (err.message || err)));
+    }).catch((err) => { hadFiles = true; note('Open failed: ' + (err.message || err)); });
     return pending;
   };
   try {
     await t.event.listen('open-launch-files', drain);
     await drain();
-  } catch (err) { note('Open failed: ' + (err.message || err)); }
+  } catch (err) { note('Open failed: ' + (err.message || err)); return false; }
+  return !hadFiles;
 }
 
 /** A file from the browser's own picker or a drop. */
@@ -1720,7 +1772,7 @@ function buildCanvas() {
       h('button', { class: 'tog', type: 'button', 'aria-label': 'Zoom out', onclick: () => zoomBy(1 / 1.25) }, domIcon('minus', 12)),
       zoomLevel,
       h('button', { class: 'tog', type: 'button', 'aria-label': 'Zoom in', onclick: () => zoomBy(1.25) }, domIcon('plus', 12)),
-      ui.fitBtn));
+      ui.fitBtn), buildStartScreen());
   attachCanvasEvents();
   ui.canvas.append(attachCrosshair(ui.canvas));
   ui.canvas.classList.toggle('dotcross', state.dotCross);
@@ -12728,7 +12780,7 @@ async function init() {
   update(true);
   setTool('select');
   if (shortcutError) note(shortcutError);
-  attachLaunchFiles();
+  attachLaunchFiles().then((noFiles) => { if (noFiles && startMode() === 'start' && state.docs.length === 1 && curDoc().empty) showStartScreen(true); });
   libInit();
   const every = Number(new URLSearchParams(location.search).get('autosave'));
   setInterval(autosaveNow, every >= 100 ? every : 120000);
