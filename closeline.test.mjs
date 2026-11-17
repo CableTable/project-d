@@ -96,6 +96,19 @@ test('join far ends: the cost leaves out the closing gap, so the bridge is the n
   assert.deepEqual(xy(closeEntities(ents(), { ends: 'straight' }).result), [[0, 0], [100, 0], [250, 50], [150, 50]], 'Close: bridge + closing gap, a trapezoid');
 });
 
+test('join far ends: a touching loop joins closed and touching collinear lines merge into one LINE, as with Off', () => {
+  for (const ends of ['straight', 'extend']) {
+    const rect = joinFar([lwpoly([[0, 0], [10, 0], [10, 5]]), lwpoly([[10, 5], [0, 5], [0, 0]])], { ends });
+    assert.equal(rect.result.type, 'LWPOLYLINE'); assert.ok(shapeOf(rect.result).closed); assert.equal(shapeOf(rect.result).pts.length, 4);
+    const four = joinFar([line(0, 0, 10, 0), line(10, 0, 10, 5), line(10, 5, 0, 5), line(0, 5, 0, 0)], { ends });
+    assert.ok(shapeOf(four.result).closed); assert.equal(shapeOf(four.result).pts.length, 4);
+    const two = joinFar([line(0, 0, 5, 0, own), line(5, 0, 10, 0)], { ends });
+    assert.equal(two.result.type, 'LINE'); assert.deepEqual([two.result.layer, two.result.aci], ['Cut', 3]);
+  }
+  const part = joinFar([line(0, 0, 5, 0), line(5, 0, 10, 0), line(20, 5, 30, 5)], { ends: 'straight' });     // the collinear pair merges, the far line is bridged to it
+  assert.ok(!shapeOf(part.result).closed); assert.deepEqual(xy(part.result), [[0, 0], [10, 0], [20, 5], [30, 5]]); assert.equal(part.skipped.length, 0);
+});
+
 test('join far ends with close: arcs of one circle become a circle, anything else runs the Close path', () => {
   assert.equal(joinFar([arc(0, 0, 10, 0, 90), arc(0, 0, 10, 180, 270)], { close: true }).result.type, 'CIRCLE');
   const c = joinFar([line(0, 0, 4, 9), line(6, 9, 10, 0)], { close: true }), k = closeEntities([line(0, 0, 4, 9), line(6, 9, 10, 0)]);

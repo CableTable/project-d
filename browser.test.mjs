@@ -30184,7 +30184,18 @@ try {
     await key97c('Escape'); await typeCmd('join'); await typeCmd('extend'); await said(/<Extend>/);
     await click(100, 130); await click(170, 200); await key97c('Enter');
     const ext = await savedDoc(); assert.equal(fieldOf(ext.entities[0], 70), 0); assert.equal(fieldOf(ext.entities[0], 90), 3, 'Extend: the ends run on to their crossing at (100, 200)');
-    await key97c('Control+z'); await key97c('Escape'); await typeCmd('join'); await typeCmd('off'); await key97c('Escape');       // remembered on this PC: back to Off
+    await key97c('Control+z'); await key97c('Escape'); await typeCmd('join'); await typeCmd('straight');
+    const hist = (await histLabels()).length;
+    await click(100, 130); await click(170, 200); await key97c('Escape');       // Esc mid-join: nothing changes, nothing to undo
+    assert.deepEqual(types97d(await savedDoc()), ['LINE', 'LINE']); assert.equal((await histLabels()).length, hist, 'no history step');
+    await closeTabs(/./);
+    const withArc = newDoc(4); addEntities(withArc, dxfArc(100, 100, 50, 0, 90), dxfLine(140, 200, 200, 200));
+    await open97c(withArc, 'close290b.dxf');       // cLose with Far ends on says Closed, like the Close command
+    await key97c('Escape'); await typeCmd('join'); await click(135, 135); await click(170, 200); await typeCmd('close');
+    const said2 = await prompt(); assert.match(said2, /Closed 2 objects into 1 closed polyline/); assert.doesNotMatch(said2, /Joined/);
+    const closed = await savedDoc(); assert.deepEqual(types97d(closed), ['LWPOLYLINE']); assert.equal(fieldOf(closed.entities[0], 70), 1, 'closed');
+    await key97c('Control+z'); assert.equal((await savedDoc()).entities.length, 2);
+    await key97c('Escape'); await typeCmd('join'); await typeCmd('off'); await key97c('Escape');       // remembered on this PC: back to Off
     await closeTabs(/./);
     const lay = newLayout('Join far layout');
     lay.parts.a = objectPart('a', 'Up', dxfLine(100, 100, 100, 160), newDoc(4).layers);

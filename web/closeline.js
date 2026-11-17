@@ -77,9 +77,14 @@ export function joinFar(entities, { ends = 'extend', close = false } = {}) {
     if (c.reason) skipped.push({ entity, reason: c.reason }); else items.push({ entity, ...c });
   }
   if (items.length < 2) return { result: null, skipped, why: skipped[0]?.reason ?? 'pick two or more objects to join' };
-  const { S, notes } = bridge(items.map((i) => i.path.segs), { extend: ends !== 'straight', close: false }), sh = polyOf(S, false);
-  sh.pts[sh.pts.length - 1] = sh.pts[sh.pts.length - 1].slice(0, 2);       // an open polyline's last vertex has no bulge
-  return { result: rebuilt(sh, items[0].entity), skipped, note: [...notes].join('. ') };
+  const off = joinEntities(entities), left = new Set(off.skipped.filter((s) => s.reason === NO_TOUCH).map((s) => s.entity));
+  if (off.result && !left.size) return off;                              // everything touches: exactly Off (collinear merge, closed loop)
+  let pieces = items;                                                    // else Off's merge first (a touching collinear pair stays one LINE), then bridge what is left
+  const merged = off.result && classify(off.result);
+  if (merged && !merged.reason) pieces = [{ entity: off.result, ...merged }, ...items.filter((i) => left.has(i.entity))];
+  const { S, notes } = bridge(pieces.map((i) => i.path.segs), { extend: ends !== 'straight', close: false }), shut = dist(S[S.length - 1].b, S[0].a) <= TOL, sh = polyOf(S, shut);
+  if (!shut) sh.pts[sh.pts.length - 1] = sh.pts[sh.pts.length - 1].slice(0, 2);       // an open polyline's last vertex has no bulge; a loop that touches joins closed, as with Off
+  return { result: rebuilt(sh, pieces[0].entity), skipped, note: [...notes].join('. ') };
 }
 
 export function closeEntities(entities, { ends = 'extend' } = {}) {

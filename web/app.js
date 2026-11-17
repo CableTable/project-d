@@ -9464,7 +9464,7 @@ function joinRun(d, close = false, closing = false) {
   setTool('select');
   if (d.vlay) { const i = layObjDoc(d.vlay).at.get(result); selectMany(placedNow.flatMap((q, k) => (q.src === 'loose' && q.i === i ? [k] : [])).flatMap(groupIdxs)); update(); }       // the old picks' indexes would point at other objects
   else setSel(d, new Set([keep.get(at)[0]]));
-  if (closing) { note(`Closed ${gone.size} object${gone.size === 1 ? '' : 's'} into 1 closed polyline.${closeNote ? ' ' + closeNote + '.' : ''}${left ? ' ' + left + '.' : ''} Ctrl+Z takes it back`); return; }
+  if (closing || far && close && result.type !== 'CIRCLE') { note(`Closed ${gone.size} object${gone.size === 1 ? '' : 's'} into 1 closed polyline.${closeNote ? ' ' + closeNote + '.' : ''}${left ? ' ' + left + '.' : ''} Ctrl+Z takes it back`); return; }
   note(`Joined ${gone.size} objects into 1 ${{ LINE: 'line', ARC: 'arc', CIRCLE: 'circle' }[result.type] || 'polyline'}.${far && closeNote ? ' ' + closeNote + '.' : ''}${left ? ' ' + left + '.' : ''} Ctrl+Z takes it back`);
 }
 /** Reverse (Enter, or a selection made first): lines, polylines and splines run the other way in place, one undo step. Locked ones and other kinds are counted as filtered out; nothing reversible changes nothing. */
