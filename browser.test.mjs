@@ -9703,8 +9703,8 @@ try {
     const heads = await page.locator('[data-docker=drawing] > section.placedsec:not([hidden]) h2.sec').allTextContents();
     assert.deepEqual(heads.slice(0, 7), ['Selected parts', 'Arrange', 'Group and lock', 'Rotate', 'Mirror', 'Duplicate', 'Nudge']);
     assert.deepEqual(await page.locator('[data-testid=sec-arrange] .section-body button').evaluateAll((bs) => bs.map((b) => b.getAttribute('aria-label'))),
-      ['Align left', 'Align centre', 'Align right', 'Align top', 'Align middle', 'Align bottom', 'Distribute horizontally', 'Distribute vertically', 'Centre on page']);
-    assert.deepEqual(await t('arrange-rel').locator('option').allTextContents(), ['Selection', 'Sheet', 'First selected', 'Last selected', 'Point...']);
+      ['Align left', 'Align centre', 'Align right', 'Align top', 'Align middle', 'Align bottom', 'Distribute horizontally', 'Distribute vertically', 'Distribute left edges', 'Distribute centre edges', 'Distribute right edges', 'Distribute top edges', 'Distribute middle edges', 'Distribute bottom edges', 'Centre on page']);
+    assert.deepEqual(await t('arrange-rel').locator('option').allTextContents(), ['Selection', 'Sheet', 'First selected', 'Last selected', 'Point...', 'Rectangle']);
     assert.equal(await t('arrange-rel').inputValue(), 'selection');
     // the bar and the panel say what is selected
     assert.equal(await t('placed-name').textContent(), '3 parts selected');
@@ -31324,11 +31324,85 @@ try {
     await menuItem('View', 'Theme: light'); assert.deepEqual(errors, []);
   });
 
+  for (const tab of ['Drawing', 'Layout']) await step(`TODO 292: ${tab} edge distribution and Rectangle pick, cancellation and one Undo`, async () => {
+    const expectNote = async (re) => { await frames(); assert.match(await prompt(), re); };
+    const raw = newDoc(4);
+    const rect = (x, y, w, h) => dxfPoly([[x, y], [x + w, y], [x + w, y + h], [x, y + h]], { closed: true });
+    addEntities(raw, rect(100, 100, 80, 40), rect(220, 180, 40, 50), rect(320, 300, 60, 30),
+      dxfLine(50, 50, 400, 50), dxfLine(400, 50, 500, 400));
+    raw.groups = [{ members: [3, 4], name: '', description: '', unnamed: true, selectable: true }];
+    const lay = newLayout('Distribute 292');
+    raw.entities.forEach((e, i) => {
+      const id = 'item' + i; lay.parts[id] = objectPart(id, id, e, raw.layers);
+      lay.placed.push({ ...objectPlacement(lay.parts[id]), ...(i >= 3 ? { g: 'area', lock: true } : {}) });
+    });
+    // Locked targets are picked without moving them; both grouped members define the area.
+    addLayer(raw, 'Locked');
+    raw.entities[3].layer = raw.entities[4].layer = 'Locked';
+    await open97c(tab === 'Layout' ? layoutRaw(lay) : raw, `distribute292-${tab}.dxf`);
+    if (tab === 'Drawing') { await t('ptab-objects').click(); await page.locator('.or.layer[data-layer=Locked] [data-act=lock]').click(); await t('ptab-drawing').click(); }
+    await key97c('Control+a');
+    if (tab === 'Layout') await click(200, 50, { shift: true });
+    const boxes = async () => {
+      const saved = await savedDoc();
+      if (tab === 'Layout') { const l = layoutFromRaw(saved); return l.placed.map((p) => placedBox(l.parts[p.partId], p)); }
+      return saved.entities.map((e) => {
+        return flatten({ ...saved, entities: [e] }).boxes.model;
+      });
+    };
+    const before = await boxes(), labels = await histLabels();
+    await t('arrange-rel').selectOption('selection'); await t('distribute-left').click();
+    await expectNote(/^Distributed left edges \(the selection\)$/);
+    const after = await boxes(); assert.deepEqual(after[0], before[0]); assert.deepEqual(after[2], before[2]);
+    approx(after[1][0], 210, .001, 'left edges evenly spaced');
+    assert.equal((await histLabels()).length, labels.length + 1);
+    await key97c('Control+z'); assert.deepEqual(await boxes(), before, 'one Undo restores edge distribution');
+    const pendingLabels = await histLabels();
+    await t('arrange-rel').selectOption('rectangle'); await t('distribute-left').click(); await expectNote(/^Pick the rectangle$/);
+    await key97c('Escape'); assert.deepEqual(await boxes(), before); assert.deepEqual(await histLabels(), pendingLabels);
+    await t('distribute-left').click(); await expectNote(/^Pick the rectangle$/); await click(300, 250);
+    await expectNote(/^Distribute cancelled$/); assert.deepEqual(await boxes(), before);
+    await t('distribute-left').click(); await expectNote(/^Pick the rectangle$/); await click(140, 100);
+    await expectNote(/an object in the selection cannot be the rectangle/); assert.deepEqual(await boxes(), before);
+    await click(200, 50); await expectNote(/^Distributed left edges \(the rectangle\)$/);
+    const area = await boxes();
+    approx(area[0][0], 50, .001, 'near edge flush'); approx(area[2][2], 500, .001, 'far edge uses whole group');
+    approx(area[1][0], 245, .001, 'chosen edges evenly spaced'); assert.deepEqual(area.slice(3), before.slice(3), 'target stays put');
+    assert.equal((await histLabels()).length, labels.length + 1);
+    mkdirSync('shots-292', { recursive: true });
+    for (const theme of ['light', 'dark']) {
+      await menuItem('View', 'Theme: ' + theme); await t('arrange-rel').scrollIntoViewIfNeeded(); await frames();
+      const path = `shots-292/distribute-${tab}-${theme}.png`; await page.screenshot({ path }); assert.ok(readFileSync(path).length > 1000);
+    }
+    await key97c('Control+z'); assert.deepEqual(await boxes(), before, 'one Undo restores Rectangle distribution');
+    await t('distribute-left').click(); await expectNote(/^Pick the rectangle$/); await key97c('Escape');
+    await key97c('ArrowRight'); assert.ok((await boxes())[0][0] > before[0][0], 'source remains editable');
+    if (tab === 'Drawing') {
+      const inch = newDoc(1); addEntities(inch, dxfLine(1, 1, 2, 1), dxfLine(4, 2, 5, 2), dxfLine(10, 1, 10.5, 5));
+      await open97c(inch, 'distribute292-inch.dxf');
+      await click(38.1, 25.4); await click(114.3, 50.8, { shift: true });
+      await t('arrange-rel').selectOption('rectangle'); await t('distribute-horizontal').click(); await expectNote(/^Pick the rectangle$/);
+      await click(260.35, 76.2); await expectNote(/equal gaps, gaps of -38.10 mm \(the rectangle\)/);
+      const moved = boxes97i2(await savedDoc());
+      approx(moved[0][0], 10, .000001, 'rectangle converted with d.factor'); approx(moved[1][2], 10.5, .000001, 'two objects flush in inch drawing');
+      await key97c('Control+z'); assert.deepEqual(boxes97i2(await savedDoc()), boxes97i2(inch));
+    } else {
+      const two = structuredClone(lay); two.placed.splice(2, 1);
+      await open97c(layoutRaw(two), 'distribute292-two-layout.dxf'); await key97c('Control+a'); await click(200, 50, { shift: true });
+      const sheetBefore = await boxes();
+      const sheetWidth = layoutFromRaw(await savedDoc()).s.sheetW;
+      await t('arrange-rel').selectOption('sheet'); await t('distribute-left').click(); await expectNote(/^Distributed left edges \(the sheet\)$/);
+      const sheet = await boxes(); approx(sheet[0][0], 0, .001, 'two objects start at sheet edge'); approx(sheet[1][2], sheetWidth, .001, 'two objects end at sheet edge');
+      await key97c('Control+z'); assert.deepEqual(await boxes(), sheetBefore);
+    }
+    await t('arrange-rel').selectOption('selection'); await closeTabs(/./); await menuItem('View', 'Theme: light'); assert.deepEqual(errors, []);
+  });
+
   await step('TODO 97i2: Drawings align left three lines, one Undo restores, no-op note and light/dark panel', async () => {
     await open97c(doc97i2(), 'arrange97i2.dxf'); await key97c('Control+a');
     assert.equal(await t('sec-arrange').isVisible(), true);
     assert.deepEqual(await t('sec-arrange').locator('.section-body button').evaluateAll((bs) => bs.map((b) => b.getAttribute('aria-label'))),
-      ['Align left', 'Align centre', 'Align right', 'Align top', 'Align middle', 'Align bottom', 'Distribute horizontally', 'Distribute vertically', 'Centre on page']);
+      ['Align left', 'Align centre', 'Align right', 'Align top', 'Align middle', 'Align bottom', 'Distribute horizontally', 'Distribute vertically', 'Distribute left edges', 'Distribute centre edges', 'Distribute right edges', 'Distribute top edges', 'Distribute middle edges', 'Distribute bottom edges', 'Centre on page']);
     await t('arrange-rel').selectOption('selection');
     mkdirSync('shots-97i2', { recursive: true });
     for (const theme of ['light', 'dark']) {
@@ -31399,7 +31473,7 @@ try {
     await open97c(layoutRaw(layout97i2()), 'relative97i2-layout.dxf'); await key97c('Control+a');
     await t('arrange-rel').selectOption('sheet');
     await open97c(doc97i2(), 'relative97i2.dxf'); await key97c('Control+a');
-    assert.deepEqual(await t('arrange-rel').locator('option').allTextContents(), ['Selection', 'First selected', 'Last selected', 'Point...']);
+    assert.deepEqual(await t('arrange-rel').locator('option').allTextContents(), ['Selection', 'First selected', 'Last selected', 'Point...', 'Rectangle']);
     assert.equal(await t('arrange-rel').inputValue(), 'selection');
     await t('align-left').click();
     assert.equal(await prompt(), '3 objects aligned left to the selection');
@@ -31408,7 +31482,7 @@ try {
     assert.equal(await prompt(), '3 objects aligned right to the first selected');
     assert.deepEqual(lineEnds97c(await savedDoc()), [[100, 100, 180, 100], [140, 180, 180, 220], [120, 300, 180, 340]]);
     await key97c('Control+z'); await typeCmd('compare'); await key97c('Control+a');
-    assert.deepEqual(await t('arrange-rel').locator('option').allTextContents(), ['Selection', 'First selected', 'Last selected', 'Point...']);
+    assert.deepEqual(await t('arrange-rel').locator('option').allTextContents(), ['Selection', 'First selected', 'Last selected', 'Point...', 'Rectangle']);
     await t('arrange-rel').selectOption('selection'); await closeTabs(/./); assert.deepEqual(errors, []);
   });
 
