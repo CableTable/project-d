@@ -198,8 +198,13 @@ test('styles: a typed field is checked (a number in its range, a comma is a poin
   near(l.textH, 3.5 / 25.4); near(l.arrow, 2.5 / 25.4); near(l.gap, 0.8 / 25.4); assert.equal(l.units, 'inch'); assert.equal(l.pos, 'above');
   const p = DM.loadPresets({ cur: 'Inch jobs', presets: { 'Inch jobs': { ...DM.STANDARD, units: 'inch' }, '': DM.STANDARD, Bad: { arrow: -3 } } });
   assert.deepEqual(Object.keys(p.presets).sort(), ['Bad', 'Inch jobs', 'Standard']); assert.equal(p.cur, 'Inch jobs'); assert.deepEqual(p.presets.Bad, DM.STANDARD);
-  assert.equal(DM.loadPresets({ cur: 'Gone', presets: {} }).cur, 'Standard'); assert.equal(DM.loadPresets('junk').cur, 'Standard'); assert.deepEqual(DM.loadPresets(null).presets, { Standard: DM.STANDARD });
+  assert.equal(DM.loadPresets({ cur: 'Gone', presets: {} }).cur, 'Standard'); assert.equal(DM.loadPresets('junk').cur, 'Standard'); assert.deepEqual({ ...DM.loadPresets(null).presets }, { Standard: DM.STANDARD });
   assert.equal(DM.loadPresets({ presets: { constructor: DM.STANDARD } }).cur, 'Standard', 'a name like constructor is only a name');
+  // TODO 253c1 (fr 85): every name works, __proto__ too: the store has own keys only and survives a save / load
+  const q = DM.loadPresets(null); q.presets['__proto__'] = { ...DM.STANDARD, arrow: 3 };
+  assert.deepEqual(Object.keys(q.presets).sort(), ['Standard', '__proto__'], '__proto__ is an own key, listed');
+  const back = DM.loadPresets(JSON.parse(JSON.stringify(q)));
+  assert.equal(back.presets['__proto__'].arrow, 3, 'saved __proto__ preset loads again'); assert.deepEqual(Object.keys(back.presets).sort(), ['Standard', '__proto__']);
 });
 
 test('TODO 222c: Follow resolves at placement; only the old Standard mm preset migrates', () => {

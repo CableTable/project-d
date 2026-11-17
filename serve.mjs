@@ -15,7 +15,9 @@ const CSP = JSON.parse(readFileSync(new URL('./src-tauri/tauri.conf.json', impor
 
 export function serve(port = 5180) {
   const server = createServer(async (req, res) => {
-    const path = normalize(decodeURIComponent(new URL(req.url, 'http://x').pathname)).replace(/^[\\/]+/, '');
+    let path;
+    try { path = normalize(decodeURIComponent(new URL(req.url, 'http://x').pathname)).replace(/^[\\/]+/, ''); }
+    catch { res.writeHead(400).end('Bad request'); return; }
     const file = join(WEB, path || 'index.html');
     if (!file.startsWith(WEB)) { res.writeHead(403).end(); return; }
     try {

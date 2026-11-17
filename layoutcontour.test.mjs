@@ -5,6 +5,7 @@ import { writeDxf, newDoc, addEntities, rect, circle, line } from './web/dxf-wri
 import { placedBox, placement1 } from './web/apply.js';
 import * as LD from './web/layoutdoc.js';
 import * as LC from './web/layoutcontour.js';
+import * as CT from './web/contour.js';
 
 let n = 0;
 function test(name, fn) { fn(); n++; console.log('ok', name); }
@@ -54,6 +55,21 @@ test('TODO 289: all open layout chains, end cache keys and closed-part precedenc
   addEntities(d, rect(100, 0, 50, 50));
   const mixed = LC.partContour(LD.makePart('m', 'mixed', d, 1), CFG);
   assert.equal(mixed.res.made, 1, 'largest closed loop still wins');
+});
+
+test('TODO 289b: an open C whose sides overlap keeps its outer ring only on Layouts (the hole is left out)', () => {
+  const d = newDoc(4), pts = [[4, 10], [0, 10], [0, 0], [10, 0], [10, 10], [6, 10]];
+  addEntities(d, ...pts.slice(1).map((p, i) => line(pts[i][0], pts[i][1], p[0], p[1])));
+  const part = LD.makePart('c', 'c', d, 1), cfg = { ...CFG, dist: 2, ends: 'round' };
+  const r = LC.partContour(part, cfg);
+  assert.equal(r.kind, 'ok');
+  assert.equal(r.res.steps.length, 1);
+  assert.equal(r.res.made, 1, 'one outer ring, no hole');
+  const ring = r.res.steps[0][0];
+  assert.ok(CT.loopArea(ring) > 0);
+  near(CT.loopArea(ring), 196, 0.5);
+  const cp = LC.contourPart(part, r.res, STYLE);
+  near(cp.w, 14); near(cp.h, 14);
 });
 
 test('the contour part is the ring: outside 10 mm grows the box by 10, inside shrinks it', () => {

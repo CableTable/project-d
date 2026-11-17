@@ -9,6 +9,12 @@ export function unitFactor(units) {
   return MM_PER[units] || 1;
 }
 
+/** CorelDRAW-style backup beside the file, keeping its extension so it opens as a drawing. */
+export function backupPath(path) {
+  const at = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\')) + 1;
+  return path.slice(0, at) + 'Backup_of_' + path.slice(at);
+}
+
 /** "converted from inch" for a non-mm file, else ''. */
 export function convertedNote(units) {
   return MM_PER[units] && MM_PER[units] !== 1 ? 'converted from ' + (NAMES[units] || units) : '';
@@ -88,8 +94,22 @@ export function fitsSheet(boxMm, sheetW, sheetH) {
 
 /** The recent-files list with `path` put first: no repeats (Windows paths match whatever the case), at most `max`. */
 export function addRecent(list, path, max = 8) {
+  return [path, ...removeRecent(list, path)].slice(0, max);
+}
+
+/** Remove a recent path using the same Windows path key as addRecent, preserving the remaining order. */
+export function removeRecent(list, path) {
   const key = (p) => String(p).replace(/\//g, '\\').toLowerCase();
-  return [path, ...(Array.isArray(list) ? list : []).filter((p) => typeof p === 'string' && key(p) !== key(path))].slice(0, max);
+  return (Array.isArray(list) ? list : []).filter((p) => typeof p === 'string' && key(p) !== key(path));
+}
+
+/** First free duplicate number across all tab names, before the file extension. */
+export function dupName(name, names) {
+  const ext = name.match(/\.[^.]+$/)?.[0] || '', base = name.slice(0, name.length - ext.length).replace(/ \(\d+\)$/, '');
+  const used = new Set(names.map((n) => n.toLowerCase()));
+  let n = 2;
+  while (used.has(`${base} (${n})${ext}`.toLowerCase())) n++;
+  return `${base} (${n})${ext}`;
 }
 
 /** Files over this many bytes get a warning before they are opened (T273a). */

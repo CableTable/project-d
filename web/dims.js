@@ -31,7 +31,7 @@ export const resolveUnit = (style, drawingUnit = 'mm') => style.units === 'follo
 export const lookOf = (style, factor = 1, drawingUnit = 'mm') => ({ textH: style.textH / factor, arrow: style.arrow / factor, gap: style.gap / factor, pos: style.pos, units: resolveUnit(style, drawingUnit) });
 
 export function loadPresets(stored) {
-  const presets = { Standard: { ...STANDARD } }, src = stored && typeof stored === 'object' && stored.presets && typeof stored.presets === 'object' ? stored.presets : {};
+  const presets = Object.assign(Object.create(null), { Standard: { ...STANDARD } }), src = stored && typeof stored === 'object' && stored.presets && typeof stored.presets === 'object' ? stored.presets : {};
   for (const [name, s] of Object.entries(src)) if (name.trim() && name.length <= 40) presets[name] = cleanStyle(s);
   if (!stored?.followDefault && presets.Standard.units === 'mm') presets.Standard.units = 'follow';
   return { presets, cur: stored && Object.hasOwn(presets, stored.cur) ? stored.cur : 'Standard', followDefault: true };

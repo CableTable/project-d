@@ -416,7 +416,7 @@ test('TODO 97a fix 3: Mirror with erase puts each copy in its own source group, 
 test('TODO 97a fix 3: Offset Multiple with Erase source keeps the member as the last copy', () => {
   const [src, c, k1, k2] = [W.line(0, 0, 10, 0), W.circle(50, 50, 2), W.line(0, 2, 10, 2), W.line(0, 4, 10, 4)];
   const doc = { ...W.newDoc(), entities: [src, c, k1, k2], groups: [make(0, 1)] };
-  const end = runInNewContext(appFunction('offsetEnd') + '\noffsetEnd;', {
+  const end = runInNewContext(appFunction('offsetEraseSource') + '\n' + appFunction('offsetEnd') + '\noffsetEnd;', {
     state: { mod: { offsetSource: 0, offsetSteps: [1] } }, modSync() {}, remapGroups: remap, setTool() {}, note() {},
     restore: (d, next) => Object.assign(d.raw, next),
   });

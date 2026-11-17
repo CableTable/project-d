@@ -16,7 +16,7 @@ export function moveByDeltas(raw, indexes, deltas) {
 }
 
 export const ALIGN_HOW = ['left', 'centre', 'right', 'top', 'middle', 'bottom'];
-export const REL = ['selection', 'sheet', 'first', 'last', 'point'];
+export const REL = ['selection', 'sheet', 'first', 'last', 'point', 'rectangle'];
 
 /** The box that holds all of these boxes, or null when there are none. */
 export function unionBox(boxes) {
@@ -85,20 +85,33 @@ export function centreOnFirstDeltas(boxes) {
 }
 
 /**
- * Equal gaps between the boxes along an axis ('x' left to right, 'y' bottom to top), in their current order. The span is the
+ * Equal gaps or chosen edges along an axis ('x' left to right, 'y' bottom to top). The span is the
  * outer edges of the selection (the first and last stay put) or, relative to the sheet, the sheet's whole width / height
  * (the first box touches the near edge, the last the far one). First / Last selected and Point use the selection's span: with equal gaps
  * there is no other sensible place for the rest to go (DECISIONS.md).
- * → { deltas: [{ dx, dy }], gap } (gap in mm, negative when the boxes overlap), or null with fewer than 3 boxes.
+ * Rectangle uses the supplied frame like Sheet. Edge modes sort by that edge, then the old axis/extent/index tie-break.
+ * Selection leaves the sorted outer two in place; area modes put their whole boxes flush with the frame.
+ * → { deltas: [{ dx, dy }], gap } (gap in mm, negative when the boxes overlap), or null below 3 boxes (2 for an area).
  */
-export function distributeDeltas(boxes, axis, rel = 'selection', sheet = null) {
-  if (boxes.length < 3) return null;
+export function distributeDeltas(boxes, axis, rel = 'selection', sheet = null, how = 'gap') {
+  const area = (rel === 'sheet' || rel === 'rectangle') && sheet;
+  if (boxes.length < (area ? 2 : 3)) return null;
   const a = axis === 'y' ? 1 : 0, b = a + 2;
-  const order = boxes.map((_, i) => i).sort((p, q) => boxes[p][a] - boxes[q][a] || boxes[p][b] - boxes[q][b] || p - q);
+  const edge = (box) => how === 'centre' || how === 'middle' ? (box[a] + box[b]) / 2 : box[how === 'right' || how === 'top' ? b : a];
+  const order = boxes.map((_, i) => i).sort((p, q) => edge(boxes[p]) - edge(boxes[q]) || boxes[p][a] - boxes[q][a] || boxes[p][b] - boxes[q][b] || p - q);
   const u = unionBox(boxes);
-  const lo = rel === 'sheet' && sheet ? sheet[a] : u[a], hi = rel === 'sheet' && sheet ? sheet[b] : u[b];
+  const lo = area ? area[a] : u[a], hi = area ? area[b] : u[b];
   const total = boxes.reduce((s, bx) => s + (bx[b] - bx[a]), 0), gap = (hi - lo - total) / (boxes.length - 1);
   const deltas = boxes.map(() => ({ dx: 0, dy: 0 }));
+  if (how !== 'gap') {
+    const first = boxes[order[0]], last = boxes[order.at(-1)];
+    const start = edge(first) + (area ? lo - first[a] : 0), end = edge(last) + (area ? hi - last[b] : 0);
+    order.forEach((i, k) => {
+      const move = k === 0 ? (area ? lo - first[a] : 0) : k === order.length - 1 ? (area ? hi - last[b] : 0) : start + (end - start) * k / (order.length - 1) - edge(boxes[i]);
+      deltas[i][a ? 'dy' : 'dx'] = move || 0;
+    });
+    return { deltas, gap };
+  }
   let at = lo;
   for (const i of order) {
     const move = at - boxes[i][a];

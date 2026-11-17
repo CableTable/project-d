@@ -174,6 +174,51 @@ test('overlapping boxes: the gap is negative, still equal', () => {
   near(r.gap, (140 - 300) / 2);
 });
 
+test('TODO 292: all six chosen edges are evenly spaced; Selection anchors, Rectangle and Sheet flush whole boxes', () => {
+  const boxes = [[-25.1, -20.2, 120, 150], [5.1, 10.2, 15, 20], [160, 200, 210.1, 260.2], [40, 50, 60, 80]];
+  const before = structuredClone(boxes), frame = [-20, -40, 300, 400];
+  for (const how of A.ALIGN_HOW) {
+    const a = ['left', 'centre', 'right'].includes(how) ? 0 : 1, b = a + 2;
+    const edge = (box) => ['centre', 'middle'].includes(how) ? (box[a] + box[b]) / 2 : box[['right', 'top'].includes(how) ? b : a];
+    const order = boxes.map((_, i) => i).sort((p, q) => edge(boxes[p]) - edge(boxes[q]) || boxes[p][a] - boxes[q][a] || boxes[p][b] - boxes[q][b] || p - q);
+    for (const rel of ['selection', 'rectangle', 'sheet']) {
+      const r = A.distributeDeltas(boxes, a ? 'y' : 'x', rel, frame, how);
+      const moved = boxes.map((box, i) => box.map((v, k) => v + (k % 2 ? r.deltas[i].dy : r.deltas[i].dx)));
+      const edges = order.map((i) => edge(moved[i]));
+      for (let i = 1; i < edges.length; i++) near(edges[i] - edges[i - 1], (edges.at(-1) - edges[0]) / 3);
+      if (rel === 'selection') {
+        assert.deepEqual(moved[order[0]], boxes[order[0]]); assert.deepEqual(moved[order.at(-1)], boxes[order.at(-1)]);
+      } else { near(moved[order[0]][a], frame[a]); near(moved[order.at(-1)][b], frame[b]); }
+      assert.ok(r.deltas.every((d) => (a ? d.dx : d.dy) === 0));
+    }
+  }
+  assert.deepEqual(boxes, before); assert.deepEqual(frame, [-20, -40, 300, 400]);
+});
+
+test('TODO 292: chosen-edge ties use the old axis/extent/index order, including identical boxes', () => {
+  const boxes = [[5, 0, 15, 10], [0, 0, 20, 10], [0, 0, 20, 10], [30, 0, 50, 10]];
+  const r = A.distributeDeltas(boxes, 'x', 'selection', null, 'centre');
+  assert.deepEqual(r.deltas.map((d) => d.dx), [20, 0, 10, 0]);
+  const right = A.distributeDeltas([[5, 0, 20, 10], [0, 0, 20, 10], [30, 0, 50, 10]], 'x', 'selection', null, 'right');
+  assert.deepEqual(right.deltas.map((d) => d.dx), [15, 0, 0]);
+});
+
+test('TODO 292: Rectangle and Sheet accept two objects and negative gaps, Selection still needs three', () => {
+  assert.ok(A.REL.includes('rectangle'));
+  for (const rel of ['rectangle', 'sheet']) for (const how of ['gap', ...A.ALIGN_HOW]) {
+    const axis = ['top', 'middle', 'bottom'].includes(how) ? 'y' : 'x';
+    const r = A.distributeDeltas([[10, 10, 110, 110], [200, 200, 250, 250]], axis, rel, [0, 0, 20, 20], how);
+    assert.ok(r); if (how === 'gap') near(r.gap, -130);
+    assert.equal(A.distributeDeltas([[10, 10, 110, 110]], axis, rel, [0, 0, 20, 20], how), null);
+  }
+  assert.equal(A.distributeDeltas(B.slice(0, 2), 'x', 'selection', null, 'left'), null);
+});
+
+test('TODO 292 fix: Align has no rectangle frame, Rectangle lines up to the selection (the note says so)', () => {
+  const b = [[0, 0, 10, 10], [50, 5, 60, 20]];
+  for (const how of A.ALIGN_HOW) assert.deepEqual(A.alignDeltas(b, how, 'rectangle'), A.alignDeltas(b, how, 'selection'));
+});
+
 test('groups are one object: members move together', () => {
   const items = [{ g: 'a', box: [0, 0, 10, 10] }, { g: null, box: [50, 0, 60, 10] }, { g: 'a', box: [20, 0, 30, 10] }];
   const objs = A.objectsOf(items);

@@ -23,7 +23,7 @@
   "TODO 148c: Fill tool, Undo, swatch fill, No fill, Join-first, Eyedropper two targets, save/reopen and PDF": 15.61,
   "TODO 148e: live fill holes, Move, Undo/Redo, save/reopen and nested rings in light + dark": 4.69,
   "TODO 148d: colour readout: line, fill, panel, copy hex + recent colours, Esc ends": 1.37,
-  "TODO 148b: swatch strip visibility, remembered View tick, selection Undo, current colour, recents and saved removal": 2.6,
+  "TODO 148b: swatch strip visibility, remembered View tick, selection Undo, current colour (right click = line colour), recents and saved removal": 2.6,
   "TODO 148a: colour picker fields, Properties, Cancel, swatches, screen pick, layers, Contour and exact DXF": 6.47,
   "TODO 155k: Tab cycles one object, cursor typing owns Tab, Tangent picks exactly, osnap/os and ortho ON/OFF": 3.91,
   "TODO 212: Snap preview": 2.88,

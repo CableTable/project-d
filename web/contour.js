@@ -15,10 +15,13 @@
 // original corner; where they overlap they are cut at their crossing. A step that would close the outline up (a piece turned round or
 // gone) is not made. A piece the offset eats (a short piece on a concave stretch tighter than the distance) is dropped, the most eaten first.
 // KNOWN LIMIT: a concave outline whose offset runs into itself (a narrow notch or neck, a thin leg collapsing before the rest) is not split
-// into several outlines: such a step is refused (a result that crosses itself is refused too).
+// into several outlines: such a step is refused (a closed loop whose result crosses itself is refused too).
+// An open line's outline whose two sides overlap (a C or tight U) is united (polygon-clipping) into an outer ring plus its holes, as straight pieces
+// (arcs sampled, chord gap at most 1% of the distance); one that does not cross keeps its lines and arcs.
 import { mapply } from './drawing.js';
 import { line, arc, circle } from './dxf-write.js';
 import { chainAt, DIM_LAYER } from './edit.js';
+import pc from './vendor/polygon-clipping/polygon-clipping.js';
 
 const TAU = Math.PI * 2;
 const sub = (a, b) => [a[0] - b[0], a[1] - b[1]];
@@ -434,7 +437,7 @@ export function contour(loops, opts) {
     for (const chain of chains) {
       const r = openOutline(chain, d * k, { corners, ends });
       if (!r.ok) { res.stopped = { step: k, why: r.why }; return res; }
-      step.push(r.loop);
+      step.push(...r.loops);
     }
     if (!step.length) { res.stopped = { step: k, why: 'it would close up' }; return res; }
     res.steps.push(step); res.made += step.length;
@@ -442,7 +445,7 @@ export function contour(loops, opts) {
   return res;
 }
 
-/** Both offset sides, joined at the original ends. Self-crossing steps await union in TODO 289b. */
+/** Both offset sides, joined at the original ends: { ok, loops } (several when the sides overlap and are united: an outer ring and its holes). */
 function openOutline(chain, d, opts) {
   const right = offsetLoop(chain, d, { corners: opts.corners, open: true });
   const left = offsetLoop(reverseLoop(chain), d, { corners: opts.corners, open: true });
@@ -457,9 +460,27 @@ function openOutline(chain, d, opts) {
   const R = right.loop, L = left.loop;
   const loop = [...R, ...cap(R[R.length - 1].p1, L[0].p0, endTan(chain[chain.length - 1])),
     ...L, ...cap(L[L.length - 1].p1, R[0].p0, mul(startTan(chain[0]), -1))];
-  // shortcut: overlapping sides are refused until TODO 289b adds outline union.
-  if (selfCrosses(loop, 1e-6 * chain.reduce((m, s) => Math.max(m, dist(s.p0, s.p1)), d)) || loopArea(loop) <= 0) return { ok: false, why: 'it would close up' };
-  return { ok: true, loop };
+  const refused = { ok: false, why: 'it would close up' }, plain = () => (loopArea(loop) > 0 ? { ok: true, loops: [loop] } : refused);
+  // The outline as straight pieces (arcs sampled so the chord gap is at most 1% of d), united by polygon-clipping. The ring's own area equals the
+  // united area only when the sides do not overlap (a crossing at a sampled point, as in a symmetric C, escapes selfCrosses): then the outline stays as it is.
+  // The ring is moved to the origin first (o = its first point): far away, rounding in the clipper and the area sums made a free outline look crossed.
+  const o = loop[0].p0, ring = [];
+  for (const s of loop) {
+    ring.push(sub(s.p0, o));
+    if (!s.b) continue;
+    const A = arcOf(s), phi = Math.min(Math.PI / 60, 2 * Math.acos(1 - Math.min(1, 0.01 * d / A.r))), n = Math.ceil(Math.abs(A.sweep) / phi);
+    for (let k = 1; k < n; k++) { const a = A.a0 + A.sweep * k / n; ring.push(sub([A.c[0] + A.r * Math.cos(a), A.c[1] + A.r * Math.sin(a)], o)); }
+  }
+  const straight = (pts) => pts.map((p, i) => seg(p, pts[(i + 1) % pts.length]));
+  let polys;
+  try { polys = pc.union([[[...ring, ring[0]]]]); } catch { return selfCrosses(loop, 1e-6 * d) ? refused : plain(); }   // polygon-clipping can throw on degenerate input
+  const rings = polys.map((poly) => poly.map((r) => straight(r.slice(0, -1))));
+  const own = Math.abs(loopArea(straight(ring))), united = rings.reduce((a, ls) => a + ls.reduce((b, l) => b + loopArea(l), 0), 0);
+  if (Math.abs(united - own) <= 1e-9 * own) return plain();
+  const loops = [];
+  const back = (l) => l.map((s) => seg(add(s.p0, o), add(s.p1, o)));
+  for (const ls of rings) if (loopArea(ls[0]) > 0) loops.push(back(ls[0]), ...ls.slice(1).filter((l) => loopArea(l) < 0).map(back));   // an outer ring runs anticlockwise, a hole clockwise: a ring that does not is dropped
+  return loops.length ? { ok: true, loops } : refused;
 }
 
 // ---------------------------------------------------------------- into the drawing

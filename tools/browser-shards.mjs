@@ -82,7 +82,11 @@ export function pickSteps(steps, only, select, until) {
   if (only && !picked.length) throw new Error(`filter ${only} matches no step`);
   if (until !== undefined) {
     const end = picked.findIndex(({ name }) => name === until);
-    if (end < 0) throw new Error(`--until step not in the selected steps: ${until}`);
+    if (end < 0) {
+      const matches = picked.map(({ name }) => name).filter((name) => name.toLowerCase().includes(until.toLowerCase()));
+      const hint = matches.length ? `; matches: ${matches.slice(0, 3).join('; ')}${matches.length > 3 ? ` (+${matches.length - 3} more)` : ''}` : '';
+      throw new Error(`--until step not in the selected steps: ${until}${hint}`);
+    }
     return picked.slice(0, end + 1);
   }
   return picked;

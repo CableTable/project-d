@@ -8,9 +8,11 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **PDF-compatible Illustrator file**: An `.ai` saved with Illustrator's Create PDF Compatible File option. Open imports its PDF artwork as a drawing, with one layer per outline colour; Save writes a DXF. Where: `DECISIONS.md`, Illustrator and PDF colours (TODO 300).
 
+**Start screen**: The page the desktop app shows when it starts with no file, or when the last tab closes: New drawing, New layout, Open, Compare and Recent files. It covers the current tab and is not a drawing tab; the house button at the left of the tab strip shows it again. Options "At start" turns it off. Where: `rook-hq/runs49/grill-307.md` (TODO 307). Avoid: Home, Welcome screen (Home is the first ribbon tab).
+
 **Context tab**: A ribbon tab shown for the current selection, such as Part when placed parts are selected on a layout. Where: `web/app.js`.
 
-**Docker tab**: One of Properties, Objects, Layers, Parts library and Step and repeat across the right panel. Only the active tab shows its name; its sections fold. The panel can be resized or hidden, with settings remembered on this PC. Where: `web/app.js`, `web/docker.js`; `DECISIONS.md`, R19 pick: Option A.
+**Docker tab**: One of Properties, Objects, Library and Step down the right edge of the right panel, with rotated labels and the active tab blue. The title bar's >> folds the panel to that strip; a tab opens it again. X hides it; Show panel or Ctrl+1 brings it back. Width, visibility and folds are remembered on this PC. Where: `web/app.js`, `web/docker.js`; `DECISIONS.md`, TODO 282b1 and 282b2.
 
 **Add to layout**: Takes the prepared drawing into a layout as a part at its true size. Where: `web/app.js`.
 
@@ -21,6 +23,8 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 **Automatic dimension**: The `DIM` command: hover a line, arc or circle to see the dimension a click would make, click it, then place it; it repeats until Enter or Esc. Where: `DECISIONS.md`, TODO 155l1, 155l2. Avoid: Dimension type picker.
 
 **Autosave**: Copies changed tabs into local recovery storage every two minutes without writing over drawing files. Where: `DECISIONS.md`, Autosave and recovery. Avoid: Save.
+
+**Backup_of_**: The DXF beside a saved drawing that holds its disk bytes from before the latest in-place Save, replaced on every Save. Where: `web/doc.js`, `web/app.js`; `DECISIONS.md`, TODO 308. Avoid: Autosave.
 
 **Background picture**: A dimmed, locked JPG, PNG or rendered PDF page beneath a drawing that can be scaled and measured but is left out of DXF Save and part PDF output. Where: `DECISIONS.md`, Background, Part PDF and Autosave and recovery.
 
@@ -172,7 +176,7 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Nudge step**: The shared positive distance in mm used by arrow keys on drawings, layouts and Compare, remembered on this PC. Set it in the Part tab / panel or with `NU` / `NUDGE` at the command bar. Where: `DECISIONS.md`, Nudge command.
 
-**Objects tab**: The right-panel tree of layers and objects, or parts and their placements on a layout, used to find, select, hide and lock things. Where: `DECISIONS.md`, Objects tab. Avoid: A separate drawing tab; Object Manager is the older feature name.
+**Objects tab**: The right-panel tree of layers and objects on Drawings and Compare. On a layout, its parts and placements come first under the layout, followed by its layer rows and Guides node as siblings. One search box finds layers and objects; Add layer at the foot creates the current layer with its name ready to type. Where: `DECISIONS.md`, Objects tab and TODO 282b2. Avoid: A separate drawing tab; Object Manager is the older feature name.
 
 **Part**: A reusable piece of prepared drawing geometry at true size that can have many placements on a sheet. Where: `TODO.md`, items 4, 6 and 19; `web/layoutdoc.js`. Avoid: One placement of that part.
 
@@ -443,7 +447,7 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Title block**: The optional 22 mm box at the bottom of a fitted/check PDF print. Its file name, scale, part / size / page, date and footnote can be edited in PDF / Print; Reset restores automatic text. Turning it off gives its space to the drawing. Settings belong to the file. Avoid: Job strip (the separate label on a 1:1 sheet or tile).
 
-**Swatch**: One square colour box. Left click sets the selected objects' line colour, right click their fill colour.
+**Swatch**: One square colour box. Left click sets the selected objects' fill colour, right click their line colour (CorelDRAW; TODO 295).
 
 **Colour picker**: The shared dialog opened from Properties, ribbon, Layers and Contour colour boxes. Edits a draft through HSB, RGB, simple-formula CMYK or hex; OK applies it and Cancel discards it. Add to Swatches remembers a colour on this PC.
 

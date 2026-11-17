@@ -13,7 +13,7 @@ import { idbStore, localStore } from './idbstore.js';
 import { WORK_AREAS, workAreaDark } from './workarea.js';
 import { FOLDS, ribbonTabs, nextFold, doubleFold } from './ribbon.js';
 import { PRESETS, presetFor, stepRepeat, gridCellNote, GRIP_KEYS } from './layout.js';
-import { unitFactor, convertedNote, startHidden, entityCount, layerCounts, drawingBoxMm, fitRect, cursorMm, fitsSheet, spaceOf, boxOnSheet, itemVisible, addRecent, closePrompt, BIG_FILE, bigFileAsk } from './doc.js';
+import { unitFactor, convertedNote, startHidden, entityCount, layerCounts, drawingBoxMm, fitRect, cursorMm, fitsSheet, spaceOf, boxOnSheet, itemVisible, addRecent, removeRecent, closePrompt, BIG_FILE, bigFileAsk, backupPath, dupName } from './doc.js';
 import * as Ed from './edit.js';
 import { follow as followGroups, remap as remapGroups, splice as spliceGroups, swap as swapGroups, copy as copyGroups, group as groupDrawing, ungroup as ungroupDrawing, groupOf, selectionOf, wholeGroup as wholeDrawingGroup } from './groups.js';
 import * as AD from './autodim.js';
@@ -60,7 +60,7 @@ import { filletEntities, filletPolylineShape, filletAllPolyline, chamferEntities
 import { breakEntity, breakAtPoint, breakWhy } from './break.js';
 import { lengthenEntity, lengthenInfo, lengthenWhy, CANNOT_LENGTHEN } from './lengthen.js';
 import { joinEntities, NO_TOUCH } from './join.js';
-import { closeEntities } from './closeline.js';
+import { closeEntities, joinFar } from './closeline.js';
 import { reverse } from './reverse.js';
 import { divideAt, measureAt } from './divide.js';
 import { alignTransform, alignMatrix, alignEntities, SAME_SRC, SAME_DST } from './align-points.js';
@@ -109,7 +109,7 @@ let ownBindings = SC.bindings(), ownCommands = SC.commandsFor(ownBindings);
 let clipboard = null;
 let selectionCycle = null;
 const ribbon = { mode: 'full', last: 'full', tab: 'Home', flyout: false, panel: null, rail: true, guideSnap: true };
-const docker = { width: 290, folds: {} };
+const docker = { width: 290, folded: false, folds: {} };
 const strip = { on: true, saved: [], recent: [] };
 let currentColour = 'bylayer';
 let currentFill = 'aci:7';
@@ -273,6 +273,7 @@ const state = {
   gapMethod: 'average',   // Join gaps (TODO 121): a key of Ed.JOIN_METHODS (remembered on this PC)
   setlen: null,                    // Set length in progress: { pts: [[x, y] drawing units], hover, measured (mm) }
   arrangePoint: null,              // Pending Align point: { d, how }
+  distributeRect: null,            // Pending Distribute area: { d, how }
   txoWait: false, mod: null, modDoc: null, offDist: 10,   // Offset / Trim / Mirror in progress (newMod), its tab, and the Offset distance in mm (remembered)
   draw: null, drawDoc: null,       // the drawing tool in progress (draw.js createTool), and the tab it works on
   drawCfg: { radius: 5 },          // the rounded rectangle's corner radius (mm), remembered on this PC
@@ -428,7 +429,7 @@ function numField(label, key, opts = {}) {
   });
   input.addEventListener('change', () => {
     const why = curLay() ? refusal() : '';
-    if ((key === 'sheetW' || key === 'sheetH') && curLay() && !Number.isInteger(state[key])) { const was = state[key]; state[key] = Math.round(was); touch(); update(); note(`Sheet ${key === 'sheetW' ? 'width' : 'height'} ${was} rounded to whole mm: ${state[key]}`); }
+    if ((key === 'sheetW' || key === 'sheetH') && curLay() && !Number.isInteger(state[key])) { const was = state[key]; state[key] = Math.round(was) < opts.floor() ? Math.ceil(was) : Math.round(was); touch(); update(); note(`Sheet ${key === 'sheetW' ? 'width' : 'height'} ${was} rounded to whole mm: ${state[key]}`); }
     input.value = String(state[key]); flagInvalid(input, why); if (why) note(why);
     if (SIZE_KEYS.includes(key)) syncFields();
   });
@@ -472,20 +473,73 @@ function recentItems() {
   return list.map((p, i) => [`${i + 1}  ${p.split(/[\\/]/).pop()}`, () => openPath(p, true), null, null, p, i === 0]);
 }
 
+function startMode() {
+  try { return localStorage.getItem('pd-start-mode') === 'blank' ? 'blank' : 'start'; } catch { return 'start'; }
+}
+function showOptions() {
+  const mode = select([['start', 'Start screen'], ['blank', 'Blank drawing']], startMode(), (value) => {
+    try { localStorage.setItem('pd-start-mode', value); } catch { note('Could not remember At start'); }
+  });
+  const close = () => { back.remove(); document.removeEventListener('keydown', onKey, true); ui.menuBtns.find((b) => b.dataset.menu === 'Tools').focus(); };
+  const onKey = (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); } };
+  const back = h('div', { class: 'pop-back' }, h('div', { class: 'pop-dialog', role: 'dialog', 'aria-label': 'Options' },
+    h('strong', null, 'Options'), labelled('At start:', mode),
+    h('button', { class: 'btn', type: 'button', onclick: close }, 'Close')));
+  document.body.append(back); document.addEventListener('keydown', onKey, true); mode.focus();
+}
+function showStartScreen(on) {
+  ui.startScreen.hidden = !on;
+  ui.startTab.classList.toggle('on', on);
+  ui.startTab.setAttribute('aria-pressed', String(on));
+  for (const b of Object.values(ui.toolBtns)) b.disabled = on;
+  railContour();
+  for (const b of ui.menuBtns) if (['Draw', 'Modify'].includes(b.dataset.menu)) b.disabled = on;
+  renderRibbon();
+  if (!on) return;
+  const items = recentItems();
+  ui.startRecent.replaceChildren();
+  if (!items.length) { ui.startRecent.append(h('p', null, 'Recent files show in the desktop app')); return; }
+  ui.startRecent.append(h('h2', null, 'Recent files'));
+  if (!items[0][4]) { ui.startRecent.append(h('p', null, 'No recent files yet')); return; }
+  for (const [, action, , , path] of items) {
+    const open = async () => { await action(); showStartScreen(false); };
+    ui.startRecent.append(h('button', { type: 'button', class: 'start-recent', title: path, 'data-testid': 'start-recent',
+      onclick: open, oncontextmenu: (e) => {
+        e.preventDefault();
+        popMenu(e.clientX, e.clientY, [['Open', open], ['Remove from list', () => forgetRecent(path)], ['Copy full path', async () => {
+          try { await navigator.clipboard.writeText(path); note('Full path copied'); } catch { note('Could not copy full path'); }
+        }]]);
+      } },
+    h('strong', null, path.split(/[\\/]/).pop()), h('small', null, path.slice(0, Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))))));
+  }
+}
+function buildStartScreen() {
+  const action = (id, label, run) => h('button', { class: 'btn', type: 'button', 'data-testid': 'start-' + id,
+    onclick: async () => { await run(); showStartScreen(false); } }, label);
+  ui.startRecent = h('section', { class: 'start-recents', 'aria-label': 'Recent files' });
+  ui.startScreen = h('section', { class: 'start-screen', hidden: true, 'data-testid': 'start-screen', 'aria-label': 'Start screen' },
+    h('h1', null, 'Start'), h('div', { class: 'start-content' },
+      h('div', { class: 'start-actions' }, action('new', 'New drawing', () => { if (!curDoc().empty) addTab(emptyDoc()); }), action('layout', 'New layout', newLayoutTab),
+        action('open', 'Open…', openFile), action('compare', 'Compare drawings…', cmpStart)), ui.startRecent));
+  // The overlay's pointer events belong to its controls, not the drawing underneath.
+  for (const name of ['pointerdown', 'pointermove', 'pointerup', 'click', 'dblclick', 'wheel', 'contextmenu']) ui.startScreen.addEventListener(name, (e) => e.stopPropagation());
+  return ui.startScreen;
+}
+
 function buildMenus() {
   // an item: [text, action, shortcut hint (shown, and only a hint for a key that is really bound), enabled? (a function, asked when the menu opens)]
   const menus = {
     File: () => [['Open…', openFile], ['New layout', newLayoutTab], ['Save', () => save(false), 'Ctrl+S'], ['Save As…', () => save(true), 'Ctrl+Shift+S'], ['Export DXF…', exportDxf], ['Export for cutter…', exportCutter], ['Compare drawings…', cmpStart], ['Import background…', () => ui.bgPicker.click()], ['Trace bitmap…', traceBitmap], ['PDF / Print…', exportPdf],
       ...recentItems()],
-    Edit: [['Undo', () => undoCurrent(), 'Ctrl+Z', () => !!state.paste || !!state.grip || !!historyOf(curDoc())?.canUndo],
-      ['Redo', () => undoCurrent(true), 'Ctrl+Y', () => !!historyOf(curDoc())?.canRedo],
+    Edit: [['Undo', () => undoCurrent(), 'Ctrl+Z', () => ui.startScreen.hidden && (!!state.paste || !!state.grip || !!historyOf(curDoc())?.canUndo)],
+      ['Redo', () => undoCurrent(true), 'Ctrl+Y', () => ui.startScreen.hidden && !!historyOf(curDoc())?.canRedo],
       ['Copy', copySelection, 'Ctrl+C', () => curLay() ? !!selItems().length : !!editable()?.sel.size],
-      ['Cut', cutSelection, null, () => !!editable()?.sel.size],
+      ['Cut', cutSelection, null, () => ui.startScreen.hidden && !!editable()?.sel.size],
       ['Paste', pasteSelection, 'Ctrl+V', () => !!clipboard && (!!cmpDoc() || !!curDoc()?.lay || !!editable())],
-      ['Paste in place', pasteInPlace, 'Ctrl+Shift+V', () => !!clipboard && (!!cmpDoc() || !!curDoc()?.lay || !!editable())],
+      ['Paste in place', pasteInPlace, 'Ctrl+Shift+V', () => ui.startScreen.hidden && !!clipboard && (!!cmpDoc() || !!curDoc()?.lay || !!editable())],
       ['Undo history…', showHistory, null, () => !!historyOf(curDoc())],
-      ['Select all', selectAll, 'Ctrl+A', () => !!editable() || !!curLay()],
-      ['Delete', () => (curLay() ? deletePlaced() : deleteSelection()), 'Del', () => { const d = editable(); return d ? d.sel.size > 0 : !!selectedPlaced(); }]],
+      ['Select all', selectAll, 'Ctrl+A', () => ui.startScreen.hidden && (!!editable() || !!curLay())],
+      ['Delete', () => (curLay() ? deletePlaced() : deleteSelection()), 'Del', () => { const d = editable(); return ui.startScreen.hidden && (d ? d.sel.size > 0 : !!selectedPlaced()); }]],
     View: () => {
       const lay = guideTarget(), theme = document.documentElement.dataset.theme || 'system', tick = (on, text) => (on ? '✓ ' : '  ') + text;
       return [['Fit to window', fitView, 'Ctrl+0'], ['Zoom Window', zoomWindow, 'ZW'], ['Zoom Selection', zoomSelection, 'ZS', () => !!selectionBox()], ['Zoom Previous', zoomPrevious, 'ZP', () => !!curDoc()?.viewHist?.length],
@@ -517,7 +571,7 @@ function buildMenus() {
   menus.Help = [['About Project D…', showAbout]];
   menus.Format = [['Dimension style…', showDimStyle]];
   menus.Arrange = () => [['Centre on page', () => runCommand(CB.resolve('cp')), 'CP', () => !!curLay(), curLay() ? 'Centre the selection as one block on the whole sheet' : 'a drawing has no page']];
-  menus.Tools = [['Preflight…', showPreflight, 'Drawing checks'], ['Shortcuts…', showShortcuts, 'Aliases + keys']];
+  menus.Tools = [['Preflight…', showPreflight, 'Drawing checks'], ['Shortcuts…', showShortcuts, 'Aliases + keys'], ['Options…', showOptions]];
   menus.Layout = [['New layout', newLayoutTab], ['Add to layout', addToLayout], ['Parts library', () => showLibrary()], ['Extract part…', () => extractPart()],
     ['Duplicate', duplicate, 'Ctrl+D', () => !!selectedPlaced() || !!editable()?.sel.size], ['Mirror X', () => mirrorSel('x'), null, () => !!selectedPlaced()], ['Mirror Y', () => mirrorSel('y'), null, () => !!selectedPlaced()],
     ['Group', groupSel, 'Ctrl+G', () => selIdxs().length > 1 && !wholeGroup()], ['Ungroup', ungroupSel, 'Ctrl+Shift+G', () => selItems().some((x) => x.p.g)],
@@ -615,16 +669,16 @@ function renderSwatchStrip() {
   const scroll = ui.stripScroll.scrollTop;
   const active = document.activeElement, key = active?.dataset.colour, group = active?.parentElement.dataset.swatchGroup;
   ui.stripScroll.replaceChildren(h('button', { type: 'button', class: 'strip-swatch no-fill', title: 'No fill', 'aria-label': 'No fill', 'data-testid': 'no-fill',
-    onclick: () => applyFill(null), oncontextmenu: (e) => { e.preventDefault(); e.stopPropagation(); applyFill(null); } }), ...stripGroups(strip.saved, strip.recent).map(({ group, swatches: list }) =>
+    onclick: () => applyFill(null), oncontextmenu: (e) => { e.preventDefault(); e.stopPropagation(); } }), ...stripGroups(strip.saved, strip.recent).map(({ group, swatches: list }) =>
     h('div', { class: 'strip-group', role: 'group', 'aria-label': group + ' colours', 'data-swatch-group': group }, list.map(({ key, title, id }) =>
       h('button', { type: 'button', class: 'strip-swatch', title, 'aria-label': title, 'data-colour': key, style: 'background:' + colourCss(key),
-        onclick: () => applyStripColour(key), oncontextmenu: (e) => {
+        onclick: () => applyFill(key), oncontextmenu: (e) => {   // left = fill, right = line colour (CorelDRAW, TODO 295)
           e.preventDefault(); e.stopPropagation(); hideMenu();
           if (e.altKey && group === 'saved') popMenu(e.clientX, e.clientY, [['Remove from Swatches', async () => {
             try { await swatches.del(id); await loadSwatches(); }
             catch { note('Could not remove the swatch on this PC. Try again.'); }
           }]]);
-          else applyFill(key);
+          else applyStripColour(key);
         }
       })) )));
   ui.stripScroll.scrollTop = scroll; showStripArrows();
@@ -692,7 +746,7 @@ function ribbonButton(label, svg, action, { small = false, enabled = () => true,
   const b = h('button', { type: 'button', class: small ? 'ribbon-small' : 'ribbon-big', title: commandTooltip(label, command, description),
     'aria-label': label, onclick: (e) => { if (e.currentTarget.dataset.held) { delete e.currentTarget.dataset.held; return; } action(e); closeRibbon(); renderRibbon(); } },
   icon(svg, { size: small ? 15 : 30, width: 1.5, cap: 'round', join: 'round' }), h('span', null, label));
-  b.ribbonSync = () => { b.title = commandTooltip(b.getAttribute('aria-label'), command, description); b.disabled = !enabled(); if (pressed) b.setAttribute('aria-pressed', String(pressed())); };
+  b.ribbonSync = () => { b.title = commandTooltip(b.getAttribute('aria-label'), command, description); b.disabled = !ui.startScreen?.hidden || !enabled(); if (pressed) b.setAttribute('aria-pressed', String(pressed())); };
   return b;
 }
 function ribbonTool(id, small = false) {
@@ -915,6 +969,8 @@ function buildTabs() {
     return b;
   });
   return h('div', { class: 'tabsrow' },
+    ui.startTab = h('button', { class: 'dtab', type: 'button', 'data-testid': 'start-tab', 'aria-pressed': 'false', onclick: () => showStartScreen(true) },
+      icon('<path d="M3 10l9-7 9 7M5 9v12h14V9M9 21v-8h6v8"/>', { size: 14 }), 'Start'),
     ui.tabs,
     h('button', { class: 'dtab', type: 'button', 'aria-label': 'New drawing', 'data-testid': 'new-tab', onclick: () => addTab(emptyDoc()) }, domIcon('plus', 14)),
     h('button', { class: 'dtab', type: 'button', 'aria-label': 'New layout', 'data-testid': 'new-layout', onclick: newLayoutTab }, domIcon('plus', 14), 'New layout'),
@@ -938,7 +994,7 @@ function applyKind() {
   renderWorkArea();
   for (const sec of [ui.partsSec, ui.stepSec, ui.stepFoot, ui.gapSec]) sec.hidden = !lay || lib;
   ui.sizeStrip.hidden = !lay;
-  ui.layersSec.hidden = lib; ui.libSec.hidden = !lib;
+  ui.libSec.hidden = !lib;
   if (state.ptab === 'library' && !lib) state.ptab = 'drawing';
   if (state.ptab === 'step' && !lay) state.ptab = 'drawing';
   renderDocker();
@@ -959,15 +1015,53 @@ function renderTabs() {
     ...state.docs.map((d, i) => {
       const x = h('span', { class: 'x', 'aria-label': 'Close ' + d.name, role: 'button' }, '×');
       x.addEventListener('click', (e) => { e.stopPropagation(); closeTab(d); });
-      const b = h('button', { class: 'dtab' + (i === state.doc ? ' on' : ''), type: 'button', 'data-kind': d.lay ? 'layout' : 'drawing' },
+      const b = h('button', { class: 'dtab' + (i === state.doc ? ' on' : ''), type: 'button', 'data-kind': d.lay ? 'layout' : d.cmp ? 'compare' : d.pdf?.pages > 1 ? 'pdf' : 'drawing' },
         d.lay && icon(GRID_ICON, { size: 14 }), h('span', { class: 'tname' }, d.name),
         PS.hasChanges(d) && h('span', { class: 'dot', title: 'Not saved yet' }, ' •'), x);
       b.addEventListener('click', () => { state.doc = i; showDoc(); });
+      b.addEventListener('contextmenu', (e) => {
+        e.preventDefault(); hideMenu();
+        if (d.pdf?.pages > 1 || d.empty || (!d.raw && !d.lay && !d.cmp)) return;
+        const r = b.getBoundingClientRect();
+        const menu = popMenu(e.clientX || r.left, e.clientY || r.bottom, [['Duplicate', () => duplicateTab(d)]]);
+        menu.addEventListener('keydown', (key) => key.stopPropagation());
+        menu.querySelector('button').focus();
+      });
       return b;
     }));
   const on = ui.tabs.querySelector('.dtab.on');
   if (on && on.scrollIntoView) on.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   updateTabFades();
+}
+
+/** A new unsaved tab owns its artwork and state, with no saved paths, recovery entry or caches. */
+async function duplicateTab(d) {
+  if (d.pdf?.pages > 1 || d.empty || (!d.raw && !d.lay && !d.cmp)) return;
+  const i = state.docs.indexOf(d);
+  if (i < 0) return;
+  try {
+    const name = dupName(d.name, state.docs.map((x) => x.name));
+    const copy = { ...structuredClone({ titleBlock: d.titleBlock, drawingUnit: d.drawingUnit, guideState: d.guideState,
+      balloons: d.balloons, bg: d.bg, curLayer: d.curLayer, scaleTarget: d.scaleTarget, viewHist: d.viewHist }),
+      name, path: null, dirty: !d.cmp, tabId: uid(), hist: Ed.createHistory(),
+      view: { ...(d === shownDoc ? { ...view, ...canvasSize() } : d.view) } };
+    if (d.lay) {
+      copy.lay = { ...structuredClone({ ...d.lay, parts: {} }), name,
+        parts: Object.fromEntries(Object.entries(d.lay.parts).map(([id, p]) => [id, p.obj ? structuredClone(p) : p])) };
+      copy.hiddenParts = new Set(d.hiddenParts); copy.lhist = Ed.createHistory();
+    } else if (d.cmp) {
+      copy.cmp = structuredClone(d.cmp); copy.cmp.selected = null; copy.cmp.sel = -1; copy.factor = d.factor;
+    } else {
+      const { raw, hid, off, locked, addedLayers } = structuredClone({ raw: d.raw, hid: d.hid, off: d.off, locked: d.locked, addedLayers: d.addedLayers });
+      Object.assign(copy, tabFields(raw, flatten(raw, hid)), { titleBlock: copy.titleBlock, drawingUnit: copy.drawingUnit, hid, off, locked, addedLayers, scratch: true });
+      dropPageCaches(copy);
+    }
+    state.docs.splice(i + 1, 0, copy); state.doc = i + 1;
+    showDoc();
+    if (copy.lay) { state.sel = -1; update(); }
+    if (copy.raw) warm(copy);
+    note('Duplicated ' + d.name);
+  } catch (err) { note('Duplicate failed: ' + (err.message || err)); }
 }
 
 // ---- closing the window with unsaved tabs: Save / Don't save / Cancel (the exe's close request, a browser's beforeunload; F5 and Ctrl+R are off in the exe) ----
@@ -1055,9 +1149,11 @@ async function closeTab(d) {
   }
   PS.pageStates(d).forEach(dropCopy);
   state.docs.splice(i, 1);
-  if (!state.docs.length) state.docs.push(emptyDoc());
+  const lastClosed = !state.docs.length;
+  if (lastClosed) state.docs.push(emptyDoc());
   state.doc = Math.min(state.doc > i ? state.doc - 1 : state.doc, state.docs.length - 1);
   showDoc();
+  if (lastClosed) showStartScreen(true);
 }
 
 async function saveDirtyPages(d) {
@@ -1108,6 +1204,7 @@ function cycleTab(step) {
 
 /** The active tab changed: its drawing, layers and status, and Fit if the view is still fitted. */
 function showDoc() {
+  showStartScreen(false);
   const changed = shownDoc !== curDoc();
   if (changed) {
     // Callers have already changed state.doc; the global view still belongs to shownDoc.
@@ -1126,7 +1223,7 @@ function showDoc() {
   state.gapSel = null; gapSig = ''; hideMenu();
   if (state.eatteditAsk || state.attdispAsk || state.orthoAsk) { state.eatteditAsk = state.attdispAsk = null; state.orthoAsk = false; ui.cmdUI.escape(); } // a tab switch ends a pending command wait like Esc
   state.mode = 'select'; state.pivot = centrePivot(); state.rotCopy = false; pdrag = null;
-  state.arrangePoint = null;
+  state.arrangePoint = null; state.distributeRect = null;
   state.setlen = null; gripEnd(); trackClear(); if (state.mod && state.modDoc !== (editable() || curDoc())) { state.mod = newMod(state.mod.kind); state.modDoc = editable() || curDoc(); if (curLay()) curDoc().factor = 1; } if (state.draw && state.drawDoc !== (editable() || curLay() && curDoc())) { state.draw = DR.createTool(state.draw.kind, state.drawCfg); state.drawDoc = editable() || curLay() && curDoc(); state.drawHover = null; } state.meas = state.tool === 'measure' ? { pts: [], hover: null } : null; state.dim = state.tool === 'dimension' ? newDim() : null; state.ldr = state.tool === 'leader' ? newLdr() : null; state.bal = state.tool === 'balloon' ? { tip: null, hover: null } : null; state.balDrag = null; state.dimDrag = null; hideRubber();
   syncFields(); renderTabs(); applyKind();
   if (changed) Object.assign(view, restoreView(shownDoc.view, canvasSize()));
@@ -1184,7 +1281,7 @@ async function dwgBytes(name, path, buf) {
   }
 }
 /** Opens a file's bytes as a new tab (path: where it lives on disk, in the app). */
-async function openBytes(name, buf, path = null) {
+async function openBytes(name, buf, path = null, batch = {}) {
   // the same file already open (in the app, where files have paths): show its tab, never a second copy.
   // Path only: a DXF saved under a new name no longer is its opened file; a DWG / PDF tab has no path of its own, so its source counts
   const same = path ? state.docs.findIndex((d) => [d.path, (d.fromDwg || d.fromPdf) && d.openPath].some((p) => p && pathKey(p) === pathKey(path))) : -1;
@@ -1193,7 +1290,7 @@ async function openBytes(name, buf, path = null) {
     note(`${name} is already open: here is its tab` + (state.docs[same].dirty ? ' (with unsaved changes)' : ''));
     return;
   }
-  if (/\.pdf$/i.test(name) || (!/\.dxf$/i.test(name) && buf.byteLength && isPdf(buf))) { await openPdf(name, buf, path); return; }
+  if (/\.pdf$/i.test(name) || (!/\.dxf$/i.test(name) && buf.byteLength && isPdf(buf))) { await openPdf(name, buf, path, null, batch); return; }
   if (/\.ai$/i.test(name)) { note(name + ": this .ai has no PDF part. In Illustrator: Save As .ai with 'Create PDF Compatible File' on, or Save a Copy as PDF."); return; }
   const dwg = /\.dwg$/i.test(name);
   if (!dwg && !/\.dxf$/i.test(name)) { note(name + ': Opens DXF or PDF; pictures go in as a background (Background…)'); return; }
@@ -1224,7 +1321,7 @@ async function openBytes(name, buf, path = null) {
   const fontNote = subs.length ? 'Fonts: ' + subs.map(({ asked, shown }) => `${asked} → ${shown}`).join(', ') : '';
   const lay = LD.layoutFromRaw(r.doc, name);
   if (lay) { openLayoutFile(lay, name, path, fontNote, readTitleBlock(r.doc), dwg); await unitsLoad(curDoc(), path, name); if (dwg && path) rememberRecent(path); return; } // one of our saved layouts: it opens as a layout tab
-  // openPath: the file itself, which Save never writes over. A DWG tab has no path of its own until Save As writes its .dxf
+  // openPath: the source file. Save backs up an opened DXF before overwriting it; a DWG has no writable path until Save As.
   const doc = { name, path: dwg ? null : path, openPath: path, guideFile: G.fileKey(path, name), dirty: false, ...(dwg && { fromDwg: true }), ...tabFields(r.doc, fl) };
   addTab(doc);
   if (dwg && path) rememberRecent(path);
@@ -1237,7 +1334,7 @@ async function openBytes(name, buf, path = null) {
 
 
 /** A PDF as a drawing: its vector lines and arcs, its text; page 1, in mm. No vector lines: offer the page as a background picture instead. */
-async function openPdf(name, buf, path = null, copies = null) {
+async function openPdf(name, buf, path = null, copies = null, batch = {}) {
   note('Reading ' + name + '…');
   const bytes = buf instanceof ArrayBuffer ? buf : buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
   let r;
@@ -1248,10 +1345,15 @@ async function openPdf(name, buf, path = null, copies = null) {
   if (copies && copies.some((c) => (c.pdfPages != null && c.pdfPages !== r.pages) || (c.pdfHash && hash && c.pdfHash !== hash) || (c.sheet ?? 1) > r.pages)) throw new Error('source PDF changed');
   if (!r.paths) {
     if (copies) throw new Error('source PDF has no vector lines');
-    const yes = await confirmAsk(name + ' has no vector lines, only a picture (or text). Use it as a background picture instead?', 'Use as background');
+    const yes = batch.pdfOpen === 'background' || await confirmAsk(name + ' has no vector lines, only a picture (or text). Use it as a background picture instead?', 'Use as background');
     if (yes) await importBackgroundPdf(name, bytes, true, path);
     else note(name + ': no vector lines to open');
     return;
+  }
+  if (!copies) {
+    if (batch.pdfOpen === undefined) batch.pdfOpen = await askPdfOpen(name);
+    if (batch.pdfOpen === null) { note(name + ': not opened'); return; }
+    if (batch.pdfOpen === 'background') { await importBackgroundPdf(name, bytes, true, path); return; }
   }
   const raw = r.doc, fl = flatten(raw);
   await preloadPictures(fl.items);
@@ -1261,6 +1363,27 @@ async function openPdf(name, buf, path = null, copies = null) {
   note(`Opened ${name} as a drawing (page ${r.page} of ${r.pages}): ${raw.entities.length} entities, ${r.texts} texts, ${fmtSize(r.mm[0])} × ${fmtSize(r.mm[1])} mm. Not saved yet: Save writes ${base}${PS.sheetNumbers(doc.pdf).length > 1 ? `-sheet${r.page}` : ''}.dxf` + (fl.truncated ? '. Too big to show all of it' : '') + (r.stencils ? `. ${r.stencils} stencil pictures not shown` : ''));
   await balLoad(doc, path, name);
   return doc;
+}
+/** One choice for the batch's vector PDFs; closing the dialog cancels their open. */
+function askPdfOpen(name) {
+  return new Promise((resolve) => {
+    const editable = h('button', { class: 'btn primary', type: 'button', 'data-testid': 'pdfopen-editable' }, 'Editable drawing');
+    const background = h('button', { class: 'btn', type: 'button', 'data-testid': 'pdfopen-background' }, 'Background picture');
+    const close = h('button', { class: 'btn', type: 'button', 'aria-label': 'Close' }, '×');
+    const dlg = h('div', { class: 'pop-dialog', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Open PDF', 'data-testid': 'pdfopen-dialog' },
+      h('div', { class: 'row' }, h('strong', null, name + ' has vector lines. Open it as:'), close),
+      h('div', { class: 'row end' }, background, editable));
+    const back = h('div', { class: 'pop-back' }, dlg);
+    const finish = (v) => { back.remove(); document.removeEventListener('keydown', onKey, true); resolve(v); };
+    const onKey = (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish(null); } };
+    editable.addEventListener('click', () => finish('editable'));
+    background.addEventListener('click', () => finish('background'));
+    close.addEventListener('click', () => finish(null));
+    back.addEventListener('click', (e) => { if (e.target === back) finish(null); });
+    document.addEventListener('keydown', onKey, true);
+    document.body.append(back);
+    editable.focus();
+  });
 }
 /** Asks a yes / no question (the native dialog in the app, confirm() in a browser). */
 async function confirmAsk(text, okLabel, kind = 'info', cancelLabel = 'No') {
@@ -1300,19 +1423,20 @@ function rememberRecent(path) {
   try { localStorage.setItem('pd-recent', JSON.stringify(addRecent(recentList(), String(path)))); } catch { /* storage may be blocked */ }
 }
 function forgetRecent(path) {
-  try { localStorage.setItem('pd-recent', JSON.stringify(recentList().filter((p) => p !== path))); } catch { /* storage may be blocked */ }
+  try { localStorage.setItem('pd-recent', JSON.stringify(removeRecent(recentList(), path))); } catch { note('Could not update Recent files'); }
+  if (!ui.startScreen.hidden) showStartScreen(true);
 }
 /** Shared by File → Open, Explorer launches and Recent files. */
-async function openPath(path, recent = false) {
+async function openPath(path, recent = false, batch = {}) {
   const t = window.__TAURI__, name = path.split(/[\\/]/).pop();
   if (!t || !t.fs || !t.fs.readFile) return;
   try {
     if (!(await bigOk([{ name, size: await pathSize(path) }])).length) return;
     if (!/\.(dxf|pdf|ai)$/i.test(name)) {                                   // a .dwg is converted from its path; other names are refused
       if (recent && t.fs.exists && !(await t.fs.exists(path))) throw new Error('not found');   // a DXF's readFile fails by itself; the helper's error would not say "moved"
-      await openBytes(name, new ArrayBuffer(0), path); return;
+      await openBytes(name, new ArrayBuffer(0), path, batch); return;
     }
-    await openBytes(name, await t.fs.readFile(path), path);
+    await openBytes(name, await t.fs.readFile(path), path, batch);
   } catch (err) {
     let missing = false;
     if (recent) { try { missing = await t.fs.exists?.(path) === false; } catch { /* an existence check can also be denied */ } }
@@ -1323,29 +1447,34 @@ async function openPath(path, recent = false) {
 
 async function attachLaunchFiles() {
   const t = window.__TAURI__;
-  if (!t?.event?.listen || !t?.core?.invoke) return;
+  if (!t?.event?.listen || !t?.core?.invoke) return true;
   let pending = Promise.resolve();
+  let hadFiles = false;
   const drain = () => {
     pending = pending.then(async () => {
-      for (const [path, error] of await t.core.invoke('take_launch_files')) {
+      const files = await t.core.invoke('take_launch_files');
+      if (files.length) hadFiles = true;
+      const batch = {};
+      for (const [path, error] of files) {
         if (error) note('Open failed: ' + error);
-        else await openPath(path);
+        else await openPath(path, false, batch);
       }
-    }).catch((err) => note('Open failed: ' + (err.message || err)));
+    }).catch((err) => { hadFiles = true; note('Open failed: ' + (err.message || err)); });
     return pending;
   };
   try {
     await t.event.listen('open-launch-files', drain);
     await drain();
-  } catch (err) { note('Open failed: ' + (err.message || err)); }
+  } catch (err) { note('Open failed: ' + (err.message || err)); return false; }
+  return !hadFiles;
 }
 
 /** A file from the browser's own picker or a drop. */
-async function openPicked(file) {
+async function openPicked(file, batch) {
   try {
     if (DU.isSidecar(file.name)) { unitsPicked(file.name, await file.text()); return; }
     if (BAL.isSidecar(file.name)) { balPicked(file.name, await file.text()); return; }
-    await openBytes(file.name, await file.arrayBuffer());
+    await openBytes(file.name, await file.arrayBuffer(), null, batch);
   } catch (err) { note('Open failed: ' + (err && err.message ? err.message : err)); }
 }
 
@@ -1406,7 +1535,8 @@ function attachDrop() {
     if (!e.dataTransfer.files.length) return;
     e.preventDefault();
     ui.canvas.classList.remove('dropping');
-    for (const f of balFirst(await bigOk([...e.dataTransfer.files]))) await openPicked(f);
+    const batch = {};
+    for (const f of balFirst(await bigOk([...e.dataTransfer.files]))) await openPicked(f, batch);
   });
 }
 
@@ -1511,7 +1641,7 @@ function buildRail() {
 /** In Compare a picked library part has no source drawing to add the outlines to: Contour is greyed. */
 function railContour() {
   const b = ui.toolBtns?.contour, item = cmpDoc() && cmpSelected(cmpDoc().cmp), part = !!item?.part && !editable(), closed = !!item && !item.part && !cmpSourceTab(item), t = TOOLS.find((x) => x.id === 'contour');
-  if (b) { b.disabled = part; b.title = part ? "Open the part's drawing to contour it" : closed ? `Open ${item.name} to edit` : commandTooltip(t.label, t.id, t.description); }
+  if (b) { b.disabled = !ui.startScreen?.hidden || part; b.title = part ? "Open the part's drawing to contour it" : closed ? `Open ${item.name} to edit` : commandTooltip(t.label, t.id, t.description); }
 }
 function paintRailTooltips() {
   for (const t of TOOLS) if (BUILT.has(t.id) && ui.toolBtns[t.id]) ui.toolBtns[t.id].title = commandTooltip(t.label, t.id, t.description);
@@ -1545,7 +1675,7 @@ function setDimType(type) {
 }
 
 function setTool(id) {
-  state.arrangePoint = null;
+  state.arrangePoint = null; state.distributeRect = null;
   if (state.paste) cancelPaste();
   state.orthoAsk = false;
   state.attdispAsk = null;
@@ -1661,7 +1791,7 @@ function buildCanvas() {
   ui.dcanvas = h('canvas', { class: 'drawing-layer', 'data-testid': 'drawing' });
   ui.gridDisplay = h('div', { class: 'drawing-grid', hidden: true, 'aria-hidden': 'true', 'data-testid': 'drawing-grid' });
   ui.picker = h('input', { type: 'file', accept: '.dxf,.dwg,.pdf,.ai,.json', hidden: true, 'data-testid': 'picker', multiple: true });
-  ui.picker.addEventListener('change', async () => { const files = [...ui.picker.files]; ui.picker.value = ''; for (const f of balFirst(await bigOk(files))) await openPicked(f); });   // emptied, so the same file can be picked again
+  ui.picker.addEventListener('change', async () => { const files = [...ui.picker.files], batch = {}; ui.picker.value = ''; for (const f of balFirst(await bigOk(files))) await openPicked(f, batch); });   // emptied, so the same file can be picked again
   ui.bgPicker = h('input', { type: 'file', accept: '.png,.jpg,.jpeg,.pdf', hidden: true, 'data-testid': 'bg-picker' });
   ui.bgPicker.addEventListener('change', async () => {
     const f = ui.bgPicker.files[0], trace = traceAfter;
@@ -1719,7 +1849,7 @@ function buildCanvas() {
       h('button', { class: 'tog', type: 'button', 'aria-label': 'Zoom out', onclick: () => zoomBy(1 / 1.25) }, domIcon('minus', 12)),
       zoomLevel,
       h('button', { class: 'tog', type: 'button', 'aria-label': 'Zoom in', onclick: () => zoomBy(1.25) }, domIcon('plus', 12)),
-      ui.fitBtn));
+      ui.fitBtn), buildStartScreen());
   attachCanvasEvents();
   ui.canvas.append(attachCrosshair(ui.canvas));
   ui.canvas.classList.toggle('dotcross', state.dotCross);
@@ -1761,7 +1891,6 @@ function buildPanel() {
   ui.pctSheet = h('span', { class: 'lbl of', 'data-testid': 'pct' }, '');
   ui.rotate = select([['best', 'Best fit'], ['0', '0°'], ['90', '90°']], state.rotate, (v) => { if (!curLay()) return; pushLay(curDoc(), null, 'set:rotate', 'Rotate'); state.rotate = v; touch(); update(); }, { 'data-testid': 'rotate' });
   ui.align = select([['centre', 'Centre'], ['topleft', 'Top-left']], state.align, (v) => { if (!curLay()) return; pushLay(curDoc(), null, 'set:align', 'Align'); state.align = v; touch(); update(); }, { 'data-testid': 'align' });
-  ui.layerRows = h('div', { class: 'layers-rows', style: 'display:flex;flex-direction:column;gap:6px' });
 
   // Fit to sheet: on = rows and columns are worked out; off = typed by hand (the grid may not fit)
   ui.fit = h('input', { type: 'checkbox', role: 'switch', class: 'swin', 'data-testid': 'fit-switch', 'aria-label': 'Fit to sheet' });
@@ -1778,15 +1907,14 @@ function buildPanel() {
   ui.stepHint = h('div', { class: 'lbl', 'data-testid': 'step-hint' });
 
   const tabs = [
-    ['drawing', 'Properties', '<path d="M5 6h14M5 12h14M5 18h14"/><circle cx="9" cy="6" r="2"/><circle cx="15" cy="12" r="2"/><circle cx="8" cy="18" r="2"/>'],
-    ['objects', 'Objects', '<path d="M4 6h4M4 12h4M4 18h4M10 6h10M10 12h10M10 18h10"/>'],
-    ['layers', 'Layers', '<path d="M12 3l9 5-9 5-9-5zM3 13l9 5 9-5"/>'],
-    ['library', 'Parts library', '<rect x="3" y="4" width="5" height="16"/><rect x="9" y="4" width="5" height="16"/><path d="M16 6l5 1-3 14-5-1z"/>'],
-    ['step', 'Step and repeat', GRID_ICON],
+    ['drawing', 'Properties'],
+    ['objects', 'Objects'],
+    ['library', 'Parts library'],
+    ['step', 'Step and repeat'],
   ];
-  ui.dockerTabs = tabs.map(([id, label, svg]) => h('button', { class: 'ptab', type: 'button', role: 'tab', title: label, 'aria-label': label,
+  ui.dockerTabs = tabs.map(([id, label]) => h('button', { class: 'ptab', type: 'button', role: 'tab', title: label, 'aria-label': label,
     id: 'docker-tab-' + id, 'aria-controls': 'docker-body', 'data-tab': id, 'data-testid': id === 'library' ? 'panel-library' : 'ptab-' + id,
-    onclick: () => setPtab(id) }, icon(svg, { size: 14 }), h('span', { class: 'ptab-name' }, label)));
+    onclick: () => setPtab(id) }, h('span', { class: 'ptab-name' }, id === 'library' ? 'Library' : id === 'step' ? 'Step' : label)));
   ui.panelScroll = h('div', { class: 'panel-scroll', id: 'docker-body', role: 'tabpanel', 'aria-labelledby': 'docker-tab-drawing' },
     buildPlacedPanel(),
     ui.guideSec = h('section', { 'data-testid': 'guides-panel' },
@@ -1807,7 +1935,7 @@ function buildPanel() {
       h('label', { class: 'row swrow' }, h('span', null, 'Fit to sheet'), h('span', { class: 'row' }, ui.fitText, ui.fit)),
       h('label', { class: 'field' }, 'Part', ui.partSel),
       h('div', { class: 'grid2' }, rowsF, colsF),
-      h('div', { class: 'grid2' }, numField('Gap X', 'gapX'), numField('Gap Y', 'gapY'),
+      h('div', { class: 'grid2' }, numField('Gap X', 'gapX', { cap: () => MAX_SHEET }), numField('Gap Y', 'gapY', { cap: () => MAX_SHEET }),
         h('label', { class: 'field' }, 'Rotate', ui.rotate), h('label', { class: 'field' }, 'Align', ui.align))),
     // the count line and Apply stay in view at the bottom of the panel (sticky), however far the panel is scrolled
     ui.stepFoot = h('div', { class: 'stepfoot', 'data-testid': 'step-foot' },
@@ -1821,42 +1949,43 @@ function buildPanel() {
       h('span', { class: 'lbl' }, 'Click a gap between two rows or columns.'),
       ui.gapList = h('div', { class: 'gaplist', 'data-testid': 'gap-list' })),
     buildLibrary(),
-    ui.layersSec = h('section', { class: 'layers' },
-      h('div', { class: 'layers-head' }, h('h2', { class: 'sec' }, 'Layers'),
-        ui.layerAdd = h('button', { class: 'tog', type: 'button', 'aria-label': 'Add layer', 'data-testid': 'layer-add', title: 'Add a layer (Layer1, Layer2…): it becomes the current layer, and you can name it and pick its colour', onclick: addLayerNow }, domIcon('plus', 12), 'Add')),
-      h('div', { class: 'osr lsr' }, oIcon('<circle cx="11" cy="11" r="6"/><path d="M16 16l4 4"/>'), ui.layerSearch = h('input', { type: 'text', placeholder: 'Search layers…', 'aria-label': 'Search layers', 'data-testid': 'layer-search', autocomplete: 'off', spellcheck: 'false' })),
-      ui.layerRows),
     buildObjects());
   // Reuse the existing controls and their validation; only their docker and section containers change.
   ui.dockerPanes = Object.fromEntries(tabs.map(([id]) => [id, h('div', { class: 'docker-pane', 'data-docker': id })]));
-  ui.dockerPanes.drawing.append(ui.placedSecs[0], ui.propSec, ui.partsSec, ui.guideSec, ...ui.placedSecs.slice(1), ui.drawSec, ui.tinySec, ui.dupsSec, ui.outSec, ui.balSelBox, ui.balNumBox, ui.cmpSec, ui.diffSec);
+  ui.partTransform = h('section', { 'data-testid': 'sec-transform', hidden: true }, h('h2', { class: 'sec' }, 'Transform'), ui.placedSecs[3], ui.placedSecs[4], ui.placedSecs[6]);
+  ui.partJumps = buildPropertyJumps([['Arrange', 'sec-arrange', '⇅'], ['Transform', 'sec-transform', '↻'], ['Duplicate', 'sec-duplicate', '⧉'], ['Group/lock', 'sec-group', '⚿']]);
+  ui.dockerPanes.drawing.append(ui.partJumps, ui.placedSecs[0], ui.propSec, ui.partsSec, ui.guideSec, ui.placedSecs[1], ui.partTransform, ui.placedSecs[5], ui.placedSecs[2], ui.gapSec, ui.drawSec, ui.outSec, ui.tinySec, ui.dupsSec, ui.balSelBox, ui.balNumBox, ui.cmpSec, ui.diffSec);
   ui.dockerPanes.objects.append(ui.objPanel);
-  ui.dockerPanes.layers.append(ui.layersSec);
-  layerSearchInit();
   ui.dockerPanes.library.append(ui.libSec);
-  ui.dockerPanes.step.append(ui.stepSec, ui.gapSec, ui.stepFoot);
+  ui.dockerPanes.step.append(ui.stepSec, ui.stepFoot);
   ui.panelScroll.replaceChildren(...Object.values(ui.dockerPanes));
   for (const section of ui.panelScroll.querySelectorAll('section')) foldableSection(section);
   ui.secTitle = ui.placedSecs[0].querySelector('.section-title');
-  ui.panelHide = h('button', { class: 'panel-hide', type: 'button', title: 'Hide panel', 'aria-label': 'Hide panel', 'data-testid': 'panel-hide', onclick: toggleProps }, icon('<path d="M9 6l6 6-6 6M19 4v16"/>', { size: 13 }));
-  const tabsEl = h('div', { class: 'ptabs', role: 'tablist', 'aria-label': 'Panel tab' }, ui.dockerTabs);
+  ui.panelHide = h('button', { class: 'panel-hide', type: 'button', title: 'Hide panel', 'aria-label': 'Hide panel', 'data-testid': 'panel-hide', onclick: toggleProps }, '×');
+  ui.panelFold = h('button', { class: 'panel-fold', type: 'button', title: 'Fold panel', 'aria-label': 'Fold panel', 'aria-controls': 'docker-body', 'data-testid': 'panel-fold', onclick: () => {
+    docker.folded = true; renderDocker(); rememberDocker();
+    ui.dockerTabs.find((button) => button.dataset.tab === state.ptab).focus();
+  } }, '>>');
+  const tabsEl = h('div', { class: 'ptabs', role: 'tablist', 'aria-label': 'Panel tab', 'aria-orientation': 'vertical' }, ui.dockerTabs);
   tabsEl.addEventListener('keydown', (e) => {
-    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) return;
+    if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(e.key)) return;
     e.preventDefault(); e.stopPropagation();
     const enabled = ui.dockerTabs.filter((b) => !b.disabled), i = enabled.indexOf(document.activeElement);
-    const next = e.key === 'Home' ? 0 : e.key === 'End' ? enabled.length - 1 : (i + (e.key === 'ArrowRight' ? 1 : -1) + enabled.length) % enabled.length;
+    const next = e.key === 'Home' ? 0 : e.key === 'End' ? enabled.length - 1 : (i + (['ArrowRight', 'ArrowDown'].includes(e.key) ? 1 : -1) + enabled.length) % enabled.length;
     enabled[next].click(); enabled[next].focus();
   });
-  // sheet size and grippers (mm), pinned above the docker tabs on every layout tab; the same numbers and limits as the ribbon's Sheet page
+  // Sheet size and grippers (mm), pinned above the title bar and edge tabs; the same limits as the ribbon's Sheet page.
   ui.sizeStrip = h('div', { class: 'size-strip', role: 'group', 'aria-label': 'Sheet size and grippers, mm', 'data-testid': 'size-strip', hidden: true }, SIZE_KEYS.map((k) => sheetField(k, true)));
-  ui.panelEl = h('aside', { class: 'panel', 'aria-label': 'Properties' },
-    buildPanelResize(), ui.sizeStrip, h('div', { class: 'panel-top' }, tabsEl, ui.panelHide), ui.panelScroll);
+  ui.panelTitle = h('strong', { class: 'panel-title' });
+  ui.panelEl = h('aside', { class: 'panel', 'aria-label': 'Right panel' },
+    buildPanelResize(), ui.sizeStrip, h('div', { class: 'panel-cols' },
+      h('div', { class: 'panel-main' }, h('div', { class: 'panel-top' }, ui.panelTitle, ui.panelFold, ui.panelHide), ui.panelScroll), tabsEl));
   ui.panelShow = h('button', { class: 'panel-show', type: 'button', title: 'Show panel', 'aria-label': 'Show panel', 'data-testid': 'panel-show', onclick: toggleProps }, icon('<path d="M15 6l-6 6 6 6M5 4v16"/>', { size: 14 }));
   return h('div', { class: 'docker' }, ui.panelEl, ui.panelShow);
 }
 
 function rememberDocker() {
-  viewStore.put({ id: 'docker', width: docker.width, on: state.propsOn, folds: docker.folds })
+  viewStore.put({ id: 'docker', width: docker.width, on: state.propsOn, folded: docker.folded, folds: docker.folds })
     .catch(() => note('Could not remember the panel settings; they still apply until the app closes'));
 }
 
@@ -1911,7 +2040,10 @@ function buildPanelResize() {
 function renderDocker() {
   if (!ui.panelEl) return;
   ui.panelEl.hidden = !state.propsOn; ui.panelShow.hidden = state.propsOn;
-  ui.panelEl.style.width = docker.width + 'px';
+  ui.panelEl.classList.toggle('panel-folded', docker.folded);
+  ui.panelEl.style.width = (docker.folded ? 25 : docker.width) + 'px';
+  ui.panelTitle.textContent = ui.dockerTabs.find((button) => button.dataset.tab === state.ptab).textContent;
+  ui.panelFold.setAttribute('aria-expanded', String(!docker.folded));
   ui.panelResize.setAttribute('aria-valuenow', String(docker.width));
   for (const button of ui.dockerTabs) {
     const on = button.dataset.tab === state.ptab;
@@ -1947,7 +2079,7 @@ function buildPlacedPanel() {
   ui.ppLock = h('span', { class: 'chip lockchip', hidden: true, 'data-testid': 'pp-lock' }, icon(ICONS.lock, { size: 12, width: 1.8, cap: 'round', join: 'round' }), 'Locked');
   ui.members = h('ol', { class: 'members', 'data-testid': 'members', hidden: true });
   const ibtn = (kind, how, label) => h('button', { class: 'ib', type: 'button', 'data-testid': `${kind}-${how}`, 'aria-label': label, title: label, onclick: () => arrange(kind, how) }, icon(ICONS[how], { size: 18, cap: 'round', join: 'round' }));
-  ui.relSel = select([['selection', 'Selection'], ['sheet', 'Sheet'], ['first', 'First selected'], ['last', 'Last selected'], ['point', 'Point...']], state.arrangeRel, setArrangeRel, { 'data-testid': 'arrange-rel', 'aria-label': 'Relative to' });
+  ui.relSel = select([['selection', 'Selection'], ['sheet', 'Sheet'], ['first', 'First selected'], ['last', 'Last selected'], ['point', 'Point...'], ['rectangle', 'Rectangle']], state.arrangeRel, setArrangeRel, { 'data-testid': 'arrange-rel', 'aria-label': 'Relative to' });
   ui.centreOnPage = h('button', { class: 'btn sm', type: 'button', 'data-testid': 'centre-on-page', 'aria-label': 'Centre on page', onclick: () => runCommand(CB.resolve('cp')) }, 'Centre on page');
   const gb = (id, text, ic, fn, title) => { const b = h('button', { class: 'btn sm', type: 'button', 'data-testid': id, title, onclick: fn }, icon(ICONS[ic], { size: 16, cap: 'round', join: 'round' }), text); ui[id] = b; return b; };
   ui.pivotRows = [labelled('Pivot', ui.pivotSel, 'field'), labelled('Pivot X (mm)', px, 'field'), labelled('Pivot Y (mm)', py, 'field')];
@@ -1957,6 +2089,7 @@ function buildPlacedPanel() {
     sec('Arrange', 'sec-arrange',
       h('div', { class: 'row arrow' }, h('span', { class: 'lbl rowname' }, 'Align'), ...['left', 'centre', 'right', 'top', 'middle', 'bottom'].map((how) => ibtn('align', how, 'Align ' + how))),
       h('div', { class: 'row arrow' }, h('span', { class: 'lbl rowname' }, 'Distribute'), ibtn('distribute', 'horizontal', 'Distribute horizontally'), ibtn('distribute', 'vertical', 'Distribute vertically'), h('span', { class: 'lbl' }, 'equal gaps')),
+      h('div', { class: 'row arrow' }, h('span', { class: 'lbl rowname' }, 'Edges'), ...A.ALIGN_HOW.map((how) => ibtn('distribute', how, 'Distribute ' + how + ' edges'))),
       h('label', { class: 'lbl row' }, h('span', { class: 'rowname' }, 'Relative to'), ui.relSel),
       h('div', { class: 'btnrow' }, ui.centreOnPage)),
     sec('Group and lock', 'sec-group',
@@ -2633,7 +2766,7 @@ function setPivotText(axis, text) {
 // ---- Arrange (TODO 36, TODO 97i2): a group is one object in every tab ----
 const ARRANGE_PROMPT = 'Align or distribute [Left / Centre on first / Right / Top / Middle / Bottom / Horizontal / Vertical]:';
 /** Align or distribute the selected objects using the Relative to frame. */
-function arrange(kind, how, point = null) {
+function arrange(kind, how, point = null, rectangle = null) {
   const lay = curLay(), d = !lay && editable(), center = kind === 'center', page = kind === 'page';
   if (page && !lay) { note('a drawing has no page'); return; }
   if (d && moveLocked(d, d.sel, 'align')) return;
@@ -2644,7 +2777,8 @@ function arrange(kind, how, point = null) {
   if (lay && items.some((x) => x.p.lock)) { note(LOCKED); return; }
   const rel = page ? 'sheet' : center ? 'first' : !lay && state.arrangeRel === 'sheet' ? 'selection' : state.arrangeRel, sheet = lay ? [0, 0, lay.s.sheetW, lay.s.sheetH] : null;
   const objs = A.objectsOf(items);
-  const boxes = objs.map((o) => o.box), relName = { selection: 'the selection', sheet: 'the sheet', first: 'the first selected', last: 'the last selected', point: kind === 'align' ? 'the point' : 'the selection; Point uses Selection for Distribute' }[rel];
+  const boxes = objs.map((o) => o.box), relName = { selection: 'the selection', sheet: 'the sheet', first: 'the first selected', last: 'the last selected', rectangle: kind === 'align' ? 'the selection; Rectangle is for Distribute' : 'the rectangle', point: kind === 'align' ? 'the point' : 'the selection; Point uses Selection for Distribute' }[rel];
+  const edges = kind === 'distribute' && A.ALIGN_HOW.includes(how);
   let deltas, extra = '';
   if (center) {
     if (objs.length < 2) { note(needCenter); return; }
@@ -2654,13 +2788,15 @@ function arrange(kind, how, point = null) {
     if (pointAlign && !point) { setTool('select'); state.arrangePoint = { d: d || curDoc(), how }; renderCommand(); return; }
     deltas = A.alignDeltas(boxes, page ? 'page' : how, rel, sheet, 0, point, A.lastObjectOf(objs));
   } else {
-    if (objs.length < 3) { note('Distribute needs three or more objects (a group counts as one)'); return; }
-    const r = A.distributeDeltas(boxes, how === 'horizontal' ? 'x' : 'y', rel, sheet);
-    deltas = r.deltas; extra = `, gaps of ${fmt(r.gap)} mm`;
+    const area = rel === 'rectangle' || rel === 'sheet';
+    if (objs.length < (area ? 2 : 3)) { note(`Distribute needs ${area ? 'two' : 'three'} or more objects (a group counts as one)`); return; }
+    if (rel === 'rectangle' && !rectangle) { setTool('select'); state.distributeRect = { d: d || curDoc(), how }; renderCommand(); return; }
+    const r = A.distributeDeltas(boxes, ['horizontal', 'left', 'centre', 'right'].includes(how) ? 'x' : 'y', rel, rectangle || sheet, edges ? how : 'gap');
+    deltas = r.deltas; extra = edges ? '' : `, gaps of ${fmt(r.gap)} mm`;
   }
   const per = A.spreadToItems(objs, deltas, items.length);
   const label = page ? 'Centre on page' : center ? 'Centre on first' : (kind === 'align' ? 'Align ' : 'Distribute ') + how;
-  const message = (name) => page ? `${name} centred on the sheet` : center ? `${objs.length} objects centred on the first selected` : kind === 'align' ? `${name} aligned ${how} to ${relName}` : `${name} distributed ${how}ly with equal gaps${extra} (${relName})`;
+  const message = (name) => page ? `${name} centred on the sheet` : center ? `${objs.length} objects centred on the first selected` : kind === 'align' ? `${name} aligned ${how} to ${relName}` : edges ? `Distributed ${how} edges (${relName})` : `${name} distributed ${how}ly with equal gaps${extra} (${relName})`;
   const unchanged = 'Already ' + (center || page ? 'centred' : kind === 'align' ? 'aligned' : 'evenly spaced') + ' (nothing moved)' + (kind === 'distribute' && rel === 'point' ? '; Point uses Selection for Distribute' : '');
   if (d) {
     try {
@@ -2688,7 +2824,33 @@ function arrangeAtPoint(d, p, shift = false, typed = false) {
   paintOverlay();
 }
 /** The Relative to choice is remembered for the session; each Point alignment asks again. */
-function setArrangeRel(v) { state.arrangePoint = null; state.arrangeRel = A.REL.includes(v) ? v : 'selection'; renderProps(); renderEdit(); renderCommand(); }
+function setArrangeRel(v) { state.arrangePoint = null; state.distributeRect = null; state.arrangeRel = A.REL.includes(v) ? v : 'selection'; renderProps(); renderEdit(); renderCommand(); }
+
+/** A rectangle area is the box of the object a plain click selects, including a locked object or a whole group. */
+function distributeRectangle(e) {
+  const pending = state.distributeRect, d = pending.d;
+  let box, selected = false;
+  if (d.lay) {
+    const hit = e.target.closest('[data-i]');
+    if (hit) {
+      const members = groupIdxs(Number(hit.dataset.i));
+      selected = members.some((i) => selIdxs().includes(i));
+      box = A.unionBox(members.map((i) => placedBox(d.lay.parts[placedNow[i].partId], placedNow[i])));
+    }
+  } else {
+    const p = toDrawing(d, e.clientX, e.clientY), hit = Ed.hitEntity(edIndex(d), p[0], p[1], pickTol(d));
+    if (hit >= 0) {
+      const members = [...selectionOf(d.raw.groups, [hit])];
+      selected = members.some((i) => d.sel.has(i));
+      box = OB.boxOf(d.fl, members)?.map((v) => v * d.factor);
+    }
+  }
+  if (selected) { pending.prompt = 'Pick the rectangle: an object in the selection cannot be the rectangle'; note(pending.prompt); return; }
+  state.distributeRect = null;
+  if (box) arrange('distribute', pending.how, null, box);
+  else note('Distribute cancelled');
+  renderCommand(); paintOverlay();
+}
 
 // ---- Group, Ungroup, Lock, Unlock (TODO 37) ----
 /** Changes the flags (group, lock) of the selected parts, in one undo step: fn(placement) → the new placement. */
@@ -2975,7 +3137,7 @@ function setRulers(on) {
 function renderGuidePanel() {
   if (!ui.guideSec) return;
   const lay = guideTarget(), lib = state.panel === 'library';
-  ui.guideSec.hidden = !lay || lib;
+  ui.guideSec.hidden = !lay || lib || (!curLay() && !!editable()?.sel.size);
   if (!lay || lib) return;
   const sig = lay.s.guides.map((q) => q.axis + q.mm).join(',');
   if (ui.guideSig !== sig || ui.guideLay !== lay) {
@@ -3692,8 +3854,8 @@ async function writeDrawing(raw, name, path, opts = {}) {
 }
 
 /**
- * Save writes the tab to its own file; Save As asks for a name. The file a tab was opened from is never overwritten: the
- * first Save is a Save As ("<name>-edited.dxf"), later ones write that file. A file with things the writer can't keep
+ * Save writes the tab to its own file, backing up the current disk bytes before each in-place write; Save As asks for a name.
+ * An opened DXF saves in place, including layouts. A file with things the writer can't keep
  * goes to Save As as "<name>-copy.dxf". A layout made here has no file yet: its first Save is a Save As, to "<name>.dxf";
  * the file holds the sheet and parts for any CAD app and the layout's settings for ours (layoutdoc.js). A tab with nothing in it has nothing to save.
  */
@@ -3711,15 +3873,13 @@ async function save(forceAs) {
   const bad = unwritable(raw);
   const lossy = bad.length > 0 && !d.acceptedLoss && !d.lay;       // a layout is a new file: nothing to overwrite
   if (lossy) note(`This file has things Save can't keep (${bad.map((b) => b.type + ' ' + b.count).join(', ')}), so it's saved as a copy`);
-  // the opened file itself is never touched: its first save is a Save As (to "<name>-edited.dxf"), later ones overwrite that
   const source = forceAs && d.openPath;
-  const first = (!d.saved || source) && !d.fromPdf && !d.scratch && !lossy && (!d.lay || d.fromFile);
   const base = baseName(dxfName(source ? source.split(/[\\/]/).pop() : d.name));
-  const want = d.pdf && !d.path ? baseName(d.pdf.name) + (PS.sheetNumbers(d.pdf).length > 1 ? `-sheet${d.pdf.page}` : '') + '.dxf' : lossy ? base + '-copy.dxf' : d.fromDwg ? dxfName(d.name) : first ? base + '-edited.dxf' : dxfName(d.name);
-  const ask = forceAs || lossy || first || (d.lay && !d.saved) || (d.scratch && !d.saved);
+  const want = d.pdf && !d.path ? baseName(d.pdf.name) + (PS.sheetNumbers(d.pdf).length > 1 ? `-sheet${d.pdf.page}` : '') + '.dxf' : lossy ? base + '-copy.dxf' : dxfName(d.name);
+  const ask = forceAs || lossy || (d.lay && !d.fromFile && !d.saved) || (d.scratch && !d.saved);
   const t = window.__TAURI__;
   try {
-    let path = d.path, name = d.name;
+    let path = d.path, name = d.name, backupNote = '';
     if (t && t.dialog && t.dialog.save && t.fs && t.fs.writeTextFile) {
       if (ask || !path) {
         path = await t.dialog.save({ defaultPath: saveDefault(want, d.openPath), filters: [{ name: 'DXF drawing', extensions: ['dxf'] }] });
@@ -3731,10 +3891,15 @@ async function save(forceAs) {
           catch (err) { console.warn('Balloon file scope:', err); } // A sidecar failure must not prevent the DXF save.
         }
       }
-      if (d.openPath && pathKey(path) === pathKey(d.openPath)) { note('Pick another name: that is the opened file, and Save never writes over it'); return; }
       const key = pathKey(path);
       if (state.docs.some((o) => o !== d && [o.path, o.openPath].some((p) => p && pathKey(p) === key))) { note(`Pick another name: ${path.split(/[\\/]/).pop()} is open in another tab`); return; }
       name = path.split(/[\\/]/).pop();
+      if (/\.dxf$/i.test(path) && [d.path, d.openPath].some((p) => p && pathKey(p) === key)) {
+        try {
+          if (await t.fs.exists(path)) await t.fs.writeFile(backupPath(path), await t.fs.readFile(path));
+          else backupNote = '. No backup: the original was not found';
+        } catch (err) { throw new Error('Backup failed: ' + (err.message || err)); }
+      }
     } else {
       name = ask || !path ? want : dxfName(d.name);
     }
@@ -3753,8 +3918,8 @@ async function save(forceAs) {
     if (d.lay) d.lay.name = name;
     if (bad.length) d.acceptedLoss = true;
     renderTabs();
-    const saveNote = saveReportNote({ tables, skipped });
-    if (unitError) { note('Saved; unit not saved: ' + unitError + (!balloonsSaved ? '. ' + state.msg : '')); return; }
+    const saveNote = saveReportNote({ tables, skipped }) + backupNote;
+    if (unitError) { note('Saved; unit not saved: ' + unitError + backupNote + (!balloonsSaved ? '. ' + state.msg : '')); return; }
     if (!balloonsSaved) { note('Saved ' + name + saveNote + '. ' + state.msg); return; }
     const dir = path ? path.slice(0, Math.max(path.lastIndexOf('\\'), path.lastIndexOf('/'))) : '';
     note('Saved ' + name + (dir ? ' to ' + dir : '') + saveNote + (d.bg ? '. The background picture is not saved in the DXF' : ''));
@@ -3951,8 +4116,10 @@ function addLayerNow() {
     const name = Ed.newLayerName([...Object.keys(LD.layersOf(d.lay)), ...LD.RESERVED_LAYERS]);
     pushLay(d, null, '', 'Add layer ' + name);
     d.lay.layers = { ...LD.layersOf(d.lay) }; addLayer(d.lay, name, { aci: 7 });
-    d.curLayer = name; d.dirty = true; d.layerQuery = '';
+    d.curLayer = name; d.dirty = true; (d.addedLayers ||= new Set()).add(name); omOf(d).query = '';
     renderLayers(); renderTabs(); renderCommand(); renderEdit();
+    const inp = ui.objTree.querySelector('.current [data-testid=layer-name]');
+    if (inp) { inp.focus(); inp.select(); }
     note(`Added ${name}: it is the current layer. New shapes go on it. Ctrl+Z takes it away`);
     return;
   }
@@ -3961,9 +4128,9 @@ function addLayerNow() {
   d.raw.layers = { ...d.raw.layers };
   addLayer(d.raw, name, { aci: 7 });
   (d.addedLayers || (d.addedLayers = new Set())).add(name);
-  d.curLayer = name; d.dirty = true; d.layerQuery = '';         // the new row must show
+  d.curLayer = name; d.dirty = true; omOf(d).query = '';         // the new row must show
   renderLayers(); renderTabs(); renderCommand(); renderEdit();
-  const inp = ui.layerRows.querySelector('[data-testid=layer-name]');
+  const inp = ui.objTree.querySelector('.current [data-testid=layer-name]');
   if (inp) { inp.focus(); inp.select(); }
   note(`Added ${name}: it is the current layer. Type a name and pick a colour, or press Enter to keep them. Ctrl+Z takes it away`);
 }
@@ -3972,10 +4139,11 @@ function addedName(d, l) {
   const input = h('input', { class: 'fld lname', type: 'text', value: l.name, 'aria-label': 'Layer name', 'data-testid': 'layer-name', spellcheck: 'false', maxlength: 255 });
   input.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') input.blur(); else if (e.key === 'Escape') { input.value = l.name; input.blur(); } });
   input.addEventListener('change', () => {
-    const v = input.value.trim(), why = Ed.layerNameProblem(v, allLayerNames(d), l.name);
+    const v = input.value.trim(), why = Ed.layerNameProblem(v, d.lay ? [...Object.keys(LD.layersOf(d.lay)), ...LD.RESERVED_LAYERS] : allLayerNames(d), l.name);
     if (why) { input.value = l.name; flagInvalid(input, true); note(why); return; }
     if (v === l.name) return;
-    d.raw.layers = Object.fromEntries(Object.entries(d.raw.layers).map(([k, def]) => [k === l.name ? v : k, def]));
+    const target = d.lay || d.raw;
+    target.layers = Object.fromEntries(Object.entries(d.lay ? LD.layersOf(d.lay) : d.raw.layers).map(([k, def]) => [k === l.name ? v : k, def]));
     d.addedLayers.delete(l.name); d.addedLayers.add(v);
     if (d.curLayer === l.name) d.curLayer = v;
     d.dirty = true; renderLayers(); renderTabs(); renderCommand(); renderEdit(); note(`Layer renamed to ${v}`);
@@ -4002,49 +4170,48 @@ function addedSwatch(d, l) {
 function searchEsc(input) {
   input.addEventListener('keydown', (e) => { if (e.key === 'Escape' && input.value) { e.stopPropagation(); input.value = ''; input.dispatchEvent(new Event('input')); } });
 }
-/** The Layers search: the filter is kept per tab (d.layerQuery) and only hides rows; it never touches a layer's state. */
-function layerSearchInit() {
-  ui.layerSearch.addEventListener('input', () => { const d = curDoc(); if (d) { d.layerQuery = ui.layerSearch.value; renderLayers(); } else ui.layerSearch.value = ''; });
-  searchEsc(ui.layerSearch);
-}
 function renderLayers() {
-  const d = curDoc(), q = d && d.layerQuery || '';
-  ui.layerAdd.hidden = !!d?.cmp;                                  // Compare draws onto the source drawing: new layers are made there
-  if (d?.cmp) { renderCmpLayers(d, q); return; }
-  if (ui.layerSearch.value !== q) ui.layerSearch.value = q;       // also while the box has focus (Ctrl+Tab to another tab): typed text is already in d.layerQuery
-  ui.layerRows.replaceChildren(...layerRows().filter((l) => OB.nameMatches(l.name, q)).map((l) => {
-    const isFile = l.fileLayer != null;
-    const hid = l.bg ? !d.bg.visible : isFile ? d.off.has(l.fileLayer) : l.id && state.hidden[l.id];
-    const label = hid ? 'Hidden' : l.eye === LOCK ? 'Locked' : 'Visible';
-    const ic = icon(hid ? EYE_OFF : l.eye, { size: 16, label });
-    const vis = h('button', { class: 'vis' + (l.live ? ' live' : ''), type: 'button', 'data-layer': isFile ? 'f' + l.fileLayer : l.id, disabled: !l.live, title: l.live ? 'Show / hide ' + l.name : null }, ic);
-    if (l.live) {
-      vis.addEventListener('click', () => {
-        if (l.bg) { d.bg.visible = !d.bg.visible; paintOverlay(); } else if (isFile) { if (d.off.has(l.fileLayer)) d.off.delete(l.fileLayer); else d.off.add(l.fileLayer); layersChanged(d); paintOverlay(); } else state.hidden[l.id] = !state.hidden[l.id];
-        renderLayers(); applyHidden(); renderStatus();       // (renderLayers also redraws the Objects tab)
-      });
-    }
-    const pick = isFile || l.added || l.zero || l.lay;
-    const row = h('div', { class: 'layer' + (l.on ? ' on' : '') + (hid ? ' hidden-layer' : '') + (l.cur ? ' current' : ''), 'data-file-layer': isFile ? l.fileLayer : null, 'data-layer-name': pick || l.cur ? l.name : null, title: pick || l.cur ? 'Click to make this the current layer: new shapes and text go on it' : null },
-      pick && !l.lay ? addedSwatch(d, l) : h('span', { class: 'swatch', 'aria-hidden': 'true', style: 'background:' + l.color }),
-      l.added ? addedName(d, l) : h('span', { class: 'nm' }, l.name), l.cur ? h('span', { class: 'chip', 'data-testid': 'layer-current' }, 'current') : null, l.chip ? h('span', { class: 'chip', 'data-testid': 'layer-new' }, l.chip) : null, h('span', { class: 'lbl mono' }, l.count), vis);
-    if (pick) row.addEventListener('click', (e) => { if (e.target.closest('.vis') || e.target.closest('input')) return; d.curLayer = l.name; renderLayers(); renderCommand(); renderEdit(); note(`Current layer: ${l.name}. New shapes and text go on it`); });
-    return row;
-  }));
-  if (state.ptab === 'objects') renderObjects();
+  objSigLast = null;
+  renderObjects();
 }
 
-/** Compare: the layers of the picked snapshot. On / off acts on that snapshot's own list; its source drawing keeps its own. */
-function renderCmpLayers(tab, q) {
-  if (ui.layerSearch.value !== q) ui.layerSearch.value = q;
-  const item = cmpSelected(tab.cmp);
-  if (!item) { ui.layerRows.replaceChildren(h('p', { style: 'color:var(--muted);font-size:12px;margin:0', 'data-testid': 'layers-empty' }, 'Pick a drawing')); return; }
-  ui.layerRows.replaceChildren(...item.fl.layers.map((l, i) => [l, i]).filter(([l]) => OB.nameMatches(l.name, q)).map(([l, i]) => {
-    const hid = item.off.has(i);
-    const vis = h('button', { class: 'vis live', type: 'button', 'data-layer': 'f' + i, title: 'Show / hide ' + l.name, onclick: () => cmpToggleLayer(tab, item.id, i) }, icon(hid ? EYE_OFF : EYE, { size: 16, label: hid ? 'Hidden' : 'Visible' }));
-    return h('div', { class: 'layer' + (hid ? ' hidden-layer' : ''), 'data-file-layer': i }, h('span', { class: 'swatch', 'aria-hidden': 'true', style: 'background:' + ink(l.css, isDark()) }), h('span', { class: 'nm' }, l.name), vis);
-  }));
+/** The layout's existing layer rows are siblings of its parts, never parents of them. */
+function layoutLayerRows(d, query) {
+  return layerRows().filter((l) => OB.nameMatches(l.name, query)).map((l) => {
+    const def = l.lay && LD.layersOf(d.lay)[l.name], hidden = l.id ? !!state.hidden[l.id] : !!(def?.off || def?.frozen), locked = !!(def?.flags & 4);
+    const vis = objBtn('vis', !hidden, hidden ? 'Show' : 'Hide', hidden ? EYE_OFF : EYE, ' vis live');
+    vis.dataset.layer = l.id || l.name;
+    vis.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (l.id) state.hidden[l.id] = !hidden;
+      else { pushLay(d, null, '', 'Layer visibility'); d.lay.layers = { ...LD.layersOf(d.lay), [l.name]: { ...def, off: !hidden, frozen: false } }; d.dirty = true; }
+      update();
+    });
+    const lock = objBtn('lock', locked, locked ? 'Unlock' : 'Lock', locked ? ICONS.lock : ICONS.unlock);
+    lock.disabled = !l.lay && l.id !== 'parts';
+    lock.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (l.id === 'parts') { lockObjectPlaces(placedNow.map((_, i) => i)); return; }
+      pushLay(d, null, '', 'Layer lock');
+      d.lay.layers = { ...LD.layersOf(d.lay), [l.name]: { ...def, flags: (def.flags || 0) ^ 4 } }; d.dirty = true; update();
+    });
+    const row = h('div', { class: 'or layer' + (l.cur ? ' cur current' : '') + (hidden ? ' dim hidden-layer' : ''), role: 'treeitem', 'aria-level': '2', 'data-layer-name': l.name, style: 'padding-left:20px' },
+      h('span', { class: 'swatch osw', style: 'background:' + l.color }),
+      !l.count && d.addedLayers?.has(l.name) ? addedName(d, l) : h('span', { class: 'onm nm' }, l.name), l.cur ? h('span', { class: 'chp', 'data-testid': 'layer-current' }, 'current') : null, h('span', { class: 'ocnt lbl mono' }, l.count), vis, lock);
+    row.addEventListener('click', (e) => {
+      e.stopPropagation(); if (!l.lay || e.target.closest('input')) return;
+      d.curLayer = l.name; renderLayers(); renderCommand(); renderEdit(); note(`Current layer: ${l.name}. New shapes and text go on it`);
+    });
+    return row;
+  });
 }
+
+function lockObjectPlaces(indexes) {
+  if (!indexes.length) return;
+  const on = !indexes.every((i) => placedNow[i].lock);
+  selectMany(indexes); lockSel(on);
+}
+
 function cmpToggleLayer(tab, id, i) {
   const item = tab.cmp.items.find((x) => x.id === id), off = new Set(item.off);
   if (!off.delete(i)) off.add(i);
@@ -4064,12 +4231,12 @@ const oIcon = (inner, size = 14) => icon(inner, { size, width: 1.7, cap: 'round'
 const omOf = (d) => d.om || (d.om = { open: null, openB: new Set(), show: new Map(), query: '', filter: 'all', openP: new Set() });
 
 function buildObjects() {
-  ui.objSearch = h('input', { type: 'text', placeholder: 'Search objects…', 'aria-label': 'Search objects', 'data-testid': 'obj-search', autocomplete: 'off', spellcheck: 'false' });
+  ui.objSearch = h('input', { type: 'text', placeholder: 'Search layers and objects…', 'aria-label': 'Search layers and objects', 'data-testid': 'obj-search', autocomplete: 'off', spellcheck: 'false' });
   ui.objSearch.addEventListener('input', () => { const d = curDoc(); if (d) { omOf(d).query = ui.objSearch.value; renderObjects(); } else ui.objSearch.value = ''; });
   searchEsc(ui.objSearch);
   const filt = (id, text) => (ui['objF' + id] = h('button', { class: 'ofb', type: 'button', 'data-testid': 'obj-filter-' + id, 'data-filter': id, 'aria-pressed': 'false', onclick: () => { const d = curDoc(); if (d) { omOf(d).filter = id; renderObjects(); } } }, text));
   ui.objToggle = h('button', { class: 'ofb', type: 'button', 'data-testid': 'obj-toggle', 'aria-label': 'Expand or collapse all', title: 'Expand or collapse all', onclick: objToggleAll });
-  ui.objTree = h('div', { class: 'otree', role: 'tree', 'aria-label': 'Objects', 'data-testid': 'obj-tree' });
+  ui.objTree = h('div', { class: 'otree layers-rows', role: 'tree', 'aria-label': 'Objects', 'data-testid': 'obj-tree' });
   ui.objTree.addEventListener('click', objClick);
   ui.objTree.addEventListener('contextmenu', objMenu);
   ui.objCount = h('span', { 'data-testid': 'obj-count' }); ui.objSelN = h('span', { 'data-testid': 'obj-selected' });
@@ -4078,6 +4245,7 @@ function buildObjects() {
       h('div', { class: 'osr' }, oIcon('<circle cx="11" cy="11" r="6"/><path d="M16 16l4 4"/>'), ui.objSearch),
       h('div', { class: 'ofs' }, filt('all', 'All'), filt('hidden', ''), filt('locked', ''), h('span', { style: 'flex:1' }), ui.objToggle)),
     ui.objTree,
+    ui.layerAdd = h('button', { class: 'btn sm add-layer', type: 'button', 'aria-label': 'Add layer', 'data-testid': 'layer-add', onclick: addLayerNow }, domIcon('plus', 12), 'Add layer'),
     h('div', { class: 'omfoot' }, ui.objCount, h('span', { style: 'flex:1' }), ui.objSelN));
 }
 
@@ -4086,6 +4254,7 @@ function setPtab(tab) {
   state.ptab = tab;
   state.panel = tab === 'library' ? 'library' : 'main';
   state.propsOn = true;
+  docker.folded = false;
   ui.objPanel.hidden = tab !== 'objects';
   applyKind(); update(); renderLibrary(); rememberDocker();
   ui.panelScroll.scrollTop = 0;
@@ -4095,15 +4264,15 @@ function setPtab(tab) {
 
 /** The tree for the tab that is open: a drawing's layers and objects, or a layout's parts. */
 function objOpts(d, om) {
-  return { factor: d.factor, off: d.off, hid: hidIdx(d) || new Set(), locked: d.locked || new Set(), curLayer: curLayerName(d), query: om.query, filter: om.filter, open: om.open, show: om.show, extra: d.addedLayers ? [...d.addedLayers] : [] };
+  return { factor: d.factor, off: d.off, hid: hidIdx(d) || new Set(), locked: d.locked || new Set(), curLayer: curLayerName(d), query: om.query, filter: om.filter, open: om.open, show: om.show, extra: layerRows().filter((l) => !l.bg).map((l) => l.name) };
 }
 function objBtn(act, on, label, inner, cls = '') {
   return h('button', { class: 'oa' + (on ? '' : ' off') + cls, type: 'button', 'data-act': act, 'aria-label': label, title: label }, oIcon(inner, 15));
 }
 /** What the Objects tree is made of, apart from which rows are picked: when it is the same as the last draw, a pick only re-marks the rows. */
 function objSig(d, dark) {
-  const om = omOf(d), sets = JSON.stringify([om.query, om.filter, dark, [...om.openP], [...(om.open || [])], [...om.openB], [...om.show]]);
-  if (d.lay) return { a: d, b: d.lay.parts, c: null, str: sets + JSON.stringify([Object.values(d.lay.parts).map((p) => p.name), [...(d.hiddenParts || [])], placedNow.map((p) => [p.partId, p.x, p.y, p.rot, p.lock, p.mirrorX, p.mirrorY])]) };
+  const om = omOf(d), sets = JSON.stringify([om.query, om.filter, dark, om.layoutClosed, om.guidesOpen, [...om.openP], [...(om.open || [])], [...om.openB], [...om.show]]);
+  if (d.lay) return { a: d, b: d.lay.parts, c: d.lay.layers, str: sets + JSON.stringify([d.lay.name, d.lay.s, state.hidden, d.curLayer, Object.values(d.lay.parts).map((p) => p.name), [...(d.hiddenParts || [])], placedNow.map((p) => [p.partId, p.x, p.y, p.rot, p.lock, p.mirrorX, p.mirrorY])]) };
   return { a: d, b: d.raw.entities, c: d.raw.layers, str: sets + JSON.stringify([[...d.off], [...(hidIdx(d) || [])], [...(d.locked || [])], curLayerName(d), d.factor, [...(d.addedLayers || [])]]) };
 }
 let objSigLast = null;
@@ -4117,8 +4286,11 @@ function markObjSel(d, reveal) {
   return true;
 }
 function renderObjects(reveal = false) {
-  if (!ui.objTree || state.ptab !== 'objects') return;
-  const d = curDoc(), lay = d && d.lay, ed = lay || d?.cmp ? null : editable(), dark = isDark();
+  if (!ui.objTree) return;
+  const tab = curDoc(), item = tab?.cmp && cmpSelected(tab.cmp), source = item && cmpSourceTab(item);
+  const d = item ? { ...source, raw: source?.raw || { ...item.raw, layers: {}, blocks: {} }, fl: item.fl, off: item.off, factor: item.factor, locked: source?.locked || item.locked, sel: source?.sel || new Set(), om: omOf(tab) } : tab;
+  const lay = d && d.lay, ed = item || (lay || tab?.cmp ? null : editable()), dark = isDark();
+  ui.layerAdd.hidden = !!tab?.cmp;
   const filterBtns = (hidden, locked) => {
     const f = d && d.om ? d.om.filter : 'all';
     ui.objFall.classList.toggle('on', f === 'all'); ui.objFhidden.classList.toggle('on', f === 'hidden'); ui.objFlocked.classList.toggle('on', f === 'locked');
@@ -4127,21 +4299,36 @@ function renderObjects(reveal = false) {
     ui.objFlocked.hidden = !!lay;
   };
   const rows = [];
-  const sig = lay || ed ? objSig(d, dark) : null;
+  const sig = !item && (lay || ed) ? objSig(d, dark) : null;
   if (sig && objSigLast && objSigLast.a === sig.a && objSigLast.b === sig.b && objSigLast.c === sig.c && objSigLast.str === sig.str && markObjSel(d, reveal)) return;
   objSigLast = sig;
+  if (!lay && ui.objTree.contains(ui.guideSec)) { ui.partsSec.after(ui.guideSec); applySectionFold(ui.guideSec); }
   if (lay) {
     const om = omOf(d), hp = d.hiddenParts || new Set(), parts = OB.partsTree(d.lay, placedNow, hp, om.query);
     if (ui.objSearch.value !== om.query) ui.objSearch.value = om.query;
     const shown = om.filter === 'hidden' ? parts.filter((p) => p.hidden) : parts, sel = new Set(selIdxs());
-    for (const p of shown) {
+    rows.push(h('div', { class: 'or', role: 'treeitem', 'aria-level': '1', 'aria-expanded': String(!om.layoutClosed), 'data-testid': 'obj-layout', 'data-layout': '' },
+      h('span', { class: 'otw' }, oIcon(om.layoutClosed ? CHEV_RIGHT : CHEV_DOWN, 12)), h('span', { class: 'onm' }, lay.name),
+      objBtn('vis', !state.hidden.parts, state.hidden.parts ? 'Show' : 'Hide', state.hidden.parts ? EYE_OFF : EYE), objBtn('lock', placedNow.length && placedNow.every((p) => p.lock), 'Lock / unlock layout parts', ICONS.lock)));
+    for (const p of om.layoutClosed ? [] : shown) {
       const open = !!om.query || om.openP.has(p.id);
-      rows.push(h('div', { class: 'or layer' + (p.hidden ? ' dim' : ''), 'data-part': p.id, role: 'treeitem', 'aria-expanded': String(open) },
+      rows.push(h('div', { class: 'or layer' + (p.hidden ? ' dim' : ''), 'data-part': p.id, role: 'treeitem', 'aria-level': '2', 'aria-expanded': String(open), style: 'padding-left:20px' },
         h('span', { class: 'otw' }, oIcon(open ? CHEV_DOWN : CHEV_RIGHT, 12)), h('span', { class: 'oti' }, oIcon(OBJ_ICONS.block)), h('span', { class: 'onm' }, p.name), h('span', { class: 'ocnt' }, p.count),
-        objBtn('vis', !p.hidden, p.hidden ? 'Show' : 'Hide', p.hidden ? EYE_OFF : EYE)));
-      if (open) for (const pl of p.places) rows.push(h('div', { class: 'or obj' + (sel.has(pl.k) ? ' sel' : '') + (p.hidden ? ' dim' : ''), 'data-place': pl.k, role: 'treeitem', style: 'padding-left:20px' },
-        h('span', { class: 'otw' }), h('span', { class: 'oti' }, oIcon(OBJ_ICONS.rect)), h('span', { class: 'onm' }, pl.label), pl.locked ? h('span', { class: 'chp w' }, 'locked') : null));
+        objBtn('vis', !p.hidden, p.hidden ? 'Show' : 'Hide', p.hidden ? EYE_OFF : EYE), objBtn('lock', p.places.every((pl) => pl.locked), 'Lock / unlock part', ICONS.lock)));
+      if (open) for (const pl of p.places) rows.push(h('div', { class: 'or obj' + (sel.has(pl.k) ? ' sel' : '') + (p.hidden ? ' dim' : ''), 'data-place': pl.k, role: 'treeitem', 'aria-level': '3', style: 'padding-left:36px' },
+        h('span', { class: 'otw' }), h('span', { class: 'oti' }, oIcon(OBJ_ICONS.rect)), h('span', { class: 'onm' }, pl.label),
+        objBtn('vis', !p.hidden, p.hidden ? 'Show' : 'Hide', p.hidden ? EYE_OFF : EYE), objBtn('lock', pl.locked, pl.locked ? 'Unlock' : 'Lock', pl.locked ? ICONS.lock : ICONS.unlock)));
     }
+    if (!om.layoutClosed) {
+      rows.push(...layoutLayerRows(d, om.query));
+      if (OB.nameMatches('Guides', om.query)) rows.push(h('div', { class: 'or', role: 'treeitem', 'aria-level': '2', 'aria-expanded': String(!!om.guidesOpen), 'data-testid': 'obj-guides', 'data-guides': '', style: 'padding-left:20px' },
+        h('span', { class: 'otw' }, oIcon(om.guidesOpen ? CHEV_DOWN : CHEV_RIGHT, 12)), h('span', { class: 'onm' }, 'Guides'), h('span', { class: 'ocnt' }, lay.s.guides.length),
+        objBtn('vis', lay.s.guidesShow, lay.s.guidesShow ? 'Hide' : 'Show', lay.s.guidesShow ? EYE : EYE_OFF), objBtn('lock', lay.s.guidesLock, lay.s.guidesLock ? 'Unlock' : 'Lock', lay.s.guidesLock ? ICONS.lock : ICONS.unlock)));
+    }
+    rows.push(h('div', { class: 'guide-node', role: 'group', hidden: om.layoutClosed || !om.guidesOpen || !OB.nameMatches('Guides', om.query) }, ui.guideSec));
+    ui.guideSec.classList.remove('docker-folded');
+    ui.guideSec.querySelector('.section-body').inert = false;
+    ui.guideSec.querySelector('.section-toggle').setAttribute('aria-expanded', String(!!om.guidesOpen));
     filterBtns(parts.filter((p) => p.hidden).length, 0);
     ui.objToggle.replaceChildren(oIcon(om.openP.size ? CHEV_DOWN : CHEV_RIGHT, 12));
     ui.objTree.replaceChildren(...(rows.length ? rows : [h('div', { class: 'omempty' }, parts.length || om.query ? 'Nothing matches.' : 'No parts on this layout yet.')]));
@@ -4150,7 +4337,7 @@ function renderObjects(reveal = false) {
   }
   if (!ed) {
     filterBtns(0, 0); ui.objSearch.value = '';
-    ui.objTree.replaceChildren(h('div', { class: 'omempty' }, 'Open a drawing to see its objects.'));
+    ui.objTree.replaceChildren(h('div', { class: 'omempty', 'data-testid': tab?.cmp ? 'layers-empty' : null }, tab?.cmp ? 'Pick a drawing' : 'Open a drawing to see its objects.'));
     ui.objCount.textContent = ''; ui.objSelN.textContent = '';
     return;
   }
@@ -4168,20 +4355,32 @@ function renderObjects(reveal = false) {
     if (again) tree = OB.buildTree(d.raw, d.fl, objOpts(d, om));
   }
   objLast = tree;
+  const layerMeta = new Map(layerRows().map((l) => [l.name, l]));
   for (const l of tree.layers) {
-    const sw = h('span', { class: 'osw' });
-    sw.style.background = l.css ? ink(l.css, dark) : 'var(--partline)';
-    rows.push(h('div', { class: 'or layer' + (l.cur ? ' cur' : '') + (l.hidden ? ' dim' : ''), 'data-layer': l.name, role: 'treeitem', 'aria-expanded': String(l.open) },
-      h('span', { class: 'otw' }, oIcon(l.open ? CHEV_DOWN : CHEV_RIGHT, 12)), sw, h('span', { class: 'onm' }, l.name), l.cur ? h('span', { class: 'chp', 'data-testid': 'obj-current' }, 'current') : null, h('span', { class: 'ocnt' }, l.count),
-      l.index >= 0 ? objBtn('vis', !l.hidden, l.hidden ? 'Show' : 'Hide', l.hidden ? EYE_OFF : EYE) : null, objBtn('lock', l.locked, l.locked ? 'Unlock' : 'Lock', l.locked ? ICONS.lock : ICONS.unlock, l.locked ? ' lk' : '')));
+    const meta = layerMeta.get(l.name), colour = l.css ? ink(l.css, dark) : meta?.color || 'var(--partline)';
+    const vis = objBtn('vis', !l.hidden, l.hidden ? 'Show' : 'Hide', l.hidden ? EYE_OFF : EYE, ' vis live');
+    if (l.index >= 0) vis.dataset.layer = 'f' + l.index;
+    else vis.disabled = true;
+    rows.push(h('div', { class: 'or layer' + (l.cur ? ' cur current' : '') + (l.hidden ? ' dim hidden-layer' : ''), 'data-layer': l.name, 'data-layer-name': l.name, 'data-file-layer': l.index >= 0 ? l.index : null, role: 'treeitem', 'aria-level': '1', 'aria-expanded': String(l.open) },
+      h('span', { class: 'otw', 'data-act': 'expand' }, oIcon(l.open ? CHEV_DOWN : CHEV_RIGHT, 12)), source || !item ? addedSwatch(source || d, { ...l, color: colour }) : h('span', { class: 'swatch osw', style: 'background:' + colour }),
+      !item && meta?.added ? addedName(d, l) : h('span', { class: 'onm nm' }, l.name), l.cur ? h('span', { class: 'chp', 'data-testid': 'layer-current' }, h('span', { 'data-testid': 'obj-current' }, 'current')) : null,
+      meta?.chip ? h('span', { class: 'chp', 'data-testid': 'layer-new' }, meta.chip) : null, h('span', { class: 'ocnt lbl mono' }, l.count), vis, objBtn('lock', l.locked, l.locked ? 'Unlock' : 'Lock', l.locked ? ICONS.lock : ICONS.unlock, l.locked ? ' lk' : '')));
     for (const r of l.rows) {
       const blockOpen = r.block && om.openB.has(r.e);
-      rows.push(h('div', { class: 'or obj' + (d.sel.has(r.e) ? ' sel' : '') + (r.hidden ? ' dim' : ''), 'data-e': r.e, 'data-layer-of': l.name, role: 'treeitem', style: 'padding-left:20px' },
+      const eye = objBtn('vis', !r.hidden, r.hidden ? 'Show' : 'Hide', r.hidden ? EYE_OFF : EYE);
+      eye.disabled = !!item && !source;
+      rows.push(h('div', { class: 'or obj' + (d.sel.has(r.e) ? ' sel' : '') + (r.hidden ? ' dim' : ''), 'data-e': r.e, 'data-layer-of': l.name, role: 'treeitem', 'aria-level': '2', style: 'padding-left:20px' },
         h('span', { class: 'otw', 'data-act': r.block ? 'block' : null }, r.block ? oIcon(blockOpen ? CHEV_DOWN : CHEV_RIGHT, 12) : null), h('span', { class: 'oti' }, oIcon(OBJ_ICONS[r.icon])), h('span', { class: 'onm' }, r.label),
-        r.locked ? h('span', { class: 'chp w' }, 'locked') : null, objBtn('vis', !r.hidden, r.hidden ? 'Show' : 'Hide', r.hidden ? EYE_OFF : EYE)));
-      if (blockOpen) { const m = OB.membersOf(d.raw, d.raw.entities[r.e], d.factor); for (const x of m.rows) rows.push(h('div', { class: 'or member dim0', 'data-e': r.e, style: 'padding-left:36px' }, h('span', { class: 'otw' }), h('span', { class: 'oti' }, oIcon(OBJ_ICONS[x.icon])), h('span', { class: 'onm' }, x.label))); if (m.more) rows.push(h('div', { class: 'or member', style: 'padding-left:36px' }, h('span', { class: 'onm ocnt' }, `+ ${m.more} more`))); }
+        r.locked ? h('span', { class: 'chp w' }, 'locked') : null, eye, objBtn('lock', r.locked, r.locked ? 'Unlock layer' : 'Lock layer', r.locked ? ICONS.lock : ICONS.unlock)));
+      if (blockOpen) { const m = OB.membersOf(d.raw, d.raw.entities[r.e], d.factor); for (const x of m.rows) rows.push(h('div', { class: 'or member dim0', 'data-e': r.e, role: 'treeitem', 'aria-level': '3', style: 'padding-left:36px' }, h('span', { class: 'otw' }), h('span', { class: 'oti' }, oIcon(OBJ_ICONS[x.icon])), h('span', { class: 'onm' }, x.label), objBtn('vis', !r.hidden, r.hidden ? 'Show block' : 'Hide block', r.hidden ? EYE_OFF : EYE), objBtn('lock', r.locked, r.locked ? 'Unlock layer' : 'Lock layer', r.locked ? ICONS.lock : ICONS.unlock))); if (m.more) rows.push(h('div', { class: 'or member', style: 'padding-left:36px' }, h('span', { class: 'onm ocnt' }, `+ ${m.more} more`))); }
     }
     if (l.more) rows.push(h('button', { class: 'or more', type: 'button', 'data-act': 'more', 'data-layer': l.name, style: 'padding-left:20px' }, `Show ${Math.min(OB.CAP, l.more)} more (${l.more} not listed)`));
+  }
+  if (!item && d.bg && OB.nameMatches('Background', om.query)) {
+    const vis = objBtn('vis', d.bg.visible, d.bg.visible ? 'Hide' : 'Show', d.bg.visible ? EYE : EYE_OFF, ' vis live'); vis.dataset.layer = 'bg';
+    vis.addEventListener('click', (e) => { e.stopPropagation(); d.bg.visible = !d.bg.visible; paintOverlay(); renderLayers(); });
+    const lock = objBtn('lock', true, 'Locked background', ICONS.lock); lock.disabled = true;
+    rows.push(h('div', { class: 'or layer', role: 'treeitem', 'aria-level': '1' }, h('span', { class: 'onm nm' }, 'Background'), vis, lock));
   }
   filterBtns(tree.hiddenN, tree.lockedN);
   ui.objToggle.replaceChildren(oIcon(om.open.size ? CHEV_DOWN : CHEV_RIGHT, 12));
@@ -4201,30 +4400,52 @@ function objToggleAll() {
 }
 
 function objClick(e) {
-  const d = curDoc(), row = e.target.closest('.or'), act = e.target.closest('[data-act]');
+  const tab = curDoc(), row = e.target.closest('.or'), act = e.target.closest('[data-act]');
+  const item = tab?.cmp && cmpSelected(tab.cmp), d = item ? cmpSourceTab(item) || item : tab;
   if (!d || !row) return;
-  const om = omOf(d), flip = (set, k) => (set.has(k) ? set.delete(k) : set.add(k));
+  if (e.target.closest('input, .swatch')) return;
+  const om = omOf(tab), flip = (set, k) => (set.has(k) ? set.delete(k) : set.add(k));
   if (d.lay) {
+    if (row.hasAttribute('data-layout')) {
+      if (act?.dataset.act === 'vis') { state.hidden.parts = !state.hidden.parts; update(); }
+      else if (act?.dataset.act === 'lock') lockObjectPlaces(placedNow.map((_, i) => i));
+      else { om.layoutClosed = !om.layoutClosed; renderObjects(); }
+      return;
+    }
+    if (row.hasAttribute('data-guides')) {
+      if (act?.dataset.act === 'vis') setGuidesShow(!d.lay.s.guidesShow);
+      else if (act?.dataset.act === 'lock') setGuidesLock(!d.lay.s.guidesLock);
+      else { om.guidesOpen = !om.guidesOpen; renderObjects(); }
+      return;
+    }
+    if (act?.dataset.act === 'lock') {
+      lockObjectPlaces(row.dataset.place != null ? [+row.dataset.place] : placedNow.flatMap((p, i) => p.partId === row.dataset.part ? [i] : [])); return;
+    }
     if (row.dataset.part) {
       if (act && act.dataset.act === 'vis') { const hp = d.hiddenParts || (d.hiddenParts = new Set()); flip(hp, row.dataset.part); drawSheet(); paintOverlay(); renderObjects(); note(hp.has(row.dataset.part) ? 'Part hidden: it is left out of print and PDF too. The saved file keeps it' : 'Part shown'); } else { flip(om.openP, row.dataset.part); renderObjects(); }
     } else if (row.dataset.place != null) {
-      selectMany([+row.dataset.place]); update();
+      if (act?.dataset.act === 'vis') {
+        const id = placedNow[+row.dataset.place].partId, hp = d.hiddenParts || (d.hiddenParts = new Set()); flip(hp, id); drawSheet(); paintOverlay(); renderObjects();
+      } else { selectMany([+row.dataset.place]); update(); }
     }
     return;
   }
   if (act && act.dataset.act === 'more') { om.show.set(act.dataset.layer, (om.show.get(act.dataset.layer) || OB.CAP) + OB.CAP); renderObjects(); return; }
   if (row.dataset.layer && !row.dataset.e) {
     const name = row.dataset.layer, idx = d.fl.layers.findIndex((l) => l.name === name);
-    if (act && act.dataset.act === 'vis') toggleLayerVis(d, idx);
+    if (act && act.dataset.act === 'vis') { if (item) cmpToggleLayer(tab, item.id, idx); else toggleLayerVis(d, idx); }
     else if (act && act.dataset.act === 'lock') toggleLayerLock(d, name);
     else {
       flip(om.open, name);
-      const ed = editable();       // a double-click's second click: the first rebuilt the rows, so the browser sends no dblclick; the click's detail still counts
-      if (e.detail === 2 && ed) { ed.curLayer = name; renderLayers(); renderCommand(); renderEdit(); note(`Current layer: ${name}. New shapes and text go on it`); } else renderObjects();
+      const ed = editable();
+      if (act?.dataset.act !== 'expand' && ed) { ed.curLayer = name; renderLayers(); renderCommand(); renderEdit(); note(`Current layer: ${name}. New shapes and text go on it`); } else renderObjects();
     }
     return;
   }
   const ent = +row.dataset.e;
+  if (!Number.isInteger(ent)) return;
+  if (act?.dataset.act === 'lock') { toggleLayerLock(d, d.raw.entities[ent].layer); return; }
+  if (item && !editable()) { cmpEdit('select'); return; }
   if (act && act.dataset.act === 'vis') objHide(d, [ent]);
   else if (act && act.dataset.act === 'block') { flip(om.openB, ent); renderObjects(); }
   else objSelect(d, [ent], e.shiftKey || e.ctrlKey || e.metaKey);
@@ -4237,7 +4458,7 @@ function toggleLayerVis(d, idx) {
 }
 function toggleLayerLock(d, name) {
   const lk = d.locked || (d.locked = new Set());
-  if (lk.has(name)) lk.delete(name); else { lk.add(name); if ([...d.sel].some((e) => lockedEnt(d, e))) { setSel(d, new Set([...d.sel].filter((e) => !lockedEnt(d, e)))); } }
+  if (lk.has(name)) lk.delete(name); else { lk.add(name); if (d.sel && [...d.sel].some((e) => lockedEnt(d, e))) { setSel(d, new Set([...d.sel].filter((e) => !lockedEnt(d, e)))); } }
   renderObjects();
   note(lk.has(name) ? `Layer ${name} locked: it is still drawn and snapped to, but cannot be picked or changed` : `Layer ${name} unlocked`);
 }
@@ -4296,11 +4517,12 @@ function moveToLayerMenu(d, x, y) {
   popMenu(x, y, [...new Set(allLayerNames(d))].map((n) => [n, () => propSet('layer', n)]));
 }
 function objMenu(e) {
-  const d = curDoc(), row = e.target.closest('.or');
+  const tab = curDoc(), d = tab?.cmp ? editable() : tab, row = e.target.closest('.or');
   if (!d || !row || row.classList.contains('more') || row.classList.contains('member')) return;
   e.preventDefault();
   const { clientX: x, clientY: y } = e, hid = hidIdx(d) || new Set(), sep = '-';
   if (d.lay) {
+    if (!row.dataset.part && row.dataset.place == null) return;
     const id = row.dataset.part || (row.dataset.place != null ? placedNow[+row.dataset.place].partId : null), hp = d.hiddenParts || (d.hiddenParts = new Set());
     if (row.dataset.place != null) { selectMany([+row.dataset.place]); update(); }
     popMenu(x, y, [
@@ -4312,16 +4534,18 @@ function objMenu(e) {
   }
   if (!editable()) return;
   if (row.dataset.layer && !row.dataset.e) {
-    const name = row.dataset.layer, l = objLast && objLast.layers.find((x) => x.name === name), idx = d.fl.layers.findIndex((q) => q.name === name), locked = !!(d.locked && d.locked.has(name)), hidden = idx >= 0 && d.off.has(idx);
+    const item = tab?.cmp && cmpSelected(tab.cmp), name = row.dataset.layer, l = objLast && objLast.layers.find((x) => x.name === name), idx = (item || d).fl.layers.findIndex((q) => q.name === name), locked = !!(d.locked && d.locked.has(name)), hidden = idx >= 0 && (item || d).off.has(idx);
     popMenu(x, y, [
       ['Select', () => objSelect(d, l ? l.ents : [], false), '', !!(l && l.ents.length)],
       ['Zoom to', () => objZoom(d, l ? l.ents : []), '', !!(l && l.ents.length)],
-      sep, [hidden ? 'Show' : 'Hide', () => toggleLayerVis(d, idx), '', idx >= 0], [locked ? 'Unlock' : 'Lock', () => toggleLayerLock(d, name)],
+      sep, [hidden ? 'Show' : 'Hide', () => item ? cmpToggleLayer(tab, item.id, idx) : toggleLayerVis(d, idx), '', idx >= 0], [locked ? 'Unlock' : 'Lock', () => toggleLayerLock(d, name)],
       sep, ['Rename…', () => renameLayerNow(d, name), '', name !== '0'],
       sep, ['Show all hidden', () => showAllHidden(d), '', d.off.size > 0 || hid.size > 0]]);
     return;
   }
-  const ent = +row.dataset.e, name = d.raw.entities[ent].layer, locked = !!(d.locked && d.locked.has(name));
+  const ent = +row.dataset.e;
+  if (!Number.isInteger(ent)) return;
+  const name = d.raw.entities[ent].layer, locked = !!(d.locked && d.locked.has(name));
   if (!d.sel.has(ent)) objSelect(d, [ent], false);
   const targets = d.sel.has(ent) ? [...d.sel] : [ent];
   popMenu(x, y, [
@@ -4342,6 +4566,8 @@ function buildCommand() {
 }
 /** A command is on (a tool, a grip, a rotate, …): its name and what it asks for, for the bar. Null when nothing is running. */
 function activeCmd() {
+  if (!ui.startScreen.hidden) return null;
+  if (state.distributeRect) return { label: 'DISTRIBUTE', prompt: state.distributeRect.prompt || 'Pick the rectangle', takes: () => false };
   if (state.arrangePoint) return { label: 'ALIGN', prompt: 'Align: click the point (snaps on), or type X,Y', takes: () => false };
   if (state.paste) return { label: 'PASTE', prompt: 'Paste: follows the cursor, click to place (Esc cancels):', takes: () => false };
   if (state.eatteditAsk) return { label: 'EATTEDIT', prompt: 'Select a block:', takes: () => false };
@@ -4363,6 +4589,7 @@ const pointToolAction = () => state.arrangePoint ? arrangeAtPoint : state.setlen
 
 /** What was typed at the bar (or sent by a chip or a history line), in the command that is on or as a new command. */
 function cmdEnter(raw) {
+  if (!ui.startScreen.hidden) { runCommand(CB.resolve(raw.trim().toLowerCase(), curLay() ? 'layout' : 'draw', ownCommands)); return; }
   if (state.eatteditAsk) { renderCommand(); return; }
   if (state.attdispAsk) {
     const c = raw.trim().toLowerCase(), mode = { normal: 1, on: 2, off: 0 }[c], d = state.attdispAsk;
@@ -4494,6 +4721,7 @@ const DO = {
 function runCommand(cmd) {
   if (!cmd) return;
   const n = cmd.name, label = n[0].toUpperCase() + n.slice(1), lay = curLay();
+  if (!ui.startScreen.hidden && !['open', 'compare', 'nexttab', 'previoustab', 'closetab'].includes(n)) { note('Open or start a drawing first'); return; }
   if (cmd.where === 'layout' && !lay) { note(`${label} is on a layout tab: New layout, or Add to layout`); return; }
   if (cmd.where === 'draw' && lay && cmd.cat !== 'Draw' && n !== 'textoutlines' && n !== 'combine' && n !== 'explode' && n !== 'dimension' && !DIM_OF[n] && !LAY_MODS.includes(TOOL_OF[n] || n)) { note(`${label} works on a drawing tab: open a drawing first`); return; }
   if (DIM_OF[n]) { if (cmpDoc() && !cmpEdit()) return; if (dimTarget()) setDimType(DIM_OF[n]); else note('Dimensions work on a drawing tab or a layout: open one first'); }
@@ -5121,6 +5349,7 @@ function fit() {
   const r = cb ? boxOnSheet(cb, state.sheetH) : part ? boxOnSheet(viewBox(d), state.sheetH) : lay ? fitRect(state.sheetW, state.sheetH, null) : boxOnSheet([0, 0, 200, 120], state.sheetH), P = lay ? 80 : 30;
   const bw = r[2] - r[0] + 2 * P, bh = r[3] - r[1] + 2 * P - (lay ? 10 : 0);
   const R = state.rulers ? RULER : 0, w2 = w - R, h2 = ch - R;                  // the rulers cover the top and left edge of the canvas: fit into what is left
+  if (w2 <= 0 || h2 <= 0) return;                                                // no room yet (canvas hidden or being laid out): a negative scale made a negative SVG viewBox; the next resize fits
   view.scale = Math.min(w2 / bw, h2 / bh);
   view.ox = r[0] - P - (w2 / view.scale - bw) / 2 - R / view.scale;
   view.oy = r[1] - P - (h2 / view.scale - bh) / 2 - R / view.scale;
@@ -5226,6 +5455,7 @@ function attachCanvasEvents() {
     if (state.paste && e.button === 0) { e.preventDefault(); if (pasteMove(e)) placePaste(); return; }
     if (state.eatteditAsk && e.button === 0) { attributePick(e, true); e.preventDefault(); return; }
     if (state.orthoAsk || state.attdispAsk) return;
+    if (e.button === 0 && state.distributeRect) { distributeRectangle(e); return; }
     if (e.button === 0 && state.arrangePoint) { const d = state.arrangePoint.d; arrangeAtPoint(d, toDrawing(d, e.clientX, e.clientY), e.shiftKey); return; }
     if (e.button === 0 && state.zwin) { lrub = { x: e.clientX, y: e.clientY, moved: false, zoom: true }; capture(c, e); return; }       // Zoom Window: the left button drags the box
     const rl = e.target.closest && e.target.closest('.ruler'), gh0 = e.target.closest && e.target.closest('[data-guide]');
@@ -5287,6 +5517,7 @@ function attachCanvasEvents() {
     }
     if (state.paste) { pasteMove(e); return; }
     const p = local(e);
+    if (state.distributeRect) return;
     if (state.arrangePoint) { const d = state.arrangePoint.d; pickPoint(d, toDrawing(d, e.clientX, e.clientY), [], e.shiftKey, true); paintOverlay(); return; }
     if (gdrag) guideMove(e);
     if (state.sheetDrag) sheetMove(e);
@@ -5411,6 +5642,7 @@ function attachCanvasEvents() {
 
 // ---- keeping the panels in step with the layout ----
 function renderCommand() {
+  if (state.distributeRect) { ui.hist.textContent = 'Command: DISTRIBUTE'; ui.prompt.textContent = activeCmd().prompt; return; }
   if (state.arrangePoint) { ui.hist.textContent = 'Command: ALIGN'; ui.prompt.textContent = activeCmd().prompt; return; }
   if (state.paste) { ui.hist.textContent = 'Command: PASTE'; ui.prompt.textContent = activeCmd().prompt; return; }
   if (state.eatteditAsk) { ui.hist.textContent = 'Command: EATTEDIT'; ui.prompt.textContent = activeCmd().prompt; return; }
@@ -5493,6 +5725,7 @@ function renderProps() {
   }
   const secOn = { 'sec-arrange': true, 'sec-group': true };
   for (const sec of ui.placedSecs) sec.hidden = !p || library || (sec.dataset.testid in secOn && !secOn[sec.dataset.testid]);
+  ui.partJumps.hidden = ui.partTransform.hidden = !p || library;
   if (p) {
     ui.ppName.textContent = many ? (whole ? `Group of ${items.length}` : `${items.length} parts`) : part.name;
     ui.ppSize.textContent = `${fmtSize(b[2] - b[0])} × ${fmtSize(b[3] - b[1])}`;
@@ -5779,11 +6012,12 @@ function explodeOrBurst(burst) {
   if (lay) {                                                         // on a layout: dimensions alone -> lines, arrows and text (156b2c3b); anything else -> placed parts and grids (156b4)
     const items = selItems();
     if (!items.length || !items.every((x) => x.p.src === 'loose' && isDimPart(x.part))) { explodeOnLayout(burst); return; }
-    const ats = items.map((x) => x.p.i), snap = laySnap(lay.lay);
-    const n = LD.explodeDims(lay.lay, ats, () => 'o' + uid());
-    if (!n) { note(label + ': nothing explodable (0 exploded)'); return; }
+    const ats = items.filter((x) => !x.p.lock).map((x) => x.p.i), snap = laySnap(lay.lay);       // a locked dimension stays, as in the mixed path
+    const skipped = items.length - ats.length, why = skipped ? `; ${skipped} locked or layout object${skipped === 1 ? '' : 's'} skipped` : '';
+    const n = ats.length ? LD.explodeDims(lay.lay, ats, () => 'o' + uid()) : 0;
+    if (!n) { note(label + ': nothing explodable (0 exploded)' + why); return; }
     state.sel = -1; pushLay(lay, snap, '', label); touch(); update();
-    note(`${label}: ${n} dimension${n === 1 ? '' : 's'} exploded into lines, arrows and text. Ctrl+Z puts it back`);
+    note(`${label}: ${n} dimension${n === 1 ? '' : 's'} exploded into lines, arrows and text` + why + '. Ctrl+Z puts it back');
     return;
   }
   const d = editable();
@@ -5819,7 +6053,9 @@ function shapeSelection(op) {
   const gone = SH.goneEntities(found.loops, found.openEnts, (keep ? [] : op === 'trim' ? [r.operands[r.target]] : r.operands.filter((_, i) => !r.untouched.includes(i))).flatMap((o) => o.loops));
   const kept = Ed.removeEntities(d.raw, gone);
   const made = r.rings.map((ring, i) => {
-    const src = d.raw.entities[Math.min(...found.loops[r.operands[r.sources[i]].loops[0]].ents)];
+    let first = Infinity;
+    for (const e of found.loops[r.operands[r.sources[i]].loops[0]].ents) if (e < first) first = e;      // no Math.min(...): a big loop overflows the spread
+    const src = d.raw.entities[first];
     return lwpoly(ring, op === 'boundary' ? { closed: true, layer: curLayerName(d.vlay || d) } : { closed: true, layer: src.layer, lt: src.lt, aci: src.aci, tc: src.tc, lw: src.lw, cap: src.cap, join: src.join, scaleWithObject: src.scaleWithObject, lts: src.lts, hidden: src.hidden, ps: src.ps });
   }), at = kept.entities.length;
   const had = lay ? new Set(Object.keys(lay.parts)) : null;
@@ -5860,6 +6096,8 @@ function pickGap(key) {
   const axis = key[0], after = Number(key.slice(1)), list = gapList(axis);
   state.gapSel = { axis, after };
   if (!list.some((e) => e.after === after)) list.push({ after, mm: 0 });
+  if (selIdxs().length) selectMany([]);                                  // 282b1: Extra gaps show with no part selected (grill-282b Q6)
+  if (state.ptab !== 'drawing' || docker.folded) setPtab('drawing');   // and on the Properties tab
   update();
   const inp = ui.gapList.querySelector(`[data-gap-field="${key}"]`);
   if (inp) { inp.focus(); inp.select(); }
@@ -5933,7 +6171,7 @@ function partBox(d) {
       if (d.raw.entities[it.e].layer === Ed.DIM_LAYER) { dims = true; continue; }
       x0 = Math.min(x0, it.b[0]); y0 = Math.min(y0, it.b[1]); x1 = Math.max(x1, it.b[2]); y1 = Math.max(y1, it.b[3]);
     }
-    d.pb = { fl: d.fl, key, box: dims && x1 > x0 && y1 > y0 ? [x0 * d.factor, y0 * d.factor, x1 * d.factor, y1 * d.factor] : null };
+    d.pb = { fl: d.fl, key, box: dims && x1 >= x0 && y1 >= y0 && (x1 > x0 || y1 > y0) ? [x0 * d.factor, y0 * d.factor, x1 * d.factor, y1 * d.factor] : null };
   }
   return d.pb.box || d.box;
 }
@@ -7208,9 +7446,8 @@ async function balRow(id) {
   if (!it) return;
   if (it.sheet !== sheetOf(d) && !(await balSheet(d, it.sheet))) return;
   balSelect(d, it.id);
-  const x = [it.c[0], it.tip[0]], y = [it.c[1], it.tip[1]];
   const R = balR(d);
-  zoomToBox([Math.min(...x) - R, Math.min(...y) - R, Math.max(...x) + R, Math.max(...y) + R], Math.max(20, 3 * R));
+  zoomToBox([Math.min(it.c[0], it.tip[0]) - R, Math.min(it.c[1], it.tip[1]) - R, Math.max(it.c[0], it.tip[0]) + R, Math.max(it.c[1], it.tip[1]) + R], Math.max(20, 3 * R));
   note(`Balloon ${it.n}` + (it.dim ? ': ' + it.dim : ''));
 }
 /** The table's file: Export CSV, and Export Excel (the same rows, as a UTF-8 CSV with a byte order mark: Excel opens it with Ø and ± right). */
@@ -8288,7 +8525,7 @@ function modPrompt(d) {
   if (m.kind === 'lengthen') return { status: 'Command: LENGTHEN', input, prompt: lengthenPrompt(m) };
   if (m.kind === 'chamfer') return { status: 'Command: CHAMFER', input, prompt: chamferPrompt(m) };
   if (m.kind === 'break' || m.kind === 'breakatpoint') return { status: `Command: ${m.kind.toUpperCase()}`, prompt: m.stage === 'obj' ? 'Select object:' : m.kind === 'breakatpoint' ? 'Specify break point:' : m.stage === 'first' ? 'Specify first break point:' : m.first ? 'Specify second break point:' : 'Specify second break point or [First point]:' };
-  if (m.kind === 'join') return { status: `Command: JOIN   ${m.objs.length} selected`, prompt: m.stage === 'src' ? 'Select source object or multiple objects to join at once:' : `Select objects to join${m.objs[0]?.type === 'ARC' ? ' or [cLose]' : ''}:` };
+  if (m.kind === 'join') return { status: `Command: JOIN   ${m.objs.length} selected`, prompt: `${m.stage === 'src' ? 'Select source object or multiple objects to join at once' : `Select objects to join${m.objs[0]?.type === 'ARC' ? ' or [cLose]' : ''}`}, or Far ends [Off / Extend / Straight] <${joinFarEnds[0].toUpperCase() + joinFarEnds.slice(1)}>:` };
   if (m.kind === 'close') return { status: `Command: CLOSE   ${m.objs.length} selected`, input, prompt: `Select objects to close, then Enter, or [Extend / Straight] <${closeEnds === 'straight' ? 'Straight' : 'Extend'}>:` };
   if (m.kind === 'reverse') return { status: `Command: REVERSE   ${m.objs.length} selected`, prompt: 'Select objects:' };
   if (m.kind === 'align') return { status: `Command: ALIGN   ${m.sel?.size ?? d.sel.size} selected`, input, prompt: ALIGN_PROMPT[m.stage] };
@@ -8384,6 +8621,7 @@ function modEnter(d) {
   if (m.kind === 'offset') {
     if (m.stage === 'distance') { m.stage = 'obj'; note(offsetPrompt(m)); }
     else if (m.stage === 'erase' || m.stage === 'layer') { m.stage = 'distance'; note(offsetPrompt(m)); }
+    else if (m.stage === 'side' && m.multiple) offsetNextObject(d);
     else offsetEnd(d);
     paintOverlay(); return;
   }
@@ -8413,7 +8651,7 @@ function modTakes(c) {
   if ((modLive() || layModLive()) && m.kind === 'lengthen') return true;
   if ((modLive() || layModLive()) && m.kind === 'offset') return true;
   if ((modLive() || layModLive()) && (m.kind === 'break' || m.kind === 'breakatpoint')) return m.stage !== 'obj';
-  if ((modLive() || layModLive()) && m.kind === 'join') return JOIN_CLOSE.test(c) && m.objs[0]?.type === 'ARC';
+  if ((modLive() || layModLive()) && m.kind === 'join') return JOIN_FAR.test(c) || JOIN_CLOSE.test(c) && m.objs[0]?.type === 'ARC';
   if ((modLive() || layModLive()) && m.kind === 'close') return CLOSE_ENDS.test(c);
   if ((modLive() || layModLive()) && m.kind === 'fillet') return m.askR || m.askTrim || /^(r|radius)$/.test(c) || (m.stage === 'obj' && /^(u|undo|p|polyline|t|trim|m|multiple)$/.test(c));
   if ((modLive() || layModLive()) && ['move', 'copy', 'stretch', 'align'].includes(m.kind) && m.stage !== 'pick') return true;
@@ -8451,6 +8689,11 @@ function modTyped(d, raw) {
     return false;
   }
   if (m.kind === 'join') {
+    if (JOIN_FAR.test(c)) {
+      joinFarEnds = c[0] === 'o' ? 'off' : c[0] === 's' ? 'straight' : 'extend';
+      try { localStorage.setItem(JOIN_FAR_SAVED, joinFarEnds); } catch { /* applies for this session */ }
+      note(modPrompt(d).prompt); return true;
+    }
     if (!JOIN_CLOSE.test(c) || m.objs[0]?.type !== 'ARC') return false;
     joinRun(d, true); return true;
   }
@@ -9107,7 +9350,7 @@ function layGhosts(m) {
   }
   let res = null;
   if (['move', 'copy', 'stretch'].includes(m.kind) && m.p1 && m.cur) res = layResults(m, m.cur);
-  else if (m.kind === 'scale' && m.p1 && (value ?? m.hoverK) > 0) res = layResults(m, value == null ? m.hoverK : m.ref ? referenceFactor(m.ref.value, value) : value);
+  else if (m.kind === 'scale' && m.p1 && (!m.ref || m.ref.step === 'new') && (value ?? m.hoverK) > 0) res = layResults(m, value == null ? m.hoverK : m.ref ? referenceFactor(m.ref.value, value) : value);
   else if (m.kind === 'mirror' && m.stage === 'p2' && m.cur) res = layResults(m, m.cur);
   else if (m.kind === 'mirror' && m.stage === 'erase') res = layResults(m, m.p2);
   else if (m.kind === 'align') { const t = alignPreview(m); res = t && [layAlignPlacements(m, t)]; }
@@ -9270,8 +9513,7 @@ function offsetDo(d, p) {
   note(offsetPrompt(m)); paintOverlay();
 }
 /** Multiple keeps every copy; only a completed run erases its source, in the same Undo step. */
-function offsetEnd(d) {
-  modSync(d);
+function offsetEraseSource(d) {
   const m = state.mod;
   if (m.offsetSource != null && m.offsetSteps.length) {
     const entities = d.raw.entities.filter((_, i) => i !== m.offsetSource);
@@ -9279,7 +9521,21 @@ function offsetEnd(d) {
     if (d.vlay) { LD.objectCommit(d.vlay.lay, d, entities, () => 'o' + uid()); touch(); update(); }
     else restore(d, { entities, groups: remapGroups(d.raw.groups, new Map(d.raw.entities.map((_, i) => [i, [i < m.offsetSource ? i : i === m.offsetSource ? entities.length - 1 : i - 1]]))), blocks: d.raw.blocks });       // the source's place goes to the last copy
   }
+}
+function offsetEnd(d) {
+  modSync(d);
+  offsetEraseSource(d);
   setTool('select'); note('Offset ended');
+}
+/** Enter at the side stage of Multiple (AutoCAD): this object's run is complete, Multiple is off, the command asks for the next object. */
+function offsetNextObject(d) {
+  modSync(d);
+  const m = state.mod, tab = d.vlay || d;
+  offsetEraseSource(d);
+  m.offsetSource = null; m.multiple = false; m.ent = null; m.stage = 'obj';
+  const now = mdoc(tab);
+  m.offsetRaw = now.raw.entities; m.offsetRevision = historyOf(tab).revision;
+  note(offsetPrompt(m)); paintOverlay();
 }
 function offsetUndo(d) {
   modSync(d);
@@ -9394,13 +9650,16 @@ const JOIN_CLOSE = /^(l|cl|close)$/;
 const CLOSE_ENDS = /^(e|ex|extend|s|st|straight)$/, CLOSE_ENDS_SAVED = 'pd-close-ends';
 let closeEnds = 'extend';       // Close's "Ends" option (TODO 290): 'extend' or 'straight', remembered on this PC
 try { if (localStorage.getItem(CLOSE_ENDS_SAVED) === 'straight') closeEnds = 'straight'; } catch { /* the default */ }
+const JOIN_FAR = /^(o|off|e|ex|extend|s|st|straight)$/, JOIN_FAR_SAVED = 'pd-join-far';
+let joinFarEnds = 'off';       // Join's "Far ends" option (TODO 290b): 'off' (touching ends only), 'extend' or 'straight', remembered on this PC
+try { const v = localStorage.getItem(JOIN_FAR_SAVED); if (v === 'extend' || v === 'straight') joinFarEnds = v; } catch { /* the default */ }
 /** Join (and Close, with `closing`: the picks become one closed polyline, far ends too): one undo step. */
 function joinRun(d, close = false, closing = false) {
-  const m = state.mod, all = d.raw.entities, have = new Set(all), ents = m.objs.filter((e) => have.has(e));
-  const { result, skipped, note: closeNote, why } = closing ? closeEntities(ents, { ends: closeEnds }) : joinEntities(ents, { close }), words = new Map();
+  const m = state.mod, all = d.raw.entities, have = new Set(all), ents = m.objs.filter((e) => have.has(e)), far = !closing && joinFarEnds !== 'off';
+  const { result, skipped, note: closeNote, why } = closing ? closeEntities(ents, { ends: closeEnds }) : far ? joinFar(ents, { ends: joinFarEnds, close }) : joinEntities(ents, { close }), words = new Map();
   for (const { reason } of skipped) words.set(reason, (words.get(reason) || 0) + 1);
   const left = [...words].map(([reason, n]) => reason === NO_TOUCH ? `${n} object${n === 1 ? '' : 's'} not joined: ${reason} (Join gaps can close them)` : `${n} skipped: ${reason}`).join('. ');
-  if (!result) { setTool('select'); note(closing ? `Close: ${ents.length ? why : 'nothing selected'}` : ents.length ? `Nothing joined. ${left}` : 'Join: nothing selected'); return; }
+  if (!result) { setTool('select'); note(closing ? `Close: ${ents.length ? why : 'nothing selected'}` : ents.length ? `Nothing joined. ${far && why ? why : left}` : 'Join: nothing selected'); return; }
   const gone = new Set(ents.filter((e) => !skipped.some((s) => s.entity === e))), source = ents.find((e) => gone.has(e)), at = all.indexOf(source), keep = new Map(), entities = [];
   all.forEach((e, i) => { if (i === at) { keep.set(i, [entities.length]); entities.push(result); } else if (!gone.has(e)) { keep.set(i, [entities.length]); entities.push(e); } });
   view.fitted = false;
@@ -9408,8 +9667,8 @@ function joinRun(d, close = false, closing = false) {
   setTool('select');
   if (d.vlay) { const i = layObjDoc(d.vlay).at.get(result); selectMany(placedNow.flatMap((q, k) => (q.src === 'loose' && q.i === i ? [k] : [])).flatMap(groupIdxs)); update(); }       // the old picks' indexes would point at other objects
   else setSel(d, new Set([keep.get(at)[0]]));
-  if (closing) { note(`Closed ${gone.size} object${gone.size === 1 ? '' : 's'} into 1 closed polyline.${closeNote ? ' ' + closeNote + '.' : ''}${left ? ' ' + left + '.' : ''} Ctrl+Z takes it back`); return; }
-  note(`Joined ${gone.size} objects into 1 ${{ LINE: 'line', ARC: 'arc', CIRCLE: 'circle' }[result.type] || 'polyline'}.${left ? ' ' + left + '.' : ''} Ctrl+Z takes it back`);
+  if (closing || far && close && result.type !== 'CIRCLE') { note(`Closed ${gone.size} object${gone.size === 1 ? '' : 's'} into 1 closed polyline.${closeNote ? ' ' + closeNote + '.' : ''}${left ? ' ' + left + '.' : ''} Ctrl+Z takes it back`); return; }
+  note(`Joined ${gone.size} objects into 1 ${{ LINE: 'line', ARC: 'arc', CIRCLE: 'circle' }[result.type] || 'polyline'}.${far && closeNote ? ' ' + closeNote + '.' : ''}${left ? ' ' + left + '.' : ''} Ctrl+Z takes it back`);
 }
 /** Reverse (Enter, or a selection made first): lines, polylines and splines run the other way in place, one undo step. Locked ones and other kinds are counted as filtered out; nothing reversible changes nothing. */
 function reverseRun(d) {
@@ -10938,8 +11197,15 @@ function editKey(e) {
   if (e.key === 'F12' && !e.ctrlKey && !e.altKey && !e.shiftKey) { e.preventDefault(); dynamicInputSet(!state.dynamicInput); return; }
   if ((e.key === 'F10' || e.key === 'F11') && !e.ctrlKey && !e.altKey && !e.shiftKey) { e.preventDefault(); if (e.key === 'F10') polarSet(!state.polar.on); else otrackSet(!state.otrack); return; }
   if (e.key === 'F2' && !e.ctrlKey && !e.altKey && !e.shiftKey) { e.preventDefault(); ui.cmdUI.toggleHistory(); return; }
+  if (!ui.startScreen.hidden) {       // the Start screen: a typed letter opens the command bar (open / compare) and Esc shuts it; no other key reaches the hidden drawing
+    if (e.key === 'Escape') { if (!inField || e.target === ui.cmd) ui.cmdUI.escape(); return; }
+    const seed = CB.keyOpensBar(e, { inField: !!inField || !!e.target?.isContentEditable, dialog: !!document.querySelector('.pop-back, .pdlg-back, dialog[open]'), active: !!activeCmd() });
+    if (seed != null) { e.preventDefault(); ui.cmdUI.open(seed); }
+    return;
+  }
   const d = editable();
   if (e.key === 'Escape') {
+    if (state.distributeRect) { e.preventDefault(); state.distributeRect = null; ui.cmdUI.escape(); note('Distribute cancelled'); paintOverlay(); return; }
     if (state.arrangePoint) { e.preventDefault(); state.arrangePoint = null; trackClear(); ui.cmdUI.escape(); note('Align cancelled'); paintOverlay(); return; }
     if (state.paste) { e.preventDefault(); ui.cmdUI.escape(); cancelPaste(); return; }
     if (state.eatteditAsk) { e.preventDefault(); state.eatteditAsk = null; ui.cmdUI.escape(); renderCommand(); return; }
@@ -11068,9 +11334,12 @@ function buildDrawingSection() {
   ui.lenRow = h('div', { class: 'lenrow', 'data-testid': 'len-row', hidden: true }, ui.measured, ui.realLen,
     h('div', { class: 'btnrow' }, btn('Scale', 'real-ok', applyLength, 'btn sm primary'), btn('Cancel', 'real-cancel', cancelSetlen)));
   const tog = (text, id, fn, title) => { const b = h('button', { class: 'tog', type: 'button', 'data-testid': id, title, onclick: fn }, text); ui[id] = b; return b; };
+  ui.drawSize = h('div', { class: 'propbody' },
+    h('div', { class: 'row' }, ui.sizeLabel = h('span', { class: 'lbl sizelbl', 'data-testid': 'size-target-label' }, 'Whole drawing'), sizePadlock('panel-size-padlock')),
+    h('div', { class: 'grid2' }, size('Width mm', 'dw', 'w'), size('Height mm', 'dh', 'h')));
   ui.drawSec = h('section', { class: 'drawbox', hidden: true, 'data-testid': 'drawing-panel' },
     h('div', { class: 'layers-head' }, h('h2', { class: 'sec' }, 'Drawing scale'),
-      h('span', { class: 'tools' },
+      ui.undoTools = h('span', { class: 'tools' },
         tog('Undo', 'undo', () => undoCurrent(), 'Undo (Ctrl+Z)'),
         tog('Redo', 'redo', () => undoCurrent(true), 'Redo (Ctrl+Y)'))),
     h('div', { class: 'unitrow' },
@@ -11078,9 +11347,7 @@ function buildDrawingSection() {
       tog('×25.4', 'unit-up', () => unitFix(UF.UNIT_FIXES.up), ''),
       tog('÷25.4', 'unit-down', () => unitFix(UF.UNIT_FIXES.down), '')),
     h('span', { class: 'lbl' }, 'Make the whole drawing 1:1 once. Every part extracted from it is true size.'),
-    ui.selRow, ui.dimRow, ui.ldrRow,
-    h('div', { class: 'row' }, ui.sizeLabel = h('span', { class: 'lbl sizelbl', 'data-testid': 'size-target-label' }, 'Whole drawing'), sizePadlock('panel-size-padlock')),
-    h('div', { class: 'grid2' }, size('Width mm', 'dw', 'w'), size('Height mm', 'dh', 'h')),
+    ui.drawSize,
     ui.scaleTarget, ui.bgRow, ui.lenRow, useBtn);
   ui.outList = h('div', { class: 'outlist', 'data-testid': 'outlines' });
   ui.outSec = h('section', { class: 'outbox', hidden: true, 'data-testid': 'outlines-panel' },
@@ -11285,12 +11552,26 @@ function buildPropsSection() {
   ui.propMatch = h('button', { class: 'btn', type: 'button', 'data-testid': 'prop-match', title: 'Copy layer, colour and line type from the first selected shape to the shapes you click', onclick: startMatch },
     icon('<path d="M14 4l6 6-7 7-6-6z"/><path d="M7 11c-2 2-2 6-4 9 4 0 7 0 9-3"/>', { size: 16, join: 'round', cap: 'round' }), ' Match');
   ui.propEmpty = h('div', { class: 'lbl', 'data-testid': 'prop-empty' });
-  ui.propCommon = h('div', { class: 'propbody' }, row('Layer', ui.propLayer), row('Colour', ui.propSwatch, ui.propColour), ui.propFillRow, row('Line type', ui.propLt));
+  ui.propCommon = h('div', { class: 'propbody' }, row('Layer', ui.propLayer), row('Colour', ui.propSwatch, ui.propColour), row('Line type', ui.propLt));
   ui.propButtons = h('div', { class: 'proprow btns' }, ui.propSimilar, ui.propQuick, ui.propMatch);
-  ui.propBody = h('div', { class: 'propbody' }, ui.propCommon, ui.propWidth, ui.propLineEnds, ui.propGeo);
+  const sec = (name, id, ...kids) => h('section', { 'data-testid': 'props-' + id }, h('h2', { class: 'sec' }, name), ...kids);
+  ui.propInfo = sec('Info', 'info', ui.dimRow, ui.ldrRow, ui.propGeo);
+  ui.propFillSec = sec('Fill', 'fill', ui.propFillRow);
+  ui.propJumps = buildPropertyJumps([['General', 'props-general', '▤'], ['Outline', 'props-outline', '▭'], ['Fill', 'props-fill', '■'], ['Info', 'props-info', 'ⓘ']]);
+  ui.propBody = h('div', { class: 'propbody' }, ui.propJumps, sec('General', 'general', ui.propCommon), sec('Outline', 'outline', ui.propWidth, ui.propLineEnds), ui.propFillSec, ui.propInfo);
   ui.propSec = h('section', { class: 'propbox', hidden: true, 'data-testid': 'props-panel' },
-    h('div', { class: 'layers-head' }, h('h2', { class: 'sec' }, 'Properties'), ui.propChip), ui.propEmpty, ui.propBody, ui.propButtons);
+    ui.propHead = h('div', { class: 'layers-head' }, h('h2', { class: 'sec' }, 'Properties'), ui.propChip), ui.propEmpty, ui.propBody, sec('Select', 'select', ui.propButtons, ui.selRow));
   return ui.propSec;
+}
+
+function buildPropertyJumps(groups) {
+  return h('div', { class: 'property-jumps', role: 'group', 'aria-label': 'Property sections' }, groups.map(([name, id, glyph]) => h('button', {
+    class: 'btn sm', type: 'button', 'data-testid': 'props-jump-' + id.replace('props-', ''), onclick: () => {
+      const section = ui.panelScroll.querySelector(`[data-testid="${id}"]`);
+      docker.folds[section.dataset.section] = false; applySectionFold(section); rememberDocker();
+      section.scrollIntoView({ block: 'nearest' });
+    }
+  }, h('span', { class: 'jump-icon', 'aria-hidden': 'true' }, glyph), h('span', { class: 'jump-label' }, name))));
 }
 
 function setSelect(sel, options, current) {
@@ -11314,7 +11595,7 @@ function renderPropsPanel(d) {
   ui.placedSecs[1].hidden = state.panel === 'library' || (lay ? selIdxs().length : d?.sel.size || 0) < 1;
   ui.centreOnPage.disabled = !lay;
   ui.centreOnPage.title = lay ? 'Centre the selection as one block on the whole sheet (CP)' : 'a drawing has no page';
-  setSelect(ui.relSel, [['selection', 'Selection'], ...(lay ? [['sheet', 'Sheet']] : []), ['first', 'First selected'], ['last', 'Last selected'], ['point', 'Point...']], !lay && state.arrangeRel === 'sheet' ? 'selection' : state.arrangeRel);
+  setSelect(ui.relSel, [['selection', 'Selection'], ...(lay ? [['sheet', 'Sheet']] : []), ['first', 'First selected'], ['last', 'Last selected'], ['point', 'Point...'], ['rectangle', 'Rectangle']], !lay && state.arrangeRel === 'sheet' ? 'selection' : state.arrangeRel);
   ui.propSec.hidden = !show;
   if (!show) return;
   if (lay) d = propDoc();
@@ -11325,6 +11606,15 @@ function renderPropsPanel(d) {
     return;
   }
   const pe = propEnts(d), ents = pe.map((x) => x[1]), all = propEnts(d, true).map((x) => x[1]), sm = PR.summarize(ents), none = !ents.length;
+  const text = ents.length > 0 && ents.every((e) => ['TEXT', 'MTEXT'].includes(e.type));
+  ui.propInfo.querySelector('.section-title').textContent = text ? 'Text' : 'Info';
+  if (text && ui.propJumps.nextElementSibling !== ui.propInfo) ui.propJumps.after(ui.propInfo);
+  else if (!text && ui.propBody.lastElementChild !== ui.propInfo) ui.propBody.append(ui.propInfo);
+  const infoJump = ui.propJumps.querySelector('[data-testid=props-jump-info]');
+  infoJump.querySelector('.jump-label').textContent = text ? 'Text' : 'Info';
+  infoJump.querySelector('.jump-icon').textContent = text ? 'A' : 'ⓘ';
+  if (text && ui.propJumps.firstElementChild !== infoJump) ui.propJumps.prepend(infoJump);
+  else if (!text && ui.propJumps.lastElementChild !== infoJump) ui.propJumps.append(infoJump);
   const group = !lay && wholeDrawingGroup(d.raw.groups, d.sel);
   ui.propEmpty.hidden = !none; ui.propBody.hidden = !all.length; ui.propChip.hidden = none && !group;
   ui.propChip.textContent = group ? drawingSelectionName(d) : ents.length === 1 && combinedLabel(d.raw.blocks, ents[0]) || sm.chip;
@@ -11352,6 +11642,8 @@ function renderPropsPanel(d) {
   ui.propScaleHint.textContent = ui.propScale.indeterminate ? VARIES : '';
   if (none) return;
   const closed = ents.filter(FI.closedOutline), fill = closed[0]?.fill;
+  ui.propFillSec.hidden = !closed.length;
+  ui.propJumps.querySelector('[data-testid=props-jump-fill]').hidden = !closed.length;
   ui.propFillRow.hidden = !closed.length;
   ui.propFill.classList.toggle('no-fill', !fill);
   ui.propFill.style.backgroundColor = fill ? colourCss(fill) : '';
@@ -11479,7 +11771,7 @@ function toggleProps() {
   const focus = ui.panelEl.contains(document.activeElement) || document.activeElement === ui.panelShow;
   state.propsOn = !state.propsOn;
   renderDocker(); renderRibbon(); rememberDocker();
-  if (focus) (state.propsOn ? ui.panelHide : ui.panelShow).focus();
+  if (focus) (state.propsOn ? docker.folded ? ui.dockerTabs.find((button) => button.dataset.tab === state.ptab) : ui.panelHide : ui.panelShow).focus();
   note(state.propsOn ? 'Panel shown (Ctrl+1)' : 'Panel hidden (Ctrl+1)');
 }
 
@@ -11905,7 +12197,8 @@ function renderContour() {
   const all = [...loops, ...chains, ...outs].flat();
   if (!all.length) ui.ctPreview.replaceChildren();
   else {
-    const x0 = Math.min(...all.map((p) => p[0])), x1 = Math.max(...all.map((p) => p[0])), y0 = Math.min(...all.map((p) => p[1])), y1 = Math.max(...all.map((p) => p[1]));
+    let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;      // plain loop: a spread of thousands of points overflows the stack
+    for (const p of all) { x0 = Math.min(x0, p[0]); x1 = Math.max(x1, p[0]); y0 = Math.min(y0, p[1]); y1 = Math.max(y1, p[1]); }
     const k = Math.min(220 / Math.max(x1 - x0, 1e-9), 70 / Math.max(y1 - y0, 1e-9)), ox = 120 - k * (x0 + x1) / 2, oy = 45 + k * (y0 + y1) / 2;
     const path = (pts, close = true) => 'M' + pts.map((p) => `${(ox + k * p[0]).toFixed(1)} ${(oy - k * p[1]).toFixed(1)}`).join('L') + (close ? 'Z' : '');
     ui.ctPreview.replaceChildren(
@@ -12026,7 +12319,7 @@ const ed6000 = (d) => !!d.ed && d.ed.shown.length > 6000;
 function gapsOf(d) {
   if (!d.ed) return null;
   const tol = state.gapMm / (d.factor || 1);
-  if (!d.gaps || d.gaps.ed !== d.ed || d.gaps.tol !== tol) d.gaps = { ed: d.ed, tol, list: d.ed.shown.length > 60000 ? [] : Ed.findGaps(d.ed, tol) };
+  if (!d.gaps || d.gaps.ed !== d.ed || d.gaps.tol !== tol) { const skipped = d.ed.shown.length > 60000; d.gaps = { ed: d.ed, tol, skipped, list: skipped ? [] : Ed.findGaps(d.ed, tol) }; }
   return d.gaps.list;
 }
 function gapTolTyped() {
@@ -12057,7 +12350,7 @@ function removeDuplicates() {
   const d = editable();
   if (!d) return;
   const r = CL.removeDuplicates(d.raw, (i) => !lockedEnt(d, i));
-  d.duplicates = { source: d.raw.entities, count: d.locked?.size ? CL.removeDuplicates(d.raw).count : r.count };
+  d.duplicates = { source: d.raw.entities, count: r.count };      // locked layers are not counted: one pass only
   if (!r.count) { renderEdit(); note(ui.duplicateRemove.disabled ? ui.duplicateReason.textContent : 'No removable duplicates / overlaps (locked layers are kept)'); return; }
   if (!commit(d, { entities: r.entities, groups: remapGroups(d.raw.groups, r.indexes), blocks: r.blocks }, 'Remove duplicates / overlaps')) return;
   note(`Removed redundant geometry from ${r.count} entities. Ctrl+Z brings it back`);
@@ -12137,7 +12430,15 @@ function renderEdit() {
       else if (ui.preflightSource !== d.raw.entities) ui.preflightNote.textContent = 'Drawing changed · Recheck for current counts. Cut layer: name contains “cut” (any case).';
     }
   }
-  ui.drawSec.hidden = ui.tinySec.hidden = ui.dupsSec.hidden = ui.outSec.hidden = !!cmpDoc() || !on;
+  const selected = curLay() ? selIdxs().length > 0 : !!d?.sel?.size;
+  ui.guideSec.hidden = !guideTarget() || state.panel === 'library' || (!curLay() && selected);
+  ui.partsSec.hidden = ui.gapSec.hidden = !curLay() || state.panel === 'library' || selected;
+  ui.drawSec.hidden = ui.tinySec.hidden = ui.dupsSec.hidden = !!cmpDoc() || !on || selected;
+  ui.outSec.hidden = !!cmpDoc() || !on;                    // stays with a selection: Extract part… needs one
+  const sizeBody = (on && selected ? ui.propInfo : ui.drawSec).querySelector('.section-body');
+  if (ui.drawSize.parentElement !== sizeBody) sizeBody.append(ui.drawSize);
+  const undoHead = on && selected ? ui.propHead : ui.drawSec.querySelector('.layers-head');   // Drawing scale hides with a selection; Undo / Redo stay reachable
+  if (ui.undoTools.parentElement !== undoHead) undoHead.append(ui.undoTools);
   for (const section of [ui.drawSec, ui.tinySec, ui.dupsSec]) applySectionFold(section);
   if (state.colourTool && (!on || state.colourTool.d !== d)) state.colourTool = null;
   if (state.match?.d.vlay === curDoc()) state.match.d = propDoc();
@@ -12208,7 +12509,7 @@ function renderEdit() {
   if (document.activeElement !== ui.gapTol) ui.gapTol.value = String(state.gapMm);
   ui.gapShow.classList.toggle('on', !!d.gapShow); ui.gapShow.setAttribute('aria-pressed', String(!!d.gapShow));
   ui.gapJoin.disabled = !gl || !gl.length; ui.gapShow.disabled = ui.gapJoin.disabled || countOnly;
-  const gapReason = !gl ? '' : countOnly ? `Too many gaps to show (${gl.length}): Join still works` : !gl.length ? 'No tiny gaps' : '';
+  const gapReason = !gl ? '' : d.gaps.skipped ? 'Tiny gaps not checked: too many objects' : countOnly ? `Too many gaps to show (${gl.length}): Join still works` : !gl.length ? 'No tiny gaps' : '';
   // Announce changes after a check or edit, without replacing the file-open/font message on the first index.
   if (gl && d.gapReason !== undefined && gapReason && gapReason !== d.gapReason) note(state.msg ? state.msg + '. ' + gapReason : gapReason);
   if (gl) d.gapReason = gapReason;
@@ -12569,7 +12870,7 @@ async function init() {
     if (['full', 'titles'].includes(rb?.last)) ribbon.last = rb.last;
     ribbon.rail = rb?.rail !== false; ribbon.guideSnap = rb?.guideSnap !== false;
     const panel = saved.find((r) => r.id === 'docker');
-    docker.width = panelWidth(panel?.width); state.propsOn = panel?.on !== false;
+    docker.width = panelWidth(panel?.width); state.propsOn = panel?.on !== false; docker.folded = panel?.folded === true;
     if (panel?.folds && typeof panel.folds === 'object') docker.folds = Object.fromEntries(Object.entries(panel.folds).filter(([, value]) => typeof value === 'boolean'));
   } catch { /* storage may be blocked */ }
   try { state.shapingKeepOriginals = (await shapingStore.all()).some((r) => r.id === 'keepOriginals' && r.on === true); } catch { /* storage may be blocked */ }
@@ -12634,7 +12935,7 @@ async function init() {
   update(true);
   setTool('select');
   if (shortcutError) note(shortcutError);
-  attachLaunchFiles();
+  attachLaunchFiles().then((noFiles) => { if (noFiles && startMode() === 'start' && state.docs.length === 1 && curDoc().empty) showStartScreen(true); });
   libInit();
   const every = Number(new URLSearchParams(location.search).get('autosave'));
   setInterval(autosaveNow, every >= 100 ? every : 120000);
