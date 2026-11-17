@@ -5349,6 +5349,7 @@ function fit() {
   const r = cb ? boxOnSheet(cb, state.sheetH) : part ? boxOnSheet(viewBox(d), state.sheetH) : lay ? fitRect(state.sheetW, state.sheetH, null) : boxOnSheet([0, 0, 200, 120], state.sheetH), P = lay ? 80 : 30;
   const bw = r[2] - r[0] + 2 * P, bh = r[3] - r[1] + 2 * P - (lay ? 10 : 0);
   const R = state.rulers ? RULER : 0, w2 = w - R, h2 = ch - R;                  // the rulers cover the top and left edge of the canvas: fit into what is left
+  if (w2 <= 0 || h2 <= 0) return;                                                // no room yet (canvas hidden or being laid out): a negative scale made a negative SVG viewBox; the next resize fits
   view.scale = Math.min(w2 / bw, h2 / bh);
   view.ox = r[0] - P - (w2 / view.scale - bw) / 2 - R / view.scale;
   view.oy = r[1] - P - (h2 / view.scale - bh) / 2 - R / view.scale;

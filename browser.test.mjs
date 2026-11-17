@@ -16836,6 +16836,21 @@ try {
     assert.deepEqual(errors, []); await closeTabs(/./);
   });
 
+  await step('TODO 253c2 fix 2: a canvas with no size keeps a valid viewBox (no negative width)', async () => {
+    await openGrips(writeDxf(raw188), 'narrow253c2.dxf');
+    const before = errors.length, box = () => page.evaluate(() => document.querySelector('[data-testid=canvas] svg').getAttribute('viewBox'));
+    const fitted = await box();
+    await page.evaluate(() => { document.querySelector('[data-testid=canvas]').style.display = 'none'; });      // a canvas with no size, as a tab being swapped or a docker opening can leave it for a frame
+    await frames(); await frames();
+    const narrow = await box();
+    await page.evaluate(() => { document.querySelector('[data-testid=canvas]').style.display = ''; });
+    await frames(); await frames();
+    assert.equal(await box(), fitted, 'the view fits again once the canvas has its size back');
+    assert.deepEqual(errors.slice(before), [], 'no console error from a collapsed canvas');
+    assert.ok(narrow.split(' ').slice(2).every((v) => +v >= 0), `viewBox width and height are not negative: ${narrow}`);
+    await closeTabs(/./);
+  });
+
   await step('TODO 189 read-only look', async () => {
     const shots = 'shots-193d1'; mkdirSync(shots, { recursive: true });
     const looks = {}, ratios = {};
