@@ -77,8 +77,6 @@ function panelControl(page, locator) {
       if (pane) {
         const tab = page.locator(`[data-tab=${pane}]`);
         if (await tab.getAttribute('aria-selected') !== 'true') await tab.click();
-        // grill-282b Q6: Guides, Parts on this layout, Drawing scale, Tiny gaps... show with nothing selected; Esc clears the selection (a multi-selection takes two)
-        for (let i = 0; i < 3 && await target.evaluate((el) => !!el.closest('section[hidden]')); i++) await page.keyboard.press('Escape');
         const sections = await target.evaluate((el) => {
           const keys = [];
           for (let p = el.parentElement; p; p = p.parentElement) if (p.classList.contains('docker-folded') && !p.querySelector('.section-toggle')?.contains(el)) keys.unshift(p.dataset.section);
@@ -3053,7 +3051,7 @@ try {
       await q('panel-fold').click(); assert.equal(await q('size-strip').isVisible(), false);
       await q('ptab-drawing').click(); assert.equal(await q('size-strip').isVisible(), true);
       await p.locator('[data-i="0"] .part-hit').click({ force: true });
-      assert.deepEqual(await titles(), ['Selected part', 'Properties', 'Parts on this layout', 'Guides', 'Arrange', 'Transform', 'Duplicate', 'Group and lock']);      // grill-282b Q6: Parts and Guides are not nothing-selected-only
+      assert.deepEqual(await titles(), ['Selected part', 'Properties', 'Arrange', 'Transform', 'Duplicate', 'Group and lock']);
       for (const id of ['sec-rotate', 'sec-mirror', 'sec-nudge', 'sec-duplicate', 'sec-group']) await q(id).locator('.section-toggle').click();
       await fit(290); await fit(220);
       for (const theme of ['light', 'dark']) {
@@ -3219,7 +3217,7 @@ try {
     const expected = {
       Drawing: { drawing: ['Properties', 'Select', 'Guides', 'Drawing scale', 'Outlines in this drawing', 'Tiny gaps', 'Duplicates'], objects: [], layers: ['Layers'], library: ['Parts'], step: null },
       Layout: { drawing: ['Properties', 'Select', 'Parts on this layout', 'Guides', 'Extra gaps'], objects: [], layers: ['Layers'], library: ['Parts'], step: ['Step and repeat'] },
-      'Layout selected': { drawing: ['Selected part', 'Properties', 'Select', 'Parts on this layout', 'Guides', 'Arrange', 'Transform', 'Rotate', 'Mirror', 'Nudge', 'Duplicate', 'Group and lock'], objects: [], layers: ['Layers'], library: ['Parts'], step: ['Step and repeat'] },
+      'Layout selected': { drawing: ['Selected part', 'Properties', 'Select', 'Arrange', 'Transform', 'Rotate', 'Mirror', 'Nudge', 'Duplicate', 'Group and lock'], objects: [], layers: ['Layers'], library: ['Parts'], step: ['Step and repeat'] },
       Compare: { drawing: ['Properties', 'Select', 'Guides', 'Compare', 'Differences'], objects: [], layers: ['Layers'], library: ['Parts'], step: null },
     };
     const audit = async (kind) => {
@@ -28165,6 +28163,7 @@ try {
       await open70([dxfLine(20, 30, 60, 50)]);
       await page.keyboard.press('Control+a'); await typeCmd(tool);
       if (tool !== 'text') await typeCmd('200,300');
+      if (tool === 'move') { await page.keyboard.press('Escape'); await page.keyboard.press('Escape'); }      // grill-282b F8: Drawing scale hides with a selection; Esc ends Move, a 2nd Esc clears the selection
       await t('set-length').click();
       assert.match(await prompt(), /Set length: click the first point/);
       await cmdLine().fill('@20,30');
