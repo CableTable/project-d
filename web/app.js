@@ -1015,13 +1015,13 @@ function renderTabs() {
     ...state.docs.map((d, i) => {
       const x = h('span', { class: 'x', 'aria-label': 'Close ' + d.name, role: 'button' }, '×');
       x.addEventListener('click', (e) => { e.stopPropagation(); closeTab(d); });
-      const b = h('button', { class: 'dtab' + (i === state.doc ? ' on' : ''), type: 'button', 'data-kind': d.lay ? 'layout' : d.cmp ? 'compare' : d.pdf ? 'pdf' : 'drawing' },
+      const b = h('button', { class: 'dtab' + (i === state.doc ? ' on' : ''), type: 'button', 'data-kind': d.lay ? 'layout' : d.cmp ? 'compare' : d.pdf?.pages > 1 ? 'pdf' : 'drawing' },
         d.lay && icon(GRID_ICON, { size: 14 }), h('span', { class: 'tname' }, d.name),
         PS.hasChanges(d) && h('span', { class: 'dot', title: 'Not saved yet' }, ' •'), x);
       b.addEventListener('click', () => { state.doc = i; showDoc(); });
       b.addEventListener('contextmenu', (e) => {
         e.preventDefault(); hideMenu();
-        if (d.pdf || d.empty || (!d.raw && !d.lay && !d.cmp)) return;
+        if (d.pdf?.pages > 1 || d.empty || (!d.raw && !d.lay && !d.cmp)) return;
         const r = b.getBoundingClientRect();
         const menu = popMenu(e.clientX || r.left, e.clientY || r.bottom, [['Duplicate', () => duplicateTab(d)]]);
         menu.addEventListener('keydown', (key) => key.stopPropagation());
@@ -1036,16 +1036,14 @@ function renderTabs() {
 
 /** A new unsaved tab owns its artwork and state, with no saved paths, recovery entry or caches. */
 async function duplicateTab(d) {
-  if (d.pdf || d.empty || (!d.raw && !d.lay && !d.cmp)) return;
-  const ask = d.raw && bigFileAsk([{ name: d.name, size: d.sourceSize }]);
-  if (ask && !(await confirmAsk(ask, 'Open', 'warning', 'Cancel'))) return;
+  if (d.pdf?.pages > 1 || d.empty || (!d.raw && !d.lay && !d.cmp)) return;
   const i = state.docs.indexOf(d);
   if (i < 0) return;
   try {
     const name = dupName(d.name, state.docs.map((x) => x.name));
     const copy = { ...structuredClone({ titleBlock: d.titleBlock, drawingUnit: d.drawingUnit, guideState: d.guideState,
       balloons: d.balloons, bg: d.bg, curLayer: d.curLayer, scaleTarget: d.scaleTarget, viewHist: d.viewHist }),
-      name, path: null, dirty: true, tabId: uid(), hist: Ed.createHistory(),
+      name, path: null, dirty: !d.cmp, tabId: uid(), hist: Ed.createHistory(),
       view: { ...(d === shownDoc ? { ...view, ...canvasSize() } : d.view) } };
     if (d.lay) {
       copy.lay = { ...structuredClone({ ...d.lay, parts: {} }), name,
@@ -1055,7 +1053,7 @@ async function duplicateTab(d) {
       copy.cmp = structuredClone(d.cmp); copy.cmp.selected = null; copy.cmp.sel = -1; copy.factor = d.factor;
     } else {
       const { raw, hid, off, locked, addedLayers } = structuredClone({ raw: d.raw, hid: d.hid, off: d.off, locked: d.locked, addedLayers: d.addedLayers });
-      Object.assign(copy, tabFields(raw, flatten(raw, hid)), { titleBlock: copy.titleBlock, drawingUnit: copy.drawingUnit, hid, off, locked, addedLayers, sourceSize: d.sourceSize, scratch: true });
+      Object.assign(copy, tabFields(raw, flatten(raw, hid)), { titleBlock: copy.titleBlock, drawingUnit: copy.drawingUnit, hid, off, locked, addedLayers, scratch: true });
       dropPageCaches(copy);
     }
     state.docs.splice(i + 1, 0, copy); state.doc = i + 1;
@@ -1284,7 +1282,6 @@ async function dwgBytes(name, path, buf) {
 }
 /** Opens a file's bytes as a new tab (path: where it lives on disk, in the app). */
 async function openBytes(name, buf, path = null) {
-  const sourceSize = buf.byteLength || (path && /\.dwg$/i.test(name) ? await pathSize(path) : 0);
   // the same file already open (in the app, where files have paths): show its tab, never a second copy.
   // Path only: a DXF saved under a new name no longer is its opened file; a DWG / PDF tab has no path of its own, so its source counts
   const same = path ? state.docs.findIndex((d) => [d.path, (d.fromDwg || d.fromPdf) && d.openPath].some((p) => p && pathKey(p) === pathKey(path))) : -1;
@@ -1325,7 +1322,7 @@ async function openBytes(name, buf, path = null) {
   const lay = LD.layoutFromRaw(r.doc, name);
   if (lay) { openLayoutFile(lay, name, path, fontNote, readTitleBlock(r.doc), dwg); await unitsLoad(curDoc(), path, name); if (dwg && path) rememberRecent(path); return; } // one of our saved layouts: it opens as a layout tab
   // openPath: the source file. Save backs up an opened DXF before overwriting it; a DWG has no writable path until Save As.
-  const doc = { name, path: dwg ? null : path, openPath: path, guideFile: G.fileKey(path, name), sourceSize, dirty: false, ...(dwg && { fromDwg: true }), ...tabFields(r.doc, fl) };
+  const doc = { name, path: dwg ? null : path, openPath: path, guideFile: G.fileKey(path, name), dirty: false, ...(dwg && { fromDwg: true }), ...tabFields(r.doc, fl) };
   addTab(doc);
   if (dwg && path) rememberRecent(path);
   note(`Opened ${name}: ${doc.entities} entities` + (doc.conv ? ', ' + doc.conv : '') +

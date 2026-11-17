@@ -464,7 +464,6 @@ try {
             try { await save(); return { writes, asks, guides: localStore('pd-guides:', localStorage).get(curDoc().guideFile) }; }
             finally { delete window.__TAURI__; }
           },
-          big: () => { curDoc().sourceSize = BIG_FILE + 1; },
           layoutCheck: () => { const i = state.doc, d = state.docs[i], o = state.docs[i - 1]; return {
             settings: d.lay.s !== o.lay.s, placed: d.lay.placed !== o.lay.placed && d.lay.placed[0] !== o.lay.placed[0],
             grids: d.lay.grids !== o.lay.grids, layers: d.lay.layers !== o.lay.layers,
@@ -483,8 +482,8 @@ try {
       };
       const duplicate = async (name) => { await tab(name).click({ button: 'right' }); await p.getByRole('menuitem', { name: 'Duplicate', exact: true }).click(); };
       const draw = async () => { await command('line'); await command('0,0'); await command('900,500'); await p.keyboard.press('Escape'); };
-      const fresh = async (name) => {
-        const d = await read(); assert.equal(d.name, name); assert.equal(d.path, null); assert.equal(d.dirty, true);
+      const fresh = async (name, dirty = true) => {
+        const d = await read(); assert.equal(d.name, name); assert.equal(d.path, null); assert.equal(d.dirty, dirty);
         assert.deepEqual(d.history, { past: [], future: [] }); assert.deepEqual(d.selected, []);
         const tabs = await p.locator('.tabs .tname').allTextContents();
         assert.equal(tabs[tabs.indexOf(name) - 1], name.includes('a (') ? 'a.dxf' : name.replace(' (2)', ''), 'copy is right after original');
@@ -526,11 +525,6 @@ try {
       assert.deepEqual(saved.writes.map((w) => w.path), ['E:/268/copy.dxf', 'E:/268/copy.pdballoons.json']);
       assert.equal(JSON.parse(saved.writes[1].text).items.length, 1, 'copied balloons saved beside copy');
       assert.deepEqual(saved.guides.guides, [{ axis: 'x', pos: 45 }], 'copied guides saved under new file key');
-      await p.evaluate(() => window.t268.big());
-      let warning = ''; p.once('dialog', async (d) => { warning = d.message(); await d.dismiss(); });
-      const count = await p.locator('.tabs .dtab').count(); await duplicate('copy.dxf');
-      assert.match(warning, /big drawings may open slowly/); assert.equal(await p.locator('.tabs .dtab').count(), count);
-      p.once('dialog', (d) => d.accept()); await duplicate('copy.dxf'); assert.equal((await read()).name, 'copy (2).dxf');
 
       const raw = newDoc(4); addEntities(raw, [dxfLine(0, 0, 100, 50)]);
       const part = makePart('268-part', 'Part', raw), loose = objectPart('268-obj', 'Line', dxfLine(30, 30, 80, 80), raw.layers);
@@ -546,7 +540,7 @@ try {
       await p.keyboard.press('Control+z'); assert.deepEqual((await read()).lay, { ...originalLayout, name: 'layout (2).dxf' });
 
       await tab('a.dxf').click(); await command('compare'); await p.keyboard.press('Escape');
-      await duplicate('Compare'); await fresh('Compare (2)');
+      await duplicate('Compare'); await fresh('Compare (2)', false); // a Compare tab can never be saved: no • and no close prompt
       assert.equal(await p.evaluate(() => window.t268.compareOwn()), true);
       const links = await p.evaluate(() => window.t268.compares()); assert.equal(links[1].selected, null);
       assert.deepEqual(links[0].items, links[1].items); assert.deepEqual(links[0].sources, links[1].sources);
@@ -566,7 +560,7 @@ try {
       assert.equal(await p.locator('.dtab.on').getAttribute('data-kind'), 'pdf');
       await p.locator('.dtab.on').click({ button: 'right' }); assert.equal(await q('ctx-menu').count(), 0, 'PDF menu suppressed');
       assert.deepEqual(faults, []);
-      console.log('TODO 268 proof: all three kinds, deep copies, names, views, fresh Undo, autosave, live sources, source close, PDF exclusion and big-file Cancel pass');
+      console.log('TODO 268 proof: all three kinds, deep copies, names, views, fresh Undo, autosave, live sources, source close, and PDF exclusion pass');
     } finally { await ctx.close(); }
   });
   await step('TODO 304: drawings and PDF sheet tabs keep their own pan, zoom and Zoom Previous', async () => {
