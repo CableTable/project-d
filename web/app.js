@@ -109,7 +109,7 @@ let ownBindings = SC.bindings(), ownCommands = SC.commandsFor(ownBindings);
 let clipboard = null;
 let selectionCycle = null;
 const ribbon = { mode: 'full', last: 'full', tab: 'Home', flyout: false, panel: null, rail: true, guideSnap: true };
-const docker = { width: 290, folds: {} };
+const docker = { width: 290, folded: false, folds: {} };
 const strip = { on: true, saved: [], recent: [] };
 let currentColour = 'bylayer';
 let currentFill = 'aci:7';
@@ -1779,15 +1779,15 @@ function buildPanel() {
   ui.stepHint = h('div', { class: 'lbl', 'data-testid': 'step-hint' });
 
   const tabs = [
-    ['drawing', 'Properties', '<path d="M5 6h14M5 12h14M5 18h14"/><circle cx="9" cy="6" r="2"/><circle cx="15" cy="12" r="2"/><circle cx="8" cy="18" r="2"/>'],
-    ['objects', 'Objects', '<path d="M4 6h4M4 12h4M4 18h4M10 6h10M10 12h10M10 18h10"/>'],
-    ['layers', 'Layers', '<path d="M12 3l9 5-9 5-9-5zM3 13l9 5 9-5"/>'],
-    ['library', 'Parts library', '<rect x="3" y="4" width="5" height="16"/><rect x="9" y="4" width="5" height="16"/><path d="M16 6l5 1-3 14-5-1z"/>'],
-    ['step', 'Step and repeat', GRID_ICON],
+    ['drawing', 'Properties'],
+    ['objects', 'Objects'],
+    ['layers', 'Layers'],
+    ['library', 'Parts library'],
+    ['step', 'Step and repeat'],
   ];
-  ui.dockerTabs = tabs.map(([id, label, svg]) => h('button', { class: 'ptab', type: 'button', role: 'tab', title: label, 'aria-label': label,
+  ui.dockerTabs = tabs.map(([id, label]) => h('button', { class: 'ptab', type: 'button', role: 'tab', title: label, 'aria-label': label,
     id: 'docker-tab-' + id, 'aria-controls': 'docker-body', 'data-tab': id, 'data-testid': id === 'library' ? 'panel-library' : 'ptab-' + id,
-    onclick: () => setPtab(id) }, icon(svg, { size: 14 }), h('span', { class: 'ptab-name' }, label)));
+    onclick: () => setPtab(id) }, h('span', { class: 'ptab-name' }, id === 'library' ? 'Library' : id === 'step' ? 'Step' : label)));
   ui.panelScroll = h('div', { class: 'panel-scroll', id: 'docker-body', role: 'tabpanel', 'aria-labelledby': 'docker-tab-drawing' },
     buildPlacedPanel(),
     ui.guideSec = h('section', { 'data-testid': 'guides-panel' },
@@ -1830,34 +1830,42 @@ function buildPanel() {
     buildObjects());
   // Reuse the existing controls and their validation; only their docker and section containers change.
   ui.dockerPanes = Object.fromEntries(tabs.map(([id]) => [id, h('div', { class: 'docker-pane', 'data-docker': id })]));
-  ui.dockerPanes.drawing.append(ui.placedSecs[0], ui.propSec, ui.partsSec, ui.guideSec, ...ui.placedSecs.slice(1), ui.drawSec, ui.tinySec, ui.dupsSec, ui.outSec, ui.balSelBox, ui.balNumBox, ui.cmpSec, ui.diffSec);
+  ui.partTransform = h('section', { 'data-testid': 'sec-transform', hidden: true }, h('h2', { class: 'sec' }, 'Transform'), ui.placedSecs[3], ui.placedSecs[4], ui.placedSecs[6]);
+  ui.partJumps = buildPropertyJumps([['Arrange', 'sec-arrange', '⇅'], ['Transform', 'sec-transform', '↻'], ['Duplicate', 'sec-duplicate', '⧉'], ['Group/lock', 'sec-group', '⚿']]);
+  ui.dockerPanes.drawing.append(ui.partJumps, ui.placedSecs[0], ui.propSec, ui.partsSec, ui.guideSec, ui.placedSecs[1], ui.partTransform, ui.placedSecs[5], ui.placedSecs[2], ui.gapSec, ui.drawSec, ui.outSec, ui.tinySec, ui.dupsSec, ui.balSelBox, ui.balNumBox, ui.cmpSec, ui.diffSec);
   ui.dockerPanes.objects.append(ui.objPanel);
   ui.dockerPanes.layers.append(ui.layersSec);
   layerSearchInit();
   ui.dockerPanes.library.append(ui.libSec);
-  ui.dockerPanes.step.append(ui.stepSec, ui.gapSec, ui.stepFoot);
+  ui.dockerPanes.step.append(ui.stepSec, ui.stepFoot);
   ui.panelScroll.replaceChildren(...Object.values(ui.dockerPanes));
   for (const section of ui.panelScroll.querySelectorAll('section')) foldableSection(section);
   ui.secTitle = ui.placedSecs[0].querySelector('.section-title');
-  ui.panelHide = h('button', { class: 'panel-hide', type: 'button', title: 'Hide panel', 'aria-label': 'Hide panel', 'data-testid': 'panel-hide', onclick: toggleProps }, icon('<path d="M9 6l6 6-6 6M19 4v16"/>', { size: 13 }));
-  const tabsEl = h('div', { class: 'ptabs', role: 'tablist', 'aria-label': 'Panel tab' }, ui.dockerTabs);
+  ui.panelHide = h('button', { class: 'panel-hide', type: 'button', title: 'Hide panel', 'aria-label': 'Hide panel', 'data-testid': 'panel-hide', onclick: toggleProps }, '×');
+  ui.panelFold = h('button', { class: 'panel-fold', type: 'button', title: 'Fold panel', 'aria-label': 'Fold panel', 'aria-controls': 'docker-body', 'data-testid': 'panel-fold', onclick: () => {
+    docker.folded = true; renderDocker(); rememberDocker();
+    ui.dockerTabs.find((button) => button.dataset.tab === state.ptab).focus();
+  } }, '>>');
+  const tabsEl = h('div', { class: 'ptabs', role: 'tablist', 'aria-label': 'Panel tab', 'aria-orientation': 'vertical' }, ui.dockerTabs);
   tabsEl.addEventListener('keydown', (e) => {
-    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) return;
+    if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(e.key)) return;
     e.preventDefault(); e.stopPropagation();
     const enabled = ui.dockerTabs.filter((b) => !b.disabled), i = enabled.indexOf(document.activeElement);
-    const next = e.key === 'Home' ? 0 : e.key === 'End' ? enabled.length - 1 : (i + (e.key === 'ArrowRight' ? 1 : -1) + enabled.length) % enabled.length;
+    const next = e.key === 'Home' ? 0 : e.key === 'End' ? enabled.length - 1 : (i + (['ArrowRight', 'ArrowDown'].includes(e.key) ? 1 : -1) + enabled.length) % enabled.length;
     enabled[next].click(); enabled[next].focus();
   });
-  // sheet size and grippers (mm), pinned above the docker tabs on every layout tab; the same numbers and limits as the ribbon's Sheet page
+  // Sheet size and grippers (mm), pinned above the title bar and edge tabs; the same limits as the ribbon's Sheet page.
   ui.sizeStrip = h('div', { class: 'size-strip', role: 'group', 'aria-label': 'Sheet size and grippers, mm', 'data-testid': 'size-strip', hidden: true }, SIZE_KEYS.map((k) => sheetField(k, true)));
-  ui.panelEl = h('aside', { class: 'panel', 'aria-label': 'Properties' },
-    buildPanelResize(), ui.sizeStrip, h('div', { class: 'panel-top' }, tabsEl, ui.panelHide), ui.panelScroll);
+  ui.panelTitle = h('strong', { class: 'panel-title' });
+  ui.panelEl = h('aside', { class: 'panel', 'aria-label': 'Right panel' },
+    buildPanelResize(), ui.sizeStrip, h('div', { class: 'panel-cols' },
+      h('div', { class: 'panel-main' }, h('div', { class: 'panel-top' }, ui.panelTitle, ui.panelFold, ui.panelHide), ui.panelScroll), tabsEl));
   ui.panelShow = h('button', { class: 'panel-show', type: 'button', title: 'Show panel', 'aria-label': 'Show panel', 'data-testid': 'panel-show', onclick: toggleProps }, icon('<path d="M15 6l-6 6 6 6M5 4v16"/>', { size: 14 }));
   return h('div', { class: 'docker' }, ui.panelEl, ui.panelShow);
 }
 
 function rememberDocker() {
-  viewStore.put({ id: 'docker', width: docker.width, on: state.propsOn, folds: docker.folds })
+  viewStore.put({ id: 'docker', width: docker.width, on: state.propsOn, folded: docker.folded, folds: docker.folds })
     .catch(() => note('Could not remember the panel settings; they still apply until the app closes'));
 }
 
@@ -1912,7 +1920,10 @@ function buildPanelResize() {
 function renderDocker() {
   if (!ui.panelEl) return;
   ui.panelEl.hidden = !state.propsOn; ui.panelShow.hidden = state.propsOn;
-  ui.panelEl.style.width = docker.width + 'px';
+  ui.panelEl.classList.toggle('panel-folded', docker.folded);
+  ui.panelEl.style.width = (docker.folded ? 25 : docker.width) + 'px';
+  ui.panelTitle.textContent = ui.dockerTabs.find((button) => button.dataset.tab === state.ptab).textContent;
+  ui.panelFold.setAttribute('aria-expanded', String(!docker.folded));
   ui.panelResize.setAttribute('aria-valuenow', String(docker.width));
   for (const button of ui.dockerTabs) {
     const on = button.dataset.tab === state.ptab;
@@ -3006,7 +3017,7 @@ function setRulers(on) {
 function renderGuidePanel() {
   if (!ui.guideSec) return;
   const lay = guideTarget(), lib = state.panel === 'library';
-  ui.guideSec.hidden = !lay || lib;
+  ui.guideSec.hidden = !lay || lib || (curLay() ? selIdxs().length > 0 : !!editable()?.sel.size);
   if (!lay || lib) return;
   const sig = lay.s.guides.map((q) => q.axis + q.mm).join(',');
   if (ui.guideSig !== sig || ui.guideLay !== lay) {
@@ -4117,6 +4128,7 @@ function setPtab(tab) {
   state.ptab = tab;
   state.panel = tab === 'library' ? 'library' : 'main';
   state.propsOn = true;
+  docker.folded = false;
   ui.objPanel.hidden = tab !== 'objects';
   applyKind(); update(); renderLibrary(); rememberDocker();
   ui.panelScroll.scrollTop = 0;
@@ -5528,6 +5540,7 @@ function renderProps() {
   }
   const secOn = { 'sec-arrange': true, 'sec-group': true };
   for (const sec of ui.placedSecs) sec.hidden = !p || library || (sec.dataset.testid in secOn && !secOn[sec.dataset.testid]);
+  ui.partJumps.hidden = ui.partTransform.hidden = !p || library;
   if (p) {
     ui.ppName.textContent = many ? (whole ? `Group of ${items.length}` : `${items.length} parts`) : part.name;
     ui.ppSize.textContent = `${fmtSize(b[2] - b[0])} × ${fmtSize(b[3] - b[1])}`;
@@ -11104,6 +11117,9 @@ function buildDrawingSection() {
   ui.lenRow = h('div', { class: 'lenrow', 'data-testid': 'len-row', hidden: true }, ui.measured, ui.realLen,
     h('div', { class: 'btnrow' }, btn('Scale', 'real-ok', applyLength, 'btn sm primary'), btn('Cancel', 'real-cancel', cancelSetlen)));
   const tog = (text, id, fn, title) => { const b = h('button', { class: 'tog', type: 'button', 'data-testid': id, title, onclick: fn }, text); ui[id] = b; return b; };
+  ui.drawSize = h('div', { class: 'propbody' },
+    h('div', { class: 'row' }, ui.sizeLabel = h('span', { class: 'lbl sizelbl', 'data-testid': 'size-target-label' }, 'Whole drawing'), sizePadlock('panel-size-padlock')),
+    h('div', { class: 'grid2' }, size('Width mm', 'dw', 'w'), size('Height mm', 'dh', 'h')));
   ui.drawSec = h('section', { class: 'drawbox', hidden: true, 'data-testid': 'drawing-panel' },
     h('div', { class: 'layers-head' }, h('h2', { class: 'sec' }, 'Drawing scale'),
       h('span', { class: 'tools' },
@@ -11114,9 +11130,7 @@ function buildDrawingSection() {
       tog('×25.4', 'unit-up', () => unitFix(UF.UNIT_FIXES.up), ''),
       tog('÷25.4', 'unit-down', () => unitFix(UF.UNIT_FIXES.down), '')),
     h('span', { class: 'lbl' }, 'Make the whole drawing 1:1 once. Every part extracted from it is true size.'),
-    ui.selRow, ui.dimRow, ui.ldrRow,
-    h('div', { class: 'row' }, ui.sizeLabel = h('span', { class: 'lbl sizelbl', 'data-testid': 'size-target-label' }, 'Whole drawing'), sizePadlock('panel-size-padlock')),
-    h('div', { class: 'grid2' }, size('Width mm', 'dw', 'w'), size('Height mm', 'dh', 'h')),
+    ui.drawSize,
     ui.scaleTarget, ui.bgRow, ui.lenRow, useBtn);
   ui.outList = h('div', { class: 'outlist', 'data-testid': 'outlines' });
   ui.outSec = h('section', { class: 'outbox', hidden: true, 'data-testid': 'outlines-panel' },
@@ -11321,12 +11335,26 @@ function buildPropsSection() {
   ui.propMatch = h('button', { class: 'btn', type: 'button', 'data-testid': 'prop-match', title: 'Copy layer, colour and line type from the first selected shape to the shapes you click', onclick: startMatch },
     icon('<path d="M14 4l6 6-7 7-6-6z"/><path d="M7 11c-2 2-2 6-4 9 4 0 7 0 9-3"/>', { size: 16, join: 'round', cap: 'round' }), ' Match');
   ui.propEmpty = h('div', { class: 'lbl', 'data-testid': 'prop-empty' });
-  ui.propCommon = h('div', { class: 'propbody' }, row('Layer', ui.propLayer), row('Colour', ui.propSwatch, ui.propColour), ui.propFillRow, row('Line type', ui.propLt));
+  ui.propCommon = h('div', { class: 'propbody' }, row('Layer', ui.propLayer), row('Colour', ui.propSwatch, ui.propColour), row('Line type', ui.propLt));
   ui.propButtons = h('div', { class: 'proprow btns' }, ui.propSimilar, ui.propQuick, ui.propMatch);
-  ui.propBody = h('div', { class: 'propbody' }, ui.propCommon, ui.propWidth, ui.propLineEnds, ui.propGeo);
+  const sec = (name, id, ...kids) => h('section', { 'data-testid': 'props-' + id }, h('h2', { class: 'sec' }, name), ...kids);
+  ui.propInfo = sec('Info', 'info', ui.dimRow, ui.ldrRow, ui.propGeo);
+  ui.propFillSec = sec('Fill', 'fill', ui.propFillRow);
+  ui.propJumps = buildPropertyJumps([['General', 'props-general', '▤'], ['Outline', 'props-outline', '▭'], ['Fill', 'props-fill', '■'], ['Info', 'props-info', 'ⓘ']]);
+  ui.propBody = h('div', { class: 'propbody' }, ui.propJumps, sec('General', 'general', ui.propCommon), sec('Outline', 'outline', ui.propWidth, ui.propLineEnds), ui.propFillSec, ui.propInfo);
   ui.propSec = h('section', { class: 'propbox', hidden: true, 'data-testid': 'props-panel' },
-    h('div', { class: 'layers-head' }, h('h2', { class: 'sec' }, 'Properties'), ui.propChip), ui.propEmpty, ui.propBody, ui.propButtons);
+    h('div', { class: 'layers-head' }, h('h2', { class: 'sec' }, 'Properties'), ui.propChip), ui.propEmpty, ui.propBody, sec('Select', 'select', ui.propButtons, ui.selRow));
   return ui.propSec;
+}
+
+function buildPropertyJumps(groups) {
+  return h('div', { class: 'property-jumps', role: 'group', 'aria-label': 'Property sections' }, groups.map(([name, id, glyph]) => h('button', {
+    class: 'btn sm', type: 'button', 'data-testid': 'props-jump-' + id.replace('props-', ''), onclick: () => {
+      const section = ui.panelScroll.querySelector(`[data-testid="${id}"]`);
+      docker.folds[section.dataset.section] = false; applySectionFold(section); rememberDocker();
+      section.scrollIntoView({ block: 'nearest' });
+    }
+  }, h('span', { class: 'jump-icon', 'aria-hidden': 'true' }, glyph), h('span', { class: 'jump-label' }, name))));
 }
 
 function setSelect(sel, options, current) {
@@ -11361,6 +11389,15 @@ function renderPropsPanel(d) {
     return;
   }
   const pe = propEnts(d), ents = pe.map((x) => x[1]), all = propEnts(d, true).map((x) => x[1]), sm = PR.summarize(ents), none = !ents.length;
+  const text = ents.length > 0 && ents.every((e) => ['TEXT', 'MTEXT'].includes(e.type));
+  ui.propInfo.querySelector('.section-title').textContent = text ? 'Text' : 'Info';
+  if (text && ui.propJumps.nextElementSibling !== ui.propInfo) ui.propJumps.after(ui.propInfo);
+  else if (!text && ui.propBody.lastElementChild !== ui.propInfo) ui.propBody.append(ui.propInfo);
+  const infoJump = ui.propJumps.querySelector('[data-testid=props-jump-info]');
+  infoJump.querySelector('.jump-label').textContent = text ? 'Text' : 'Info';
+  infoJump.querySelector('.jump-icon').textContent = text ? 'A' : 'ⓘ';
+  if (text && ui.propJumps.firstElementChild !== infoJump) ui.propJumps.prepend(infoJump);
+  else if (!text && ui.propJumps.lastElementChild !== infoJump) ui.propJumps.append(infoJump);
   const group = !lay && wholeDrawingGroup(d.raw.groups, d.sel);
   ui.propEmpty.hidden = !none; ui.propBody.hidden = !all.length; ui.propChip.hidden = none && !group;
   ui.propChip.textContent = group ? drawingSelectionName(d) : ents.length === 1 && combinedLabel(d.raw.blocks, ents[0]) || sm.chip;
@@ -11388,6 +11425,8 @@ function renderPropsPanel(d) {
   ui.propScaleHint.textContent = ui.propScale.indeterminate ? VARIES : '';
   if (none) return;
   const closed = ents.filter(FI.closedOutline), fill = closed[0]?.fill;
+  ui.propFillSec.hidden = !closed.length;
+  ui.propJumps.querySelector('[data-testid=props-jump-fill]').hidden = !closed.length;
   ui.propFillRow.hidden = !closed.length;
   ui.propFill.classList.toggle('no-fill', !fill);
   ui.propFill.style.backgroundColor = fill ? colourCss(fill) : '';
@@ -11515,7 +11554,7 @@ function toggleProps() {
   const focus = ui.panelEl.contains(document.activeElement) || document.activeElement === ui.panelShow;
   state.propsOn = !state.propsOn;
   renderDocker(); renderRibbon(); rememberDocker();
-  if (focus) (state.propsOn ? ui.panelHide : ui.panelShow).focus();
+  if (focus) (state.propsOn ? docker.folded ? ui.dockerTabs.find((button) => button.dataset.tab === state.ptab) : ui.panelHide : ui.panelShow).focus();
   note(state.propsOn ? 'Panel shown (Ctrl+1)' : 'Panel hidden (Ctrl+1)');
 }
 
@@ -12173,7 +12212,12 @@ function renderEdit() {
       else if (ui.preflightSource !== d.raw.entities) ui.preflightNote.textContent = 'Drawing changed · Recheck for current counts. Cut layer: name contains “cut” (any case).';
     }
   }
-  ui.drawSec.hidden = ui.tinySec.hidden = ui.dupsSec.hidden = ui.outSec.hidden = !!cmpDoc() || !on;
+  const selected = curLay() ? selIdxs().length > 0 : !!d?.sel?.size;
+  ui.guideSec.hidden = !guideTarget() || state.panel === 'library' || selected;
+  ui.partsSec.hidden = ui.gapSec.hidden = !curLay() || state.panel === 'library' || selected;
+  ui.drawSec.hidden = ui.tinySec.hidden = ui.dupsSec.hidden = ui.outSec.hidden = !!cmpDoc() || !on || selected;
+  const sizeBody = (on && selected ? ui.propInfo : ui.drawSec).querySelector('.section-body');
+  if (ui.drawSize.parentElement !== sizeBody) sizeBody.append(ui.drawSize);
   for (const section of [ui.drawSec, ui.tinySec, ui.dupsSec]) applySectionFold(section);
   if (state.colourTool && (!on || state.colourTool.d !== d)) state.colourTool = null;
   if (state.match?.d.vlay === curDoc()) state.match.d = propDoc();
@@ -12605,7 +12649,7 @@ async function init() {
     if (['full', 'titles'].includes(rb?.last)) ribbon.last = rb.last;
     ribbon.rail = rb?.rail !== false; ribbon.guideSnap = rb?.guideSnap !== false;
     const panel = saved.find((r) => r.id === 'docker');
-    docker.width = panelWidth(panel?.width); state.propsOn = panel?.on !== false;
+    docker.width = panelWidth(panel?.width); state.propsOn = panel?.on !== false; docker.folded = panel?.folded === true;
     if (panel?.folds && typeof panel.folds === 'object') docker.folds = Object.fromEntries(Object.entries(panel.folds).filter(([, value]) => typeof value === 'boolean'));
   } catch { /* storage may be blocked */ }
   try { state.shapingKeepOriginals = (await shapingStore.all()).some((r) => r.id === 'keepOriginals' && r.on === true); } catch { /* storage may be blocked */ }

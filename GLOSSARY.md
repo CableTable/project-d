@@ -10,7 +10,7 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Context tab**: A ribbon tab shown for the current selection, such as Part when placed parts are selected on a layout. Where: `web/app.js`.
 
-**Docker tab**: One of Properties, Objects, Layers, Parts library and Step and repeat across the right panel. Only the active tab shows its name; its sections fold. The panel can be resized or hidden, with settings remembered on this PC. Where: `web/app.js`, `web/docker.js`; `DECISIONS.md`, R19 pick: Option A.
+**Docker tab**: One of Properties, Objects, Layers, Library and Step down the right edge of the right panel, with rotated labels and the active tab blue. The title bar's >> folds the panel to that strip; a tab opens it again. X hides it; Show panel or Ctrl+1 brings it back. Width, visibility and folds are remembered on this PC. Where: `web/app.js`, `web/docker.js`; `DECISIONS.md`, TODO 282b1.
 
 **Add to layout**: Takes the prepared drawing into a layout as a part at its true size. Where: `web/app.js`.
 

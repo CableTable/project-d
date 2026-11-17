@@ -276,6 +276,19 @@ select.fld { font-family: var(--sans); }
 .docker { display: flex; flex-shrink: 0; min-height: 0; }
 .panel { width: 290px; flex-shrink: 0; min-height: 0; position: relative; background: var(--panel); border-left: 1px solid var(--line); display: flex; flex-direction: column; }
 .panel-scroll { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 6px 0; }
+.panel-cols { display: flex; flex: 1; min-height: 0; min-width: 0; }
+.panel-main { display: flex; flex-direction: column; flex: 1; min-width: 0; }
+.panel-folded .panel-main, .panel-folded .size-strip, .panel-folded .panel-resize { display: none; }
+.panel-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.property-jumps { display: flex; flex-wrap: wrap; gap: 3px; padding: 4px 6px; }
+.panel .property-jumps .btn { flex: 1 1 0; min-width: 0; flex-direction: column; height: auto; padding: 3px 0; font-size: 9px; gap: 1px; }
+.jump-icon { font-size: 14px; }
+.propbox > .section-body, [data-testid=sec-transform] > .section-body { padding-left: 0; padding-right: 0; }
+.docker-pane:is([data-docker=drawing], [data-docker=step]) .btnrow { flex-wrap: wrap; }
+.docker-pane[data-docker=drawing] .row { flex-wrap: wrap; }
+.panel .row.arrow { gap: 4px; }
+.panel .row.arrow .rowname { flex-basis: 100%; }
+.panel .row.arrow .ib { width: 24px; height: 26px; }
 .docker-pane { display: flex; flex-direction: column; min-height: 100%; }
 .panel section { flex-shrink: 0; padding: 0; border: 0; border-bottom: 1px solid var(--line); }
 .panel section > .sec, .panel section > .layers-head { margin: 0; padding: 0 10px; min-height: 28px; }
@@ -295,7 +308,7 @@ select.fld { font-family: var(--sans); }
 .panel-resize::before { content: ''; position: absolute; left: 2px; top: calc(50% - 17px); height: 34px; width: 2px; background: var(--line2); box-shadow: 3px 0 var(--line2); border-radius: 2px; }
 .panel-resize:hover, .panel-resize:focus-visible { background: var(--sel); outline: 1px solid var(--accent); }
 .panel-top { display: flex; align-items: center; height: 30px; padding: 0 4px 0 6px; background: var(--panel-head); border-bottom: 1px solid var(--line); flex-shrink: 0; gap: 2px; }
-.panel-hide, .panel-show { display: flex; align-items: center; justify-content: center; flex-shrink: 0; width: 22px; height: 22px; border: 1px solid var(--line2); border-radius: 3px; color: var(--muted); background: var(--app); cursor: pointer; }
+.panel-hide, .panel-show, .panel-fold { display: flex; align-items: center; justify-content: center; flex-shrink: 0; width: 22px; height: 22px; padding: 0; border: 1px solid var(--line2); border-radius: 3px; color: var(--muted); background: var(--app); cursor: pointer; }
 .panel-show { margin: 4px; }
 .panel section { display: flex; flex-direction: column; gap: 6px; }
 .panel > section { flex-shrink: 0; }
@@ -1011,11 +1024,9 @@ button.cswatch, button.ribbon-swatch { padding: 0; cursor: pointer; }
 .layer .swatch.pick { padding: 0; border: 1px solid var(--line); background: none; cursor: pointer; width: 14px; height: 14px; flex: none; }
 .layer .lname { height: 22px; flex: 1; min-width: 0; padding: 0 6px; }
 
-/* R19 Panel A: only the active docker tab carries its name. */
-.ptabs { display: flex; align-self: stretch; align-items: end; flex: 1; min-width: 0; overflow-x: auto; scrollbar-width: none; }
-.ptab { display: flex; align-items: center; gap: 5px; flex-shrink: 0; height: 24px; padding: 0 7px; border: 1px solid transparent; border-bottom: 0; border-radius: 3px 3px 0 0; background: none; color: var(--muted); font: 12px var(--sans); cursor: pointer; }
-.ptab.on { color: var(--text); background: var(--panel); border-color: var(--line2); box-shadow: inset 0 2px var(--accent); font-weight: 600; }
-.ptab:not(.on) .ptab-name { display: none; }
+.ptabs { display: flex; flex-direction: column; flex: 0 0 24px; min-height: 0; padding-top: 6px; gap: 2px; background: var(--panel-head); border-left: 1px solid var(--line); overflow-y: auto; scrollbar-width: none; }
+.ptab { writing-mode: vertical-rl; display: flex; align-items: center; justify-content: center; flex-shrink: 0; width: 24px; padding: 8px 0; border: 0; border-radius: 0 3px 3px 0; background: none; color: var(--muted); font: 12px var(--sans); cursor: pointer; }
+.ptab.on { color: #fff; background: var(--accent); font-weight: 600; }
 .ptab:disabled { opacity: .45; cursor: default; }
 .docker-pane[data-docker='objects'] { height: 100%; }
 .objpanel { display: flex; flex-direction: column; min-height: 0; flex: 1; }

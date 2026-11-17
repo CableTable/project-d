@@ -406,7 +406,7 @@ try {
         await p.keyboard.press('Escape'); await p.keyboard.press('Escape'); await command('selectall');
         if (!(await q('ptab-drawing').isVisible())) await p.keyboard.press('Control+1');
         await q('ptab-drawing').click();
-        const toggle = q('props-panel').locator('.section-toggle');
+        const toggle = q('props-panel').locator('.section-toggle').first();
         if (await toggle.getAttribute('aria-expanded') === 'false') await toggle.click();
         await p.locator('[data-prop=length]').waitFor();
       };
@@ -2859,6 +2859,113 @@ try {
       await dimension('nearest', 55, /Dimension placed: 40\.0[1-9] mm/);
     } finally { await context.close(); }
   });
+  await step('TODO 282b1: docker tabs are a vertical strip on the panel\'s right edge', async () => {
+    const context = await browser.newContext({ viewport: { width: 900, height: 700 } });
+    const p = await context.newPage(), q = (id) => p.getByTestId(id), panel = p.locator('aside.panel');
+    p.on('pageerror', (e) => errors.push(String(e)));
+    const titles = () => p.locator('[data-docker=drawing] > section:visible > .sec .section-title, [data-docker=drawing] > section:visible > .layers-head .section-title').allTextContents();
+    const savedFold = (folded) => p.waitForFunction(async (folded) => {
+      const { idbStore } = await import('./idbstore.js');
+      return (await idbStore('project-d-view', 'settings', '').all()).find((x) => x.id === 'docker')?.folded === folded;
+    }, folded);
+    const fit = async (width) => {
+      await q('panel-resize').focus(); await p.keyboard.press('Home');
+      for (let i = 220; i < width; i += 10) await p.keyboard.press('ArrowLeft');
+      assert.equal(await panel.evaluate((e) => e.getBoundingClientRect().width), width);
+      const overflow = await panel.evaluate((e) => [e, ...e.querySelectorAll('.panel-main, .panel-scroll, section, .section-body')]
+        .filter((x) => x.getBoundingClientRect().width && x.scrollWidth > x.clientWidth + 1).map((x) => x.dataset.testid || x.className));
+      assert.deepEqual(overflow, [], `${width}px: no horizontal scroll or clipped fields`);
+    };
+    try {
+      await p.goto(URL_); await q('count').waitFor({ state: 'attached' });
+      const raw = newDoc(4); addEntities(raw, dxfLine(0, 0, 100, 0), dxfLine(0, 30, 70, 30, { aci: 1 }), dxfText(10, 60, 6, 'Label'));
+      await q('picker').setInputFiles({ name: 'panel-282b1.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(raw)) });
+      await q('drawing-panel').waitFor();
+      assert.equal(await panel.getAttribute('aria-label'), 'Right panel');
+      assert.equal(await p.getByRole('tablist', { name: 'Panel tab' }).getAttribute('aria-orientation'), 'vertical');
+      assert.deepEqual(await p.locator('.ptab-name').allTextContents(), ['Properties', 'Objects', 'Layers', 'Library', 'Step']);
+      const r = await panel.boundingBox(), tabs = await p.locator('.ptabs').boundingBox(), body = await p.locator('.panel-scroll').boundingBox();
+      assert.ok(Math.abs(tabs.x + tabs.width - r.x - r.width) <= 1 && tabs.x >= body.x + body.width && tabs.width <= 26, 'strip sits on the right edge');
+      assert.equal(await q('ptab-drawing').evaluate((e) => getComputedStyle(e).writingMode), 'vertical-rl');
+      assert.equal(await q('ptab-step').isDisabled(), true);
+      await q('ptab-drawing').focus();
+      for (const [key, id] of [['ArrowDown', 'ptab-objects'], ['ArrowDown', 'ptab-layers'], ['ArrowUp', 'ptab-objects'], ['ArrowRight', 'ptab-layers'], ['ArrowLeft', 'ptab-objects'], ['End', 'panel-library'], ['Home', 'ptab-drawing']]) {
+        await p.keyboard.press(key); assert.equal(await q(id).getAttribute('aria-selected'), 'true');
+        assert.equal(await q(id).evaluate((e) => e === document.activeElement), true);
+      }
+      assert.equal(await p.locator('.panel-title').textContent(), 'Properties');
+      assert.equal(await q('size-strip').isVisible(), false);
+      assert.deepEqual(await titles(), ['Properties', 'Guides', 'Drawing scale', 'Outlines in this drawing', 'Tiny gaps', 'Duplicates']);
+      await fit(290); await fit(220);
+      for (const theme of ['light', 'dark']) {
+        await p.evaluate((theme) => { document.documentElement.dataset.theme = theme; }, theme);
+        await p.screenshot({ path: `${shotDir}/todo282b1-empty-${theme}.png` });
+      }
+      await q('panel-fold').click(); await savedFold(true);
+      assert.ok((await panel.boundingBox()).width <= 26);
+      assert.equal(await p.locator('.panel-scroll').isVisible(), false);
+      await p.reload(); await q('count').waitFor({ state: 'attached' });
+      assert.ok((await panel.boundingBox()).width <= 26, 'fold survives reload');
+      await q('ptab-drawing').focus(); await p.keyboard.press('Control+1'); await q('panel-show').click();
+      assert.equal(await q('ptab-drawing').evaluate((e) => e === document.activeElement), true, 'showing a folded panel restores focus to its tab');
+      await q('ptab-drawing').click(); await savedFold(false);
+      assert.equal(await panel.evaluate((e) => e.getBoundingClientRect().width), 220);
+      await q('panel-hide').click(); assert.equal(await panel.isVisible(), false);
+      await q('panel-show').click(); assert.equal(await panel.isVisible(), true);
+      await p.keyboard.press('Control+1'); assert.equal(await panel.isVisible(), false);
+      await p.keyboard.press('Control+1'); assert.equal(await panel.isVisible(), true);
+      await q('picker').setInputFiles({ name: 'panel-282b1.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(raw)) });
+      const lay = newLayout('Panel layout'); lay.parts.a = makePart('a', 'Bracket', raw);
+      lay.placed.push({ partId: 'a', x: 50, y: 50, rot: 0 });
+      await q('picker').setInputFiles({ name: 'panel-layout.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
+      await q('size-strip').waitFor();
+      await p.keyboard.press('Escape'); await p.keyboard.press('Escape');
+      assert.equal(await q('ptab-step').isDisabled(), false);
+      assert.ok((await q('size-strip').boundingBox()).y < (await p.locator('.panel-top').boundingBox()).y);
+      assert.deepEqual(await titles(), ['Properties', 'Parts on this layout', 'Guides', 'Extra gaps']);
+      for (const id of ['ptab-objects', 'ptab-layers', 'panel-library', 'ptab-step', 'ptab-drawing']) {
+        await q(id).click(); await fit(290); await fit(220);
+        assert.equal(await p.locator('.panel-title').textContent(), await q(id).textContent());
+      }
+      await q('panel-fold').click(); assert.equal(await q('size-strip').isVisible(), false);
+      await q('ptab-drawing').click(); assert.equal(await q('size-strip').isVisible(), true);
+      await p.locator('[data-i="0"] .part-hit').click({ force: true });
+      assert.deepEqual(await titles(), ['Selected part', 'Properties', 'Arrange', 'Transform', 'Duplicate', 'Group and lock']);
+      for (const id of ['sec-rotate', 'sec-mirror', 'sec-nudge', 'sec-duplicate', 'sec-group']) await q(id).locator('.section-toggle').click();
+      await fit(290); await fit(220);
+      for (const theme of ['light', 'dark']) {
+        await p.evaluate((theme) => { document.documentElement.dataset.theme = theme; }, theme);
+        await p.locator('.panel-scroll').evaluate((e) => { e.scrollTop = 0; });
+        await p.screenshot({ path: `${shotDir}/todo282b1-part-${theme}.png` });
+      }
+      await p.locator('.dtab[data-kind=drawing]').first().click();
+      await q('ptab-objects').click(); await p.locator('.or.obj').first().click(); await q('ptab-drawing').click();
+      assert.equal(await q('prop-chip').textContent(), 'Line');
+      assert.deepEqual(await q('props-panel').locator('section:visible > h2 .section-title').allTextContents(), ['General', 'Outline', 'Info', 'Select']);
+      assert.equal(await q('drawing-panel').isVisible(), false);
+      await fit(290); await fit(220);
+      for (const theme of ['light', 'dark']) {
+        await p.evaluate((theme) => { document.documentElement.dataset.theme = theme; }, theme);
+        await p.locator('.panel-scroll').evaluate((e) => { e.scrollTop = 0; });
+        await p.screenshot({ path: `${shotDir}/todo282b1-line-${theme}.png` });
+      }
+      await q('props-info').locator('.section-toggle').click();
+      await q('props-jump-info').click();
+      assert.equal(await q('props-info').locator('.section-toggle').getAttribute('aria-expanded'), 'true', 'icon unfolds its section');
+      await p.keyboard.press('Escape'); await q('ptab-objects').click();
+      await p.locator('.or.obj').nth(2).click(); await q('ptab-drawing').click();
+      assert.equal(await q('prop-chip').textContent(), 'Text');
+      assert.equal(await q('props-info').locator('.section-title').textContent(), 'Text');
+      await p.locator('[data-prop=textH]').fill('8'); await p.keyboard.press('Enter');
+      assert.equal(await p.locator('[data-prop=textH]').inputValue(), '8.00');
+      await p.keyboard.press('Control+z');
+      await q('ptab-objects').click(); await p.locator('.or.obj').nth(1).click();
+      await p.locator('.or.obj').nth(2).click({ modifiers: ['Shift'] }); await q('ptab-drawing').click();
+      assert.equal(await q('prop-chip').textContent(), '2 shapes');
+      assert.equal(await q('prop-colour').locator('option:checked').textContent(), '*varies*');
+      console.log('282b1: right edge, keys, remembered fold, hide/show, selection sections, 290/220px fit');
+    } finally { await context.close(); }
+  });
   await step('TODO 94/132: docker tabs, remembered folds, library first, resize, hide/show and typed Guides', async () => {
     const context = await browser.newContext({ viewport: { width: 1180, height: 760 }, deviceScaleFactor: 1.25 });
     const p = await context.newPage(), q = (id) => p.locator(`[data-testid=${id}]`);
@@ -2888,7 +2995,7 @@ try {
       await q('picker').setInputFiles('fixtures/outline.dxf');
       await q('drawing-panel').waitFor({ state: 'visible' });
       assert.deepEqual(await p.locator('.ptab').evaluateAll((els) => els.map((e) => e.getAttribute('aria-label'))), ['Properties', 'Objects', 'Layers', 'Parts library', 'Step and repeat']);
-      assert.deepEqual(await p.locator('.ptab-name:visible').allTextContents(), ['Properties']);
+      assert.deepEqual(await p.locator('.ptab-name:visible').allTextContents(), ['Properties', 'Objects', 'Layers', 'Library', 'Step']);
       for (const button of await p.locator('.ptab').all()) assert.equal(await button.getAttribute('title'), await button.getAttribute('aria-label'));
       await q('ptab-drawing').focus(); await p.keyboard.press('ArrowRight');
       assert.equal(await q('ptab-objects').getAttribute('aria-selected'), 'true');
@@ -2905,9 +3012,9 @@ try {
       await q('drawing-panel').waitFor({ state: 'visible' });
       assert.equal(await fold('drawing-panel').getAttribute('aria-expanded'), 'true', 'open fold survives reload');
       await fold('drawing-panel').click();
-      await p.keyboard.press('Control+a'); await fold('outlines-panel').click(); await q('extract').click();
+      await fold('outlines-panel').click(); await p.keyboard.press('Control+a'); await q('bar-extract').click();
       await q('name-input').fill('<R19 bracket>'); await q('name-ok').click();
-      await q('name-dialog').waitFor({ state: 'detached' }); await fold('outlines-panel').click();
+      await q('name-dialog').waitFor({ state: 'detached' }); await p.keyboard.press('Escape'); await fold('outlines-panel').click();
       await q('panel-library').click();
       assert.deepEqual(await q('lib-list').locator('.cname').allTextContents(), ['<R19 bracket>'], 'part names stay literal text');
       assert.deepEqual(await p.locator('[data-docker=library] > section').evaluateAll((els) => els.map((e) => e.querySelector('.section-title').textContent)), ['Parts']);
@@ -2987,10 +3094,10 @@ try {
       await p.waitForFunction((name) => document.querySelector('.dtab.on .tname').textContent === name, name);
     };
     const expected = {
-      Drawing: { drawing: ['Properties', 'Guides', 'Drawing scale', 'Tiny gaps', 'Duplicates', 'Outlines in this drawing'], objects: [], layers: ['Layers'], library: ['Parts'], step: null },
-      Layout: { drawing: ['Properties', 'Parts on this layout', 'Guides'], objects: [], layers: ['Layers'], library: ['Parts'], step: ['Step and repeat', 'Extra gaps'] },
-      'Layout selected': { drawing: ['Selected part', 'Properties', 'Parts on this layout', 'Guides', 'Arrange', 'Group and lock', 'Rotate', 'Mirror', 'Duplicate', 'Nudge'], objects: [], layers: ['Layers'], library: ['Parts'], step: ['Step and repeat', 'Extra gaps'] },
-      Compare: { drawing: ['Properties', 'Guides', 'Compare', 'Differences'], objects: [], layers: ['Layers'], library: ['Parts'], step: null },
+      Drawing: { drawing: ['Properties', 'Select', 'Guides', 'Drawing scale', 'Outlines in this drawing', 'Tiny gaps', 'Duplicates'], objects: [], layers: ['Layers'], library: ['Parts'], step: null },
+      Layout: { drawing: ['Properties', 'Select', 'Parts on this layout', 'Guides', 'Extra gaps'], objects: [], layers: ['Layers'], library: ['Parts'], step: ['Step and repeat'] },
+      'Layout selected': { drawing: ['Selected part', 'Properties', 'Select', 'Arrange', 'Transform', 'Rotate', 'Mirror', 'Nudge', 'Duplicate', 'Group and lock'], objects: [], layers: ['Layers'], library: ['Parts'], step: ['Step and repeat'] },
+      Compare: { drawing: ['Properties', 'Select', 'Guides', 'Compare', 'Differences'], objects: [], layers: ['Layers'], library: ['Parts'], step: null },
     };
     const audit = async (kind) => {
       for (const [tab, sections] of Object.entries(expected[kind])) {
@@ -15660,7 +15767,7 @@ try {
   };
   const propsOpen = async () => { await openGrips(propsDoc(), 'props.dxf'); };
   const propVal = (key) => page.locator(`[data-prop=${key}]`).inputValue();
-  const propsOnNow = async () => { await t('ptab-drawing').click(); const button = t('props-panel').locator('.section-toggle'); if (await button.getAttribute('aria-expanded') === 'false') await button.click(); await t('props-panel').waitFor(); };
+  const propsOnNow = async () => { await t('ptab-drawing').click(); const button = t('props-panel').locator('.section-toggle').first(); if (await button.getAttribute('aria-expanded') === 'false') await button.click(); await t('props-panel').waitFor(); };
   const qselectDoc = () => {
     const doc = newDoc(4);
     addLayer(doc, 'A', { aci: 1 }); addLayer(doc, 'B', { aci: 5 });
