@@ -134,6 +134,24 @@ test('TODO K5: --until stops at the exact selected step, inclusive and in suite 
   }
 });
 
+test('TODO 313: --until hints show three full selected names case-insensitively and count the rest', () => {
+  const steps = [
+    'outside TODO 313', 'picked TODO 313 excluded',
+    'picked: TODO 313 first full step', 'picked: todo 313 second full step',
+    'picked: ToDo 313 third full step', 'picked: TODO 313 fourth full step',
+    'picked: TODO 313 fifth full step',
+  ].map((name) => ({ name }));
+  assert.throws(() => pickSteps(steps, '^picked', (name) => !name.endsWith('excluded'), 'todo 313'), {
+    message: '--until step not in the selected steps: todo 313; matches: picked: TODO 313 first full step; picked: todo 313 second full step; picked: ToDo 313 third full step (+2 more)',
+  });
+});
+
+test('TODO 313: --until without a hint preserves the old error message', () => {
+  assert.throws(() => pickSteps([{ name: 'a' }], undefined, () => true, 'missing'), {
+    message: '--until step not in the selected steps: missing',
+  });
+});
+
 test('local runner launches four children together, prefixes failures and counts crashed children', () => {
   const dir = mkdtempSync(join(tmpdir(), 'pd-browser-shards-'));
   try {
