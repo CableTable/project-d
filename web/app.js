@@ -429,7 +429,7 @@ function numField(label, key, opts = {}) {
   });
   input.addEventListener('change', () => {
     const why = curLay() ? refusal() : '';
-    if ((key === 'sheetW' || key === 'sheetH') && curLay() && !Number.isInteger(state[key])) { const was = state[key]; state[key] = Math.round(was); touch(); update(); note(`Sheet ${key === 'sheetW' ? 'width' : 'height'} ${was} rounded to whole mm: ${state[key]}`); }
+    if ((key === 'sheetW' || key === 'sheetH') && curLay() && !Number.isInteger(state[key])) { const was = state[key]; state[key] = Math.round(was) < opts.floor() ? Math.ceil(was) : Math.round(was); touch(); update(); note(`Sheet ${key === 'sheetW' ? 'width' : 'height'} ${was} rounded to whole mm: ${state[key]}`); }
     input.value = String(state[key]); flagInvalid(input, why); if (why) note(why);
     if (SIZE_KEYS.includes(key)) syncFields();
   });
@@ -1935,7 +1935,7 @@ function buildPanel() {
       h('label', { class: 'row swrow' }, h('span', null, 'Fit to sheet'), h('span', { class: 'row' }, ui.fitText, ui.fit)),
       h('label', { class: 'field' }, 'Part', ui.partSel),
       h('div', { class: 'grid2' }, rowsF, colsF),
-      h('div', { class: 'grid2' }, numField('Gap X', 'gapX'), numField('Gap Y', 'gapY'),
+      h('div', { class: 'grid2' }, numField('Gap X', 'gapX', { cap: () => MAX_SHEET }), numField('Gap Y', 'gapY', { cap: () => MAX_SHEET }),
         h('label', { class: 'field' }, 'Rotate', ui.rotate), h('label', { class: 'field' }, 'Align', ui.align))),
     // the count line and Apply stay in view at the bottom of the panel (sticky), however far the panel is scrolled
     ui.stepFoot = h('div', { class: 'stepfoot', 'data-testid': 'step-foot' },
@@ -6052,7 +6052,9 @@ function shapeSelection(op) {
   const gone = SH.goneEntities(found.loops, found.openEnts, (keep ? [] : op === 'trim' ? [r.operands[r.target]] : r.operands.filter((_, i) => !r.untouched.includes(i))).flatMap((o) => o.loops));
   const kept = Ed.removeEntities(d.raw, gone);
   const made = r.rings.map((ring, i) => {
-    const src = d.raw.entities[Math.min(...found.loops[r.operands[r.sources[i]].loops[0]].ents)];
+    let first = Infinity;
+    for (const e of found.loops[r.operands[r.sources[i]].loops[0]].ents) if (e < first) first = e;      // no Math.min(...): a big loop overflows the spread
+    const src = d.raw.entities[first];
     return lwpoly(ring, op === 'boundary' ? { closed: true, layer: curLayerName(d.vlay || d) } : { closed: true, layer: src.layer, lt: src.lt, aci: src.aci, tc: src.tc, lw: src.lw, cap: src.cap, join: src.join, scaleWithObject: src.scaleWithObject, lts: src.lts, hidden: src.hidden, ps: src.ps });
   }), at = kept.entities.length;
   const had = lay ? new Set(Object.keys(lay.parts)) : null;
@@ -7443,9 +7445,8 @@ async function balRow(id) {
   if (!it) return;
   if (it.sheet !== sheetOf(d) && !(await balSheet(d, it.sheet))) return;
   balSelect(d, it.id);
-  const x = [it.c[0], it.tip[0]], y = [it.c[1], it.tip[1]];
   const R = balR(d);
-  zoomToBox([Math.min(...x) - R, Math.min(...y) - R, Math.max(...x) + R, Math.max(...y) + R], Math.max(20, 3 * R));
+  zoomToBox([Math.min(it.c[0], it.tip[0]) - R, Math.min(it.c[1], it.tip[1]) - R, Math.max(it.c[0], it.tip[0]) + R, Math.max(it.c[1], it.tip[1]) + R], Math.max(20, 3 * R));
   note(`Balloon ${it.n}` + (it.dim ? ': ' + it.dim : ''));
 }
 /** The table's file: Export CSV, and Export Excel (the same rows, as a UTF-8 CSV with a byte order mark: Excel opens it with Ø and ± right). */
@@ -12195,7 +12196,8 @@ function renderContour() {
   const all = [...loops, ...chains, ...outs].flat();
   if (!all.length) ui.ctPreview.replaceChildren();
   else {
-    const x0 = Math.min(...all.map((p) => p[0])), x1 = Math.max(...all.map((p) => p[0])), y0 = Math.min(...all.map((p) => p[1])), y1 = Math.max(...all.map((p) => p[1]));
+    let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;      // plain loop: a spread of thousands of points overflows the stack
+    for (const p of all) { x0 = Math.min(x0, p[0]); x1 = Math.max(x1, p[0]); y0 = Math.min(y0, p[1]); y1 = Math.max(y1, p[1]); }
     const k = Math.min(220 / Math.max(x1 - x0, 1e-9), 70 / Math.max(y1 - y0, 1e-9)), ox = 120 - k * (x0 + x1) / 2, oy = 45 + k * (y0 + y1) / 2;
     const path = (pts, close = true) => 'M' + pts.map((p) => `${(ox + k * p[0]).toFixed(1)} ${(oy - k * p[1]).toFixed(1)}`).join('L') + (close ? 'Z' : '');
     ui.ctPreview.replaceChildren(
@@ -12316,7 +12318,7 @@ const ed6000 = (d) => !!d.ed && d.ed.shown.length > 6000;
 function gapsOf(d) {
   if (!d.ed) return null;
   const tol = state.gapMm / (d.factor || 1);
-  if (!d.gaps || d.gaps.ed !== d.ed || d.gaps.tol !== tol) d.gaps = { ed: d.ed, tol, list: d.ed.shown.length > 60000 ? [] : Ed.findGaps(d.ed, tol) };
+  if (!d.gaps || d.gaps.ed !== d.ed || d.gaps.tol !== tol) { const skipped = d.ed.shown.length > 60000; d.gaps = { ed: d.ed, tol, skipped, list: skipped ? [] : Ed.findGaps(d.ed, tol) }; }
   return d.gaps.list;
 }
 function gapTolTyped() {
@@ -12347,7 +12349,7 @@ function removeDuplicates() {
   const d = editable();
   if (!d) return;
   const r = CL.removeDuplicates(d.raw, (i) => !lockedEnt(d, i));
-  d.duplicates = { source: d.raw.entities, count: d.locked?.size ? CL.removeDuplicates(d.raw).count : r.count };
+  d.duplicates = { source: d.raw.entities, count: r.count };      // locked layers are not counted: one pass only
   if (!r.count) { renderEdit(); note(ui.duplicateRemove.disabled ? ui.duplicateReason.textContent : 'No removable duplicates / overlaps (locked layers are kept)'); return; }
   if (!commit(d, { entities: r.entities, groups: remapGroups(d.raw.groups, r.indexes), blocks: r.blocks }, 'Remove duplicates / overlaps')) return;
   note(`Removed redundant geometry from ${r.count} entities. Ctrl+Z brings it back`);
@@ -12506,7 +12508,7 @@ function renderEdit() {
   if (document.activeElement !== ui.gapTol) ui.gapTol.value = String(state.gapMm);
   ui.gapShow.classList.toggle('on', !!d.gapShow); ui.gapShow.setAttribute('aria-pressed', String(!!d.gapShow));
   ui.gapJoin.disabled = !gl || !gl.length; ui.gapShow.disabled = ui.gapJoin.disabled || countOnly;
-  const gapReason = !gl ? '' : countOnly ? `Too many gaps to show (${gl.length}): Join still works` : !gl.length ? 'No tiny gaps' : '';
+  const gapReason = !gl ? '' : d.gaps.skipped ? 'Tiny gaps not checked: too many objects' : countOnly ? `Too many gaps to show (${gl.length}): Join still works` : !gl.length ? 'No tiny gaps' : '';
   // Announce changes after a check or edit, without replacing the file-open/font message on the first index.
   if (gl && d.gapReason !== undefined && gapReason && gapReason !== d.gapReason) note(state.msg ? state.msg + '. ' + gapReason : gapReason);
   if (gl) d.gapReason = gapReason;

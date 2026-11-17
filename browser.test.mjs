@@ -4774,6 +4774,23 @@ try {
     assert.equal(await page.locator('svg [d*="e+"]').count(), 0, 'no 1e+… in a path');
   }, { needs: ['a DXF opens on a drawing tab (no sheet); Add to layout makes a layout tab and the part fills Step and repeat'] });
 
+  await step('TODO 253c2: Gap X / Gap Y refuse over 100 000 mm; a sheet side rounded to whole mm never falls below its grippers', async () => {
+    const f = (k) => panelControl(page, page.locator(`[data-key=${k}]`));
+    const w0 = await f('sheetW').inputValue();
+    for (const [k, label] of [['gapX', 'Gap X'], ['gapY', 'Gap Y']]) {
+      const g0 = await f(k).inputValue();
+      await layoutTab(); await f(k).fill('1e308'); await f(k).blur();
+      assert.equal(await f(k).inputValue(), g0, `${label} 1e308: refused, the field reverts`);
+      assert.match(await t('cmd-prompt').textContent(), new RegExp(`${label} can be 100000 mm at most`));
+    }
+    await layoutTab(); await grip('Left').fill('5.2'); await layoutTab(); await grip('Right').fill('5.2');
+    await layoutTab(); await f('sheetW').fill('10.4'); await f('sheetW').blur();
+    assert.equal(await f('sheetW').inputValue(), '11', '10.4 rounds up: 10 would be narrower than the grippers (10.4)');
+    await layoutTab(); await grip('Left').fill('0'); await layoutTab(); await grip('Right').fill('0');
+    await layoutTab(); await f('sheetW').fill(w0); await f('sheetW').blur();
+    assert.equal(await f('sheetW').inputValue(), w0);
+  }, { needs: ['a DXF opens on a drawing tab (no sheet); Add to layout makes a layout tab and the part fills Step and repeat'] });
+
   await step('preset, gripper sides and top-left align: the count and the first position follow', async () => {
     await layoutTab(); await t('preset').selectOption('a3');
     assert.equal(await panelControl(page, page.locator('[data-key=sheetW]')).inputValue(), '420');
@@ -11333,6 +11350,21 @@ try {
     await closeTabs(/./);
     await page.evaluate(() => localStorage.removeItem('pd-contour'));
   });
+  await step('TODO 253c2: the Contour preview of a 100 000-vertex outline draws (no spread over the points)', async () => {
+    await closeTabs(/./);
+    const N = 100000, rows = ['0', 'SECTION', '2', 'ENTITIES', '0', 'LWPOLYLINE', '8', '0', '90', String(N), '70', '1'];      // by hand: writeDxf itself overflows on 100 000 vertices
+    for (let i = 0; i < N; i++) rows.push('10', (1000 * Math.cos(2 * Math.PI * i / N)).toFixed(4), '20', (1000 * Math.sin(2 * Math.PI * i / N)).toFixed(4));
+    rows.push('0', 'ENDSEC', '0', 'EOF');
+    await t('picker').setInputFiles({ name: 'ring253c2.dxf', mimeType: 'application/dxf', buffer: Buffer.from(rows.join('\n'), 'latin1') });
+    await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'ring253c2.dxf', null, { timeout: 60000 });
+    await page.keyboard.press('Escape'); await page.keyboard.press('Control+a');
+    await page.locator('[data-tool=contour]').click();
+    await t('contour-steps').fill('1'); await t('contour-steps').press('Enter');
+    await page.waitForFunction(() => document.querySelectorAll('[data-testid=contour-preview] .ct-orig').length === 1, null, { timeout: 60000 });
+    await t('contour-close').click();
+    await closeTabs(/./);
+    await page.evaluate(() => localStorage.removeItem('pd-contour'));
+  });
 
   await step('TODO 199: contour outside a hexagon with a near-repeated point', async () => {
     const configured = (key, value) => page.waitForFunction(([k, v]) => JSON.parse(localStorage.getItem('pd-contour'))?.[k] === v, [key, value]);
@@ -17480,6 +17512,33 @@ try {
     assert.equal(await t('gap-show').getAttribute('aria-pressed'), 'true');
     await tolerance('0.01');
     await closeTabs(/./);
+  });
+  await step('TODO 253c2: over 60 000 objects Tiny gaps says it was not checked; Remove duplicates with a locked layer scans once', async () => {
+    const raw = newDoc();
+    for (let i = 0; i <= 60000; i++) addEntities(raw, dxfLine((i % 300) * 3, Math.floor(i / 300) * 3, (i % 300) * 3 + 1, Math.floor(i / 300) * 3));
+    await openGrips(writeDxf(raw), 'many-253c2.dxf');
+    assert.equal(await t('gap-count').textContent(), '0');
+    assert.equal(await t('gap-reason').textContent(), 'Tiny gaps not checked: too many objects');
+    assert.equal(await t('gap-show').isDisabled(), true);
+    await closeTabs(/./);
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    try {
+      const p = await context.newPage(), q = (id) => panelControl(p, p.getByTestId(id));
+      await p.route('**/cleanup.js', (route) => route.fulfill({ contentType: 'text/javascript',
+        body: readFileSync('web/cleanup.js', 'utf8').replace('export function removeDuplicates(raw, eligible = () => true) {', (m) => m + ' globalThis.rdCalls = (globalThis.rdCalls || 0) + 1;') }));
+      await p.goto(URL_); await p.waitForSelector('[data-testid=count]', { state: 'attached' });
+      const doc = newDoc(4);
+      addLayer(doc, 'Locked');
+      addEntities(doc, dxfLine(10, 10, 90, 10), dxfLine(10, 10, 90, 10), dxfLine(10, 40, 90, 40, { layer: 'Locked' }), dxfLine(10, 40, 90, 40, { layer: 'Locked' }));
+      await q('picker').setInputFiles({ name: 'locked-253c2.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(doc)) });
+      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'locked-253c2.dxf');
+      await q('ptab-objects').click();
+      await p.locator('.or.layer[data-layer=Locked] [data-act=lock]').click();
+      await q('ptab-drawing').click();
+      await q('duplicate-remove').click();
+      await p.waitForFunction(() => /^Removed redundant geometry from 1 entities/.test(document.querySelector('[data-testid=cmd-prompt]').textContent));
+      assert.equal(await p.evaluate(() => globalThis.rdCalls), 1, 'one scan of the drawing, not a second one to count the locked layer');
+    } finally { await context.close(); }
   });
   await step('Preflight open, Select, Fix, Recheck and Close, light/dark screenshots (TODO 50)', async () => {
     await openGrips(cleanupDrawing(), 'preflight.dxf');
