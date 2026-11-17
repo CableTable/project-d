@@ -9647,7 +9647,8 @@ try {
   });
 
   await step('invalid numbers (text, negative, 0 rows) get a message naming the allowed range, a red mark on the field, and the old value back', async () => {
-    const cases = [['rows', '0', /Rows must be 1 or more \(up to 200\)/], ['rows', 'abc', /Rows must be 1 or more/], ['gapX', 'abc', /Gap X must be a number in mm: 0 or more/], ['gapY', '-4', /Gap Y must be 0 mm or more/],
+    if (only) await pdfLayout();
+    const cases = [['rows', '0', /Rows must be 1 or more \(up to 200\)/], ['rows', 'abc', /Rows must be 1 or more/], ['gapX', 'abc', /Gap X must be a number in mm: 0 to 100000/], ['gapY', '-4', /Gap Y must be 0 mm or more/],
       ['sheetW', 'abc', /Width must be a number in mm: \d+ to 100000/], ['sheetH', '0', /Height must be \d+ mm or more/], ['gripLeft', '-5', /Left must be 0 mm or more/]];
     const key = (k) => panelControl(page, page.locator(`[data-key=${k}]`)).first();
     await t('fit-switch').uncheck();
