@@ -995,6 +995,7 @@ try {
         await start(x, y); await near(expectedX, expectedY); assert.equal(await guides.count(), count); await cancel();
       }
       // Alt bypasses Guidelines too, while their separate switch remains functional.
+      await p.keyboard.press('Escape');      // grill-282b F9: Guides hide with a selection
       await q('guide-add-v').click(); await q('guide-pos').fill('0'); await q('guide-pos').press('Enter');
       await p.locator('[data-ribbon-tab=View]').click();
       await p.locator('.ribbon-body').getByRole('button', { name: 'Snap to guides', exact: true }).click();
@@ -10501,6 +10502,7 @@ try {
     await freshLayoutWithPlate();
     await t('ptab-drawing').click();
     assert.equal(await page.locator('[data-testid=guides-panel] h2').textContent(), 'Guides');
+    await page.keyboard.press('Escape');      // grill-282b F9: Guides hide with a selection
     await t('guide-add-h').click();
     assert.deepEqual(await guideVals(), [['y', 350]]);
     assert.equal(await t('guide-pos').evaluate((e) => document.activeElement === e), true, 'the new guide\'s field is ready to type in');
@@ -10537,8 +10539,11 @@ try {
     assert.equal((await guideVals()).length, 2, 'locked: no new guide from a ruler');
     assert.match(await prompt(), /^Guides are locked/);
     // a locked guide does not catch a press meant for the part under it
+    await page.locator('[data-group=parts] .part-hit').first().click();      // select the plate again: px / py read its X / Y
     const pp = [Number(await t('px').inputValue()) + 50, Number(await t('py').inputValue()) + 30];
+    await page.keyboard.press('Escape');      // grill-282b F9: Guides hide with a selection
     await t('guide-pos').first().fill('' + (pp[1])); await t('guide-pos').first().press('Enter');
+    await page.locator('[data-group=parts] .part-hit').first().click({ position: { x: 10, y: 5 } });      // off the guide across its middle
     const at0 = await pos();
     await dragMm([pp[0], pp[1]], [pp[0] + 30, pp[1] + 30]);
     approx((await pos())[0], at0[0] + 30, 1.2, 'the part under the locked guide was dragged'); approx((await pos())[1], at0[1] + 30, 1.2);
@@ -10575,6 +10580,7 @@ try {
     assert.equal((await guideVals()).length, 0);
     await t('guide-del').count().then((n) => assert.equal(n, 0));
     // delete from the panel
+    await page.keyboard.press('Escape');      // grill-282b F9: the dragged plate is still selected
     await t('guide-add-h').click(); await t('guide-add-h').click();
     assert.deepEqual(await guideVals(), [['y', 350], ['y', 360]], 'a second guide on the same line is moved along 10 mm');
     await page.locator('[data-testid=guide-del]').first().click();
@@ -10584,8 +10590,10 @@ try {
 
   await step('TODO 38: a part dragged near a guide lands on it (within a few screen px; SNAP off stops it); the guide lights up', async () => {
     await freshLayoutWithPlate();
+    await page.keyboard.press('Escape');      // grill-282b F9: Guides hide with a selection
     await t('guide-add-v').click(); await t('guide-pos').fill('300'); await t('guide-pos').press('Enter');
     await t('guide-add-h').click(); await t('guide-pos').nth(1).fill('200'); await t('guide-pos').nth(1).press('Enter');
+    await page.locator('[data-group=parts] .part-hit').first().click();      // select the plate again: pos() reads its X / Y
     const p0 = await pos(), sc = (await page.locator('rect.sheet').boundingBox()).width / 1000, tol = 6 / sc;
     assert.deepEqual(p0, [450, 320]);
     // the part's left edge (450) dragged to about x 302, bottom edge (320) to about y 203
@@ -10636,6 +10644,7 @@ try {
 
   await step('TODO 38: guides are saved in the layout file (settings block) and reopen, with Show and Lock; screenshots light and dark', async () => {
     await freshLayoutWithPlate();
+    await page.keyboard.press('Escape');      // grill-282b F9: Guides hide with a selection
     await t('guide-add-h').click(); await t('guide-pos').fill('600'); await t('guide-pos').press('Enter');
     await t('guide-add-v').click(); await t('guide-pos').nth(1).fill('250'); await t('guide-pos').nth(1).press('Enter');
     await page.keyboard.press('Escape');
@@ -11296,6 +11305,7 @@ try {
     await t('gap-tol').fill('0.01'); await t('gap-tol').press('Enter');
     await page.waitForFunction(() => document.querySelector('[data-testid=gap-count]').textContent === '2');
     await clickConnected(50, 0); await waitSel('8 selected');
+    await page.keyboard.press('Escape');      // grill-282b F9: Tiny gaps hides with a selection
     await t('gap-join').click();
     await page.waitForFunction(() => document.querySelector('[data-testid=gap-count]').textContent === '0');
     assert.match(await t('cmd-prompt').textContent(), /Joined 2 gaps/);
@@ -12542,6 +12552,7 @@ try {
       await t('nest-cancel').click();
       await shotBoth('todo147b-nest', () => t('nest').click(), () => t('nest-cancel').click());
       const beforeRemoval = s.lay;
+      await page.keyboard.press('Escape');      // grill-282b F9: Parts hide with a selection
       await panelControl(page, page.locator('[data-part-remove="147f-a"]')).click();
       assert.equal(await nParts(), 2, 'both copies of Plate F and their contours leave the sheet');
       s = await state();
@@ -16262,11 +16273,12 @@ try {
 
   await step('TODO 193d1 Layout history keeps objects and placed parts selected at plain steps and Start', async () => {
     await openLayout162b();
-    await click(175, 100); await click(700, 380, { shift: true });
-    assert.deepEqual(await picked162b(2), [100, 650]);
+    await page.keyboard.press('Escape');      // grill-282b F9: Guides hide with a selection, so the guides come first
     for (const position of ['25', '50']) {
       await t('guide-position').fill(position); await t('guide-add-v').click();
     }
+    await click(175, 100); await click(700, 380, { shift: true });
+    assert.deepEqual(await picked162b(2), [100, 650]);
     assert.deepEqual(await histLabels(), ['Start', 'Add guide', 'Add guide']);
     for (const row of [1, 0, 2]) {
       await menuItem('Edit', 'Undo history…'); await t('hist-row').nth(row).click();
@@ -28161,7 +28173,9 @@ try {
   await step('TODO 70: Set length replaces active drawing, modify and Text point prompts', async () => {
     for (const tool of ['line', 'move', 'text']) {
       await open70([dxfLine(20, 30, 60, 50)]);
-      await page.keyboard.press('Control+a'); await typeCmd(tool);
+      await page.keyboard.press('Control+a');
+      if (tool !== 'move') await page.keyboard.press('Escape');      // grill-282b F9: Drawing scale hides with a selection; cleared before Line / Text starts
+      await typeCmd(tool);
       if (tool !== 'text') await typeCmd('200,300');
       if (tool === 'move') { await page.keyboard.press('Escape'); await page.keyboard.press('Escape'); }      // grill-282b F8: Drawing scale hides with a selection; Esc ends Move, a 2nd Esc clears the selection
       await t('set-length').click();
@@ -29633,6 +29647,7 @@ try {
   await step('TODO 175: + and − icons centred', async () => {
     await nestLayout();
     await t('ptab-drawing').click();
+    await page.keyboard.press('Escape');      // grill-282b F9: Guides hide with a selection
     if (!await t('guide-add-h').isVisible()) await t('guides-panel').locator('.section-toggle').first().click();      // the Guides fold starts closed
     const measure = (inDialog) => page.evaluate((inDialog) => {       // the dialog covers the layout panel: the nest buttons and the others are measured apart
       const mid = (r, ax) => ax === 'x' ? r.x + r.width / 2 : r.y + r.height / 2;
