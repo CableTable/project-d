@@ -5,11 +5,21 @@ import { decodeDxf, readDxf, flatten } from './web/drawing.js';
 import { mapply } from './web/drawing.js';
 import { buildTree } from './web/objects.js';
 import { makeDimension, addDimension } from './web/edit.js';
-import { unitFactor, convertedNote, spaceOf, shownItems, itemVisible, startHidden, entityCount, layerCounts, drawingBoxMm, placement, boxOnSheet, fitRect, cursorMm, fitsSheet, addRecent, closePrompt, BIG_FILE, bigFileAsk } from './web/doc.js';
+import { unitFactor, convertedNote, spaceOf, shownItems, itemVisible, startHidden, entityCount, layerCounts, drawingBoxMm, placement, boxOnSheet, fitRect, cursorMm, fitsSheet, addRecent, closePrompt, BIG_FILE, bigFileAsk, backupPath } from './web/doc.js';
 
 const load = (f) => flatten(readDxf(decodeDxf(readFileSync(f))));
 let n = 0;
 const test = (name, fn) => { fn(); n++; console.log('ok', name); };
+
+test('TODO 308: backup names preserve the folder, extension and literal file name', () => {
+  for (const [path, want] of [
+    ['C:\\work\\part.dxf', 'C:\\work\\Backup_of_part.dxf'],
+    ['D:/jobs/part.dwg.dxf', 'D:/jobs/Backup_of_part.dwg.dxf'],
+    ['C:/mixed\\panel $&.DXF', 'C:/mixed\\Backup_of_panel $&.DXF'],
+    ['part.dxf', 'Backup_of_part.dxf'],
+    ['Backup_of_part.dxf', 'Backup_of_Backup_of_part.dxf'],
+  ]) assert.equal(backupPath(path), want);
+});
 
 test('unit factors', () => {
   assert.equal(unitFactor('mm'), 1); assert.equal(unitFactor('in'), 25.4); assert.equal(unitFactor('cm'), 10);

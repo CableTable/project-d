@@ -9,6 +9,12 @@ export function unitFactor(units) {
   return MM_PER[units] || 1;
 }
 
+/** CorelDRAW-style backup beside the file, keeping its extension so it opens as a drawing. */
+export function backupPath(path) {
+  const at = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\')) + 1;
+  return path.slice(0, at) + 'Backup_of_' + path.slice(at);
+}
+
 /** "converted from inch" for a non-mm file, else ''. */
 export function convertedNote(units) {
   return MM_PER[units] && MM_PER[units] !== 1 ? 'converted from ' + (NAMES[units] || units) : '';

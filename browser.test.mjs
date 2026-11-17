@@ -610,10 +610,11 @@ try {
         window.unitFiles = files; window.unitOpen = open; window.unitRemoved = []; window.unitSaveCalls = 0;
         window.__TAURI__ = {
           core: { invoke: async (name) => { if (name !== 'grant_balloon_sidecar') throw new Error(name); } },
-          dialog: { open: async () => window.unitOpen, save: async () => { window.unitSaveCalls++; return 'E:/units/native-feet-edited.dxf'; } },
+          dialog: { open: async () => window.unitOpen, save: async () => { window.unitSaveCalls++; return 'E:/units/native-feet.dxf'; } },
           fs: {
             readFile: async (path) => new TextEncoder().encode(window.unitFiles[path]),
             readTextFile: async (path) => window.unitFiles[path], exists: async (path) => Object.hasOwn(window.unitFiles, path),
+            writeFile: async (path, bytes) => { window.unitFiles[path] = new TextDecoder().decode(bytes); },
             writeTextFile: async (path, text) => {
               if (window.unitWriteFail && path.endsWith('.pdunits.json')) throw new Error('unit disk full');
               window.unitFiles[path] = text;
@@ -627,19 +628,19 @@ try {
       await command('open'); await p.waitForFunction(() => document.querySelector('[data-testid=drawing-unit]').textContent === 'ft');
       await pick('ft-in'); await p.evaluate(() => { window.unitWriteFail = true; }); await saveCommand();
       assert.equal(await q('cmd-prompt').textContent(), 'Saved; unit not saved: unit disk full');
-      assert.equal(await p.locator('.dtab.on .tname').textContent(), 'native-feet-edited.dxf', 'the DXF save updates the tab despite a sidecar failure');
+      assert.equal(await p.locator('.dtab.on .tname').textContent(), 'native-feet.dxf', 'grill-308 F6: Save keeps the opened name despite a sidecar failure');
       assert.equal(await p.locator('.dtab.on .dot').count(), 1, 'the failed unit remains unsaved');
-      const nativeSide = 'E:/units/native-feet-edited.dxf.pdunits.json';
+      const nativeSide = 'E:/units/native-feet.dxf.pdunits.json';
       assert.equal(await p.evaluate((path) => Object.hasOwn(window.unitFiles, path), nativeSide), false);
       await p.evaluate(() => { window.unitWriteFail = false; }); await saveCommand();
-      assert.equal(await p.evaluate(() => window.unitSaveCalls), 1, 'retry saves to the completed DXF path without another Save As');
+      assert.equal(await p.evaluate(() => window.unitSaveCalls), 0, 'grill-308 F6: Save and retry use the opened path without Save As');
       await p.waitForFunction((path) => !!window.unitFiles[path], nativeSide);
-      const native = readDxf(await p.evaluate(() => window.unitFiles['E:/units/native-feet-edited.dxf']));
+      const native = readDxf(await p.evaluate(() => window.unitFiles['E:/units/native-feet.dxf']));
       assert.equal(+native.header.$INSUNITS, 2); assert.deepEqual(native.entities.map(lineEnds), raw.entities.map(lineEnds));
       await pick('ft'); await saveCommand(); await p.waitForFunction((path) => window.unitRemoved.includes(path), nativeSide);
       await pick('ft-in'); await saveCommand(); await p.waitForFunction((path) => !!window.unitFiles[path], nativeSide);
       const disk = await p.evaluate(() => window.unitFiles);
-      await p.reload(); await q('count').waitFor({ state: 'attached' }); await installDisk(disk, 'E:/units/native-feet-edited.dxf');
+      await p.reload(); await q('count').waitFor({ state: 'attached' }); await installDisk(disk, 'E:/units/native-feet.dxf');
       await command('open'); await p.waitForFunction(() => document.querySelector('[data-testid=drawing-unit]').textContent === 'ft-in');
     } finally { await context.close(); }
   });
@@ -3396,7 +3397,7 @@ try {
       await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'table.dxf');
       const singleNote = '1 table saved as a block (AutoCAD sees it as a block, not a table)';
       const single = await saved(singleNote);
-      assert.equal(single.name, 'table-edited.dxf');
+      assert.equal(single.name, 'table.dxf', 'grill-308 F6: Save keeps the opened name');
       assert.equal(readDxf(single.text).entities[0].type, 'INSERT');
       // Saving again still converts a table: Save must not replace the open document's entity.
       await saved(singleNote);
@@ -3778,7 +3779,7 @@ try {
       const p = await context.newPage();
       p.on('pageerror', (e) => errors.push(String(e)));
       await p.addInitScript(({ dxf, pdf }) => {
-        const log = window.__launchLog = { reads: [], grants: [], active: 0, maxActive: 0, saves: [] };
+        const log = window.__launchLog = { reads: [], grants: [], active: 0, maxActive: 0, saves: [], writes: [] };
         const allowed = new Set();
         const queue = [['C:/jobs/first plate.dxf', null], ['D:/jobs/second.dxf', null]];
         window.__launchQueue = queue;
@@ -3810,7 +3811,7 @@ try {
               return new Uint8Array(/\.pdf$/i.test(path) ? pdf : dxf);
             },
             exists: async () => false,
-            writeTextFile: async () => { throw new Error('launch sources must never be overwritten'); },
+            writeTextFile: async (path) => { log.writes.push(path); },
           },
           dialog: {
             open: async () => window.__launchPick,
@@ -3860,8 +3861,9 @@ try {
       assert.equal((await names()).length, 6, 'reopening an existing file follows Open and selects its tab');
       assert.match(await prompt(), /already open/);
       await p.keyboard.press('Control+s');
-      await p.waitForFunction(() => window.__launchLog.saves.length === 1);
-      assert.deepEqual(await p.evaluate(() => window.__launchLog.saves), ['C:/jobs/first plate-edited.dxf']);
+      await p.waitForFunction(() => window.__launchLog.writes.length === 1);
+      assert.deepEqual(await p.evaluate(() => window.__launchLog.saves), [], 'grill-308 F6: no Save As for an opened DXF');
+      assert.deepEqual(await p.evaluate(() => window.__launchLog.writes), ['C:/jobs/first plate.dxf']);
       await p.screenshot({ path: shotDir + '/explorer-open-light.png' });
       await p.locator('[data-menu=View]').click();
       await p.getByRole('menuitemcheckbox', { name: /Theme: dark/ }).click();
@@ -4707,12 +4709,12 @@ try {
     await t('picker').setInputFiles('fixtures/inch.dxf');
     await page.waitForSelector('.tabs .dtab:has-text("inch.dxf")');
     const dl = await downloaded(() => menuItem('File', 'Save As…'));
-    assert.equal(dl.name, 'inch-edited.dxf');
+    assert.equal(dl.name, 'inch.dxf', 'grill-308 F6: Save As suggests the opened name');
     assert.match(dl.text, /^\s*0\r\nSECTION/);
     assert.ok(/^[\x00-\x7f]*$/.test(dl.text), 'ASCII only');
     assert.deepEqual(layerNames(dl.text), fixtureLayers('inch.dxf'));
-    assert.match(await t('cmd-prompt').textContent(), /Saved inch-edited\.dxf/);
-    await page.locator('.tabs .dtab', { hasText: 'inch-edited.dxf' }).locator('.x').click();
+    assert.match(await t('cmd-prompt').textContent(), /Saved inch\.dxf/);
+    await page.locator('.tabs .dtab', { hasText: 'inch.dxf' }).locator('.x').click();
   });
 
   await step('Ctrl+S on a file with things Save cannot keep saves a copy, never the original', async () => {
@@ -6719,13 +6721,13 @@ try {
 
   await step('edit: Save writes the edited drawing: 8 entities, 62.5 × 37.5, nothing else', async () => {
     const dl = await downloaded(() => page.keyboard.press('Control+s'));
-    assert.equal(dl.name, 'outline-edited.dxf', 'the opened file is left alone: the first Save is a Save As');
+    assert.equal(dl.name, 'outline.dxf', 'grill-308 F6: Save keeps the opened name');
     const doc = readDxf(dl.text), b = flatten(doc).boxes.model;
     assert.deepEqual(doc.entities.map((e) => e.type).sort(), ['ARC', 'ARC', 'ARC', 'ARC', 'LINE', 'LINE', 'LINE', 'LINE']);
     assert.deepEqual(b.map((v) => Math.round(v * 100) / 100), [0, 0, 62.5, 37.5]);
     assert.ok(!(await tabs()).at(-1).includes('•'), 'saved: no dot');
     const again = await downloaded(() => page.keyboard.press('Control+s'));
-    assert.equal(again.name, 'outline-edited.dxf', 'later saves write the same file');
+    assert.equal(again.name, 'outline.dxf', 'later saves write the same file');
   }, { needs: ['edit: Set length: two points snap to ends, the real length scales the drawing'] });
 
   await step('edit: Add to layout puts the edited, scaled part (62.5 × 37.5) on a new layout', async () => {
@@ -6733,18 +6735,18 @@ try {
     const before = (await tabs()).length;
     await t('add-to-layout').click();
     await page.waitForFunction((n) => document.querySelectorAll('.tabs .dtab:not([aria-label])').length === n, before + 1);
-    assert.match((await tabs()).at(-1), /^outline-edited layout •/);
-    assert.equal(await partText(), 'outline-edited · 62.5 × 37.5');
+    assert.match((await tabs()).at(-1), /^outline layout •/); // grill-308 F6: the source keeps its name
+    assert.equal(await partText(), 'outline · 62.5 × 37.5');
     const want = stepRepeat({ ...base, gripBottom: 0, partW: 62.5, partH: 37.5 }).count;
     assert.equal(Number(await t('count').textContent()), want);
     const dl = await downloaded(() => page.keyboard.press('Control+s'));
-    assert.equal(dl.name, 'outline-edited layout.dxf');
+    assert.equal(dl.name, 'outline layout.dxf');
     const doc = readDxf(dl.text), ins = doc.entities.filter((e) => e.type === 'INSERT');
     assert.equal(ins.length, want);
     const one = flatten({ ...doc, entities: [ins[0]] }).boxes.model;
     const dims = [one[2] - one[0], one[3] - one[1]].map((v) => Math.round(v * 100) / 100).sort((x, y) => x - y);
     assert.deepEqual(dims, [37.5, 62.5], 'the copy is the edited part at true size');
-    const blk = Object.entries(doc.blocks).find(([n]) => n === 'outline-edited');
+    const blk = Object.entries(doc.blocks).find(([n]) => n === 'outline');
     assert.equal(blk[1].entities.length, 8, 'only the outline is in the part');
   }, { needs: ['edit: Save writes the edited drawing: 8 entities, 62.5 × 37.5, nothing else'] });
 
@@ -8786,9 +8788,9 @@ try {
     assert.deepEqual((await libNames()).sort(), ['Dial', 'Plate A']);
     await t('ptab-drawing').click();
     await shotBoth('reopen');
-    // a file opened is never overwritten: the first Save of it is a Save As
+    // grill-308 F6: an opened layout saves under its own name
     const again = await downloaded(() => page.keyboard.press('Control+s'));
-    assert.equal(again.name, 'Layout 1-edited.dxf');
+    assert.equal(again.name, 'Layout 1.dxf', 'grill-308 F6: an opened layout keeps its name');
   });
 
   await step('dark theme changes the body background', async () => {
@@ -17470,14 +17472,14 @@ try {
     await page.evaluate(() => document.activeElement && document.activeElement.blur());
     await page.keyboard.press('Control+z');
     assert.equal(await entCount(), 2, 'one Undo takes both away');
-    assert.deepEqual(await tabNames(), ['t50-target-edited.dxf'], 'still the one tab (the Save above gave it its -edited name)');
+    assert.deepEqual(await tabNames(), ['t50-target.dxf'], 'grill-308 F6: still the one tab with its opened name');
 
     // a layout tab: on the sheet, as before
     await t('new-layout').click();
     m = await mid();
     await fire('drop', m.x, m.y);
     assert.match(await t('cmd-prompt').textContent(), /^T50 part \(100\.00 × 60\.00 mm\) added to Layout 1/);
-    assert.deepEqual(await tabNames(), ['t50-target-edited.dxf', 'Layout 1']);
+    assert.deepEqual(await tabNames(), ['t50-target.dxf', 'Layout 1']);
     await page.locator('.tabs .dtab', { hasText: 't50-target' }).click();
     assert.equal(await entCount(), 2, 'the drawing tab is untouched');
     await closeTabs(/./);
@@ -18417,7 +18419,7 @@ try {
     assert.equal(emptySize.size, 20); assert.deepEqual(emptySize.items, [], 'size is saved before placing any balloon');
     await page.locator('.tabs .dtab').filter({ hasText: /^insp\.dxf/ }).click();
     assert.equal(await sizeValue('10'), '10');
-    await page.locator('.tabs .dtab').filter({ hasText: /^size-other-edited\.dxf/ }).click();
+    await page.locator('.tabs .dtab').filter({ hasText: /^size-other\.dxf/ }).click(); // grill-308 F6
     assert.equal(await sizeValue('20'), '20');
     await page.locator('.tabs .dtab').filter({ hasText: /^insp\.dxf/ }).click();
     await page.locator('[data-tool=select]').click();
@@ -22122,22 +22124,21 @@ try {
         await openPdf();
         await suggestion(() => t('pdf-go').click(), source.replace(/[^\\/]*$/, () => name.replace(/\.dxf$/, '.pdf')));
         await t('pdf-cancel').click();
-        const want = source.slice(0, -4) + '-edited.dxf';
-        await suggestion(() => page.keyboard.press('Control+s'), want);
+        const want = source; // grill-308 F1/F6: Save As suggests and permits the source name
         await suggestion(() => menuItem('File', 'Save As…'), want);
         assert.deepEqual(await page.evaluate(() => window.__log.wrote), [], 'cancelled: no file written');
         await page.evaluate((p) => { window.__next = p; }, source);
         await suggestion(() => page.keyboard.press('Control+Shift+s'), want);
-        await page.waitForFunction(() => document.querySelector('[data-testid=cmd-prompt]').textContent.includes('Pick another name: that is the opened file'));
-        assert.deepEqual(await page.evaluate(() => window.__log.wrote), [], 'Save As refuses the opened file');
+        await page.waitForFunction(() => window.__log.wrote.length === 1);
+        assert.deepEqual(await page.evaluate(() => window.__log.wrote), [source], 'Save As permits the opened file');
         await page.evaluate(() => { window.__next = 'C:\\elsewhere\\chosen.dxf'; });
         await suggestion(() => menuItem('File', 'Save As…'), want);
-        await page.waitForFunction(() => window.__log.wrote.length === 1);
-        await page.keyboard.press('Control+s');
         await page.waitForFunction(() => window.__log.wrote.length === 2);
-        assert.deepEqual(await page.evaluate(() => window.__log.wrote), ['C:\\elsewhere\\chosen.dxf', 'C:\\elsewhere\\chosen.dxf']);
+        await page.keyboard.press('Control+s');
+        await page.waitForFunction(() => window.__log.wrote.length === 3);
+        assert.deepEqual(await page.evaluate(() => window.__log.wrote), [source, 'C:\\elsewhere\\chosen.dxf', 'C:\\elsewhere\\chosen.dxf']);
         await page.evaluate(() => { window.__next = null; });
-        await suggestion(() => menuItem('File', 'Save As…'), want);
+        await suggestion(() => menuItem('File', 'Save As…'), source.replace(/[^\\/]*$/, 'chosen.dxf'));
         await openPdf();
         await stubPdfPrint(page, 'throws');
         await suggestion(() => t('pdf-print').click(), 'C:\\elsewhere\\chosen.pdf');            // after Save As elsewhere the PDF starts where the drawing now lives
@@ -22181,15 +22182,15 @@ try {
       await refused('x1.dxf');
       assert.deepEqual(await wrote(), [], 'Save As over tab 1 writes nothing');
       await page.locator('.tabs .dtab').nth(0).click();                           // (c) a plain Save of tab 1 still writes
-      await page.evaluate(() => { window.__next = 'C:\\work\\x1-edited.dxf'; });
-      await page.keyboard.press('Control+s');
+      await page.evaluate(() => { window.__next = 'C:\\work\\x1-saved.dxf'; });
+      await menuItem('File', 'Save As…'); // grill-308 F6: explicitly choose a different file before reopening the source
       await page.waitForFunction(() => window.__log.wrote.length === 1);
       await page.keyboard.press('Control+s');
       await page.waitForFunction(() => window.__log.wrote.length === 2);
-      assert.deepEqual(await wrote(), ['C:\\work\\x1-edited.dxf', 'C:\\work\\x1-edited.dxf']);
-      await openFile('C:\\work\\x1.dxf');                                         // (b) x1 opened again as tab 3: its first Save picks tab 1's x1-edited
-      await page.keyboard.press('Control+s');
-      await refused('x1-edited.dxf');
+      assert.deepEqual(await wrote(), ['C:\\work\\x1-saved.dxf', 'C:\\work\\x1-saved.dxf']);
+      await openFile('C:\\work\\x1.dxf');                                         // (b) tab 3 cannot overwrite tab 1's Save As target
+      await menuItem('File', 'Save As…');
+      await refused('x1-saved.dxf');
       assert.equal((await wrote()).length, 2, 'tab 3 wrote nothing');
     } finally {
       await closeTabs(/./);
@@ -22222,6 +22223,7 @@ try {
           readFile: async (p) => { check(p); return new Uint8Array(bytes); },
           exists: async (p) => { check(p); if (!/\.pdunits\.json$/.test(p)) log.checked.push(p); return files.has(p); },
           readTextFile: async (p) => { check(p); return files.get(p); },
+          writeFile: async (p, bytes) => { check(p.replace(/Backup_of_([^/]+)$/, '$1')); files.set(p, new TextDecoder().decode(bytes)); }, // grill-308 F2: drive scope permits the sibling backup
           writeTextFile: async (p, text) => {
             check(p);
             if (/\.json$/.test(p) && window.__balloonWriteFails) throw new Error('disk is read-only');
@@ -22249,9 +22251,9 @@ try {
         await page.keyboard.press('Control+s');
         await page.waitForFunction(() => /Saving the balloons failed: disk is read-only/.test(document.querySelector('[data-testid=cmd-prompt]').textContent));
         assert.equal(await page.locator('.tabs .dtab.on .dot').count(), 1, 'a real error keeps the tab dirty');
-        assert.match(await prompt(), /^Saved plate-edited.dxf\./, 'the warning confirms the DXF was saved');
-        assert.deepEqual(await page.evaluate(() => window.__sidecarLog.wrote), ['D:/output/plate-edited.dxf'], 'a sidecar failure never blocks the DXF');
-        assert.equal((await page.evaluate(() => window.__sidecarLog.dialogs)).length, 1);
+        assert.match(await prompt(), native ? /^Saved plate.dxf\./ : /^Saved plate-edited.dxf\./, 'the warning confirms the DXF was saved');
+        assert.deepEqual(await page.evaluate(() => window.__sidecarLog.wrote), [native ? 'C:/jobs/plate.dxf' : 'D:/output/plate-edited.dxf'], 'a sidecar failure never blocks the DXF');
+        assert.equal((await page.evaluate(() => window.__sidecarLog.dialogs)).length, native ? 0 : 1, 'grill-308 F6: native Open saves without a dialog');
         await menuItem('File', 'Save As…');
         await page.waitForFunction(() => window.__sidecarLog.wrote.length === 2 && /Saving the balloons failed/.test(document.querySelector('[data-testid=cmd-prompt]').textContent));
         assert.equal(await page.locator('.tabs .dtab.on .dot').count(), 1);
@@ -22259,12 +22261,12 @@ try {
         await page.keyboard.press('Control+s');
         await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'plate-edited.dxf' && !document.querySelector('.tabs .dtab.on .dot'));
         const log = await page.evaluate(() => window.__sidecarLog);
-        assert.equal(log.dialogs.length, 2, 'only the two drawing Save As dialogs were shown: ' + JSON.stringify(log));
+        assert.equal(log.dialogs.length, native ? 1 : 2, 'only drawing Save As dialogs were shown: ' + JSON.stringify(log));
         assert.ok(log.grants.includes('D:/output/plate-edited.dxf'), 'the Save picker grant is extended by an awaited command');
         if (native) assert.ok(log.grants.includes('C:/jobs/plate.dxf'), 'Open extends the grant before checking the sidecar');
         assert.ok(log.wrote.includes(native ? 'C:/jobs/plate.pdballoons.json' : 'D:/output/plate-edited.pdballoons.json'));
         assert.ok(log.wrote.includes('D:/output/plate-edited.dxf'));
-        assert.ok(!log.wrote.includes('C:/jobs/plate.dxf'), 'source drawing is protected');
+        assert.equal(log.wrote.includes('C:/jobs/plate.dxf'), native, 'grill-308 F6: native Save writes its source drawing');
       }
       await closeTabs(/./);
     } finally {
@@ -22272,7 +22274,95 @@ try {
     }
   });
 
-  await step('Save in the exe: the opened file is never written; a name without .dxf that exists asks first; a balloons file that could not be read is not written over', async () => {
+  await step('TODO 308: Ctrl+S on an opened .dxf overwrites it with no dialog and writes Backup_of_; a lossy file still saves as -copy', async () => {
+    await closeTabs(/./);
+    const path = 'C:/work/part.dxf', backup = 'C:/work/Backup_of_part.dxf';
+    const layout = newLayout('Saved layout');
+    await page.evaluate(({ path, drawing, lossy, layout }) => {
+      const files = window.__files308 = { [path]: drawing, 'C:/work/lossy.dxf': lossy, 'C:/work/layout.dxf': layout };
+      const log = window.__log308 = { dialogs: [], writes: [] };
+      window.__open308 = path; window.__next308 = null; window.__fail308 = '';
+      window.__TAURI__ = {
+        dialog: { open: async () => window.__open308, ask: async () => true,
+          save: async (o) => { log.dialogs.push(o.defaultPath); return window.__next308; } },
+        fs: {
+          exists: async (p) => { if (window.__fail308 === 'exists') throw new Error('stat denied'); return Object.hasOwn(files, p); },
+          readFile: async (p) => {
+            if (window.__fail308 === 'read') throw new Error('read denied');
+            return Uint8Array.from(files[p]);
+          },
+          writeFile: async (p, bytes) => {
+            if (window.__fail308 === 'backup') throw new Error('backup disk full');
+            files[p] = [...bytes]; log.writes.push(p);
+          },
+          writeTextFile: async (p, text) => { files[p] = [...new TextEncoder().encode(text)]; log.writes.push(p); },
+        },
+      };
+    }, { path, drawing: [...readFileSync('fixtures/outline.dxf')], lossy: [...readFileSync('fixtures/sample.dxf')], layout: [...Buffer.from(writeDxf(layoutRaw(layout)))] });
+    const disk = () => page.evaluate(() => window.__files308);
+    const open = async (p) => {
+      await page.evaluate((p) => { window.__open308 = p; }, p);
+      await menuItem('File', 'Open…');
+      await said(new RegExp('^Opened ' + p.split('/').pop().replace('.', '\\.')));
+    };
+    try {
+      await open(path);
+      // grill-308 F2/F3: copy today's disk bytes, not the bytes cached at Open.
+      const external = [0, 255, 13, 10, 128, 42];
+      await page.evaluate(({ path, external }) => { window.__files308[path] = external; }, { path, external });
+      await page.keyboard.press('Control+s'); await said(/^Saved part.dxf/);
+      assert.deepEqual((await disk())[backup], external, 'backup is byte-identical to the file on disk');
+      assert.deepEqual(await page.evaluate(() => window.__log308), { dialogs: [], writes: [backup, path] });
+      const first = (await disk())[path];
+      await page.locator('[data-tool=line]').click(); await typeCmd('20,20'); await typeCmd('40,20'); await page.keyboard.press('Escape');
+      await page.locator('[data-tool=select]').click();
+      await page.keyboard.press('Control+s'); await said(/^Saved part.dxf/);
+      assert.deepEqual((await disk())[backup], first, 'the second Save replaces the backup');
+      assert.notDeepEqual((await disk())[path], first, 'the drawing remains editable after Save');
+      await page.keyboard.press('Control+z');
+      for (const failure of ['backup', 'read', 'exists']) {
+        const before = await disk(), writes = await page.evaluate(() => window.__log308.writes.length);
+        await page.evaluate((f) => { window.__fail308 = f; }, failure);
+        await page.keyboard.press('Control+s'); await said(/^Save failed: Backup failed:/);
+        assert.deepEqual(await disk(), before, failure + ': the original stays untouched');
+        assert.equal(await page.evaluate(() => window.__log308.writes.length), writes);
+        assert.equal(await page.locator('.dtab.on .dot').count(), 1, 'a failed backup keeps the edit dirty');
+      }
+      await page.evaluate((path) => { window.__fail308 = ''; delete window.__files308[path]; }, path);
+      await page.keyboard.press('Control+s'); await said(/No backup: the original was not found/);
+      assert.deepEqual((await disk())[path], first, 'one Undo restores the drawing, even when the original was deleted');
+      assert.deepEqual(await page.evaluate(() => window.__log308.dialogs), []);
+      const beforeAs = (await disk())[path];
+      await page.evaluate((path) => { window.__next308 = path; }, path);
+      await page.keyboard.press('Control+Shift+s'); await said(/^Saved part.dxf/);
+      assert.deepEqual(await page.evaluate(() => window.__log308.dialogs), [path], 'Save As suggests and permits the opened name');
+      assert.deepEqual((await disk())[backup], beforeAs, 'Save As to the same file also backs it up');
+      await open('C:/work/layout.dxf');
+      const layoutBefore = (await disk())['C:/work/layout.dxf'];
+      await page.keyboard.press('Control+s'); await said(/^Saved layout.dxf/);
+      assert.deepEqual((await disk())['C:/work/Backup_of_layout.dxf'], layoutBefore, 'an opened layout saves in place');
+      assert.equal(await page.evaluate(() => window.__log308.dialogs.length), 1);
+      await open('C:/work/lossy.dxf');
+      const lossyBefore = (await disk())['C:/work/lossy.dxf'];
+      await page.evaluate(() => { window.__next308 = null; });
+      await page.keyboard.press('Control+s'); await said(/saved as a copy/);
+      await page.waitForFunction(() => window.__log308.dialogs.length === 2);
+      assert.equal(await page.evaluate(() => window.__log308.dialogs.at(-1)), 'C:/work/lossy-copy.dxf');
+      assert.deepEqual((await disk())['C:/work/lossy.dxf'], lossyBefore, 'cancel writes nothing');
+      await page.evaluate(() => { window.__next308 = 'C:/work/lossy-copy.dxf'; });
+      await page.keyboard.press('Control+s'); await said(/^Saved lossy-copy.dxf/);
+      assert.deepEqual((await disk())['C:/work/lossy.dxf'], lossyBefore);
+      assert.ok((await disk())['C:/work/lossy-copy.dxf']);
+      assert.equal((await disk())['C:/work/Backup_of_lossy.dxf'], undefined);
+    } catch (err) {
+      throw new Error(err.message + ' | prompt: ' + await prompt() + ' | log: ' + JSON.stringify(await page.evaluate(() => window.__log308)));
+    } finally {
+      await closeTabs(/./);
+      await page.evaluate(() => { delete window.__TAURI__; delete window.__files308; delete window.__log308; delete window.__open308; delete window.__next308; delete window.__fail308; localStorage.removeItem('pd-recent'); });
+    }
+  });
+
+  await step('Save in the exe: Save As permits the opened file (grill-308 F1); a name without .dxf that exists asks first; a balloons file that could not be read is not written over', async () => {
     const insp = [...balPdf()], sample = [...readFileSync('fixtures/sample.dxf')];
     await page.evaluate(([insp, sample]) => {
       const log = window.__log = { wrote: [], ask: [], dlg: [] };
@@ -22323,19 +22413,14 @@ try {
       await page.waitForFunction(() => window.__log.wrote.length === 2);
       assert.deepEqual(await page.evaluate(() => window.__log.wrote), ['C:\\work\\insp-x.dxf', 'C:\\work\\keep.pdballoons.json']);
       assert.ok((await page.evaluate(() => window.__log.dlg)).includes('C:\\work\\insp.pdballoons.json'), 'balloon Save As suggests the source folder');
-      // the opened .dxf: Save refuses it, even in another case
+      // grill-308 F1: Save As permits the opened .dxf, even in another case
       await closeTabs(/./);
       await page.evaluate(() => { window.__log.wrote.length = 0; window.__open = 'C:\\work\\a.dxf'; window.__exists = new Set(); window.__next = 'C:\\work\\A.DXF'; });
       await menuItem('File', 'Open…');
       await page.waitForFunction(() => document.querySelector('.tabs .dtab.on').textContent.startsWith('a.dxf'));
-      await page.keyboard.press('Control+s');
-      await page.waitForFunction(() => window.__log.dlg.length >= 3);
-      assert.match(await prompt(), /Pick another name: that is the opened file/);
-      assert.deepEqual(await page.evaluate(() => window.__log.wrote), [], 'the opened file was not written');
-      await page.evaluate(() => { window.__next = 'C:\\work\\a-edited.dxf'; });
-      await page.keyboard.press('Control+s');
+      await page.keyboard.press('Control+Shift+s');
       await page.waitForFunction(() => window.__log.wrote.length === 1);
-      assert.deepEqual(await page.evaluate(() => window.__log.wrote), ['C:\\work\\a-edited.dxf']);
+      assert.deepEqual(await page.evaluate(() => window.__log.wrote), ['C:\\work\\A.DXF']);
     } finally {
       await page.evaluate(() => { delete window.__TAURI__; delete window.__log; localStorage.removeItem('pd-recent'); });
     }
@@ -22719,10 +22804,10 @@ try {
       await page.evaluate(() => { window.__exp109.next = null; }); await t('export-dxf-go').click();
       await page.waitForFunction(() => window.__exp109.asked.length === 2); assert.equal((await written()).length, 1, 'native Cancel writes nothing');
       await page.evaluate(() => { window.__exp109.next = 'C:\\saved\\plate-edited.dxf'; });
-      await page.keyboard.press('Control+s'); await page.waitForFunction(() => window.__exp109.wrote.length === 2);
+      await page.keyboard.press('Control+Shift+s'); await page.waitForFunction(() => window.__exp109.wrote.length === 2); // grill-308 F6: a different path requires Save As
       const original = readDxf((await written())[1].text);
       assert.equal(original.header.$INSUNITS, '4'); assert.equal(+original.entities[0].r.v[original.entities[0].r.c.indexOf(11)], 100);
-      assert.equal(await page.evaluate(() => window.__exp109.asked.at(-1)), 'C:\\source\\plate-edited.dxf', 'Export did not change the Save path');
+      assert.equal(await page.evaluate(() => window.__exp109.asked.at(-1)), 'C:\\source\\plate.dxf', 'Export did not change the Save path');
       await open(); await t('export-dxf-go').click(); await dialog.waitFor({ state: 'detached' });
       await said(/Export never writes over it/); assert.equal((await written()).length, 2, 'saved drawing cannot be overwritten by Export');
       await page.evaluate(() => { window.__exp109.next = 'C:\\source\\plate.dxf'; });

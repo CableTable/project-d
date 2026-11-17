@@ -13,7 +13,7 @@ import { idbStore, localStore } from './idbstore.js';
 import { WORK_AREAS, workAreaDark } from './workarea.js';
 import { FOLDS, ribbonTabs, nextFold, doubleFold } from './ribbon.js';
 import { PRESETS, presetFor, stepRepeat, gridCellNote, GRIP_KEYS } from './layout.js';
-import { unitFactor, convertedNote, startHidden, entityCount, layerCounts, drawingBoxMm, fitRect, cursorMm, fitsSheet, spaceOf, boxOnSheet, itemVisible, addRecent, closePrompt, BIG_FILE, bigFileAsk } from './doc.js';
+import { unitFactor, convertedNote, startHidden, entityCount, layerCounts, drawingBoxMm, fitRect, cursorMm, fitsSheet, spaceOf, boxOnSheet, itemVisible, addRecent, closePrompt, BIG_FILE, bigFileAsk, backupPath } from './doc.js';
 import * as Ed from './edit.js';
 import { follow as followGroups, remap as remapGroups, splice as spliceGroups, swap as swapGroups, copy as copyGroups, group as groupDrawing, ungroup as ungroupDrawing, groupOf, selectionOf, wholeGroup as wholeDrawingGroup } from './groups.js';
 import * as AD from './autodim.js';
@@ -1225,7 +1225,7 @@ async function openBytes(name, buf, path = null) {
   const fontNote = subs.length ? 'Fonts: ' + subs.map(({ asked, shown }) => `${asked} → ${shown}`).join(', ') : '';
   const lay = LD.layoutFromRaw(r.doc, name);
   if (lay) { openLayoutFile(lay, name, path, fontNote, readTitleBlock(r.doc), dwg); await unitsLoad(curDoc(), path, name); if (dwg && path) rememberRecent(path); return; } // one of our saved layouts: it opens as a layout tab
-  // openPath: the file itself, which Save never writes over. A DWG tab has no path of its own until Save As writes its .dxf
+  // openPath: the source file. Save backs up an opened DXF before overwriting it; a DWG has no writable path until Save As.
   const doc = { name, path: dwg ? null : path, openPath: path, guideFile: G.fileKey(path, name), dirty: false, ...(dwg && { fromDwg: true }), ...tabFields(r.doc, fl) };
   addTab(doc);
   if (dwg && path) rememberRecent(path);
@@ -3734,8 +3734,8 @@ async function writeDrawing(raw, name, path, opts = {}) {
 }
 
 /**
- * Save writes the tab to its own file; Save As asks for a name. The file a tab was opened from is never overwritten: the
- * first Save is a Save As ("<name>-edited.dxf"), later ones write that file. A file with things the writer can't keep
+ * Save writes the tab to its own file, backing up the current disk bytes before each in-place write; Save As asks for a name.
+ * An opened DXF saves in place, including layouts. A file with things the writer can't keep
  * goes to Save As as "<name>-copy.dxf". A layout made here has no file yet: its first Save is a Save As, to "<name>.dxf";
  * the file holds the sheet and parts for any CAD app and the layout's settings for ours (layoutdoc.js). A tab with nothing in it has nothing to save.
  */
@@ -3753,15 +3753,13 @@ async function save(forceAs) {
   const bad = unwritable(raw);
   const lossy = bad.length > 0 && !d.acceptedLoss && !d.lay;       // a layout is a new file: nothing to overwrite
   if (lossy) note(`This file has things Save can't keep (${bad.map((b) => b.type + ' ' + b.count).join(', ')}), so it's saved as a copy`);
-  // the opened file itself is never touched: its first save is a Save As (to "<name>-edited.dxf"), later ones overwrite that
   const source = forceAs && d.openPath;
-  const first = (!d.saved || source) && !d.fromPdf && !d.scratch && !lossy && (!d.lay || d.fromFile);
   const base = baseName(dxfName(source ? source.split(/[\\/]/).pop() : d.name));
-  const want = d.pdf && !d.path ? baseName(d.pdf.name) + (PS.sheetNumbers(d.pdf).length > 1 ? `-sheet${d.pdf.page}` : '') + '.dxf' : lossy ? base + '-copy.dxf' : d.fromDwg ? dxfName(d.name) : first ? base + '-edited.dxf' : dxfName(d.name);
-  const ask = forceAs || lossy || first || (d.lay && !d.saved) || (d.scratch && !d.saved);
+  const want = d.pdf && !d.path ? baseName(d.pdf.name) + (PS.sheetNumbers(d.pdf).length > 1 ? `-sheet${d.pdf.page}` : '') + '.dxf' : lossy ? base + '-copy.dxf' : dxfName(d.name);
+  const ask = forceAs || lossy || (d.lay && !d.fromFile && !d.saved) || (d.scratch && !d.saved);
   const t = window.__TAURI__;
   try {
-    let path = d.path, name = d.name;
+    let path = d.path, name = d.name, backupNote = '';
     if (t && t.dialog && t.dialog.save && t.fs && t.fs.writeTextFile) {
       if (ask || !path) {
         path = await t.dialog.save({ defaultPath: saveDefault(want, d.openPath), filters: [{ name: 'DXF drawing', extensions: ['dxf'] }] });
@@ -3773,10 +3771,15 @@ async function save(forceAs) {
           catch (err) { console.warn('Balloon file scope:', err); } // A sidecar failure must not prevent the DXF save.
         }
       }
-      if (d.openPath && pathKey(path) === pathKey(d.openPath)) { note('Pick another name: that is the opened file, and Save never writes over it'); return; }
       const key = pathKey(path);
       if (state.docs.some((o) => o !== d && [o.path, o.openPath].some((p) => p && pathKey(p) === key))) { note(`Pick another name: ${path.split(/[\\/]/).pop()} is open in another tab`); return; }
       name = path.split(/[\\/]/).pop();
+      if (/\.dxf$/i.test(path) && [d.path, d.openPath].some((p) => p && pathKey(p) === key)) {
+        try {
+          if (await t.fs.exists(path)) await t.fs.writeFile(backupPath(path), await t.fs.readFile(path));
+          else backupNote = '. No backup: the original was not found';
+        } catch (err) { throw new Error('Backup failed: ' + (err.message || err)); }
+      }
     } else {
       name = ask || !path ? want : dxfName(d.name);
     }
@@ -3795,8 +3798,8 @@ async function save(forceAs) {
     if (d.lay) d.lay.name = name;
     if (bad.length) d.acceptedLoss = true;
     renderTabs();
-    const saveNote = saveReportNote({ tables, skipped });
-    if (unitError) { note('Saved; unit not saved: ' + unitError + (!balloonsSaved ? '. ' + state.msg : '')); return; }
+    const saveNote = saveReportNote({ tables, skipped }) + backupNote;
+    if (unitError) { note('Saved; unit not saved: ' + unitError + backupNote + (!balloonsSaved ? '. ' + state.msg : '')); return; }
     if (!balloonsSaved) { note('Saved ' + name + saveNote + '. ' + state.msg); return; }
     const dir = path ? path.slice(0, Math.max(path.lastIndexOf('\\'), path.lastIndexOf('/'))) : '';
     note('Saved ' + name + (dir ? ' to ' + dir : '') + saveNote + (d.bg ? '. The background picture is not saved in the DXF' : ''));

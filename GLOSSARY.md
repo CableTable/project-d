@@ -22,6 +22,8 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Autosave**: Copies changed tabs into local recovery storage every two minutes without writing over drawing files. Where: `DECISIONS.md`, Autosave and recovery. Avoid: Save.
 
+**Backup_of_**: The DXF beside a saved drawing that holds its disk bytes from before the latest in-place Save, replaced on every Save. Where: `web/doc.js`, `web/app.js`; `DECISIONS.md`, TODO 308. Avoid: Autosave.
+
 **Background picture**: A dimmed, locked JPG, PNG or rendered PDF page beneath a drawing that can be scaled and measured but is left out of DXF Save and part PDF output. Where: `DECISIONS.md`, Background, Part PDF and Autosave and recovery.
 
 **Balloon**: A numbered inspection callout placed by hand on a drawing, PDF or picture, with its data saved in a separate balloon file. Where: `DECISIONS.md`, Inspection balloons. Avoid: Dimension.
