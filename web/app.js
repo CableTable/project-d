@@ -6011,11 +6011,12 @@ function explodeOrBurst(burst) {
   if (lay) {                                                         // on a layout: dimensions alone -> lines, arrows and text (156b2c3b); anything else -> placed parts and grids (156b4)
     const items = selItems();
     if (!items.length || !items.every((x) => x.p.src === 'loose' && isDimPart(x.part))) { explodeOnLayout(burst); return; }
-    const ats = items.map((x) => x.p.i), snap = laySnap(lay.lay);
-    const n = LD.explodeDims(lay.lay, ats, () => 'o' + uid());
-    if (!n) { note(label + ': nothing explodable (0 exploded)'); return; }
+    const ats = items.filter((x) => !x.p.lock).map((x) => x.p.i), snap = laySnap(lay.lay);       // a locked dimension stays, as in the mixed path
+    const skipped = items.length - ats.length, why = skipped ? `; ${skipped} locked or layout object${skipped === 1 ? '' : 's'} skipped` : '';
+    const n = ats.length ? LD.explodeDims(lay.lay, ats, () => 'o' + uid()) : 0;
+    if (!n) { note(label + ': nothing explodable (0 exploded)' + why); return; }
     state.sel = -1; pushLay(lay, snap, '', label); touch(); update();
-    note(`${label}: ${n} dimension${n === 1 ? '' : 's'} exploded into lines, arrows and text. Ctrl+Z puts it back`);
+    note(`${label}: ${n} dimension${n === 1 ? '' : 's'} exploded into lines, arrows and text` + why + '. Ctrl+Z puts it back');
     return;
   }
   const d = editable();
@@ -6167,7 +6168,7 @@ function partBox(d) {
       if (d.raw.entities[it.e].layer === Ed.DIM_LAYER) { dims = true; continue; }
       x0 = Math.min(x0, it.b[0]); y0 = Math.min(y0, it.b[1]); x1 = Math.max(x1, it.b[2]); y1 = Math.max(y1, it.b[3]);
     }
-    d.pb = { fl: d.fl, key, box: dims && x1 > x0 && y1 > y0 ? [x0 * d.factor, y0 * d.factor, x1 * d.factor, y1 * d.factor] : null };
+    d.pb = { fl: d.fl, key, box: dims && x1 >= x0 && y1 >= y0 && (x1 > x0 || y1 > y0) ? [x0 * d.factor, y0 * d.factor, x1 * d.factor, y1 * d.factor] : null };
   }
   return d.pb.box || d.box;
 }
@@ -8618,6 +8619,7 @@ function modEnter(d) {
   if (m.kind === 'offset') {
     if (m.stage === 'distance') { m.stage = 'obj'; note(offsetPrompt(m)); }
     else if (m.stage === 'erase' || m.stage === 'layer') { m.stage = 'distance'; note(offsetPrompt(m)); }
+    else if (m.stage === 'side' && m.multiple) offsetNextObject(d);
     else offsetEnd(d);
     paintOverlay(); return;
   }
@@ -9346,7 +9348,7 @@ function layGhosts(m) {
   }
   let res = null;
   if (['move', 'copy', 'stretch'].includes(m.kind) && m.p1 && m.cur) res = layResults(m, m.cur);
-  else if (m.kind === 'scale' && m.p1 && (value ?? m.hoverK) > 0) res = layResults(m, value == null ? m.hoverK : m.ref ? referenceFactor(m.ref.value, value) : value);
+  else if (m.kind === 'scale' && m.p1 && (!m.ref || m.ref.step === 'new') && (value ?? m.hoverK) > 0) res = layResults(m, value == null ? m.hoverK : m.ref ? referenceFactor(m.ref.value, value) : value);
   else if (m.kind === 'mirror' && m.stage === 'p2' && m.cur) res = layResults(m, m.cur);
   else if (m.kind === 'mirror' && m.stage === 'erase') res = layResults(m, m.p2);
   else if (m.kind === 'align') { const t = alignPreview(m); res = t && [layAlignPlacements(m, t)]; }
@@ -9509,8 +9511,7 @@ function offsetDo(d, p) {
   note(offsetPrompt(m)); paintOverlay();
 }
 /** Multiple keeps every copy; only a completed run erases its source, in the same Undo step. */
-function offsetEnd(d) {
-  modSync(d);
+function offsetEraseSource(d) {
   const m = state.mod;
   if (m.offsetSource != null && m.offsetSteps.length) {
     const entities = d.raw.entities.filter((_, i) => i !== m.offsetSource);
@@ -9518,7 +9519,21 @@ function offsetEnd(d) {
     if (d.vlay) { LD.objectCommit(d.vlay.lay, d, entities, () => 'o' + uid()); touch(); update(); }
     else restore(d, { entities, groups: remapGroups(d.raw.groups, new Map(d.raw.entities.map((_, i) => [i, [i < m.offsetSource ? i : i === m.offsetSource ? entities.length - 1 : i - 1]]))), blocks: d.raw.blocks });       // the source's place goes to the last copy
   }
+}
+function offsetEnd(d) {
+  modSync(d);
+  offsetEraseSource(d);
   setTool('select'); note('Offset ended');
+}
+/** Enter at the side stage of Multiple (AutoCAD): this object's run is complete, Multiple is off, the command asks for the next object. */
+function offsetNextObject(d) {
+  modSync(d);
+  const m = state.mod, tab = d.vlay || d;
+  offsetEraseSource(d);
+  m.offsetSource = null; m.multiple = false; m.ent = null; m.stage = 'obj';
+  const now = mdoc(tab);
+  m.offsetRaw = now.raw.entities; m.offsetRevision = historyOf(tab).revision;
+  note(offsetPrompt(m)); paintOverlay();
 }
 function offsetUndo(d) {
   modSync(d);

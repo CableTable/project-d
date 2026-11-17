@@ -19380,7 +19380,7 @@ try {
       if (finish === 'Undo') {
         await typeCmd('u'); assert.deepEqual(lineYs(await savedDoc()), [30, 40, 50]);
         assert.match(await prompt(), /Select object to offset/); await end();
-      } else if (finish === 'Enter') await end();
+      } else if (finish === 'Enter') { await end(); await end(); }       // the first Enter completes this object, the second leaves the command
       else await page.keyboard.press('Escape');
       assert.deepEqual(lineYs(await savedDoc()), finish === 'Enter' ? [40, 50, 60] : finish === 'Undo' ? [30, 40, 50] : [30, 40, 50, 60], 'only Enter erases the Drawing source');
       assert.equal((await histLabels()).length, beforeEsc.length + 1);
@@ -19402,7 +19402,7 @@ try {
     assert.equal(await prompt(), 'Specify point on side to offset or [Exit/Undo] <next object>:');
     await click(70, 10);
     assert.deepEqual(lineYs(await savedDoc()), [20, 30, 40, 50], 'a click below the source offsets the source, not the newest copy');
-    await end(); await undo(); assert.deepEqual(lineYs(await savedDoc()), [30]);
+    await end(); await end(); await undo(); assert.deepEqual(lineYs(await savedDoc()), [30]);
     // A completed copy stays independent when its source is subsequently edited.
     await start(); await end(); await click(70, 30); await click(70, 50); await end();
     await click(70, 30); await typeCmd('mv'); await typeCmd('70,30'); await typeCmd('0,5');
@@ -19431,7 +19431,7 @@ try {
     await start(); await typeCmd('10'); await click(150, 300); await typeCmd('m');
     for (const y of [320, 330, 340]) await click(150, y);
     assert.deepEqual(lineYs(await savedDoc()), [300, 310, 320, 330], 'Layout Erase Multiple keeps the source and every copy until Enter');
-    await end(); assert.deepEqual(lineYs(await savedDoc()), [310, 320, 330], 'Enter erases only the Layout source');
+    await end(); assert.deepEqual(lineYs(await savedDoc()), [310, 320, 330], 'Enter erases only the Layout source'); await end();
     await undo(); assert.deepEqual(lineYs(await savedDoc()), [300]);
     await start(); await typeCmd('10'); await click(150, 300); await typeCmd('m');
     for (const y of [320, 330, 340]) await click(150, y);
@@ -19493,7 +19493,7 @@ try {
     assert.ok(closest(pathOf(curveShape(through)), [370, 137]).d < 0.01, 'open spline Through uses the nearest curve point');
     await undo(); assert.equal(await entCount(), 2);
     await typeCmd('offset'); await typeCmd('e'); await typeCmd('y'); await typeCmd('l'); await typeCmd('c'); await typeCmd('5');
-    await click(150, 150); await typeCmd('m'); await click(150, 170); await click(150, 180); await end();
+    await click(150, 150); await typeCmd('m'); await click(150, 170); await click(150, 180); await end(); await end();
     doc = await savedDoc();
     assert.equal(doc.entities.filter((e) => e.type === 'ELLIPSE').length, 0, 'Erase removes the ellipse');
     assert.equal(doc.entities.length, 3, 'Multiple keeps both spline copies');
@@ -30189,6 +30189,71 @@ try {
     assert.equal(await nParts(), gridN, 'one Undo puts the grid back');
     assert.equal(dimBlocks(await save()), 1, 'and its dimension');
     assert.equal(readMeta(readDxf(await save())).s.gridPart, part.partId, 'the grid is restored');
+  });
+
+  await step('TODO 253c1: Explode and Burst of a locked dimension alone on a layout leave it, as the mixed selection does', async () => {
+    const save = async () => (await downloaded(() => page.keyboard.press('Control+s'))).text;
+    const dimBlocks = (text) => Object.keys(readDxf(text).blocks).filter((k) => /^PD_DIM_/.test(k)).length;
+    await freshLayoutWithPlate();
+    await typeCmd('line'); await typeCmd('150,150'); await typeCmd('300,150'); await page.keyboard.press('Escape');
+    await typeCmd('dli'); await typeCmd('150,150'); await typeCmd('300,150'); await typeCmd('220,200'); await page.keyboard.press('Escape');
+    await page.locator('[data-tool=select]').click();
+    await click(170, 200); await frames();
+    await t('bar-lock').click();
+    for (const cmd of ['explode', 'burst']) {
+      await typeCmd(cmd); await frames();
+      await said(new RegExp(`^${cmd === 'burst' ? 'Burst' : 'Explode'}: nothing explodable \\(0 exploded\\); 1 locked or layout object skipped`));       // the locked dimension alone is skipped
+      assert.equal(dimBlocks(await save()), 1, `${cmd}: the locked dimension stays intact`);
+    }
+  });
+
+  await step('TODO 253c1: Offset Multiple: Enter at the side stage sets Multiple off and asks for the next object; the command stays', async () => {
+    await openGrips(modDoc(), 'offset-multiple-enter.dxf');
+    const end = () => typeCmd('');
+    const lineYs = (doc) => doc.entities.filter((e) => e.type === 'LINE').map((e) => fieldOf(e, 20)).sort((a, b) => a - b);
+    await typeCmd('offset'); await typeCmd('e'); await typeCmd('n'); await typeCmd('l'); await typeCmd('s'); await typeCmd('10');
+    await click(70, 30); await typeCmd('m'); await click(70, 50);
+    await said(/^Specify point on side to offset or \[Exit\/Undo\] <next object>:$/);
+    await end();
+    await said(/^Select object to offset or \[Exit\/Undo\] <Exit>:$/);       // back to the object question
+    assert.equal(await t('tool-chip').textContent(), 'Tool: Offset', 'the command stays');
+    assert.deepEqual(lineYs(await savedDoc()), [30, 40]);
+    await click(70, 30);
+    await said(/^Specify point on side to offset or \[Exit\/Multiple\/Undo\] <Exit>:$/);       // Multiple is off again
+    await click(70, 10);
+    assert.deepEqual(lineYs(await savedDoc()), [20, 30, 40]);
+    await end(); assert.equal(await t('tool-chip').textContent(), 'Tool: Select', 'Enter at the object question ends the command');
+  });
+
+  await step('TODO 253c1: Scale Reference on a layout: no ghost while the reference length is typed, the ghost comes back for the new length', async () => {
+    const ghosts = () => page.locator('[data-group=tools] polygon.ghost').count();
+    await freshLayoutWithPlate();
+    await page.locator('[data-tool=select]').click(); await page.keyboard.press('Escape'); await page.keyboard.press('Control+a');
+    await page.evaluate(() => document.activeElement?.blur()); await frames();
+    const move = async (x, y) => { const p = await at(x, y); await page.mouse.move(p.x - 1, p.y); await page.mouse.move(p.x, p.y); await frames(); };
+    await typeCmd('scale'); await typeCmd('100,100'); await move(200, 150);
+    assert.ok(await ghosts() > 0, 'the hover factor shows a ghost before Reference');
+    await typeCmd('r'); await said(/Specify reference length/);
+    await frames();
+    assert.equal(await ghosts(), 0, 'the hover factor is not the reference: no ghost');
+    await page.keyboard.type('2'); await frames();
+    assert.equal(await ghosts(), 0, 'a typed reference length is not a factor: no ghost');
+    await page.keyboard.press('Backspace'); await page.keyboard.type('10'); await page.keyboard.press('Enter'); await said(/Specify the new length/);
+    await move(220, 150);
+    assert.ok(await ghosts() > 0, 'the new length shows its ghost');
+    await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
+  });
+
+  await step('TODO 253c1: a part that is one horizontal line is sized by itself, not by the dimension drawn beside it', async () => {
+    const raw = newDoc(); addEntities(raw, dxfLine(0, 0, 100, 0));
+    await t('picker').setInputFiles({ name: 'one-line.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(raw)) });
+    await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'one-line.dxf');
+    const n0 = await entitiesN();
+    assert.deepEqual(await sizeNow(), ['100', '0'], 'the line alone');
+    await typeCmd('d');
+    await click(10, 0); await click(90, 0); await click(50, -25);
+    await page.waitForFunction((n) => Number(document.querySelector('[data-testid=entities]').textContent.replace(/\D/g, '')) === n, n0 + 1);
+    assert.deepEqual(await sizeNow(), ['100', '0'], 'the dimension below does not make the line 25 mm tall');
   });
 
   await step('TODO 175: + and − icons centred', async () => {
