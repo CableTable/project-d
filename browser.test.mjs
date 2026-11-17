@@ -65,6 +65,13 @@ function chromePath() {
   return existsSync(local) && !process.env.CI ? local : undefined;
 }
 
+// TODO 309: older flows open vector PDFs as drawings; share the Editable click across their pages and reloads.
+function acceptEditablePdf() {
+  new MutationObserver(() => {
+    if (!window.__pdfopenManual) document.querySelector('[data-testid=pdfopen-editable]')?.click();
+  }).observe(document, { childList: true, subtree: true });
+}
+
 // Older feature flows use controls now spread across docker tabs. Navigate with the UI
 // before an action; visibility assertions still inspect the current screen unchanged.
 function panelControl(page, locator) {
@@ -136,6 +143,7 @@ try {
   const newContext = browser.newContext.bind(browser);
   browser.newContext = async (...args) => {
     const context = await newContext(...args);
+    await context.addInitScript(acceptEditablePdf);
     await context.addInitScript(() => {
       if (!localStorage.getItem('pd-test-start-initialized')) {
         localStorage.setItem('pd-start-mode', 'blank');
@@ -8211,6 +8219,167 @@ try {
           return hit > 100;
         }, rgb);
       }
+    } finally { await context.close(); }
+  });
+
+  await step('TODO 309: a vector PDF asks Editable / Background; Editable opens a drawing, Background a background tab, Esc nothing', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    try {
+      const p = await context.newPage(), q = (id) => p.getByTestId(id);
+      await p.goto(URL_ + '?autosave=86400000');
+      await q('picker').waitFor({ state: 'attached' });
+      await p.evaluate(() => { window.__pdfopenManual = true; });
+      const before = await p.locator('.dtab').count();
+      await q('picker').setInputFiles('fixtures/vector.pdf');
+      await q('pdfopen-dialog').waitFor();
+      assert.equal(await q('pdfopen-dialog').getByRole('strong').textContent(), 'vector.pdf has vector lines. Open it as:');
+      assert.equal(await q('pdfopen-editable').textContent(), 'Editable drawing');
+      assert.equal(await q('pdfopen-background').textContent(), 'Background picture');
+      for (const theme of ['light', 'dark']) {
+        await p.evaluate((theme) => { document.documentElement.dataset.theme = theme; }, theme);
+        await p.screenshot({ path: shotDir + '/309-dialog-' + theme + '.png' });
+      }
+      await p.keyboard.press('Enter');
+      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'vector.dxf');
+      assert.equal(await p.locator('.dtab.on').getAttribute('data-kind'), 'drawing');
+      assert.equal(await q('bg-name').textContent(), '');
+      await q('picker').setInputFiles('fixtures/vector.pdf');
+      await q('pdfopen-background').click();
+      await p.waitForFunction(() => document.querySelector('[data-testid=bg-name]').textContent === 'vector.pdf');
+      assert.equal(await p.locator('.dtab.on .tname').textContent(), 'vector.pdf');
+      assert.equal(await p.locator('.dtab').count(), before + 1); // first open replaces the untouched blank tab
+      await q('picker').setInputFiles('fixtures/vector.pdf');
+      await q('pdfopen-dialog').waitFor(); await p.keyboard.press('Escape');
+      await p.waitForFunction(() => document.querySelector('[data-testid=cmd-prompt]').textContent === 'vector.pdf: not opened');
+      assert.equal(await p.locator('.dtab').count(), before + 1);
+      await q('picker').setInputFiles({ name: '<img onerror=alert(1)>.pdf', mimeType: 'application/pdf', buffer: readFileSync('fixtures/vector.pdf') });
+      await q('pdfopen-dialog').waitFor();
+      assert.equal(await q('pdfopen-dialog').locator('img').count(), 0);
+      await q('pdfopen-dialog').getByRole('button', { name: 'Close', exact: true }).click();
+      await p.waitForFunction(() => document.querySelector('[data-testid=cmd-prompt]').textContent.endsWith(': not opened'));
+      assert.equal(await p.locator('.dtab').count(), before + 1);
+    } finally { await context.close(); }
+  });
+
+  await step('TODO 309: a drop of two vector PDFs and one picture-only PDF asks once; Background takes all three', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    try {
+      const p = await context.newPage(), q = (id) => p.getByTestId(id);
+      await p.goto(URL_ + '?autosave=86400000'); await q('picker').waitFor({ state: 'attached' });
+      await p.evaluate(() => {
+        window.__pdfopenManual = true; window.__pdfopenCount = 0;
+        new MutationObserver((records) => {
+          for (const r of records) for (const n of r.addedNodes) if (n.querySelector?.('[data-testid=pdfopen-dialog]')) window.__pdfopenCount++;
+        }).observe(document.body, { childList: true });
+      });
+      p.on('dialog', () => assert.fail('Background batch must not ask the picture-only question'));
+      const before = await p.locator('.dtab').count();
+      await p.evaluate(({ vector, picture }) => {
+        const dt = new DataTransfer();
+        for (const [name, bytes] of [['one.pdf', vector], ['two.pdf', vector], ['picture.pdf', picture]]) dt.items.add(new File([Uint8Array.from(bytes)], name, { type: 'application/pdf' }));
+        window.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true }));
+      }, { vector: [...readFileSync('fixtures/vector.pdf')], picture: [...readFileSync('fixtures/text-only.pdf')] });
+      await q('pdfopen-background').click();
+      await p.waitForFunction(() => document.querySelector('[data-testid=bg-name]').textContent === 'picture.pdf');
+      assert.equal(await p.evaluate(() => window.__pdfopenCount), 1);
+      assert.equal(await p.locator('.dtab').count(), before + 2); // first open replaces the untouched blank tab
+      for (const name of ['one.pdf', 'two.pdf', 'picture.pdf']) {
+        await p.locator('.dtab', { has: p.locator('.tname', { hasText: name }) }).click();
+        assert.equal(await q('bg-name').textContent(), name);
+      }
+      // A later picker call is a fresh batch, even on the same page.
+      await q('picker').setInputFiles('fixtures/vector.pdf'); await q('pdfopen-editable').click();
+      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'vector.dxf');
+      assert.equal(await p.evaluate(() => window.__pdfopenCount), 2);
+    } finally { await context.close(); }
+  });
+
+  await step('TODO 309: Background on a two-page PDF still asks which page', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    try {
+      const p = await context.newPage(), q = (id) => p.getByTestId(id);
+      await p.goto(URL_ + '?autosave=86400000'); await q('picker').waitFor({ state: 'attached' });
+      await p.evaluate(() => { window.__pdfopenManual = true; });
+      const sheet = new Page(80, 50); sheet.rect(10, 10, 30, 20); sheet.stroke();
+      let asked = 0;
+      p.on('dialog', async (d) => { assert.equal(d.type(), 'prompt'); assert.equal(d.message(), 'two-pages.pdf has 2 pages. Which page?'); asked++; await d.accept('2'); });
+      await q('picker').setInputFiles({ name: 'two-pages.pdf', mimeType: 'application/pdf', buffer: Buffer.from(writePdf([sheet, new Page(120, 90)])) });
+      await q('pdfopen-background').click();
+      await p.waitForFunction(() => document.querySelector('[data-testid=cmd-prompt]').textContent.includes('page 2 of 2, true size from the PDF'));
+      assert.equal(asked, 1); assert.equal(await q('bg-name').textContent(), 'two-pages.pdf');
+    } finally { await context.close(); }
+  });
+
+  await step('TODO 309: picker batches reuse Editable and Esc; picture-only PDFs still ask', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    try {
+      const p = await context.newPage(), q = (id) => p.getByTestId(id);
+      await p.goto(URL_ + '?autosave=86400000'); await q('picker').waitFor({ state: 'attached' });
+      await p.evaluate(() => { window.__pdfopenManual = true; });
+      let picturesAsked = 0;
+      p.on('dialog', async (d) => { assert.match(d.message(), /no vector lines/); picturesAsked++; await d.dismiss(); });
+      const vector = readFileSync('fixtures/vector.pdf'), picture = readFileSync('fixtures/text-only.pdf');
+      for (const choice of ['editable', 'cancel']) {
+        const before = await p.locator('.dtab').count();
+        await q('picker').setInputFiles([
+          { name: choice + '-one.pdf', mimeType: 'application/pdf', buffer: vector },
+          { name: choice + '-two.pdf', mimeType: 'application/pdf', buffer: vector },
+          { name: choice + '-picture.pdf', mimeType: 'application/pdf', buffer: picture },
+        ]);
+        await q('pdfopen-dialog').waitFor();
+        if (choice === 'editable') await q('pdfopen-editable').click();
+        else await p.keyboard.press('Escape');
+        await p.waitForFunction((name) => document.querySelector('[data-testid=cmd-prompt]').textContent === name + ': no vector lines to open', choice + '-picture.pdf');
+        assert.equal(await q('pdfopen-dialog').count(), 0);
+        assert.equal(await p.locator('.dtab').count(), before + (choice === 'editable' ? 1 : 0));
+        if (choice === 'editable') assert.deepEqual(await p.locator('.dtab .tname').allTextContents(), ['editable-one.dxf', 'editable-two.dxf']);
+      }
+      assert.equal(picturesAsked, 2);
+    } finally { await context.close(); }
+  });
+
+  await step('TODO 309: Explorer batches expire; single Open keeps same-file and big-file rules; background reopen asks again', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    try {
+      const p = await context.newPage(), q = (id) => p.getByTestId(id);
+      await p.addInitScript(({ vector, picture }) => {
+        window.__pdfopenManual = true; window.__launchQueue309 = []; window.__big309 = [];
+        window.__TAURI__ = {
+          event: { listen: async (_name, fn) => { window.__launch309 = fn; } },
+          core: { invoke: async (name) => name === 'take_launch_files' ? window.__launchQueue309.splice(0) : null },
+          fs: { exists: async () => false, stat: async (path) => ({ size: path.includes('big') ? 51 * 1024 * 1024 : 0 }),
+            readFile: async (path) => Uint8Array.from(path.includes('picture') ? picture : vector) },
+          dialog: { open: async () => window.__pick309, ask: async (text) => {
+            window.__big309.push([text, !!document.querySelector('[data-testid=pdfopen-dialog]')]); return true;
+          } },
+        };
+      }, { vector: [...readFileSync('fixtures/vector.pdf')], picture: [...readFileSync('fixtures/text-only.pdf')] });
+      await p.goto(URL_ + '?autosave=86400000'); await q('picker').waitFor({ state: 'attached' });
+      await p.evaluate(() => {
+        window.__launchQueue309.push(...['one.pdf', 'two.pdf', 'picture.pdf'].map((name) => ['C:/jobs/' + name, null]));
+        window.__launchDone309 = window.__launch309();
+      });
+      await q('pdfopen-background').click();
+      await p.waitForFunction(() => document.querySelector('[data-testid=bg-name]').textContent === 'picture.pdf');
+      await p.evaluate(() => window.__launchDone309);
+      assert.deepEqual(await p.locator('.dtab .tname').allTextContents(), ['one.pdf', 'two.pdf', 'picture.pdf']);
+      assert.deepEqual(await p.evaluate(() => window.__big309), [], 'Background skips the picture-only question');
+      await p.evaluate(() => { window.__launchQueue309.push(['C:/jobs/later.pdf', null]); window.__launchDone309 = window.__launch309(); });
+      await q('pdfopen-dialog').waitFor(); await p.keyboard.press('Escape'); await p.evaluate(() => window.__launchDone309);
+      assert.equal(await p.locator('.dtab .tname').count(), 3);
+      await p.evaluate(() => { window.__pick309 = 'C:/jobs/big.pdf'; });
+      await q('open').click(); await q('pdfopen-dialog').waitFor();
+      const big = await p.evaluate(() => window.__big309);
+      assert.equal(big.length, 1); assert.match(big[0][0], /big.pdf/); assert.equal(big[0][1], false, 'bigOk asks before the PDF choice');
+      await q('pdfopen-editable').click();
+      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'big.dxf');
+      await q('open').click();
+      await p.waitForFunction(() => document.querySelector('[data-testid=cmd-prompt]').textContent.startsWith('big.pdf is already open'));
+      assert.equal(await q('pdfopen-dialog').count(), 0);
+      await p.evaluate(() => { window.__pick309 = 'C:/jobs/one.pdf'; });
+      await q('open').click(); await q('pdfopen-background').click();
+      await p.waitForFunction(() => document.querySelector('[data-testid=bg-name]').textContent === 'one.pdf');
+      assert.equal(await p.locator('.dtab .tname').count(), 5, 'a background tab never matches on reopen');
     } finally { await context.close(); }
   });
 

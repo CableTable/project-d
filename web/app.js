@@ -1281,7 +1281,7 @@ async function dwgBytes(name, path, buf) {
   }
 }
 /** Opens a file's bytes as a new tab (path: where it lives on disk, in the app). */
-async function openBytes(name, buf, path = null) {
+async function openBytes(name, buf, path = null, batch = {}) {
   // the same file already open (in the app, where files have paths): show its tab, never a second copy.
   // Path only: a DXF saved under a new name no longer is its opened file; a DWG / PDF tab has no path of its own, so its source counts
   const same = path ? state.docs.findIndex((d) => [d.path, (d.fromDwg || d.fromPdf) && d.openPath].some((p) => p && pathKey(p) === pathKey(path))) : -1;
@@ -1290,7 +1290,7 @@ async function openBytes(name, buf, path = null) {
     note(`${name} is already open: here is its tab` + (state.docs[same].dirty ? ' (with unsaved changes)' : ''));
     return;
   }
-  if (/\.pdf$/i.test(name) || (!/\.dxf$/i.test(name) && buf.byteLength && isPdf(buf))) { await openPdf(name, buf, path); return; }
+  if (/\.pdf$/i.test(name) || (!/\.dxf$/i.test(name) && buf.byteLength && isPdf(buf))) { await openPdf(name, buf, path, null, batch); return; }
   if (/\.ai$/i.test(name)) { note(name + ": this .ai has no PDF part. In Illustrator: Save As .ai with 'Create PDF Compatible File' on, or Save a Copy as PDF."); return; }
   const dwg = /\.dwg$/i.test(name);
   if (!dwg && !/\.dxf$/i.test(name)) { note(name + ': Opens DXF or PDF; pictures go in as a background (Background…)'); return; }
@@ -1334,7 +1334,7 @@ async function openBytes(name, buf, path = null) {
 
 
 /** A PDF as a drawing: its vector lines and arcs, its text; page 1, in mm. No vector lines: offer the page as a background picture instead. */
-async function openPdf(name, buf, path = null, copies = null) {
+async function openPdf(name, buf, path = null, copies = null, batch = {}) {
   note('Reading ' + name + '…');
   const bytes = buf instanceof ArrayBuffer ? buf : buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
   let r;
@@ -1345,10 +1345,15 @@ async function openPdf(name, buf, path = null, copies = null) {
   if (copies && copies.some((c) => (c.pdfPages != null && c.pdfPages !== r.pages) || (c.pdfHash && hash && c.pdfHash !== hash) || (c.sheet ?? 1) > r.pages)) throw new Error('source PDF changed');
   if (!r.paths) {
     if (copies) throw new Error('source PDF has no vector lines');
-    const yes = await confirmAsk(name + ' has no vector lines, only a picture (or text). Use it as a background picture instead?', 'Use as background');
+    const yes = batch.pdfOpen === 'background' || await confirmAsk(name + ' has no vector lines, only a picture (or text). Use it as a background picture instead?', 'Use as background');
     if (yes) await importBackgroundPdf(name, bytes, true, path);
     else note(name + ': no vector lines to open');
     return;
+  }
+  if (!copies) {
+    if (batch.pdfOpen === undefined) batch.pdfOpen = await askPdfOpen(name);
+    if (batch.pdfOpen === null) { note(name + ': not opened'); return; }
+    if (batch.pdfOpen === 'background') { await importBackgroundPdf(name, bytes, true, path); return; }
   }
   const raw = r.doc, fl = flatten(raw);
   await preloadPictures(fl.items);
@@ -1358,6 +1363,27 @@ async function openPdf(name, buf, path = null, copies = null) {
   note(`Opened ${name} as a drawing (page ${r.page} of ${r.pages}): ${raw.entities.length} entities, ${r.texts} texts, ${fmtSize(r.mm[0])} × ${fmtSize(r.mm[1])} mm. Not saved yet: Save writes ${base}${PS.sheetNumbers(doc.pdf).length > 1 ? `-sheet${r.page}` : ''}.dxf` + (fl.truncated ? '. Too big to show all of it' : '') + (r.stencils ? `. ${r.stencils} stencil pictures not shown` : ''));
   await balLoad(doc, path, name);
   return doc;
+}
+/** One choice for the batch's vector PDFs; closing the dialog cancels their open. */
+function askPdfOpen(name) {
+  return new Promise((resolve) => {
+    const editable = h('button', { class: 'btn primary', type: 'button', 'data-testid': 'pdfopen-editable' }, 'Editable drawing');
+    const background = h('button', { class: 'btn', type: 'button', 'data-testid': 'pdfopen-background' }, 'Background picture');
+    const close = h('button', { class: 'btn', type: 'button', 'aria-label': 'Close' }, '×');
+    const dlg = h('div', { class: 'pop-dialog', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Open PDF', 'data-testid': 'pdfopen-dialog' },
+      h('div', { class: 'row' }, h('strong', null, name + ' has vector lines. Open it as:'), close),
+      h('div', { class: 'row end' }, background, editable));
+    const back = h('div', { class: 'pop-back' }, dlg);
+    const finish = (v) => { back.remove(); document.removeEventListener('keydown', onKey, true); resolve(v); };
+    const onKey = (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish(null); } };
+    editable.addEventListener('click', () => finish('editable'));
+    background.addEventListener('click', () => finish('background'));
+    close.addEventListener('click', () => finish(null));
+    back.addEventListener('click', (e) => { if (e.target === back) finish(null); });
+    document.addEventListener('keydown', onKey, true);
+    document.body.append(back);
+    editable.focus();
+  });
 }
 /** Asks a yes / no question (the native dialog in the app, confirm() in a browser). */
 async function confirmAsk(text, okLabel, kind = 'info', cancelLabel = 'No') {
@@ -1401,16 +1427,16 @@ function forgetRecent(path) {
   if (!ui.startScreen.hidden) showStartScreen(true);
 }
 /** Shared by File → Open, Explorer launches and Recent files. */
-async function openPath(path, recent = false) {
+async function openPath(path, recent = false, batch = {}) {
   const t = window.__TAURI__, name = path.split(/[\\/]/).pop();
   if (!t || !t.fs || !t.fs.readFile) return;
   try {
     if (!(await bigOk([{ name, size: await pathSize(path) }])).length) return;
     if (!/\.(dxf|pdf|ai)$/i.test(name)) {                                   // a .dwg is converted from its path; other names are refused
       if (recent && t.fs.exists && !(await t.fs.exists(path))) throw new Error('not found');   // a DXF's readFile fails by itself; the helper's error would not say "moved"
-      await openBytes(name, new ArrayBuffer(0), path); return;
+      await openBytes(name, new ArrayBuffer(0), path, batch); return;
     }
-    await openBytes(name, await t.fs.readFile(path), path);
+    await openBytes(name, await t.fs.readFile(path), path, batch);
   } catch (err) {
     let missing = false;
     if (recent) { try { missing = await t.fs.exists?.(path) === false; } catch { /* an existence check can also be denied */ } }
@@ -1428,9 +1454,10 @@ async function attachLaunchFiles() {
     pending = pending.then(async () => {
       const files = await t.core.invoke('take_launch_files');
       if (files.length) hadFiles = true;
+      const batch = {};
       for (const [path, error] of files) {
         if (error) note('Open failed: ' + error);
-        else await openPath(path);
+        else await openPath(path, false, batch);
       }
     }).catch((err) => { hadFiles = true; note('Open failed: ' + (err.message || err)); });
     return pending;
@@ -1443,11 +1470,11 @@ async function attachLaunchFiles() {
 }
 
 /** A file from the browser's own picker or a drop. */
-async function openPicked(file) {
+async function openPicked(file, batch) {
   try {
     if (DU.isSidecar(file.name)) { unitsPicked(file.name, await file.text()); return; }
     if (BAL.isSidecar(file.name)) { balPicked(file.name, await file.text()); return; }
-    await openBytes(file.name, await file.arrayBuffer());
+    await openBytes(file.name, await file.arrayBuffer(), null, batch);
   } catch (err) { note('Open failed: ' + (err && err.message ? err.message : err)); }
 }
 
@@ -1508,7 +1535,8 @@ function attachDrop() {
     if (!e.dataTransfer.files.length) return;
     e.preventDefault();
     ui.canvas.classList.remove('dropping');
-    for (const f of balFirst(await bigOk([...e.dataTransfer.files]))) await openPicked(f);
+    const batch = {};
+    for (const f of balFirst(await bigOk([...e.dataTransfer.files]))) await openPicked(f, batch);
   });
 }
 
@@ -1763,7 +1791,7 @@ function buildCanvas() {
   ui.dcanvas = h('canvas', { class: 'drawing-layer', 'data-testid': 'drawing' });
   ui.gridDisplay = h('div', { class: 'drawing-grid', hidden: true, 'aria-hidden': 'true', 'data-testid': 'drawing-grid' });
   ui.picker = h('input', { type: 'file', accept: '.dxf,.dwg,.pdf,.ai,.json', hidden: true, 'data-testid': 'picker', multiple: true });
-  ui.picker.addEventListener('change', async () => { const files = [...ui.picker.files]; ui.picker.value = ''; for (const f of balFirst(await bigOk(files))) await openPicked(f); });   // emptied, so the same file can be picked again
+  ui.picker.addEventListener('change', async () => { const files = [...ui.picker.files], batch = {}; ui.picker.value = ''; for (const f of balFirst(await bigOk(files))) await openPicked(f, batch); });   // emptied, so the same file can be picked again
   ui.bgPicker = h('input', { type: 'file', accept: '.png,.jpg,.jpeg,.pdf', hidden: true, 'data-testid': 'bg-picker' });
   ui.bgPicker.addEventListener('change', async () => {
     const f = ui.bgPicker.files[0], trace = traceAfter;
