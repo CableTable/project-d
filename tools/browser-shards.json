@@ -110,6 +110,7 @@
   "edit: dragging a box from empty space selects what lies fully inside it": 0.2,
   "edit: Delete removes the selection, Ctrl+Z brings it back, Ctrl+Y does it again; the tab is marked unsaved": 0.09,
   "Select all: Ctrl+A and Edit → Select all pick every visible entity of a drawing (not while typing in an input); Delete then works; Ctrl+Z brings them back": 0.38,
+  "TODO 329b: the latest selection paints before the ribbon and Properties refresh": 0.3,
   "edit: Keep only this leaves just the outline; the size is the plate's 100 × 60": 0.88,
   "edit: a typed width scales the drawing, the height follows, it stays at the sheet's bottom-left": 0.18,
   "edit: Set length: two points snap to ends, the real length scales the drawing": 0.2,

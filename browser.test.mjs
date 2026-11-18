@@ -7038,6 +7038,56 @@ try {
     await page.waitForFunction(() => document.querySelector('[data-testid=entities]').textContent.trim() === 'Entities 15');
   }, { needs: ['edit: a DXF tab gets the Drawing panel with W × H in mm; no selection, no Keep only'] });
 
+  await step('TODO 329b: the latest selection paints before the ribbon and Properties refresh', async () => {
+    const p = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    try {
+      const raw = newDoc(4);
+      addEntities(raw, [dxfLine(10, 10, 90, 10, { aci: 1 }), dxfCircle(50, 45, 20, { aci: 5 })]);
+      await p.goto(URL_);
+      await p.getByTestId('picker').setInputFiles({ name: 'selection-329b.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(raw)) });
+      await p.waitForFunction(() => document.querySelector('[data-testid=entities]').textContent === 'Entities 2');
+      await p.getByTestId('ptab-objects').click();
+      await p.locator('.obj[data-e="1"]').waitFor();
+      const result = await p.evaluate(async () => {
+        const count = document.querySelector('[data-testid=sel-count]');
+        const chip = document.querySelector('[data-testid=prop-chip]');
+        const ribbon = document.querySelector('[aria-label="Ribbon colour"]');
+        const ctx = document.querySelector('[data-testid=drawing]').getContext('2d');
+        const stroke = ctx.stroke;
+        let highlighted = false;
+        ctx.stroke = function (...args) {
+          highlighted ||= this.getLineDash().length > 0;
+          return stroke.apply(this, args);
+        };
+        let updates = 0;
+        const observer = new MutationObserver((records) => { updates += records.length; });
+        const frame = () => new Promise((resolve) => requestAnimationFrame(resolve));
+        const snapshot = () => ({ chip: chip.textContent, colour: ribbon.value, highlighted });
+        try {
+          const before = snapshot();
+          observer.observe(chip, { childList: true });
+          document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', ctrlKey: true, bubbles: true }));
+          const firstCount = count.textContent;
+          document.querySelector('.obj[data-e="1"]').click();
+          const secondCount = count.textContent, immediate = snapshot();
+          await frame();
+          const painted = snapshot();
+          await frame();
+          return { before, firstCount, secondCount, immediate, painted, settled: snapshot(), updates: updates + observer.takeRecords().length };
+        } finally {
+          observer.disconnect();
+          delete ctx.stroke;
+        }
+      });
+      assert.equal(result.firstCount, '2 selected');
+      assert.equal(result.secondCount, '1 selected');
+      assert.deepEqual(result.immediate, result.before, 'the ribbon and Properties wait for the paint');
+      assert.deepEqual(result.painted, { ...result.before, highlighted: true }, 'the highlight paints in the first frame');
+      assert.deepEqual(result.settled, { chip: 'Circle', colour: 'aci:5', highlighted: true });
+      assert.equal(result.updates, 1, 'the two picks refresh Properties once');
+    } finally { await p.close(); }
+  });
+
   await step('edit: Keep only this leaves just the outline; the size is the plate\'s 100 × 60', async () => {
     await clickConnected(50, 0); await waitSel('8 selected');
     await t('keep-only').click();
@@ -11725,6 +11775,7 @@ try {
       await page.mouse.move(a.x, a.y); await page.mouse.down(); await page.mouse.move(b.x, b.y, { steps: 5 }); await page.mouse.up();
       await waitSel('1 selected');
       if (!(await t('props-panel').isVisible())) await page.keyboard.press('Control+1');
+      await frames();
       assert.equal(await t('prop-chip').textContent(), 'Line');
       assert.equal(await t('prop-layer').inputValue(), 'Contour');
       assert.equal(await t('prop-colour').inputValue(), 'aci:1');

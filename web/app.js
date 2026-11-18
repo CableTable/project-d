@@ -891,7 +891,7 @@ function ribbonContents(kind) {
   return groups;
 }
 function renderRibbon() {
-  if (!ui.ribbon) return;
+  if (!ui.ribbon || (selectionEditDoc && editable() === selectionEditDoc)) return;
   const tab = curDoc(), d = editable() || tab, kind = tab?.lay ? 'layout' : tab?.cmp ? 'compare' : 'drawing', part = kind === 'layout' && !!selectedPlaced(), tabs = ribbonTabs(kind, part);
   const context = part ? state.doc + ':' + selIdxs().join(',') : null;
   if (context && ribbon.context !== context) { ribbon.tab = 'Part'; ribbon.flyout = false; ribbon.panel = null; }
@@ -4877,6 +4877,10 @@ function renderStatus() {
   ui.drawingUnit.textContent = drawingUnit();
   ui.entities.textContent = d && d.fl ? 'Entities ' + d.entities : '';
   ui.units.textContent = d && d.fl ? d.conv : '';
+  if (!d || d !== selectionEditDoc) renderStatusLayer(d);
+}
+
+function renderStatusLayer(d) {
   // the layer: a layout's parts are all on "Parts"; on a drawing tab it is the selection's own layer ("—" when nothing is selected)
   let layer = '—';
   if (d && d.lay) layer = 'Parts';
@@ -6535,6 +6539,7 @@ function pickPoint(d, p, pts, shift, hover = false) {
   return tq ? [tq[0], tq[1]] : straight && q.length === 2 ? Ed.orthoLock(base, q) : q;
 }
 
+let selectionEditDoc = null, selectionEditFrame = 0;
 function setSel(d, sel, stretchSelection = null, prefiltered = false) {
   if (d.raw.groups?.length) sel = selectionOf(d.raw.groups, sel, true, (i) => !lockedEnt(d, i), prefiltered);
   state.drawingRotate = null;
@@ -6549,7 +6554,23 @@ function setSel(d, sel, stretchSelection = null, prefiltered = false) {
     d.hl = hl;
   } else d.hl = Ed.itemsOfEntities(d.fl, sel, cmpEditingItem(d)?.off || d.off, hidIdx(d));
   if (!d.ed) warm(d);
-  paintOverlay(); renderEdit();
+  paintOverlay();
+  if (editable() === d) {
+    selectionEditDoc = d;
+    cancelAnimationFrame(selectionEditFrame);
+    // Paint is already queued. A newer pick starts the wait again so its highlight paints first too.
+    selectionEditFrame = requestAnimationFrame(() => {
+      selectionEditFrame = requestAnimationFrame(() => {
+        selectionEditFrame = 0; selectionEditDoc = null;
+        if (editable() !== d) return;
+        renderRibbon();
+        renderStatusLayer(d);
+        renderPropsValues(d);
+        renderSelectionProps(d);
+      });
+    });
+  }
+  renderEdit();
   if (state.ptab === 'objects') renderObjects(true);
 }
 
@@ -11668,7 +11689,10 @@ function renderPropsPanel(d) {
   ui.centreOnPage.title = lay ? 'Centre the selection as one block on the whole sheet (CP)' : 'a drawing has no page';
   setSelect(ui.relSel, [['selection', 'Selection'], ...(lay ? [['sheet', 'Sheet']] : []), ['first', 'First selected'], ['last', 'Last selected'], ['point', 'Point...'], ['rectangle', 'Rectangle']], !lay && state.arrangeRel === 'sheet' ? 'selection' : state.arrangeRel);
   ui.propSec.hidden = !show;
-  if (!show) return;
+  if (show && (!d || d !== selectionEditDoc)) renderPropsValues(d, lay);
+}
+
+function renderPropsValues(d, lay = curLay()) {
   if (lay) d = propDoc();
   if (lay && !d.sel.size) {
     ui.propEmpty.hidden = ui.propBody.hidden = ui.propChip.hidden = ui.propMatch.hidden = true;
@@ -12354,20 +12378,16 @@ function outlinesOf(d) {
 
 /** The property bar for the selection and the list of outlines (drawing tab). */
 function renderSelection(d) {
-  const outs = outlinesOf(d), n = d.sel.size, { width, indices } = propEnts(d);
+  const outs = outlinesOf(d), n = d.sel.size;
   const layer = n ? 'layer ' + d.raw.entities[d.sel.values().next().value].layer : '';
   ui.selCommands.hidden = n < 2;
   ui.selbar.classList.toggle('multi-selection', n >= 2);
   ui.selLayer.title = layer;
-  setSelect(ui.selWidth, [['', '*varies*'], ...PR.widthOptions(width ?? '', recentWidths)], String(width ?? ''));
+  if (d !== selectionEditDoc) renderSelectionProps(d);
   ui.outList.replaceChildren(...(outs ? outs.map((o, k) => h('button', { class: 'orow', type: 'button', 'data-outline': k + 1, onclick: () => setSel(d, new Set(o.set)) },
     h('span', { class: 'nm' }, 'Outline ' + (k + 1)), h('span', { class: 'lbl mono' }, `${fmtSize(o.w)} × ${fmtSize(o.h)}`),
     (d.savedAs || []).includes(sizeKey(o.w, o.h)) ? h('span', { class: 'chip' }, 'saved') : null)) : [h('span', { class: 'lbl' }, 'Reading the drawing…')]));
   if (outs && !outs.length) ui.outList.append(h('span', { class: 'lbl' }, ed6000(d) ? 'Too many pieces to list. Right-click an edge → Select connected.' : 'No outlines found. Click a shape in the drawing.'));
-  // Keep only and Extract part act on geometry: a selection of kept dimensions alone has none (they are not part of a part)
-  const noPart = !indices.length;
-  ui.barKeep.disabled = ui.barExtract.disabled = ui['keep-only'].disabled = noPart;
-  ui.barKeep.title = ui.barExtract.title = ui['keep-only'].title = n && noPart ? 'A kept dimension is not part of a part' : '';
   if (!n) { ui.selName.textContent = 'Nothing selected'; ui.selLayer.textContent = 'right-click an edge → Select connected'; ui.selArea.textContent = ''; return; }
   const ed = d.ed && edIndex(d);
   if (!ed) { ui.selName.textContent = ui.selArea.textContent = '…'; ui.selLayer.textContent = layer; return; }      // warm builds the index after the paint and renders again
@@ -12379,6 +12399,15 @@ function renderSelection(d) {
   ui.selArea.textContent = !ap ? '' : (ap.loops ? `Area ${DU.formatArea(ap.area, drawingUnit())}` + (ap.holes ? ` (${ap.holes} hole${ap.holes > 1 ? 's' : ''} off)` : '') +
     (ap.gaps ? ` (closed across ${ap.gaps} tiny gap${ap.gaps > 1 ? 's' : ''})` : '') : 'Not closed: no area') +
     ` · Perimeter ${lengthText(ap.perimeter)}${lengthSuffix()}` + (ap.loops && ap.open ? ` · ${ap.open} open piece${ap.open > 1 ? 's' : ''} not in the area` : '');
+}
+
+function renderSelectionProps(d) {
+  const { width, indices } = propEnts(d);
+  setSelect(ui.selWidth, [['', '*varies*'], ...PR.widthOptions(width ?? '', recentWidths)], String(width ?? ''));
+  // Keep only and Extract part act on geometry, which excludes kept dimensions.
+  const noPart = !indices.length;
+  ui.barKeep.disabled = ui.barExtract.disabled = ui['keep-only'].disabled = noPart;
+  ui.barKeep.title = ui.barExtract.title = ui['keep-only'].title = d.sel.size && noPart ? 'A kept dimension is not part of a part' : '';
 }
 const ed6000 = (d) => !!d.ed && d.ed.shown.length > 6000;
 
