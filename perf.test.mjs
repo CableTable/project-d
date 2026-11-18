@@ -57,14 +57,17 @@ test('skipPoint keeps run ends and stays within half a pixel', () => {
     [.3, .4, 1, false], [-.3, -.3, 1, true], [.1, 0, 5, false], [.1, 0, 4, true]]) {
     assert.equal(perf.skipPoint(dx, dy, k), want);
   }
+  const round = (x) => Math.round(x * 1e9) / 1e9;
   const paint = (ops, { kind = 'p', fill = false, dash, dpx, matrix = [1, 0, 0, 1, 0, 0], scale = 1, dpr = 1, slots, highlight = false, wireframe = false } = {}) => {
     const calls = [], c = {
-      setTransform(...m) { this.m = m; }, clearRect() {}, beginPath() {}, stroke() {}, fill() {},
+      setTransform(...m) { this.m = m; }, clearRect() {}, beginPath() {}, fill() {},
       save() {}, restore() {}, clip() {}, fillRect() {}, setLineDash() {},
-      moveTo(x, y) { calls.push(['M', ...mapply(this.m, x, y)]); },
-      lineTo(x, y) { calls.push(['L', ...mapply(this.m, x, y)]); },
-      arc() { calls.push(['A']); }, closePath() { calls.push(['Z']); }
+      moveTo(x, y) { calls.push(['M', ...mapply(this.m, x, y).map(round)]); },       // rounded: the overlay's paths start at their run's corner, not the view's origin (329a)
+      lineTo(x, y) { calls.push(['L', ...mapply(this.m, x, y).map(round)]); },
+      arc() { calls.push(['A']); }, closePath() { calls.push(['Z']); },
+      stroke(p) { if (p) for (const f of p.fns) this[f[0]](...f.slice(1)); }       // the selection overlay's Path2D (TODO 329a): replayed under the matrix set before the stroke
     };
+    globalThis.Path2D = class { fns = []; moveTo(...a) { this.fns.push(['moveTo', ...a]); } lineTo(...a) { this.fns.push(['lineTo', ...a]); } arc(...a) { this.fns.push(['arc', ...a]); } closePath() { this.fns.push(['closePath']); } rect() {} };
     const it = { k: kind, ops, b: [-50, -50, 50, 50], L: [0], m: 0, css: '#000000', fill, dash, dpx, fam: [] };
     const fl = { items: highlight ? [] : [it], mats: [matrix], boxes: { model: it.b } };
     paintDrawing({ getContext: () => c }, { fl, off: new Set(), factor: 1, sheetH: 0, ox: 0, oy: 0,
