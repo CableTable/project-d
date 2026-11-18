@@ -415,7 +415,17 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
 - [x] 257. **Right-click fill does nothing on a Combined object** (bug, S, T75; grill `runs45/grill-257.md`; built Knight `92c9e27`, Bishop ship, 3 Lows held in `runs45/lows.txt`; picked `6e52a78`, suite pending).
 - [x] 258. **Measure and Line tools lag on a big (8MB) drawing** (bug, M, T76; with 237 / 260; built King `e090242`, Bishop ship, 3 Lows held in `runs45/lows.txt`; picked HEAD~1 of the tick, suite pending; select click also fixed, 22 -> 1 ms repaint).
 - [x] 259. **Clicks freeze on a big (8MB) drawing: select, finishing Stretch** (bug, M, T78; with 237 / 258; select click fixed by 258; Stretch finish: 259b Knight `80319bd` picked `6799d49`, rv-259b ship; suite pending).
-- [ ] 260. **Audit where else the app lags on big drawings** (L, T77; after 258 / 259).
+- [x] 260. (done 2026-11-18 S51b: King job `runs51/j-260.jsonl`, 2.01M tokens (99k new), table in `rook-hq/runs51/audit-260.md`; rows below, numbers one headless run each on 150k / real.dxf) **Audit where else the app lags on big drawings** (L, T77; after 258 / 259).
+- [ ] 316. **Compare button freezes on big files** (bug, L, from 260 row 1): 20.6 s at 150k, 0.7 s real.dxf (`app.js:12562-12565`, `compare.js:152`); `compareItems` to a worker or chunked with progress. Row 8 (Compare start / click 1.2 s / 0.67 s) folds in.
+- [ ] 317. **Compare grip drag repaints both snapshots** (bug, M, 260 row 2): 12 s task, 6.3M lineTo; keep the drag on the cached bitmap (`app.js:5226-5252`).
+- [ ] 318. **Trim hover slow on big drawings** (bug, M, 260 row 3): 250 ms per hover at 150k; bbox pre-filter before `shapeOf` (`modify.js:574`).
+- [ ] 319. **Undo / Delete / Move commit re-flattens all** (bug, L, 260 row 4): 0.5-0.67 s at 150k (`app.js:6729`); re-flatten changed entities only.
+- [ ] 320. **Object / grip drag full paints** (bug, M, 260 row 5): 20 full paints per drag at 150k; draw over a cached base bitmap (`app.js:5247-5256`). Row 11 (Layouts repaints, S) ticks with it if it shares the path.
+- [ ] 321. **Layer on/off full re-warm** (bug, M, 260 row 6): 0.45-0.7 s at 150k (`app.js:4454-4457`, `:6350`); skip `warm()` / `d.fl` rebuild when only visibility changes.
+- [ ] 322. **Open: flatten on main thread** (bug, L, 260 row 7 + 13): 0.94 s at 150k (`app.js:1358`, `:1315`); move into the existing worker (`:1248`). With 237.
+- [ ] 323. **Select-all / Properties summarise slow** (bug, M, 260 row 9): Ctrl+A 0.43 s, Properties 0.38-0.49 s at 150k (`app.js:11608`).
+- [ ] 324. **Compare wheel / pan gesture-end repaint** (bug, M, 260 row 10): 0.23-0.25 s at 150k (`app.js:5260`).
+- [ ] 325. **Objects tab render on big drawings** (bug, S, 260 row 12): 67 ms-0.35 s at 150k; cause not read.
 - [x] 261. **Paste into a blank `+` tab is refused** (bug, S, T80; built Knight `d676535`, Bishop ship, 3 Lows held in `runs45/lows.txt`; picked HEAD~1 of the tick, suite pending).
 - [x] 262. **Layout: "Group of 6" stays selected after Esc or empty click** (bug, S, T82; built King `911c679`, Bishop ship, 3 Lows held in `runs45/lows.txt`; picked HEAD~1 of the tick; fixes 1-5 (stale steps + Esc on open menu closes only the menu, fix 5 on Opus) picked `f3e93e0`..`86f2ee4`, rv-262fix5 ship; suite pending).
 - [x] 263. **Print: sheet size and gripper labels fall off the page with a small margin** (bug, M, T83; built Knight `3793404`, Bishop ship, 4 Lows held in `runs45/lows.txt`; picked HEAD~1 of the tick, suite pending).
