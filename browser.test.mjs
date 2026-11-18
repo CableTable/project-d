@@ -28229,11 +28229,75 @@ try {
           else await p.mouse.up();
           await frame();
           assert.equal(await paints() - during, 1, `${end} gives one full paint`);
-          assert.equal(await paints() - before, 2, 'Compare drag gives two full paints (start, end)');
+          assert.equal(await paints() - before, 1, 'Compare drag gives one full paint (the end: the base and the grabbed snapshot are painted off screen at the start, TODO 317)');
           if (end === 'Esc') { await p.mouse.move(x + 60, y + 30); await p.mouse.up(); await frame(); assert.equal(await p.getByTestId('cmp-hint').textContent(), hint, 'Esc restores the offset and ends the drag'); }
           else assert.notEqual(await p.getByTestId('cmp-hint').textContent(), hint, 'drop moves the snapshot');
           await equalsFull(`${theme} ${end}`);
-          console.log(`P14b: ${theme} ${end}, 2 full paints, picture equals a full paint`);
+          console.log(`P14b: ${theme} ${end}, 1 full paint, picture equals a full paint`);
+        }
+      }
+      assert.deepEqual(errors, []);
+    } finally { await ctx.close(); }
+  });
+
+  await step('TODO 317 / 320: a grip drag paints over a cached base: no full paint while it moves, one at the release, in a drawing tab and in Compare; mid-drag picture equals a full paint', async () => {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    try {
+      const p = await ctx.newPage(), drawing = p.getByTestId('drawing'), errors = [];
+      p.on('pageerror', (e) => errors.push(String(e)));
+      await p.route('**/app.js', (route) => route.fulfill({ contentType: 'text/javascript', body: readFileSync('web/app.js', 'utf8') + '\nwindow.t317Paint = () => paintOverlay();' }));
+      const frame = () => p.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+      const paints = async () => Number(await drawing.getAttribute('data-paints'));
+      const gripAt = () => p.getByTestId('grip').first().evaluate((g) => { const b = g.getBoundingClientRect(); return { x: b.x + b.width / 2, y: b.y + b.height / 2 }; });
+      await p.goto(URL_ + '?autosave=86400000'); await p.getByTestId('count').waitFor({ state: 'attached' });
+      const buffer = Buffer.from(writeDxf(bigDoc(20000)));
+      for (const name of ['t317-a.dxf', 't317-b.dxf']) {
+        await p.getByTestId('picker').setInputFiles({ name, mimeType: 'text/plain', buffer });
+        await p.waitForFunction((name) => document.querySelector('.dtab.on .tname').textContent === name, name);
+      }
+      for (const kind of ['drawing', 'compare']) {
+        if (kind === 'compare') { await p.locator('[data-menu=File]').click(); await p.getByRole('menuitem', { name: 'Compare drawings…', exact: true }).click(); }
+        await p.getByTestId('canvas').getByRole('button', { name: 'Fit', exact: true }).click(); await frame();
+        await p.locator('[data-tool=select]').first().click();
+        const box = await p.getByTestId('canvas').boundingBox();
+        await p.mouse.click(box.x + box.width / 2, box.y + box.height / 2); await frame();      // the selection (and its grips) stays through the drags of both themes
+        assert.ok(await p.getByTestId('grip').count() > 0, `${kind}: the click selects an object with grips`);
+        for (const theme of ['light', 'dark']) {
+          const label = `${kind} ${theme}`;
+          await p.locator('[data-menu=View]').click();
+          await p.getByRole('menuitemcheckbox', { name: new RegExp('Theme: ' + theme + '\\b') }).click(); await frame();
+          for (const again of [false, true]) {
+            const at = await gripAt();
+            await p.mouse.move(at.x, at.y); await frame();
+            const before = await paints();
+            await p.mouse.down(); await frame();
+            const pressed = await paints();
+            assert.equal(pressed - before, kind === 'drawing' ? 0 : 1, `${label}: a drawing tab presses on its kept picture; Compare's idle picture is not kept yet (TODO 317 finding), so its press is one full paint`);
+            for (let i = 1; i <= 10; i++) { await p.mouse.move(at.x + i * 4, at.y + i * 2); await frame(); }
+            assert.equal(await paints(), pressed, `${label}: 10 grip moves give no full paint`);
+            assert.equal(await drawing.getAttribute('data-keep'), '1', `${label}: the grip drag paints over the kept base`);
+            if (again) {
+              await drawing.evaluate((c) => { window.__A = c.getContext('2d').getImageData(0, 0, c.width, c.height); c.dataset.nokeep = '1'; });
+              await p.evaluate(() => window.t317Paint()); await frame();
+              const diff = await drawing.evaluate((c) => {
+                const a = window.__A, b = c.getContext('2d').getImageData(0, 0, c.width, c.height);
+                delete c.dataset.nokeep; delete window.__A;
+                let over2 = 0;
+                for (let i = 0; i < a.data.length; i += 4) for (let j = 0; j < 4; j++) if (Math.abs(a.data[i + j] - b.data[i + j]) > 2) { over2++; break; }
+                return over2;
+              });
+              assert.equal(diff, 0, `${label}: the mid-drag picture equals a full paint (max channel difference 2)`);
+              await p.mouse.up(); await frame();
+            } else {
+              const path = `${shotDir}/t317-${kind}-${theme}.png`;
+              await p.screenshot({ path }); assert.ok(readFileSync(path).length > 1000, 'required screenshot exists');
+              const during = await paints();
+              await p.mouse.up(); await frame();
+              assert.equal(await paints() - during, 1, `${label}: the release gives one full paint`);
+              assert.notDeepEqual(await gripAt(), at, `${label}: the grip drag moved the grip`);
+            }
+          }
+          console.log(`T317 / T320: ${label}, grip moves 0 full paints, release 1, mid-drag picture equals a full paint`);
         }
       }
       assert.deepEqual(errors, []);
@@ -28341,13 +28405,13 @@ try {
     const cmp = await flow((p) => interactCompare(p, big, 'lag-big.dxf'));
     assert.deepEqual(Object.keys(cmp), ['open', 'Compare start', 'Compare wheel', 'Compare pan', 'Compare click', 'Compare button', 'Compare button again', 'Compare grip drag', 'Compare drag']);
     assert.ok(cmp['Compare start'].lineTo > 30000, `both snapshots paint: lineTo ${cmp['Compare start'].lineTo}`);
-    within(cmp, { 'Compare start': 1, 'Compare wheel': 21, 'Compare pan': 1, 'Compare click': 2, 'Compare button': 2, 'Compare button again': 2, 'Compare drag': 2 });
+    within(cmp, { 'Compare start': 1, 'Compare wheel': 21, 'Compare pan': 1, 'Compare click': 2, 'Compare button': 2, 'Compare button again': 2, 'Compare grip drag': 2, 'Compare drag': 1 });       // TODO 317: a grip drag was 21 full paints, a body drag 2 (a grip press is one more paint when it does not share the frame of the first move)
     assert.ok(cmp['Compare button again'].longTotal < 1500, `Compare button again long tasks ${cmp['Compare button again'].longTotal} ms (the second press reuses the fl-keyed metrics cache; this head 338 ms; the first press measures both items)`);
     const firstPressBound = process.env.CI ? 6000 : 3000;
     assert.ok(cmp['Compare button'].longTotal < firstPressBound, `Compare button (the first press) long tasks ${cmp['Compare button'].longTotal} ms (bound ${firstPressBound} ms; CI allows 6000 ms for the slower runner; P14a: 4cff4b3 ~10300 ms, outlineLoops scanned every open piece per join)`);
     const edit = await flow((p) => interactEdit(p, big, 'lag-big.dxf'));
     assert.deepEqual(Object.keys(edit), ['open', 'Ctrl+A', 'box select', 'Move hover', 'Move commit click', 'Trim hover', 'object drag', 'LINE grip drag', 'Delete', 'Ctrl+Z', 'Ctrl+Y']);
-    within(edit, { 'Ctrl+A': 1 });
+    within(edit, { 'Ctrl+A': 1, 'object drag': 1, 'LINE grip drag': 2 });       // TODO 320: both were 20 full paints
     assert.ok(edit['Ctrl+A'].lineTo >= edit['Ctrl+Z'].lineTo, 'Ctrl+A paints the highlight too');
     assert.ok(edit['Ctrl+A'].lineTo <= 2 * edit['Ctrl+Z'].lineTo, `Ctrl+A traces the drawing at most twice (base and highlight): lineTo ${edit['Ctrl+A'].lineTo}, one full paint ${edit['Ctrl+Z'].lineTo}`);
   });

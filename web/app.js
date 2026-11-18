@@ -5339,7 +5339,7 @@ function paintEditable(c, d, base, marks, part, afterBase) {
   if (afterBase) { drawn = paintDrawing(c, { ...o, part: 'base' }); afterBase(drawn); paintDrawing(c, { ...o, part: 'over' }); }
   else drawn = paintDrawing(c, part ? { ...o, part } : o);
   if (part === 'base') return drawn;                                   // the base alone, off screen: no preview of a move in it
-  const move =state.drawingRotate?.drag || state.entityDrag || (state.grip?.d === d && state.grip.move) || (modLive() && ['move', 'copy', 'stretch', 'array', 'rotate', 'scale', 'mirror', 'align'].includes(state.mod.kind) ? state.mod.move : null);
+  const move = state.drawingRotate?.drag || state.entityDrag || (state.grip?.d === d && state.grip.move) || (modLive() && ['move', 'copy', 'stretch', 'array', 'rotate', 'scale', 'mirror', 'align'].includes(state.mod.kind) ? state.mod.move : null);
   c.dataset.preview = move?.items ? paintDrawing(c, { ...base, ox: base.ox - move.dx * d.factor, oy: base.oy + move.dy * d.factor, keep: true, fl: move.preview, off: d.off, factor: d.factor, slots: (!state.entityDrag && !state.grip && modTypedSlots(d)) || move.slots, tint: cssVar('--selection', '#4f46e5'), previewBounds: (box) => { canvasPreviewBounds = unionBox(canvasPreviewBounds, box); } }) : 0;
   const paste = state.paste;
   if (paste?.d === d && paste.from) c.dataset.preview = paintDrawing(c, { ...base, ox: base.ox - paste.dx * d.factor, oy: base.oy + paste.dy * d.factor, keep: true, fl: paste.preview, off: d.off, factor: d.factor, tint: `color-mix(in srgb, ${cssVar('--selection', '#4f46e5')} 50%, transparent)`, previewBounds: (box) => { canvasPreviewBounds = unionBox(canvasPreviewBounds, box); } });
