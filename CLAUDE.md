@@ -33,7 +33,7 @@ Set up in session 1, the same shape as Project R:
 - `npm run test:browser`: the UI in Chromium (Playwright) against the web code served locally.
 - The Tauri build in CI (`cargo tauri build`), and the exe started once.
 - **A UI change also gets looked at**: screenshots, light and dark.
-- No cargo or MSYS2 on this PC: Rust and `ci.yml` compile only in CI, so such a change gets its probe before the full suite.
+- **Tools on this PC (2026-11-18):** Rust MSVC in `E:\Softwares\rust`, VS Build Tools in `E:\Softwares\VSBuildTools` (no MSYS2). In Git Bash, if `cargo` is not found: `export CARGO_HOME='E:\Softwares\rust\cargo' RUSTUP_HOME='E:\Softwares\rust\rustup'; PATH="/e/Softwares/rust/cargo/bin:$PATH"`. Local exe: `npx tauri build --no-bundle` -> `src-tauri/target/release/` (~5 min; CI does the same). A Rust or `ci.yml` change still gets its probe before the full suite.
 
 ## 1. How changes ship
 
