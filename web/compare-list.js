@@ -1,6 +1,8 @@
 // Compare's session-only snapshots and results; no DOM or storage.
-import { COLOURS, polylines, lineUp, compare } from './compare.js';
-import { makeIndex, areaPerimeter, chainTol } from './edit.js';
+import { COLOURS, polylines, lineUp, compareSteps } from './compare.js';
+import { itemShown, areaPerimeterSteps, chainTol } from './edit.js';
+import { spaceOf } from './doc.js';
+import { drain, slice, scaled } from './perf.js';
 
 export const MAX_ITEMS = 5;
 export const reference = (items) => items.find((x) => x.checked);
@@ -45,23 +47,38 @@ export function lineUpItems(items, mode) {
   return items.map((x) => x.checked && x.box ? { ...x, offset: x === ref ? [0, 0] : lineUp(ref.box, x.box, mode) } : x);
 }
 
+/** The part of edit.js makeIndex that outlineLoops reads, without its pick grid (that grid was most of the time on 150 000 entities). */
+function loopIndex(raw, fl, off) {
+  const space = spaceOf(fl), byEnt = new Array(raw.entities.length), shown = [];
+  fl.items.forEach((it, i) => {
+    if (!itemShown(it, space, off, null)) return;
+    if (!byEnt[it.e]) { byEnt[it.e] = []; shown.push(it.e); }
+    byEnt[it.e].push(i);
+  });
+  return { raw, fl, items: fl.items, byEnt, shown };
+}
+
 /** Each checked item's signed measurements and outline differences from the first checked item. */
-export function compareItems(items, tol) {
+export const compareItems = (items, tol) => drain(compareItemsSteps(items, tol));
+/** compareItems as a generator (TODO 316): yields its progress (0..1) whenever due() says its slice is used up; the app runs it with runChunks. */
+export function* compareItemsSteps(items, tol, due = slice()) {
   const ref = reference(items), chosen = items.filter((x) => x.checked);
   if (chosen.length < 2) return null;
-  const diffs = [], rows = [];
-  let truncated = false;
+  const diffs = [], rows = [], units = 2 * chosen.length - 1;       // a metrics step per item, a compare step per item but the reference
+  let truncated = false, unit = 0;
   for (const item of chosen) {
     if (!metrics.has(item.fl)) {
-      const ed = makeIndex(item.raw, item.fl, item.off);
-      const m = item.box && areaPerimeter(ed, new Set(ed.shown), item.factor, chainTol(item.box, 1) / item.factor);
+      const ed = loopIndex(item.raw, item.fl, item.off);
+      const m = item.box && (yield* scaled(areaPerimeterSteps(ed, new Set(ed.shown), item.factor, chainTol(item.box, 1) / item.factor, due), unit / units, (unit + 1) / units));
       metrics.set(item.fl, { area: m?.area || 0, perimeter: m?.perimeter || 0, w: item.w, h: item.h });
     }
+    unit++;
     const current = metrics.get(item.fl), base = metrics.get(ref.fl);
     const delta = Object.fromEntries(Object.keys(base).map((k) => [k, current[k] - base[k]]));
     rows.push({ id: item.id, ...delta });
     if (item === ref) continue;
-    const result = compare(ref.polys, item.polys, tol, { offsetB: [item.offset[0] - ref.offset[0], item.offset[1] - ref.offset[1]] });
+    const result = yield* scaled(compareSteps(ref.polys, item.polys, tol, { offsetB: [item.offset[0] - ref.offset[0], item.offset[1] - ref.offset[1]] }, due), unit / units, (unit + 1) / units);
+    unit++;
     truncated ||= result.truncated;
     for (const d of result.diffs) diffs.push({ ...d, n: diffs.length + 1, itemId: item.id,
       x: d.x + ref.offset[0], y: d.y + ref.offset[1], box: d.box.map((v, i) => v + ref.offset[i % 2]) });

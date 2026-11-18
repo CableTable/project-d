@@ -11,6 +11,7 @@
 //        x, y: the worst point; mm: how far off it is there; side: 'A' (only the first has it), 'B' or 'AB'; opts.offsetB: [dx, dy]
 import { mapply, mscale, arcSweep } from './drawing.js';
 import { spaceOf, itemVisible } from './doc.js';
+import { drain, slice } from './perf.js';
 
 export const COLOURS = [
   { id: 'red', label: 'Red', css: '#c62828', dark: '#ff7b7b' },
@@ -149,9 +150,13 @@ function groups(pts, link) {
  * The differences between two sets of outlines (mm): wherever an outline of one is more than `tol` mm from every outline of the other.
  * B is first moved by opts.offsetB. A difference is a group of such points close together, numbered from the left.
  */
-export function compare(polysA, polysB, tol = DEFAULT_TOL, opts = {}) {
+export const compare = (polysA, polysB, tol, opts) => drain(compareSteps(polysA, polysB, tol, opts));
+/** compare as a generator (TODO 316): yields its progress whenever due() says so, returns the same result. */
+export function* compareSteps(polysA, polysB, tol = DEFAULT_TOL, opts = {}, due = slice()) {
   const [dx, dy] = opts.offsetB || [0, 0];
-  const sa = segmentsOf(polysA, 0, 0), sb = segmentsOf(polysB, dx, dy);
+  const sa = segmentsOf(polysA, 0, 0);
+  if (due()) yield 0;
+  const sb = segmentsOf(polysB, dx, dy);
   const out = { diffs: [], truncated: false, samples: 0 };
   if (!sa.length && !sb.length) return out;
   const box = [Infinity, Infinity, -Infinity, -Infinity];
@@ -159,9 +164,14 @@ export function compare(polysA, polysB, tol = DEFAULT_TOL, opts = {}) {
   let total = 0;
   for (const s of [sa, sb]) for (let k = 0; k < s.length; k += 4) total += Math.hypot(s[k + 2] - s[k], s[k + 3] - s[k + 1]);
   const step = Math.max(Math.min(Math.max(tol, 0.1), 2), total / MAX_SAMPLES), c = Math.max(tol * 4, Math.hypot(box[2] - box[0], box[3] - box[1]) / 200, 0.5);
-  const ga = makeGrid(sa, box, c), gb = makeGrid(sb, box, c), far = [];
-  const sweep = (segs, other, side) => {
+  if (due()) yield 0.01;
+  const ga = makeGrid(sa, box, c);
+  if (due()) yield 0.03;
+  const gb = makeGrid(sb, box, c), far = [];
+  if (due()) yield 0.04;
+  const sweep = function* (segs, other, side, from) {
     for (let k = 0; k < segs.length && far.length < MAX_FAR; k += 4) {
+      if (due()) yield from + 0.45 * k / segs.length;
       const len = Math.hypot(segs[k + 2] - segs[k], segs[k + 3] - segs[k + 1]), n = Math.max(1, Math.ceil(len / step));
       for (let j = 0; j <= n; j++) {
         if (j === n && k + 4 < segs.length && segs[k + 2] === segs[k + 4] && segs[k + 3] === segs[k + 5]) continue;      // the next segment starts here
@@ -172,8 +182,8 @@ export function compare(polysA, polysB, tol = DEFAULT_TOL, opts = {}) {
       }
     }
   };
-  sweep(sa, gb, 'A');
-  sweep(sb, ga, 'B');
+  yield* sweep(sa, gb, 'A', 0.05);
+  yield* sweep(sb, ga, 'B', 0.5);
   const link = Math.max(1, 3 * step);
   const list = groups(far, link).map((g) => {
     let worst = g[0], x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity, hasA = false, hasB = false;

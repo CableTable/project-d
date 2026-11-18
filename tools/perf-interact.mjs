@@ -189,8 +189,9 @@ export async function interactCompare(page, buffer, name = 'cmp.dxf') {
     await fitView(page, frame);
     await useTool(page, frame, cx, cy, 'select');
     await run('Compare click', async () => { await page.mouse.click(cx, cy); });
-    await run('Compare button', async () => { await page.locator('[data-testid=cmp-run]').dispatchEvent('click'); });
-    await run('Compare button again', async () => { await page.locator('[data-testid=cmp-run]').dispatchEvent('click'); });
+    const compareDone = async () => { await page.locator('[data-testid=cmp-run]').dispatchEvent('click'); await page.waitForFunction(() => !document.querySelector('[data-testid=cmp-count]').textContent.startsWith('Comparing'), null, { timeout: 300000 }); };       // the run is in slices (TODO 316): wait for its end
+    await run('Compare button', compareDone);
+    await run('Compare button again', compareDone);
     await run('Compare grip drag', async () => {
       await page.mouse.move(cx, cy); await page.mouse.down();
       for (let i = 1; i <= 20; i++) { await page.mouse.move(cx + i * 4, cy + i * 2); await frame(); }

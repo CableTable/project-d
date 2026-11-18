@@ -17,6 +17,7 @@ import { mapply, mscale, pickIndex, pickAt, piecesNear, flatten, ownBlock, union
 import { rotateRecord } from './rotate.js';
 import { format as formatLength, parse as parseLength } from './units.js';
 import { spaceOf, itemVisible } from './doc.js';
+import { drain, slice, scaled } from './perf.js';
 import { line, insert, entity, addLayer, arc, lwpoly } from './dxf-write.js';
 import { DEFAULT_TYPES, perpFoot, preferSnap, tangentPoints, orderCandidates } from './snap.js';
 import { pieceInter } from './modify.js';
@@ -58,10 +59,14 @@ function arcSweepOp(a0, a1, acw) {
  * and a loop whose last gap is tiny (≤ 10 × tol) is closed across it and counted in `gaps`. Text, fills and kept dimensions are left out.
  * Returns { loops: [{ pts, ents }] (ents: the entity indexes the loop is made of), len (all lines and arcs), gaps, open (pieces that do not close), openEnts (the entities that have such a piece) }, or null if there are no lines.
  */
-export function outlineLoops(ed, ents, tol = 1e-6) {
-  const { fl, items, raw } = ed, pieces = [];
-  let len = 0;
+export const outlineLoops = (ed, ents, tol) => drain(outlineLoopsSteps(ed, ents, tol));
+/** outlineLoops as a generator (TODO 316): yields its progress whenever due() says so, returns the same result. */
+export function* outlineLoopsSteps(ed, ents, tol = 1e-6, due = slice()) {
+  const { fl, items, raw } = ed, pieces = [], total = ents.size ?? ents.length ?? 1;
+  let len = 0, seen = 0;
   for (const e of ents) {
+    if (due()) yield 0.5 * seen / total;
+    seen++;
     if (!ed.byEnt[e] || raw.entities[e].layer === DIM_LAYER || raw.entities[e].type === 'DIMENSION') continue;
     for (const i of ed.byEnt[e]) {
       const it = items[i];
@@ -90,6 +95,7 @@ export function outlineLoops(ed, ents, tol = 1e-6) {
   for (const p of pieces) {                                    // one piece that ends where it starts (a circle, a closed polyline)
     if (p.closed || (p.pts.length > 2 && near(p.pts[0], p.pts[p.pts.length - 1]))) { loops.push({ pts: p.pts, ents: p.ents }); p.used = true; }
   }
+  if (due()) yield 0.5;
   const open = pieces.filter((p) => !p.used), gapTol = tol * 10;
   // The first unused open piece with an end within tol of pt: its ends sit in a grid of tol-sized cells, so only the 9 cells around pt are looked at (the answer of a scan of `open`, in `open` order).
   const cell = Math.max(tol, 1e-9), cellOf = (v) => Math.floor(v / cell), ends = new Map();
@@ -103,8 +109,10 @@ export function outlineLoops(ed, ents, tol = 1e-6) {
     }
     return open[best];
   };
-  let gaps = 0;
+  let gaps = 0, joined = 0;
   for (const start of open) {                                  // join open pieces end to end until they close
+    if (due()) yield 0.5 + 0.5 * joined / open.length;
+    joined++;
     if (start.used) continue;
     start.used = true;
     let path = start.pts.slice(), closed = false;
@@ -139,8 +147,10 @@ export function outlineLoops(ed, ents, tol = 1e-6) {
  * a hole and is taken off.
  * Returns { area, perimeter, loops, holes, gaps, open } (open: pieces that do not close), or null if there are no lines.
  */
-export function areaPerimeter(ed, ents, factor = 1, tol = 1e-6) {
-  const r = outlineLoops(ed, ents, tol);
+export const areaPerimeter = (ed, ents, factor, tol) => drain(areaPerimeterSteps(ed, ents, factor, tol));
+/** areaPerimeter as a generator (TODO 316): the hole test is the slow part on a drawing of many loops. */
+export function* areaPerimeterSteps(ed, ents, factor = 1, tol = 1e-6, due = slice()) {
+  const r = yield* scaled(outlineLoopsSteps(ed, ents, tol, due), 0, 0.3);
   if (!r) return null;
   const { len, gaps, open } = r, loops = r.loops.map((l) => l.pts);
   const shoelace = (pts) => { let s = 0; for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) s += pts[j][0] * pts[i][1] - pts[i][0] * pts[j][1]; return Math.abs(s) / 2; };
@@ -153,6 +163,7 @@ export function areaPerimeter(ed, ents, factor = 1, tol = 1e-6) {
     return c;
   };
   const a = loops.map(shoelace);
+  if (due()) yield 0.3;
   const boxes = loops.map((pts) => {
     const b = [Infinity, Infinity, -Infinity, -Infinity];
     for (const p of pts) {
@@ -162,15 +173,16 @@ export function areaPerimeter(ed, ents, factor = 1, tol = 1e-6) {
     return b;
   });
   let area = 0, holes = 0;
-  loops.forEach((L, i) => {
-    const px = L[0][0], py = L[0][1], ai = a[i];     // no destructuring: edit.test.mjs counts inside() by the array iterations of 2-element arrays
+  for (let i = 0; i < loops.length; i++) {
+    if (due()) yield 0.3 + 0.7 * i / loops.length;
+    const L = loops[i], px = L[0][0], py = L[0][1], ai = a[i];     // no destructuring: edit.test.mjs counts inside() by the array iterations of 2-element arrays
     let depth = 0;
     for (let j = 0; j < loops.length; j++) {            // a plain loop: 6700 loops make 45 million box checks
       const b = boxes[j];
       if (a[j] > ai && px >= b[0] && py >= b[1] && px <= b[2] && py <= b[3] && inside(L[0], loops[j])) depth++;
     }
     if (depth % 2) { area -= a[i]; holes++; } else area += a[i];
-  });
+  }
   return { area: area * factor * factor, perimeter: len * factor, loops: loops.length, holes, gaps, open };
 }
 

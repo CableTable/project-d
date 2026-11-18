@@ -31,7 +31,7 @@ import * as BAL from './balloons.js';
 import * as PS from './pdf-sheets.js';
 import { paintDrawing, drawMarks, drawContour, drawDimPreview, ink, FONT_FAMILY } from './render.js';
 import { overlayBox } from './preview.js';
-import { snapPlace, snapUsable, heavy, sameBase } from './perf.js';
+import { snapPlace, snapUsable, heavy, sameBase, runChunks } from './perf.js';
 import { flatten, patchWidths, primeSplines, unionBox, CAP, ACI, UNITS, mapply, mmul, pickIndex, arcSweep, DrawingError } from './drawing.js';
 import { writeDxf, writeDxfWithReport, saveReportNote, unwritable, addLayer, newDoc, lwpoly, point } from './dxf-write.js';
 import * as SH from './shaping.js';
@@ -12543,7 +12543,7 @@ function cmpEdit(action = 'edit') {
   return null;
 }
 /** Refresh changed linked artwork and measurements on return to Compare; closeTab also captures the final copy. */
-function cmpRefresh(d) {
+async function cmpRefresh(d) {
   if (!d.tabId) return;
   const next = cmpSourceState(d);
   for (const tab of state.docs) if (tab.cmp?.items.some((x) => x.tabId === d.tabId)) {
@@ -12551,7 +12551,7 @@ function cmpRefresh(d) {
     if (previous?.length === next.length && next.every((v, i) => v === previous[i])) continue;
     c.items = c.items.map((x) => x.tabId === d.tabId ? { ...x, ...CMP.refreshGeometry(x, d) } : x);
     c.sources.set(d.tabId, next);
-    cmpCalc(c);
+    await cmpCalc(c);
   }
 }
 /** Visible snapshots at their current offsets (mm, y up). */
@@ -12559,14 +12559,26 @@ function cmpBox(d) {
   const c = d && d.cmp;
   return c ? c.items.filter((x) => x.visible && x.box).reduce((b, x) => unionBox(b, x.box.map((v, i) => v + x.offset[i % 2])), null) : null;
 }
-function cmpCalc(c) {
-  c.items = CMP.lineUpItems(c.items, c.mode); c.sel = 0; c.stale = false;
-  c.res = CMP.compareItems(c.items, c.tol);
+const cmpComparing = (c) => `Comparing… ${Math.round(c.progress * 100)}%`;
+/** Runs the comparison in slices (TODO 316): c.run is the run's token, so a second click, a move, a removed snapshot, a closed tab or a refresh drops a run that is still going. c.res stays null until it is done. */
+async function cmpCalc(c) {
+  const run = c.run = {};
+  c.items = CMP.lineUpItems(c.items, c.mode); c.sel = 0; c.stale = false; c.res = null; c.progress = 0;
+  const gen = CMP.compareItemsSteps(c.items, c.tol), first = gen.next();       // a small drawing ends in this first slice: its result is set before cmpCalc returns
+  if (first.done) { c.res = first.value; c.run = null; return; }
+  c.progress = first.value;
+  await new Promise((r) => setTimeout(r));          // the caller shows "Comparing…" and the page paints before the next slice
+  const alive = () => c.run === run && state.docs.some((t) => t.cmp === c);
+  try {
+    const res = await runChunks(gen, { alive, onProgress: (p) => { c.progress = p; if (cmpDoc()?.cmp === c) ui.cmpCount.textContent = cmpComparing(c); } });
+    if (!alive()) return;
+    c.res = res;
+  } finally { if (c.run === run) { c.run = null; if (cmpDoc()?.cmp === c) { renderCommand(); renderCompare(); paintOverlay(); } } }       // not update(): that would clear a note set since the click
 }
 /** The Compare button also recalculates after an alignment or tolerance change. */
-function cmpRun(d) { cmpCalc(d.cmp); update(); }
-/** A move or setting change marks the last result out of date, without calculating. */
-function cmpMoved(d, refit = false) { const c = d.cmp; c.items = CMP.lineUpItems(c.items, c.mode); if (c.res) c.stale = true; update(refit && view.fitted); }
+async function cmpRun(d) { const done = cmpCalc(d.cmp); update(); await done; }
+/** A move or setting change marks the last result out of date, without calculating; a run still going is dropped. */
+function cmpMoved(d, refit = false) { const c = d.cmp; c.run = null; c.items = CMP.lineUpItems(c.items, c.mode); if (c.res) c.stale = true; update(refit && view.fitted); }
 
 function cmpAdd(d, source, offset = null) {
   try {
@@ -12714,7 +12726,7 @@ function renderCompare() {
     return h('tr', { 'data-testid': 'cmp-result', 'data-colour': x.colour }, h('th', { scope: 'row', style: `color:${cmpCss(x.colour)}`, title: x.name }, x.name),
       h('td', null, delta(r.area)), h('td', null, delta(r.perimeter)), h('td', null, `${delta(r.w)} × ${delta(r.h)}`));
   }));
-  ui.cmpCount.textContent = !c.res ? (!ui.cmpRunBtn.disabled ? 'Press Compare' : 'Tick at least two drawings') : diffs.length ? `${diffs.length} difference${diffs.length === 1 ? '' : 's'}${c.res.truncated ? ' or more' : ''}` : 'No differences';
+  ui.cmpCount.textContent = !c.res ? (c.run ? cmpComparing(c) : !ui.cmpRunBtn.disabled ? 'Press Compare' : 'Tick at least two drawings') : diffs.length ? `${diffs.length} difference${diffs.length === 1 ? '' : 's'}${c.res.truncated ? ' or more' : ''}` : 'No differences';
   if (ui.cmpListRes !== c.res || ui.cmpListDark !== workDark()) {
     ui.cmpListRes = c.res; ui.cmpListDark = workDark();
     ui.cmpList.replaceChildren(...diffs.map((x) => h('button', { class: 'gaprow cmprow', type: 'button', 'data-n': x.n, 'data-testid': 'cmp-diff', title: 'Zoom to this difference', onclick: () => cmpZoom(d, x) },
@@ -12844,7 +12856,7 @@ function cmpKey(e, mod) {
 }
 function cmpCommand(c) {
   const n = c.res ? c.res.diffs.length : 0, chosen = c.items.filter((x) => x.checked);
-  ui.hist.textContent = `Command: COMPARE   ${chosen.map((x) => x.name + ` (${x.colour})`).join(' vs ')} · tolerance ${c.tol} mm · ` + (c.res ? `${n} difference${n === 1 ? '' : 's'}${c.stale ? ' (out of date)' : ''}` : chosen.length >= 2 ? 'press Compare' : 'tick at least two drawings');
+  ui.hist.textContent = `Command: COMPARE   ${chosen.map((x) => x.name + ` (${x.colour})`).join(' vs ')} · tolerance ${c.tol} mm · ` + (c.res ? `${n} difference${n === 1 ? '' : 's'}${c.stale ? ' (out of date)' : ''}` : c.run ? 'comparing' : chosen.length >= 2 ? 'press Compare' : 'tick at least two drawings');
   ui.prompt.textContent = state.msg ? state.msg : c.stale ? 'Out of date - press Compare again:' : n ? `Zoom to a difference: click it in the panel (1-${n}):` : 'Line up, Tolerance and Show differences are in the panel:';
 }
 

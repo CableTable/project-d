@@ -28240,6 +28240,38 @@ try {
     } finally { await ctx.close(); }
   });
 
+  await step('TODO 316: the Compare button on a big pair runs in slices: "Comparing… n%", no differences until done, a second click and a closed tab drop a run', async () => {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    try {
+      const p = await ctx.newPage(), errors = [], q = (id) => p.getByTestId(id);
+      p.on('pageerror', (e) => errors.push(String(e)));
+      await p.goto(URL_ + '?autosave=86400000'); await q('count').waitFor({ state: 'attached' });
+      for (const [name, n] of [['t316-a.dxf', 20000], ['t316-b.dxf', 20300]]) {
+        await q('picker').setInputFiles({ name, mimeType: 'text/plain', buffer: Buffer.from(writeDxf(bigDoc(n))) });
+        await p.waitForFunction((name) => document.querySelector('.dtab.on .tname').textContent === name, name);
+      }
+      await p.locator('[data-menu=File]').click(); await p.getByRole('menuitem', { name: 'Compare drawings…', exact: true }).click();
+      const text = () => q('cmp-count').textContent(), done = () => p.waitForFunction(() => /difference|No differences/.test(document.querySelector('[data-testid=cmp-count]').textContent), null, { timeout: 120000 });
+      await q('cmp-run').click();
+      assert.match(await text(), /^Comparing… \d+%$/, 'a big pair shows the progress line');
+      assert.equal(await q('cmp-result').count(), 0, 'no result rows while it runs');
+      assert.equal(await q('cmp-glow').count(), 0, 'no differences are drawn while it runs');
+      await q('cmp-run').click();                     // a second click starts again; the first run is dropped
+      assert.match(await text(), /^Comparing… \d+%$/);
+      await done();
+      const once = await text();
+      assert.match(once, /^\d+ differences?( or more)?$/, 'the second run finished with differences');
+      assert.equal(await q('cmp-result').count(), 2, 'one result row per drawing');
+      await q('cmp-run').click(); await done();
+      assert.equal(await text(), once, 'an uninterrupted run gives the same count');
+      await q('cmp-run').click();                     // closing the tab mid-run drops it
+      await p.locator('.dtab.on .x').click();
+      await p.waitForTimeout(1500);
+      assert.equal(await p.locator('.tabs .dtab').count(), 2, 'the Compare tab closed, both drawings stay');
+      assert.deepEqual(errors, []);
+    } finally { await ctx.close(); }
+  });
+
   await step('lag harness: spline fixture counts', async () => {
     const { splineDoc } = await import('./tools/gen-big-dxf.mjs');
     assert.equal(typeof splineDoc, 'function', 'P6 provides the generated spline fixture');

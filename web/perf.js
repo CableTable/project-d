@@ -19,6 +19,28 @@ export function maxScale([a, b, c, d]) {
  *  then moving the view reuses its bitmap until the view settles. */
 export const heavy = (ms, drawn) => ms > 25 || drawn > 15000;
 
+// Chunked work (TODO 316): a generator yields its progress (0..1) whenever due() says its time slice is used up.
+// drain runs one to the end in a single call (the old synchronous behaviour); runChunks lets the page breathe between slices.
+export const drain = (gen) => { let s; while (!(s = gen.next()).done); return s.value; };
+export function slice(ms = 30) {
+  let t = performance.now();
+  return () => { const n = performance.now(); if (n - t < ms) return false; t = n; return true; };
+}
+/** The progress of `gen` squeezed into [a, b]; returns what gen returns. */
+export function* scaled(gen, a, b) {
+  for (;;) { const s = gen.next(); if (s.done) return s.value; yield a + (b - a) * s.value; }
+}
+/** Runs a generator one slice per timer tick; stops (undefined) as soon as alive() is false. onProgress gets each yielded fraction. */
+export async function runChunks(gen, { onProgress, alive = () => true } = {}) {
+  for (;;) {
+    const s = gen.next();
+    if (s.done) return s.value;
+    if (!alive()) return undefined;
+    onProgress?.(s.value);
+    await new Promise((r) => setTimeout(r));
+  }
+}
+
 /** Equal flat base-paint keys keep the same picture. */
 export const sameBase = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
 
