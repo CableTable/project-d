@@ -7042,10 +7042,11 @@ try {
     const p = await browser.newPage({ viewport: { width: 1440, height: 900 } });
     try {
       const raw = newDoc(4);
-      addEntities(raw, [dxfLine(10, 10, 90, 10, { aci: 1 }), dxfCircle(50, 45, 20, { aci: 5 })]);
+      // above 2000 selected items the refresh is deferred (DECISIONS.md, 329b); a small selection refreshes at once
+      addEntities(raw, [dxfLine(10, 10, 90, 10, { aci: 1 }), dxfCircle(50, 45, 20, { aci: 5 }), ...Array.from({ length: 2000 }, (_, i) => dxfLine(200 + i, 0, 200 + i, 5, { aci: 1 }))]);
       await p.goto(URL_);
       await p.getByTestId('picker').setInputFiles({ name: 'selection-329b.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(raw)) });
-      await p.waitForFunction(() => document.querySelector('[data-testid=entities]').textContent === 'Entities 2');
+      await p.waitForFunction(() => document.querySelector('[data-testid=entities]').textContent === 'Entities 2002');
       await p.getByTestId('ptab-objects').click();
       await p.locator('.obj[data-e="1"]').waitFor();
       const result = await p.evaluate(async () => {
@@ -7067,22 +7068,22 @@ try {
           const before = snapshot();
           observer.observe(chip, { childList: true });
           document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', ctrlKey: true, bubbles: true }));
-          const firstCount = count.textContent;
+          const firstCount = count.textContent, deferred = snapshot();
           document.querySelector('.obj[data-e="1"]').click();
           const secondCount = count.textContent, immediate = snapshot();
           await frame();
           const painted = snapshot();
           await frame();
-          return { before, firstCount, secondCount, immediate, painted, settled: snapshot(), updates: updates + observer.takeRecords().length };
+          return { before, firstCount, deferred, secondCount, immediate, painted, settled: snapshot(), updates: updates + observer.takeRecords().length };
         } finally {
           observer.disconnect();
           delete ctx.stroke;
         }
       });
-      assert.equal(result.firstCount, '2 selected');
+      assert.equal(result.firstCount, '2002 selected');
       assert.equal(result.secondCount, '1 selected');
-      assert.deepEqual(result.immediate, result.before, 'the ribbon and Properties wait for the paint');
-      assert.deepEqual(result.painted, { ...result.before, highlighted: true }, 'the highlight paints in the first frame');
+      assert.deepEqual(result.deferred, result.before, 'a 2002-item selection: the ribbon and Properties wait for the paint');
+      assert.deepEqual(result.immediate, { chip: 'Circle', colour: 'aci:5', highlighted: false }, 'a one-item pick refreshes at once and drops the waiting refresh');
       assert.deepEqual(result.settled, { chip: 'Circle', colour: 'aci:5', highlighted: true });
       assert.equal(result.updates, 1, 'the two picks refresh Properties once');
     } finally { await p.close(); }

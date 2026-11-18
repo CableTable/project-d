@@ -6540,6 +6540,7 @@ function pickPoint(d, p, pts, shift, hover = false) {
 }
 
 let selectionEditDoc = null, selectionEditFrame = 0;
+const DEFER_SELECTION_EDIT = 2000; // above this many selected items the ribbon / Properties refresh waits two frames (329b)
 function setSel(d, sel, stretchSelection = null, prefiltered = false) {
   if (d.raw.groups?.length) sel = selectionOf(d.raw.groups, sel, true, (i) => !lockedEnt(d, i), prefiltered);
   state.drawingRotate = null;
@@ -6555,7 +6556,8 @@ function setSel(d, sel, stretchSelection = null, prefiltered = false) {
   } else d.hl = Ed.itemsOfEntities(d.fl, sel, cmpEditingItem(d)?.off || d.off, hidIdx(d));
   if (!d.ed) warm(d);
   paintOverlay();
-  if (editable() === d) {
+  cancelAnimationFrame(selectionEditFrame); selectionEditDoc = null;
+  if (editable() === d && d.sel.size > DEFER_SELECTION_EDIT) {
     selectionEditDoc = d;
     cancelAnimationFrame(selectionEditFrame);
     // Paint is already queued. A newer pick starts the wait again so its highlight paints first too.

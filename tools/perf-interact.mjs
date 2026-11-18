@@ -14,17 +14,18 @@ import { shownItems, itemVisible, startHidden, unitFactor } from '../web/doc.js'
 // The recorder every mode shares: long tasks, frame gaps and lineTo on the drawing canvas around each run(), plus the full-paint counter (data-paints).
 async function instrument(page) {
   await page.evaluate(() => {
-    const rec = { frames: [], long: [], lineTo: 0 }, proto = CanvasRenderingContext2D.prototype, lineTo = proto.lineTo;
+    const rec = { frames: [], long: [], lineTo: 0 }, proto = CanvasRenderingContext2D.prototype, lineTo = proto.lineTo, pathProto = Path2D.prototype, pathLineTo = pathProto.lineTo;
     proto.lineTo = function (...args) {
       if (this.canvas.dataset.testid === 'drawing') rec.lineTo++;
       return lineTo.apply(this, args);
     };
+    pathProto.lineTo = function (...args) { rec.lineTo++; return pathLineTo.apply(this, args); };       // the selection overlay builds Path2D runs (TODO 329a)
     const observer = new PerformanceObserver((list) => { for (const e of list.getEntries()) rec.long.push(e.duration); });
     observer.observe({ entryTypes: ['longtask'] });
     let raf;
     const tick = (t) => { rec.frames.push(t); raf = requestAnimationFrame(tick); };
     raf = requestAnimationFrame(tick);
-    window.__perfInteract = { rec, observer, stop() { cancelAnimationFrame(raf); observer.disconnect(); proto.lineTo = lineTo; } };
+    window.__perfInteract = { rec, observer, stop() { cancelAnimationFrame(raf); observer.disconnect(); proto.lineTo = lineTo; pathProto.lineTo = pathLineTo; } };
   });
   const frame = () => page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
   const count = () => page.locator('[data-testid=entities]').textContent().then((s) => Number(s.replace(/\D/g, '')));
