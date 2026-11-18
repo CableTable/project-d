@@ -5220,7 +5220,7 @@ function paintOverlay(gesture = false) {
     } else if (d?.cmp) key = cmpBaseKey(d, base, cw, chh);
     const ekey = d && d.fl && !d.lay && !d.cmp ? paintKey(d, base, cw, chh) : null, dkey = key?.drag ? key : ekey?.drag ? ekey : null;
     c.dataset.snap = ''; c.dataset.keep = '';
-    if (dkey && c.dataset.nokeep !== '1' && !(kept && sameBase(kept.key, dkey))) {
+    if (full && dkey && c.dataset.nokeep !== '1' && !(kept && sameBase(kept.key, dkey))) {
       // a drag starts, or the view moved under it: the base without what is dragged is painted off screen once, so it is no counted full paint (TODO 317 / 320)
       snap = null; keptCv = keptCv || document.createElement('canvas'); keptCv.width = cw; keptCv.height = chh;
       kept = { key: dkey, drag: null };
