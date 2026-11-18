@@ -3980,14 +3980,14 @@ try {
       await p.locator('.dtab.on .x').click(); await q('close-dialog').waitFor(); await q('close-discard').click();
       await q('picker').setInputFiles('fixtures/three-sheets.pdf'); await q('bal-sheets').waitFor();
       assert.deepEqual(await p.locator('[data-sheet]').evaluateAll((els) => els.map((el) => el.dataset.sheet)), ['1', '2', '3'], 'reopen restores all PDF pages');
-      // Picture pages re-render, while geometry drawn over them keeps its own Undo.
-      p.once('dialog', (d) => d.accept('1'));
+      // A picture PDF is one picture of all its pages on one sheet (TODO 330): no sheet buttons, and geometry drawn over it keeps its Undo.
       await q('bg-picker').setInputFiles({ name: 'picture-sheets.pdf', mimeType: 'application/pdf', buffer: Buffer.from(writePdf([new Page(80, 50), new Page(120, 90)])) });
       await p.waitForFunction(() => document.querySelector('[data-testid=bg-name]').textContent === 'picture-sheets.pdf');
-      await circle(3); await sheet(2, 2); await circle(4); await sheet(1, 2);
+      await circle(3);                                              // (the bar redraws on the first edit: placeBackground sets d.pdf after its showDoc, today's order)
+      assert.equal(await q('bal-sheets').isVisible(), false, 'no sheet buttons for a picture PDF');
       assert.deepEqual(circles(await saved()), [3]);
       await p.keyboard.press('Control+z'); assert.deepEqual(circles(await saved()), []);
-      await sheet(2, 2); assert.deepEqual(circles(await saved()), [4]);
+      await p.keyboard.press('Control+y'); assert.deepEqual(circles(await saved()), [3]);
 
       // Each dirty sheet survives autosave while another, clean sheet is shown.
       await p.goto(URL_ + '?autosave=300');
@@ -8416,19 +8416,49 @@ try {
     } finally { await context.close(); }
   });
 
-  await step('TODO 309: Background on a two-page PDF still asks which page', async () => {
+  await step('TODO 309 / 330: Background on a two-page PDF asks nothing: both pages side by side, width = page 1 + 10 mm + page 2', async () => {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     try {
       const p = await context.newPage(), q = (id) => p.getByTestId(id);
       await p.goto(URL_ + '?autosave=86400000'); await q('picker').waitFor({ state: 'attached' });
       await p.evaluate(() => { window.__pdfopenManual = true; });
       const sheet = new Page(80, 50); sheet.rect(10, 10, 30, 20); sheet.stroke();
-      let asked = 0;
-      p.on('dialog', async (d) => { assert.equal(d.type(), 'prompt'); assert.equal(d.message(), 'two-pages.pdf has 2 pages. Which page?'); asked++; await d.accept('2'); });
+      p.on('dialog', () => assert.fail('a background PDF no longer asks which page'));
       await q('picker').setInputFiles({ name: 'two-pages.pdf', mimeType: 'application/pdf', buffer: Buffer.from(writePdf([sheet, new Page(120, 90)])) });
       await q('pdfopen-background').click();
-      await p.waitForFunction(() => document.querySelector('[data-testid=cmd-prompt]').textContent.includes('page 2 of 2, true size from the PDF'));
-      assert.equal(asked, 1); assert.equal(await q('bg-name').textContent(), 'two-pages.pdf');
+      await p.waitForFunction(() => document.querySelector('[data-testid=cmd-prompt]').textContent.includes('all 2 pages side by side, true size from the PDF'));
+      assert.equal(await q('bg-name').textContent(), 'two-pages.pdf');
+      const [w, h] = [Number(await q('dw').inputValue()), Number(await q('dh').inputValue())];
+      assert.ok(Math.abs(w - (80 + 10 + 120)) < 0.5 && Math.abs(h - 90) < 0.5, `picture ${w} × ${h} mm, want 210 × 90`);
+      assert.equal(await q('sheet-chip').isVisible(), false, 'one sheet: no per-page chip');
+      assert.equal(await p.locator('[data-sheet]').count(), 0, 'one sheet: no per-page buttons');
+    } finally { await context.close(); }
+  });
+
+  await step('TODO 330: a background of three mixed-size pages: top edges aligned, width = the pages + 2 × 10 mm, own size each', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    try {
+      const p = await context.newPage(), q = (id) => p.getByTestId(id);
+      await p.goto(URL_ + '?autosave=86400000'); await q('picker').waitFor({ state: 'attached' });
+      await p.evaluate(() => { window.__pdfopenManual = true; });
+      const solid = (w, h) => { const pg = new Page(w, h); pg.rect(0, 0, w, h); pg.fill(); return pg; };       // a black sheet: its pixels show where it landed
+      const bytes = writePdf([solid(80, 50), solid(40, 120), solid(100, 70)]);
+      await q('picker').setInputFiles({ name: 'three.pdf', mimeType: 'application/pdf', buffer: Buffer.from(bytes) });
+      await q('pdfopen-background').click();
+      await p.waitForFunction(() => document.querySelector('[data-testid=cmd-prompt]').textContent.includes('all 3 pages side by side, true size from the PDF'));
+      const [w, h] = [Number(await q('dw').inputValue()), Number(await q('dh').inputValue())];
+      assert.ok(Math.abs(w - (80 + 40 + 100 + 2 * 10)) < 0.6 && Math.abs(h - 120) < 0.5, `picture ${w} × ${h} mm, want 240 × 120`);
+      const alpha = await p.evaluate(async (bytes) => {
+        const { renderPdfPages } = await import('./pdf-read.js');
+        const seen = []; const r = await renderPdfPages(Uint8Array.from(bytes), { onPage: (k, n) => seen.push([k, n]) });
+        const c = r.canvas.getContext('2d'), a = (x, y) => c.getImageData(Math.round(x / r.mmPerPx), Math.round(y / r.mmPerPx), 1, 1).data[3];
+        return { seen, pages: r.pages, dpi: r.dpi, top: [40, 110, 190].map((x) => a(x, 0.5)), gap: [a(85, 10), a(135, 10)], under: [a(40, 60), a(110, 100), a(190, 60), a(190, 80)] };
+      }, [...bytes]);
+      assert.deepEqual(alpha.seen, [[1, 3], [2, 3], [3, 3]], 'status "Rendering page k of N" per page');
+      assert.deepEqual([alpha.pages, alpha.dpi], [3, 150]);
+      assert.deepEqual(alpha.top, [255, 255, 255], 'every page starts at the top edge');
+      assert.deepEqual(alpha.gap, [0, 0], 'the 10 mm gaps stay empty');
+      assert.deepEqual(alpha.under, [0, 255, 255, 0], 'each page keeps its own height (50 / 120 / 70 mm)');
     } finally { await context.close(); }
   });
 
@@ -17744,31 +17774,24 @@ try {
     }
   });
 
-  await step('Picture PDF: changing sheets keeps independent Undo and Redo and background scale', async () => {
+  await step('Picture PDF (TODO 330): all pages are one picture on one sheet: no sheet chips, the scale and Undo / Redo work on the whole picture', async () => {
     await closeTabs(/./);
-    page.once('dialog', (d) => d.accept('1'));
+    const asked = []; const onDialog = (d) => { asked.push(d.message()); d.dismiss(); }; page.on('dialog', onDialog);
     await t('bg-picker').setInputFiles({ name: 'picture-sheets.pdf', mimeType: 'application/pdf', buffer: Buffer.from(writePdf([new Page(80, 50), new Page(120, 90)])) });
     await page.waitForFunction(() => document.querySelector('[data-testid=bg-name]').textContent === 'picture-sheets.pdf');
-    const original = await sizeNow();
+    page.off('dialog', onDialog); assert.deepEqual(asked, [], 'a background PDF no longer asks which page');
+    const original = (await sizeNow()).map(Number);
+    assert.ok(Math.abs(original[0] - 210) < 0.5 && Math.abs(original[1] - 90) < 0.5, `both pages: ${original} mm, want 210 × 90`);
+    assert.equal(await t('sheet-chip').isVisible(), false, 'no sheet chip');
+    assert.equal(await page.locator('[data-sheet]').count(), 0, 'no per-page sheet buttons');
+    assert.equal(await t('undo').isDisabled(), true);
     await t('unit-up').click();
-    const enlarged = await sizeNow();
+    const enlarged = (await sizeNow()).map(Number);
+    original.forEach((v, i) => assert.ok(Math.abs(enlarged[i] - v * 25.4) < 0.2, `the whole picture scales: ${enlarged[i]} vs ${v * 25.4}`));       // the fields show 2 decimals: ×25.4 of a rounded value is off by up to 0.13
     assert.equal(await t('undo').isDisabled(), false);
-    await page.locator('[data-sheet="2"]').click();
-    await page.waitForFunction(() => document.querySelector('[data-testid=sheet-chip]').textContent === 'Sheet 2 / 2');
-    assert.equal(await t('undo').isDisabled(), true, 'unvisited sheet 2 has no history');
-    const before = await sizeNow();
-    await page.keyboard.press('Control+z'); assert.deepEqual(await sizeNow(), before, 'sheet 2 size stays put');
-    await t('unit-up').click(); await page.keyboard.press('Control+z');
-    assert.deepEqual(await sizeNow(), before, 'sheet 2 has its own working undo');
+    await page.keyboard.press('Control+z'); assert.deepEqual((await sizeNow()).map(Number), original, 'Undo takes the whole picture back');
     assert.equal(await t('redo').isDisabled(), false);
-    await page.locator('[data-sheet="1"]').click();
-    await page.waitForFunction(() => document.querySelector('[data-testid=sheet-chip]').textContent === 'Sheet 1 / 2');
-    assert.equal(await t('redo').isDisabled(), true, 'sheet 1 has no redo');
-    assert.deepEqual(await sizeNow(), enlarged, 'sheet 1 keeps its background scale');
-    await page.keyboard.press('Control+z'); assert.deepEqual(await sizeNow(), original, 'sheet 1 Undo still works');
-    await page.locator('[data-sheet="2"]').click();
-    await page.waitForFunction(() => document.querySelector('[data-testid=sheet-chip]').textContent === 'Sheet 2 / 2');
-    assert.equal(await t('redo').isDisabled(), false, 'sheet 2 redo stays with sheet 2');
+    await t('redo').click(); assert.deepEqual((await sizeNow()).map(Number), enlarged, 'Redo scales the whole picture again');
     await closeTabs(/./);
   });
 
@@ -23441,39 +23464,27 @@ try {
     } finally { await context.close(); }
   });
 
-  await step('TODO 253b: PDF page prompt Cancel imports nothing; invalid input falls back to page 1', async () => {
+  await step('TODO 253b / 330: a picture-only two-page PDF opened as a background asks no page: both pages in one picture', async () => {
     const pdf = [...writePdf([new Page(80, 50), new Page(120, 90)])];
-    for (const [answer, expected] of [[null, null], ['', 1], ['bad', 1], ['0', 1], ['-3', 1], ['2', 2], ['99', 2]]) {
-      const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
-      const p = await context.newPage();
-      p.on('pageerror', (e) => errors.push(String(e)));
-      try {
-        await p.addInitScript(({ answer, pdf }) => {
-          window.__pagePrompts = [];
-          window.prompt = (message, value) => { window.__pagePrompts.push([message, value]); return answer; };
-          window.__TAURI__ = { dialog: { open: async () => 'C:/jobs/pages.pdf', ask: async () => true },
-            fs: { readFile: async () => new Uint8Array(pdf) } };
-        }, { answer, pdf });
-        await p.goto(URL_ + '?autosave=86400000');
-        await p.getByTestId('count').waitFor({ state: 'attached' });
-        const before = await p.locator('.dtab .tname').allTextContents();
-        await p.getByTestId('open').click();
-        // the expected note text (empty after Cancel), wrapped so the empty string is truthy
-        const shown = await (await p.waitForFunction((expected) => {
-          const s = document.querySelector('[data-testid=cmd-prompt]').textContent;
-          return window.__pagePrompts.length && (expected === null ? s === '' : s.includes(`page ${expected} of 2, true size from the PDF`)) && { s };
-        }, expected)).jsonValue();
-        assert.deepEqual(await p.evaluate(() => window.__pagePrompts), [['pages.pdf has 2 pages. Which page?', '1']]);
-        if (expected === null) {
-          assert.deepEqual(await p.locator('.dtab .tname').allTextContents(), before);
-          assert.equal(shown.s, '');
-          assert.equal(await p.getByTestId('bg-name').textContent(), '');
-        } else {
-          assert.match(shown.s, new RegExp(`page ${expected} of 2, true size from the PDF`));
-          assert.equal(await panelControl(p, p.getByTestId('bg-name')).textContent(), 'pages.pdf');
-        }
-      } finally { await context.close(); }
-    }
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const p = await context.newPage();
+    p.on('pageerror', (e) => errors.push(String(e)));
+    try {
+      await p.addInitScript(({ pdf }) => {
+        window.__pagePrompts = [];
+        window.prompt = (message, value) => { window.__pagePrompts.push([message, value]); return '2'; };
+        window.__TAURI__ = { dialog: { open: async () => 'C:/jobs/pages.pdf', ask: async () => true },
+          fs: { readFile: async () => new Uint8Array(pdf) } };
+      }, { pdf });
+      await p.goto(URL_ + '?autosave=86400000');
+      await p.getByTestId('count').waitFor({ state: 'attached' });
+      await p.getByTestId('open').click();
+      await p.waitForFunction(() => document.querySelector('[data-testid=cmd-prompt]').textContent.includes('all 2 pages side by side, true size from the PDF'));
+      assert.deepEqual(await p.evaluate(() => window.__pagePrompts), [], 'no "Which page?"');
+      assert.equal(await panelControl(p, p.getByTestId('bg-name')).textContent(), 'pages.pdf');
+      const w = Number(await p.getByTestId('dw').inputValue());
+      assert.ok(Math.abs(w - 210) < 0.5, `both pages: ${w} mm wide, want 210`);
+    } finally { await context.close(); }
   });
 
   await step('TODO 253b: reopening matches both drawing paths and skips PDF backgrounds', async () => {

@@ -97,7 +97,7 @@ import { loadFont } from './fontload.js';
 import { fontForStyle, fontSubstitutions } from './fontsub.js';
 import { outlineOf } from './nestshape.js';
 import { partSource, readTitleBlock, withTitleBlock } from './pdf-export.js';
-import { readPdf, renderPdfPage, isPdf } from './pdf-read.js';
+import { readPdf, renderPdfPage, renderPdfPages, isPdf } from './pdf-read.js';
 import { preloadPictures, rawPixels } from './pictures.js';
 import { panelWidth } from './docker.js';
 
@@ -5837,19 +5837,15 @@ async function importBackground(file) {
   try { bitmap = await createImageBitmap(file); } catch { note(file.name + ': could not read this picture'); return; }
   placeBackground(file.name, bitmap, 25.4 / 96, 'shown at 96 dpi. Set length makes it true size');
 }
-/** A PDF page (page 1, or the one asked for when there are more) as the background, at true size (a 150 dpi picture of it). */
+/** Every page of a PDF as ONE background picture, side by side, at true size (150 dpi, lower when the picture would be too big). One sheet: d.pdf.sheets is [1]. */
 async function importBackgroundPdf(name, bytes, newTab = false, path = null) {
-  let page = 1;
-  const keep = bytes.slice(0);                                      // pdf.js takes the buffer it is given: a copy stays for the other sheets
+  const keep = bytes.slice(0);                                      // pdf.js takes the buffer it is given: a copy stays for the sheet reads
   try {
-    const probe = await renderPdfPage(bytes.slice(0), { page: 1, dpi: 20 });
-    if (probe.pages > 1) {
-      const a = window.prompt(`${name} has ${probe.pages} pages. Which page?`, '1');
-      if (a === null) { note(''); return; }
-      page = Math.min(probe.pages, Math.max(1, parseInt(a, 10) || 1));
-    }
-    const r = await renderPdfPage(bytes, { page, dpi: 150 });
-    placeBackground(name, await createImageBitmap(r.canvas), r.mmPerPx, `page ${page} of ${r.pages}, true size from the PDF`, newTab, { path, pdf: { name, bytes: keep, pages: r.pages, page, picture: true } });
+    const r = await renderPdfPages(bytes, { onPage: (k, n) => note(`Rendering page ${k} of ${n}`) });
+    const bitmap = await createImageBitmap(r.canvas);
+    r.canvas.width = r.canvas.height = 0;
+    placeBackground(name, bitmap, r.mmPerPx, r.pages > 1 ? `all ${r.pages} pages side by side, true size from the PDF` : 'page 1 of 1, true size from the PDF', newTab, { path, pdf: { name, bytes: keep, pages: r.pages, page: 1, sheets: [1], allPages: true, picture: true } });
+    if (r.dpi < 150) note(`Background at ${r.dpi} dpi (${r.pages} pages)`);
   } catch (err) { note(name + ': could not draw this PDF (' + (err && err.message ? err.message : err) + ')'); }
 }
 function placeBackground(name, bitmap, mm, how, newTab = false, src = null) {
@@ -7575,7 +7571,7 @@ async function balSheet(d, n) {
   try {
     let next = P.states?.get(n);
     if (P.picture) {
-      const r = await renderPdfPage(P.bytes.slice(0), { page: n, dpi: 150 }), bm = await createImageBitmap(r.canvas);
+      const r = P.allPages ? await renderPdfPages(P.bytes.slice(0)) : await renderPdfPage(P.bytes.slice(0), { page: n, dpi: 150 }), bm = await createImageBitmap(r.canvas);
       if (!next) { const raw = newDoc(); next = { ...tabFields(raw, flatten(raw)), hist: Ed.createHistory(), name: P.name, path: null, dirty: false }; }
       next = { ...next, bg: { name: P.name, mm: r.mmPerPx, x: 0, y: 0, visible: true, ...next.bg, bitmap: bm, w: bm.width, h: bm.height } };
     } else if (!next) {
@@ -7842,7 +7838,7 @@ function renderBalloons() {
     }));
   }
   ui.balPic.hidden = !(d && tool && !balTexts(d).length);
-  ui.balSheets.hidden = !(P && P.pages > 1);
+  ui.balSheets.hidden = !(P && P.pages > 1 && !P.allPages);                 // a background PDF is one picture of all its pages: one sheet, no chips
   if (!ui.balSheets.hidden) {
     const key = P.page + ':' + sheets.join(',') + ':' + P.name;
     if (ui.balSheets.dataset.sig !== key) {
@@ -7854,7 +7850,7 @@ function renderBalloons() {
         h('button', { class: 'btn', type: 'button', 'data-testid': 'delete-sheet', disabled: sheets.length === 1, onclick: () => deleteSheet(editable()) }, 'Delete sheet'));
     }
   }
-  ui.sheetChip.hidden = !(P && P.pages > 1);
+  ui.sheetChip.hidden = !(P && P.pages > 1 && !P.allPages);
   if (P) ui.sheetChip.textContent = `Sheet ${P.page} / ${sheets.length}`;
 }
 
