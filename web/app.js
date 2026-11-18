@@ -13,7 +13,7 @@ import { idbStore, localStore } from './idbstore.js';
 import { WORK_AREAS, workAreaDark } from './workarea.js';
 import { FOLDS, ribbonTabs, nextFold, doubleFold } from './ribbon.js';
 import { PRESETS, presetFor, stepRepeat, gridCellNote, GRIP_KEYS } from './layout.js';
-import { unitFactor, convertedNote, startHidden, entityCount, layerCounts, drawingBoxMm, fitRect, cursorMm, fitsSheet, spaceOf, boxOnSheet, itemVisible, addRecent, removeRecent, closePrompt, BIG_FILE, bigFileAsk, backupPath, dupName } from './doc.js';
+import { unitFactor, convertedNote, startHidden, entityCount, layerCounts, patchedCounts, drawingBoxMm, fitRect, cursorMm, fitsSheet, spaceOf, boxOnSheet, itemVisible, addRecent, removeRecent, closePrompt, BIG_FILE, bigFileAsk, backupPath, dupName } from './doc.js';
 import * as Ed from './edit.js';
 import { follow as followGroups, remap as remapGroups, splice as spliceGroups, swap as swapGroups, copy as copyGroups, group as groupDrawing, ungroup as ungroupDrawing, groupOf, selectionOf, wholeGroup as wholeDrawingGroup } from './groups.js';
 import * as AD from './autodim.js';
@@ -2415,7 +2415,7 @@ function showHistory() {
       if (!target || target !== d && !cmpEdit()) return;
       const st = stepHist(target, dir);
       if (!st) return;
-      if (restore(target, st) === false) { target.hist[forward ? 'undo' : 'redo'](st); return; }       // the refused step goes back where it was
+      if (restore(target, st, drawnOf(target, st)) === false) { target.hist[forward ? 'undo' : 'redo'](st); return; }       // the refused step goes back where it was
     } else {
       let st = d.lay ? laySnap(d.lay) : snapshotOf(d);
       let blSize = false;
@@ -2425,7 +2425,7 @@ function showHistory() {
       }
       if (!st) return;
       if (d.lay) layRestore(d, st);
-      else if (restore(d, { ...st, blSize }) === false) { hist[forward ? 'undoMany' : 'redoMany'](Math.abs(r - now), st); return; }       // the whole jump goes back where it was
+      else if (restore(d, { ...st, blSize }, drawnOf(d, st)) === false) { hist[forward ? 'undoMany' : 'redoMany'](Math.abs(r - now), st); return; }       // the whole jump goes back where it was
     }
     const current = historyOf(d), step = (d.cmp ? current.undoHistory : current)?.currentStep;
     if (step?.grip) {
@@ -6201,7 +6201,8 @@ const dimTarget = () => { const d = curDoc(); if (d?.lay) { d.factor = 1; return
 const pointTarget = () => state.tool === 'measure' ? measureTarget() : state.tool === 'dimension' ? dimTarget() : editable();
 const drawBox = (fl) => fl.boxes[spaceOf(fl) ? 'paper' : 'model'];
 const fmtSize = (v) => String(+Number(v).toFixed(2));
-const snapshotOf = (d) => ({ cmp: d.cmp && structuredClone(d.cmp), attmode: d.raw?.header.$ATTMODE, guides: d.guideState && structuredClone(d.guideState.s.guides), groups: d.raw?.groups, entities: d.raw?.entities, blocks: d.raw?.blocks, layers: d.raw?.layers, ltypes: d.raw?.ltypes, mm: d.bg ? d.bg.mm : null, pos: d.bg ? [d.bg.x, d.bg.y] : null, bl: d.balloons });
+/** fl + hid (TODO 319b): the drawn items of this state and the entities hidden one by one they were made with; Undo / Redo reuse them (see drawnOf). */
+const snapshotOf = (d) => ({ fl: d.fl, hid: d.hid?.size ? new Set(d.hid) : null, cmp: d.cmp && structuredClone(d.cmp), attmode: d.raw?.header.$ATTMODE, guides: d.guideState && structuredClone(d.guideState.s.guides), groups: d.raw?.groups, entities: d.raw?.entities, blocks: d.raw?.blocks, layers: d.raw?.layers, ltypes: d.raw?.ltypes, mm: d.bg ? d.bg.mm : null, pos: d.bg ? [d.bg.x, d.bg.y] : null, bl: d.balloons });
 function copySelection() {
   const lay = curLay();
   if (lay) {
@@ -6348,7 +6349,7 @@ async function placePaste() {
 const compareEditIndexes = new WeakMap();
 /** The edit index of a tab (pick grid, ends), built on first use and again after a change. */
 function edIndex(d) {
-  if (!d.ed) d.ed = Ed.makeIndex(d.raw, d.fl, d.off, hidIdx(d));
+  if (!d.ed) { d.ed = Ed.makeIndex(d.raw, d.fl, d.off, hidIdx(d), undefined, d.edPrev); d.edPrev = null; }       // edPrev: the index before the last edit, its parts for unchanged items are kept (TODO 319c)
   const item = cmpEditingItem(d);
   if (!item || item.off.size === d.off.size && [...item.off].every((i) => d.off.has(i))) return d.ed;
   const c = compareEditIndexes.get(item.off);
@@ -6701,7 +6702,7 @@ function settleMeasures(d, next) {
 function commit(d, next, label, keepSel) {       // keepSel (a grip edit's objects): Undo / Redo of this step select them again
   if (d.vlay) { layObjCommit(d, next, label, keepSel); return true; }
   let fl, names, index;       // drawn first, so a too-nested result leaves history, Redo and the drawing untouched; restore reuses it
-  const raw = d.raw;
+  const raw = d.raw, oldFl = d.fl;       // oldFl: d.fl is released below while the new one is drawn, the undo step keeps it (TODO 319b)
   next = settleMeasures(d, next);
   if (raw && (next.entities !== raw.entities || next.blocks !== raw.blocks || next.layers && next.layers !== raw.layers || 'attmode' in next && next.attmode !== raw.header.$ATTMODE)) {
     if (next.widths) {
@@ -6720,10 +6721,11 @@ function commit(d, next, label, keepSel) {       // keepSel (a grip edit's objec
         if (!(e instanceof DrawingError)) throw e;
         note(e.message); return false;
       }
+      if (cached.ed?.ix) d.edPrev = { ix: cached.ed.ix, fl: cached.fl };
       cached = null;
     }
   }
-  pushHistory(d, keepSel ? { ...snapshotOf(d), sel: [...keepSel], grip: true } : snapshotOf(d), label); d.newLayer = null;
+  pushHistory(d, { ...snapshotOf(d), fl: oldFl, ...keepSel && { sel: [...keepSel], grip: true } }, label); d.newLayer = null;
   restore(d, next, fl, names, index);
   return true;
 }
@@ -6747,6 +6749,8 @@ function restoreBg(d, st) {
   if (st.mm != null && d.bg) d.bg.mm = st.mm;
   if (st.pos && d.bg) [d.bg.x, d.bg.y] = st.pos;
 }
+/** The drawn items a stored step brings back, or undefined (restore draws them again): they were made with the entities hidden one by one that are hidden now. */
+const drawnOf = (d, st) => st.fl && (st.hid?.size || 0) === (d.hid?.size || 0) && [...(st.hid || [])].every((e) => d.hid.has(e)) ? st.fl : undefined;
 /** Puts the tab in the state `st`. False (and the tab as it was, everything) when the drawing is too nested to draw again. */
 function restore(d, st, drawn, layerNames, index) {
   const before = snapshotOf(d), header = d.raw?.header;
@@ -6764,6 +6768,7 @@ function restore(d, st, drawn, layerNames, index) {
     restoreBg(d, st);
     d.dirty = true; if (cmpDoc()) cmpRefresh(d); showDoc(); return;
   }
+  const was = d.cnt?.entities === d.raw.entities && d.cnt.counts === d.counts && d.cnt.n === d.entities ? d.cnt : null, prevIx = !index && d.ed?.ix ? { ix: d.ed.ix, fl: d.fl } : null;       // before the entity list and fl change: the counts and the pick index are patched from these
   d.raw.groups = st.groups || followGroups(d.raw.groups, d.raw.entities, st.entities);       // Undo / Redo bring the groups back; an edit follows its entities
   d.raw.entities = st.entities; d.raw.blocks = st.blocks;
   const names = layerNames || [...d.off].map((i) => d.fl.layers[i] && d.fl.layers[i].name);
@@ -6778,7 +6783,8 @@ function restore(d, st, drawn, layerNames, index) {
   restoreBg(d, st);
   d.off = new Set(fl.layers.map((l, i) => (names.includes(l.name) ? i : -1)).filter((i) => i >= 0));      // layer numbers can shift: keep them by name
   if (index) { index.fl = fl; index.items = fl.items; }
-  Object.assign(d, { fl, counts: layerCounts(d.raw, fl), entities: entityCount(d.raw, fl), box: drawingBoxMm(fl, d.factor), dirty: true, ed: index || null, outl: null, sel: new Set(), stretchSelection: null, hl: [] });
+  const c = patchedCounts(was, d.raw, fl);
+  Object.assign(d, { fl, counts: c.counts, entities: c.n, cnt: { entities: d.raw.entities, names: fl.layers.map((l) => l.name), space: spaceOf(fl), counts: c.counts, n: c.n }, edPrev: index ? null : prevIx || d.edPrev, box: drawingBoxMm(fl, d.factor), dirty: true, ed: index || null, outl: null, sel: new Set(), stretchSelection: null, hl: [] });
   if (cmpDoc()) cmpRefresh(d);
   showDoc();
   warm(d);
@@ -6824,7 +6830,7 @@ function undo(d) {
   const m = state.modDoc === d && state.mod?.kind === 'copy' ? state.mod : null;
   const copied = m && d.hist.labels().past.at(-1) === 'Copy', raw = d.raw?.entities;
   const st = stepHist(d, 'undo'); if (!st) { note('Nothing to undo'); return; }
-  if (restore(d, st) === false) { d.hist.redo(st); return; }       // the step goes back on the undo list
+  if (restore(d, st, drawnOf(d, st)) === false) { d.hist.redo(st); return; }       // the step goes back on the undo list
   if (m?.raw) {
     if (copied && m.raw === raw && [...m.sel].every((i) => raw[i] === st.entities[i])) m.raw = d.raw.entities;
     else { setTool('select'); note('Undone. Copy ended: drawing or source objects changed; start Copy again'); return; }
@@ -6833,7 +6839,7 @@ function undo(d) {
 }
 function redo(d) {
   const st = stepHist(d, 'redo'); if (!st) { note('Nothing to redo'); return; }
-  if (restore(d, st) === false) { d.hist.undo(st); return; }       // the step goes back on the redo list
+  if (restore(d, st, drawnOf(d, st)) === false) { d.hist.undo(st); return; }       // the step goes back on the redo list
   note('Redone');
 }
 

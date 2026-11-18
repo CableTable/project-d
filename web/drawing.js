@@ -1043,12 +1043,37 @@ function curveExtremes(points, closed, refine, period) {
 }
 
 /**
+ * TODO 319c: the pieces and snaps an earlier index (prev = { ix, fl }) already made for items that are still there, found by their `ops`
+ * (an edit patch keeps those arrays; a changed or new item has new ones). Returns (item, idx) => true when it copied the item's parts into
+ * `stored` / `snaps`, or null (build everything) when prev is not the same kind of index or its items are not safe to match.
+ */
+function reuser(prev, fl, paper, frame, stored, snaps, stride) {
+  const o = prev?.ix, of = prev?.fl;
+  if (!o?.stored || o.paper !== !!paper || o.frame !== frame || of.mats !== fl.mats) return null;
+  const at = new Map(), n = of.items.length;
+  for (let i = 0; i < n; i++) { const k = of.items[i].ops ?? of.items[i]; if (at.has(k)) return null; at.set(k, i); }
+  const starts = (list, itemOf, from) => {       // list is in item order: where each old item's run begins (and ends)
+    const s = new Int32Array(n + 1);
+    for (let i = 0, p = from; i <= n; i++) { while (p < list.length && itemOf(list[p]) < i) p++; s[i] = p; }
+    return s;
+  };
+  const ps = starts(o.stored, (v) => (typeof v === 'number' ? v % o.stride : v.it), 0), ss = starts(o.snaps, (s) => s.it, o.head);
+  return (it, idx) => {
+    const i = at.get(it.ops ?? it);
+    if (i === undefined || of.items[i].m !== it.m) return false;
+    for (let k = ps[i]; k < ps[i + 1]; k++) { const v = o.stored[k]; if (typeof v === 'number') stored.push(Math.floor(v / o.stride) * stride + idx); else { v.it = idx; stored.push(v); } }
+    for (let k = ss[i]; k < ss[i + 1]; k++) { const s = o.snaps[k]; s.it = idx; snaps.push(s); }
+    return true;
+  };
+}
+
+/**
  * The pickable pieces of one space (the model, or the sheet): straight pieces, arcs, and snap points (ends,
  * middles, centres, points), in the drawing's own coordinates, on a grid for quick lookups.
  */
-export function pickIndex(fl, paper, visible = () => true, extremeFrame = IDENT) {
+export function pickIndex(fl, paper, visible = () => true, extremeFrame = IDENT, prev = null) {
   // Spline segments already live in ops: retain an item/op address, not another object and four boxed coordinates per segment.
-  const stored = [], snaps = [], stride = fl.items.length;
+  const stored = [], snaps = [], stride = fl.items.length, reuse = reuser(prev, fl, paper, extremeFrame, stored, snaps, stride);
   const pieces = new Proxy(stored, { get(target, key, receiver) {
     const value = Reflect.get(target, key, receiver);
     if (key === 'length' || typeof value !== 'number') return value;
@@ -1063,8 +1088,10 @@ export function pickIndex(fl, paper, visible = () => true, extremeFrame = IDENT)
       break;
     }
   }
+  const head = snaps.length;
   fl.items.forEach((it, idx) => {
     if (!!it.ps !== !!paper) return;
+    if (reuse?.(it, idx)) return;
     const m = fl.mats[it.m];
     if (it.insertion) { const [x, y] = mapply(m, ...it.insertion); snaps.push({ x, y, kind: 'insertion', it: idx }); }
     if (it.k === 'n') { const [x, y] = mapply(m, it.x, it.y); snaps.push({ x, y, kind: 'node', it: idx }); return; }
@@ -1147,7 +1174,7 @@ export function pickIndex(fl, paper, visible = () => true, extremeFrame = IDENT)
   if (!Number.isFinite(x0)) return { pieces, snaps, G: 0 };
   const G = Math.min(512, Math.max(1, Math.ceil(Math.sqrt((pieces.length + snaps.length + fl.items.length) / 3))));
   const cell = Math.max(x1 - x0, y1 - y0, 1e-9) / G;
-  const ix = { pieces, snaps, G, cell, x0, y0, pc: new Map(), sc: new Map(), wide: [] };
+  const ix = { pieces, snaps, G, cell, x0, y0, pc: new Map(), sc: new Map(), wide: [], stored, stride, head, paper: !!paper, frame: extremeFrame };
   const key = (i, j) => i * 4096 + j;
   const at = (x) => Math.min(G - 1, Math.max(0, Math.floor(x)));
   pieces.forEach((p, n) => {

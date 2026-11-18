@@ -18,7 +18,7 @@ const source = names.map((name) => {
   assert.ok(fn, name);
   return fn;
 }).join('\n');
-const snapshot = app.match(/^const snapshotOf = .*;$/m)[0];
+const snapshot = app.match(/^const snapshotOf = .*;$/m)[0] + '\n' + app.match(/^const drawnOf = .*;$/m)[0];
 const noop = () => {};
 const clean = (x) => JSON.parse(JSON.stringify(x));
 function setup(raw, factor = 1, drawEdit = flattenEdit) {

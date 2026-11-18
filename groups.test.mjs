@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 import { readDxf, flatten, DrawingError } from './web/drawing.js';
-import { layerCounts, entityCount, drawingBoxMm } from './web/doc.js';
+import { patchedCounts, spaceOf, drawingBoxMm } from './web/doc.js';
 import * as W from './web/dxf-write.js';
 import { filletEntities, filletAllPolyline } from './web/fillet.js';
 import { trimEntity, mirrorEntity } from './web/modify.js';
@@ -80,7 +80,7 @@ test('TODO 97b: group-only restore, Undo and Redo leave entity and block referen
   const { snapshotOf, restore } = runInNewContext([
     snapshotSource, appFunction('restoreBg'), appFunction('restore'), '({ snapshotOf, restore });',
   ].join('\n'), {
-    followGroups: follow, flatten, DrawingError, layerCounts, entityCount, drawingBoxMm,
+    followGroups: follow, flatten, DrawingError, patchedCounts, spaceOf, drawingBoxMm,
     cmpDoc: () => false, showDoc() {}, warm() {}, update() {},
   });
   const raw = { ...W.newDoc(), entities: [W.line(0, 0, 10, 0), W.line(0, 10, 10, 10)] };
@@ -320,7 +320,7 @@ test('TODO 97a fix 2: snapshotOf / restore carry edited and split groups through
   const { snapshotOf, restore } = runInNewContext([
     snapshotSource, appFunction('restoreBg'), appFunction('restore'), '({ snapshotOf, restore });',
   ].join('\n'), {
-    followGroups: follow, flatten, DrawingError, layerCounts, entityCount, drawingBoxMm,
+    followGroups: follow, flatten, DrawingError, patchedCounts, spaceOf, drawingBoxMm,
     cmpDoc: () => false, showDoc() {}, warm() {}, update() {},
   });
   const a = W.line(0, 0, 10, 0), b = W.line(10, 0, 10, 10), c = W.circle(30, 30, 2);

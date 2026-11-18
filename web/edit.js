@@ -245,8 +245,8 @@ export function resizeItemsBox(raw, items, factor = 1) {
  * What the editor needs about a drawing: per shown entity its items and box, a pick grid, and the end points.
  * off: the layer indexes switched off (their entities are not there to pick); hid: entities hidden one by one (Objects tab), the same.
  */
-export function makeIndex(raw, fl, off = new Set(), hid = null, extremeFrame) {
-  const ix = pickIndex(fl, spaceOf(fl) === 1, undefined, extremeFrame);
+export function makeIndex(raw, fl, off = new Set(), hid = null, extremeFrame, prev = null) {
+  const ix = pickIndex(fl, spaceOf(fl) === 1, undefined, extremeFrame, prev);       // prev { ix, fl }: an earlier index of this drawing, its parts for unchanged items are kept (TODO 319c)
   const ed = indexWithVisibility({ raw, fl, ix }, off, hid);
   const all = off.size || hid?.size ? indexWithVisibility({ raw, fl, ix }, new Set(), null) : ed;
   ed.boxGrid = entityBoxGrid(all);
@@ -1395,13 +1395,16 @@ export function copyEntities(raw, selection, dx, dy) {
  * undoMany(n, current) / redoMany(n, current) go several steps at once.
  */
 let historyOrder = 0;
+/** A step's state may carry `fl` and `hid` (the drawn items, TODO 319b): only the newest KEEP_FL steps of a list keep them, as each fl is memory. */
+export const KEEP_FL = 10;
+const lean = (list) => { const s = list[list.length - 1 - KEEP_FL]?.s; if (s?.fl) { delete s.fl; delete s.hid; } };
 export function createHistory(limit = 100) {
   let revision = 0;
   let undo = [], redo = [];                                  // entries { s: the state to go back to, label: the step it undoes }
   const h = {
-    push(state, label = 'Edit') { revision++; undo.push({ s: state, label, order: ++historyOrder }); if (undo.length > limit) undo.shift(); redo = []; },
-    undo(current) { revision++; const e = undo.pop(); if (!e) return null; redo.push({ ...e, s: current }); return e.s; },
-    redo(current) { revision++; const e = redo.pop(); if (!e) return null; undo.push({ ...e, s: current }); return e.s; },
+    push(state, label = 'Edit') { revision++; undo.push({ s: state, label, order: ++historyOrder }); if (undo.length > limit) undo.shift(); redo = []; lean(undo); },
+    undo(current) { revision++; const e = undo.pop(); if (!e) return null; redo.push({ ...e, s: current }); lean(redo); return e.s; },
+    redo(current) { revision++; const e = redo.pop(); if (!e) return null; undo.push({ ...e, s: current }); lean(undo); return e.s; },
     /** Back n steps (1 to canUndo count): the state to restore, or null. */
     undoMany(n, current) { if (!(n >= 1) || n > undo.length) return null; let s = current; for (let i = 0; i < n; i++) s = h.undo(s); return s; },
     redoMany(n, current) { if (!(n >= 1) || n > redo.length) return null; let s = current; for (let i = 0; i < n; i++) s = h.redo(s); return s; },

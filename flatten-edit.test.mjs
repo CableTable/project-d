@@ -37,3 +37,38 @@ test('319a a changed layer table falls back to the full flatten', () => {
   assert.deepEqual(drawn, flatten(next, hidden));
   assert.notEqual(drawn.items[0], fl.items[0], 'rebuild even the unchanged first item');
 });
+
+// 319c: the fallbacks of patchEntities (rv-319a gap): each one gives a drawing equal to a fresh flatten, built again (no item kept)
+function fallsBack(raw, next) {
+  const fl = flatten(raw), drawn = flattenEdit(raw, next, fl, new Set());
+  assert.deepEqual(drawn, flatten(next, new Set()));
+  assert.ok(drawn.items.every((it) => !fl.items.includes(it)), 'every item is drawn again');
+}
+
+test('319c hole-fill: deleting a closed outline while another entity is filled draws everything again', () => {
+  const raw = readDxf(writeDxf(Object.assign(newDoc(4), { entities: [circle(0, 0, 9), circle(0, 0, 3), line(20, 0, 30, 0)] })));
+  raw.entities[0] = { ...raw.entities[0], fill: 'aci:1' };
+  fallsBack(raw, { ...raw, ...removeEntities(raw, new Set([1])) });
+});
+
+test('319c block definition changed: draws everything again', () => {
+  const raw = drawing(), mark = raw.blocks.Mark;
+  fallsBack(raw, { ...raw, blocks: { ...raw.blocks, Mark: { ...mark, entities: mark.entities.slice(1) } } });
+});
+
+test('319c the last plain entity on a layer: the layer list could change, so draw everything again', () => {
+  const raw = drawing();
+  fallsBack(raw, { ...raw, ...removeEntities(raw, new Set([3])) });
+});
+
+test('319c a changed linetype table draws everything again', () => {
+  const raw = drawing();
+  fallsBack(raw, { ...raw, ...moveEntities(raw, new Set([1]), 5, 5), ltypes: { ...raw.ltypes } });
+});
+
+test('319c a stale hidden set (d.hid) is no patch: hidden entities draw everything again', () => {
+  const raw = drawing(), fl = flatten(raw), hidden = new Set([raw.entities[0]]), next = { ...raw, ...removeEntities(raw, new Set([1])) };
+  const drawn = flattenEdit(raw, next, fl, hidden);
+  assert.deepEqual(drawn, flatten(next, hidden));
+  assert.ok(drawn.items.every((it) => !fl.items.includes(it)));
+});
