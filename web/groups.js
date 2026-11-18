@@ -29,11 +29,11 @@ export function ungroup(groups = [], selection) {
 export const groupOf = (groups = [], entity) => groups.find((g) => g.members.includes(entity)) || null;
 
 /** A crossing / click expands touched groups; a window accepts only complete groups. */
-export function selectionOf(groups = [], selection, crossing = true, eligible = () => true) {
-  const seeds = new Set([...selection].filter(eligible)), picked = new Set(seeds);
+export function selectionOf(groups = [], selection, crossing = true, eligible = () => true, prefiltered = false) {
+  const seeds = prefiltered ? selection : new Set([...selection].filter(eligible)), picked = new Set(seeds);
   for (const g of groups) {
     if (g.selectable === false || !g.members.some((i) => seeds.has(i))) continue;
-    const include = g.members.every(eligible) && (crossing || g.members.every((i) => seeds.has(i)));
+    const include = g.members.every((i) => seeds.has(i) || (crossing && eligible(i)));
     for (const i of g.members) { if (include) picked.add(i); else picked.delete(i); }
   }
   return picked;

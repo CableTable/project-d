@@ -931,8 +931,8 @@ function renderRibbon() {
     setSelect(ui.ribbonLayer, [...new Set(editable() ? ['0', ...allLayerNames(d)] : ['0'])].map((n) => [n, n]), editable() ? curLayerName(d) : '0');
   }
   if (ui.ribbonColour) {
-    const ents = editable() ? propEnts(d).map((x) => x[1]) : [], all = editable() ? propEnts(d, true).map((x) => x[1]) : [], sm = PR.summarize(ents);
-    const values = all.map((e) => PR.widthKey(e, d.factor)), width = values.length && values.every((w) => w === values[0]) ? values[0] ?? '' : '';
+    const { ents, all, summary: sm, width: sharedWidth } = editable() ? propEnts(d) : emptyProps;
+    const width = sharedWidth ?? '';
     const colour = ents.length ? sm.colour : currentColour;
     ui.ribbonSwatch.style.background = colour == null ? 'var(--muted)' : colourCss(colour === 'bylayer' ? (ents.length ? PR.effectiveColour(ents[0], layerMap(d)) : editable() ? PR.effectiveColour({ layer: curLayerName(d) }, layerMap(d)) : 'aci:7') : colour);
     for (const [sel, options, value] of [[ui.ribbonColour, PR.colourOptions(colour), colour],
@@ -4878,8 +4878,8 @@ function renderStatus() {
   let layer = '—';
   if (d && d.lay) layer = 'Parts';
   else if (d && d.fl && d.sel && d.sel.size) {
-    const names = [...new Set([...d.sel].map((e) => d.raw.entities[e] && d.raw.entities[e].layer).filter((n) => n != null))];
-    layer = names.length === 1 ? names[0] : names.length + ' layers';
+    const { layers } = propEnts(d);
+    layer = layers.size === 1 ? layers.values().next().value : layers.size + ' layers';
   }
   ui.layerInfo.textContent = ui.layerInfo.title = 'Layer: ' + layer;
 }
@@ -6508,15 +6508,19 @@ function pickPoint(d, p, pts, shift, hover = false) {
   return tq ? [tq[0], tq[1]] : straight && q.length === 2 ? Ed.orthoLock(base, q) : q;
 }
 
-function setSel(d, sel, stretchSelection = null) {
-  if (d.raw.groups?.length) sel = selectionOf(d.raw.groups, sel, true, (i) => !lockedEnt(d, i));
+function setSel(d, sel, stretchSelection = null, prefiltered = false) {
+  if (d.raw.groups?.length) sel = selectionOf(d.raw.groups, sel, true, (i) => !lockedEnt(d, i), prefiltered);
   state.drawingRotate = null;
   d.stretchSelection = stretchSelection || { boxes: [], picked: new Set(sel) };
   d.sel = sel; d.lastPick = -1;       // lastPick: the entity just clicked (Shaping's target); a box or any other selection has none
   if (sel.size) state.balSel = null;
   // no index right after a commit: list from the items so the click does not build it (warm does, after the paint)
   const ed = d.ed && edIndex(d);
-  d.hl = ed ? [...sel].flatMap((e) => (ed.byEnt[e] || []).map((i) => ed.items[i])) : Ed.itemsOfEntities(d.fl, sel, cmpEditingItem(d)?.off || d.off, hidIdx(d));
+  if (ed) {
+    const hl = [];
+    for (const e of sel) if (ed.byEnt[e]) for (const i of ed.byEnt[e]) hl.push(ed.items[i]);
+    d.hl = hl;
+  } else d.hl = Ed.itemsOfEntities(d.fl, sel, cmpEditingItem(d)?.off || d.off, hidIdx(d));
   if (!d.ed) warm(d);
   paintOverlay(); renderEdit();
   if (state.ptab === 'objects') renderObjects(true);
@@ -11190,9 +11194,10 @@ function selectAll() {
     update(); note(`${idxs.length} part${idxs.length === 1 ? '' : 's'} selected`);
   } else if (d) {
     if (drawLive() && DR.toolBusy(state.draw)) return;
-    const all = edIndex(d).shown.filter((e) => !lockedEnt(d, e));       // a locked layer cannot be picked, so Ctrl+A + Delete cannot reach it
-    if (!all.length) { note('Nothing to select'); return; }
-    setSel(d, new Set(all)); note(`${all.length} entit${all.length === 1 ? 'y' : 'ies'} selected`);
+    const all = new Set();
+    for (const e of edIndex(d).shown) if (!lockedEnt(d, e)) all.add(e);       // a locked layer cannot be picked, so Ctrl+A + Delete cannot reach it
+    if (!all.size) { note('Nothing to select'); return; }
+    setSel(d, all, null, true); note(`${all.size} entit${all.size === 1 ? 'y' : 'ies'} selected`);
   }
 }
 
@@ -11514,15 +11519,13 @@ function drawSheetSel() {
 // A value the selected shapes do not share shows "*varies*"; typing into it sets it on all of them. One undo step per change.
 const VARIES = '*varies*';
 const propDoc = () => curLay() ? layObjSelDoc(curDoc()) : editable();
-/** [index, entity] of the selection without kept dimensions (a dimension has its own text-height field). */
-function propEnts(d, all = false) {
-  const out = [];
-  for (const e of d.sel) { const ent = d.raw.entities[e]; if (ent && (all || ent.layer !== Ed.DIM_LAYER)) out.push([e, ent]); }
-  return out;
+const emptyProps = { ents: [], all: [], summary: PR.summarize([]), width: null };
+function propEnts(d) {
+  return PR.selectionProps(d, d.vlay ? layHist(d.vlay).revision : d.hist?.revision);
 }
 /** The layers to pick from: the file's, and the ones the selection is on (not the kept-dimensions layer). */
-function propLayers(d, pe) {
-  const names = new Set([...Object.keys(d.raw.layers || {}), ...d.fl.layers.map((l) => l.name), ...pe.map((x) => x[1].layer)]);
+function propLayers(d, layers) {
+  const names = new Set([...Object.keys(d.raw.layers || {}), ...d.fl.layers.map((l) => l.name), ...layers]);
   names.delete(Ed.DIM_LAYER);
   return [...names].sort((a, b) => a.localeCompare(b));
 }
@@ -11533,8 +11536,8 @@ function colourCss(key) {
 }
 const layerMap = (d) => d.raw.layers || {};
 async function pickPropColour() {
-  const d = propDoc(), ent = d && propEnts(d)[0]?.[1];
-  const mixed = !!ent && new Set(propEnts(d).map((x) => PR.colourKey(x[1]))).size > 1;
+  const d = propDoc(), { ents: [ent], summary } = d ? propEnts(d) : emptyProps;
+  const mixed = !!ent && summary.colour === null;
   const key = ent ? PR.effectiveColour(ent, layerMap(d)) : currentColour === 'bylayer' && d ? PR.effectiveColour({ layer: curLayerName(d) }, layerMap(d)) : currentColour;
   const rgb = await pickColour(keyRgb(key), mixed);
   if (rgb) propSet('colour', rgbKey(rgb));
@@ -11549,9 +11552,10 @@ function buildPropsSection() {
   ui.propLt = h('select', { class: 'fld', 'aria-label': 'Line type', 'data-testid': 'prop-lt' });
   ui.propSwatch = h('button', { class: 'cswatch', type: 'button', 'aria-label': 'Pick colour', 'data-testid': 'prop-swatch', onclick: pickPropColour });
   ui.propFill = h('button', { class: 'cswatch', type: 'button', 'aria-label': 'Fill colour', 'data-testid': 'prop-fill', onclick: async () => {
-    const d = propDoc(), ents = d && propEnts(d).map((x) => x[1]).filter(FI.closedOutline);
-    if (!ents?.length) return;
-    const rgb = await pickColour(keyRgb(ents[0].fill || currentFill), !ents[0].fill || ents.some((e) => e.fill !== ents[0].fill));
+    const d = propDoc(), props = d && propEnts(d);
+    if (!props?.closed) return;
+    const fill = props.closed.fill;
+    const rgb = await pickColour(keyRgb(fill || currentFill), !fill || props.fillMixed);
     if (rgb && propDoc() === d) applyFill(rgbKey(rgb));
   } });
   ui.propFillLabel = h('span', { class: 'lbl' });
@@ -11640,8 +11644,7 @@ function renderPropsPanel(d) {
     ui.propSimilar.hidden = !selItems().some((x) => x.p.src === 'loose' && x.part.obj);
     return;
   }
-  const pe = propEnts(d), ents = pe.map((x) => x[1]), all = propEnts(d, true).map((x) => x[1]), sm = PR.summarize(ents), none = !ents.length;
-  const text = ents.length > 0 && ents.every((e) => ['TEXT', 'MTEXT'].includes(e.type));
+  const props = propEnts(d), { ents, all, summary: sm, text, width } = props, none = !ents.length;
   ui.propInfo.querySelector('.section-title').textContent = text ? 'Text' : 'Info';
   if (text && ui.propJumps.nextElementSibling !== ui.propInfo) ui.propJumps.after(ui.propInfo);
   else if (!text && ui.propBody.lastElementChild !== ui.propInfo) ui.propBody.append(ui.propInfo);
@@ -11657,7 +11660,6 @@ function renderPropsPanel(d) {
   ui.propSimilar.hidden = ui.propMatch.hidden = none;
   ui.propQuick.hidden = false;
   ui.propEmpty.textContent = d.sel.size ? 'A kept dimension has its own text height, above.' : 'Select something to see its properties.';
-  const widths = all.map((e) => PR.widthKey(e, d.factor)), width = widths.length && widths.every((w) => w === widths[0]) ? widths[0] : null;
   ui.propWidthHint.textContent = 'Selection · mm';
   ui.propWidthUnits.textContent = 'mm';
   for (const b of ui.propWidthPresets.children) {
@@ -11668,29 +11670,28 @@ function renderPropsPanel(d) {
     ui.propWidthInput.value = typeof width === 'number' ? String(+width.toPrecision(10)) : '';
     ui.propWidthInput.placeholder = width == null ? VARIES : typeof width === 'string' ? width : '';
   }
-  for (const [control, key, values] of [[ui.propEnds, 'cap', ['butt', 'round', 'square']], [ui.propCorners, 'join', ['miter', 'round', 'bevel']]]) {
-    const value = all[0]?.[key] || values[0], mixed = all.some((e) => (e[key] || values[0]) !== value);
-    setSelect(control, [...(mixed ? [['', VARIES]] : []), ...values.map((v) => [v, v[0].toUpperCase() + v.slice(1)])], mixed ? '' : value);
+  for (const [control, value, values] of [[ui.propEnds, props.cap, ['butt', 'round', 'square']], [ui.propCorners, props.join, ['miter', 'round', 'bevel']]]) {
+    setSelect(control, [...(value == null ? [['', VARIES]] : []), ...values.map((v) => [v, v[0].toUpperCase() + v.slice(1)])], value ?? '');
   }
-  ui.propScale.checked = all[0]?.scaleWithObject === true;
-  ui.propScale.indeterminate = all.some((e) => !!e.scaleWithObject !== ui.propScale.checked);
+  ui.propScale.checked = props.scale;
+  ui.propScale.indeterminate = props.scaleMixed;
   ui.propScaleHint.textContent = ui.propScale.indeterminate ? VARIES : '';
   if (none) return;
-  const closed = ents.filter(FI.closedOutline), fill = closed[0]?.fill;
-  ui.propFillSec.hidden = !closed.length;
-  ui.propJumps.querySelector('[data-testid=props-jump-fill]').hidden = !closed.length;
-  ui.propFillRow.hidden = !closed.length;
+  const { closed, fillMixed } = props, fill = closed?.fill;
+  ui.propFillSec.hidden = !closed;
+  ui.propJumps.querySelector('[data-testid=props-jump-fill]').hidden = !closed;
+  ui.propFillRow.hidden = !closed;
   ui.propFill.classList.toggle('no-fill', !fill);
   ui.propFill.style.backgroundColor = fill ? colourCss(fill) : '';
-  ui.propFillLabel.textContent = closed.some((e) => e.fill !== fill) ? VARIES : fill ? PR.colourLabel(fill) : 'No fill';
-  setSelect(ui.propLayer, [...(sm.layer == null ? [['', VARIES]] : []), ...propLayers(d, pe).map((n) => [n, n])], sm.layer == null ? '' : sm.layer);
+  ui.propFillLabel.textContent = fillMixed ? VARIES : fill ? PR.colourLabel(fill) : 'No fill';
+  setSelect(ui.propLayer, [...(sm.layer == null ? [['', VARIES]] : []), ...propLayers(d, props.layers).map((n) => [n, n])], sm.layer == null ? '' : sm.layer);
   setSelect(ui.propColour, [...(sm.colour == null ? [['', VARIES]] : []), ...PR.colourOptions(sm.colour)], sm.colour == null ? '' : sm.colour);
   const lts = [...PR.LINETYPES.map((c) => [c.key, c.label])];
   if (sm.lt != null && !lts.some((c) => c[0] === sm.lt)) lts.push([sm.lt, PR.ltLabel(sm.lt)]);
   setSelect(ui.propLt, [...(sm.lt == null ? [['', VARIES]] : []), ...lts], sm.lt == null ? '' : sm.lt);
   ui.propSwatch.style.background = sm.colour == null ? 'repeating-linear-gradient(45deg, var(--line) 0 3px, transparent 3px 6px)' : colourCss(sm.colour === 'bylayer' ? PR.effectiveColour(ents[0], layerMap(d)) : sm.colour);
   // the geometry: rebuilt when the list of fields changes, else only the numbers are put in
-  const fields = PR.fieldsOf(ents, d.factor), unit = drawingUnit(), sig = unit + ':' + fields.map((f) => f.key).join();
+  const { fields } = props, unit = drawingUnit(), sig = unit + ':' + fields.map((f) => f.key).join();
   if (ui.propGeo.dataset.sig !== sig) {
     ui.propGeo.dataset.sig = sig;
     const groups = [];
@@ -11717,8 +11718,8 @@ const propLocked = (d) => !!d.vlay && selItems().some((x) => x.p.src === 'loose'
 /** Applies fn to every entity in the selection (not kept dimensions) as one undo step; fn returns the changed entity or null (left as it was). */
 function propCommit(d, label, fn, all = false, widthOnly = false) {
   if (propLocked(d)) { note(LOCKED); renderEdit(); return 0; }      // as the strip colour: a locked Layout object is not changed
-  const pe = propEnts(d, all), repl = new Map();
-  for (const [i, ent] of pe) { const n = fn(ent); if (n && n !== ent) repl.set(i, n); }
+  const props = propEnts(d), repl = new Map();
+  for (const i of all ? props.all : props.indices) { const ent = d.raw.entities[i], n = fn(ent); if (n && n !== ent) repl.set(i, n); }
   if (!repl.size) return 0;
   view.fitted = false;
   if (d.vlay) return layGripCommit(d, [...repl].map(([i, next]) => [d.raw.entities[i], next]), label) ? repl.size : 0;
@@ -11753,9 +11754,9 @@ function ribbonCustomWidth(control = ui.ribbonWidth) {
 function propWidthSet(value, custom = false) {
   const d = propDoc();
   if (!d) return;
-  const all = propEnts(d, true);
+  const { all } = propEnts(d);
   if (!all.length) return;
-  if (!PR.withWidth(all[0][1], value, d.factor)) {
+  if (!PR.withWidth(d.raw.entities[all[0]], value, d.factor)) {
     note('Outline width: type a positive number up to ' + fmt(327.67) + ' mm'); renderEdit(); return;
   }
   const label = typeof value === 'number' ? fmt(value) + ' mm' : value;
@@ -11775,12 +11776,12 @@ function propSet(what, value) {
   const d = propDoc();
   if (what === 'colour' && validColourKey(value)) {
     if (!d?.sel.size) { currentColour = value; usedColour(value); renderRibbon(); return; }
-    const keys = new Set(propEnts(d).map(([, ent]) => PR.effectiveColour(PR.withColour(ent, value), layerMap(d))));
+    const keys = new Set(propEnts(d).ents.map((ent) => PR.effectiveColour(PR.withColour(ent, value), layerMap(d))));
     for (const key of keys) usedColour(key);
   }
   if (!d || value === '') { renderEdit(); return; }
-  const same = (ent) => (what === 'layer' ? ent.layer === value : what === 'colour' ? PR.colourKey(ent) === value : PR.ltKey(ent) === value);
-  if (propEnts(d).every((x) => same(x[1]))) { renderEdit(); return; }
+  const { summary } = propEnts(d);
+  if (!summary.n || summary[what] === value) { renderEdit(); return; }
   const label = what === 'layer' ? 'Layer → ' + value : what === 'colour' ? 'Colour → ' + PR.colourLabel(value) : 'Line type → ' + PR.ltLabel(value);
   const n = propCommit(d, label, (ent) => (what === 'layer' ? PR.withLayer(ent, value) : what === 'colour' ? PR.withColour(ent, value) : PR.withLineType(ent, value)));
   if (n) note(`${label} on ${n} shape${n === 1 ? '' : 's'}. Ctrl+Z takes it back`);
@@ -11792,7 +11793,7 @@ function propFieldSet(key, textValue) {
   const v = PR.parseField(key, textValue, drawingUnit()), label = FIELD_LABELS[key] || key;
   if (v == null) { note(`${label}: type a number`); renderEdit(); return; }
   if (['length', 'radius', 'diameter', 'textH'].includes(key) && !(v > 0)) { note(`${label}: must be above 0`); renderEdit(); return; }
-  const ents = propEnts(d).map((x) => x[1]), cur = PR.fieldsOf(ents, d.factor).find((f) => f.key === key);
+  const { ents, fields } = propEnts(d), cur = fields.find((f) => f.key === key);
   if (cur && cur.value != null && Math.abs(cur.value - v) < 5e-3) { renderEdit(); return; }       // the shown number again: nothing to do
   let failed = 0;
   const shown = key === 'textAngle' ? fmt(v) : lengthText(v);
@@ -12321,27 +12322,26 @@ function outlinesOf(d) {
 
 /** The property bar for the selection and the list of outlines (drawing tab). */
 function renderSelection(d) {
-  const outs = outlinesOf(d), n = d.sel.size;
+  const outs = outlinesOf(d), n = d.sel.size, { width, indices } = propEnts(d);
+  const layer = n ? 'layer ' + d.raw.entities[d.sel.values().next().value].layer : '';
   ui.selCommands.hidden = n < 2;
   ui.selbar.classList.toggle('multi-selection', n >= 2);
-  ui.selLayer.title = n ? 'layer ' + d.raw.entities[[...d.sel][0]].layer : '';
-  const widths = propEnts(d, true).map(([, ent]) => PR.widthKey(ent, d.factor));
-  const width = widths.length && widths.every((v) => v === widths[0]) ? widths[0] ?? '' : '';
-  setSelect(ui.selWidth, [['', '*varies*'], ...PR.widthOptions(width, recentWidths)], String(width));
+  ui.selLayer.title = layer;
+  setSelect(ui.selWidth, [['', '*varies*'], ...PR.widthOptions(width ?? '', recentWidths)], String(width ?? ''));
   ui.outList.replaceChildren(...(outs ? outs.map((o, k) => h('button', { class: 'orow', type: 'button', 'data-outline': k + 1, onclick: () => setSel(d, new Set(o.set)) },
     h('span', { class: 'nm' }, 'Outline ' + (k + 1)), h('span', { class: 'lbl mono' }, `${fmtSize(o.w)} × ${fmtSize(o.h)}`),
     (d.savedAs || []).includes(sizeKey(o.w, o.h)) ? h('span', { class: 'chip' }, 'saved') : null)) : [h('span', { class: 'lbl' }, 'Reading the drawing…')]));
   if (outs && !outs.length) ui.outList.append(h('span', { class: 'lbl' }, ed6000(d) ? 'Too many pieces to list. Right-click an edge → Select connected.' : 'No outlines found. Click a shape in the drawing.'));
   // Keep only and Extract part act on geometry: a selection of kept dimensions alone has none (they are not part of a part)
-  const noPart = !n || !selHasPart(d);
+  const noPart = !indices.length;
   ui.barKeep.disabled = ui.barExtract.disabled = ui['keep-only'].disabled = noPart;
   ui.barKeep.title = ui.barExtract.title = ui['keep-only'].title = n && noPart ? 'A kept dimension is not part of a part' : '';
   if (!n) { ui.selName.textContent = 'Nothing selected'; ui.selLayer.textContent = 'right-click an edge → Select connected'; ui.selArea.textContent = ''; return; }
   const ed = d.ed && edIndex(d);
-  if (!ed) { ui.selName.textContent = ui.selArea.textContent = '…'; ui.selLayer.textContent = 'layer ' + d.raw.entities[[...d.sel][0]].layer; return; }      // warm builds the index after the paint and renders again
-  const sel = [...d.sel], k = outs ? outs.findIndex((o) => o.set.size === n && sel.every((e) => o.set.has(e))) : -1;
+  if (!ed) { ui.selName.textContent = ui.selArea.textContent = '…'; ui.selLayer.textContent = layer; return; }      // warm builds the index after the paint and renders again
+  const k = outs ? outs.findIndex((o) => o.set.size === n && [...d.sel].every((e) => o.set.has(e))) : -1;
   ui.selName.textContent = wholeDrawingGroup(d.raw.groups, d.sel) ? drawingSelectionName(d) : k >= 0 ? 'Outline ' + (k + 1) : n + ' selected';
-  ui.selLayer.textContent = 'layer ' + d.raw.entities[[...d.sel][0]].layer;
+  ui.selLayer.textContent = layer;
   // area and perimeter (TODO 31): for ink and cost; skipped on a huge selection, where it would be slow
   const ap = n <= 3000 ? Ed.areaPerimeter(ed, d.sel, d.factor, Ed.chainTol(drawBox(d.fl), d.factor)) : null;
   ui.selArea.textContent = !ap ? '' : (ap.loops ? `Area ${DU.formatArea(ap.area, drawingUnit())}` + (ap.holes ? ` (${ap.holes} hole${ap.holes > 1 ? 's' : ''} off)` : '') +

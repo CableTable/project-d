@@ -1,4 +1,4 @@
-// T76 / T78 / P13: node tools/perf-interact.mjs <file.dxf|spline:900|big:20000> [draw|edit|commit|cmp|layers|lay:<parts>] [port=5184]
+// T76 / T78 / P13: node tools/perf-interact.mjs <file.dxf|spline:900|big:20000> [draw|edit|commit|cmp|layers|selection|lay:<parts>] [port=5184]
 // Counts are for the drawing canvas; timings include instrumentation and depend on the machine.
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
@@ -371,9 +371,39 @@ async function interactLayers(page, buffer, name) {
   } finally { await stop(); }
 }
 
+/** TODO 323: select all and toggle Properties on warmed tabs, with a placed part on the layout. */
+async function interactSelection(page, buffer, name) {
+  const n = readDxf(decodeDxf(buffer)).entities.length, { frame, run, stop } = await instrument(page);
+  const first = page.locator('.tabs .dtab').first();
+  const measure = async (tab, count) => {
+    await fitView(page, frame);
+    await page.waitForTimeout(1000);
+    await run(`${tab} Ctrl+A`, () => page.keyboard.press('Control+a'));
+    if (tab === 'Layout') assert.match(await page.getByTestId('cmd-prompt').textContent(), /^1 part selected$/);
+    else assert.equal(await page.getByTestId('sel-count').textContent(), `${count} selected`);
+    await run(`${tab} Ctrl+1 close`, () => page.keyboard.press('Control+1'));
+    assert.match(await page.getByTestId('cmd-prompt').textContent(), /Panel hidden/);
+    await run(`${tab} Ctrl+1 open`, () => page.keyboard.press('Control+1'));
+    assert.match(await page.getByTestId('cmd-prompt').textContent(), /Panel shown/);
+    await page.keyboard.press('Escape');
+  };
+  try {
+    await openFile(page, name, buffer, n);
+    console.log(`Selection fixture: ${n} entities per drawing, one placed part on Layout`);
+    await measure('Drawings', n);
+    await menu(page, 'Layout', 'Add to layout');
+    await first.click();
+    await menu(page, 'Layout', 'Add to layout');
+    await measure('Layout', 1);
+    await openFile(page, '2-' + name, buffer, n);
+    await menu(page, 'File', 'Compare drawings…');
+    await measure('Compare', n);
+  } finally { await stop(); }
+}
+
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
   const input = process.argv[2], rest = process.argv.slice(3), port = Number(rest.find((a) => /^\d+$/.test(a))) || 5184, mode = rest.find((a) => !/^\d+$/.test(a)) || 'draw';
-  if (!input || !/^(draw|edit|commit|cmp|layers|lay:\d+)$/.test(mode)) { console.error('usage: node tools/perf-interact.mjs <file.dxf|spline:900|big:20000> [draw|edit|commit|cmp|layers|lay:<parts>] [port]'); process.exit(1); }
+  if (!input || !/^(draw|edit|commit|cmp|layers|selection|lay:\d+)$/.test(mode)) { console.error('usage: node tools/perf-interact.mjs <file.dxf|spline:900|big:20000> [draw|edit|commit|cmp|layers|selection|lay:<parts>] [port]'); process.exit(1); }
   const big = input.startsWith('big:') && bigDoc(Number(input.slice(4)));
   if (big && mode === 'layers') {
     addLayer(big, 'Toggle', { aci: 3 });
@@ -397,6 +427,7 @@ if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.m
     else if (mode === 'commit') await interactCommit(page, buffer, name);
     else if (mode === 'cmp') await interactCompare(page, buffer, name);
     else if (mode === 'layers') await interactLayers(page, buffer, name);
+    else if (mode === 'selection') await interactSelection(page, buffer, name);
     else await interactLayout(page, buffer, name, Number(mode.slice(4)));
   } finally { await browser?.close(); server.kill(); }
 }

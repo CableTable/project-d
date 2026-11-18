@@ -15,6 +15,8 @@ import { sweepOf } from './draw.js';
 import * as TX from './text.js';
 import * as DU from './units.js';
 import { rgbHex, keyRgb } from './colour.js';
+import { DIM_LAYER } from './edit.js';
+import { closedOutline } from './fill.js';
 
 const DEG = Math.PI / 180;
 export const fieldUnit = (field, unit) => field.unit === 'mm' ? unit : field.unit === 'mm²' ? DU.formatArea(0, unit).split(' ')[1] : field.unit;
@@ -93,8 +95,8 @@ export function widthKey(ent, factor = 1) {
   if (ent.type === 'LWPOLYLINE' || ent.type === 'POLYLINE') {
     const cw = get(ent.r, ent.type === 'LWPOLYLINE' ? 43 : 40);
     if (cw > 0 && (ent.type === 'LWPOLYLINE' || cw === get(ent.r, 41))) return cw * factor;
-    const widths = [ent.r, ...(ent.kids || [])].flatMap((r) => r.c.flatMap((c, i) => c === 40 || c === 41 ? [num(r.v[i])] : []));
-    if (widths.some((w) => w > 0)) return null;
+    const hasWidth = (r) => r.c.some((c, i) => (c === 40 || c === 41) && num(r.v[i]) > 0);
+    if (hasWidth(ent.r) || ent.kids?.some(hasWidth)) return null;
   }
   const lw = ent.lw ?? -1;
   return lw === -1 ? 'ByLayer' : lw === -2 ? 'ByBlock' : lw === -3 ? 'Default' : lw === 5 || lw === 0 ? 'Hairline' : lw / 100;
@@ -120,14 +122,57 @@ export const matchChanges = (src, dst) => !sameProps(src, dst);
 
 // ---------------------------------------------------------------- what a selection has in common
 
-const common = (list) => (list.every((x) => x === list[0]) ? list[0] : null);
 /** { n, kind (the type when all are one, else null), chip (its words), layer, colour, lt }; a common value is null when they differ. */
 export function summarize(ents) {
   const n = ents.length;
   if (!n) return { n: 0, kind: null, chip: '', layer: null, colour: null, lt: null };
-  const kind = common(ents.map((e) => e.type));
-  const chip = kind ? (n === 1 ? typeName(ents[0]) : `${typeName(ents[0])} × ${n}`) : `${n} shapes`;
-  return { n, kind, chip, layer: common(ents.map((e) => e.layer)), colour: common(ents.map(colourKey)), lt: common(ents.map(ltKey)) };
+  const first = ents[0];
+  let kind = first.type, layer = first.layer, colour = colourKey(first), lt = ltKey(first);
+  for (const e of ents) {
+    if (e.type !== kind) kind = null;
+    if (e.layer !== layer) layer = null;
+    if (colour !== null && colourKey(e) !== colour) colour = null;
+    if (lt !== null && ltKey(e) !== lt) lt = null;
+  }
+  const chip = kind ? (n === 1 ? typeName(first) : `${typeName(first)} × ${n}`) : `${n} shapes`;
+  return { n, kind, chip, layer, colour, lt };
+}
+
+const selectionCache = new WeakMap();
+/** The Properties panel, ribbon and status share this selection until it or the drawing changes. */
+export function selectionProps(d, revision = d.hist?.revision) {
+  const { sel, factor, raw: { entities } } = d, cached = selectionCache.get(d);
+  if (cached?.sel === sel && cached.revision === revision && cached.entities === entities && cached.factor === factor) return cached.props;
+  const all = [], indices = [], ents = [], layers = new Set();
+  let width = null, cap = 'butt', join = 'miter', scale = false, scaleMixed = false, text = true, closed, fillMixed = false;
+  for (const i of sel) {
+    const e = entities[i];
+    if (!e) continue;
+    if (!all.length) {
+      const w = widthKey(e, factor);
+      width = Number.isNaN(w) ? null : w;
+      cap = e.cap || cap; join = e.join || join; scale = e.scaleWithObject === true;
+    } else {
+      if (width !== null && widthKey(e, factor) !== width) width = null;
+      if ((e.cap || 'butt') !== cap) cap = null;
+      if ((e.join || 'miter') !== join) join = null;
+    }
+    all.push(i);
+    scaleMixed ||= !!e.scaleWithObject !== scale;
+    if (e.layer != null) layers.add(e.layer);
+    if (e.layer === DIM_LAYER) continue;
+    indices.push(i); ents.push(e);
+    text &&= e.type === 'TEXT' || e.type === 'MTEXT';
+    if (!fillMixed && closedOutline(e)) {
+      closed ??= e;
+      fillMixed = e.fill !== closed.fill;
+    }
+  }
+  let fields;
+  const props = { all, indices, ents, layers, width, cap, join, scale, scaleMixed, text: text && ents.length > 0, closed, fillMixed, summary: summarize(ents),
+    get fields() { return fields ??= fieldsOf(ents, factor); } };
+  selectionCache.set(d, { sel, revision, entities, factor, props });
+  return props;
 }
 
 // ---------------------------------------------------------------- geometry
