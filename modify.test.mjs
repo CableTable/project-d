@@ -767,6 +767,23 @@ test('previewEdit (TODO 155a T4): the piece a click would cut, or the stretch it
   assert.ok(previewEdit(circle(0, 0, 10, base), [line(50, -20, 50, 20, base)], [10, 0], true).error, 'a closed shape cannot extend');
 });
 
+test('TODO 318: Trim skips far cutting edges before building shapes and still cuts at touching bounds', () => {
+  const target = line(0, 0, 100, 0, base), crossing = line(40, 0, 40, 10, base), far = line(200, -10, 200, 10, base);
+  const xCode = far.r.c.indexOf(10), x = far.r.v[xCode];
+  let reads = 0;
+  Object.defineProperty(far.r.v, xCode, { get() { reads++; return x; } });
+  for (const pick of [[10, 0], [20, 0]]) {
+    const preview = previewEdit(target, [far, crossing], pick, false, false);
+    assert.equal(preview.act, 'trim');
+    nearPt(S(preview.cut).a, [0, 0]); nearPt(S(preview.cut).b, [40, 0]);
+  }
+  assert.equal(reads, 1, 'only the far edge bounds read its coordinates');
+
+  const bulged = lwpoly([[0, 0, 1], [10, 0]], base), acrossBulge = line(0, -4, 10, -4, base);
+  const preview = previewEdit(acrossBulge, [bulged], [5, -4], false, false);
+  nearPt(S(preview.cut).a, [2, -4]); nearPt(S(preview.cut).b, [8, -4]);
+});
+
 test('TODO 155a3: region dry runs return exactly the cut pieces / added stretches and cap crossed objects only for previews', () => {
   const l = line(0, 0, 100, 0, base), edges = [line(30, -20, 30, 20), line(70, -20, 70, 20)];
   const before = structuredClone([l, ...edges]);

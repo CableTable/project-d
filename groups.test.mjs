@@ -467,7 +467,7 @@ test('TODO 97a fix 5: Break Apart and Trim keep source groups; polyline Fillet a
   const pieces = [W.line(0, 0, 1, 0), W.line(2, 0, 3, 0)], trim = { ...W.newDoc(), entities: e(4), groups: [make(0, 3), make(1, 2)] };
   const commit = (d, next) => { Object.assign(d.raw, next); return true; };
   const trimmed = runInNewContext(appFunction('trimDo') + '\ntrimDo;', {
-    state: { mod: { edges: [], quick: false } }, MD: { canModify: () => true, trimEntity: () => ({ ents: pieces }) }, curveEdgesOnly: () => false, trimEdges: () => [], view: {},
+    state: { mod: { edges: [], quick: false } }, MD: { canModify: () => true, trimCuttingEdges: (_, edges) => edges, trimEntity: () => ({ ents: pieces }) }, curveEdgesOnly: () => false, trimEdges: () => [], view: {},
     trimCommit: commit, renderCommand() {}, note() {}, spliceGroups: G.splice,
   });
   trimmed({ raw: trim }, 1, [0, 0]);

@@ -9966,7 +9966,7 @@ function trimDo(d, idx, p) {
   const m = state.mod, ent = d.raw.entities[idx];
   if (!MD.canModify(ent)) { note('Trim takes a line, arc, circle or polyline'); return; }
   if (curveEdgesOnly(d, m)) { note("Ellipse and spline edges don't trim yet"); return; }
-  const r = MD.trimEntity(ent, trimEdges(d, m), p, m.quick);
+  const r = MD.trimEntity(ent, MD.trimCuttingEdges(ent, trimEdges(d, m)), p, m.quick);
   if (r.error) { note(r.error); return; }
   view.fitted = false;
   // the pieces of a cutting edge are still cutting edges (set before the commit, whose redraw drops edges that are gone)
