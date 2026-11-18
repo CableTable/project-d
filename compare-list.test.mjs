@@ -36,8 +36,12 @@ test('snapshots own their geometry and visibility; five distinct colours, limit 
   const original = plate('<b>part</b>');
   let items = L.addItem([], original);
   const before = structuredClone(items[0]);
-  original.fl.items[0].ops[1] = 999; original.off.add(0); original.raw.entities.length = 0;
+  const shared = original.fl.items[0];                        // TODO 327: an edit makes a new fl and new items (commit, patchWidths), so the snapshot shares the old ones instead of a deep copy
+  original.fl = { ...original.fl, items: original.fl.items.map((it, i) => i ? it : { ...it, ops: it.ops.map((v, j) => j === 1 ? 999 : v) }) };
+  original.off.add(0); original.raw.entities.length = 0;
   assert.deepEqual(items[0], before);
+  assert.equal(items[0].fl.items[0], shared, 'the unedited items are not copied');
+  assert.notEqual(items[0].fl, original.fl);
   for (let i = 1; i < 5; i++) items = L.addItem(items, plate('part ' + i));
   assert.equal(new Set(items.map((x) => x.colour)).size, 5);
   assert.throws(() => L.addItem(items, plate('six')), /at most 5/);
@@ -46,6 +50,24 @@ test('snapshots own their geometry and visibility; five distinct colours, limit 
   assert.equal(items.at(-1).colour, removed.colour);
   assert.equal(new Set(items.map((x) => x.id)).size, 5);
   assert.throws(() => L.addItem([], source('empty', [])), /no outlines/);
+});
+
+test('TODO 327: a snapshot shares the source artwork and writes nothing into it (frozen), so a source edit cannot reach it', () => {
+  const freeze = (v) => { if (v && typeof v === 'object' && !Object.isFrozen(v)) { Object.freeze(v); Object.values(v).forEach(freeze); } return v; };
+  const src = plate('frozen'), second = plate('second', 32, 50), expected = structuredClone(src.fl);
+  freeze(src.fl); freeze(second.fl);
+  let items = L.addItem(L.addItem([], src), second);
+  assert.deepEqual(items[0].fl, expected);
+  assert.notEqual(items[0].fl, src.fl, 'a new top-level object: the key of the metrics cache');
+  assert.equal(items[0].fl.items, src.fl.items, 'no deep copy');
+  items = L.setItem(items, items[0].id, L.setItemOff(items[0], new Set([0])));
+  assert.deepEqual(items[0].fl, expected);
+  const refreshed = L.refreshGeometry(items[0], src);
+  assert.deepEqual(refreshed.box, items[0].box);
+  assert.doesNotThrow(() => L.compareItems(L.lineUpItems(items, 'bl'), .1));
+  const edited = { ...src, fl: { ...src.fl, items: src.fl.items.slice(1) } };       // a source edit: its next fl, the old one stays
+  assert.deepEqual(L.addItem([], src)[0].fl, expected);
+  assert.notDeepEqual(L.addItem([], edited)[0].polys, L.addItem([], src)[0].polys);
 });
 
 test('first checked is reference; hiding still compares, unticking leaves it out, inputs are unchanged', () => {

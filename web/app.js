@@ -5218,7 +5218,7 @@ function paintOverlay(gesture = false) {
         key.push(null);
       }
     } else if (d?.cmp) key = cmpBaseKey(d, base, cw, chh);
-    const ekey = d && d.fl && !d.lay && !d.cmp ? paintKey(d, base, cw, chh) : null, dkey = key?.drag ? key : ekey?.drag ? ekey : null;
+    const ekey = d && d.fl && !d.lay && !d.cmp ? paintKey(d, base, cw, chh) : null, dkey = key?.drag ? key : ekey?.drag ? ekey : null, ckey = d?.cmp && !key ? cmpKeepKey(d, base, cw, chh) : null;
     c.dataset.snap = ''; c.dataset.keep = '';
     if (full && dkey && c.dataset.nokeep !== '1' && !(kept && sameBase(kept.key, dkey))) {
       // a drag starts, or the view moved under it: the base without what is dragged is painted off screen once, so it is no counted full paint (TODO 317 / 320)
@@ -5248,12 +5248,13 @@ function paintOverlay(gesture = false) {
       ui.cmdUI.place();
       return;
     }
-    const bkey = d?.cmp ? dkey : ekey;
+    const bkey = d?.cmp ? dkey || ckey : ekey;
     if (bkey && kept && c.dataset.nokeep !== '1' && sameBase(kept.key, bkey)) {
       const g = c.getContext('2d');
       g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, cw, chh);
       g.drawImage(keptCv, 0, 0);
-      if (d.cmp) cmpOver(c, d.cmp, base, marks, kept.drag);
+      if (d.cmp && kept.still) { c.dataset.preview = 0; cmpOver(c, d.cmp, base, state.paste?.d === d || preview ? null : marks, null); cmpTop(c, d, base, marks, preview); }       // a select click on a heavy Compare: the selection only (TODO 327)
+      else if (d.cmp) cmpOver(c, d.cmp, base, marks, kept.drag);
       else paintEditable(c, d, base, marks, 'over');
       c.dataset.keep = '1';
       ui.cmdUI.place();
@@ -5263,27 +5264,22 @@ function paintOverlay(gesture = false) {
     c.dataset.paints = (+c.dataset.paints || 0) + 1;
     const t0 = performance.now();
     let drawn = 0;
-    if (d?.cmp) {
-      const paste = state.paste?.d === d && state.paste;
-      c.dataset.preview = 0;
-      drawn = cmpPaint(c, d.cmp, base, paste || preview ? null : marks);
-      if (paste?.from) c.dataset.preview = paintDrawing(c, { ...base, ox: base.ox - paste.dx, oy: base.oy + paste.dy, keep: true, fl: paste.preview, off: paste.source.off, factor: paste.source.factor,
-        tint: `color-mix(in srgb, ${cssVar('--selection', '#4f46e5')} 50%, transparent)`, previewBounds: (box) => { canvasPreviewBounds = unionBox(canvasPreviewBounds, box); } });
-      if (marks && (state.tool === 'measure' || paste || preview)) {
-        const k = base.scale * dpr, T = [k, 0, 0, -k, -base.ox * k, (base.sheetH - base.oy) * k];
-        drawMarks(c.getContext('2d'), marks, T, dpr, cssVar('--selection', '#4f46e5'), cssVar('--snap-mark', '#00c000'));
-        canvasPreviewBounds = unionBox(canvasPreviewBounds, overlayBox({ marks }, T, dpr));
-      }
-    } else if (d && d.lay) {                // a layout: each part painted once for all the places it is placed at (its matrix per place)
-      paintDrawing(c, { ...base, fl: null, factor: 1 });                                      // clears
-      for (const call of calls) drawn += paintDrawing(c, { ...base, keep: true, ...call });
-    } else drawn = paintEditable(c, d, base, marks, undefined, ekey && ((n) => {
+    // a slow base is kept (see `kept`): ekey for a drawing tab, ckey for Compare's stills
+    const keepBase = (key) => key && ((n) => {
       if (performance.now() - t0 <= KEEP_MS && n <= 15000) return;
       keptCv = keptCv || document.createElement('canvas');
       keptCv.width = cw; keptCv.height = chh;
       keptCv.getContext('2d').drawImage(c, 0, 0);
-      kept = { key: ekey };
-    }));
+      kept = { key, still: !!d.cmp };
+    });
+    if (d?.cmp) {
+      c.dataset.preview = 0;
+      drawn = cmpPaint(c, d.cmp, base, state.paste?.d === d || preview ? null : marks, false, keepBase(ckey));
+      cmpTop(c, d, base, marks, preview);
+    } else if (d && d.lay) {                // a layout: each part painted once for all the places it is placed at (its matrix per place)
+      paintDrawing(c, { ...base, fl: null, factor: 1 });                                      // clears
+      for (const call of calls) drawn += paintDrawing(c, { ...base, keep: true, ...call });
+    } else drawn = paintEditable(c, d, base, marks, undefined, keepBase(ekey));
     c.dataset.drawn = drawn || 0;
     c.dataset.indexed = d && d.ed ? '1' : '0';       // test hook (P3): a paint right after a commit comes before the pick index
     if (heavy(performance.now() - t0, drawn || 0)) {
@@ -12771,11 +12767,24 @@ function cmpItems(canvas, c, base, marks, lifted, part) {
   }
   return drawn;
 }
-function cmpPaint(canvas, c, base, marks, lifted = false) {
+/** afterBase(drawn), when given, is called between the snapshots and the edited drawing's selection and previews on top of them (see paintEditable). */
+function cmpPaint(canvas, c, base, marks, lifted = false, afterBase = null) {
   if (!lifted) paintDrawing(canvas, { ...base, fl: null, factor: 1 });                         // clears
-  const drawn = cmpItems(canvas, c, base, marks, lifted);
+  const drawn = cmpItems(canvas, c, base, marks, lifted, afterBase ? 'base' : undefined);
+  if (afterBase) { afterBase(drawn); cmpItems(canvas, c, base, marks, lifted, 'over'); }
   if (lifted) cmpGuide(canvas, c, base);
   return drawn;
+}
+/** What Compare paints on top of the snapshots besides the edited drawing's own selection: a paste preview and the marks (Measure, paste, snap preview). */
+function cmpTop(c, d, base, marks, preview) {
+  const paste = state.paste?.d === d && state.paste, { dpr } = base;
+  if (paste?.from) c.dataset.preview = paintDrawing(c, { ...base, ox: base.ox - paste.dx, oy: base.oy + paste.dy, keep: true, fl: paste.preview, off: paste.source.off, factor: paste.source.factor,
+    tint: `color-mix(in srgb, ${cssVar('--selection', '#4f46e5')} 50%, transparent)`, previewBounds: (box) => { canvasPreviewBounds = unionBox(canvasPreviewBounds, box); } });
+  if (marks && (state.tool === 'measure' || paste || preview)) {
+    const k = base.scale * dpr, T = [k, 0, 0, -k, -base.ox * k, (base.sheetH - base.oy) * k];
+    drawMarks(c.getContext('2d'), marks, T, dpr, cssVar('--selection', '#4f46e5'), cssVar('--snap-mark', '#00c000'));
+    canvasPreviewBounds = unionBox(canvasPreviewBounds, overlayBox({ marks }, T, dpr));
+  }
 }
 /** The snap: a thin dotted guide through it and the usual marker with its name. */
 function cmpGuide(canvas, c, base) {
@@ -12801,6 +12810,14 @@ function cmpBaseKey(d, base, cw, chh) {
   }
   key.drag = true;
   if (grip) for (const e of hide) key.push(e);
+  return key;
+}
+/** The key of Compare's stills when nothing is dragged (cmpBaseKey is null then): the snapshots and the edited drawing without its selection. A select click on it keeps the bitmap and paints the selection only (TODO 327). */
+function cmpKeepKey(d, base, cw, chh) {
+  const c = d.cmp, sel = cmpSelected(c), target = sel?.visible && cmpSourceTab(sel);
+  const key = [d, c.selected, base.ox, base.oy, base.scale, cw, chh, base.dpr, base.dark, base.wireframe, base.sheetH];
+  for (const sd of c.items) if (sd.visible) key.push(sd.fl, sd.factor, cmpCss(sd.colour), ...sd.offset, ...[...(sd.off || [])].sort((a, b) => a - b), null);
+  if (target) key.push(...paintKey(target, base, cw, chh));
   return key;
 }
 const dragCv = document.createElement('canvas');                                            // the grabbed snapshot of a Compare drag, painted once where it was grabbed
@@ -12860,11 +12877,12 @@ function cmpDown(e) {
   if (source && (e.target.closest('[data-rot], [data-pivot]') || gripOn(source) && gripAt(source, e.clientX, e.clientY))) return false;
   const target = ref === item ? c.items.find((x) => x !== item && x.checked && x.visible) : ref?.visible ? ref : null;
   const p0 = sheetAt(e.clientX, e.clientY), m0 = [...item.offset], mode0 = c.mode;
-  const grab = cmpSnap(item, m0, p0), g = grab ? [grab.x, grab.y] : p0;
+  let grab, g;                        // looked up at the first move, so a click builds no snap index (150 000 entities: 350 ms, TODO 327)
   c.moving = true;
   let moved = false, manual = false, free = false, last = null;       // free: Alt was pressed in this drag, so this drop snaps to no object (guides stay)
   const move = (ev) => {
     if (!moved && Math.hypot(ev.clientX - e.clientX, ev.clientY - e.clientY) <= 4) return;
+    if (!last) { grab = cmpSnap(item, m0, p0); g = grab ? [grab.x, grab.y] : p0; }
     last = ev; free ||= ev.altKey;
     manual = cmpManual(c) || manual;
     const p = sheetAt(ev.clientX, ev.clientY);

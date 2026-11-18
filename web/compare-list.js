@@ -12,7 +12,8 @@ const metrics = new WeakMap();      // keyed by the snapshot's artwork: copies m
 
 /** Artwork and dimensions refreshed together, including an emptied drawing. */
 export function snapshotGeometry(source) {
-  const { name, raw, factor = 1 } = source, fl = structuredClone(source.fl), off = new Set(source.off);
+  // fl: a source edit makes a new fl (patchWidths keeps the old items untouched), so the snapshot owns the old one without a deep copy (that copy was 650 ms at 150 000 entities); the new top-level object is the key of `metrics`
+  const { name, raw, factor = 1 } = source, fl = { ...source.fl }, off = new Set(source.off);
   const outlines = polylines(fl, factor, off);
   return { name, fl, factor, off, raw: { entities: raw.entities.map(({ type, layer }) => ({ type, layer })) }, ...outlines,     // all that the measurements read, kept so a layer can be hidden later (no live link to the source)
     w: outlines.box ? outlines.box[2] - outlines.box[0] : 0, h: outlines.box ? outlines.box[3] - outlines.box[1] : 0, sn: null };

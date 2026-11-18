@@ -7717,13 +7717,11 @@ try {
   await step('TODO 156c1 fixes: Compare orders guide and drawing Undo, refreshes source edits and refuses hidden edits', async () => {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
     const p = await context.newPage(), q = (id) => panelControl(p, p.getByTestId(id));
-    await p.addInitScript(() => {
-      const clone = window.structuredClone;
-      window.snapshotClones = 0;
-      window.structuredClone = (value, ...options) => {
-        if (Array.isArray(value?.items) && Array.isArray(value?.layers) && value.mats) window.snapshotClones++;
-        return clone(value, ...options);
-      };
+    await p.addInitScript(() => { window.snapshotClones = 0; });
+    await p.route('**/compare-list.js', (route) => {            // TODO 327: a snapshot no longer deep-copies the artwork, so the count is its builds (snapshotGeometry), not structuredClone calls of an fl
+      const src = readFileSync('web/compare-list.js', 'utf8'), body = src.replace('export function snapshotGeometry(source) {', 'export function snapshotGeometry(source) { window.snapshotClones++;');
+      assert.notEqual(body, src, 'the snapshot build counter is installed');
+      route.fulfill({ contentType: 'text/javascript', body });
     });
     p.on('pageerror', (e) => errors.push(String(e)));
     p.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
@@ -28272,7 +28270,7 @@ try {
             const before = await paints();
             await p.mouse.down(); await frame();
             const pressed = await paints();
-            assert.equal(pressed - before, kind === 'drawing' ? 0 : 1, `${label}: a drawing tab presses on its kept picture; Compare's idle picture is not kept yet (TODO 317 finding), so its press is one full paint`);
+            assert.equal(pressed - before, 0, `${label}: a press is on the kept picture (Compare's idle picture is kept since TODO 327; it was one full paint before)`);
             for (let i = 1; i <= 10; i++) { await p.mouse.move(at.x + i * 4, at.y + i * 2); await frame(); }
             assert.equal(await paints(), pressed, `${label}: 10 grip moves give no full paint`);
             assert.equal(await drawing.getAttribute('data-keep'), '1', `${label}: the grip drag paints over the kept base`);
@@ -28333,6 +28331,68 @@ try {
       await p.waitForTimeout(1500);
       assert.equal(await p.locator('.tabs .dtab').count(), 2, 'the Compare tab closed, both drawings stay');
       assert.deepEqual(errors, []);
+    } finally { await ctx.close(); }
+  });
+
+  await step('TODO 327: Compare start is one full paint; a select click on a big pair paints only the selection over the kept picture, which equals a full paint', async () => {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    try {
+      const p = await ctx.newPage(), drawing = p.getByTestId('drawing'), errors = [], q = (id) => p.getByTestId(id);
+      p.on('pageerror', (e) => errors.push(String(e)));
+      const frame = () => p.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+      const paints = async () => Number(await drawing.getAttribute('data-paints'));
+      await p.goto(URL_ + '?autosave=86400000'); await q('count').waitFor({ state: 'attached' });
+      for (const name of ['t327-a.dxf', 't327-b.dxf']) {
+        await q('picker').setInputFiles({ name, mimeType: 'text/plain', buffer: Buffer.from(writeDxf(bigDoc(20000))) });
+        await p.waitForFunction((name) => document.querySelector('.dtab.on .tname').textContent === name, name);
+      }
+      await p.waitForTimeout(1500); await frame();
+      const start = await paints();
+      await p.locator('[data-menu=File]').click(); await p.getByRole('menuitem', { name: 'Compare drawings…', exact: true }).click();
+      await p.waitForTimeout(500); await frame();
+      assert.equal(await paints() - start, 1, 'Compare start is one full paint');
+      await p.locator('[data-testid=canvas]').getByRole('button', { name: 'Fit', exact: true }).click(); await frame();
+      await p.locator('[data-tool=select]').first().click();
+      const b = await p.getByTestId('canvas').boundingBox(), cx = b.x + b.width / 2, cy = b.y + b.height / 2;
+      await p.mouse.move(cx, cy); await frame();
+      const before = await paints();
+      await p.mouse.click(cx, cy); await frame();
+      const selected = () => q('sel-count').textContent();
+      assert.match(await selected(), /[1-9]\d* selected/, 'the click selects something in the edited drawing');
+      assert.equal(await paints(), before, 'a select click does no full paint');
+      assert.equal(await drawing.getAttribute('data-keep'), '1', 'the selection is painted over the kept picture');
+      const pixels = async (label) => {                         // the kept picture against a forced full paint of the same state (Fit again: same view)
+        await frame();
+        await drawing.evaluate((c) => { window.__A = c.getContext('2d').getImageData(0, 0, c.width, c.height); c.dataset.nokeep = '1'; });
+        const was = await paints();
+        await p.locator('[data-testid=canvas]').getByRole('button', { name: 'Fit', exact: true }).click(); await frame();
+        assert.ok(await paints() > was, `${label}: nokeep forces a full pass`);
+        const over = await drawing.evaluate((c) => {
+          const a = window.__A, g = c.getContext('2d').getImageData(0, 0, c.width, c.height);
+          delete c.dataset.nokeep; delete window.__A;
+          let n = 0;
+          for (let i = 0; i < a.data.length; i += 4) for (let j = 0; j < 4; j++) if (Math.abs(a.data[i + j] - g.data[i + j]) > 2) { n++; break; }
+          return n;
+        });
+        assert.equal(over, 0, `${label}: kept and full pixels (max channel difference 2)`);
+      };
+      await pixels('select click');
+      await p.mouse.click(cx, cy); await frame();             // the full pass above kept a new base: Escape and a second click are over it again
+      const again = await paints();
+      await p.mouse.click(b.x + 60, b.y + 90); await frame();
+      assert.doesNotMatch(await selected(), /[1-9]\d* selected/, 'a click on empty paper clears the selection');
+      assert.equal(await paints(), again, 'clearing the selection does no full paint');
+      await p.mouse.click(cx + 20, cy + 14); await frame();
+      assert.equal(await paints(), again, 'a second click does no full paint');
+      await p.mouse.move(cx + 200, cy); await frame();
+      await p.screenshot({ path: `${shotDir}/t327-light.png` });
+      await p.locator('[data-menu=View]').click(); await p.getByRole('menuitemcheckbox', { name: /Theme: dark\b/ }).click(); await frame();
+      await p.screenshot({ path: `${shotDir}/t327-dark.png` });
+      await p.setViewportSize({ width: 1024, height: 800 }); await p.waitForTimeout(600); await frame();
+      await p.screenshot({ path: `${shotDir}/t327-1024.png` });
+      for (const f of ['light', 'dark', '1024']) assert.ok(readFileSync(`${shotDir}/t327-${f}.png`).length > 1000, 'required screenshot exists');
+      assert.deepEqual(errors, []);
+      console.log('T327: Compare start 1 full paint; select click, a click on empty paper and a second click 0 full paints on the kept picture; pixels equal a full paint');
     } finally { await ctx.close(); }
   });
 
@@ -28405,7 +28465,7 @@ try {
     const cmp = await flow((p) => interactCompare(p, big, 'lag-big.dxf'));
     assert.deepEqual(Object.keys(cmp), ['open', 'Compare start', 'Compare wheel', 'Compare pan', 'Compare click', 'Compare button', 'Compare button again', 'Compare grip drag', 'Compare drag']);
     assert.ok(cmp['Compare start'].lineTo > 30000, `both snapshots paint: lineTo ${cmp['Compare start'].lineTo}`);
-    within(cmp, { 'Compare start': 1, 'Compare wheel': 21, 'Compare pan': 1, 'Compare click': 2, 'Compare button': 2, 'Compare button again': 2, 'Compare grip drag': 2, 'Compare drag': 1 });       // TODO 317: a grip drag was 21 full paints, a body drag 2 (a grip press is one more paint when it does not share the frame of the first move)
+    within(cmp, { 'Compare start': 1, 'Compare wheel': 21, 'Compare pan': 1, 'Compare click': 0, 'Compare button': 2, 'Compare button again': 2, 'Compare grip drag': 2, 'Compare drag': 1 });       // TODO 317: a grip drag was 21 full paints, a body drag 2 (a grip press is one more paint when it does not share the frame of the first move)
     assert.ok(cmp['Compare button again'].longTotal < 1500, `Compare button again long tasks ${cmp['Compare button again'].longTotal} ms (the second press reuses the fl-keyed metrics cache; this head 338 ms; the first press measures both items)`);
     const firstPressBound = process.env.CI ? 6000 : 3000;
     assert.ok(cmp['Compare button'].longTotal < firstPressBound, `Compare button (the first press) long tasks ${cmp['Compare button'].longTotal} ms (bound ${firstPressBound} ms; CI allows 6000 ms for the slower runner; P14a: 4cff4b3 ~10300 ms, outlineLoops scanned every open piece per join)`);
