@@ -28000,7 +28000,7 @@ try {
       const p = await ctx.newPage(), drawing = p.getByTestId('drawing'), errors = [];
       p.on('pageerror', (e) => errors.push(String(e)));
       await p.route('**/app.js', (route) => {
-        const src = readFileSync('web/app.js', 'utf8'), body = src.replace('d.ed =Ed.makeIndex(', 'd.ed = (window.t258Index = (window.t258Index || 0) + 1, Ed.makeIndex)(');
+        const src = readFileSync('web/app.js', 'utf8'), body = src.replace('d.ed = Ed.makeIndex(', 'd.ed = (window.t258Index = (window.t258Index || 0) + 1, Ed.makeIndex)(');
         assert.notEqual(body, src, 'the index counter is installed');
         const timed = body.replace('function commit(d, next, label, keepSel) {', `function commit(d, next, label, keepSel) {
           const start = performance.now(), before = window.t259Misses.length, old = new Set(d.raw.entities.map(e => e.r));
