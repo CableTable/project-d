@@ -13,10 +13,11 @@
 //   removeEntities / keepOnly    → { entities, blocks } without (or with only) some entities; unused blocks go too
 //   scaleAbout(raw, s, ax, ay)   → { entities, blocks, skipped } scaled uniformly about (ax, ay)
 //   createHistory()              → undo / redo of { entities, blocks } states
-import { mapply, mscale, pickIndex, pickAt, piecesNear, flatten, ownBlock, unionBox } from './drawing.js';
+import { mapply, mscale, pickIndex, pickAt, piecesNear, visibleSnapItem, flatten, ownBlock, unionBox } from './drawing.js';
 import { rotateRecord } from './rotate.js';
 import { format as formatLength, parse as parseLength } from './units.js';
 import { spaceOf, itemVisible } from './doc.js';
+import { drain, slice, scaled } from './perf.js';
 import { line, insert, entity, addLayer, arc, lwpoly } from './dxf-write.js';
 import { DEFAULT_TYPES, perpFoot, preferSnap, tangentPoints, orderCandidates } from './snap.js';
 import { pieceInter } from './modify.js';
@@ -58,10 +59,14 @@ function arcSweepOp(a0, a1, acw) {
  * and a loop whose last gap is tiny (≤ 10 × tol) is closed across it and counted in `gaps`. Text, fills and kept dimensions are left out.
  * Returns { loops: [{ pts, ents }] (ents: the entity indexes the loop is made of), len (all lines and arcs), gaps, open (pieces that do not close), openEnts (the entities that have such a piece) }, or null if there are no lines.
  */
-export function outlineLoops(ed, ents, tol = 1e-6) {
-  const { fl, items, raw } = ed, pieces = [];
-  let len = 0;
+export const outlineLoops = (ed, ents, tol) => drain(outlineLoopsSteps(ed, ents, tol));
+/** outlineLoops as a generator (TODO 316): yields its progress whenever due() says so, returns the same result. */
+export function* outlineLoopsSteps(ed, ents, tol = 1e-6, due = slice()) {
+  const { fl, items, raw } = ed, pieces = [], total = ents.size ?? ents.length ?? 1;
+  let len = 0, seen = 0;
   for (const e of ents) {
+    if (due()) yield 0.5 * seen / total;
+    seen++;
     if (!ed.byEnt[e] || raw.entities[e].layer === DIM_LAYER || raw.entities[e].type === 'DIMENSION') continue;
     for (const i of ed.byEnt[e]) {
       const it = items[i];
@@ -90,6 +95,7 @@ export function outlineLoops(ed, ents, tol = 1e-6) {
   for (const p of pieces) {                                    // one piece that ends where it starts (a circle, a closed polyline)
     if (p.closed || (p.pts.length > 2 && near(p.pts[0], p.pts[p.pts.length - 1]))) { loops.push({ pts: p.pts, ents: p.ents }); p.used = true; }
   }
+  if (due()) yield 0.5;
   const open = pieces.filter((p) => !p.used), gapTol = tol * 10;
   // The first unused open piece with an end within tol of pt: its ends sit in a grid of tol-sized cells, so only the 9 cells around pt are looked at (the answer of a scan of `open`, in `open` order).
   const cell = Math.max(tol, 1e-9), cellOf = (v) => Math.floor(v / cell), ends = new Map();
@@ -103,8 +109,10 @@ export function outlineLoops(ed, ents, tol = 1e-6) {
     }
     return open[best];
   };
-  let gaps = 0;
+  let gaps = 0, joined = 0;
   for (const start of open) {                                  // join open pieces end to end until they close
+    if (due()) yield 0.5 + 0.5 * joined / open.length;
+    joined++;
     if (start.used) continue;
     start.used = true;
     let path = start.pts.slice(), closed = false;
@@ -139,8 +147,10 @@ export function outlineLoops(ed, ents, tol = 1e-6) {
  * a hole and is taken off.
  * Returns { area, perimeter, loops, holes, gaps, open } (open: pieces that do not close), or null if there are no lines.
  */
-export function areaPerimeter(ed, ents, factor = 1, tol = 1e-6) {
-  const r = outlineLoops(ed, ents, tol);
+export const areaPerimeter = (ed, ents, factor, tol) => drain(areaPerimeterSteps(ed, ents, factor, tol));
+/** areaPerimeter as a generator (TODO 316): the hole test is the slow part on a drawing of many loops. */
+export function* areaPerimeterSteps(ed, ents, factor = 1, tol = 1e-6, due = slice()) {
+  const r = yield* scaled(outlineLoopsSteps(ed, ents, tol, due), 0, 0.3);
   if (!r) return null;
   const { len, gaps, open } = r, loops = r.loops.map((l) => l.pts);
   const shoelace = (pts) => { let s = 0; for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) s += pts[j][0] * pts[i][1] - pts[i][0] * pts[j][1]; return Math.abs(s) / 2; };
@@ -153,24 +163,59 @@ export function areaPerimeter(ed, ents, factor = 1, tol = 1e-6) {
     return c;
   };
   const a = loops.map(shoelace);
-  const boxes = loops.map((pts) => {
+  const boxes = [], sizes = [];
+  for (let j = 0; j < loops.length; j++) {
+    if (due()) yield 0.3 + 0.1 * j / loops.length;
     const b = [Infinity, Infinity, -Infinity, -Infinity];
-    for (const p of pts) {
+    for (const p of loops[j]) {
       b[0] = Math.min(b[0], p[0]); b[1] = Math.min(b[1], p[1]);
       b[2] = Math.max(b[2], p[0]); b[3] = Math.max(b[3], p[1]);
     }
-    return b;
-  });
-  let area = 0, holes = 0;
-  loops.forEach((L, i) => {
-    const px = L[0][0], py = L[0][1], ai = a[i];     // no destructuring: edit.test.mjs counts inside() by the array iterations of 2-element arrays
-    let depth = 0;
-    for (let j = 0; j < loops.length; j++) {            // a plain loop: 6700 loops make 45 million box checks
-      const b = boxes[j];
-      if (a[j] > ai && px >= b[0] && py >= b[1] && px <= b[2] && py <= b[3] && inside(L[0], loops[j])) depth++;
+    boxes.push(b);
+    const size = Math.max(b[2] - b[0], b[3] - b[1]);
+    if (size > 0 && Number.isFinite(size)) sizes.push(size);
+  }
+  sizes.sort((x, y) => x - y);
+  const size = sizes[Math.floor(sizes.length / 2)] ?? 1;
+  const cellOf = (v) => Math.floor(v / size), keyOf = (x, y) => x + ',' + y, grid = new Map();
+  // Visit each box's cells, storing only the cells that have a loop's first point to test.
+  for (let i = 0; i < loops.length; i++) {
+    if (due()) yield 0.4 + 0.1 * i / loops.length;
+    const p = loops[i][0], x = cellOf(p[0]), y = cellOf(p[1]), key = keyOf(x, y);
+    const cell = grid.get(key);
+    if (cell) cell.probes.push(i); else grid.set(key, { x, y, probes: [i] });
+  }
+  const cellsFor = function* (x0, y0, x1, y1) {
+    // Wide boxes can span more cells than the drawing occupies, so scan occupied cells in that case.
+    if ((x1 - x0 + 1) * (y1 - y0 + 1) > 64 || ![x0, y0, x1, y1].every(Number.isSafeInteger)) {
+      yield* grid.values();
+      return;
     }
-    if (depth % 2) { area -= a[i]; holes++; } else area += a[i];
-  });
+    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+      const cell = grid.get(keyOf(x, y));
+      if (cell) yield cell;
+    }
+  };
+  const depths = new Uint32Array(loops.length);
+  let visited = 0;
+  for (let j = 0; j < loops.length; j++) {
+    const progress = 0.5 + 0.5 * j / loops.length;
+    if (due()) yield progress;
+    const b = boxes[j], aj = a[j], x0 = cellOf(b[0]), y0 = cellOf(b[1]), x1 = cellOf(b[2]), y1 = cellOf(b[3]);
+    for (const cell of cellsFor(x0, y0, x1, y1)) {
+      if (++visited % 1024 === 0 && due()) yield progress;
+      if (!(cell.x >= x0 && cell.x <= x1 && cell.y >= y0 && cell.y <= y1)) continue;
+      for (let k = 0; k < cell.probes.length; k++) {
+        if (++visited % 1024 === 0 && due()) yield progress;
+        const i = cell.probes[k], p = loops[i][0], px = p[0], py = p[1], ai = a[i]; // edit.test.mjs counts two-element array iterations in inside()
+        if (aj > ai && px >= b[0] && py >= b[1] && px <= b[2] && py <= b[3] && inside(p, loops[j])) depths[i]++;
+      }
+    }
+  }
+  let area = 0, holes = 0;
+  for (let i = 0; i < loops.length; i++) {
+    if (depths[i] % 2) { area -= a[i]; holes++; } else area += a[i];
+  }
   return { area: area * factor * factor, perimeter: len * factor, loops: loops.length, holes, gaps, open };
 }
 
@@ -184,6 +229,11 @@ export function itemsOfEntities(fl, sel, off = new Set(), hid = null) {
   return [...sel].flatMap((e) => by.get(e) || []);
 }
 
+export function visibleSelection(fl, sel, off, hid) {
+  const hl = sel.size ? itemsOfEntities(fl, sel, off, hid) : [];
+  return { sel: new Set(hl.map((it) => it.e)), hl };
+}
+
 /** The selection's shown items already carry its bounds; kept dimensions do not size the part. */
 export function resizeItemsBox(raw, items, factor = 1) {
   let box = null;
@@ -195,7 +245,17 @@ export function resizeItemsBox(raw, items, factor = 1) {
  * What the editor needs about a drawing: per shown entity its items and box, a pick grid, and the end points.
  * off: the layer indexes switched off (their entities are not there to pick); hid: entities hidden one by one (Objects tab), the same.
  */
-export function makeIndex(raw, fl, off = new Set(), hid = null, extremeFrame) {
+export function makeIndex(raw, fl, off = new Set(), hid = null, extremeFrame, prev = null) {
+  const ix = pickIndex(fl, spaceOf(fl) === 1, undefined, extremeFrame, prev);       // prev { ix, fl }: an earlier index of this drawing, its parts for unchanged items are kept (TODO 319c)
+  const ed = indexWithVisibility({ raw, fl, ix }, off, hid);
+  const all = off.size || hid?.size ? indexWithVisibility({ raw, fl, ix }, new Set(), null) : ed;
+  ed.boxGrid = entityBoxGrid(all);
+  return ed;
+}
+
+/** Keep the pieces and snaps spatially indexed. Only the visible entity summaries change. */
+export function indexWithVisibility(ed, off, hid) {
+  const { raw, fl, ix, boxGrid } = ed;
   const space = spaceOf(fl), n = raw.entities.length, items = fl.items;
   const vis = new Uint8Array(items.length), byEnt = new Array(n), box = new Float64Array(n * 4);
   const areas = [], shown = [];
@@ -209,7 +269,13 @@ export function makeIndex(raw, fl, off = new Set(), hid = null, extremeFrame) {
     byEnt[e].push(i);
     if (it.k !== 'p' || it.fill) areas.push(i);
   }
-  // end points: one pair per entity made of open paths only (not blocks, not text, not closed shapes)
+  let ends;
+  return { raw, fl, space, n, vis, byEnt, box, shown, areas, items, ix, graph: null, boxGrid,
+    get ends() { return ends ??= indexEnds(this); } };
+}
+
+/** One endpoint pair per entity made of open paths (excluding blocks, text and closed shapes). */
+function indexEnds({ raw, fl, n, shown, byEnt, items, box }) {
   const ends = new Float64Array(n * 4).fill(NaN);
   for (const e of shown) {
     const type = raw.entities[e].type;
@@ -223,7 +289,11 @@ export function makeIndex(raw, fl, off = new Set(), hid = null, extremeFrame) {
     if (type !== 'LINE' && Math.hypot(a[0] - b[0], a[1] - b[1]) < 1e-9 * size) continue;     // a circle: its start is no end; zero-length lines can be micro pieces
     ends[e * 4] = a[0]; ends[e * 4 + 1] = a[1]; ends[e * 4 + 2] = b[0]; ends[e * 4 + 3] = b[1];
   }
-  const ix = pickIndex(fl, space === 1, (i) => vis[i] === 1, extremeFrame), bc = new Map(), bw = [];
+  return ends;
+}
+
+function entityBoxGrid({ ix, shown, box }) {
+  const bc = new Map(), bw = [];
   const at = (v) => Math.min(ix.G - 1, Math.max(0, Math.floor(v)));
   // Entity boxes share the pick grid; dimensions need their whole block box, text and hatches have no pick pieces.
   for (const e of shown) {
@@ -235,7 +305,7 @@ export function makeIndex(raw, fl, off = new Set(), hid = null, extremeFrame) {
       bc.get(key).push(e);
     }
   }
-  return { raw, fl, space, n, vis, byEnt, box, shown, areas, ends, items, ix, bc, bw, graph: null };
+  return { bc, bw };
 }
 
 /** The entity under (x, y) within tol: the nearest line or arc, else a filled or text item whose box holds the point. -1 if none. */
@@ -301,15 +371,16 @@ export function snapPick(ed, x, y, tol, on = true, skip = -1, types = DEFAULT_TY
   if (!ix.G) return best;
   const at = (v) => Math.min(ix.G - 1, Math.max(0, Math.floor(v)));
   const i0 = at((x - tol - ix.x0) / ix.cell), i1 = at((x + tol - ix.x0) / ix.cell), j0 = at((y - tol - ix.y0) / ix.cell), j1 = at((y + tol - ix.y0) / ix.cell);
+  const visible = (i) => ed.vis[i] === 1 && !skips(skip, ed.items[i].e);
   for (let i = i0; i <= i1; i++) for (let j = j0; j <= j1; j++) for (const k of ix.sc.get(i * 4096 + j) || []) {
     const sn = ix.snaps[k];
-    if (!ed.vis[sn.it] || skips(skip, ed.items[sn.it].e)) continue;
+    if (visibleSnapItem(sn, visible) < 0) continue;
     best = preferSnap(best, sn, x, y, tol, types);
   }
   const perp = from && types.perpendicular !== false, tangent = from && types.tangent !== false;
   if (types.intersection !== false || types.apparent !== false || perp || tangent) {
     // shortcut: only the 200 pieces nearest the cursor are crossed (k^2/2 pieceInter calls per hover); raise or index them if a dense drawing misses a crossing.
-    const pieces = piecesNear(ix, x, y, tol, (i) => ed.vis[i] === 1 && !skips(skip, ed.items[i].e)).filter((p) => !p.ent.curve).sort((a, b) => a.d - b.d).slice(0, 200).map((p) => p.ent);
+    const pieces = piecesNear(ix, x, y, tol, visible).filter((p) => !p.ent.curve).sort((a, b) => a.d - b.d).slice(0, 200).map((p) => p.ent);
     const eps = 1e-9 * (1 + Math.abs(x) + Math.abs(y));
     if (types.intersection !== false || types.apparent !== false) for (let i = 0; i < pieces.length; i++) for (let j = i + 1; j < pieces.length; j++) {
       for (const [px, py] of pieceInter(pieces[i], pieces[j])) {
@@ -326,7 +397,7 @@ export function snapPick(ed, x, y, tol, on = true, skip = -1, types = DEFAULT_TY
   }
   if (best) return { x: best.x, y: best.y, kind: best.kind };
   if (types.near === false) return null;
-  const p = pickAt(ix, x, y, tol, (i) => ed.vis[i] === 1 && !skips(skip, ed.items[i].e));
+  const p = pickAt(ix, x, y, tol, visible);
   return p.ent && p.near ? { x: p.near[0], y: p.near[1], kind: 'near' } : null;
 }
 
@@ -336,7 +407,10 @@ export function snapObject(ed, x, y, tol, skip = -1, types = DEFAULT_TYPES) {
   const hit = pickAt(ed.ix, x, y, tol, visible);
   if (hit.ent) return ed.items[hit.ent.it].e;
   let best = null;
-  for (const sn of ed.ix.snaps) if (visible(sn.it)) best = preferSnap(best, sn, x, y, tol, types);
+  for (const sn of ed.ix.snaps) {
+    const it = visibleSnapItem(sn, visible);
+    if (it >= 0) best = preferSnap(best, it === sn.it ? sn : { ...sn, it }, x, y, tol, types);
+  }
   return best ? ed.items[best.it].e : -1;
 }
 
@@ -349,7 +423,7 @@ export function snapReference(ed, x, y, tol, skip = -1) {
 export function snapCandidates(ed, e, x, y, tol, types = DEFAULT_TYPES, from = null) {
   const visible = (it) => ed.vis[it] === 1;
   const own = (it) => visible(it) && ed.items[it].e === e;
-  const candidates = ed.ix.snaps.filter((sn) => own(sn.it));
+  const candidates = ed.ix.snaps.filter((sn) => visibleSnapItem(sn, own) >= 0);
   const pieces = ed.ix.pieces.filter((p) => own(p.it));
   for (const p of pieces) {
     candidates.push(...tangentPoints(from, p));
@@ -439,10 +513,11 @@ const selectionBox = (b) => [Math.min(b[0], b[2]), Math.min(b[1], b[3]), Math.ma
 function boxCandidates(ed, b) {
   const ix = ed.ix;
   if (!ix.G) return [];
+  const { bc, bw } = ed.boxGrid;
   const at = (v) => Math.min(ix.G - 1, Math.max(0, Math.floor(v)));
-  const i0 = at((b[0] - ix.x0) / ix.cell), i1 = at((b[2] - ix.x0) / ix.cell), j0 = at((b[1] - ix.y0) / ix.cell), j1 = at((b[3] - ix.y0) / ix.cell), seen = new Set(ed.bw);
-  for (let i = i0; i <= i1; i++) for (let j = j0; j <= j1; j++) for (const e of ed.bc.get(i * 4096 + j) || []) seen.add(e);
-  return [...seen].filter((e) => { const k = e * 4; return ed.box[k] <= b[2] && ed.box[k + 2] >= b[0] && ed.box[k + 1] <= b[3] && ed.box[k + 3] >= b[1]; });
+  const i0 = at((b[0] - ix.x0) / ix.cell), i1 = at((b[2] - ix.x0) / ix.cell), j0 = at((b[1] - ix.y0) / ix.cell), j1 = at((b[3] - ix.y0) / ix.cell), seen = new Set(bw);
+  for (let i = i0; i <= i1; i++) for (let j = j0; j <= j1; j++) for (const e of bc.get(i * 4096 + j) || []) seen.add(e);
+  return [...seen].filter((e) => { const k = e * 4; return ed.byEnt[e] && ed.box[k] <= b[2] && ed.box[k + 2] >= b[0] && ed.box[k + 1] <= b[3] && ed.box[k + 3] >= b[1]; });
 }
 const pointInBox = (p, b) => p[0] >= b[0] && p[0] <= b[2] && p[1] >= b[1] && p[1] <= b[3];
 
@@ -1320,13 +1395,16 @@ export function copyEntities(raw, selection, dx, dy) {
  * undoMany(n, current) / redoMany(n, current) go several steps at once.
  */
 let historyOrder = 0;
+/** A step's state may carry `fl` and `hid` (the drawn items, TODO 319b): only the newest KEEP_FL steps of a list keep them, as each fl is memory. */
+export const KEEP_FL = 10;
+const lean = (list) => { const s = list[list.length - 1 - KEEP_FL]?.s; if (s?.fl) { delete s.fl; delete s.hid; } };
 export function createHistory(limit = 100) {
   let revision = 0;
   let undo = [], redo = [];                                  // entries { s: the state to go back to, label: the step it undoes }
   const h = {
-    push(state, label = 'Edit') { revision++; undo.push({ s: state, label, order: ++historyOrder }); if (undo.length > limit) undo.shift(); redo = []; },
-    undo(current) { revision++; const e = undo.pop(); if (!e) return null; redo.push({ ...e, s: current }); return e.s; },
-    redo(current) { revision++; const e = redo.pop(); if (!e) return null; undo.push({ ...e, s: current }); return e.s; },
+    push(state, label = 'Edit') { revision++; undo.push({ s: state, label, order: ++historyOrder }); if (undo.length > limit) undo.shift(); redo = []; lean(undo); },
+    undo(current) { revision++; const e = undo.pop(); if (!e) return null; redo.push({ ...e, s: current }); lean(redo); return e.s; },
+    redo(current) { revision++; const e = redo.pop(); if (!e) return null; undo.push({ ...e, s: current }); lean(undo); return e.s; },
     /** Back n steps (1 to canUndo count): the state to restore, or null. */
     undoMany(n, current) { if (!(n >= 1) || n > undo.length) return null; let s = current; for (let i = 0; i < n; i++) s = h.undo(s); return s; },
     redoMany(n, current) { if (!(n >= 1) || n > redo.length) return null; let s = current; for (let i = 0; i < n; i++) s = h.redo(s); return s; },

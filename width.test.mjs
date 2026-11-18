@@ -99,6 +99,7 @@ test('selection keeps the true-width object ink under a thin accent centre line'
     for (const dark of [false, true]) {
       const strokes = [];
       let matrix, width, colour;
+      globalThis.Path2D = class { moveTo() {} lineTo() {} arc() {} closePath() {} rect() {} };       // the selection overlay's paths (TODO 329a)
       const c = { setTransform: (...m) => { matrix = m; }, clearRect() {}, setLineDash() {}, beginPath() {}, moveTo() {}, lineTo() {},
         set lineWidth(w) { width = w; }, set strokeStyle(v) { colour = v; },
         stroke() { strokes.push([colour, width * Math.abs(matrix[0])]); } };

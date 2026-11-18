@@ -7038,6 +7038,57 @@ try {
     await page.waitForFunction(() => document.querySelector('[data-testid=entities]').textContent.trim() === 'Entities 15');
   }, { needs: ['edit: a DXF tab gets the Drawing panel with W × H in mm; no selection, no Keep only'] });
 
+  await step('TODO 329b: the latest selection paints before the ribbon and Properties refresh', async () => {
+    const p = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    try {
+      const raw = newDoc(4);
+      // above 2000 selected items the refresh is deferred (DECISIONS.md, 329b); a small selection refreshes at once
+      addEntities(raw, [dxfLine(10, 10, 90, 10, { aci: 1 }), dxfCircle(50, 45, 20, { aci: 5 }), ...Array.from({ length: 2000 }, (_, i) => dxfLine(200 + i, 0, 200 + i, 5, { aci: 1 }))]);
+      await p.goto(URL_);
+      await p.getByTestId('picker').setInputFiles({ name: 'selection-329b.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(raw)) });
+      await p.waitForFunction(() => document.querySelector('[data-testid=entities]').textContent === 'Entities 2002');
+      await p.getByTestId('ptab-objects').click();
+      await p.locator('.obj[data-e="1"]').waitFor();
+      const result = await p.evaluate(async () => {
+        const count = document.querySelector('[data-testid=sel-count]');
+        const chip = document.querySelector('[data-testid=prop-chip]');
+        const ribbon = document.querySelector('[aria-label="Ribbon colour"]');
+        const ctx = document.querySelector('[data-testid=drawing]').getContext('2d');
+        const stroke = ctx.stroke;
+        let highlighted = false;
+        ctx.stroke = function (...args) {
+          highlighted ||= this.getLineDash().length > 0;
+          return stroke.apply(this, args);
+        };
+        let updates = 0;
+        const observer = new MutationObserver((records) => { updates += records.length; });
+        const frame = () => new Promise((resolve) => requestAnimationFrame(resolve));
+        const snapshot = () => ({ chip: chip.textContent, colour: ribbon.value, highlighted });
+        try {
+          const before = snapshot();
+          observer.observe(chip, { childList: true });
+          document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', ctrlKey: true, bubbles: true }));
+          const firstCount = count.textContent, deferred = snapshot();
+          document.querySelector('.obj[data-e="1"]').click();
+          const secondCount = count.textContent, immediate = snapshot();
+          await frame();
+          const painted = snapshot();
+          await frame();
+          return { before, firstCount, deferred, secondCount, immediate, painted, settled: snapshot(), updates: updates + observer.takeRecords().length };
+        } finally {
+          observer.disconnect();
+          delete ctx.stroke;
+        }
+      });
+      assert.equal(result.firstCount, '2002 selected');
+      assert.equal(result.secondCount, '1 selected');
+      assert.deepEqual(result.deferred, result.before, 'a 2002-item selection: the ribbon and Properties wait for the paint');
+      assert.deepEqual(result.immediate, { chip: 'Circle', colour: 'aci:5', highlighted: false }, 'a one-item pick refreshes at once and drops the waiting refresh');
+      assert.deepEqual(result.settled, { chip: 'Circle', colour: 'aci:5', highlighted: true });
+      assert.equal(result.updates, 1, 'the two picks refresh Properties once');
+    } finally { await p.close(); }
+  });
+
   await step('edit: Keep only this leaves just the outline; the size is the plate\'s 100 × 60', async () => {
     await clickConnected(50, 0); await waitSel('8 selected');
     await t('keep-only').click();
@@ -7670,6 +7721,62 @@ try {
     } finally { await context.close(); }
   });
 
+  await step('TODO 321: a layer eye keeps visible selections and picks on Drawings, Layouts and Compare', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const p = await context.newPage(), q = (id) => p.getByTestId(id);
+    await p.route('**/compare-list.js', (route) => {
+      const body = readFileSync('web/compare-list.js', 'utf8').replace('export function refreshGeometry(item, source) {',
+        'export function refreshGeometry(item, source) { window.visibilityRefreshes = (window.visibilityRefreshes || 0) + 1;');
+      return route.fulfill({ contentType: 'application/javascript', body });
+    });
+    const raw = newDoc(4);
+    addLayer(raw, 'Toggle');
+    addEntities(raw, dxfLine(100, 80, 180, 80), dxfLine(100, 120, 180, 120, { layer: 'Toggle' }));
+    const open = async (name, doc) => {
+      await q('picker').setInputFiles({ name, mimeType: 'text/plain', buffer: Buffer.from(writeDxf(doc)) });
+      await p.waitForFunction((n) => document.querySelector('.dtab.on .tname')?.textContent === n, name);
+    };
+    const click = async (x, y) => {
+      const pt = await p.locator('rect.sheet').evaluate((sheet, [x, y]) => {
+        const b = sheet.getBoundingClientRect(), k = b.width / +sheet.getAttribute('width');
+        return { x: b.x + x * k, y: b.y + (+sheet.getAttribute('height') - y) * k };
+      }, [x, y]);
+      await p.mouse.click(pt.x, pt.y);
+    };
+    const eye = p.locator('[data-layer-name="Toggle"] button[data-act=vis]');
+    const drawing = q('drawing'), num = () => q('obj-selected').textContent();
+    const layerCheck = async (kind) => {
+      await q('ptab-objects').click();
+      await p.keyboard.press('Control+a'); assert.equal(await num(), '2 selected', kind);
+      await eye.click(); assert.equal(await eye.getAttribute('aria-label'), 'Show');
+      assert.equal(await num(), '1 selected', `${kind}: hiding keeps the visible selection`);
+      await click(140, 120); assert.equal(await num(), '0 selected', `${kind}: an off layer cannot be picked`);
+      await click(140, 80); assert.equal(await num(), '1 selected', `${kind}: the other layer still picks`);
+      await eye.click(); assert.equal(await num(), '1 selected', `${kind}: showing does not reselect`);
+      await click(140, 120); assert.equal(await num(), '1 selected', `${kind}: showing restores picks`);
+    };
+    try {
+      await p.goto(URL_); await p.locator('[data-tool=select]').waitFor();
+      await open('drawing-321.dxf', raw);
+      await drawing.evaluate((c) => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      await layerCheck('Drawings');
+      await p.locator('[data-menu=File]').click(); await p.getByRole('menuitem', { name: 'Compare drawings…', exact: true }).click();
+      await layerCheck('Compare');
+      const tab = (name) => p.locator('.dtab').filter({ has: p.locator('.tname').getByText(name, { exact: true }) });
+      await tab('drawing-321.dxf').click(); await eye.click();
+      await tab('Compare').click(); assert.equal(await eye.getAttribute('aria-label'), 'Hide', 'the snapshot keeps its own layer on');
+      assert.equal(await p.evaluate(() => window.visibilityRefreshes || 0), 0, 'visibility changes do not refresh linked artwork');
+      const lay = newLayout('Layout 321'); lay.layers = raw.layers;
+      raw.entities.forEach((e, i) => {
+        const id = `object-${i}`, part = lay.parts[id] = objectPart(id, id, e, lay.layers);
+        lay.placed.push(objectPlacement(part));
+      });
+      await open('layout-321.dxf', layoutRaw(lay));
+      await layerCheck('Layouts');
+      await p.keyboard.press('Control+z'); assert.equal(await eye.getAttribute('aria-label'), 'Show', 'one Undo turns the layout layer off again');
+    } finally { await context.close(); }
+  });
+
   await step('TODO 156c3: Ctrl+Z drops a Line point in Compare, then falls to the source Undo', async () => {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
     const p = await context.newPage(), q = (id) => panelControl(p, p.getByTestId(id));
@@ -7717,13 +7824,11 @@ try {
   await step('TODO 156c1 fixes: Compare orders guide and drawing Undo, refreshes source edits and refuses hidden edits', async () => {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
     const p = await context.newPage(), q = (id) => panelControl(p, p.getByTestId(id));
-    await p.addInitScript(() => {
-      const clone = window.structuredClone;
-      window.snapshotClones = 0;
-      window.structuredClone = (value, ...options) => {
-        if (Array.isArray(value?.items) && Array.isArray(value?.layers) && value.mats) window.snapshotClones++;
-        return clone(value, ...options);
-      };
+    await p.addInitScript(() => { window.snapshotClones = 0; });
+    await p.route('**/compare-list.js', (route) => {            // TODO 327: a snapshot no longer deep-copies the artwork, so the count is its builds (snapshotGeometry), not structuredClone calls of an fl
+      const src = readFileSync('web/compare-list.js', 'utf8'), body = src.replace('export function snapshotGeometry(source) {', 'export function snapshotGeometry(source) { window.snapshotClones++;');
+      assert.notEqual(body, src, 'the snapshot build counter is installed');
+      route.fulfill({ contentType: 'text/javascript', body });
     });
     p.on('pageerror', (e) => errors.push(String(e)));
     p.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
@@ -11671,6 +11776,7 @@ try {
       await page.mouse.move(a.x, a.y); await page.mouse.down(); await page.mouse.move(b.x, b.y, { steps: 5 }); await page.mouse.up();
       await waitSel('1 selected');
       if (!(await t('props-panel').isVisible())) await page.keyboard.press('Control+1');
+      await frames();
       assert.equal(await t('prop-chip').textContent(), 'Line');
       assert.equal(await t('prop-layer').inputValue(), 'Contour');
       assert.equal(await t('prop-colour').inputValue(), 'aci:1');
@@ -27793,6 +27899,157 @@ try {
     await closeTabs(/big/);
   });
 
+  await step('TODO 328a: Ctrl+1 shows the scaled picture first, then one full paint', async () => {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    try {
+      const p = await ctx.newPage(), drawing = p.getByTestId('drawing'), fit = p.getByTestId('canvas').getByRole('button', { name: 'Fit', exact: true });
+      const frame = () => p.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+      const paints = async () => Number(await drawing.getAttribute('data-paints'));
+      await p.addInitScript(() => {
+        const match = window.matchMedia.bind(window);
+        window.matchMedia = (query) => {
+          const media = match(query);
+          if (query.startsWith('(resolution:')) window.dprMedia328a = media;
+          return media;
+        };
+      });
+      await p.goto(URL_ + '?autosave=86400000');
+      await p.getByTestId('picker').setInputFiles({ name: 't328a.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(bigDoc(20000))) });
+      await p.waitForFunction(() => document.querySelector('.dtab.on .tname')?.textContent === 't328a.dxf');
+      await fit.click(); await frame();
+      assert.ok(Number(await drawing.getAttribute('data-drawn')) > 15000, 'the fitted drawing is heavy');
+      const before = await paints();
+      await drawing.evaluate((c) => {
+        const w = c.width, old = document.createElement('canvas'), svg = c.parentElement.querySelector('svg');
+        const view = () => { const [x, y, width] = svg.getAttribute('viewBox').split(' ').map(Number); return { x, y, scale: c.getBoundingClientRect().width / width }; };
+        const a = view();
+        old.width = w; old.height = c.height; old.getContext('2d').drawImage(c, 0, 0);
+        window.firstResize328a = new Promise((resolve) => {
+          const obs = new MutationObserver(() => {
+            if (c.width === w) return;
+            obs.disconnect();
+            const b = view(), r = b.scale / a.scale, dpr = window.devicePixelRatio;
+            const expected = document.createElement('canvas'); expected.width = c.width; expected.height = c.height;
+            const x = (a.x - b.x) * b.scale * dpr, y = (a.y - b.y) * b.scale * dpr;
+            expected.getContext('2d').drawImage(old, x, y, old.width * r, old.height * r);
+            resolve({ snap: c.dataset.snap, paints: Number(c.dataset.paints), same: c.toDataURL() === expected.toDataURL(),
+              blankStrip: x + old.width * r < c.width - 1 && c.getContext('2d').getImageData(c.width - 1, c.height >> 1, 1, 1).data[3] === 0 });
+          });
+          obs.observe(c, { attributes: true, attributeFilter: ['width'] });
+        });
+      });
+      await p.keyboard.press('Control+1');
+      const first = await p.evaluate(() => window.firstResize328a);
+      assert.deepEqual(first, { snap: '1', paints: before, same: true, blankStrip: true }, 'first resized frame uses the old bitmap in the new view, with a blank strip');
+      await p.waitForFunction(() => document.querySelector('[data-testid=drawing]').dataset.snap === '');
+      assert.equal(await paints(), before + 1, 'exactly one settled full paint');
+      const settled = await drawing.evaluate((c) => { c.dataset.nokeep = '1'; return c.toDataURL(); });
+      await fit.click(); await frame();
+      assert.equal(await paints(), before + 2, 'Fit forces a fresh full paint at the same size');
+      assert.ok(await drawing.evaluate((c, settled) => c.toDataURL() === settled, settled), 'settled pixels equal a fresh full paint');
+      const light = `${shotDir}/t328a-light.png`, dark = `${shotDir}/t328a-dark.png`;
+      await p.screenshot({ path: light });
+      await p.locator('[data-menu=View]').click(); await p.getByRole('menuitemcheckbox', { name: /Theme: dark\b/ }).click(); await frame();
+      await p.screenshot({ path: dark });
+      for (const path of [light, dark]) assert.ok(readFileSync(path).length > 1000, 'required screenshot exists');
+      const dprBefore = await paints(), cdp = await ctx.newCDPSession(p);
+      await drawing.evaluate((c) => {
+        const width = c.width;
+        window.firstDpr328a = new Promise((resolve) => {
+          const obs = new MutationObserver(() => {
+            if (c.width !== 2 * width) return;
+            obs.disconnect(); resolve([c.dataset.snap, Number(c.dataset.paints)]);
+          });
+          obs.observe(c, { attributes: true, attributeFilter: ['width'] });
+        });
+      });
+      await cdp.send('Emulation.setDeviceMetricsOverride', { ...p.viewportSize(), deviceScaleFactor: 2, mobile: false });
+      // Headless CDP changes DPR without delivering the resolution change event.
+      await p.evaluate(() => window.dprMedia328a.dispatchEvent(new Event('change')));
+      await p.waitForFunction(() => window.firstDpr328a);
+      assert.deepEqual(await p.evaluate(() => window.firstDpr328a), ['1', dprBefore], 'DPR alone also blits first');
+      await p.waitForFunction(() => document.querySelector('[data-testid=drawing]').dataset.snap === '');
+      assert.equal(await paints(), dprBefore + 1, 'DPR also settles with one full paint');
+      console.log('328a: old bitmap and blank strip first, one settled full paint, pixels match; DPR blits then settles');
+    } finally { await ctx.close(); }
+  });
+
+  await step('TODO 328b: a layer toggle on a heavy drawing paints quick (items under 1 px skipped), then settles at 0.4 px', async () => {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    try {
+      const doc = bigDoc(20000), TINY = 400;
+      addLayer(doc, 'Toggle', { aci: 3 });
+      doc.entities.forEach((e, i) => { if (i % 7 === 0) { e.layer = 'Toggle'; e.r.v[0] = e.layer; } });
+      addEntities(doc, Array.from({ length: TINY }, (_, i) => dxfLine((i % 20) * 65 + 2, Math.floor(i / 20) * 65 + 2, (i % 20) * 65 + 3, Math.floor(i / 20) * 65 + 3)));    // 1 mm lines on layer 0: 0.4 to 1 px at Fit
+      const buffer = Buffer.from(writeDxf(doc));
+      const p = await ctx.newPage(), drawing = p.getByTestId('drawing'), fit = p.getByTestId('canvas').getByRole('button', { name: 'Fit', exact: true });
+      const frame = () => p.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+      const paints = async () => Number(await drawing.getAttribute('data-paints'));
+      const menu = async (top, name) => { await p.locator(`[data-menu=${top}]`).click(); await p.getByRole('menuitem', { name, exact: true }).click({ timeout: 120000 }); };
+      const open = async (name) => {
+        await p.getByTestId('picker').setInputFiles({ name, mimeType: 'text/plain', buffer });
+        await p.waitForFunction((n) => document.querySelector('.dtab.on .tname').textContent === n, name, { timeout: 120000 });
+        await frame();
+      };
+      // One toggle: the quick paint (read in the frame it lands), then the settled one; the two differ only by the skipped items.
+      const toggle = async (eye, tab, strict) => {
+        const before = await paints();
+        await drawing.evaluate((c) => {
+          window.quick328b = null;
+          const obs = new MutationObserver(() => {
+            if (c.dataset.quick !== '1') return;
+            obs.disconnect(); window.quick328b = { drawn: Number(c.dataset.drawn), paints: Number(c.dataset.paints) };
+          });
+          obs.observe(c, { attributes: true, attributeFilter: ['data-quick'] });
+        });
+        await eye.dispatchEvent('click', null, { timeout: 15000 });
+        const quick = await (await p.waitForFunction(() => window.quick328b, null, { timeout: 15000 })).jsonValue();
+        await p.waitForFunction(() => document.querySelector('[data-testid=drawing]').dataset.quick === '');
+        const settled = { drawn: Number(await drawing.getAttribute('data-drawn')), paints: await paints() };
+        assert.equal(quick.paints, before + 1, `${tab}: the toggle paints once quick`);
+        assert.equal(settled.paints, before + 2, `${tab}: and once settled`);
+        if (strict) assert.ok(settled.drawn - quick.drawn > TINY / 2, `${tab}: the quick paint left out the 0.4-1 px items (${quick.drawn} of ${settled.drawn})`);
+        else assert.ok(settled.drawn >= quick.drawn, `${tab}: the settled paint draws at least what the quick one did`);
+        console.log(`328b ${tab}: quick ${quick.drawn} items, settled ${settled.drawn}`);
+        return settled;
+      };
+      const objects = () => p.getByTestId('ptab-objects').click();
+      const layerEye = () => p.locator('[data-file-layer][data-layer-name]').filter({ has: p.getByText('Toggle', { exact: true }) }).locator('button[data-act=vis]').first();
+      await p.goto(URL_ + '?autosave=86400000');
+      await p.waitForSelector('[data-testid=count]', { state: 'attached' });
+      await open('t328b.dxf');
+      await fit.click(); await frame();
+      assert.ok(Number(await drawing.getAttribute('data-drawn')) > 15000, 'the fitted drawing is heavy');
+      await objects();
+      await p.waitForTimeout(500);
+      await toggle(layerEye(), 'Drawings off', true);
+      await toggle(layerEye(), 'Drawings on', true);
+      const settled = await drawing.evaluate((c) => { c.dataset.nokeep = '1'; return c.toDataURL(); });
+      const n = await paints();
+      await fit.click(); await frame();
+      assert.equal(await paints(), n + 1, 'Fit forces a fresh full paint at the same size');
+      assert.ok(await drawing.evaluate((c, settled) => c.toDataURL() === settled, settled), 'settled pixels equal a full paint');
+      await drawing.evaluate((c) => { c.dataset.nokeep = ''; });
+      await p.screenshot({ path: `${shotDir}/t328b-light.png` });
+      assert.ok(readFileSync(`${shotDir}/t328b-light.png`).length > 1000, 'required screenshot exists');
+      // Layouts: the layout's part eye; Compare: the snapshot's layer eye
+      await menu('Layout', 'Add to layout');
+      await p.locator('.tabs .dtab').first().click();
+      await menu('Layout', 'Add to layout');
+      await objects();
+      const partEye = p.locator('[data-testid=obj-layout] button[data-act=vis]');
+      await frame(); await p.waitForTimeout(500);
+      await toggle(partEye, 'Layouts off', false);
+      await toggle(partEye, 'Layouts on', true);
+      await open('2-t328b.dxf');
+      await menu('File', 'Compare drawings…');
+      await objects();
+      await frame(); await p.waitForTimeout(500);
+      await toggle(layerEye(), 'Compare off', true);
+      await toggle(layerEye(), 'Compare on', true);
+    } finally { await ctx.close(); }
+  });
+
   await step('Layout and Compare: pan and wheel reuse the kept picture', async () => {
     const buffer = Buffer.from(writeDxf(bigDoc(20000)));
     for (const kind of ['Layout', 'Compare']) {
@@ -27931,7 +28188,14 @@ try {
         assert.ok(readFileSync(path).length > 1000, 'required screenshot exists');
       }
       await stale('wireframe', () => p.keyboard.press('F9'));
-      await stale('resize', () => p.setViewportSize({ width: 1450, height: 900 }));
+      await stale('resize', async () => {
+        const width = await drawing.evaluate((c) => c.width);
+        await p.setViewportSize({ width: 1450, height: 900 });
+        await p.waitForFunction((width) => {
+          const c = document.querySelector('[data-testid=drawing]');
+          return c.width !== width && c.dataset.snap === '';
+        }, width);
+      });
       const pick = await centre(); await p.mouse.click(pick.x, pick.y); await frame();
       await stale('nudge', () => p.keyboard.press('ArrowRight'));
       await stale('Undo nudge', () => p.keyboard.press('Control+z'));
@@ -27946,7 +28210,7 @@ try {
       const p = await ctx.newPage(), drawing = p.getByTestId('drawing'), errors = [];
       p.on('pageerror', (e) => errors.push(String(e)));
       await p.route('**/app.js', (route) => {
-        const src = readFileSync('web/app.js', 'utf8'), body = src.replace('d.ed =Ed.makeIndex(', 'd.ed = (window.t258Index = (window.t258Index || 0) + 1, Ed.makeIndex)(');
+        const src = readFileSync('web/app.js', 'utf8'), body = src.replace('d.ed = Ed.makeIndex(', 'd.ed = (window.t258Index = (window.t258Index || 0) + 1, Ed.makeIndex)(');
         assert.notEqual(body, src, 'the index counter is installed');
         const timed = body.replace('function commit(d, next, label, keepSel) {', `function commit(d, next, label, keepSel) {
           const start = performance.now(), before = window.t259Misses.length, old = new Set(d.raw.entities.map(e => e.r));
@@ -28229,14 +28493,172 @@ try {
           else await p.mouse.up();
           await frame();
           assert.equal(await paints() - during, 1, `${end} gives one full paint`);
-          assert.equal(await paints() - before, 2, 'Compare drag gives two full paints (start, end)');
+          assert.equal(await paints() - before, 1, 'Compare drag gives one full paint (the end: the base and the grabbed snapshot are painted off screen at the start, TODO 317)');
           if (end === 'Esc') { await p.mouse.move(x + 60, y + 30); await p.mouse.up(); await frame(); assert.equal(await p.getByTestId('cmp-hint').textContent(), hint, 'Esc restores the offset and ends the drag'); }
           else assert.notEqual(await p.getByTestId('cmp-hint').textContent(), hint, 'drop moves the snapshot');
           await equalsFull(`${theme} ${end}`);
-          console.log(`P14b: ${theme} ${end}, 2 full paints, picture equals a full paint`);
+          console.log(`P14b: ${theme} ${end}, 1 full paint, picture equals a full paint`);
         }
       }
       assert.deepEqual(errors, []);
+    } finally { await ctx.close(); }
+  });
+
+  await step('TODO 317 / 320: a grip drag paints over a cached base: no full paint while it moves, one at the release, in a drawing tab and in Compare; mid-drag picture equals a full paint', async () => {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    try {
+      const p = await ctx.newPage(), drawing = p.getByTestId('drawing'), errors = [];
+      p.on('pageerror', (e) => errors.push(String(e)));
+      await p.route('**/app.js', (route) => route.fulfill({ contentType: 'text/javascript', body: readFileSync('web/app.js', 'utf8') + '\nwindow.t317Paint = () => paintOverlay();' }));
+      const frame = () => p.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+      const paints = async () => Number(await drawing.getAttribute('data-paints'));
+      const gripAt = () => p.getByTestId('grip').first().evaluate((g) => { const b = g.getBoundingClientRect(); return { x: b.x + b.width / 2, y: b.y + b.height / 2 }; });
+      await p.goto(URL_ + '?autosave=86400000'); await p.getByTestId('count').waitFor({ state: 'attached' });
+      const buffer = Buffer.from(writeDxf(bigDoc(20000)));
+      for (const name of ['t317-a.dxf', 't317-b.dxf']) {
+        await p.getByTestId('picker').setInputFiles({ name, mimeType: 'text/plain', buffer });
+        await p.waitForFunction((name) => document.querySelector('.dtab.on .tname').textContent === name, name);
+      }
+      for (const kind of ['drawing', 'compare']) {
+        if (kind === 'compare') { await p.locator('[data-menu=File]').click(); await p.getByRole('menuitem', { name: 'Compare drawings…', exact: true }).click(); }
+        await p.getByTestId('canvas').getByRole('button', { name: 'Fit', exact: true }).click(); await frame();
+        await p.locator('[data-tool=select]').first().click();
+        const box = await p.getByTestId('canvas').boundingBox();
+        await p.mouse.click(box.x + box.width / 2, box.y + box.height / 2); await frame();      // the selection (and its grips) stays through the drags of both themes
+        assert.ok(await p.getByTestId('grip').count() > 0, `${kind}: the click selects an object with grips`);
+        for (const theme of ['light', 'dark']) {
+          const label = `${kind} ${theme}`;
+          await p.locator('[data-menu=View]').click();
+          await p.getByRole('menuitemcheckbox', { name: new RegExp('Theme: ' + theme + '\\b') }).click(); await frame();
+          for (const again of [false, true]) {
+            const at = await gripAt();
+            await p.mouse.move(at.x, at.y); await frame();
+            const before = await paints();
+            await p.mouse.down(); await frame();
+            const pressed = await paints();
+            assert.equal(pressed - before, 0, `${label}: a press is on the kept picture (Compare's idle picture is kept since TODO 327; it was one full paint before)`);
+            for (let i = 1; i <= 10; i++) { await p.mouse.move(at.x + i * 4, at.y + i * 2); await frame(); }
+            assert.equal(await paints(), pressed, `${label}: 10 grip moves give no full paint`);
+            assert.equal(await drawing.getAttribute('data-keep'), '1', `${label}: the grip drag paints over the kept base`);
+            if (again) {
+              await drawing.evaluate((c) => { window.__A = c.getContext('2d').getImageData(0, 0, c.width, c.height); c.dataset.nokeep = '1'; });
+              await p.evaluate(() => window.t317Paint()); await frame();
+              const diff = await drawing.evaluate((c) => {
+                const a = window.__A, b = c.getContext('2d').getImageData(0, 0, c.width, c.height);
+                delete c.dataset.nokeep; delete window.__A;
+                let over2 = 0;
+                for (let i = 0; i < a.data.length; i += 4) for (let j = 0; j < 4; j++) if (Math.abs(a.data[i + j] - b.data[i + j]) > 2) { over2++; break; }
+                return over2;
+              });
+              assert.equal(diff, 0, `${label}: the mid-drag picture equals a full paint (max channel difference 2)`);
+              await p.mouse.up(); await frame();
+            } else {
+              const path = `${shotDir}/t317-${kind}-${theme}.png`;
+              await p.screenshot({ path }); assert.ok(readFileSync(path).length > 1000, 'required screenshot exists');
+              const during = await paints();
+              await p.mouse.up(); await frame();
+              assert.equal(await paints() - during, 1, `${label}: the release gives one full paint`);
+              assert.notDeepEqual(await gripAt(), at, `${label}: the grip drag moved the grip`);
+            }
+          }
+          console.log(`T317 / T320: ${label}, grip moves 0 full paints, release 1, mid-drag picture equals a full paint`);
+        }
+      }
+      assert.deepEqual(errors, []);
+    } finally { await ctx.close(); }
+  });
+
+  await step('TODO 316: the Compare button on a big pair runs in slices: "Comparing… n%", no differences until done, a second click and a closed tab drop a run', async () => {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    try {
+      const p = await ctx.newPage(), errors = [], q = (id) => p.getByTestId(id);
+      p.on('pageerror', (e) => errors.push(String(e)));
+      await p.goto(URL_ + '?autosave=86400000'); await q('count').waitFor({ state: 'attached' });
+      for (const [name, n] of [['t316-a.dxf', 20000], ['t316-b.dxf', 20300]]) {
+        await q('picker').setInputFiles({ name, mimeType: 'text/plain', buffer: Buffer.from(writeDxf(bigDoc(n))) });
+        await p.waitForFunction((name) => document.querySelector('.dtab.on .tname').textContent === name, name);
+      }
+      await p.locator('[data-menu=File]').click(); await p.getByRole('menuitem', { name: 'Compare drawings…', exact: true }).click();
+      const text = () => q('cmp-count').textContent(), done = () => p.waitForFunction(() => /difference|No differences/.test(document.querySelector('[data-testid=cmp-count]').textContent), null, { timeout: 120000 });
+      await q('cmp-run').click();
+      assert.match(await text(), /^Comparing… \d+%$/, 'a big pair shows the progress line');
+      assert.equal(await q('cmp-result').count(), 0, 'no result rows while it runs');
+      assert.equal(await q('cmp-glow').count(), 0, 'no differences are drawn while it runs');
+      await q('cmp-run').click();                     // a second click starts again; the first run is dropped
+      assert.match(await text(), /^Comparing… \d+%$/);
+      await done();
+      const once = await text();
+      assert.match(once, /^\d+ differences?( or more)?$/, 'the second run finished with differences');
+      assert.equal(await q('cmp-result').count(), 2, 'one result row per drawing');
+      await q('cmp-run').click(); await done();
+      assert.equal(await text(), once, 'an uninterrupted run gives the same count');
+      await q('cmp-run').click();                     // closing the tab mid-run drops it
+      await p.locator('.dtab.on .x').click();
+      await p.waitForTimeout(1500);
+      assert.equal(await p.locator('.tabs .dtab').count(), 2, 'the Compare tab closed, both drawings stay');
+      assert.deepEqual(errors, []);
+    } finally { await ctx.close(); }
+  });
+
+  await step('TODO 327: Compare start is one full paint; a select click on a big pair paints only the selection over the kept picture, which equals a full paint', async () => {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    try {
+      const p = await ctx.newPage(), drawing = p.getByTestId('drawing'), errors = [], q = (id) => p.getByTestId(id);
+      p.on('pageerror', (e) => errors.push(String(e)));
+      const frame = () => p.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+      const paints = async () => Number(await drawing.getAttribute('data-paints'));
+      await p.goto(URL_ + '?autosave=86400000'); await q('count').waitFor({ state: 'attached' });
+      for (const name of ['t327-a.dxf', 't327-b.dxf']) {
+        await q('picker').setInputFiles({ name, mimeType: 'text/plain', buffer: Buffer.from(writeDxf(bigDoc(20000))) });
+        await p.waitForFunction((name) => document.querySelector('.dtab.on .tname').textContent === name, name);
+      }
+      await p.waitForTimeout(1500); await frame();
+      const start = await paints();
+      await p.locator('[data-menu=File]').click(); await p.getByRole('menuitem', { name: 'Compare drawings…', exact: true }).click();
+      await p.waitForTimeout(500); await frame();
+      assert.equal(await paints() - start, 1, 'Compare start is one full paint');
+      await p.locator('[data-testid=canvas]').getByRole('button', { name: 'Fit', exact: true }).click(); await frame();
+      await p.locator('[data-tool=select]').first().click();
+      const b = await p.getByTestId('canvas').boundingBox(), cx = b.x + b.width / 2, cy = b.y + b.height / 2;
+      await p.mouse.move(cx, cy); await frame();
+      const before = await paints();
+      await p.mouse.click(cx, cy); await frame();
+      const selected = () => q('sel-count').textContent();
+      assert.match(await selected(), /[1-9]\d* selected/, 'the click selects something in the edited drawing');
+      assert.equal(await paints(), before, 'a select click does no full paint');
+      assert.equal(await drawing.getAttribute('data-keep'), '1', 'the selection is painted over the kept picture');
+      const pixels = async (label) => {                         // the kept picture against a forced full paint of the same state (Fit again: same view)
+        await frame();
+        await drawing.evaluate((c) => { window.__A = c.getContext('2d').getImageData(0, 0, c.width, c.height); c.dataset.nokeep = '1'; });
+        const was = await paints();
+        await p.locator('[data-testid=canvas]').getByRole('button', { name: 'Fit', exact: true }).click(); await frame();
+        assert.ok(await paints() > was, `${label}: nokeep forces a full pass`);
+        const over = await drawing.evaluate((c) => {
+          const a = window.__A, g = c.getContext('2d').getImageData(0, 0, c.width, c.height);
+          delete c.dataset.nokeep; delete window.__A;
+          let n = 0;
+          for (let i = 0; i < a.data.length; i += 4) for (let j = 0; j < 4; j++) if (Math.abs(a.data[i + j] - g.data[i + j]) > 2) { n++; break; }
+          return n;
+        });
+        assert.equal(over, 0, `${label}: kept and full pixels (max channel difference 2)`);
+      };
+      await pixels('select click');
+      await p.mouse.click(cx, cy); await frame();             // the full pass above kept a new base: Escape and a second click are over it again
+      const again = await paints();
+      await p.mouse.click(b.x + 60, b.y + 90); await frame();
+      assert.doesNotMatch(await selected(), /[1-9]\d* selected/, 'a click on empty paper clears the selection');
+      assert.equal(await paints(), again, 'clearing the selection does no full paint');
+      await p.mouse.click(cx + 20, cy + 14); await frame();
+      assert.equal(await paints(), again, 'a second click does no full paint');
+      await p.mouse.move(cx + 200, cy); await frame();
+      await p.screenshot({ path: `${shotDir}/t327-light.png` });
+      await p.locator('[data-menu=View]').click(); await p.getByRole('menuitemcheckbox', { name: /Theme: dark\b/ }).click(); await frame();
+      await p.screenshot({ path: `${shotDir}/t327-dark.png` });
+      await p.setViewportSize({ width: 1024, height: 800 }); await p.waitForTimeout(600); await frame();
+      await p.screenshot({ path: `${shotDir}/t327-1024.png` });
+      for (const f of ['light', 'dark', '1024']) assert.ok(readFileSync(`${shotDir}/t327-${f}.png`).length > 1000, 'required screenshot exists');
+      assert.deepEqual(errors, []);
+      console.log('T327: Compare start 1 full paint; select click, a click on empty paper and a second click 0 full paints on the kept picture; pixels equal a full paint');
     } finally { await ctx.close(); }
   });
 
@@ -28309,13 +28731,13 @@ try {
     const cmp = await flow((p) => interactCompare(p, big, 'lag-big.dxf'));
     assert.deepEqual(Object.keys(cmp), ['open', 'Compare start', 'Compare wheel', 'Compare pan', 'Compare click', 'Compare button', 'Compare button again', 'Compare grip drag', 'Compare drag']);
     assert.ok(cmp['Compare start'].lineTo > 30000, `both snapshots paint: lineTo ${cmp['Compare start'].lineTo}`);
-    within(cmp, { 'Compare start': 1, 'Compare wheel': 21, 'Compare pan': 1, 'Compare click': 2, 'Compare button': 2, 'Compare button again': 2, 'Compare drag': 2 });
+    within(cmp, { 'Compare start': 1, 'Compare wheel': 21, 'Compare pan': 1, 'Compare click': 0, 'Compare button': 2, 'Compare button again': 2, 'Compare grip drag': 2, 'Compare drag': 1 });       // TODO 317: a grip drag was 21 full paints, a body drag 2 (a grip press is one more paint when it does not share the frame of the first move)
     assert.ok(cmp['Compare button again'].longTotal < 1500, `Compare button again long tasks ${cmp['Compare button again'].longTotal} ms (the second press reuses the fl-keyed metrics cache; this head 338 ms; the first press measures both items)`);
     const firstPressBound = process.env.CI ? 6000 : 3000;
     assert.ok(cmp['Compare button'].longTotal < firstPressBound, `Compare button (the first press) long tasks ${cmp['Compare button'].longTotal} ms (bound ${firstPressBound} ms; CI allows 6000 ms for the slower runner; P14a: 4cff4b3 ~10300 ms, outlineLoops scanned every open piece per join)`);
     const edit = await flow((p) => interactEdit(p, big, 'lag-big.dxf'));
     assert.deepEqual(Object.keys(edit), ['open', 'Ctrl+A', 'box select', 'Move hover', 'Move commit click', 'Trim hover', 'object drag', 'LINE grip drag', 'Delete', 'Ctrl+Z', 'Ctrl+Y']);
-    within(edit, { 'Ctrl+A': 1 });
+    within(edit, { 'Ctrl+A': 1, 'object drag': 1, 'LINE grip drag': 2 });       // TODO 320: both were 20 full paints
     assert.ok(edit['Ctrl+A'].lineTo >= edit['Ctrl+Z'].lineTo, 'Ctrl+A paints the highlight too');
     assert.ok(edit['Ctrl+A'].lineTo <= 2 * edit['Ctrl+Z'].lineTo, `Ctrl+A traces the drawing at most twice (base and highlight): lineTo ${edit['Ctrl+A'].lineTo}, one full paint ${edit['Ctrl+Z'].lineTo}`);
   });

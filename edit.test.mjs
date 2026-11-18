@@ -1,4 +1,5 @@
 // edit.js — picking by chain, box, delete / keep only, scaling every entity type, undo.   node edit.test.mjs
+import { indexWithVisibility, visibleSelection } from './web/edit.js';
 const { test } = await import('node:test');
 const assert = (await import('node:assert/strict')).default;
 const fs = await import('node:fs');
@@ -39,6 +40,47 @@ test('items of entities without an index match byEnt', () => {
     }
   }
   assert.deepEqual(E.itemsOfEntities(load('sample.dxf').fl, new Set()), []);
+});
+
+test('TODO 321: layer visibility keeps only still-visible selected entities and highlights', () => {
+  const raw = W.newDoc(4);
+  W.addLayer(raw, 'Off');
+  W.addBlock(raw, 'Mixed', [W.line(2, 0, 4, 0, { layer: 'Off' }), W.line(2, 2, 4, 2)]);
+  W.addEntities(raw, W.line(0, 0, 10, 0), W.line(0, 10, 10, 10, { layer: 'Off' }), W.insert('Mixed', 40, 10), W.line(0, 20, 10, 20));
+  const fl = D.flatten(raw), off = new Set([fl.layers.findIndex((l) => l.name === 'Off')]), sel = new Set([2, 1, 0, 3]);
+  const kept = visibleSelection(fl, sel, off, new Set([3]));
+  assert.deepEqual([...kept.sel], [2, 0]);
+  assert.deepEqual(kept.hl.map((it) => it.e), [2, 0], 'only the visible member of the INSERT stays highlighted');
+  assert.deepEqual([...sel], [2, 1, 0, 3]);
+  assert.deepEqual([...visibleSelection(fl, kept.sel, new Set()).sel], [2, 0], 'showing the layer does not reselect its objects');
+});
+
+test('TODO 321: reused index matches fresh hits and snaps with a layer off and on', () => {
+  const raw = W.newDoc(4);
+  W.addLayer(raw, 'Off');
+  W.addBlock(raw, 'Mixed', [W.line(2, 0, 4, 0, { layer: 'Off' }), W.line(2, 2, 4, 2)]);
+  W.addEntities(raw, W.line(0, 0, 10, 0), W.line(5, -5, 5, 5, { layer: 'Off' }), W.insert('Mixed', 40, 10),
+    W.insert('Mixed', 60, 10, { layer: 'Off' }), W.text(80, 10, 2, 'Note', { layer: 'Off' }), W.line(100, 0, 110, 0));
+  const fl = D.flatten(raw), layer = fl.layers.findIndex((l) => l.name === 'Off'), hid = new Set([5]);
+  const opts = SNAP.snapTypes({ insertion: true });
+  let ed = E.makeIndex(raw, fl, new Set(), hid);
+  const originalGrid = ed.ix, originalBoxes = ed.boxGrid;
+  for (const off of [new Set([layer]), new Set()]) {
+    ed = indexWithVisibility(ed, off, hid);
+    const fresh = E.makeIndex(raw, fl, off, hid);
+    assert.equal(ed.ix, originalGrid);
+    assert.equal(ed.boxGrid, originalBoxes);
+    for (const [x, y] of [[0, 0], [5, 0], [5, 4], [40, 10], [43, 10], [43, 12], [60, 10], [63, 12], [81, 11], [100, 0]]) {
+      for (const fn of [E.hitEntity, E.hitEntities, E.hitItem, E.snapEnd]) assert.deepEqual(fn(ed, x, y, .2), fn(fresh, x, y, .2));
+      assert.deepEqual(E.snapPick(ed, x, y, .2, true, -1, opts), E.snapPick(fresh, x, y, .2, true, -1, opts));
+    }
+    if (off.size) for (const [x, y] of [[5, 4], [43, 10], [63, 12], [81, 11]]) assert.equal(E.hitEntity(ed, x, y, .2), -1);
+    assert.equal(E.snapPick(ed, 40, 10, .2, true, -1, opts)?.kind, 'insertion', 'a visible block member keeps the insertion snap');
+    assert.equal(E.snapPick(ed, 60, 10, .2, true, -1, opts)?.kind, off.size ? undefined : 'insertion');
+    assert.equal(E.snapPick(ed, 5, 4, .2)?.kind, off.size ? undefined : 'near', 'off-layer geometry cannot snap');
+    assert.deepEqual(E.inBox(ed, [0, -5, 75, 20]), E.inBox(fresh, [0, -5, 75, 20]));
+    assert.deepEqual(E.crossBox(ed, [41, 9, 65, 11]), E.crossBox(fresh, [41, 9, 65, 11]));
+  }
 });
 
 test('P3: selection size from shown items matches the index without kept dimensions', () => {
@@ -966,58 +1008,101 @@ test('area and perimeter of a rounded outline (100 x 60, r 10)', () => {
   near(r.perimeter, 320 - 80 + 20 * Math.PI, 'perimeter', 1e-4);
 });
 
-test('areaPerimeter: box reject gives the same result on nested loops and counts few inside tests', () => {
-  const index = (entities) => {
-    const doc = W.newDoc(4); W.addEntities(doc, entities);
-    const raw = D.readDxf(W.writeDxf(doc)); return E.makeIndex(raw, D.flatten(raw));
-  };
-  // The old depth calculation, without a box reject, is the reference for all returned fields.
-  const before = (ed, factor = 1, tol = 1e-6) => {
-    const r = E.outlineLoops(ed, ed.shown, tol);
-    if (!r) return null;
-    const loops = r.loops.map((l) => l.pts), areas = loops.map((pts) => {
-      let a = 0; for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) a += pts[j][0] * pts[i][1] - pts[i][0] * pts[j][1];
-      return Math.abs(a) / 2;
-    });
-    let area = 0, holes = 0;
-    loops.forEach((L, i) => {
-      const depth = loops.reduce((n, M, k) => {
-        if (k === i || areas[k] <= areas[i]) return n;
-        let inside = false;
-        for (let p = 0, q = M.length - 1; p < M.length; q = p++) {
-          if ((M[p][1] > L[0][1]) !== (M[q][1] > L[0][1]) && L[0][0] < (M[q][0] - M[p][0]) * (L[0][1] - M[p][1]) / (M[q][1] - M[p][1]) + M[p][0]) inside = !inside;
-        }
-        return n + (inside ? 1 : 0);
-      }, 0);
-      if (depth % 2) { area -= areas[i]; holes++; } else area += areas[i];
-    });
-    return { area: area * factor * factor, perimeter: r.len * factor, loops: loops.length, holes, gaps: r.gaps, open: r.open };
-  };
-  // 300 loops in separate groups of three nested outlines: genuine holes plus many box rejects.
-  const ed = index(Array.from({ length: 100 }, (_, i) => [W.rect(i * 30, 0, 20, 20), W.rect(i * 30 + 4, 4, 12, 12), W.rect(i * 30 + 8, 8, 4, 4)]).flat());
-  const expected = before(ed), loops = E.outlineLoops(ed, ed.shown).loops, pts = loops[0].pts.length;
+function loopIndex(entities) {
+  const doc = W.newDoc(4); W.addEntities(doc, entities);
+  const raw = D.readDxf(W.writeDxf(doc)); return E.makeIndex(raw, D.flatten(raw));
+}
+
+// The old depth calculation, without a box reject, is the reference for all returned fields.
+function bruteLoopMeasure(ed, factor = 1, tol = 1e-6) {
+  const r = E.outlineLoops(ed, ed.shown, tol);
+  if (!r) return null;
+  const loops = r.loops.map((l) => l.pts), areas = loops.map((pts) => {
+    let a = 0; for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) a += pts[j][0] * pts[i][1] - pts[i][0] * pts[j][1];
+    return Math.abs(a) / 2;
+  });
+  let area = 0, holes = 0;
+  loops.forEach((L, i) => {
+    const depth = loops.reduce((n, M, k) => {
+      if (k === i || areas[k] <= areas[i]) return n;
+      let inside = false;
+      for (let p = 0, q = M.length - 1; p < M.length; q = p++) {
+        if ((M[p][1] > L[0][1]) !== (M[q][1] > L[0][1]) && L[0][0] < (M[q][0] - M[p][0]) * (L[0][1] - M[p][1]) / (M[q][1] - M[p][1]) + M[p][0]) inside = !inside;
+      }
+      return n + (inside ? 1 : 0);
+    }, 0);
+    if (depth % 2) { area -= areas[i]; holes++; } else area += areas[i];
+  });
+  return { area: area * factor * factor, perimeter: r.len * factor, loops: loops.length, holes, gaps: r.gaps, open: r.open };
+}
+
+function countLoopTests(ed) {
+  const loops = E.outlineLoops(ed, ed.shown).loops, pts = loops[0].pts.length;
   assert.ok(loops.every((l) => l.pts.length === pts));
-  const iter = Array.prototype[Symbol.iterator]; let steps = 0, result;
-  // As in the P13 counter, inside() destructures two points per polygon step; boxes read coordinates directly.
+  const iter = Array.prototype[Symbol.iterator], map = Array.prototype.map;
+  let steps = 0, areaReads = 0, result;
+  // The ray test reads two points per vertex; the hole pass reads one area per candidate and two per loop.
   Array.prototype[Symbol.iterator] = function () { if (this.length === 2) steps++; return iter.call(this); };
-  try { result = E.areaPerimeter(ed, ed.shown); } finally { Array.prototype[Symbol.iterator] = iter; }
-  assert.deepEqual(result, expected);
+  Array.prototype.map = function (callback, thisArg) {
+    const values = map.call(this, callback, thisArg);
+    if (callback.name !== 'shoelace') return values;
+    return new Proxy(values, { get(target, key) {
+      if (typeof key === 'string' && /^\d+$/.test(key)) areaReads++;
+      return target[key];
+    } });
+  };
+  try { result = E.areaPerimeter(ed, ed.shown); } finally {
+    Array.prototype[Symbol.iterator] = iter;
+    Array.prototype.map = map;
+  }
+  assert.ok(areaReads >= 2 * loops.length, 'the counter sees the shoelace array reads');
+  return { result, calls: steps / 2 / pts, candidates: areaReads - 2 * loops.length };
+}
+
+test('areaPerimeter: box grid gives the same result on nested loops and counts few inside tests', () => {
+  // 300 loops in separate groups of three nested outlines: genuine holes plus many box rejects.
+  const ed = loopIndex(Array.from({ length: 100 }, (_, i) => [W.rect(i * 30, 0, 20, 20), W.rect(i * 30 + 4, 4, 12, 12), W.rect(i * 30 + 8, 8, 4, 4)]).flat());
+  const { result, calls, candidates } = countLoopTests(ed);
+  assert.deepEqual(result, bruteLoopMeasure(ed));
   assert.deepEqual([result.area, result.perimeter, result.loops, result.holes], [27200, 14400, 300, 100]);
-  const calls = steps / 2 / pts;
   assert.equal(calls, 300, 'each nested outline is tested only against its larger neighbours');
-  assert.ok(calls < loops.length ** 2 * .05, `${calls} inside tests must be under 5% of loops squared`);
-  console.log(`P11: ${calls} inside tests for ${loops.length} loops (under 5% of loops squared)`);
+  assert.ok(calls < result.loops ** 2 * .05, `${calls} inside tests must be under 5% of loops squared`);
+  assert.ok(candidates < 5 * result.loops, `${candidates} candidate box checks for ${result.loops} loops`);
+  console.log(`P11: ${calls} inside tests and ${candidates} candidate box checks for ${result.loops} loops`);
   const edges = [
     [[0, 4], [2, 4], [2, 6], [0, 6]], [[20, 4], [18, 4], [18, 6], [20, 6]],
     [[4, 0], [6, 0], [6, 2], [4, 2]], [[4, 20], [6, 20], [6, 18], [4, 18]],
   ];
   for (const points of edges) {
-    const edge = index([W.rect(0, 0, 20, 20), W.lwpoly(points, { closed: true })]);
-    assert.deepEqual(E.areaPerimeter(edge, edge.shown, 25.4), before(edge, 25.4), 'points on each box edge keep the old containment result');
+    const edge = loopIndex([W.rect(0, 0, 20, 20), W.lwpoly(points, { closed: true })]);
+    assert.deepEqual(E.areaPerimeter(edge, edge.shown, 25.4), bruteLoopMeasure(edge, 25.4), 'points on each box edge keep the old containment result');
   }
-  const open = index([W.line(0, 0, 10, 0)]), empty = index([W.text(0, 0, 1, 'no outline')]);
-  assert.deepEqual(E.areaPerimeter(open, open.shown), before(open));
-  assert.deepEqual(E.areaPerimeter(empty, empty.shown), before(empty));
+  const open = loopIndex([W.line(0, 0, 10, 0)]), empty = loopIndex([W.text(0, 0, 1, 'no outline')]);
+  assert.deepEqual(E.areaPerimeter(open, open.shown), bruteLoopMeasure(open));
+  assert.deepEqual(E.areaPerimeter(empty, empty.shown), bruteLoopMeasure(empty));
+});
+
+test('TODO 326: the box grid matches brute force on 2000 nested and side-by-side loops', () => {
+  const rects = Array.from({ length: 500 }, (_, i) => {
+    const x = i * 40 - 10000;
+    return [W.rect(x, -10, 20, 20), W.rect(x + 2, -8, 16, 16), W.rect(x + 4, -6, 12, 12), W.rect(x + 4, -6, 12, 12)];
+  }).flat();
+  rects.push(W.rect(-10020, -20, 11000, 50));
+  const ed = loopIndex(rects), { result, candidates } = countLoopTests(ed);
+  const expected = bruteLoopMeasure(ed);
+  assert.deepEqual(result, expected);
+  assert.equal(result.loops, rects.length);
+  assert.ok(result.holes > 0);
+  console.log(`TODO 326: ${candidates} candidate box checks for ${result.loops} loops (limit ${result.loops * 50})`);
+  assert.ok(candidates < result.loops * 50, `${candidates} candidate box checks for ${result.loops} loops`);
+  const steps = E.areaPerimeterSteps(ed, ed.shown, 1, 1e-6, () => true);
+  let step = steps.next(), yieldedInGrid = false;
+  while (!step.done) {
+    yieldedInGrid ||= step.value >= 0.4 && step.value < 0.5;
+    step = steps.next();
+  }
+  assert.ok(yieldedInGrid, 'the generator yields while building the grid');
+  assert.deepEqual(step.value, expected);
 });
 
 test('area across a tiny gap: the outline scaled x2 (gaps 0.008 and 0.012 mm) still closes, and says so', () => {
@@ -1283,30 +1368,20 @@ test('gapMarks requires Show; 50 rings are allowed, 51 keeps the count and draws
   assert.equal(gaps.length, 51, 'the count is never truncated');
 });
 
-test('P13 lag counter: areaPerimeter point-in-loop tests on 300 loops stay at today\'s number (upper bound; the fix ticket tightens it)', () => {
-  // inside() is private and reads two points per polygon step by array destructuring: count those on 2-element arrays (no hook in web/).
-  const insideCalls = (rects) => {
-    const doc = W.newDoc(4); W.addEntities(doc, rects);
-    const raw = D.readDxf(W.writeDxf(doc)), ed = E.makeIndex(raw, D.flatten(raw)), ents = new Set(ed.shown);
-    const loops = E.outlineLoops(ed, ents).loops, pts = loops[0].pts.length, iter = Array.prototype[Symbol.iterator];
-    assert.ok(loops.every((l) => l.pts.length === pts), 'every loop has the same vertex count, so steps / pts = calls');
-    let steps = 0, r;
-    Array.prototype[Symbol.iterator] = function () { if (this.length === 2) steps++; return iter.call(this); };
-    try { r = E.areaPerimeter(ed, ents); } finally { Array.prototype[Symbol.iterator] = iter; }
-    return { calls: steps / 2 / pts, r };
-  };
+test('P13 lag counter: nested loops keep their inside tests and side-by-side loops check few boxes', () => {
   const side = (i) => W.rect(-i, -i, 2 * i, 2 * i);
-  assert.equal(insideCalls([side(1), side(2), side(3)]).calls, 3, 'the counter sees the 3 tests (each loop against each bigger one) of three nested loops');
+  assert.equal(countLoopTests(loopIndex([side(1), side(2), side(3)])).calls, 3, 'the counter sees the 3 tests (each loop against each bigger one) of three nested loops');
   const N = 300, bound = N * (N - 1) / 2;
-  const nested = insideCalls(Array.from({ length: N }, (_, k) => side(k + 1)));
-  assert.equal(nested.r.loops, N);
+  const nested = countLoopTests(loopIndex(Array.from({ length: N }, (_, k) => side(k + 1))));
+  assert.deepEqual([nested.result.loops, nested.result.holes], [N, N / 2]);
   let want = 0; for (let k = 1; k <= N; k++) want += (N - k) % 2 ? -4 * k * k : 4 * k * k;      // loop k sits inside the N - k bigger ones: odd = a hole
-  near(nested.r.area, want, 'nested area');
-  assert.ok(nested.calls <= bound, `nested loops: ${nested.calls} inside tests, today's bound ${bound}`);
-  const apart = insideCalls(Array.from({ length: N }, (_, k) => W.rect((k + 1) ** 2, 0, k + 1, k + 1)));      // 300 loops of different sizes side by side
-  assert.equal(apart.r.holes, 0);
-  assert.ok(apart.calls <= bound, `loops side by side: ${apart.calls} inside tests, today's bound ${bound}`);
-  console.log(`P13: inside tests, nested ${nested.calls}, side by side ${apart.calls}, bound ${bound}`);
+  near(nested.result.area, want, 'nested area');
+  assert.equal(nested.calls, bound, 'every containing loop must still reach inside()');
+  const apart = countLoopTests(loopIndex(Array.from({ length: N }, (_, k) => W.rect((k + 1) ** 2, 0, k + 1, k + 1))));
+  assert.equal(apart.result.holes, 0);
+  assert.equal(apart.calls, 0);
+  console.log(`P13: ${nested.calls} inside tests for nested loops, ${apart.calls} inside tests and ${apart.candidates} candidate box checks for side-by-side loops`);
+  assert.ok(apart.candidates < 5 * N, `${apart.candidates} candidate box checks for ${N} side-by-side loops`);
 });
 
 test('P14a: joining open pieces through the end grid gives the loops the scan of every piece gave', async () => {

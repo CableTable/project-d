@@ -9,7 +9,7 @@
 //   mirrorEntity(ent, p1, p2, blocks)  → { ent, blocks? } | { skip }    reflection; dimensions and leaders return private blocks
 //   mirrorShape(sh, p1, p2) / offsetShape(sh, d, at) / trimShape(sh, edgeShapes, pick) are the same on shapes.
 import { ownBlock } from './drawing.js';
-import { shapeOf, hasGrips, num, at as atCode, get, withValues } from './grips.js';
+import { shapeOf, hasGrips, lwVertices, num, at as atCode, get, withValues } from './grips.js';
 import { toEntity } from './draw.js';
 import { LDR_BLOCK } from './edit.js';
 import * as L from './leader.js';
@@ -589,17 +589,58 @@ export function windowHit(a, b) {
   return (segs) => (inside(segs[0].a) ? segs[0].a : touches(segs, lines));
 }
 
+const lineBox = (a, b) => [Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[0], b[0]), Math.max(a[1], b[1])];
+function padPathBox(b) {
+  // Retain intersections accepted by the segment solver's tolerance.
+  const pad = 1e-7 * (1 + Math.max(Math.abs(b[0]), Math.abs(b[1]), Math.abs(b[2]), Math.abs(b[3])));
+  return [b[0] - pad, b[1] - pad, b[2] + pad, b[3] + pad];
+}
+
 function pathBox(P) {
   const b = [Infinity, Infinity, -Infinity, -Infinity];
   for (const s of P.segs) {
     const g = geo(s);
     // Full-circle bounds conservatively include bulged arcs beyond their endpoints.
-    const q = g.line ? [Math.min(s.a[0], s.b[0]), Math.min(s.a[1], s.b[1]), Math.max(s.a[0], s.b[0]), Math.max(s.a[1], s.b[1])]
+    const q = g.line ? lineBox(s.a, s.b)
       : [g.c[0] - g.r, g.c[1] - g.r, g.c[0] + g.r, g.c[1] + g.r];
     b[0] = Math.min(b[0], q[0]); b[1] = Math.min(b[1], q[1]); b[2] = Math.max(b[2], q[2]); b[3] = Math.max(b[3], q[3]);
   }
-  const pad = 1e-7 * (1 + Math.max(...b.map(Math.abs)));      // retain intersections accepted by the segment solver's tolerance
-  return [b[0] - pad, b[1] - pad, b[2] + pad, b[3] + pad];
+  return padPathBox(b);
+}
+
+function entityPathBox(ent) {
+  const r = ent.r, value = (code) => get(r, code) ?? 0;
+  if (ent.type === 'LWPOLYLINE') {
+    const pts = lwVertices(r).map(({ x, y, b }) => [x, y, b]);
+    return pathBox(pathOf({ t: 'poly', pts, closed: !!(value(70) & 1) }));
+  }
+  const p = [value(10), value(20)];
+  if (ent.type === 'LINE') return padPathBox(lineBox(p, [value(11), value(21)]));
+  const sh = ent.type === 'CIRCLE' ? { t: 'circle', c: p, r: value(40) }
+    : { t: 'arc', c: p, r: value(40), a0: value(50), a1: value(51) };
+  return pathBox(pathOf(sh));
+}
+
+const trimBoxes = new WeakMap();
+function trimBox(ent) {
+  const cached = trimBoxes.get(ent);
+  if (cached !== undefined) return cached;
+  if (!canModify(ent)) return null;
+  // Edits replace entities, so a hover can reuse bounds for the same record.
+  const box = entityPathBox(ent);
+  trimBoxes.set(ent, box);
+  return box;
+}
+
+/** Single-object Trim can skip edges outside the target's padded path bounds. */
+export function trimCuttingEdges(ent, edges) {
+  const b = trimBox(ent);
+  if (!b) return [];
+  return edges.filter((e) => {
+    if (e === ent) return false;
+    const c = trimBox(e);
+    return c && !(c[0] > b[2] || c[2] < b[0] || c[1] > b[3] || c[3] < b[1]);
+  });
 }
 
 /**

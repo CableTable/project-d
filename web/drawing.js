@@ -641,6 +641,80 @@ export function flatten(doc, hidden = new Set()) {
   return { units, layers, items, insertions, mats, vports, boxes, left, truncated, endsEarly: !!doc.endsEarly };
 }
 
+const PLAIN_EDIT_TYPES = new Set(['LINE', 'POINT', 'CIRCLE', 'ARC', 'ELLIPSE', 'LWPOLYLINE', 'POLYLINE', 'SPLINE',
+  'TEXT', 'MTEXT', 'ATTDEF', 'SOLID', 'TRACE', '3DFACE', 'HATCH', 'LEADER', 'MULTILEADER', 'MLEADER', 'WIPEOUT']);
+
+/** Splice independent top-level replacements or deletions into the previous draw. */
+export function flattenEdit(before, after, fl, hidden) {
+  return patchEntities(before, after, fl, hidden) ?? flatten(after, hidden);
+}
+
+function patchEntities(before, after, fl, hidden) {
+  if (!fl || fl.truncated || hidden?.size || before.layers !== after.layers || before.ltypes !== after.ltypes || before.header !== after.header) return null;
+  if (before.blocks !== after.blocks) {
+    const names = Object.keys(after.blocks);
+    if (names.length !== Object.keys(before.blocks).length || names.some((name) => before.blocks[name] !== after.blocks[name])) return null;
+  }
+  const old = before.entities, next = after.entities, deleting = next.length < old.length;
+  if (next.length > old.length) return null;
+  const edits = [], seenLayers = new Set();
+  let checkHoles = false, j = 0;
+  for (let i = 0; i < old.length; i++) {
+    const e = old[i], replacement = next[j];
+    if (e === replacement) {
+      if (deleting && !e.hidden) seenLayers.add(e.layer);
+      j++;
+      continue;
+    }
+    if (!PLAIN_EDIT_TYPES.has(e.type) || e.flip || e.hidden || e.fill) return null;
+    if (deleting) {
+      // Keep the first encounter of each layer in the same order, including layers introduced by a block.
+      if (!seenLayers.has(e.layer) && (replacement?.layer !== e.layer || replacement?.hidden)) return null;
+    } else {
+      if (replacement.type !== e.type || replacement.layer !== e.layer || replacement.flip || replacement.hidden || replacement.fill) return null;
+      j++;
+    }
+    checkHoles ||= closedOutline(e) || (!deleting && closedOutline(replacement));
+    edits.push(i);
+  }
+  if (j !== next.length || checkHoles && old.some((e) => e.fill)) return null;
+  if (!edits.length) return fl;
+
+  const rebuilt = deleting ? [] : flatten({ ...after, entities: edits.map((i) => next[i]) }, hidden).items;
+  const layers = fl.layers.map((l) => ({ ...l, n: 0 })), layerAt = new Map(layers.map((l, i) => [l.name, i]));
+  const items = [], offsets = deleting && fl.insertions.length ? new Uint32Array(fl.items.length + 1) : null;
+  let pos = 0, patch = 0, removed = 0;
+  const keep = () => {
+    const it = fl.items[pos];
+    if (offsets) offsets[pos] = items.length;
+    items.push(removed ? { ...it, e: it.e - removed } : it);
+    pos++;
+  };
+  for (const [slot, e] of edits.entries()) {
+    while (fl.items[pos]?.e < e) keep();
+    const start = pos, out = items.length;
+    while (fl.items[pos]?.e === e) {
+      if (offsets) offsets[pos] = out;
+      pos++;
+    }
+    if (deleting) removed++;
+    else {
+      while (rebuilt[patch]?.e === slot) items.push({ ...rebuilt[patch++], e, L: [layerAt.get(next[e].layer)] });
+      if (pos - start !== items.length - out) return null;   // keep the cached INSERT ranges valid
+    }
+  }
+  while (pos < fl.items.length) keep();
+  if (offsets) offsets[pos] = items.length;
+  const insertions = offsets ? fl.insertions.map((v) => ({ ...v, start: offsets[v.start], end: offsets[v.end] })) : fl.insertions;
+  const boxes = { model: null, paper: null };
+  for (const it of items) {
+    layers[it.L[0]].n++;
+    if (it.L.every((l) => layers[l].on)) boxes[it.ps ? 'paper' : 'model'] = unionBox(boxes[it.ps ? 'paper' : 'model'], it.b);
+  }
+  for (const v of fl.vports) boxes.paper = unionBox(boxes.paper, [v.cx - v.w / 2, v.cy - v.h / 2, v.cx + v.w / 2, v.cy + v.h / 2]);
+  return { ...fl, items, layers, boxes, insertions };
+}
+
 /** A filled arrowhead at `tip`, pointing away from `from`. */
 function arrow(from, tip, size, base, put) {
   const dx = tip[0] - from[0], dy = tip[1] - from[1], l = Math.hypot(dx, dy);
@@ -969,12 +1043,37 @@ function curveExtremes(points, closed, refine, period) {
 }
 
 /**
+ * TODO 319c: the pieces and snaps an earlier index (prev = { ix, fl }) already made for items that are still there, found by their `ops`
+ * (an edit patch keeps those arrays; a changed or new item has new ones). Returns (item, idx) => true when it copied the item's parts into
+ * `stored` / `snaps`, or null (build everything) when prev is not the same kind of index or its items are not safe to match.
+ */
+function reuser(prev, fl, paper, frame, stored, snaps, stride) {
+  const o = prev?.ix, of = prev?.fl;
+  if (!o?.stored || o.paper !== !!paper || o.frame !== frame || of.mats !== fl.mats) return null;
+  const at = new Map(), n = of.items.length;
+  for (let i = 0; i < n; i++) { const k = of.items[i].ops ?? of.items[i]; if (at.has(k)) return null; at.set(k, i); }
+  const starts = (list, itemOf, from) => {       // list is in item order: where each old item's run begins (and ends)
+    const s = new Int32Array(n + 1);
+    for (let i = 0, p = from; i <= n; i++) { while (p < list.length && itemOf(list[p]) < i) p++; s[i] = p; }
+    return s;
+  };
+  const ps = starts(o.stored, (v) => (typeof v === 'number' ? v % o.stride : v.it), 0), ss = starts(o.snaps, (s) => s.it, o.head);
+  return (it, idx) => {
+    const i = at.get(it.ops ?? it);
+    if (i === undefined || of.items[i].m !== it.m) return false;
+    for (let k = ps[i]; k < ps[i + 1]; k++) { const v = o.stored[k]; if (typeof v === 'number') stored.push(Math.floor(v / o.stride) * stride + idx); else { v.it = idx; stored.push(v); } }
+    for (let k = ss[i]; k < ss[i + 1]; k++) { const s = o.snaps[k]; s.it = idx; snaps.push(s); }
+    return true;
+  };
+}
+
+/**
  * The pickable pieces of one space (the model, or the sheet): straight pieces, arcs, and snap points (ends,
  * middles, centres, points), in the drawing's own coordinates, on a grid for quick lookups.
  */
-export function pickIndex(fl, paper, visible = () => true, extremeFrame = IDENT) {
+export function pickIndex(fl, paper, visible = () => true, extremeFrame = IDENT, prev = null) {
   // Spline segments already live in ops: retain an item/op address, not another object and four boxed coordinates per segment.
-  const stored = [], snaps = [], stride = fl.items.length;
+  const stored = [], snaps = [], stride = fl.items.length, reuse = reuser(prev, fl, paper, extremeFrame, stored, snaps, stride);
   const pieces = new Proxy(stored, { get(target, key, receiver) {
     const value = Reflect.get(target, key, receiver);
     if (key === 'length' || typeof value !== 'number') return value;
@@ -985,12 +1084,14 @@ export function pickIndex(fl, paper, visible = () => true, extremeFrame = IDENT)
   } });
   for (const { p: [x, y], start, end } of fl.insertions || []) {
     for (let it = start; it < end; it++) if (!!fl.items[it].ps === !!paper && visible(it)) {
-      snaps.push({ x, y, kind: 'insertion', it });
+      snaps.push({ x, y, kind: 'insertion', it, end });
       break;
     }
   }
+  const head = snaps.length;
   fl.items.forEach((it, idx) => {
     if (!!it.ps !== !!paper) return;
+    if (reuse?.(it, idx)) return;
     const m = fl.mats[it.m];
     if (it.insertion) { const [x, y] = mapply(m, ...it.insertion); snaps.push({ x, y, kind: 'insertion', it: idx }); }
     if (it.k === 'n') { const [x, y] = mapply(m, it.x, it.y); snaps.push({ x, y, kind: 'node', it: idx }); return; }
@@ -1073,7 +1174,7 @@ export function pickIndex(fl, paper, visible = () => true, extremeFrame = IDENT)
   if (!Number.isFinite(x0)) return { pieces, snaps, G: 0 };
   const G = Math.min(512, Math.max(1, Math.ceil(Math.sqrt((pieces.length + snaps.length + fl.items.length) / 3))));
   const cell = Math.max(x1 - x0, y1 - y0, 1e-9) / G;
-  const ix = { pieces, snaps, G, cell, x0, y0, pc: new Map(), sc: new Map(), wide: [] };
+  const ix = { pieces, snaps, G, cell, x0, y0, pc: new Map(), sc: new Map(), wide: [], stored, stride, head, paper: !!paper, frame: extremeFrame };
   const key = (i, j) => i * 4096 + j;
   const at = (x) => Math.min(G - 1, Math.max(0, Math.floor(x)));
   pieces.forEach((p, n) => {
@@ -1129,7 +1230,7 @@ export function pickAt(ix, x, y, tol, visible = () => true) {
   let best = tol, seen = new Set();
   for (let i = i0; i <= i1; i++) for (let j = j0; j <= j1; j++) for (const n of ix.sc.get(i * 4096 + j) || []) {
     const s = ix.snaps[n], d = Math.hypot(s.x - x, s.y - y);
-    if (d <= best && visible(s.it)) { best = d; out.snap = { x: s.x, y: s.y, kind: s.kind }; }
+    if (d <= best && visibleSnapItem(s, visible) >= 0) { best = d; out.snap = { x: s.x, y: s.y, kind: s.kind }; }
   }
   best = tol;
   const look = (n) => {
@@ -1145,6 +1246,12 @@ export function pickAt(ix, x, y, tol, visible = () => true) {
   if (out.snap) out.point = [out.snap.x, out.snap.y];
   else if (out.near) out.point = out.near;
   return out;
+}
+
+/** An INSERT has one insertion snap while any of its flattened members is visible. */
+export function visibleSnapItem(snap, visible) {
+  for (let i = snap.it, end = snap.end ?? i + 1; i < end; i++) if (visible(i)) return i;
+  return -1;
 }
 
 /** What one pick reads as: a circle's Ø, an arc's R, a line's length, or where a point is. */

@@ -37,20 +37,37 @@ test('subPixel only for boxes under half a pixel in both directions', () => {
   assert.equal(subPixel([0, 0, 1, 1], 5, 0.3), false);
 });
 
+test('TODO 328b: the quick paint after a layer toggle skips boxes under 1 px, every other paint 0.4 px', () => {
+  assert.equal(perf.QUICK_PX, 1);
+  assert.equal(subPixel([0, 0, 1, 1], 0, 0.7), false);                 // 0.7 px: drawn by the normal paint
+  assert.equal(subPixel([0, 0, 1, 1], 0, 0.7, perf.QUICK_PX), true);   // and skipped by the quick one
+  assert.equal(subPixel([0, 0, 10, 0.1], 0, 0.7, perf.QUICK_PX), false);   // a long thin line stays
+  assert.equal(subPixel([0, 0, 1, 1], 0, 1, perf.QUICK_PX), false);    // exactly 1 px stays
+  assert.equal(subPixel([0, 0, 1, 1], 0, 0.3), true);                  // the default is still 0.4
+  const c = { setTransform() {}, clearRect() {}, beginPath() {}, stroke() {}, fill() {}, save() {}, restore() {}, clip() {}, fillRect() {}, setLineDash() {}, moveTo() {}, lineTo() {}, arc() {}, closePath() {} };
+  const it = { k: 'p', ops: [0, 0, 0, 1, 1, 1], b: [0, 0, 1, 1], L: [0], m: 0, css: '#000000', fam: [] }, fl = { items: [it], mats: [[1, 0, 0, 1, 0, 0]], boxes: { model: it.b } };
+  const draw = (o) => paintDrawing({ getContext: () => c }, { fl, off: new Set(), factor: 1, sheetH: 0, ox: 0, oy: 0, scale: 0.7, dpr: 1, w: 200, h: 200, ...o });
+  assert.equal(draw({}), 1, 'a 0.7 px item is drawn by the normal paint');
+  assert.equal(draw({ minPx: perf.QUICK_PX }), 0, 'and left out by the quick paint');
+});
+
 test('skipPoint keeps run ends and stays within half a pixel', () => {
   assert.equal(typeof perf.skipPoint, 'function');
   for (const [dx, dy, k, want] of [[0, 0, 0, false], [.49, 0, 1, true], [.5, 0, 1, false],
     [.3, .4, 1, false], [-.3, -.3, 1, true], [.1, 0, 5, false], [.1, 0, 4, true]]) {
     assert.equal(perf.skipPoint(dx, dy, k), want);
   }
+  const round = (x) => Math.round(x * 1e9) / 1e9;
   const paint = (ops, { kind = 'p', fill = false, dash, dpx, matrix = [1, 0, 0, 1, 0, 0], scale = 1, dpr = 1, slots, highlight = false, wireframe = false } = {}) => {
     const calls = [], c = {
-      setTransform(...m) { this.m = m; }, clearRect() {}, beginPath() {}, stroke() {}, fill() {},
+      setTransform(...m) { this.m = m; }, clearRect() {}, beginPath() {}, fill() {},
       save() {}, restore() {}, clip() {}, fillRect() {}, setLineDash() {},
-      moveTo(x, y) { calls.push(['M', ...mapply(this.m, x, y)]); },
-      lineTo(x, y) { calls.push(['L', ...mapply(this.m, x, y)]); },
-      arc() { calls.push(['A']); }, closePath() { calls.push(['Z']); }
+      moveTo(x, y) { calls.push(['M', ...mapply(this.m, x, y).map(round)]); },       // rounded: the overlay's paths start at their run's corner, not the view's origin (329a)
+      lineTo(x, y) { calls.push(['L', ...mapply(this.m, x, y).map(round)]); },
+      arc() { calls.push(['A']); }, closePath() { calls.push(['Z']); },
+      stroke(p) { if (p) for (const f of p.fns) this[f[0]](...f.slice(1)); }       // the selection overlay's Path2D (TODO 329a): replayed under the matrix set before the stroke
     };
+    globalThis.Path2D = class { fns = []; moveTo(...a) { this.fns.push(['moveTo', ...a]); } lineTo(...a) { this.fns.push(['lineTo', ...a]); } arc(...a) { this.fns.push(['arc', ...a]); } closePath() { this.fns.push(['closePath']); } rect() {} };
     const it = { k: kind, ops, b: [-50, -50, 50, 50], L: [0], m: 0, css: '#000000', fill, dash, dpx, fam: [] };
     const fl = { items: highlight ? [] : [it], mats: [matrix], boxes: { model: it.b } };
     paintDrawing({ getContext: () => c }, { fl, off: new Set(), factor: 1, sheetH: 0, ox: 0, oy: 0,
@@ -121,12 +138,25 @@ test('snapPlace: the same view is the identity; a pan shifts; a zoom about a poi
   assert.equal(100 * p.r + p.dx, 100); assert.equal(50 * p.r + p.dy, 50);
 });
 
-test('snapUsable needs the same canvas size and a modest zoom change', () => {
+test('snapUsable accepts a canvas size or DPR change and still limits zoom', () => {
   const s = { view: { ox: 0, oy: 0, scale: 1 }, w: 100, h: 80 };
   assert.equal(snapUsable(s, { view: { ox: 5, oy: 0, scale: 2 }, w: 100, h: 80 }), true);
-  assert.equal(snapUsable(s, { view: { ox: 0, oy: 0, scale: 1 }, w: 101, h: 80 }), false);
+  assert.equal(snapUsable(s, { view: { ox: 0, oy: 0, scale: 1 }, w: 101, h: 80 }), true);
+  assert.equal(snapUsable(s, { view: s.view, w: 200, h: 160 }), true);
   assert.equal(snapUsable(s, { view: { ox: 0, oy: 0, scale: 30 }, w: 100, h: 80 }), false);
   assert.equal(snapUsable(null, s), false);
+});
+
+test('blitCovers: a shifted bitmap shows nothing its canvas did not hold', () => {
+  const inside = [100, 100, 200, 200], w = 400, h = 300;
+  assert.equal(perf.blitCovers(inside, 50, -30, w, h), true, 'a picture inside the canvas stays inside');
+  assert.equal(perf.blitCovers(inside, 400, 0, w, h), true, 'shifted out of the canvas: nothing shows');
+  assert.equal(perf.blitCovers([300, 100, 500, 200], 200, 0, w, h), true, 'the cut-off part moves away from the view');
+  assert.equal(perf.blitCovers([300, 100, 500, 200], -100, 0, w, h), false, 'the part outside on the right slides into view');
+  assert.equal(perf.blitCovers([-50, 100, 50, 200], 20, 0, w, h), false, 'the part outside on the left slides into view');
+  assert.equal(perf.blitCovers([-50, 100, 50, 200], -20, 0, w, h), true, 'it moves further out of the view');
+  assert.equal(perf.blitCovers(null, 0, 0, w, h), true, 'no shift needs no box');
+  assert.equal(perf.blitCovers(null, 1, 0, w, h), false, 'an unknown box is not trusted once shifted');
 });
 
 test('heavy: slow script or many items; a small quick drawing always repaints in full', () => {

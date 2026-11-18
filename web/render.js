@@ -90,7 +90,7 @@ export function paintDrawing(canvas, o) {
         const X = xs.map((p) => p[0]), Y = xs.map((p) => p[1]);
         if (Math.max(...X) < view[0] || Math.min(...X) > view[2] || Math.max(...Y) < view[1] || Math.min(...Y) > view[3]) continue;
       }
-      drawn += paintItems(c, fl, off, mmul(V, M), k, null, dpr, col, sheetBg, null, factor, o.wireframe);
+      drawn += paintItems(c, fl, off, mmul(V, M), k, null, dpr, col, sheetBg, null, factor, o.wireframe, o.minPx);
     }
     return drawn;
   }
@@ -99,7 +99,7 @@ export function paintDrawing(canvas, o) {
   const xs = [ox / factor, (ox + w / scale) / factor];
   const ys = [(sheetH - oy - h / scale) / factor, (sheetH - oy) / factor];
   const vr = [Math.min(...xs), ys[0], Math.max(...xs), ys[1]];
-  const drawn = over ? 0 : paintItems(c, fl, off, T, k, vr, dpr, col, sheetBg, o.hide, factor, o.wireframe);
+  const drawn = over ? 0 : paintItems(c, fl, off, T, k, vr, dpr, col, sheetBg, o.hide, factor, o.wireframe, o.minPx);
   if (o.part === 'base') return drawn;
   if (o.hl && o.hl.length) highlight(c, o.hl, fl.mats, T, k, dpr, o.accent || '#4f46e5', o.wireframe);
   if (o.dim) drawDimPreview(c, o.dim, T, dpr, o.dimCol || DIM_LIGHT);
@@ -150,7 +150,7 @@ function paintPictures(c, fl, off, T, vr, hide) {
 }
 
 /** The shown items through T (drawing units → canvas pixels), k pixels per unit; vr culls to the view (drawing units), or null. */
-function paintItems(c, fl, off, T, k, vr, dpr, col, sheetBg, hide, factor, wireframe) {
+function paintItems(c, fl, off, T, k, vr, dpr, col, sheetBg, hide, factor, wireframe, minPx) {
   const mats = fl.mats;
   let cur = -1, kk = k, pxPerUnit = 0, open = false, pc = null, pw = 0, pd = null, cap = null, join = null, origin = [0, 0], drawn = 0, run = 0;
   const flush = () => { if (open) { if (wireframe) wireStroke(c, dpr); else c.stroke(); } open = false; };
@@ -160,7 +160,7 @@ function paintItems(c, fl, off, T, k, vr, dpr, col, sheetBg, hide, factor, wiref
     const b = it.b;
     const pad = it.k === 'p' && !it.fill ? strokeWidth(it, factor, mscale(mats[it.m])) / factor / 2 : 0;
     if (vr && outsideView(b, pad, vr)) continue;
-    if (it.k !== 'n' && subPixel(b, pad, k)) continue;       // under half a pixel
+    if (it.k !== 'n' && subPixel(b, pad, k, minPx)) continue;       // under 0.4 px (minPx: the quick paint's 1 px)
     if (!itemVisible(it, off)) continue;
     if (hide && hide.has(it.e)) continue;                                  // an entity being dragged by a grip is drawn by the overlay
     if (it.m !== cur) { flush(); cur = it.m; const M = mats[cur], V = mmul(T, M); origin = viewOrigin(V); c.setTransform(...V.slice(0, 4), ...mapply(V, ...origin)); kk = k * mscale(M) || k; pxPerUnit = maxScale(V); }
@@ -200,15 +200,46 @@ function paintItems(c, fl, off, T, k, vr, dpr, col, sheetBg, hide, factor, wiref
 /** The selection: a dashed accent centre line leaves the object's own colour and fill visible. */
 function highlight(c, items, mats, T, k, dpr, accent, wireframe) {
   c.strokeStyle = accent;
-  let cur = -1, kk = k, pxPerUnit = 0, origin = [0, 0];
-  for (const it of items) {
-    if (it.m !== cur) { cur = it.m; const M = mats[cur], V = mmul(T, M); origin = viewOrigin(V); c.setTransform(...V.slice(0, 4), ...mapply(V, ...origin)); kk = k * mscale(M) || k; pxPerUnit = maxScale(V); }
-    c.lineWidth = 2.6 * dpr / kk;
-    c.lineCap = it.cap || 'butt'; c.lineJoin = it.join || 'miter'; c.miterLimit = 10;
-    c.beginPath();
-    if (it.k === 'p' || it.k === 'i' || (wireframe && it.ops)) { c.setLineDash([6 * dpr / kk, 6 * dpr / kk]); trace(c, it.ops, origin, pxPerUnit); c.stroke(); }
-    else { c.setLineDash([]); c.strokeRect(it.b[0] - origin[0], it.b[1] - origin[1], it.b[2] - it.b[0], it.b[3] - it.b[1]); }
+  const runs = highlightRuns(items, mats, T, wireframe);
+  for (const r of runs) {
+    const M = mats[r.m], V = mmul(T, M), kk = k * mscale(M) || k, dashed = r.path && !runs.big;
+    c.setTransform(...V.slice(0, 4), ...mapply(V, ...r.origin));
+    c.lineWidth = (runs.big ? 1 : 2.6) * dpr / kk;
+    c.lineCap = r.cap; c.lineJoin = r.join; c.miterLimit = 10;
+    c.setLineDash(dashed ? [6 * dpr / kk, 6 * dpr / kk] : []);
+    c.stroke(r.p);
   }
+}
+
+// The selection's paths, one Path2D per run, kept while the same items are repainted at the same zoom (a pan, a panel toggle): 150k items' canvas calls were 150 ms, TODO 329a.
+const highlightCache = new WeakMap();
+const HL_SOLID_ABOVE = 20000;     // selected path items: above this the overlay is solid and 1 px, a 2.6 px stroke of 150k tiny items rasterised in 180 ms and a 1 px one in 25 (dashing costs only ~15 of those 180)
+const CAPS = ['butt', 'round', 'square'], JOINS = ['miter', 'round', 'bevel'];
+const HL_RUN = 100;                     // items per Path2D: a run of 5000 took 400 ms to build at 150k (each call grows with the path), 100 took 50
+function highlightRuns(items, mats, T, wireframe) {
+  const key = `${T[0]},${T[1]},${T[2]},${T[3]},${wireframe}`, hit = highlightCache.get(items);
+  if (hit && hit.key === key && hit.mats === mats && hit.ops.length === items.length && hit.ops.every((ops, i) => ops === items[i].ops)) return hit.runs;
+  // One stroke per run of items with the same matrix and line style (not one per item: 150k selected items took 0.4 s, TODO 323b).
+  // Each run's path is in item units from the run's first corner (not the view's origin), so a pan does not rebuild it; the zoom does (trace drops sub-pixel points).
+  // The open run per matrix / style, so text boxes between the paths (every third item of a drawing with notes) do not each start a stroke: one colour and alpha, the order does not show.
+  const runs = [], open = new Map(), px = []; let r = null, paths = 0;
+  for (const it of items) {
+    if (px[it.m] === undefined) px[it.m] = maxScale(mmul(T, mats[it.m]));
+    const path = !!(it.k === 'p' || it.k === 'i' || (wireframe && it.ops)), nextCap = it.cap || 'butt', nextJoin = it.join || 'miter', styleKey = it.m * 18 + (path ? 1 : 0) + 2 * CAPS.indexOf(nextCap) + 6 * JOINS.indexOf(nextJoin);       // a number: a string key per item cost 80 ms at 150k
+    r = open.get(styleKey);
+    if (!r || (path && it.ops[0] > 2) || ++r.n > HL_RUN) {      // (ops starting with a line or a close: none today, kept apart)
+      runs.push(r = { m: it.m, origin: [it.b[0], it.b[1]], path, cap: nextCap, join: nextJoin, n: 1, p: new Path2D() });
+      open.set(styleKey, r);
+    }
+    const pxPerUnit = px[it.m];
+    if (path) paths++;
+    if (path && it.ops[0] === 2) r.p.moveTo(it.ops[1] + it.ops[3] * Math.cos(it.ops[4]) - r.origin[0], it.ops[2] + it.ops[3] * Math.sin(it.ops[4]) - r.origin[1]);       // an arc first in its ops would join the path before it: start its own subpath
+    if (path) trace(r.p, it.ops, r.origin, pxPerUnit);
+    else r.p.rect(it.b[0] - r.origin[0], it.b[1] - r.origin[1], it.b[2] - it.b[0], it.b[3] - it.b[1]);
+  }
+  runs.big = paths > HL_SOLID_ABOVE;
+  highlightCache.set(items, { key, mats, ops: items.map((it) => it.ops), runs });
+  return runs;
 }
 
 /** The dimension being placed or moved (edit.js dimGeometry, drawing units): its lines, arrowheads and text, in the dimension colour. */

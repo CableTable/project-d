@@ -1,8 +1,10 @@
 // props.js — the Properties section's model.   node props.test.mjs
 import assert from 'node:assert/strict';
 import * as P from './web/props.js';
+import { selectionProps } from './web/props.js';
 import { newDoc, addEntities, writeDxf, line, circle, arc, lwpoly, rect, text, ellipse, entity } from './web/dxf-write.js';
 import { readDxf } from './web/drawing.js';
+import { createHistory, DIM_LAYER } from './web/edit.js';
 
 let n = 0;
 function test(name, fn) { fn(); n++; console.log('ok', name); }
@@ -19,6 +21,32 @@ test('summarize: one shape, several alike, a mix; a differing value is null', ()
   assert.equal(two.chip, 'Line × 2'); assert.equal(two.kind, 'LINE'); assert.equal(two.layer, 'Cut'); assert.equal(two.colour, null, 'colours differ');
   const mix = P.summarize([a, c]);
   assert.equal(mix.chip, '2 shapes'); assert.equal(mix.kind, null); assert.equal(mix.layer, null);
+});
+
+test('TODO 323: cached Properties summary follows selection, colour edit, Undo and Redo', () => {
+  const red = line(0, 0, 10, 0, { aci: 1 }), blue = line(0, 5, 10, 5, { aci: 5 });
+  const d = { raw: { entities: [red, blue, { ...red, layer: DIM_LAYER, lw: 50 }] }, sel: new Set([0]), factor: 1, hist: createHistory() };
+  const check = (ents, colour) => {
+    const cached = selectionProps(d);
+    assert.equal(selectionProps(d), cached, 'the ribbon and panel reuse the result');
+    assert.deepEqual(cached.summary, P.summarize(ents));
+    assert.equal(cached.summary.colour, colour);
+    return cached;
+  };
+  check([red], 'aci:1');
+  d.sel = new Set([1, 2]);
+  const before = check([blue], 'aci:5');
+  assert.deepEqual(before.all, [1, 2]);
+  assert.deepEqual(before.indices, [1]);
+  assert.equal(before.width, null, 'kept dimensions still contribute outline width');
+  const edited = P.withColour(blue, 'aci:3');
+  d.hist.push(blue, 'Colour → Green');
+  d.raw.entities[1] = edited;
+  check([edited], 'aci:3');
+  d.raw.entities[1] = d.hist.undo(edited);
+  check([blue], 'aci:5');
+  d.raw.entities[1] = d.hist.redo(blue);
+  check([edited], 'aci:3');
 });
 
 test('colour and line type: keys, labels, setting them (a colour clears a true colour)', () => {

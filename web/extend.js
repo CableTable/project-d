@@ -2,7 +2,7 @@
 // Drawing units, y up. Boundaries are any shapes modify.js pathOf takes (line, arc, circle, polyline with bulges), plus ellipses and splines (flattened).
 import { shapeOf, get, at, num, withValues } from './grips.js';
 import { nurbs, nurbsAt, nurbsOk } from './drawing.js';
-import { pathOf, segInter, geo, rebuilt, canModify, trimEntity } from './modify.js';
+import { pathOf, segInter, geo, rebuilt, canModify, trimCuttingEdges, trimEntity } from './modify.js';
 
 const TAU = Math.PI * 2, DEG = 180 / Math.PI;
 const dist = (a, b) => Math.hypot(b[0] - a[0], b[1] - a[1]);
@@ -350,6 +350,6 @@ export function previewEdit(ent, edges, pick, extend, quick = true) {
     const r = extendEntity(ent, edges, pick);
     return r.error ? r : { act: 'extend', add: addedPiece(ent, r.ent) };
   }
-  const r = trimEntity(ent, edges, pick, quick);
+  const r = trimEntity(ent, trimCuttingEdges(ent, edges), pick, quick);
   return r.error ? r : { act: 'trim', cut: r.removed };
 }

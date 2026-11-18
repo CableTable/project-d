@@ -13,7 +13,7 @@ import { idbStore, localStore } from './idbstore.js';
 import { WORK_AREAS, workAreaDark } from './workarea.js';
 import { FOLDS, ribbonTabs, nextFold, doubleFold } from './ribbon.js';
 import { PRESETS, presetFor, stepRepeat, gridCellNote, GRIP_KEYS } from './layout.js';
-import { unitFactor, convertedNote, startHidden, entityCount, layerCounts, drawingBoxMm, fitRect, cursorMm, fitsSheet, spaceOf, boxOnSheet, itemVisible, addRecent, removeRecent, closePrompt, BIG_FILE, bigFileAsk, backupPath, dupName } from './doc.js';
+import { unitFactor, convertedNote, startHidden, entityCount, layerCounts, patchedCounts, drawingBoxMm, fitRect, cursorMm, fitsSheet, spaceOf, boxOnSheet, itemVisible, addRecent, removeRecent, closePrompt, BIG_FILE, bigFileAsk, backupPath, dupName } from './doc.js';
 import * as Ed from './edit.js';
 import { follow as followGroups, remap as remapGroups, splice as spliceGroups, swap as swapGroups, copy as copyGroups, group as groupDrawing, ungroup as ungroupDrawing, groupOf, selectionOf, wholeGroup as wholeDrawingGroup } from './groups.js';
 import * as AD from './autodim.js';
@@ -31,8 +31,8 @@ import * as BAL from './balloons.js';
 import * as PS from './pdf-sheets.js';
 import { paintDrawing, drawMarks, drawContour, drawDimPreview, ink, FONT_FAMILY } from './render.js';
 import { overlayBox } from './preview.js';
-import { snapPlace, snapUsable, heavy, sameBase } from './perf.js';
-import { flatten, patchWidths, primeSplines, unionBox, CAP, ACI, UNITS, mapply, mmul, pickIndex, arcSweep, DrawingError } from './drawing.js';
+import { snapPlace, snapUsable, heavy, sameBase, runChunks, blitCovers, QUICK_PX } from './perf.js';
+import { flatten, flattenEdit, patchWidths, primeSplines, unionBox, CAP, ACI, UNITS, mapply, mmul, pickIndex, arcSweep, DrawingError } from './drawing.js';
 import { writeDxf, writeDxfWithReport, saveReportNote, unwritable, addLayer, newDoc, lwpoly, point } from './dxf-write.js';
 import * as SH from './shaping.js';
 import { explodeSelection } from './explode.js';
@@ -140,12 +140,15 @@ function s(tag, attrs, ...kids) {
 }
 
 /** One of our own fixed icon strings → an <svg> (parsed, never innerHTML). */
+const iconCache = new Map();
 function icon(inner, { size = 20, width = 1.6, cap, join, label, box = 24 } = {}) {
   const attrs = `xmlns="${SVGNS}" width="${size}" height="${size}" viewBox="0 0 ${box} ${box}" fill="none" stroke="currentColor" stroke-width="${width}"` +
     (cap ? ` stroke-linecap="${cap}"` : '') + (join ? ` stroke-linejoin="${join}"` : '') +
     (label ? ` role="img" aria-label="${label}"` : ' aria-hidden="true"');
-  const doc = new DOMParser().parseFromString(`<svg ${attrs}>${inner}</svg>`, 'image/svg+xml');
-  return document.importNode(doc.documentElement, true);
+  const markup = `<svg ${attrs}>${inner}</svg>`;
+  let tpl = iconCache.get(markup);                      // parsed once: an Objects rebuild asks for thousands of the same few icons (TODO 321b)
+  if (!tpl) iconCache.set(markup, tpl = document.importNode(new DOMParser().parseFromString(markup, 'image/svg+xml').documentElement, true));
+  return tpl.cloneNode(true);
 }
 
 // ---- tools (same order and icons as the mock-up) ----
@@ -326,7 +329,11 @@ const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(
 
 const note = (text) => { state.msg = text; if (ui.fontNote) ui.fontNote.hidden = true; renderCommand(); };
 const fmt = (n) => Number(n).toFixed(2);
-const partHid = (p) => { const d = curDoc(); return !!(d && d.hiddenParts && d.hiddenParts.has(p.partId)); };       // hidden in the Objects tab: not drawn, not hit, not selected
+const partHid = (p) => {
+  const d = curDoc(), part = d?.lay?.parts[p.partId];
+  const layer = part?.obj && LD.layersOf(d.lay)[part.raw.entities[0]?.layer];
+  return !!(d?.hiddenParts?.has(p.partId) || layer?.off || layer?.frozen);
+};
 const partSelectable = (p) => !state.hidden.parts && !partHid(p) && !p.lock;
 let cssCache = null;                // theme colours read from the page once per theme, not at every repaint
 const cssVar = (name, fallback) => { const c = cssCache || (cssCache = new Map()); if (!c.has(name)) c.set(name, getComputedStyle(ui.canvas).getPropertyValue(name).trim() || fallback); return c.get(name); };
@@ -884,7 +891,7 @@ function ribbonContents(kind) {
   return groups;
 }
 function renderRibbon() {
-  if (!ui.ribbon) return;
+  if (!ui.ribbon || (selectionEditDoc && editable() === selectionEditDoc)) return;
   const tab = curDoc(), d = editable() || tab, kind = tab?.lay ? 'layout' : tab?.cmp ? 'compare' : 'drawing', part = kind === 'layout' && !!selectedPlaced(), tabs = ribbonTabs(kind, part);
   const context = part ? state.doc + ':' + selIdxs().join(',') : null;
   if (context && ribbon.context !== context) { ribbon.tab = 'Part'; ribbon.flyout = false; ribbon.panel = null; }
@@ -927,8 +934,8 @@ function renderRibbon() {
     setSelect(ui.ribbonLayer, [...new Set(editable() ? ['0', ...allLayerNames(d)] : ['0'])].map((n) => [n, n]), editable() ? curLayerName(d) : '0');
   }
   if (ui.ribbonColour) {
-    const ents = editable() ? propEnts(d).map((x) => x[1]) : [], all = editable() ? propEnts(d, true).map((x) => x[1]) : [], sm = PR.summarize(ents);
-    const values = all.map((e) => PR.widthKey(e, d.factor)), width = values.length && values.every((w) => w === values[0]) ? values[0] ?? '' : '';
+    const { ents, all, summary: sm, width: sharedWidth } = editable() ? propEnts(d) : emptyProps;
+    const width = sharedWidth ?? '';
     const colour = ents.length ? sm.colour : currentColour;
     ui.ribbonSwatch.style.background = colour == null ? 'var(--muted)' : colourCss(colour === 'bylayer' ? (ents.length ? PR.effectiveColour(ents[0], layerMap(d)) : editable() ? PR.effectiveColour({ layer: curLayerName(d) }, layerMap(d)) : 'aci:7') : colour);
     for (const [sel, options, value] of [[ui.ribbonColour, PR.colourOptions(colour), colour],
@@ -1050,7 +1057,7 @@ async function duplicateTab(d) {
         parts: Object.fromEntries(Object.entries(d.lay.parts).map(([id, p]) => [id, p.obj ? structuredClone(p) : p])) };
       copy.hiddenParts = new Set(d.hiddenParts); copy.lhist = Ed.createHistory();
     } else if (d.cmp) {
-      copy.cmp = structuredClone(d.cmp); copy.cmp.selected = null; copy.cmp.sel = -1; copy.factor = d.factor;
+      copy.cmp = structuredClone(d.cmp); copy.cmp.selected = null; copy.cmp.sel = -1; copy.cmp.run = null; copy.factor = d.factor;
     } else {
       const { raw, hid, off, locked, addedLayers } = structuredClone({ raw: d.raw, hid: d.hid, off: d.off, locked: d.locked, addedLayers: d.addedLayers });
       Object.assign(copy, tabFields(raw, flatten(raw, hid)), { titleBlock: copy.titleBlock, drawingUnit: copy.drawingUnit, hid, off, locked, addedLayers, scratch: true });
@@ -1213,6 +1220,8 @@ function showDoc() {
   }
   state.paste = null;
   for (const item of cmpDoc()?.cmp.items || []) { const source = cmpSourceTab(item); if (source) cmpRefresh(source); }
+  const edit = changed ? editable() : null;
+  if (edit?.sel.size) Object.assign(edit, Ed.visibleSelection(edit.fl, edit.sel, cmpEditingItem(edit)?.off || edit.off, hidIdx(edit)));
   selectionCycle = null;
   if (state.pointDoc !== curDoc()) { state.pointLast = null; state.pointDoc = curDoc(); }
   ui.fontNote.hidden = true;
@@ -2406,7 +2415,7 @@ function showHistory() {
       if (!target || target !== d && !cmpEdit()) return;
       const st = stepHist(target, dir);
       if (!st) return;
-      if (restore(target, st) === false) { target.hist[forward ? 'undo' : 'redo'](st); return; }       // the refused step goes back where it was
+      if (restore(target, st, drawnOf(target, st)) === false) { target.hist[forward ? 'undo' : 'redo'](st); return; }       // the refused step goes back where it was
     } else {
       let st = d.lay ? laySnap(d.lay) : snapshotOf(d);
       let blSize = false;
@@ -2416,7 +2425,7 @@ function showHistory() {
       }
       if (!st) return;
       if (d.lay) layRestore(d, st);
-      else if (restore(d, { ...st, blSize }) === false) { hist[forward ? 'undoMany' : 'redoMany'](Math.abs(r - now), st); return; }       // the whole jump goes back where it was
+      else if (restore(d, { ...st, blSize }, drawnOf(d, st)) === false) { hist[forward ? 'undoMany' : 'redoMany'](Math.abs(r - now), st); return; }       // the whole jump goes back where it was
     }
     const current = historyOf(d), step = (d.cmp ? current.undoHistory : current)?.currentStep;
     if (step?.grip) {
@@ -4185,6 +4194,10 @@ function layoutLayerRows(d, query) {
       e.stopPropagation();
       if (l.id) state.hidden[l.id] = !hidden;
       else { pushLay(d, null, '', 'Layer visibility'); d.lay.layers = { ...LD.layersOf(d.lay), [l.name]: { ...def, off: !hidden, frozen: false } }; d.dirty = true; }
+      if (!hidden && (!l.id || l.id === 'parts')) {
+        const sel = selIdxs(), visible = state.hidden.parts ? [] : sel.filter((i) => !partHid(placedNow[i]));
+        if (visible.length !== sel.length) selectMany(visible, visible.includes(state.sel) ? state.sel : undefined);
+      }
       update();
     });
     const lock = objBtn('lock', locked, locked ? 'Unlock' : 'Lock', locked ? ICONS.lock : ICONS.unlock);
@@ -4213,10 +4226,13 @@ function lockObjectPlaces(indexes) {
 }
 
 function cmpToggleLayer(tab, id, i) {
+  if (i < 0) return;
   const item = tab.cmp.items.find((x) => x.id === id), off = new Set(item.off);
   if (!off.delete(i)) off.add(i);
   tab.cmp.items = CMP.setItem(tab.cmp.items, id, CMP.setItemOff(item, off));
-  cmpMoved(tab);
+  const source = cmpSourceTab(item);
+  if (source) layerVisibilitySelection(source, off);
+  quickNext = true; cmpMoved(tab);
 }
 
 // ---- the Objects tab (TODO 39, mock-up R11a Option A): the open file as a tree, layer by layer; the tree itself is objects.js ----
@@ -4407,7 +4423,7 @@ function objClick(e) {
   const om = omOf(tab), flip = (set, k) => (set.has(k) ? set.delete(k) : set.add(k));
   if (d.lay) {
     if (row.hasAttribute('data-layout')) {
-      if (act?.dataset.act === 'vis') { state.hidden.parts = !state.hidden.parts; update(); }
+      if (act?.dataset.act === 'vis') { state.hidden.parts = !state.hidden.parts; quickNext = true; update(); }
       else if (act?.dataset.act === 'lock') lockObjectPlaces(placedNow.map((_, i) => i));
       else { om.layoutClosed = !om.layoutClosed; renderObjects(); }
       return;
@@ -4422,10 +4438,10 @@ function objClick(e) {
       lockObjectPlaces(row.dataset.place != null ? [+row.dataset.place] : placedNow.flatMap((p, i) => p.partId === row.dataset.part ? [i] : [])); return;
     }
     if (row.dataset.part) {
-      if (act && act.dataset.act === 'vis') { const hp = d.hiddenParts || (d.hiddenParts = new Set()); flip(hp, row.dataset.part); drawSheet(); paintOverlay(); renderObjects(); note(hp.has(row.dataset.part) ? 'Part hidden: it is left out of print and PDF too. The saved file keeps it' : 'Part shown'); } else { flip(om.openP, row.dataset.part); renderObjects(); }
+      if (act && act.dataset.act === 'vis') { const hp = d.hiddenParts || (d.hiddenParts = new Set()); flip(hp, row.dataset.part); drawSheet(); quickNext = true; paintOverlay(); renderObjects(); note(hp.has(row.dataset.part) ? 'Part hidden: it is left out of print and PDF too. The saved file keeps it' : 'Part shown'); } else { flip(om.openP, row.dataset.part); renderObjects(); }
     } else if (row.dataset.place != null) {
       if (act?.dataset.act === 'vis') {
-        const id = placedNow[+row.dataset.place].partId, hp = d.hiddenParts || (d.hiddenParts = new Set()); flip(hp, id); drawSheet(); paintOverlay(); renderObjects();
+        const id = placedNow[+row.dataset.place].partId, hp = d.hiddenParts || (d.hiddenParts = new Set()); flip(hp, id); drawSheet(); quickNext = true; paintOverlay(); renderObjects();
       } else { selectMany([+row.dataset.place]); update(); }
     }
     return;
@@ -4454,7 +4470,9 @@ function objClick(e) {
 function toggleLayerVis(d, idx) {
   if (idx < 0) return;
   if (d.off.has(idx)) d.off.delete(idx); else d.off.add(idx);
-  layersChanged(d); paintOverlay(); renderLayers(); applyHidden(); renderStatus();
+  if (d.ed) d.ed = Ed.indexWithVisibility(d.ed, d.off, hidIdx(d));
+  layerVisibilitySelection(d, d.off);
+  renderEdit(); renderLayers(); applyHidden(); quickNext = true; paintOverlay();
 }
 function toggleLayerLock(d, name) {
   const lk = d.locked || (d.locked = new Set());
@@ -4528,7 +4546,7 @@ function objMenu(e) {
     popMenu(x, y, [
       ['Select', () => { const k = placedNow.findIndex((p) => p.partId === id); if (k >= 0) { selectMany(placedNow.map((p, i) => (p.partId === id ? i : -1)).filter((i) => i >= 0)); update(); } }],
       ['Zoom to', () => { const bs = placedNow.filter((p) => p.partId === id).map((p) => placedBox(d.lay.parts[id], p)); if (bs.length) { const u = A.unionBox(bs); zoomToBox(u, zoomPad(u)); } }],
-      sep, [hp.has(id) ? 'Show' : 'Hide', () => { if (hp.has(id)) hp.delete(id); else hp.add(id); drawSheet(); paintOverlay(); renderObjects(); }],
+      sep, [hp.has(id) ? 'Show' : 'Hide', () => { if (hp.has(id)) hp.delete(id); else hp.add(id); drawSheet(); quickNext = true; paintOverlay(); renderObjects(); }],
       sep, ['Show all hidden', () => showAllHidden(d), '', hp.size > 0]]);
     return;
   }
@@ -4859,12 +4877,16 @@ function renderStatus() {
   ui.drawingUnit.textContent = drawingUnit();
   ui.entities.textContent = d && d.fl ? 'Entities ' + d.entities : '';
   ui.units.textContent = d && d.fl ? d.conv : '';
+  if (!d || d !== selectionEditDoc) renderStatusLayer(d);
+}
+
+function renderStatusLayer(d) {
   // the layer: a layout's parts are all on "Parts"; on a drawing tab it is the selection's own layer ("—" when nothing is selected)
   let layer = '—';
   if (d && d.lay) layer = 'Parts';
   else if (d && d.fl && d.sel && d.sel.size) {
-    const names = [...new Set([...d.sel].map((e) => d.raw.entities[e] && d.raw.entities[e].layer).filter((n) => n != null))];
-    layer = names.length === 1 ? names[0] : names.length + ' layers';
+    const { layers } = propEnts(d);
+    layer = layers.size === 1 ? layers.values().next().value : layers.size + ' layers';
   }
   ui.layerInfo.textContent = ui.layerInfo.title = 'Layer: ' + layer;
 }
@@ -5152,18 +5174,21 @@ function previewBounds() {
   }
   return boxes.map((box) => box.map((v, i) => v + (i < 2 ? -3 : 3)));
 }
-// A heavy drawing (perf.js heavy) keeps the bitmap of its last full paint: wheel and pan frames move and scale that, and one full paint follows when the view settles (TODO 55)
-let paintFull = true, snap = null, snapCv = null, snapTimer = 0;
+// Wheel, pan and resize move and scale the last full paint of a heavy drawing until the view settles (TODO 55 / 328a).
+let paintFull = true, snap = null, snapCv = null, snapTimer = 0, paintSize = null;
+// A layer toggle on a drawing whose last full paint was heavy paints once quick (items under QUICK_PX skipped, no kept bitmap), then settles with the 0.4 px paint after 120 ms (TODO 328b).
+let quickNext = false, lastHeavy = false;
 // A drawing tab whose own paint is slow keeps its bitmap (without selection, marks, previews): a hover or a select click paints only those on top (TODO 258 / 259).
 let kept = null, keptCv = null;
 const KEEP_MS = 10;
-/** Everything the drawing's own pass reads, flat (compare with sameBase); null while a grip or drag hides entities one by one. */
+/** Everything the drawing's own pass reads, flat (compare with sameBase). While a grip or drag hides entities one by one, `drag` is set and their numbers end the key: that base is painted without them (TODO 320). */
 function paintKey(d, base, cw, chh) {
   const hide = hideNow(d), hid = hidIdx(d);
-  if (hide && hide.size !== (hid ? hid.size : 0)) return null;
   const ed = state.text.ed?.d === d && state.text.ed.dim ? state.text.ed : null, fl = ed ? ed.dim.fl : d.fl, bg = d.bg;
-  return [d, fl, fl.items.length, hid, d.factor, base.ox, base.oy, base.scale, cw, chh, base.dpr, base.dark, base.wireframe, base.sheetH,
+  const key = [d, fl, fl.items.length, hid, d.factor, base.ox, base.oy, base.scale, cw, chh, base.dpr, base.dark, base.wireframe, base.sheetH,
     bg, bg?.visible, bg?.bitmap, bg?.x, bg?.y, bg?.mm, ...[...d.off || []].sort((a, b) => a - b)];       // d.off is changed in place: its layers are part of the key
+  if (hide && hide.size !== (hid ? hid.size : 0)) { key.drag = true; key.push(null); for (const e of hide) key.push(e); }
+  return key;
 }
 function paintOverlay(gesture = false) {
   if (!gesture) paintFull = true;
@@ -5175,13 +5200,19 @@ function paintOverlay(gesture = false) {
     drawOvl(true);
     const { w, h: ch } = canvasSize(), dpr = window.devicePixelRatio || 1, c = ui.dcanvas;
     const cw = Math.max(1, Math.round(w * dpr)), chh = Math.max(1, Math.round(ch * dpr));
+    if (w !== paintSize?.w || ch !== paintSize.h || dpr !== paintSize.dpr) {
+      paintSize = { w, h: ch, dpr };
+      kept = keptCv = null;
+      if (snap) snap.key = null;       // even a resize back to the original size needs a settled full paint
+    }
     if (c.width !== cw || c.height !== chh) { c.width = cw; c.height = chh; }
-    const want = { view: { ox: view.ox, oy: view.oy, scale: view.scale }, w: cw, h: chh };
+    const want = { view: { ox: view.ox, oy: view.oy, scale: view.scale }, w: cw, h: chh, dpr };
     clearTimeout(snapTimer);
     const full = paintFull; paintFull = false;
+    const quick = quickNext && lastHeavy; quickNext = false;
     const d = curDoc();
     // Artwork and layout sheet paper follow the same Work area.
-    const base = { sheetH: state.sheetH, ox: view.ox, oy: view.oy, scale: view.scale, w, h: ch, dpr, dark: workDark(), wireframe: state.wireframe };
+    const base = { minPx: quick ? QUICK_PX : undefined, sheetH: state.sheetH, ox: view.ox, oy: view.oy, scale: view.scale, w, h: ch, dpr, dark: workDark(), wireframe: state.wireframe };
     const L2 = state.setlen || state.meas || state.dim || state.ldr || ((modLive() || layModLive()) && ['move', 'copy', 'stretch', 'rotate', 'scale', 'lengthen', 'align'].includes(state.mod.kind) ? { pts: state.mod.ref && state.mod.ref.step !== 'new' ? state.mod.ref.pts : state.mod.p1 ? [state.mod.p1] : [], hover: state.mod.cur }
       : (modLive() || layModLive()) && state.mod.kind === 'array' && state.mod.type === 'polar' ? { pts: state.mod.center ? [state.mod.center] : [], hover: state.mod.stage === 'center' ? state.mod.cur : null } : null);
     const hv = L2 && (typedAt() || L2.hover);                       // typed cursor fields: the rubber line goes to the typed point
@@ -5194,13 +5225,12 @@ function paintOverlay(gesture = false) {
       if (!state.hidden.parts) {
         const byPart = new Map(), liftedBy = new Map(), drag = pdrag?.moved ? pdrag.idxs : null, gripped = new Set(state.grip && state.grip.d.vlay === d ? gripShown(state.grip).map((e) => state.grip.d.at.get(state.grip.ents ? state.grip.ents.get(e) : state.grip.ent)) : []);       // the objects a grip drags are drawn by the overlay only
         for (const p of placedNow) {
-          if (p.src === 'loose' && gripped.has(p.i)) continue;
+          if (partHid(p) || p.src === 'loose' && gripped.has(p.i)) continue;
           const to = p.src === 'loose' && drag?.includes(p.i) ? liftedBy : byPart;
           if (!to.has(p.partId)) to.set(p.partId, []);
           to.get(p.partId).push(p);
         }
         for (const [id, part] of Object.entries(d.lay.parts)) {
-          if (d.hiddenParts && d.hiddenParts.has(id)) continue;                                // hidden in the Objects tab
           const fl = state.text.ed?.dim?.raw === part.raw ? state.text.ed.dim.fl : part.fl;
           const slotsOf = (list) => list.map((p) => placedMat(part, p, state.sheetH));
           for (const [list, to] of [[byPart.get(id) || [], calls], [liftedBy.get(id) || [], lifted]]) {
@@ -5216,19 +5246,21 @@ function paintOverlay(gesture = false) {
         for (const slot of call.slots) key.push(...slot);
         key.push(null);
       }
-    } else if (d?.cmp?.dragged) {
-      // shortcut: the snapshot stays on top and is retraced each frame; revisit if a real drag remains heavy.
-      key = [d, d.cmp.dragged, base.ox, base.oy, base.scale, cw, chh, dpr, base.dark, base.wireframe, base.sheetH];
-      for (const sd of d.cmp.items) {
-        if (!sd.visible || sd.id === d.cmp.dragged) continue;
-        key.push(sd.fl, sd.factor, cmpCss(sd.colour), ...sd.offset, ...[...(sd.off || [])].sort((a, b) => a - b), null);
-      }
+    } else if (d?.cmp) key = cmpBaseKey(d, base, cw, chh);
+    const ekey = d && d.fl && !d.lay && !d.cmp ? paintKey(d, base, cw, chh) : null, dkey = key?.drag ? key : ekey?.drag ? ekey : null, ckey = d?.cmp && !key ? cmpKeepKey(d, base, cw, chh) : null;
+    c.dataset.snap = ''; c.dataset.keep = ''; c.dataset.quick = '';
+    if (full && dkey && c.dataset.nokeep !== '1' && !(kept && sameBase(kept.key, dkey))) {
+      // a drag starts, or the view moved under it: the base without what is dragged is painted off screen once, so it is no counted full paint (TODO 317 / 320)
+      snap = null; keptCv = keptCv || document.createElement('canvas'); keptCv.width = cw; keptCv.height = chh;
+      kept = { key: dkey, drag: null };
+      if (d.cmp) kept.drag = cmpBase(keptCv, d.cmp, base);
+      else paintEditable(keptCv, d, base, null, 'base');
     }
-    c.dataset.snap = ''; c.dataset.keep = '';
     if (!full && snapUsable(snap, want)) {
       const { dx, dy, r } = snapPlace(snap.view, want.view), g = c.getContext('2d');
+      const scale = r * dpr / snap.dpr;
       g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, cw, chh);
-      g.drawImage(snapCv, dx * dpr, dy * dpr, cw * r, chh * r);
+      g.drawImage(snapCv, dx * dpr, dy * dpr, snap.w * scale, snap.h * scale);
       if (d?.lay) layOverlay(c, d, base, marks, lifted);
       if (d?.cmp?.dragged) cmpPaint(c, d.cmp, base, marks, true);
       c.dataset.snap = '1';
@@ -5246,12 +5278,14 @@ function paintOverlay(gesture = false) {
       ui.cmdUI.place();
       return;
     }
-    const ekey = d && d.fl && !d.lay && !d.cmp ? paintKey(d, base, cw, chh) : null;
-    if (ekey && kept && c.dataset.nokeep !== '1' && sameBase(kept.key, ekey)) {
+    const bkey = d?.cmp ? dkey || ckey : ekey;
+    if (bkey && kept && c.dataset.nokeep !== '1' && sameBase(kept.key, bkey)) {
       const g = c.getContext('2d');
       g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, cw, chh);
       g.drawImage(keptCv, 0, 0);
-      paintEditable(c, d, base, marks, 'over');
+      if (d.cmp && kept.still) { c.dataset.preview = 0; cmpOver(c, d.cmp, base, state.paste?.d === d || preview ? null : marks, null); cmpTop(c, d, base, marks, preview); }       // a select click on a heavy Compare: the selection only (TODO 327)
+      else if (d.cmp) cmpOver(c, d.cmp, base, marks, kept.drag);
+      else paintEditable(c, d, base, marks, 'over');
       c.dataset.keep = '1';
       ui.cmdUI.place();
       return;
@@ -5260,37 +5294,35 @@ function paintOverlay(gesture = false) {
     c.dataset.paints = (+c.dataset.paints || 0) + 1;
     const t0 = performance.now();
     let drawn = 0;
-    if (d?.cmp) {
-      const paste = state.paste?.d === d && state.paste;
-      c.dataset.preview = 0;
-      drawn = cmpPaint(c, d.cmp, base, paste || preview ? null : marks);
-      if (paste?.from) c.dataset.preview = paintDrawing(c, { ...base, ox: base.ox - paste.dx, oy: base.oy + paste.dy, keep: true, fl: paste.preview, off: paste.source.off, factor: paste.source.factor,
-        tint: `color-mix(in srgb, ${cssVar('--selection', '#4f46e5')} 50%, transparent)`, previewBounds: (box) => { canvasPreviewBounds = unionBox(canvasPreviewBounds, box); } });
-      if (marks && (state.tool === 'measure' || paste || preview)) {
-        const k = base.scale * dpr, T = [k, 0, 0, -k, -base.ox * k, (base.sheetH - base.oy) * k];
-        drawMarks(c.getContext('2d'), marks, T, dpr, cssVar('--selection', '#4f46e5'), cssVar('--snap-mark', '#00c000'));
-        canvasPreviewBounds = unionBox(canvasPreviewBounds, overlayBox({ marks }, T, dpr));
-      }
-    } else if (d && d.lay) {                // a layout: each part painted once for all the places it is placed at (its matrix per place)
-      paintDrawing(c, { ...base, fl: null, factor: 1 });                                      // clears
-      for (const call of calls) drawn += paintDrawing(c, { ...base, keep: true, ...call });
-    } else drawn = paintEditable(c, d, base, marks, undefined, ekey && ((n) => {
+    // a slow base is kept (see `kept`): ekey for a drawing tab, ckey for Compare's stills
+    const keepBase = (key) => key && !quick && ((n) => {
       if (performance.now() - t0 <= KEEP_MS && n <= 15000) return;
       keptCv = keptCv || document.createElement('canvas');
       keptCv.width = cw; keptCv.height = chh;
       keptCv.getContext('2d').drawImage(c, 0, 0);
-      kept = { key: ekey };
-    }));
+      kept = { key, still: !!d.cmp };
+    });
+    if (d?.cmp) {
+      c.dataset.preview = 0;
+      drawn = cmpPaint(c, d.cmp, base, state.paste?.d === d || preview ? null : marks, false, keepBase(ckey));
+      cmpTop(c, d, base, marks, preview);
+    } else if (d && d.lay) {                // a layout: each part painted once for all the places it is placed at (its matrix per place)
+      paintDrawing(c, { ...base, fl: null, factor: 1 });                                      // clears
+      for (const call of calls) drawn += paintDrawing(c, { ...base, keep: true, ...call });
+    } else drawn = paintEditable(c, d, base, marks, undefined, keepBase(ekey));
     c.dataset.drawn = drawn || 0;
     c.dataset.indexed = d && d.ed ? '1' : '0';       // test hook (P3): a paint right after a commit comes before the pick index
-    if (heavy(performance.now() - t0, drawn || 0)) {
+    const isHeavy = heavy(performance.now() - t0, drawn || 0);
+    if (!quick && drawn) lastHeavy = isHeavy;       // an empty paint (every part hidden) says nothing about how heavy the next one is
+    if (isHeavy) {
       snapCv = snapCv || document.createElement('canvas');
       snapCv.width = cw; snapCv.height = chh;
       snapCv.getContext('2d').drawImage(c, 0, 0);
-      snap = { ...want, key };
+      snap = { ...want, key: quick ? null : key };       // a quick bitmap may scale under a wheel, but never stands in for a paint
     }
     if (d?.lay) layOverlay(c, d, base, marks, lifted);
     if (d?.cmp?.dragged) cmpPaint(c, d.cmp, base, marks, true);
+    if (quick) { c.dataset.quick = '1'; snapTimer = setTimeout(() => paintOverlay(), 120); }
     ui.cmdUI.place();
   });
 }
@@ -5320,7 +5352,7 @@ function layOverlay(c, d, base, marks, lifted) {
   }
 }
 
-/** part: 'over' paints only what goes on top of the drawing (selection, marks, previews) on a base already on the canvas; afterBase(drawn), when given, is called between the drawing and that rest. */
+/** part: 'over' paints only what goes on top of the drawing (selection, marks, previews) on a base already on the canvas, 'base' only the drawing; afterBase(drawn), when given, is called between the drawing and that rest. */
 function paintEditable(c, d, base, marks, part, afterBase) {
   const ed = state.text.ed?.d === d && state.text.ed.dim ? state.text.ed : null;
   const dragSnap = state.paste?.d === d ? state.paste.to : state.entityDrag?.d === d && state.entityDrag.to;
@@ -5335,6 +5367,7 @@ function paintEditable(c, d, base, marks, part, afterBase) {
   let drawn;
   if (afterBase) { drawn = paintDrawing(c, { ...o, part: 'base' }); afterBase(drawn); paintDrawing(c, { ...o, part: 'over' }); }
   else drawn = paintDrawing(c, part ? { ...o, part } : o);
+  if (part === 'base') return drawn;                                   // the base alone, off screen: no preview of a move in it
   const move = state.drawingRotate?.drag || state.entityDrag || (state.grip?.d === d && state.grip.move) || (modLive() && ['move', 'copy', 'stretch', 'array', 'rotate', 'scale', 'mirror', 'align'].includes(state.mod.kind) ? state.mod.move : null);
   c.dataset.preview = move?.items ? paintDrawing(c, { ...base, ox: base.ox - move.dx * d.factor, oy: base.oy + move.dy * d.factor, keep: true, fl: move.preview, off: d.off, factor: d.factor, slots: (!state.entityDrag && !state.grip && modTypedSlots(d)) || move.slots, tint: cssVar('--selection', '#4f46e5'), previewBounds: (box) => { canvasPreviewBounds = unionBox(canvasPreviewBounds, box); } }) : 0;
   const paste = state.paste;
@@ -5342,7 +5375,7 @@ function paintEditable(c, d, base, marks, part, afterBase) {
   return drawn;
 }
 
-function fit() {
+function fit(gesture = false) {
   const { w, h: ch } = canvasSize();
   // the sheet and, if one is open, the drawing; room for the dimension lines around
   const d = curDoc(), part = partView(d), lay = !!(d && d.lay), cb = cmpBox(d);
@@ -5354,7 +5387,7 @@ function fit() {
   view.ox = r[0] - P - (w2 / view.scale - bw) / 2 - R / view.scale;
   view.oy = r[1] - P - (h2 / view.scale - bh) / 2 - R / view.scale;
   view.fitted = true;
-  applyView();
+  applyView(gesture === true);
 }
 
 function zoomAt(factor, px, py, gesture = false) {
@@ -5637,7 +5670,18 @@ function attachCanvasEvents() {
     const actions = selHasPart(d) ? [['Extract part…', extractPart], ['Keep only this', keepSelection]] : [];   // a dimension alone is not a part
     popMenu(e.clientX, e.clientY, partial ? [items[0], ...actions, ...items.slice(1)] : [...actions, ...items]);
   });
-  new ResizeObserver(() => { if (view.fitted) fit(); else applyView(); }).observe(c);
+  const resize = () => {
+    clearTimeout(snapTimer);
+    if (view.fitted) fit(true); else applyView(true);
+  };
+  new ResizeObserver(resize).observe(c);
+  const watchDpr = () => {
+    window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`).addEventListener('change', () => {
+      watchDpr();
+      resize();
+    }, { once: true });
+  };
+  watchDpr();
 }
 
 // ---- keeping the panels in step with the layout ----
@@ -6184,7 +6228,8 @@ const dimTarget = () => { const d = curDoc(); if (d?.lay) { d.factor = 1; return
 const pointTarget = () => state.tool === 'measure' ? measureTarget() : state.tool === 'dimension' ? dimTarget() : editable();
 const drawBox = (fl) => fl.boxes[spaceOf(fl) ? 'paper' : 'model'];
 const fmtSize = (v) => String(+Number(v).toFixed(2));
-const snapshotOf = (d) => ({ cmp: d.cmp && structuredClone(d.cmp), attmode: d.raw?.header.$ATTMODE, guides: d.guideState && structuredClone(d.guideState.s.guides), groups: d.raw?.groups, entities: d.raw?.entities, blocks: d.raw?.blocks, layers: d.raw?.layers, ltypes: d.raw?.ltypes, mm: d.bg ? d.bg.mm : null, pos: d.bg ? [d.bg.x, d.bg.y] : null, bl: d.balloons });
+/** fl + hid (TODO 319b): the drawn items of this state and the entities hidden one by one they were made with; Undo / Redo reuse them (see drawnOf). */
+const snapshotOf = (d) => ({ fl: d.fl, hid: d.hid?.size ? new Set(d.hid) : null, cmp: d.cmp && structuredClone(d.cmp), attmode: d.raw?.header.$ATTMODE, guides: d.guideState && structuredClone(d.guideState.s.guides), groups: d.raw?.groups, entities: d.raw?.entities, blocks: d.raw?.blocks, layers: d.raw?.layers, ltypes: d.raw?.ltypes, mm: d.bg ? d.bg.mm : null, pos: d.bg ? [d.bg.x, d.bg.y] : null, bl: d.balloons });
 function copySelection() {
   const lay = curLay();
   if (lay) {
@@ -6328,8 +6373,18 @@ async function placePaste() {
   catch (err) { note(`Paste: ${err.message}`); }
   renderEdit(); paintOverlay();
 }
+const compareEditIndexes = new WeakMap();
 /** The edit index of a tab (pick grid, ends), built on first use and again after a change. */
-function edIndex(d) { if (!d.ed) d.ed =Ed.makeIndex(d.raw, d.fl, d.off, hidIdx(d)); return d.ed; }
+function edIndex(d) {
+  if (!d.ed) { d.ed = Ed.makeIndex(d.raw, d.fl, d.off, hidIdx(d), undefined, d.edPrev); d.edPrev = null; }       // edPrev: the index before the last edit, its parts for unchanged items are kept (TODO 319c)
+  const item = cmpEditingItem(d);
+  if (!item || item.off.size === d.off.size && [...item.off].every((i) => d.off.has(i))) return d.ed;
+  const c = compareEditIndexes.get(item.off);
+  if (c?.base === d.ed && c.index.fl === d.fl) return c.index;
+  const index = Ed.indexWithVisibility(d.ed, item.off, hidIdx(d));
+  compareEditIndexes.set(item.off, { base: d.ed, index });
+  return index;
+}
 /** The entity under a point, unless its layer is locked (Objects tab): a locked layer is drawn and snapped to, but cannot be picked. -1 if none. */
 function hitAt(d, p) { const e = Ed.hitEntity(edIndex(d), p[0], p[1], pickTol(d)); return e >= 0 && lockedEnt(d, e) ? -1 : e; }
 const lockedEnt = (d, e) => (!!d.locked && d.locked.size > 0 && d.locked.has(d.raw.entities[e].layer)) || (!!d.lockedEnts && d.lockedEnts.has(d.raw.entities[e]));      // lockedEnts: a layout's locked objects
@@ -6348,6 +6403,14 @@ function warm(d) {
   requestAnimationFrame(() => setTimeout(() => { if (state.docs.includes(d) && d.fl) { if (!d.ed) { edIndex(d); d.outl = null; } if (curDoc() === d || editable() === d) renderEdit(); } }, 0));       // also refresh a Compare source, even when a hover built its index first
 }
 function layersChanged(d) { state.drawingRotate = null; selectionCycle = null; d.ed = null; d.outl = null; d.sel = new Set(); d.stretchSelection = null; d.hl = []; if (cmpDoc()) cmpRefresh(d); warm(d); renderEdit(); }
+
+function layerVisibilitySelection(d, off) {
+  state.drawingRotate = null; selectionCycle = null; d.outl = null;
+  snapWatch(null); snapRef = snapQuery = snapCycle = null;
+  const selection = Ed.visibleSelection(d.fl, d.sel, off, hidIdx(d));
+  if (selection.sel.size !== d.sel.size) { d.stretchSelection = null; d.lastPick = -1; }
+  Object.assign(d, selection);
+}
 
 /** A pointer position → drawing units (y up), and the pick distance (7 px) in them. */
 function toDrawing(d, cx, cy) {
@@ -6476,16 +6539,40 @@ function pickPoint(d, p, pts, shift, hover = false) {
   return tq ? [tq[0], tq[1]] : straight && q.length === 2 ? Ed.orthoLock(base, q) : q;
 }
 
-function setSel(d, sel, stretchSelection = null) {
-  if (d.raw.groups?.length) sel = selectionOf(d.raw.groups, sel, true, (i) => !lockedEnt(d, i));
+let selectionEditDoc = null, selectionEditFrame = 0;
+const DEFER_SELECTION_EDIT = 2000; // above this many selected items the ribbon / Properties refresh waits two frames (329b)
+function setSel(d, sel, stretchSelection = null, prefiltered = false) {
+  if (d.raw.groups?.length) sel = selectionOf(d.raw.groups, sel, true, (i) => !lockedEnt(d, i), prefiltered);
   state.drawingRotate = null;
   d.stretchSelection = stretchSelection || { boxes: [], picked: new Set(sel) };
   d.sel = sel; d.lastPick = -1;       // lastPick: the entity just clicked (Shaping's target); a box or any other selection has none
   if (sel.size) state.balSel = null;
   // no index right after a commit: list from the items so the click does not build it (warm does, after the paint)
-  d.hl = d.ed ? [...sel].flatMap((e) => (d.ed.byEnt[e] || []).map((i) => d.ed.items[i])) : Ed.itemsOfEntities(d.fl, sel, d.off, hidIdx(d));
+  const ed = d.ed && edIndex(d);
+  if (ed) {
+    const hl = [];
+    for (const e of sel) if (ed.byEnt[e]) for (const i of ed.byEnt[e]) hl.push(ed.items[i]);
+    d.hl = hl;
+  } else d.hl = Ed.itemsOfEntities(d.fl, sel, cmpEditingItem(d)?.off || d.off, hidIdx(d));
   if (!d.ed) warm(d);
-  paintOverlay(); renderEdit();
+  paintOverlay();
+  cancelAnimationFrame(selectionEditFrame); selectionEditDoc = null;
+  if (editable() === d && d.sel.size > DEFER_SELECTION_EDIT) {
+    selectionEditDoc = d;
+    cancelAnimationFrame(selectionEditFrame);
+    // Paint is already queued. A newer pick starts the wait again so its highlight paints first too.
+    selectionEditFrame = requestAnimationFrame(() => {
+      selectionEditFrame = requestAnimationFrame(() => {
+        selectionEditFrame = 0; selectionEditDoc = null;
+        if (editable() !== d) return;
+        renderRibbon();
+        renderStatusLayer(d);
+        renderPropsValues(d);
+        renderSelectionProps(d);
+      });
+    });
+  }
+  renderEdit();
   if (state.ptab === 'objects') renderObjects(true);
 }
 
@@ -6661,7 +6748,7 @@ function settleMeasures(d, next) {
 function commit(d, next, label, keepSel) {       // keepSel (a grip edit's objects): Undo / Redo of this step select them again
   if (d.vlay) { layObjCommit(d, next, label, keepSel); return true; }
   let fl, names, index;       // drawn first, so a too-nested result leaves history, Redo and the drawing untouched; restore reuses it
-  const raw = d.raw;
+  const raw = d.raw, oldFl = d.fl;       // oldFl: d.fl is released below while the new one is drawn, the undo step keeps it (TODO 319b)
   next = settleMeasures(d, next);
   if (raw && (next.entities !== raw.entities || next.blocks !== raw.blocks || next.layers && next.layers !== raw.layers || 'attmode' in next && next.attmode !== raw.header.$ATTMODE)) {
     if (next.widths) {
@@ -6673,15 +6760,18 @@ function commit(d, next, label, keepSel) {       // keepSel (a grip edit's objec
       names = [...d.off].map((i) => d.fl.layers[i]?.name);
       let cached = { fl: d.fl, ed: d.ed, outl: d.outl, pb: d.pb, hl: d.hl };
       d.fl = d.ed = d.outl = d.pb = d.hl = null;
-      try { fl = flatten({ ...raw, entities: next.entities, blocks: next.blocks, layers: next.layers || raw.layers, ltypes: next.ltypes || raw.ltypes, header: 'attmode' in next ? { ...raw.header, $ATTMODE: next.attmode } : raw.header }, d.hid); } catch (e) {
+      try {
+        fl = flattenEdit(raw, { ...raw, entities: next.entities, blocks: next.blocks, layers: next.layers || raw.layers, ltypes: next.ltypes || raw.ltypes, header: 'attmode' in next && next.attmode !== raw.header.$ATTMODE ? { ...raw.header, $ATTMODE: next.attmode } : raw.header }, cached.fl, d.hid);
+      } catch (e) {
         Object.assign(d, cached);
         if (!(e instanceof DrawingError)) throw e;
         note(e.message); return false;
       }
+      if (cached.ed?.ix) d.edPrev = { ix: cached.ed.ix, fl: cached.fl };
       cached = null;
     }
   }
-  pushHistory(d, keepSel ? { ...snapshotOf(d), sel: [...keepSel], grip: true } : snapshotOf(d), label); d.newLayer = null;
+  pushHistory(d, { ...snapshotOf(d), fl: oldFl, ...keepSel && { sel: [...keepSel], grip: true } }, label); d.newLayer = null;
   restore(d, next, fl, names, index);
   return true;
 }
@@ -6705,6 +6795,8 @@ function restoreBg(d, st) {
   if (st.mm != null && d.bg) d.bg.mm = st.mm;
   if (st.pos && d.bg) [d.bg.x, d.bg.y] = st.pos;
 }
+/** The drawn items a stored step brings back, or undefined (restore draws them again): they were made with the entities hidden one by one that are hidden now. */
+const drawnOf = (d, st) => st.fl && (st.hid?.size || 0) === (d.hid?.size || 0) && [...(st.hid || [])].every((e) => d.hid.has(e)) ? st.fl : undefined;
 /** Puts the tab in the state `st`. False (and the tab as it was, everything) when the drawing is too nested to draw again. */
 function restore(d, st, drawn, layerNames, index) {
   const before = snapshotOf(d), header = d.raw?.header;
@@ -6722,6 +6814,7 @@ function restore(d, st, drawn, layerNames, index) {
     restoreBg(d, st);
     d.dirty = true; if (cmpDoc()) cmpRefresh(d); showDoc(); return;
   }
+  const was = d.cnt?.entities === d.raw.entities && d.cnt.counts === d.counts && d.cnt.n === d.entities ? d.cnt : null, prevIx = !index && d.ed?.ix ? { ix: d.ed.ix, fl: d.fl } : null;       // before the entity list and fl change: the counts and the pick index are patched from these
   d.raw.groups = st.groups || followGroups(d.raw.groups, d.raw.entities, st.entities);       // Undo / Redo bring the groups back; an edit follows its entities
   d.raw.entities = st.entities; d.raw.blocks = st.blocks;
   const names = layerNames || [...d.off].map((i) => d.fl.layers[i] && d.fl.layers[i].name);
@@ -6736,7 +6829,8 @@ function restore(d, st, drawn, layerNames, index) {
   restoreBg(d, st);
   d.off = new Set(fl.layers.map((l, i) => (names.includes(l.name) ? i : -1)).filter((i) => i >= 0));      // layer numbers can shift: keep them by name
   if (index) { index.fl = fl; index.items = fl.items; }
-  Object.assign(d, { fl, counts: layerCounts(d.raw, fl), entities: entityCount(d.raw, fl), box: drawingBoxMm(fl, d.factor), dirty: true, ed: index || null, outl: null, sel: new Set(), stretchSelection: null, hl: [] });
+  const c = patchedCounts(was, d.raw, fl);
+  Object.assign(d, { fl, counts: c.counts, entities: c.n, cnt: { entities: d.raw.entities, names: fl.layers.map((l) => l.name), space: spaceOf(fl), counts: c.counts, n: c.n }, edPrev: index ? null : prevIx || d.edPrev, box: drawingBoxMm(fl, d.factor), dirty: true, ed: index || null, outl: null, sel: new Set(), stretchSelection: null, hl: [] });
   if (cmpDoc()) cmpRefresh(d);
   showDoc();
   warm(d);
@@ -6782,7 +6876,7 @@ function undo(d) {
   const m = state.modDoc === d && state.mod?.kind === 'copy' ? state.mod : null;
   const copied = m && d.hist.labels().past.at(-1) === 'Copy', raw = d.raw?.entities;
   const st = stepHist(d, 'undo'); if (!st) { note('Nothing to undo'); return; }
-  if (restore(d, st) === false) { d.hist.redo(st); return; }       // the step goes back on the undo list
+  if (restore(d, st, drawnOf(d, st)) === false) { d.hist.redo(st); return; }       // the step goes back on the undo list
   if (m?.raw) {
     if (copied && m.raw === raw && [...m.sel].every((i) => raw[i] === st.entities[i])) m.raw = d.raw.entities;
     else { setTool('select'); note('Undone. Copy ended: drawing or source objects changed; start Copy again'); return; }
@@ -6791,7 +6885,7 @@ function undo(d) {
 }
 function redo(d) {
   const st = stepHist(d, 'redo'); if (!st) { note('Nothing to redo'); return; }
-  if (restore(d, st) === false) { d.hist.undo(st); return; }       // the step goes back on the redo list
+  if (restore(d, st, drawnOf(d, st)) === false) { d.hist.undo(st); return; }       // the step goes back on the redo list
   note('Redone');
 }
 
@@ -9966,7 +10060,7 @@ function trimDo(d, idx, p) {
   const m = state.mod, ent = d.raw.entities[idx];
   if (!MD.canModify(ent)) { note('Trim takes a line, arc, circle or polyline'); return; }
   if (curveEdgesOnly(d, m)) { note("Ellipse and spline edges don't trim yet"); return; }
-  const r = MD.trimEntity(ent, trimEdges(d, m), p, m.quick);
+  const r = MD.trimEntity(ent, MD.trimCuttingEdges(ent, trimEdges(d, m)), p, m.quick);
   if (r.error) { note(r.error); return; }
   view.fitted = false;
   // the pieces of a cutting edge are still cutting edges (set before the commit, whose redraw drops edges that are gone)
@@ -11155,9 +11249,10 @@ function selectAll() {
     update(); note(`${idxs.length} part${idxs.length === 1 ? '' : 's'} selected`);
   } else if (d) {
     if (drawLive() && DR.toolBusy(state.draw)) return;
-    const all = edIndex(d).shown.filter((e) => !lockedEnt(d, e));       // a locked layer cannot be picked, so Ctrl+A + Delete cannot reach it
-    if (!all.length) { note('Nothing to select'); return; }
-    setSel(d, new Set(all)); note(`${all.length} entit${all.length === 1 ? 'y' : 'ies'} selected`);
+    const all = new Set();
+    for (const e of edIndex(d).shown) if (!lockedEnt(d, e)) all.add(e);       // a locked layer cannot be picked, so Ctrl+A + Delete cannot reach it
+    if (!all.size) { note('Nothing to select'); return; }
+    setSel(d, all, null, true); note(`${all.size} entit${all.size === 1 ? 'y' : 'ies'} selected`);
   }
 }
 
@@ -11479,15 +11574,13 @@ function drawSheetSel() {
 // A value the selected shapes do not share shows "*varies*"; typing into it sets it on all of them. One undo step per change.
 const VARIES = '*varies*';
 const propDoc = () => curLay() ? layObjSelDoc(curDoc()) : editable();
-/** [index, entity] of the selection without kept dimensions (a dimension has its own text-height field). */
-function propEnts(d, all = false) {
-  const out = [];
-  for (const e of d.sel) { const ent = d.raw.entities[e]; if (ent && (all || ent.layer !== Ed.DIM_LAYER)) out.push([e, ent]); }
-  return out;
+const emptyProps = { ents: [], all: [], summary: PR.summarize([]), width: null };
+function propEnts(d) {
+  return PR.selectionProps(d, d.vlay ? layHist(d.vlay).revision : d.hist?.revision);
 }
 /** The layers to pick from: the file's, and the ones the selection is on (not the kept-dimensions layer). */
-function propLayers(d, pe) {
-  const names = new Set([...Object.keys(d.raw.layers || {}), ...d.fl.layers.map((l) => l.name), ...pe.map((x) => x[1].layer)]);
+function propLayers(d, layers) {
+  const names = new Set([...Object.keys(d.raw.layers || {}), ...d.fl.layers.map((l) => l.name), ...layers]);
   names.delete(Ed.DIM_LAYER);
   return [...names].sort((a, b) => a.localeCompare(b));
 }
@@ -11498,8 +11591,8 @@ function colourCss(key) {
 }
 const layerMap = (d) => d.raw.layers || {};
 async function pickPropColour() {
-  const d = propDoc(), ent = d && propEnts(d)[0]?.[1];
-  const mixed = !!ent && new Set(propEnts(d).map((x) => PR.colourKey(x[1]))).size > 1;
+  const d = propDoc(), { ents: [ent], summary } = d ? propEnts(d) : emptyProps;
+  const mixed = !!ent && summary.colour === null;
   const key = ent ? PR.effectiveColour(ent, layerMap(d)) : currentColour === 'bylayer' && d ? PR.effectiveColour({ layer: curLayerName(d) }, layerMap(d)) : currentColour;
   const rgb = await pickColour(keyRgb(key), mixed);
   if (rgb) propSet('colour', rgbKey(rgb));
@@ -11514,9 +11607,10 @@ function buildPropsSection() {
   ui.propLt = h('select', { class: 'fld', 'aria-label': 'Line type', 'data-testid': 'prop-lt' });
   ui.propSwatch = h('button', { class: 'cswatch', type: 'button', 'aria-label': 'Pick colour', 'data-testid': 'prop-swatch', onclick: pickPropColour });
   ui.propFill = h('button', { class: 'cswatch', type: 'button', 'aria-label': 'Fill colour', 'data-testid': 'prop-fill', onclick: async () => {
-    const d = propDoc(), ents = d && propEnts(d).map((x) => x[1]).filter(FI.closedOutline);
-    if (!ents?.length) return;
-    const rgb = await pickColour(keyRgb(ents[0].fill || currentFill), !ents[0].fill || ents.some((e) => e.fill !== ents[0].fill));
+    const d = propDoc(), props = d && propEnts(d);
+    if (!props?.closed) return;
+    const fill = props.closed.fill;
+    const rgb = await pickColour(keyRgb(fill || currentFill), !fill || props.fillMixed);
     if (rgb && propDoc() === d) applyFill(rgbKey(rgb));
   } });
   ui.propFillLabel = h('span', { class: 'lbl' });
@@ -11597,7 +11691,10 @@ function renderPropsPanel(d) {
   ui.centreOnPage.title = lay ? 'Centre the selection as one block on the whole sheet (CP)' : 'a drawing has no page';
   setSelect(ui.relSel, [['selection', 'Selection'], ...(lay ? [['sheet', 'Sheet']] : []), ['first', 'First selected'], ['last', 'Last selected'], ['point', 'Point...'], ['rectangle', 'Rectangle']], !lay && state.arrangeRel === 'sheet' ? 'selection' : state.arrangeRel);
   ui.propSec.hidden = !show;
-  if (!show) return;
+  if (show && (!d || d !== selectionEditDoc)) renderPropsValues(d, lay);
+}
+
+function renderPropsValues(d, lay = curLay()) {
   if (lay) d = propDoc();
   if (lay && !d.sel.size) {
     ui.propEmpty.hidden = ui.propBody.hidden = ui.propChip.hidden = ui.propMatch.hidden = true;
@@ -11605,8 +11702,7 @@ function renderPropsPanel(d) {
     ui.propSimilar.hidden = !selItems().some((x) => x.p.src === 'loose' && x.part.obj);
     return;
   }
-  const pe = propEnts(d), ents = pe.map((x) => x[1]), all = propEnts(d, true).map((x) => x[1]), sm = PR.summarize(ents), none = !ents.length;
-  const text = ents.length > 0 && ents.every((e) => ['TEXT', 'MTEXT'].includes(e.type));
+  const props = propEnts(d), { ents, all, summary: sm, text, width } = props, none = !ents.length;
   ui.propInfo.querySelector('.section-title').textContent = text ? 'Text' : 'Info';
   if (text && ui.propJumps.nextElementSibling !== ui.propInfo) ui.propJumps.after(ui.propInfo);
   else if (!text && ui.propBody.lastElementChild !== ui.propInfo) ui.propBody.append(ui.propInfo);
@@ -11622,7 +11718,6 @@ function renderPropsPanel(d) {
   ui.propSimilar.hidden = ui.propMatch.hidden = none;
   ui.propQuick.hidden = false;
   ui.propEmpty.textContent = d.sel.size ? 'A kept dimension has its own text height, above.' : 'Select something to see its properties.';
-  const widths = all.map((e) => PR.widthKey(e, d.factor)), width = widths.length && widths.every((w) => w === widths[0]) ? widths[0] : null;
   ui.propWidthHint.textContent = 'Selection · mm';
   ui.propWidthUnits.textContent = 'mm';
   for (const b of ui.propWidthPresets.children) {
@@ -11633,29 +11728,28 @@ function renderPropsPanel(d) {
     ui.propWidthInput.value = typeof width === 'number' ? String(+width.toPrecision(10)) : '';
     ui.propWidthInput.placeholder = width == null ? VARIES : typeof width === 'string' ? width : '';
   }
-  for (const [control, key, values] of [[ui.propEnds, 'cap', ['butt', 'round', 'square']], [ui.propCorners, 'join', ['miter', 'round', 'bevel']]]) {
-    const value = all[0]?.[key] || values[0], mixed = all.some((e) => (e[key] || values[0]) !== value);
-    setSelect(control, [...(mixed ? [['', VARIES]] : []), ...values.map((v) => [v, v[0].toUpperCase() + v.slice(1)])], mixed ? '' : value);
+  for (const [control, value, values] of [[ui.propEnds, props.cap, ['butt', 'round', 'square']], [ui.propCorners, props.join, ['miter', 'round', 'bevel']]]) {
+    setSelect(control, [...(value == null ? [['', VARIES]] : []), ...values.map((v) => [v, v[0].toUpperCase() + v.slice(1)])], value ?? '');
   }
-  ui.propScale.checked = all[0]?.scaleWithObject === true;
-  ui.propScale.indeterminate = all.some((e) => !!e.scaleWithObject !== ui.propScale.checked);
+  ui.propScale.checked = props.scale;
+  ui.propScale.indeterminate = props.scaleMixed;
   ui.propScaleHint.textContent = ui.propScale.indeterminate ? VARIES : '';
   if (none) return;
-  const closed = ents.filter(FI.closedOutline), fill = closed[0]?.fill;
-  ui.propFillSec.hidden = !closed.length;
-  ui.propJumps.querySelector('[data-testid=props-jump-fill]').hidden = !closed.length;
-  ui.propFillRow.hidden = !closed.length;
+  const { closed, fillMixed } = props, fill = closed?.fill;
+  ui.propFillSec.hidden = !closed;
+  ui.propJumps.querySelector('[data-testid=props-jump-fill]').hidden = !closed;
+  ui.propFillRow.hidden = !closed;
   ui.propFill.classList.toggle('no-fill', !fill);
   ui.propFill.style.backgroundColor = fill ? colourCss(fill) : '';
-  ui.propFillLabel.textContent = closed.some((e) => e.fill !== fill) ? VARIES : fill ? PR.colourLabel(fill) : 'No fill';
-  setSelect(ui.propLayer, [...(sm.layer == null ? [['', VARIES]] : []), ...propLayers(d, pe).map((n) => [n, n])], sm.layer == null ? '' : sm.layer);
+  ui.propFillLabel.textContent = fillMixed ? VARIES : fill ? PR.colourLabel(fill) : 'No fill';
+  setSelect(ui.propLayer, [...(sm.layer == null ? [['', VARIES]] : []), ...propLayers(d, props.layers).map((n) => [n, n])], sm.layer == null ? '' : sm.layer);
   setSelect(ui.propColour, [...(sm.colour == null ? [['', VARIES]] : []), ...PR.colourOptions(sm.colour)], sm.colour == null ? '' : sm.colour);
   const lts = [...PR.LINETYPES.map((c) => [c.key, c.label])];
   if (sm.lt != null && !lts.some((c) => c[0] === sm.lt)) lts.push([sm.lt, PR.ltLabel(sm.lt)]);
   setSelect(ui.propLt, [...(sm.lt == null ? [['', VARIES]] : []), ...lts], sm.lt == null ? '' : sm.lt);
   ui.propSwatch.style.background = sm.colour == null ? 'repeating-linear-gradient(45deg, var(--line) 0 3px, transparent 3px 6px)' : colourCss(sm.colour === 'bylayer' ? PR.effectiveColour(ents[0], layerMap(d)) : sm.colour);
   // the geometry: rebuilt when the list of fields changes, else only the numbers are put in
-  const fields = PR.fieldsOf(ents, d.factor), unit = drawingUnit(), sig = unit + ':' + fields.map((f) => f.key).join();
+  const { fields } = props, unit = drawingUnit(), sig = unit + ':' + fields.map((f) => f.key).join();
   if (ui.propGeo.dataset.sig !== sig) {
     ui.propGeo.dataset.sig = sig;
     const groups = [];
@@ -11682,8 +11776,8 @@ const propLocked = (d) => !!d.vlay && selItems().some((x) => x.p.src === 'loose'
 /** Applies fn to every entity in the selection (not kept dimensions) as one undo step; fn returns the changed entity or null (left as it was). */
 function propCommit(d, label, fn, all = false, widthOnly = false) {
   if (propLocked(d)) { note(LOCKED); renderEdit(); return 0; }      // as the strip colour: a locked Layout object is not changed
-  const pe = propEnts(d, all), repl = new Map();
-  for (const [i, ent] of pe) { const n = fn(ent); if (n && n !== ent) repl.set(i, n); }
+  const props = propEnts(d), repl = new Map();
+  for (const i of all ? props.all : props.indices) { const ent = d.raw.entities[i], n = fn(ent); if (n && n !== ent) repl.set(i, n); }
   if (!repl.size) return 0;
   view.fitted = false;
   if (d.vlay) return layGripCommit(d, [...repl].map(([i, next]) => [d.raw.entities[i], next]), label) ? repl.size : 0;
@@ -11718,9 +11812,9 @@ function ribbonCustomWidth(control = ui.ribbonWidth) {
 function propWidthSet(value, custom = false) {
   const d = propDoc();
   if (!d) return;
-  const all = propEnts(d, true);
+  const { all } = propEnts(d);
   if (!all.length) return;
-  if (!PR.withWidth(all[0][1], value, d.factor)) {
+  if (!PR.withWidth(d.raw.entities[all[0]], value, d.factor)) {
     note('Outline width: type a positive number up to ' + fmt(327.67) + ' mm'); renderEdit(); return;
   }
   const label = typeof value === 'number' ? fmt(value) + ' mm' : value;
@@ -11740,12 +11834,12 @@ function propSet(what, value) {
   const d = propDoc();
   if (what === 'colour' && validColourKey(value)) {
     if (!d?.sel.size) { currentColour = value; usedColour(value); renderRibbon(); return; }
-    const keys = new Set(propEnts(d).map(([, ent]) => PR.effectiveColour(PR.withColour(ent, value), layerMap(d))));
+    const keys = new Set(propEnts(d).ents.map((ent) => PR.effectiveColour(PR.withColour(ent, value), layerMap(d))));
     for (const key of keys) usedColour(key);
   }
   if (!d || value === '') { renderEdit(); return; }
-  const same = (ent) => (what === 'layer' ? ent.layer === value : what === 'colour' ? PR.colourKey(ent) === value : PR.ltKey(ent) === value);
-  if (propEnts(d).every((x) => same(x[1]))) { renderEdit(); return; }
+  const { summary } = propEnts(d);
+  if (!summary.n || summary[what] === value) { renderEdit(); return; }
   const label = what === 'layer' ? 'Layer → ' + value : what === 'colour' ? 'Colour → ' + PR.colourLabel(value) : 'Line type → ' + PR.ltLabel(value);
   const n = propCommit(d, label, (ent) => (what === 'layer' ? PR.withLayer(ent, value) : what === 'colour' ? PR.withColour(ent, value) : PR.withLineType(ent, value)));
   if (n) note(`${label} on ${n} shape${n === 1 ? '' : 's'}. Ctrl+Z takes it back`);
@@ -11757,7 +11851,7 @@ function propFieldSet(key, textValue) {
   const v = PR.parseField(key, textValue, drawingUnit()), label = FIELD_LABELS[key] || key;
   if (v == null) { note(`${label}: type a number`); renderEdit(); return; }
   if (['length', 'radius', 'diameter', 'textH'].includes(key) && !(v > 0)) { note(`${label}: must be above 0`); renderEdit(); return; }
-  const ents = propEnts(d).map((x) => x[1]), cur = PR.fieldsOf(ents, d.factor).find((f) => f.key === key);
+  const { ents, fields } = propEnts(d), cur = fields.find((f) => f.key === key);
   if (cur && cur.value != null && Math.abs(cur.value - v) < 5e-3) { renderEdit(); return; }       // the shown number again: nothing to do
   let failed = 0;
   const shown = key === 'textAngle' ? fmt(v) : lengthText(v);
@@ -12117,12 +12211,12 @@ function closeContour() { if (state.tool === 'contour') setTool('select'); }
 /** The closed outlines the selection draws (cached for the selection and the drawing's index). */
 function contourLoops(d) {
   const sig = [...d.sel].sort((a, b) => a - b).join(',');
-  if (d.cAn && d.cAn.ed === d.ed && d.cAn.sig === sig) return d.cAn;
   const ed = edIndex(d), tol = Ed.chainTol(drawBox(d.fl), d.factor);
+  if (d.cAn && d.cAn.ed === ed && d.cAn.sig === sig) return d.cAn;
   const segs = d.sel.size > 4000 ? null : CT.segmentsFromItems(ed, d.sel, (e) => e.layer === Ed.DIM_LAYER || e.type === 'DIMENSION', tol);
   const r = segs ? CT.buildLoops(segs, tol) : { loops: [], open: 0, chains: [] };
   const partial = !!segs && CT.partialOutline(ed, d.sel, tol);
-  return (d.cAn = { ed: d.ed, sig, loops: r.loops, chains: r.chains, open: r.open, partial, big: !segs, n: segs ? segs.length : 0 });
+  return (d.cAn = { ed, sig, loops: r.loops, chains: r.chains, open: r.open, partial, big: !segs, n: segs ? segs.length : 0 });
 }
 /** The contour for the selection and the panel's values: { kind: 'none' | 'big' | 'open' | 'ok', an, res (CT.contour's result) }. */
 function contourCompute(d) {
@@ -12287,31 +12381,35 @@ function outlinesOf(d) {
 /** The property bar for the selection and the list of outlines (drawing tab). */
 function renderSelection(d) {
   const outs = outlinesOf(d), n = d.sel.size;
+  const layer = n ? 'layer ' + d.raw.entities[d.sel.values().next().value].layer : '';
   ui.selCommands.hidden = n < 2;
   ui.selbar.classList.toggle('multi-selection', n >= 2);
-  ui.selLayer.title = n ? 'layer ' + d.raw.entities[[...d.sel][0]].layer : '';
-  const widths = propEnts(d, true).map(([, ent]) => PR.widthKey(ent, d.factor));
-  const width = widths.length && widths.every((v) => v === widths[0]) ? widths[0] ?? '' : '';
-  setSelect(ui.selWidth, [['', '*varies*'], ...PR.widthOptions(width, recentWidths)], String(width));
+  ui.selLayer.title = layer;
+  if (d !== selectionEditDoc) renderSelectionProps(d);
   ui.outList.replaceChildren(...(outs ? outs.map((o, k) => h('button', { class: 'orow', type: 'button', 'data-outline': k + 1, onclick: () => setSel(d, new Set(o.set)) },
     h('span', { class: 'nm' }, 'Outline ' + (k + 1)), h('span', { class: 'lbl mono' }, `${fmtSize(o.w)} × ${fmtSize(o.h)}`),
     (d.savedAs || []).includes(sizeKey(o.w, o.h)) ? h('span', { class: 'chip' }, 'saved') : null)) : [h('span', { class: 'lbl' }, 'Reading the drawing…')]));
   if (outs && !outs.length) ui.outList.append(h('span', { class: 'lbl' }, ed6000(d) ? 'Too many pieces to list. Right-click an edge → Select connected.' : 'No outlines found. Click a shape in the drawing.'));
-  // Keep only and Extract part act on geometry: a selection of kept dimensions alone has none (they are not part of a part)
-  const noPart = !n || !selHasPart(d);
-  ui.barKeep.disabled = ui.barExtract.disabled = ui['keep-only'].disabled = noPart;
-  ui.barKeep.title = ui.barExtract.title = ui['keep-only'].title = n && noPart ? 'A kept dimension is not part of a part' : '';
   if (!n) { ui.selName.textContent = 'Nothing selected'; ui.selLayer.textContent = 'right-click an edge → Select connected'; ui.selArea.textContent = ''; return; }
-  const ed = d.ed;
-  if (!ed) { ui.selName.textContent = ui.selArea.textContent = '…'; ui.selLayer.textContent = 'layer ' + d.raw.entities[[...d.sel][0]].layer; return; }      // warm builds the index after the paint and renders again
-  const sel = [...d.sel], k = outs ? outs.findIndex((o) => o.set.size === n && sel.every((e) => o.set.has(e))) : -1;
+  const ed = d.ed && edIndex(d);
+  if (!ed) { ui.selName.textContent = ui.selArea.textContent = '…'; ui.selLayer.textContent = layer; return; }      // warm builds the index after the paint and renders again
+  const k = outs ? outs.findIndex((o) => o.set.size === n && [...d.sel].every((e) => o.set.has(e))) : -1;
   ui.selName.textContent = wholeDrawingGroup(d.raw.groups, d.sel) ? drawingSelectionName(d) : k >= 0 ? 'Outline ' + (k + 1) : n + ' selected';
-  ui.selLayer.textContent = 'layer ' + d.raw.entities[[...d.sel][0]].layer;
+  ui.selLayer.textContent = layer;
   // area and perimeter (TODO 31): for ink and cost; skipped on a huge selection, where it would be slow
   const ap = n <= 3000 ? Ed.areaPerimeter(ed, d.sel, d.factor, Ed.chainTol(drawBox(d.fl), d.factor)) : null;
   ui.selArea.textContent = !ap ? '' : (ap.loops ? `Area ${DU.formatArea(ap.area, drawingUnit())}` + (ap.holes ? ` (${ap.holes} hole${ap.holes > 1 ? 's' : ''} off)` : '') +
     (ap.gaps ? ` (closed across ${ap.gaps} tiny gap${ap.gaps > 1 ? 's' : ''})` : '') : 'Not closed: no area') +
     ` · Perimeter ${lengthText(ap.perimeter)}${lengthSuffix()}` + (ap.loops && ap.open ? ` · ${ap.open} open piece${ap.open > 1 ? 's' : ''} not in the area` : '');
+}
+
+function renderSelectionProps(d) {
+  const { width, indices } = propEnts(d);
+  setSelect(ui.selWidth, [['', '*varies*'], ...PR.widthOptions(width ?? '', recentWidths)], String(width ?? ''));
+  // Keep only and Extract part act on geometry, which excludes kept dimensions.
+  const noPart = !indices.length;
+  ui.barKeep.disabled = ui.barExtract.disabled = ui['keep-only'].disabled = noPart;
+  ui.barKeep.title = ui.barExtract.title = ui['keep-only'].title = d.sel.size && noPart ? 'A kept dimension is not part of a part' : '';
 }
 const ed6000 = (d) => !!d.ed && d.ed.shown.length > 6000;
 
@@ -12532,7 +12630,7 @@ const cmpDoc = () => { const d = curDoc(); return d && d.cmp ? d : null; };
 const cmpCss = (id) => { const k = C.COLOURS.find((x) => x.id === id) || C.COLOURS[0]; return workDark() ? k.dark : k.css; };
 const cmpSelected = (c) => c.items.find((x) => x.id === c.selected);
 const cmpSourceTab = (item) => item?.tabId ? state.docs.find((d) => d.tabId === item.tabId && d.raw && !d.lay) : null;
-const cmpSourceState = (d) => [d.fl, d.raw.entities, d.factor, d.pdf?.page, d.name, ...d.off];
+const cmpSourceState = (d) => [d.fl, d.raw.entities, d.factor, d.pdf?.page, d.name];
 const cmpEditingItem = (d) => { const c = cmpDoc()?.cmp, item = c && cmpSelected(c); return d && cmpSourceTab(item) === d ? item : null; };
 const drawingTransform = (d) => { const item = cmpEditingItem(d); return item ? `translate(${item.offset[0]} ${-item.offset[1]})` : null; };
 function cmpEdit(action = 'edit') {
@@ -12543,7 +12641,7 @@ function cmpEdit(action = 'edit') {
   return null;
 }
 /** Refresh changed linked artwork and measurements on return to Compare; closeTab also captures the final copy. */
-function cmpRefresh(d) {
+async function cmpRefresh(d) {
   if (!d.tabId) return;
   const next = cmpSourceState(d);
   for (const tab of state.docs) if (tab.cmp?.items.some((x) => x.tabId === d.tabId)) {
@@ -12551,7 +12649,7 @@ function cmpRefresh(d) {
     if (previous?.length === next.length && next.every((v, i) => v === previous[i])) continue;
     c.items = c.items.map((x) => x.tabId === d.tabId ? { ...x, ...CMP.refreshGeometry(x, d) } : x);
     c.sources.set(d.tabId, next);
-    cmpCalc(c);
+    await cmpCalc(c);
   }
 }
 /** Visible snapshots at their current offsets (mm, y up). */
@@ -12559,14 +12657,26 @@ function cmpBox(d) {
   const c = d && d.cmp;
   return c ? c.items.filter((x) => x.visible && x.box).reduce((b, x) => unionBox(b, x.box.map((v, i) => v + x.offset[i % 2])), null) : null;
 }
-function cmpCalc(c) {
-  c.items = CMP.lineUpItems(c.items, c.mode); c.sel = 0; c.stale = false;
-  c.res = CMP.compareItems(c.items, c.tol);
+const cmpComparing = (c) => `Comparing… ${Math.round(c.progress * 100)}%`;
+/** Runs the comparison in slices (TODO 316): c.run is the run's token, so a second click, a move, a removed snapshot, a closed tab or a refresh drops a run that is still going. c.res stays null until it is done. */
+async function cmpCalc(c) {
+  const run = c.run = {};
+  c.items = CMP.lineUpItems(c.items, c.mode); c.sel = 0; c.stale = false; c.res = null; c.progress = 0;
+  const gen = CMP.compareItemsSteps(c.items, c.tol), first = gen.next();       // a small drawing ends in this first slice: its result is set before cmpCalc returns
+  if (first.done) { c.res = first.value; c.run = null; return; }
+  c.progress = first.value;
+  await new Promise((r) => setTimeout(r));          // the caller shows "Comparing…" and the page paints before the next slice
+  const alive = () => c.run === run && state.docs.some((t) => t.cmp === c);
+  try {
+    const res = await runChunks(gen, { alive, onProgress: (p) => { c.progress = p; if (cmpDoc()?.cmp === c) ui.cmpCount.textContent = cmpComparing(c); } });
+    if (!alive()) return;
+    c.res = res;
+  } finally { if (c.run === run) { c.run = null; if (cmpDoc()?.cmp === c) { renderCommand(); renderCompare(); paintOverlay(); } } }       // not update(): that would clear a note set since the click
 }
 /** The Compare button also recalculates after an alignment or tolerance change. */
-function cmpRun(d) { cmpCalc(d.cmp); update(); }
-/** A move or setting change marks the last result out of date, without calculating. */
-function cmpMoved(d, refit = false) { const c = d.cmp; c.items = CMP.lineUpItems(c.items, c.mode); if (c.res) c.stale = true; update(refit && view.fitted); }
+async function cmpRun(d) { const done = cmpCalc(d.cmp); update(); await done; }
+/** A move or setting change marks the last result out of date, without calculating; a run still going is dropped. */
+function cmpMoved(d, refit = false) { const c = d.cmp; c.run = null; c.items = CMP.lineUpItems(c.items, c.mode); if (c.res) c.stale = true; update(refit && view.fitted); }
 
 function cmpAdd(d, source, offset = null) {
   try {
@@ -12714,7 +12824,7 @@ function renderCompare() {
     return h('tr', { 'data-testid': 'cmp-result', 'data-colour': x.colour }, h('th', { scope: 'row', style: `color:${cmpCss(x.colour)}`, title: x.name }, x.name),
       h('td', null, delta(r.area)), h('td', null, delta(r.perimeter)), h('td', null, `${delta(r.w)} × ${delta(r.h)}`));
   }));
-  ui.cmpCount.textContent = !c.res ? (!ui.cmpRunBtn.disabled ? 'Press Compare' : 'Tick at least two drawings') : diffs.length ? `${diffs.length} difference${diffs.length === 1 ? '' : 's'}${c.res.truncated ? ' or more' : ''}` : 'No differences';
+  ui.cmpCount.textContent = !c.res ? (c.run ? cmpComparing(c) : !ui.cmpRunBtn.disabled ? 'Press Compare' : 'Tick at least two drawings') : diffs.length ? `${diffs.length} difference${diffs.length === 1 ? '' : 's'}${c.res.truncated ? ' or more' : ''}` : 'No differences';
   if (ui.cmpListRes !== c.res || ui.cmpListDark !== workDark()) {
     ui.cmpListRes = c.res; ui.cmpListDark = workDark();
     ui.cmpList.replaceChildren(...diffs.map((x) => h('button', { class: 'gaprow cmprow', type: 'button', 'data-n': x.n, 'data-testid': 'cmp-diff', title: 'Zoom to this difference', onclick: () => cmpZoom(d, x) },
@@ -12742,22 +12852,91 @@ function cmpZoom(d, x) {
   note(`Difference ${x.n}: ${x.mm.toFixed(2)} mm at X ${fmt(x.x)}, Y ${fmt(x.y)}`);
 }
 
-function cmpPaint(canvas, c, base, marks, lifted = false) {
-  if (!lifted) paintDrawing(canvas, { ...base, fl: null, factor: 1 });                         // clears
+/** One pass of Compare's snapshots: the stills (lifted false) or the one a drag moves (lifted true). part: see paintEditable ('over' paints only the edited drawing's selection and previews). */
+function cmpItems(canvas, c, base, marks, lifted, part) {
   let drawn = 0;
   for (const sd of c.items) {
     if (!sd.visible || (sd.id === c.dragged) !== lifted) continue;
     const target = sd.id === c.selected && cmpSourceTab(sd), placed = { ...base, ox: base.ox - sd.offset[0], oy: base.oy + sd.offset[1], keep: true, tint: cmpCss(sd.colour), cmpOff: sd.off };
-    if (target) drawn += paintEditable(canvas, target, placed, state.tool === 'measure' ? null : marks);
-    else drawn += paintDrawing(canvas, { ...placed, fl: sd.fl, off: sd.off, factor: sd.factor });
-  }
-  if (lifted && c.snap) {                                                                    // the snap: a thin dotted guide through it and the usual marker with its name
-    const ctx = canvas.getContext('2d'), k = base.scale * base.dpr, T = [k, 0, 0, -k, -base.ox * k, (base.sheetH - base.oy) * k], at = mapply(T, c.snap.x, c.snap.y), accent = cssVar('--selection', '#4f46e5');
-    ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.strokeStyle = accent; ctx.lineWidth = base.dpr; ctx.setLineDash([3 * base.dpr, 4 * base.dpr]);
-    ctx.beginPath(); ctx.moveTo(0, at[1]); ctx.lineTo(canvas.width, at[1]); ctx.moveTo(at[0], 0); ctx.lineTo(at[0], canvas.height); ctx.stroke();
-    drawMarks(ctx, [[c.snap.x, c.snap.y, c.snap.kind, true]], T, base.dpr, accent, cssVar('--snap-mark', '#00c000'));
+    if (target) drawn += paintEditable(canvas, target, placed, state.tool === 'measure' ? null : marks, part);
+    else if (part !== 'over') drawn += paintDrawing(canvas, { ...placed, fl: sd.fl, off: sd.off, factor: sd.factor });
   }
   return drawn;
+}
+/** afterBase(drawn), when given, is called between the snapshots and the edited drawing's selection and previews on top of them (see paintEditable). */
+function cmpPaint(canvas, c, base, marks, lifted = false, afterBase = null) {
+  if (!lifted) paintDrawing(canvas, { ...base, fl: null, factor: 1 });                         // clears
+  const drawn = cmpItems(canvas, c, base, marks, lifted, afterBase ? 'base' : undefined);
+  if (afterBase) { afterBase(drawn); cmpItems(canvas, c, base, marks, lifted, 'over'); }
+  if (lifted) cmpGuide(canvas, c, base);
+  return drawn;
+}
+/** What Compare paints on top of the snapshots besides the edited drawing's own selection: a paste preview and the marks (Measure, paste, snap preview). */
+function cmpTop(c, d, base, marks, preview) {
+  const paste = state.paste?.d === d && state.paste, { dpr } = base;
+  if (paste?.from) c.dataset.preview = paintDrawing(c, { ...base, ox: base.ox - paste.dx, oy: base.oy + paste.dy, keep: true, fl: paste.preview, off: paste.source.off, factor: paste.source.factor,
+    tint: `color-mix(in srgb, ${cssVar('--selection', '#4f46e5')} 50%, transparent)`, previewBounds: (box) => { canvasPreviewBounds = unionBox(canvasPreviewBounds, box); } });
+  if (marks && (state.tool === 'measure' || paste || preview)) {
+    const k = base.scale * dpr, T = [k, 0, 0, -k, -base.ox * k, (base.sheetH - base.oy) * k];
+    drawMarks(c.getContext('2d'), marks, T, dpr, cssVar('--selection', '#4f46e5'), cssVar('--snap-mark', '#00c000'));
+    canvasPreviewBounds = unionBox(canvasPreviewBounds, overlayBox({ marks }, T, dpr));
+  }
+}
+/** The snap: a thin dotted guide through it and the usual marker with its name. */
+function cmpGuide(canvas, c, base) {
+  if (!c.snap) return;
+  const ctx = canvas.getContext('2d'), k = base.scale * base.dpr, T = [k, 0, 0, -k, -base.ox * k, (base.sheetH - base.oy) * k], at = mapply(T, c.snap.x, c.snap.y), accent = cssVar('--selection', '#4f46e5');
+  ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.strokeStyle = accent; ctx.lineWidth = base.dpr; ctx.setLineDash([3 * base.dpr, 4 * base.dpr]);
+  ctx.beginPath(); ctx.moveTo(0, at[1]); ctx.lineTo(canvas.width, at[1]); ctx.moveTo(at[0], 0); ctx.lineTo(at[0], canvas.height); ctx.stroke();
+  drawMarks(ctx, [[c.snap.x, c.snap.y, c.snap.kind, true]], T, base.dpr, accent, cssVar('--snap-mark', '#00c000'));
+}
+/**
+ * The key of Compare's base while a drag is on (flat, `drag` set, see paintKey): the stills, and for a grip drag the edited drawing without the entities it moves
+ * (a grip drag never sets c.dragged: gripDown / gripMove paint with state.grip, 'Grip drag' in TODO 317). Null when nothing is dragged.
+ */
+function cmpBaseKey(d, base, cw, chh) {
+  const c = d.cmp, sel = cmpSelected(c), target = !c.dragged && sel?.visible && cmpSourceTab(sel), hide = target && hideNow(target);
+  const grip = hide && hide.size !== (hidIdx(target)?.size || 0);
+  if (!c.dragged && !grip) return null;
+  const key = [d, c.dragged, base.ox, base.oy, base.scale, cw, chh, base.dpr, base.dark, base.wireframe, base.sheetH];
+  for (const sd of c.items) {
+    if (!sd.visible || sd.id === c.dragged) continue;
+    key.push(sd.fl, sd.factor, cmpCss(sd.colour), ...sd.offset, ...[...(sd.off || [])].sort((a, b) => a - b), null);
+    if (grip && sd === sel) key.push(target.fl, target.factor, hidIdx(target), null);
+  }
+  key.drag = true;
+  if (grip) for (const e of hide) key.push(e);
+  return key;
+}
+/** The key of Compare's stills when nothing is dragged (cmpBaseKey is null then): the snapshots and the edited drawing without its selection. A select click on it keeps the bitmap and paints the selection only (TODO 327). */
+function cmpKeepKey(d, base, cw, chh) {
+  const c = d.cmp, sel = cmpSelected(c), target = sel?.visible && cmpSourceTab(sel);
+  const key = [d, c.selected, base.ox, base.oy, base.scale, cw, chh, base.dpr, base.dark, base.wireframe, base.sheetH];
+  for (const sd of c.items) if (sd.visible) key.push(sd.fl, sd.factor, cmpCss(sd.colour), ...sd.offset, ...[...(sd.off || [])].sort((a, b) => a - b), null);
+  if (target) key.push(...paintKey(target, base, cw, chh));
+  return key;
+}
+const dragCv = document.createElement('canvas');                                            // the grabbed snapshot of a Compare drag, painted once where it was grabbed
+/** Paints the stills (the edited drawing without the entities a grip moves) on `canvas`; for a body drag also the grabbed snapshot into dragCv: { off, box } (its offset and its px box then). */
+function cmpBase(canvas, c, base) {
+  paintDrawing(canvas, { ...base, fl: null, factor: 1 });                                      // clears
+  cmpItems(canvas, c, base, null, false, 'base');
+  const sd = c.items.find((x) => x.id === c.dragged);
+  if (!sd) return null;
+  dragCv.width = canvas.width; dragCv.height = canvas.height;
+  cmpItems(dragCv, c, base, null, true);
+  const k = base.scale * base.dpr, pad = 4 * base.dpr, [x0, y0, x1, y1] = sd.box || [];       // pad: line width and the selection outline lie outside the box
+  return { off: [...sd.offset], box: sd.box ? [(x0 + sd.offset[0] - base.ox) * k - pad, (base.sheetH - y1 - sd.offset[1] - base.oy) * k - pad, (x1 + sd.offset[0] - base.ox) * k + pad, (base.sheetH - y0 - sd.offset[1] - base.oy) * k + pad] : null };
+}
+/** On the base kept for a drag: the grabbed snapshot's bitmap moved by how far it has gone (retraced when it would show what the bitmap lacks), or the edited drawing's selection and previews. */
+function cmpOver(canvas, c, base, marks, drag) {
+  const sd = drag && c.items.find((x) => x.id === c.dragged);
+  if (!sd) { cmpItems(canvas, c, base, marks, false, 'over'); return; }
+  const k = base.scale * base.dpr, dx = Math.round((sd.offset[0] - drag.off[0]) * k), dy = Math.round(-(sd.offset[1] - drag.off[1]) * k);
+  if (!blitCovers(drag.box, dx, dy, canvas.width, canvas.height)) { cmpPaint(canvas, c, base, marks, true); return; }
+  const g = canvas.getContext('2d');
+  g.setTransform(1, 0, 0, 1, 0, 0); g.drawImage(dragCv, dx, dy);
+  cmpGuide(canvas, c, base);
 }
 /** The differences as a glow (a soft round patch) with its number; the one picked in the list has a ring. */
 function cmpGlow(c, out) {
@@ -12775,11 +12954,13 @@ function cmpGlow(c, out) {
 /** A Compare side's snap index: the editor's own snap points and pick grid (edit.js snapPick), built once per side. */
 const cmpSnaps = new WeakMap();                                                             // off the side itself: snapshotOf structuredClones the sides, and the index holds a Proxy
 const cmpSnapEd = (sd) => {
-  if (!cmpSnaps.has(sd)) {
-    const vis = Uint8Array.from(sd.fl.items, (it) => (itemVisible(it, sd.off) ? 1 : 0));
-    cmpSnaps.set(sd, { ix: pickIndex(sd.fl, spaceOf(sd.fl) === 1, (i) => vis[i] === 1), items: sd.fl.items, vis });
-  }
-  return cmpSnaps.get(sd);
+  const c = cmpSnaps.get(sd.fl);
+  if (c?.off === sd.off) return c;
+  const space = spaceOf(sd.fl), items = sd.fl.items;
+  const vis = Uint8Array.from(items, (it) => (it.ps ? 1 : 0) === space && itemVisible(it, sd.off));
+  const index = { ix: c?.ix || pickIndex(sd.fl, space === 1), items, vis, off: sd.off };
+  cmpSnaps.set(sd.fl, index);
+  return index;
 };
 /** The snap near sheet point p (mm) on a side drawn at offset o (follows the SNAP button): { x, y (mm), kind } or null. */
 function cmpSnap(sd, o, p) {
@@ -12794,11 +12975,12 @@ function cmpDown(e) {
   if (source && (e.target.closest('[data-rot], [data-pivot]') || gripOn(source) && gripAt(source, e.clientX, e.clientY))) return false;
   const target = ref === item ? c.items.find((x) => x !== item && x.checked && x.visible) : ref?.visible ? ref : null;
   const p0 = sheetAt(e.clientX, e.clientY), m0 = [...item.offset], mode0 = c.mode;
-  const grab = cmpSnap(item, m0, p0), g = grab ? [grab.x, grab.y] : p0;
+  let grab, g;                        // looked up at the first move, so a click builds no snap index (150 000 entities: 350 ms, TODO 327)
   c.moving = true;
   let moved = false, manual = false, free = false, last = null;       // free: Alt was pressed in this drag, so this drop snaps to no object (guides stay)
   const move = (ev) => {
     if (!moved && Math.hypot(ev.clientX - e.clientX, ev.clientY - e.clientY) <= 4) return;
+    if (!last) { grab = cmpSnap(item, m0, p0); g = grab ? [grab.x, grab.y] : p0; }
     last = ev; free ||= ev.altKey;
     manual = cmpManual(c) || manual;
     const p = sheetAt(ev.clientX, ev.clientY);
@@ -12844,7 +13026,7 @@ function cmpKey(e, mod) {
 }
 function cmpCommand(c) {
   const n = c.res ? c.res.diffs.length : 0, chosen = c.items.filter((x) => x.checked);
-  ui.hist.textContent = `Command: COMPARE   ${chosen.map((x) => x.name + ` (${x.colour})`).join(' vs ')} · tolerance ${c.tol} mm · ` + (c.res ? `${n} difference${n === 1 ? '' : 's'}${c.stale ? ' (out of date)' : ''}` : chosen.length >= 2 ? 'press Compare' : 'tick at least two drawings');
+  ui.hist.textContent = `Command: COMPARE   ${chosen.map((x) => x.name + ` (${x.colour})`).join(' vs ')} · tolerance ${c.tol} mm · ` + (c.res ? `${n} difference${n === 1 ? '' : 's'}${c.stale ? ' (out of date)' : ''}` : c.run ? 'comparing' : chosen.length >= 2 ? 'press Compare' : 'tick at least two drawings');
   ui.prompt.textContent = state.msg ? state.msg : c.stale ? 'Out of date - press Compare again:' : n ? `Zoom to a difference: click it in the panel (1-${n}):` : 'Line up, Tolerance and Show differences are in the panel:';
 }
 

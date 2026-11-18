@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import * as L from './web/compare-list.js';
 import * as C from './web/compare.js';
+import { runChunks } from './web/perf.js';
 import { flatten, readDxf } from './web/drawing.js';
 import { makeIndex, areaPerimeter, chainTol } from './web/edit.js';
 import { newDoc, addEntities, addLayer, writeDxf, rect, circle, line } from './web/dxf-write.js';
@@ -35,8 +36,12 @@ test('snapshots own their geometry and visibility; five distinct colours, limit 
   const original = plate('<b>part</b>');
   let items = L.addItem([], original);
   const before = structuredClone(items[0]);
-  original.fl.items[0].ops[1] = 999; original.off.add(0); original.raw.entities.length = 0;
+  const shared = original.fl.items[0];                        // TODO 327: an edit makes a new fl and new items (commit, patchWidths), so the snapshot shares the old ones instead of a deep copy
+  original.fl = { ...original.fl, items: original.fl.items.map((it, i) => i ? it : { ...it, ops: it.ops.map((v, j) => j === 1 ? 999 : v) }) };
+  original.off.add(0); original.raw.entities.length = 0;
   assert.deepEqual(items[0], before);
+  assert.equal(items[0].fl.items[0], shared, 'the unedited items are not copied');
+  assert.notEqual(items[0].fl, original.fl);
   for (let i = 1; i < 5; i++) items = L.addItem(items, plate('part ' + i));
   assert.equal(new Set(items.map((x) => x.colour)).size, 5);
   assert.throws(() => L.addItem(items, plate('six')), /at most 5/);
@@ -45,6 +50,24 @@ test('snapshots own their geometry and visibility; five distinct colours, limit 
   assert.equal(items.at(-1).colour, removed.colour);
   assert.equal(new Set(items.map((x) => x.id)).size, 5);
   assert.throws(() => L.addItem([], source('empty', [])), /no outlines/);
+});
+
+test('TODO 327: a snapshot shares the source artwork and writes nothing into it (frozen), so a source edit cannot reach it', () => {
+  const freeze = (v) => { if (v && typeof v === 'object' && !Object.isFrozen(v)) { Object.freeze(v); Object.values(v).forEach(freeze); } return v; };
+  const src = plate('frozen'), second = plate('second', 32, 50), expected = structuredClone(src.fl);
+  freeze(src.fl); freeze(second.fl);
+  let items = L.addItem(L.addItem([], src), second);
+  assert.deepEqual(items[0].fl, expected);
+  assert.notEqual(items[0].fl, src.fl, 'a new top-level object: the key of the metrics cache');
+  assert.equal(items[0].fl.items, src.fl.items, 'no deep copy');
+  items = L.setItem(items, items[0].id, L.setItemOff(items[0], new Set([0])));
+  assert.deepEqual(items[0].fl, expected);
+  const refreshed = L.refreshGeometry(items[0], src);
+  assert.deepEqual(refreshed.box, items[0].box);
+  assert.doesNotThrow(() => L.compareItems(L.lineUpItems(items, 'bl'), .1));
+  const edited = { ...src, fl: { ...src.fl, items: src.fl.items.slice(1) } };       // a source edit: its next fl, the old one stays
+  assert.deepEqual(L.addItem([], src)[0].fl, expected);
+  assert.notDeepEqual(L.addItem([], edited)[0].polys, L.addItem([], src)[0].polys);
 });
 
 test('first checked is reference; hiding still compares, unticking leaves it out, inputs are unchanged', () => {
@@ -152,13 +175,20 @@ test('addItem builds no index; compareItems gives the same metrics as before', (
   assert.equal(calls, 0, 'addItem builds no index');
   console.log(`P13: makeIndex calls in addItem ${calls}, bound 0`);
   const before = structuredClone(items);
+  // compareItems measures with its own light index (no pick grid, TODO 316): one walk of an item's fl.items per measurement.
+  const measured = (fn, list) => {
+    let n = 0;
+    for (const item of list) { const walk = item.fl.items.forEach; item.fl.items.forEach = function (...a) { n++; return walk.apply(this, a); }; }
+    try { fn(); } finally { for (const item of list) delete item.fl.items.forEach; }
+    return n;
+  };
   let result;
-  assert.equal(count(() => { result = L.compareItems(items, .1); }), 2, 'first comparison measures each item once');
-  assert.equal(count(() => assert.deepEqual(L.compareItems(items, .1), result)), 0, 'same items reuse their measurements');
+  assert.equal(measured(() => { result = L.compareItems(items, .1); }, items), 2, 'first comparison measures each item once');
+  assert.equal(measured(() => assert.deepEqual(L.compareItems(items, .1), result), items), 0, 'same items reuse their measurements');
   const fresh = L.addItem(L.addItem([], plate('press.dxf')), plate('press wider', 32));      // each press lines up again: new item copies, same artwork
-  assert.equal(count(() => L.compareItems(L.lineUpItems(fresh, 'bl'), .1)), 2, 'first press measures each item once');
+  assert.equal(measured(() => L.compareItems(L.lineUpItems(fresh, 'bl'), .1), fresh), 2, 'first press measures each item once');
   assert.notEqual(L.lineUpItems(fresh, 'bl')[1], fresh[1], 'line up copies the items');
-  assert.equal(count(() => L.compareItems(L.lineUpItems(fresh, 'bl'), .1)), 0, 'second press: 0 makeIndex');
+  assert.equal(measured(() => L.compareItems(L.lineUpItems(fresh, 'bl'), .1), fresh), 0, 'second press: 0 measurements');
   assert.deepEqual(items, before, 'measurements stay off the items');
   assert.ok(items.every((item) => !Object.hasOwn(item, 'metrics')));
   const oldMetrics = (src) => {
@@ -173,6 +203,24 @@ test('addItem builds no index; compareItems gives the same metrics as before', (
     assert.deepEqual(row, { id: item.id, ...Object.fromEntries(Object.keys(ref).map((k) => [k, expected[k] - ref[k]])) }, src.name);
   }
   const refreshed = { ...items[1], ...L.refreshGeometry(items[1], plate('refreshed', 35)) };
-  assert.equal(count(() => L.compareItems([items[0], refreshed], .1)), 1, 'a refreshed item is measured anew');
+  assert.equal(measured(() => L.compareItems([items[0], refreshed], .1), [items[0], refreshed]), 1, 'a refreshed item is measured anew');
   assert.equal(L.compareItems([items[0], refreshed], .1).rows[1].w, 5, 'a refresh never reads the old metrics');
+});
+
+test('TODO 316: the chunked comparison yields often, ends with the same result, and stops when dropped', async () => {
+  // plates with holes and a moved part: differences, area, perimeter. Each makes fresh artwork, so nothing is cached.
+  const pair = () => L.lineUpItems(L.addItem(L.addItem([], plate('a')), plate('b', 31, 50)), 'bl');
+  const expected = L.compareItems(pair(), .1);
+  assert.ok(expected.diffs.length > 0 && expected.rows[1].area !== 0, 'the fixture has differences and measurements');
+  const old = C.compare(pair()[0].polys, pair()[1].polys, .1, { offsetB: pair()[1].offset });
+  assert.deepEqual(expected.diffs.map(({ itemId, ...d }) => d), old.diffs, 'the same differences as compare()');
+  let yields = 0, last = -1;
+  const result = await runChunks(L.compareItemsSteps(pair(), .1, () => true), { onProgress: (p) => { yields++; assert.ok(p >= last && p <= 1, 'progress only goes up to 1'); last = p; } });
+  assert.deepEqual(result, expected);
+  assert.ok(yields > 20, `a slice per due() check: ${yields} yields`);
+  let stopped = 0;
+  const dropped = await runChunks(L.compareItemsSteps(pair(), .1, () => true), { alive: () => ++stopped < 3 });
+  assert.equal(dropped, undefined, 'a dropped run returns nothing');
+  assert.equal(stopped, 3, 'and stops at once');
+  assert.equal(await runChunks(L.compareItemsSteps(L.addItem([], plate('a')), .1, () => true)), null, 'one drawing: null, as before');
 });

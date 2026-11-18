@@ -1,7 +1,7 @@
 {
   "permissions": {
     "allow": [
-	  "Bash(node tools/base-check.mjs:*)",
+      "Bash(node tools/base-check.mjs:*)",
       "Edit",
       "Write",
       "Read",
@@ -26,6 +26,8 @@
       "Bash(git rm:*)",
       "Bash(git stash:*)",
       "Bash(git rev-parse:*)",
+      "Bash(git grep:*)",
+      "Bash(git ls-tree:*)",
       "Bash(npm:*)",
       "Bash(npm.cmd:*)",
       "Bash(npx:*)",
@@ -36,8 +38,8 @@
       "Bash(gh pr edit:*)",
       "Bash(gh run view:*)",
       "Bash(gh run list:*)",
-	  "Bash(gh run download:*)",
-	  "Bash(gh run watch:*)",
+      "Bash(gh run download:*)",
+      "Bash(gh run watch:*)",
       "Bash(ls:*)",
       "Bash(cat:*)",
       "Bash(head:*)",
@@ -57,7 +59,6 @@
       "PowerShell(node:*)",
       "PowerShell(Get-ChildItem:*)"
     ],
-  
     "deny": [
       "Bash(sed -i:*)",
       "Bash(git push * --force*)",
@@ -77,10 +78,25 @@
   },
   "hooks": {
     "PreToolUse": [
-      { "matcher": "Bash|PowerShell|Monitor", "hooks": [ { "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/tools/fg-hook.mjs\"" } ] }
+      {
+        "matcher": "Bash|PowerShell|Monitor",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/tools/fg-hook.mjs\""
+          }
+        ]
+      }
     ],
     "Stop": [
-      { "hooks": [ { "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/tools/stop-hook.mjs\"" } ] }
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/tools/stop-hook.mjs\""
+          }
+        ]
+      }
     ]
   }
 }

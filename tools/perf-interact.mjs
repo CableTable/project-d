@@ -1,4 +1,4 @@
-// T76 / T78 / P13: node tools/perf-interact.mjs <file.dxf|spline:900|big:20000> [draw|edit|cmp|lay:<parts>] [port=5184]
+// T76 / T78 / P13: node tools/perf-interact.mjs <file.dxf|spline:900|big:20000> [draw|edit|commit|cmp|layers|selection|resize|lay:<parts>] [port=5184]
 // Counts are for the drawing canvas; timings include instrumentation and depend on the machine.
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
@@ -7,37 +7,44 @@ import { basename, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { chromium } from 'playwright';
 import { bigDoc, splineDoc } from './gen-big-dxf.mjs';
-import { writeDxf } from '../web/dxf-write.js';
+import { addLayer, writeDxf } from '../web/dxf-write.js';
 import { decodeDxf, readDxf, flatten, mapply } from '../web/drawing.js';
 import { shownItems, itemVisible, startHidden, unitFactor } from '../web/doc.js';
 
 // The recorder every mode shares: long tasks, frame gaps and lineTo on the drawing canvas around each run(), plus the full-paint counter (data-paints).
 async function instrument(page) {
   await page.evaluate(() => {
-    const rec = { frames: [], long: [], lineTo: 0 }, proto = CanvasRenderingContext2D.prototype, lineTo = proto.lineTo;
+    const rec = { frames: [], long: [], lineTo: 0 }, proto = CanvasRenderingContext2D.prototype, lineTo = proto.lineTo, pathProto = Path2D.prototype, pathLineTo = pathProto.lineTo;
     proto.lineTo = function (...args) {
       if (this.canvas.dataset.testid === 'drawing') rec.lineTo++;
       return lineTo.apply(this, args);
     };
+    pathProto.lineTo = function (...args) { rec.lineTo++; return pathLineTo.apply(this, args); };       // the selection overlay builds Path2D runs (TODO 329a)
     const observer = new PerformanceObserver((list) => { for (const e of list.getEntries()) rec.long.push(e.duration); });
     observer.observe({ entryTypes: ['longtask'] });
     let raf;
     const tick = (t) => { rec.frames.push(t); raf = requestAnimationFrame(tick); };
     raf = requestAnimationFrame(tick);
-    window.__perfInteract = { rec, observer, stop() { cancelAnimationFrame(raf); observer.disconnect(); proto.lineTo = lineTo; } };
+    window.__perfInteract = { rec, observer, stop() { cancelAnimationFrame(raf); observer.disconnect(); proto.lineTo = lineTo; pathProto.lineTo = pathLineTo; } };
   });
   const frame = () => page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
   const count = () => page.locator('[data-testid=entities]').textContent().then((s) => Number(s.replace(/\D/g, '')));
   const results = [];
-  const run = async (action, fn) => {
+  const run = async (action, fn, resized = false) => {
     const paints = await page.evaluate(() => {
       const { rec, observer } = window.__perfInteract;
       observer.takeRecords(); rec.frames = [performance.now()]; rec.long = []; rec.lineTo = 0;
       return Number(document.querySelector('[data-testid=drawing]').dataset.paints);
     });
     assert.ok(Number.isFinite(paints), 'data-paints full-paint counter is installed');
+    const size = resized && await page.getByTestId('drawing').evaluate((c) => [c.width, c.height]);
     const started = Date.now();
-    await fn(); await frame();
+    await fn();
+    if (size) await page.waitForFunction(([w, h]) => {
+      const c = document.querySelector('[data-testid=drawing]');
+      return c.width !== w || c.height !== h;
+    }, size);
+    else await frame();
     const ms = Date.now() - started;
     const snap = await page.locator('[data-testid=drawing]').getAttribute('data-snap');
     // Include the 120 ms gesture settle paint and delivery of long-task records.
@@ -53,7 +60,7 @@ async function instrument(page) {
       longTasks: rec.long.length, longTotal: rec.long.reduce((a, b) => a + b, 0), longMax: Math.max(0, ...rec.long),
       lineTo: rec.lineTo, paints: rec.paints - paints };
     results.push(r);
-    console.log(`${action}: ${ms} ms; frames ${r.frames}; gaps median/p90/max ${r.gapMedian.toFixed(1)}/${r.gapP90.toFixed(1)}/${r.gapMax.toFixed(1)} ms; long tasks ${r.longTasks}, total/max ${r.longTotal.toFixed(1)}/${r.longMax.toFixed(1)} ms; lineTo ${r.lineTo}; full paints ${r.paints}`);
+    console.log(`${action}: ${ms} ms; frames ${r.frames}; gaps median/p90/max ${r.gapMedian.toFixed(1)}/${r.gapP90.toFixed(1)}/${r.gapMax.toFixed(1)} ms; long tasks ${r.longTasks}, total/max ${r.longTotal.toFixed(1)}/${r.longMax.toFixed(1)} ms; lineTo ${r.lineTo}; full paints ${r.paints}${resized ? `; first picture: ${snap === '1' ? 'scaled' : 'full'}` : ''}`);
   };
   const stop = () => page.evaluate(() => { window.__perfInteract.stop(); delete window.__perfInteract; });
   return { frame, count, results, run, stop };
@@ -189,8 +196,9 @@ export async function interactCompare(page, buffer, name = 'cmp.dxf') {
     await fitView(page, frame);
     await useTool(page, frame, cx, cy, 'select');
     await run('Compare click', async () => { await page.mouse.click(cx, cy); });
-    await run('Compare button', async () => { await page.locator('[data-testid=cmp-run]').dispatchEvent('click'); });
-    await run('Compare button again', async () => { await page.locator('[data-testid=cmp-run]').dispatchEvent('click'); });
+    const compareDone = async () => { await page.locator('[data-testid=cmp-run]').dispatchEvent('click'); await page.waitForFunction(() => !document.querySelector('[data-testid=cmp-count]').textContent.startsWith('Comparing'), null, { timeout: 300000 }); };       // the run is in slices (TODO 316): wait for its end
+    await run('Compare button', compareDone);
+    await run('Compare button again', compareDone);
     await run('Compare grip drag', async () => {
       await page.mouse.move(cx, cy); await page.mouse.down();
       for (let i = 1; i <= 20; i++) { await page.mouse.move(cx + i * 4, cy + i * 2); await frame(); }
@@ -308,10 +316,154 @@ export async function interactEdit(page, buffer, name = 'edit.dxf') {
   } finally { await stop(); }
 }
 
+/** One selected object, with picking and Move's base point outside the timed commit. */
+async function interactCommit(page, buffer, name) {
+  const doc = readDxf(decodeDxf(buffer)), fl = flatten(doc), { frame, count, run, results, stop } = await instrument(page);
+  const [x0, y0, x1, y1] = fl.boxes.model, centre = [(x0 + x1) / 2, (y0 + y1) / 2], off = startHidden(fl);
+  const it = fl.items.find((it) => doc.entities[it.e].type === 'LINE' && itemVisible(it, off) &&
+    Math.abs(it.b[0] - centre[0]) < (x1 - x0) / 10 && Math.abs(it.b[1] - centre[1]) < (y1 - y0) / 10);
+  assert.ok(it, 'the drawing needs a visible LINE near the centre');
+  const pick = [0, 1].map((i) => (it.b[i] + it.b[i + 2]) / 2 * unitFactor(fl.units));
+  try {
+    await openFile(page, name, buffer, doc.entities.length);
+    await fitView(page, frame);
+    const { x, y } = await page.locator('rect.sheet').evaluate((el, [x, y]) => {
+      const b = el.getBoundingClientRect(), k = b.width / Number(el.getAttribute('width'));
+      return { x: b.x + x * k, y: b.y + (Number(el.getAttribute('height')) - y) * k };
+    }, pick);
+    const selectOne = async () => {
+      await page.mouse.click(x, y); await frame();
+      assert.match(await page.getByTestId('sel-count').textContent(), /^1 selected$/);
+    };
+    await selectOne();
+    console.log(`Commit fixture: ${await count()} entities, 1 selected`);
+    await run('Delete one object', () => page.keyboard.press('Delete'));
+    assert.equal(await count(), doc.entities.length - 1);
+    await page.keyboard.press('Control+z'); await frame();
+    assert.equal(await count(), doc.entities.length);
+    await selectOne();
+    await page.locator('[data-tool=move]').first().click();
+    await page.mouse.click(x, y);
+    await page.mouse.move(x + 100, y + 80); await frame();
+    await run('Move one object commit', () => page.mouse.click(x + 100, y + 80));
+    assert.match(await page.getByTestId('cmd-prompt').textContent(), /Selection moved/);
+    assert.equal(await count(), doc.entities.length);
+    for (const r of results) assert.equal(r.paints, 1, `${r.action}: full paints`);
+  } finally { await stop(); }
+}
+
+/** Measure both eyes on the same layer, after opening and warming the drawings. */
+async function interactLayers(page, buffer, name) {
+  const raw = readDxf(decodeDxf(buffer)), { frame, run, results, stop } = await instrument(page);
+  const layer = raw.entities.find((e) => e.layer !== '0')?.layer;
+  assert.ok(layer, 'the drawing needs a second layer');
+  const eye = page.locator(`[data-file-layer][data-layer-name]`).filter({ has: page.getByText(layer, { exact: true }) }).locator('button[data-act=vis]');
+  const objects = () => page.getByTestId('ptab-objects').click();
+  const toggle = async (tab) => {
+    await frame();
+    await page.waitForTimeout(500);
+    for (const [action, label] of [['off', 'Show'], ['on', 'Hide']]) {
+      await run(`${tab} layer ${action}`, () => eye.dispatchEvent('click'));
+      assert.equal(await eye.getAttribute('aria-label'), label);
+    }
+  };
+  try {
+    await openFile(page, 'reference-' + name, buffer, raw.entities.length);
+    await openFile(page, name, buffer, raw.entities.length);
+    console.log(`Layer fixture: ${raw.entities.length} entities per drawing, ${raw.entities.filter((e) => e.layer === layer).length} on ${layer}`);
+    await objects(); await toggle('Drawings');
+    // The layout's own row hides / shows its parts (the layout has no file layers of its own).
+    await menu(page, 'Layout', 'Add to layout');
+    await page.locator('.tabs .dtab').first().click();
+    await menu(page, 'Layout', 'Add to layout');
+    await objects();
+    const layoutEye = page.locator('[data-testid=obj-layout] button[data-act=vis]');
+    await frame(); await page.waitForTimeout(500);
+    for (const [action, label] of [['off', 'Show'], ['on', 'Hide']]) {
+      await run(`Layouts layer ${action}`, () => layoutEye.dispatchEvent('click'));
+      assert.equal(await layoutEye.getAttribute('aria-label'), label);
+    }
+    await menu(page, 'File', 'Compare drawings…');
+    await objects(); await toggle('Compare');
+    for (const r of results) assert.ok([1, 2].includes(r.paints), `${r.action}: full paints ${r.paints}`);       // 2 = a heavy drawing's quick paint, then the settled one (TODO 328b)
+    return results;
+  } finally { await stop(); }
+}
+
+/** The before / after table: headline per action is longTotal (all long tasks) and gapMax (longest frame gap), the < 100 ms target is judged on these. */
+export function headlineTable(results) {
+  const rows = results.map((r) => `${r.action.padEnd(28)} | ${r.longTotal.toFixed(0).padStart(5)} ms | ${r.gapMax.toFixed(0).padStart(5)} ms | ${String(r.paints).padStart(2)} | ${r.lineTo}`);
+  return ['action                       | longTotal | gapMax | full paints | lineTo', ...rows].join('\n');
+}
+
+/** TODO 323: select all and toggle Properties on warmed tabs, with a placed part on the layout. */
+async function interactSelection(page, buffer, name) {
+  const n = readDxf(decodeDxf(buffer)).entities.length, { frame, run, results, stop } = await instrument(page);
+  const first = page.locator('.tabs .dtab').first();
+  const measure = async (tab, count) => {
+    await fitView(page, frame);
+    await page.waitForTimeout(1000);
+    await run(`${tab} Ctrl+A`, () => page.keyboard.press('Control+a'));
+    if (tab === 'Layout') assert.match(await page.getByTestId('cmd-prompt').textContent(), /^1 part selected$/);
+    else assert.equal(await page.getByTestId('sel-count').textContent(), `${count} selected`);
+    await run(`${tab} Ctrl+1 close`, () => page.keyboard.press('Control+1'));
+    assert.match(await page.getByTestId('cmd-prompt').textContent(), /Panel hidden/);
+    await run(`${tab} Ctrl+1 open`, () => page.keyboard.press('Control+1'));
+    assert.match(await page.getByTestId('cmd-prompt').textContent(), /Panel shown/);
+    await page.keyboard.press('Escape');
+  };
+  try {
+    await openFile(page, name, buffer, n);
+    console.log(`Selection fixture: ${n} entities per drawing, one placed part on Layout`);
+    await measure('Drawings', n);
+    await menu(page, 'Layout', 'Add to layout');
+    await first.click();
+    await menu(page, 'Layout', 'Add to layout');
+    await measure('Layout', 1);
+    await openFile(page, '2-' + name, buffer, n);
+    await menu(page, 'File', 'Compare drawings…');
+    await measure('Compare', n);
+    return results;
+  } finally { await stop(); }
+}
+
+/** First resized canvas frame, then total full paints through settle on each warmed tab. */
+async function interactResize(page, buffer, name) {
+  const n = readDxf(decodeDxf(buffer)).entities.length, { frame, run, results, stop } = await instrument(page);
+  const viewport = page.viewportSize();
+  const measure = async (tab) => {
+    await fitView(page, frame);
+    await page.waitForTimeout(500);
+    await run(`${tab} resize`, () => page.setViewportSize({ width: viewport.width + 200, height: viewport.height + 100 }), true);
+    await run(`${tab} Ctrl+1 close`, () => page.keyboard.press('Control+1'), true);
+    await run(`${tab} Ctrl+1 open`, () => page.keyboard.press('Control+1'), true);
+    await page.setViewportSize(viewport);
+    await frame();
+  };
+  try {
+    await openFile(page, name, buffer, n);
+    console.log(`Resize fixture: ${n} entities per drawing, one placed part on Layouts, two snapshots in Compare`);
+    await measure('Drawings');
+    await menu(page, 'Layout', 'Add to layout');
+    await page.locator('.tabs .dtab').first().click();
+    await menu(page, 'Layout', 'Add to layout');
+    await measure('Layouts');
+    await openFile(page, '2-' + name, buffer, n);
+    await menu(page, 'File', 'Compare drawings…');
+    await measure('Compare');
+    return results;
+  } finally { await stop(); }
+}
+
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
   const input = process.argv[2], rest = process.argv.slice(3), port = Number(rest.find((a) => /^\d+$/.test(a))) || 5184, mode = rest.find((a) => !/^\d+$/.test(a)) || 'draw';
-  if (!input || !/^(draw|edit|cmp|lay:\d+)$/.test(mode)) { console.error('usage: node tools/perf-interact.mjs <file.dxf|spline:900|big:20000> [draw|edit|cmp|lay:<parts>] [port]'); process.exit(1); }
-  const buffer = input.startsWith('spline:') ? Buffer.from(writeDxf(splineDoc(Number(input.slice(7))))) : input.startsWith('big:') ? Buffer.from(writeDxf(bigDoc(Number(input.slice(4))))) : readFileSync(input);
+  if (!input || !/^(draw|edit|commit|cmp|layers|selection|resize|lay:\d+)$/.test(mode)) { console.error('usage: node tools/perf-interact.mjs <file.dxf|spline:900|big:20000> [draw|edit|commit|cmp|layers|selection|resize|lay:<parts>] [port]'); process.exit(1); }
+  const big = input.startsWith('big:') && bigDoc(Number(input.slice(4)));
+  if (big && mode === 'layers') {
+    addLayer(big, 'Toggle', { aci: 3 });
+    big.entities.forEach((e, i) => { if (i % 7 === 0) { e.layer = 'Toggle'; e.r.v[0] = e.layer; } });
+  }
+  const buffer = input.startsWith('spline:') ? Buffer.from(writeDxf(splineDoc(Number(input.slice(7))))) : big ? Buffer.from(writeDxf(big)) : readFileSync(input);
   const server = spawn(process.execPath, ['serve.mjs', String(port)], { stdio: 'ignore', env: { ...process.env, PORT: String(port) } });
   let browser;
   try {
@@ -324,9 +476,14 @@ if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.m
     await page.goto(`http://localhost:${port}/?autosave=86400000`);
     await page.waitForSelector('[data-testid=count]', { state: 'attached' });
     const name = /^(spline|big):/.test(input) ? input.replace(':', '-') + '.dxf' : basename(input);
-    if (mode === 'draw') await interact(page, buffer, name);
-    else if (mode === 'edit') await interactEdit(page, buffer, name);
-    else if (mode === 'cmp') await interactCompare(page, buffer, name);
-    else await interactLayout(page, buffer, name, Number(mode.slice(4)));
+    const results = mode === 'draw' ? await interact(page, buffer, name)
+      : mode === 'edit' ? await interactEdit(page, buffer, name)
+        : mode === 'commit' ? await interactCommit(page, buffer, name)
+          : mode === 'cmp' ? await interactCompare(page, buffer, name)
+            : mode === 'layers' ? await interactLayers(page, buffer, name)
+              : mode === 'selection' ? await interactSelection(page, buffer, name)
+                : mode === 'resize' ? await interactResize(page, buffer, name)
+                  : await interactLayout(page, buffer, name, Number(mode.slice(4)));
+    if (results) console.log(`\n${headlineTable(results)}`);
   } finally { await browser?.close(); server.kill(); }
 }

@@ -64,6 +64,32 @@ export function layerCounts(raw, fl) {
   return n;
 }
 
+/**
+ * TODO 319c: { counts: layerCounts, n: entityCount } after an edit, from what they were before (prev = { entities, names, space, counts, n }):
+ * only the entities between the first and the last one that differ are counted again. Counted in full when prev is not for the
+ * entity list the edit started from, or the layers (names, order) or the shown space differ (a layer that lost its last entity, a space change).
+ */
+export function patchedCounts(prev, raw, fl) {
+  const old = prev?.entities, now = raw.entities, space = spaceOf(fl);
+  if (!old || prev.space !== space || prev.names.length !== fl.layers.length || prev.names.some((n, i) => n !== fl.layers[i].name)) return { counts: layerCounts(raw, fl), n: entityCount(raw, fl) };
+  let a = 0, b = 0;
+  while (a < old.length && a < now.length && old[a] === now[a]) a++;
+  while (b < old.length - a && b < now.length - a && old[old.length - 1 - b] === now[now.length - 1 - b]) b++;
+  const counts = prev.counts.slice(), at = new Map(fl.layers.map((l, i) => [l.name, i]));
+  let n = prev.n;
+  const move = (list, to, sign) => {
+    for (let i = a; i < to; i++) {
+      const e = list[i];
+      if (e.hidden || (e.ps ? 1 : 0) !== space) continue;
+      n += sign;
+      const l = at.get(e.layer);
+      if (l != null) counts[l] += sign;
+    }
+  };
+  move(old, old.length - b, -1); move(now, now.length - b, 1);
+  return { counts, n };
+}
+
 /** The drawing's box [x0,y0,x1,y1] in mm, y up, or null if it has none. */
 export function drawingBoxMm(fl, factor) {
   const b = fl.boxes && fl.boxes[spaceOf(fl) ? 'paper' : 'model'];
