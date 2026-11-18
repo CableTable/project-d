@@ -3,8 +3,9 @@
 /** True when box b = [x0, y0, x1, y1], grown by pad, is wholly outside the view vr = [x0, y0, x1, y1] (same units). */
 export const outsideView = (b, pad, vr) => b[2] + pad < vr[0] || b[0] - pad > vr[2] || b[3] + pad < vr[1] || b[1] - pad > vr[3];
 
-/** True when the box, grown by pad, is under half a pixel each way at k pixels per unit. */
-export const subPixel = (b, pad, k) => (b[2] - b[0] + 2 * pad) * k < 0.4 && (b[3] - b[1] + 2 * pad) * k < 0.4;
+/** True when the box, grown by pad, is under `min` px each way at k pixels per unit: 0.4 px for every paint, QUICK_PX for the quick paint right after a layer toggle (TODO 328b). */
+export const subPixel = (b, pad, k, min = 0.4) => (b[2] - b[0] + 2 * pad) * k < min && (b[3] - b[1] + 2 * pad) * k < min;
+export const QUICK_PX = 1;
 
 /** True when a point is under 0.5 device px from the last drawn point; zero disables skipping. */
 export const skipPoint = (dx, dy, pxPerUnit) => pxPerUnit > 0 && Math.hypot(dx, dy) * pxPerUnit < 0.5;

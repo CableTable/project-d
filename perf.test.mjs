@@ -37,6 +37,20 @@ test('subPixel only for boxes under half a pixel in both directions', () => {
   assert.equal(subPixel([0, 0, 1, 1], 5, 0.3), false);
 });
 
+test('TODO 328b: the quick paint after a layer toggle skips boxes under 1 px, every other paint 0.4 px', () => {
+  assert.equal(perf.QUICK_PX, 1);
+  assert.equal(subPixel([0, 0, 1, 1], 0, 0.7), false);                 // 0.7 px: drawn by the normal paint
+  assert.equal(subPixel([0, 0, 1, 1], 0, 0.7, perf.QUICK_PX), true);   // and skipped by the quick one
+  assert.equal(subPixel([0, 0, 10, 0.1], 0, 0.7, perf.QUICK_PX), false);   // a long thin line stays
+  assert.equal(subPixel([0, 0, 1, 1], 0, 1, perf.QUICK_PX), false);    // exactly 1 px stays
+  assert.equal(subPixel([0, 0, 1, 1], 0, 0.3), true);                  // the default is still 0.4
+  const c = { setTransform() {}, clearRect() {}, beginPath() {}, stroke() {}, fill() {}, save() {}, restore() {}, clip() {}, fillRect() {}, setLineDash() {}, moveTo() {}, lineTo() {}, arc() {}, closePath() {} };
+  const it = { k: 'p', ops: [0, 0, 0, 1, 1, 1], b: [0, 0, 1, 1], L: [0], m: 0, css: '#000000', fam: [] }, fl = { items: [it], mats: [[1, 0, 0, 1, 0, 0]], boxes: { model: it.b } };
+  const draw = (o) => paintDrawing({ getContext: () => c }, { fl, off: new Set(), factor: 1, sheetH: 0, ox: 0, oy: 0, scale: 0.7, dpr: 1, w: 200, h: 200, ...o });
+  assert.equal(draw({}), 1, 'a 0.7 px item is drawn by the normal paint');
+  assert.equal(draw({ minPx: perf.QUICK_PX }), 0, 'and left out by the quick paint');
+});
+
 test('skipPoint keeps run ends and stays within half a pixel', () => {
   assert.equal(typeof perf.skipPoint, 'function');
   for (const [dx, dy, k, want] of [[0, 0, 0, false], [.49, 0, 1, true], [.5, 0, 1, false],

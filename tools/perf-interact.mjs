@@ -384,7 +384,7 @@ async function interactLayers(page, buffer, name) {
     }
     await menu(page, 'File', 'Compare drawings…');
     await objects(); await toggle('Compare');
-    for (const r of results) assert.equal(r.paints, 1, `${r.action}: full paints`);
+    for (const r of results) assert.ok([1, 2].includes(r.paints), `${r.action}: full paints ${r.paints}`);       // 2 = a heavy drawing's quick paint, then the settled one (TODO 328b)
     return results;
   } finally { await stop(); }
 }

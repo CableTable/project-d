@@ -27922,6 +27922,82 @@ try {
     } finally { await ctx.close(); }
   });
 
+  await step('TODO 328b: a layer toggle on a heavy drawing paints quick (items under 1 px skipped), then settles at 0.4 px', async () => {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    try {
+      const doc = bigDoc(20000), TINY = 400;
+      addLayer(doc, 'Toggle', { aci: 3 });
+      doc.entities.forEach((e, i) => { if (i % 7 === 0) { e.layer = 'Toggle'; e.r.v[0] = e.layer; } });
+      addEntities(doc, Array.from({ length: TINY }, (_, i) => dxfLine((i % 20) * 65 + 2, Math.floor(i / 20) * 65 + 2, (i % 20) * 65 + 3, Math.floor(i / 20) * 65 + 3)));    // 1 mm lines on layer 0: 0.4 to 1 px at Fit
+      const buffer = Buffer.from(writeDxf(doc));
+      const p = await ctx.newPage(), drawing = p.getByTestId('drawing'), fit = p.getByTestId('canvas').getByRole('button', { name: 'Fit', exact: true });
+      const frame = () => p.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+      const paints = async () => Number(await drawing.getAttribute('data-paints'));
+      const menu = async (top, name) => { await p.locator(`[data-menu=${top}]`).click(); await p.getByRole('menuitem', { name, exact: true }).click({ timeout: 120000 }); };
+      const open = async (name) => {
+        await p.getByTestId('picker').setInputFiles({ name, mimeType: 'text/plain', buffer });
+        await p.waitForFunction((n) => document.querySelector('.dtab.on .tname').textContent === n, name, { timeout: 120000 });
+        await frame();
+      };
+      // One toggle: the quick paint (read in the frame it lands), then the settled one; the two differ only by the skipped items.
+      const toggle = async (eye, tab, strict) => {
+        const before = await paints();
+        await drawing.evaluate((c) => {
+          window.quick328b = null;
+          const obs = new MutationObserver(() => {
+            if (c.dataset.quick !== '1') return;
+            obs.disconnect(); window.quick328b = { drawn: Number(c.dataset.drawn), paints: Number(c.dataset.paints) };
+          });
+          obs.observe(c, { attributes: true, attributeFilter: ['data-quick'] });
+        });
+        await eye.dispatchEvent('click', null, { timeout: 15000 });
+        const quick = await (await p.waitForFunction(() => window.quick328b, null, { timeout: 15000 })).jsonValue();
+        await p.waitForFunction(() => document.querySelector('[data-testid=drawing]').dataset.quick === '');
+        const settled = { drawn: Number(await drawing.getAttribute('data-drawn')), paints: await paints() };
+        assert.equal(quick.paints, before + 1, `${tab}: the toggle paints once quick`);
+        assert.equal(settled.paints, before + 2, `${tab}: and once settled`);
+        if (strict) assert.ok(settled.drawn - quick.drawn > TINY / 2, `${tab}: the quick paint left out the 0.4-1 px items (${quick.drawn} of ${settled.drawn})`);
+        else assert.ok(settled.drawn >= quick.drawn, `${tab}: the settled paint draws at least what the quick one did`);
+        console.log(`328b ${tab}: quick ${quick.drawn} items, settled ${settled.drawn}`);
+        return settled;
+      };
+      const objects = () => p.getByTestId('ptab-objects').click();
+      const layerEye = () => p.locator('[data-file-layer][data-layer-name]').filter({ has: p.getByText('Toggle', { exact: true }) }).locator('button[data-act=vis]').first();
+      await p.goto(URL_ + '?autosave=86400000');
+      await p.waitForSelector('[data-testid=count]', { state: 'attached' });
+      await open('t328b.dxf');
+      await fit.click(); await frame();
+      assert.ok(Number(await drawing.getAttribute('data-drawn')) > 15000, 'the fitted drawing is heavy');
+      await objects();
+      await p.waitForTimeout(500);
+      await toggle(layerEye(), 'Drawings off', true);
+      await toggle(layerEye(), 'Drawings on', true);
+      const settled = await drawing.evaluate((c) => { c.dataset.nokeep = '1'; return c.toDataURL(); });
+      const n = await paints();
+      await fit.click(); await frame();
+      assert.equal(await paints(), n + 1, 'Fit forces a fresh full paint at the same size');
+      assert.ok(await drawing.evaluate((c, settled) => c.toDataURL() === settled, settled), 'settled pixels equal a full paint');
+      await drawing.evaluate((c) => { c.dataset.nokeep = ''; });
+      await p.screenshot({ path: `${shotDir}/t328b-light.png` });
+      assert.ok(readFileSync(`${shotDir}/t328b-light.png`).length > 1000, 'required screenshot exists');
+      // Layouts: the layout's part eye; Compare: the snapshot's layer eye
+      await menu('Layout', 'Add to layout');
+      await p.locator('.tabs .dtab').first().click();
+      await menu('Layout', 'Add to layout');
+      await objects();
+      const partEye = p.locator('[data-testid=obj-layout] button[data-act=vis]');
+      await frame(); await p.waitForTimeout(500);
+      await toggle(partEye, 'Layouts off', false);
+      await toggle(partEye, 'Layouts on', true);
+      await open('2-t328b.dxf');
+      await menu('File', 'Compare drawings…');
+      await objects();
+      await frame(); await p.waitForTimeout(500);
+      await toggle(layerEye(), 'Compare off', true);
+      await toggle(layerEye(), 'Compare on', true);
+    } finally { await ctx.close(); }
+  });
+
   await step('Layout and Compare: pan and wheel reuse the kept picture', async () => {
     const buffer = Buffer.from(writeDxf(bigDoc(20000)));
     for (const kind of ['Layout', 'Compare']) {

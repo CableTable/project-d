@@ -31,7 +31,7 @@ import * as BAL from './balloons.js';
 import * as PS from './pdf-sheets.js';
 import { paintDrawing, drawMarks, drawContour, drawDimPreview, ink, FONT_FAMILY } from './render.js';
 import { overlayBox } from './preview.js';
-import { snapPlace, snapUsable, heavy, sameBase, runChunks, blitCovers } from './perf.js';
+import { snapPlace, snapUsable, heavy, sameBase, runChunks, blitCovers, QUICK_PX } from './perf.js';
 import { flatten, flattenEdit, patchWidths, primeSplines, unionBox, CAP, ACI, UNITS, mapply, mmul, pickIndex, arcSweep, DrawingError } from './drawing.js';
 import { writeDxf, writeDxfWithReport, saveReportNote, unwritable, addLayer, newDoc, lwpoly, point } from './dxf-write.js';
 import * as SH from './shaping.js';
@@ -4232,7 +4232,7 @@ function cmpToggleLayer(tab, id, i) {
   tab.cmp.items = CMP.setItem(tab.cmp.items, id, CMP.setItemOff(item, off));
   const source = cmpSourceTab(item);
   if (source) layerVisibilitySelection(source, off);
-  cmpMoved(tab);
+  quickNext = true; cmpMoved(tab);
 }
 
 // ---- the Objects tab (TODO 39, mock-up R11a Option A): the open file as a tree, layer by layer; the tree itself is objects.js ----
@@ -4423,7 +4423,7 @@ function objClick(e) {
   const om = omOf(tab), flip = (set, k) => (set.has(k) ? set.delete(k) : set.add(k));
   if (d.lay) {
     if (row.hasAttribute('data-layout')) {
-      if (act?.dataset.act === 'vis') { state.hidden.parts = !state.hidden.parts; update(); }
+      if (act?.dataset.act === 'vis') { state.hidden.parts = !state.hidden.parts; quickNext = true; update(); }
       else if (act?.dataset.act === 'lock') lockObjectPlaces(placedNow.map((_, i) => i));
       else { om.layoutClosed = !om.layoutClosed; renderObjects(); }
       return;
@@ -4438,10 +4438,10 @@ function objClick(e) {
       lockObjectPlaces(row.dataset.place != null ? [+row.dataset.place] : placedNow.flatMap((p, i) => p.partId === row.dataset.part ? [i] : [])); return;
     }
     if (row.dataset.part) {
-      if (act && act.dataset.act === 'vis') { const hp = d.hiddenParts || (d.hiddenParts = new Set()); flip(hp, row.dataset.part); drawSheet(); paintOverlay(); renderObjects(); note(hp.has(row.dataset.part) ? 'Part hidden: it is left out of print and PDF too. The saved file keeps it' : 'Part shown'); } else { flip(om.openP, row.dataset.part); renderObjects(); }
+      if (act && act.dataset.act === 'vis') { const hp = d.hiddenParts || (d.hiddenParts = new Set()); flip(hp, row.dataset.part); drawSheet(); quickNext = true; paintOverlay(); renderObjects(); note(hp.has(row.dataset.part) ? 'Part hidden: it is left out of print and PDF too. The saved file keeps it' : 'Part shown'); } else { flip(om.openP, row.dataset.part); renderObjects(); }
     } else if (row.dataset.place != null) {
       if (act?.dataset.act === 'vis') {
-        const id = placedNow[+row.dataset.place].partId, hp = d.hiddenParts || (d.hiddenParts = new Set()); flip(hp, id); drawSheet(); paintOverlay(); renderObjects();
+        const id = placedNow[+row.dataset.place].partId, hp = d.hiddenParts || (d.hiddenParts = new Set()); flip(hp, id); drawSheet(); quickNext = true; paintOverlay(); renderObjects();
       } else { selectMany([+row.dataset.place]); update(); }
     }
     return;
@@ -4472,7 +4472,7 @@ function toggleLayerVis(d, idx) {
   if (d.off.has(idx)) d.off.delete(idx); else d.off.add(idx);
   if (d.ed) d.ed = Ed.indexWithVisibility(d.ed, d.off, hidIdx(d));
   layerVisibilitySelection(d, d.off);
-  renderEdit(); renderLayers(); applyHidden(); paintOverlay();
+  renderEdit(); renderLayers(); applyHidden(); quickNext = true; paintOverlay();
 }
 function toggleLayerLock(d, name) {
   const lk = d.locked || (d.locked = new Set());
@@ -4546,7 +4546,7 @@ function objMenu(e) {
     popMenu(x, y, [
       ['Select', () => { const k = placedNow.findIndex((p) => p.partId === id); if (k >= 0) { selectMany(placedNow.map((p, i) => (p.partId === id ? i : -1)).filter((i) => i >= 0)); update(); } }],
       ['Zoom to', () => { const bs = placedNow.filter((p) => p.partId === id).map((p) => placedBox(d.lay.parts[id], p)); if (bs.length) { const u = A.unionBox(bs); zoomToBox(u, zoomPad(u)); } }],
-      sep, [hp.has(id) ? 'Show' : 'Hide', () => { if (hp.has(id)) hp.delete(id); else hp.add(id); drawSheet(); paintOverlay(); renderObjects(); }],
+      sep, [hp.has(id) ? 'Show' : 'Hide', () => { if (hp.has(id)) hp.delete(id); else hp.add(id); drawSheet(); quickNext = true; paintOverlay(); renderObjects(); }],
       sep, ['Show all hidden', () => showAllHidden(d), '', hp.size > 0]]);
     return;
   }
@@ -5172,6 +5172,8 @@ function previewBounds() {
 }
 // Wheel, pan and resize move and scale the last full paint of a heavy drawing until the view settles (TODO 55 / 328a).
 let paintFull = true, snap = null, snapCv = null, snapTimer = 0, paintSize = null;
+// A layer toggle on a drawing whose last full paint was heavy paints once quick (items under QUICK_PX skipped, no kept bitmap), then settles with the 0.4 px paint after 120 ms (TODO 328b).
+let quickNext = false, lastHeavy = false;
 // A drawing tab whose own paint is slow keeps its bitmap (without selection, marks, previews): a hover or a select click paints only those on top (TODO 258 / 259).
 let kept = null, keptCv = null;
 const KEEP_MS = 10;
@@ -5203,9 +5205,10 @@ function paintOverlay(gesture = false) {
     const want = { view: { ox: view.ox, oy: view.oy, scale: view.scale }, w: cw, h: chh, dpr };
     clearTimeout(snapTimer);
     const full = paintFull; paintFull = false;
+    const quick = quickNext && lastHeavy; quickNext = false;
     const d = curDoc();
     // Artwork and layout sheet paper follow the same Work area.
-    const base = { sheetH: state.sheetH, ox: view.ox, oy: view.oy, scale: view.scale, w, h: ch, dpr, dark: workDark(), wireframe: state.wireframe };
+    const base = { minPx: quick ? QUICK_PX : undefined, sheetH: state.sheetH, ox: view.ox, oy: view.oy, scale: view.scale, w, h: ch, dpr, dark: workDark(), wireframe: state.wireframe };
     const L2 = state.setlen || state.meas || state.dim || state.ldr || ((modLive() || layModLive()) && ['move', 'copy', 'stretch', 'rotate', 'scale', 'lengthen', 'align'].includes(state.mod.kind) ? { pts: state.mod.ref && state.mod.ref.step !== 'new' ? state.mod.ref.pts : state.mod.p1 ? [state.mod.p1] : [], hover: state.mod.cur }
       : (modLive() || layModLive()) && state.mod.kind === 'array' && state.mod.type === 'polar' ? { pts: state.mod.center ? [state.mod.center] : [], hover: state.mod.stage === 'center' ? state.mod.cur : null } : null);
     const hv = L2 && (typedAt() || L2.hover);                       // typed cursor fields: the rubber line goes to the typed point
@@ -5241,7 +5244,7 @@ function paintOverlay(gesture = false) {
       }
     } else if (d?.cmp) key = cmpBaseKey(d, base, cw, chh);
     const ekey = d && d.fl && !d.lay && !d.cmp ? paintKey(d, base, cw, chh) : null, dkey = key?.drag ? key : ekey?.drag ? ekey : null, ckey = d?.cmp && !key ? cmpKeepKey(d, base, cw, chh) : null;
-    c.dataset.snap = ''; c.dataset.keep = '';
+    c.dataset.snap = ''; c.dataset.keep = ''; c.dataset.quick = '';
     if (full && dkey && c.dataset.nokeep !== '1' && !(kept && sameBase(kept.key, dkey))) {
       // a drag starts, or the view moved under it: the base without what is dragged is painted off screen once, so it is no counted full paint (TODO 317 / 320)
       snap = null; keptCv = keptCv || document.createElement('canvas'); keptCv.width = cw; keptCv.height = chh;
@@ -5288,7 +5291,7 @@ function paintOverlay(gesture = false) {
     const t0 = performance.now();
     let drawn = 0;
     // a slow base is kept (see `kept`): ekey for a drawing tab, ckey for Compare's stills
-    const keepBase = (key) => key && ((n) => {
+    const keepBase = (key) => key && !quick && ((n) => {
       if (performance.now() - t0 <= KEEP_MS && n <= 15000) return;
       keptCv = keptCv || document.createElement('canvas');
       keptCv.width = cw; keptCv.height = chh;
@@ -5305,14 +5308,17 @@ function paintOverlay(gesture = false) {
     } else drawn = paintEditable(c, d, base, marks, undefined, keepBase(ekey));
     c.dataset.drawn = drawn || 0;
     c.dataset.indexed = d && d.ed ? '1' : '0';       // test hook (P3): a paint right after a commit comes before the pick index
-    if (heavy(performance.now() - t0, drawn || 0)) {
+    const isHeavy = heavy(performance.now() - t0, drawn || 0);
+    if (!quick && drawn) lastHeavy = isHeavy;       // an empty paint (every part hidden) says nothing about how heavy the next one is
+    if (isHeavy) {
       snapCv = snapCv || document.createElement('canvas');
       snapCv.width = cw; snapCv.height = chh;
       snapCv.getContext('2d').drawImage(c, 0, 0);
-      snap = { ...want, key };
+      snap = { ...want, key: quick ? null : key };       // a quick bitmap may scale under a wheel, but never stands in for a paint
     }
     if (d?.lay) layOverlay(c, d, base, marks, lifted);
     if (d?.cmp?.dragged) cmpPaint(c, d.cmp, base, marks, true);
+    if (quick) { c.dataset.quick = '1'; snapTimer = setTimeout(() => paintOverlay(), 120); }
     ui.cmdUI.place();
   });
 }
