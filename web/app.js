@@ -31,7 +31,7 @@ import * as BAL from './balloons.js';
 import * as PS from './pdf-sheets.js';
 import { paintDrawing, drawMarks, drawContour, drawDimPreview, ink, FONT_FAMILY } from './render.js';
 import { overlayBox } from './preview.js';
-import { snapPlace, snapUsable, heavy, sameBase, runChunks } from './perf.js';
+import { snapPlace, snapUsable, heavy, sameBase, runChunks, blitCovers } from './perf.js';
 import { flatten, patchWidths, primeSplines, unionBox, CAP, ACI, UNITS, mapply, mmul, pickIndex, arcSweep, DrawingError } from './drawing.js';
 import { writeDxf, writeDxfWithReport, saveReportNote, unwritable, addLayer, newDoc, lwpoly, point } from './dxf-write.js';
 import * as SH from './shaping.js';
@@ -5157,13 +5157,14 @@ let paintFull = true, snap = null, snapCv = null, snapTimer = 0;
 // A drawing tab whose own paint is slow keeps its bitmap (without selection, marks, previews): a hover or a select click paints only those on top (TODO 258 / 259).
 let kept = null, keptCv = null;
 const KEEP_MS = 10;
-/** Everything the drawing's own pass reads, flat (compare with sameBase); null while a grip or drag hides entities one by one. */
+/** Everything the drawing's own pass reads, flat (compare with sameBase). While a grip or drag hides entities one by one, `drag` is set and their numbers end the key: that base is painted without them (TODO 320). */
 function paintKey(d, base, cw, chh) {
   const hide = hideNow(d), hid = hidIdx(d);
-  if (hide && hide.size !== (hid ? hid.size : 0)) return null;
   const ed = state.text.ed?.d === d && state.text.ed.dim ? state.text.ed : null, fl = ed ? ed.dim.fl : d.fl, bg = d.bg;
-  return [d, fl, fl.items.length, hid, d.factor, base.ox, base.oy, base.scale, cw, chh, base.dpr, base.dark, base.wireframe, base.sheetH,
+  const key = [d, fl, fl.items.length, hid, d.factor, base.ox, base.oy, base.scale, cw, chh, base.dpr, base.dark, base.wireframe, base.sheetH,
     bg, bg?.visible, bg?.bitmap, bg?.x, bg?.y, bg?.mm, ...[...d.off || []].sort((a, b) => a - b)];       // d.off is changed in place: its layers are part of the key
+  if (hide && hide.size !== (hid ? hid.size : 0)) { key.drag = true; key.push(null); for (const e of hide) key.push(e); }
+  return key;
 }
 function paintOverlay(gesture = false) {
   if (!gesture) paintFull = true;
@@ -5216,15 +5217,16 @@ function paintOverlay(gesture = false) {
         for (const slot of call.slots) key.push(...slot);
         key.push(null);
       }
-    } else if (d?.cmp?.dragged) {
-      // shortcut: the snapshot stays on top and is retraced each frame; revisit if a real drag remains heavy.
-      key = [d, d.cmp.dragged, base.ox, base.oy, base.scale, cw, chh, dpr, base.dark, base.wireframe, base.sheetH];
-      for (const sd of d.cmp.items) {
-        if (!sd.visible || sd.id === d.cmp.dragged) continue;
-        key.push(sd.fl, sd.factor, cmpCss(sd.colour), ...sd.offset, ...[...(sd.off || [])].sort((a, b) => a - b), null);
-      }
-    }
+    } else if (d?.cmp) key = cmpBaseKey(d, base, cw, chh);
+    const ekey = d && d.fl && !d.lay && !d.cmp ? paintKey(d, base, cw, chh) : null, dkey = key?.drag ? key : ekey?.drag ? ekey : null;
     c.dataset.snap = ''; c.dataset.keep = '';
+    if (dkey && c.dataset.nokeep !== '1' && !(kept && sameBase(kept.key, dkey))) {
+      // a drag starts, or the view moved under it: the base without what is dragged is painted off screen once, so it is no counted full paint (TODO 317 / 320)
+      snap = null; keptCv = keptCv || document.createElement('canvas'); keptCv.width = cw; keptCv.height = chh;
+      kept = { key: dkey, drag: null };
+      if (d.cmp) kept.drag = cmpBase(keptCv, d.cmp, base);
+      else paintEditable(keptCv, d, base, null, 'base');
+    }
     if (!full && snapUsable(snap, want)) {
       const { dx, dy, r } = snapPlace(snap.view, want.view), g = c.getContext('2d');
       g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, cw, chh);
@@ -5246,12 +5248,13 @@ function paintOverlay(gesture = false) {
       ui.cmdUI.place();
       return;
     }
-    const ekey = d && d.fl && !d.lay && !d.cmp ? paintKey(d, base, cw, chh) : null;
-    if (ekey && kept && c.dataset.nokeep !== '1' && sameBase(kept.key, ekey)) {
+    const bkey = d?.cmp ? dkey : ekey;
+    if (bkey && kept && c.dataset.nokeep !== '1' && sameBase(kept.key, bkey)) {
       const g = c.getContext('2d');
       g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, cw, chh);
       g.drawImage(keptCv, 0, 0);
-      paintEditable(c, d, base, marks, 'over');
+      if (d.cmp) cmpOver(c, d.cmp, base, marks, kept.drag);
+      else paintEditable(c, d, base, marks, 'over');
       c.dataset.keep = '1';
       ui.cmdUI.place();
       return;
@@ -5320,7 +5323,7 @@ function layOverlay(c, d, base, marks, lifted) {
   }
 }
 
-/** part: 'over' paints only what goes on top of the drawing (selection, marks, previews) on a base already on the canvas; afterBase(drawn), when given, is called between the drawing and that rest. */
+/** part: 'over' paints only what goes on top of the drawing (selection, marks, previews) on a base already on the canvas, 'base' only the drawing; afterBase(drawn), when given, is called between the drawing and that rest. */
 function paintEditable(c, d, base, marks, part, afterBase) {
   const ed = state.text.ed?.d === d && state.text.ed.dim ? state.text.ed : null;
   const dragSnap = state.paste?.d === d ? state.paste.to : state.entityDrag?.d === d && state.entityDrag.to;
@@ -5335,7 +5338,8 @@ function paintEditable(c, d, base, marks, part, afterBase) {
   let drawn;
   if (afterBase) { drawn = paintDrawing(c, { ...o, part: 'base' }); afterBase(drawn); paintDrawing(c, { ...o, part: 'over' }); }
   else drawn = paintDrawing(c, part ? { ...o, part } : o);
-  const move = state.drawingRotate?.drag || state.entityDrag || (state.grip?.d === d && state.grip.move) || (modLive() && ['move', 'copy', 'stretch', 'array', 'rotate', 'scale', 'mirror', 'align'].includes(state.mod.kind) ? state.mod.move : null);
+  if (part === 'base') return drawn;                                   // the base alone, off screen: no preview of a move in it
+  const move =state.drawingRotate?.drag || state.entityDrag || (state.grip?.d === d && state.grip.move) || (modLive() && ['move', 'copy', 'stretch', 'array', 'rotate', 'scale', 'mirror', 'align'].includes(state.mod.kind) ? state.mod.move : null);
   c.dataset.preview = move?.items ? paintDrawing(c, { ...base, ox: base.ox - move.dx * d.factor, oy: base.oy + move.dy * d.factor, keep: true, fl: move.preview, off: d.off, factor: d.factor, slots: (!state.entityDrag && !state.grip && modTypedSlots(d)) || move.slots, tint: cssVar('--selection', '#4f46e5'), previewBounds: (box) => { canvasPreviewBounds = unionBox(canvasPreviewBounds, box); } }) : 0;
   const paste = state.paste;
   if (paste?.d === d && paste.from) c.dataset.preview = paintDrawing(c, { ...base, ox: base.ox - paste.dx * d.factor, oy: base.oy + paste.dy * d.factor, keep: true, fl: paste.preview, off: d.off, factor: d.factor, tint: `color-mix(in srgb, ${cssVar('--selection', '#4f46e5')} 50%, transparent)`, previewBounds: (box) => { canvasPreviewBounds = unionBox(canvasPreviewBounds, box); } });
@@ -12754,22 +12758,70 @@ function cmpZoom(d, x) {
   note(`Difference ${x.n}: ${x.mm.toFixed(2)} mm at X ${fmt(x.x)}, Y ${fmt(x.y)}`);
 }
 
-function cmpPaint(canvas, c, base, marks, lifted = false) {
-  if (!lifted) paintDrawing(canvas, { ...base, fl: null, factor: 1 });                         // clears
+/** One pass of Compare's snapshots: the stills (lifted false) or the one a drag moves (lifted true). part: see paintEditable ('over' paints only the edited drawing's selection and previews). */
+function cmpItems(canvas, c, base, marks, lifted, part) {
   let drawn = 0;
   for (const sd of c.items) {
     if (!sd.visible || (sd.id === c.dragged) !== lifted) continue;
     const target = sd.id === c.selected && cmpSourceTab(sd), placed = { ...base, ox: base.ox - sd.offset[0], oy: base.oy + sd.offset[1], keep: true, tint: cmpCss(sd.colour), cmpOff: sd.off };
-    if (target) drawn += paintEditable(canvas, target, placed, state.tool === 'measure' ? null : marks);
-    else drawn += paintDrawing(canvas, { ...placed, fl: sd.fl, off: sd.off, factor: sd.factor });
-  }
-  if (lifted && c.snap) {                                                                    // the snap: a thin dotted guide through it and the usual marker with its name
-    const ctx = canvas.getContext('2d'), k = base.scale * base.dpr, T = [k, 0, 0, -k, -base.ox * k, (base.sheetH - base.oy) * k], at = mapply(T, c.snap.x, c.snap.y), accent = cssVar('--selection', '#4f46e5');
-    ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.strokeStyle = accent; ctx.lineWidth = base.dpr; ctx.setLineDash([3 * base.dpr, 4 * base.dpr]);
-    ctx.beginPath(); ctx.moveTo(0, at[1]); ctx.lineTo(canvas.width, at[1]); ctx.moveTo(at[0], 0); ctx.lineTo(at[0], canvas.height); ctx.stroke();
-    drawMarks(ctx, [[c.snap.x, c.snap.y, c.snap.kind, true]], T, base.dpr, accent, cssVar('--snap-mark', '#00c000'));
+    if (target) drawn += paintEditable(canvas, target, placed, state.tool === 'measure' ? null : marks, part);
+    else if (part !== 'over') drawn += paintDrawing(canvas, { ...placed, fl: sd.fl, off: sd.off, factor: sd.factor });
   }
   return drawn;
+}
+function cmpPaint(canvas, c, base, marks, lifted = false) {
+  if (!lifted) paintDrawing(canvas, { ...base, fl: null, factor: 1 });                         // clears
+  const drawn = cmpItems(canvas, c, base, marks, lifted);
+  if (lifted) cmpGuide(canvas, c, base);
+  return drawn;
+}
+/** The snap: a thin dotted guide through it and the usual marker with its name. */
+function cmpGuide(canvas, c, base) {
+  if (!c.snap) return;
+  const ctx = canvas.getContext('2d'), k = base.scale * base.dpr, T = [k, 0, 0, -k, -base.ox * k, (base.sheetH - base.oy) * k], at = mapply(T, c.snap.x, c.snap.y), accent = cssVar('--selection', '#4f46e5');
+  ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.strokeStyle = accent; ctx.lineWidth = base.dpr; ctx.setLineDash([3 * base.dpr, 4 * base.dpr]);
+  ctx.beginPath(); ctx.moveTo(0, at[1]); ctx.lineTo(canvas.width, at[1]); ctx.moveTo(at[0], 0); ctx.lineTo(at[0], canvas.height); ctx.stroke();
+  drawMarks(ctx, [[c.snap.x, c.snap.y, c.snap.kind, true]], T, base.dpr, accent, cssVar('--snap-mark', '#00c000'));
+}
+/**
+ * The key of Compare's base while a drag is on (flat, `drag` set, see paintKey): the stills, and for a grip drag the edited drawing without the entities it moves
+ * (a grip drag never sets c.dragged: gripDown / gripMove paint with state.grip, 'Grip drag' in TODO 317). Null when nothing is dragged.
+ */
+function cmpBaseKey(d, base, cw, chh) {
+  const c = d.cmp, sel = cmpSelected(c), target = !c.dragged && sel?.visible && cmpSourceTab(sel), hide = target && hideNow(target);
+  const grip = hide && hide.size !== (hidIdx(target)?.size || 0);
+  if (!c.dragged && !grip) return null;
+  const key = [d, c.dragged, base.ox, base.oy, base.scale, cw, chh, base.dpr, base.dark, base.wireframe, base.sheetH];
+  for (const sd of c.items) {
+    if (!sd.visible || sd.id === c.dragged) continue;
+    key.push(sd.fl, sd.factor, cmpCss(sd.colour), ...sd.offset, ...[...(sd.off || [])].sort((a, b) => a - b), null);
+    if (grip && sd === sel) key.push(target.fl, target.factor, hidIdx(target), null);
+  }
+  key.drag = true;
+  if (grip) for (const e of hide) key.push(e);
+  return key;
+}
+const dragCv = document.createElement('canvas');                                            // the grabbed snapshot of a Compare drag, painted once where it was grabbed
+/** Paints the stills (the edited drawing without the entities a grip moves) on `canvas`; for a body drag also the grabbed snapshot into dragCv: { off, box } (its offset and its px box then). */
+function cmpBase(canvas, c, base) {
+  paintDrawing(canvas, { ...base, fl: null, factor: 1 });                                      // clears
+  cmpItems(canvas, c, base, null, false, 'base');
+  const sd = c.items.find((x) => x.id === c.dragged);
+  if (!sd) return null;
+  dragCv.width = canvas.width; dragCv.height = canvas.height;
+  cmpItems(dragCv, c, base, null, true);
+  const k = base.scale * base.dpr, pad = 4 * base.dpr, [x0, y0, x1, y1] = sd.box || [];       // pad: line width and the selection outline lie outside the box
+  return { off: [...sd.offset], box: sd.box ? [(x0 + sd.offset[0] - base.ox) * k - pad, (base.sheetH - y1 - sd.offset[1] - base.oy) * k - pad, (x1 + sd.offset[0] - base.ox) * k + pad, (base.sheetH - y0 - sd.offset[1] - base.oy) * k + pad] : null };
+}
+/** On the base kept for a drag: the grabbed snapshot's bitmap moved by how far it has gone (retraced when it would show what the bitmap lacks), or the edited drawing's selection and previews. */
+function cmpOver(canvas, c, base, marks, drag) {
+  const sd = drag && c.items.find((x) => x.id === c.dragged);
+  if (!sd) { cmpItems(canvas, c, base, marks, false, 'over'); return; }
+  const k = base.scale * base.dpr, dx = Math.round((sd.offset[0] - drag.off[0]) * k), dy = Math.round(-(sd.offset[1] - drag.off[1]) * k);
+  if (!blitCovers(drag.box, dx, dy, canvas.width, canvas.height)) { cmpPaint(canvas, c, base, marks, true); return; }
+  const g = canvas.getContext('2d');
+  g.setTransform(1, 0, 0, 1, 0, 0); g.drawImage(dragCv, dx, dy);
+  cmpGuide(canvas, c, base);
 }
 /** The differences as a glow (a soft round patch) with its number; the one picked in the list has a ring. */
 function cmpGlow(c, out) {

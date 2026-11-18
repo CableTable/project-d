@@ -129,6 +129,18 @@ test('snapUsable needs the same canvas size and a modest zoom change', () => {
   assert.equal(snapUsable(null, s), false);
 });
 
+test('blitCovers: a shifted bitmap shows nothing its canvas did not hold', () => {
+  const inside = [100, 100, 200, 200], w = 400, h = 300;
+  assert.equal(perf.blitCovers(inside, 50, -30, w, h), true, 'a picture inside the canvas stays inside');
+  assert.equal(perf.blitCovers(inside, 400, 0, w, h), true, 'shifted out of the canvas: nothing shows');
+  assert.equal(perf.blitCovers([300, 100, 500, 200], 200, 0, w, h), true, 'the cut-off part moves away from the view');
+  assert.equal(perf.blitCovers([300, 100, 500, 200], -100, 0, w, h), false, 'the part outside on the right slides into view');
+  assert.equal(perf.blitCovers([-50, 100, 50, 200], 20, 0, w, h), false, 'the part outside on the left slides into view');
+  assert.equal(perf.blitCovers([-50, 100, 50, 200], -20, 0, w, h), true, 'it moves further out of the view');
+  assert.equal(perf.blitCovers(null, 0, 0, w, h), true, 'no shift needs no box');
+  assert.equal(perf.blitCovers(null, 1, 0, w, h), false, 'an unknown box is not trusted once shifted');
+});
+
 test('heavy: slow script or many items; a small quick drawing always repaints in full', () => {
   assert.equal(heavy(3, 200), false);
   assert.equal(heavy(40, 200), true);

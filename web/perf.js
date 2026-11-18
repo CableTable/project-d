@@ -52,6 +52,17 @@ export function snapPlace(a, b) {
   return { dx: (a.ox - b.ox) * b.scale, dy: (a.oy - b.oy) * b.scale, r: b.scale / a.scale };
 }
 
+/**
+ * A bitmap of a w x h canvas holding a picture whose box is `box` ([x0, y0, x1, y1] px, null = unknown), drawn again shifted by (dx, dy) px:
+ * true when every pixel that shows on the canvas after the shift was inside the canvas before it (nothing the bitmap lacks slides into view).
+ */
+export function blitCovers(box, dx, dy, w, h) {
+  if (!dx && !dy) return true;
+  if (!box) return false;
+  const [x0, y0, x1, y1] = [Math.max(box[0], -dx), Math.max(box[1], -dy), Math.min(box[2], w - dx), Math.min(box[3], h - dy)];
+  return x0 >= x1 || y0 >= y1 || (x0 >= 0 && y0 >= 0 && x1 <= w && y1 <= h);
+}
+
 /** The bitmap `snap` ({ view, w, h } as painted) can stand in for a paint of `want` ({ view, w, h }): same canvas size, and not zoomed far from it. */
 export function snapUsable(snap, want) {
   if (!snap || snap.w !== want.w || snap.h !== want.h) return false;
