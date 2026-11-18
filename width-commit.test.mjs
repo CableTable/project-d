@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
-import { flatten, patchWidths, DrawingError, strokeWidth } from './web/drawing.js';
+import { flatten, flattenEdit, patchWidths, DrawingError, strokeWidth } from './web/drawing.js';
 import * as W from './web/dxf-write.js';
 import { readDxf } from './web/drawing.js';
 import * as PR from './web/props.js';
@@ -21,13 +21,14 @@ const source = names.map((name) => {
 const snapshot = app.match(/^const snapshotOf = .*;$/m)[0];
 const noop = () => {};
 const clean = (x) => JSON.parse(JSON.stringify(x));
-function setup(raw, factor = 1, draw = flatten) {
+function setup(raw, factor = 1, drawEdit = flattenEdit) {
   const d = { raw, factor, fl: flatten(raw), hist: Ed.createHistory(), sel: new Set(raw.entities.map((_, i) => i)), off: new Set(), hid: new Set() };
   d.ed = Ed.makeIndex(raw, d.fl);
   let calls = 0;
   const api = runInNewContext(`${snapshot}\n${source}\n({ ${names.join(', ')} })`, {
     Ed, PR, ...DOC, followGroups, DrawingError, patchWidths, structuredClone,
-    flatten: (...args) => { calls++; return draw(...args); },
+    flatten: (...args) => { calls++; return flatten(...args); },
+    flattenEdit: (...args) => { calls++; return drawEdit(...args); },
     state: {}, view: {}, propDoc: () => d, propLocked: () => false, fmt: String,
     pushHistory: (doc, st, label) => doc.hist.push(st, label),
     cmpDoc: () => null, showDoc: noop, update: noop, warm: noop, renderEdit: noop, note: noop,

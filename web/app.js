@@ -32,7 +32,7 @@ import * as PS from './pdf-sheets.js';
 import { paintDrawing, drawMarks, drawContour, drawDimPreview, ink, FONT_FAMILY } from './render.js';
 import { overlayBox } from './preview.js';
 import { snapPlace, snapUsable, heavy, sameBase, runChunks, blitCovers } from './perf.js';
-import { flatten, patchWidths, primeSplines, unionBox, CAP, ACI, UNITS, mapply, mmul, pickIndex, arcSweep, DrawingError } from './drawing.js';
+import { flatten, flattenEdit, patchWidths, primeSplines, unionBox, CAP, ACI, UNITS, mapply, mmul, pickIndex, arcSweep, DrawingError } from './drawing.js';
 import { writeDxf, writeDxfWithReport, saveReportNote, unwritable, addLayer, newDoc, lwpoly, point } from './dxf-write.js';
 import * as SH from './shaping.js';
 import { explodeSelection } from './explode.js';
@@ -6677,7 +6677,9 @@ function commit(d, next, label, keepSel) {       // keepSel (a grip edit's objec
       names = [...d.off].map((i) => d.fl.layers[i]?.name);
       let cached = { fl: d.fl, ed: d.ed, outl: d.outl, pb: d.pb, hl: d.hl };
       d.fl = d.ed = d.outl = d.pb = d.hl = null;
-      try { fl = flatten({ ...raw, entities: next.entities, blocks: next.blocks, layers: next.layers || raw.layers, ltypes: next.ltypes || raw.ltypes, header: 'attmode' in next ? { ...raw.header, $ATTMODE: next.attmode } : raw.header }, d.hid); } catch (e) {
+      try {
+        fl = flattenEdit(raw, { ...raw, entities: next.entities, blocks: next.blocks, layers: next.layers || raw.layers, ltypes: next.ltypes || raw.ltypes, header: 'attmode' in next && next.attmode !== raw.header.$ATTMODE ? { ...raw.header, $ATTMODE: next.attmode } : raw.header }, cached.fl, d.hid);
+      } catch (e) {
         Object.assign(d, cached);
         if (!(e instanceof DrawingError)) throw e;
         note(e.message); return false;

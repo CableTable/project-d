@@ -1,4 +1,4 @@
-// T76 / T78 / P13: node tools/perf-interact.mjs <file.dxf|spline:900|big:20000> [draw|edit|cmp|lay:<parts>] [port=5184]
+// T76 / T78 / P13: node tools/perf-interact.mjs <file.dxf|spline:900|big:20000> [draw|edit|commit|cmp|lay:<parts>] [port=5184]
 // Counts are for the drawing canvas; timings include instrumentation and depend on the machine.
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
@@ -309,9 +309,45 @@ export async function interactEdit(page, buffer, name = 'edit.dxf') {
   } finally { await stop(); }
 }
 
+/** One selected object, with picking and Move's base point outside the timed commit. */
+async function interactCommit(page, buffer, name) {
+  const doc = readDxf(decodeDxf(buffer)), fl = flatten(doc), { frame, count, run, results, stop } = await instrument(page);
+  const [x0, y0, x1, y1] = fl.boxes.model, centre = [(x0 + x1) / 2, (y0 + y1) / 2], off = startHidden(fl);
+  const it = fl.items.find((it) => doc.entities[it.e].type === 'LINE' && itemVisible(it, off) &&
+    Math.abs(it.b[0] - centre[0]) < (x1 - x0) / 10 && Math.abs(it.b[1] - centre[1]) < (y1 - y0) / 10);
+  assert.ok(it, 'the drawing needs a visible LINE near the centre');
+  const pick = [0, 1].map((i) => (it.b[i] + it.b[i + 2]) / 2 * unitFactor(fl.units));
+  try {
+    await openFile(page, name, buffer, doc.entities.length);
+    await fitView(page, frame);
+    const { x, y } = await page.locator('rect.sheet').evaluate((el, [x, y]) => {
+      const b = el.getBoundingClientRect(), k = b.width / Number(el.getAttribute('width'));
+      return { x: b.x + x * k, y: b.y + (Number(el.getAttribute('height')) - y) * k };
+    }, pick);
+    const selectOne = async () => {
+      await page.mouse.click(x, y); await frame();
+      assert.match(await page.getByTestId('sel-count').textContent(), /^1 selected$/);
+    };
+    await selectOne();
+    console.log(`Commit fixture: ${await count()} entities, 1 selected`);
+    await run('Delete one object', () => page.keyboard.press('Delete'));
+    assert.equal(await count(), doc.entities.length - 1);
+    await page.keyboard.press('Control+z'); await frame();
+    assert.equal(await count(), doc.entities.length);
+    await selectOne();
+    await page.locator('[data-tool=move]').first().click();
+    await page.mouse.click(x, y);
+    await page.mouse.move(x + 100, y + 80); await frame();
+    await run('Move one object commit', () => page.mouse.click(x + 100, y + 80));
+    assert.match(await page.getByTestId('cmd-prompt').textContent(), /Selection moved/);
+    assert.equal(await count(), doc.entities.length);
+    for (const r of results) assert.equal(r.paints, 1, `${r.action}: full paints`);
+  } finally { await stop(); }
+}
+
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
   const input = process.argv[2], rest = process.argv.slice(3), port = Number(rest.find((a) => /^\d+$/.test(a))) || 5184, mode = rest.find((a) => !/^\d+$/.test(a)) || 'draw';
-  if (!input || !/^(draw|edit|cmp|lay:\d+)$/.test(mode)) { console.error('usage: node tools/perf-interact.mjs <file.dxf|spline:900|big:20000> [draw|edit|cmp|lay:<parts>] [port]'); process.exit(1); }
+  if (!input || !/^(draw|edit|commit|cmp|lay:\d+)$/.test(mode)) { console.error('usage: node tools/perf-interact.mjs <file.dxf|spline:900|big:20000> [draw|edit|commit|cmp|lay:<parts>] [port]'); process.exit(1); }
   const buffer = input.startsWith('spline:') ? Buffer.from(writeDxf(splineDoc(Number(input.slice(7))))) : input.startsWith('big:') ? Buffer.from(writeDxf(bigDoc(Number(input.slice(4))))) : readFileSync(input);
   const server = spawn(process.execPath, ['serve.mjs', String(port)], { stdio: 'ignore', env: { ...process.env, PORT: String(port) } });
   let browser;
@@ -327,6 +363,7 @@ if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.m
     const name = /^(spline|big):/.test(input) ? input.replace(':', '-') + '.dxf' : basename(input);
     if (mode === 'draw') await interact(page, buffer, name);
     else if (mode === 'edit') await interactEdit(page, buffer, name);
+    else if (mode === 'commit') await interactCommit(page, buffer, name);
     else if (mode === 'cmp') await interactCompare(page, buffer, name);
     else await interactLayout(page, buffer, name, Number(mode.slice(4)));
   } finally { await browser?.close(); server.kill(); }

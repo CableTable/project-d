@@ -641,6 +641,80 @@ export function flatten(doc, hidden = new Set()) {
   return { units, layers, items, insertions, mats, vports, boxes, left, truncated, endsEarly: !!doc.endsEarly };
 }
 
+const PLAIN_EDIT_TYPES = new Set(['LINE', 'POINT', 'CIRCLE', 'ARC', 'ELLIPSE', 'LWPOLYLINE', 'POLYLINE', 'SPLINE',
+  'TEXT', 'MTEXT', 'ATTDEF', 'SOLID', 'TRACE', '3DFACE', 'HATCH', 'LEADER', 'MULTILEADER', 'MLEADER', 'WIPEOUT']);
+
+/** Splice independent top-level replacements or deletions into the previous draw. */
+export function flattenEdit(before, after, fl, hidden) {
+  return patchEntities(before, after, fl, hidden) ?? flatten(after, hidden);
+}
+
+function patchEntities(before, after, fl, hidden) {
+  if (!fl || fl.truncated || hidden?.size || before.layers !== after.layers || before.ltypes !== after.ltypes || before.header !== after.header) return null;
+  if (before.blocks !== after.blocks) {
+    const names = Object.keys(after.blocks);
+    if (names.length !== Object.keys(before.blocks).length || names.some((name) => before.blocks[name] !== after.blocks[name])) return null;
+  }
+  const old = before.entities, next = after.entities, deleting = next.length < old.length;
+  if (next.length > old.length) return null;
+  const edits = [], seenLayers = new Set();
+  let checkHoles = false, j = 0;
+  for (let i = 0; i < old.length; i++) {
+    const e = old[i], replacement = next[j];
+    if (e === replacement) {
+      if (deleting && !e.hidden) seenLayers.add(e.layer);
+      j++;
+      continue;
+    }
+    if (!PLAIN_EDIT_TYPES.has(e.type) || e.flip || e.hidden || e.fill) return null;
+    if (deleting) {
+      // Keep the first encounter of each layer in the same order, including layers introduced by a block.
+      if (!seenLayers.has(e.layer) && (replacement?.layer !== e.layer || replacement?.hidden)) return null;
+    } else {
+      if (replacement.type !== e.type || replacement.layer !== e.layer || replacement.flip || replacement.hidden || replacement.fill) return null;
+      j++;
+    }
+    checkHoles ||= closedOutline(e) || (!deleting && closedOutline(replacement));
+    edits.push(i);
+  }
+  if (j !== next.length || checkHoles && old.some((e) => e.fill)) return null;
+  if (!edits.length) return fl;
+
+  const rebuilt = deleting ? [] : flatten({ ...after, entities: edits.map((i) => next[i]) }, hidden).items;
+  const layers = fl.layers.map((l) => ({ ...l, n: 0 })), layerAt = new Map(layers.map((l, i) => [l.name, i]));
+  const items = [], offsets = deleting && fl.insertions.length ? new Uint32Array(fl.items.length + 1) : null;
+  let pos = 0, patch = 0, removed = 0;
+  const keep = () => {
+    const it = fl.items[pos];
+    if (offsets) offsets[pos] = items.length;
+    items.push(removed ? { ...it, e: it.e - removed } : it);
+    pos++;
+  };
+  for (const [slot, e] of edits.entries()) {
+    while (fl.items[pos]?.e < e) keep();
+    const start = pos, out = items.length;
+    while (fl.items[pos]?.e === e) {
+      if (offsets) offsets[pos] = out;
+      pos++;
+    }
+    if (deleting) removed++;
+    else {
+      while (rebuilt[patch]?.e === slot) items.push({ ...rebuilt[patch++], e, L: [layerAt.get(next[e].layer)] });
+      if (pos - start !== items.length - out) return null;   // keep the cached INSERT ranges valid
+    }
+  }
+  while (pos < fl.items.length) keep();
+  if (offsets) offsets[pos] = items.length;
+  const insertions = offsets ? fl.insertions.map((v) => ({ ...v, start: offsets[v.start], end: offsets[v.end] })) : fl.insertions;
+  const boxes = { model: null, paper: null };
+  for (const it of items) {
+    layers[it.L[0]].n++;
+    if (it.L.every((l) => layers[l].on)) boxes[it.ps ? 'paper' : 'model'] = unionBox(boxes[it.ps ? 'paper' : 'model'], it.b);
+  }
+  for (const v of fl.vports) boxes.paper = unionBox(boxes.paper, [v.cx - v.w / 2, v.cy - v.h / 2, v.cx + v.w / 2, v.cy + v.h / 2]);
+  return { ...fl, items, layers, boxes, insertions };
+}
+
 /** A filled arrowhead at `tip`, pointing away from `from`. */
 function arrow(from, tip, size, base, put) {
   const dx = tip[0] - from[0], dy = tip[1] - from[1], l = Math.hypot(dx, dy);
