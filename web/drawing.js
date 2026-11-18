@@ -1059,7 +1059,7 @@ export function pickIndex(fl, paper, visible = () => true, extremeFrame = IDENT)
   } });
   for (const { p: [x, y], start, end } of fl.insertions || []) {
     for (let it = start; it < end; it++) if (!!fl.items[it].ps === !!paper && visible(it)) {
-      snaps.push({ x, y, kind: 'insertion', it });
+      snaps.push({ x, y, kind: 'insertion', it, end });
       break;
     }
   }
@@ -1203,7 +1203,7 @@ export function pickAt(ix, x, y, tol, visible = () => true) {
   let best = tol, seen = new Set();
   for (let i = i0; i <= i1; i++) for (let j = j0; j <= j1; j++) for (const n of ix.sc.get(i * 4096 + j) || []) {
     const s = ix.snaps[n], d = Math.hypot(s.x - x, s.y - y);
-    if (d <= best && visible(s.it)) { best = d; out.snap = { x: s.x, y: s.y, kind: s.kind }; }
+    if (d <= best && visibleSnapItem(s, visible) >= 0) { best = d; out.snap = { x: s.x, y: s.y, kind: s.kind }; }
   }
   best = tol;
   const look = (n) => {
@@ -1219,6 +1219,12 @@ export function pickAt(ix, x, y, tol, visible = () => true) {
   if (out.snap) out.point = [out.snap.x, out.snap.y];
   else if (out.near) out.point = out.near;
   return out;
+}
+
+/** An INSERT has one insertion snap while any of its flattened members is visible. */
+export function visibleSnapItem(snap, visible) {
+  for (let i = snap.it, end = snap.end ?? i + 1; i < end; i++) if (visible(i)) return i;
+  return -1;
 }
 
 /** What one pick reads as: a circle's Ø, an arc's R, a line's length, or where a point is. */

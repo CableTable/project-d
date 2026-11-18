@@ -1,4 +1,4 @@
-// T76 / T78 / P13: node tools/perf-interact.mjs <file.dxf|spline:900|big:20000> [draw|edit|commit|cmp|lay:<parts>] [port=5184]
+// T76 / T78 / P13: node tools/perf-interact.mjs <file.dxf|spline:900|big:20000> [draw|edit|commit|cmp|layers|lay:<parts>] [port=5184]
 // Counts are for the drawing canvas; timings include instrumentation and depend on the machine.
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
@@ -7,7 +7,7 @@ import { basename, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { chromium } from 'playwright';
 import { bigDoc, splineDoc } from './gen-big-dxf.mjs';
-import { writeDxf } from '../web/dxf-write.js';
+import { addLayer, writeDxf } from '../web/dxf-write.js';
 import { decodeDxf, readDxf, flatten, mapply } from '../web/drawing.js';
 import { shownItems, itemVisible, startHidden, unitFactor } from '../web/doc.js';
 
@@ -345,10 +345,41 @@ async function interactCommit(page, buffer, name) {
   } finally { await stop(); }
 }
 
+/** Measure both eyes on the same layer, after opening and warming the drawings. */
+async function interactLayers(page, buffer, name) {
+  const raw = readDxf(decodeDxf(buffer)), { frame, run, results, stop } = await instrument(page);
+  const layer = raw.entities.find((e) => e.layer !== '0')?.layer;
+  assert.ok(layer, 'the drawing needs a second layer');
+  const eye = page.locator(`[data-file-layer][data-layer-name]`).filter({ has: page.getByText(layer, { exact: true }) }).locator('button[data-act=vis]');
+  const objects = () => page.getByTestId('ptab-objects').click();
+  const toggle = async (tab) => {
+    await frame();
+    await page.waitForTimeout(500);
+    for (const [action, label] of [['off', 'Show'], ['on', 'Hide']]) {
+      await run(`${tab} layer ${action}`, () => eye.dispatchEvent('click'));
+      assert.equal(await eye.getAttribute('aria-label'), label);
+    }
+  };
+  try {
+    await openFile(page, 'reference-' + name, buffer, raw.entities.length);
+    await openFile(page, name, buffer, raw.entities.length);
+    console.log(`Layer fixture: ${raw.entities.length} entities per drawing, ${raw.entities.filter((e) => e.layer === layer).length} on ${layer}`);
+    await objects(); await toggle('Drawings');
+    await menu(page, 'File', 'Compare drawings…');
+    await objects(); await toggle('Compare');
+    for (const r of results) assert.equal(r.paints, 1, `${r.action}: full paints`);
+  } finally { await stop(); }
+}
+
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
   const input = process.argv[2], rest = process.argv.slice(3), port = Number(rest.find((a) => /^\d+$/.test(a))) || 5184, mode = rest.find((a) => !/^\d+$/.test(a)) || 'draw';
-  if (!input || !/^(draw|edit|commit|cmp|lay:\d+)$/.test(mode)) { console.error('usage: node tools/perf-interact.mjs <file.dxf|spline:900|big:20000> [draw|edit|commit|cmp|lay:<parts>] [port]'); process.exit(1); }
-  const buffer = input.startsWith('spline:') ? Buffer.from(writeDxf(splineDoc(Number(input.slice(7))))) : input.startsWith('big:') ? Buffer.from(writeDxf(bigDoc(Number(input.slice(4))))) : readFileSync(input);
+  if (!input || !/^(draw|edit|commit|cmp|layers|lay:\d+)$/.test(mode)) { console.error('usage: node tools/perf-interact.mjs <file.dxf|spline:900|big:20000> [draw|edit|commit|cmp|layers|lay:<parts>] [port]'); process.exit(1); }
+  const big = input.startsWith('big:') && bigDoc(Number(input.slice(4)));
+  if (big && mode === 'layers') {
+    addLayer(big, 'Toggle', { aci: 3 });
+    big.entities.forEach((e, i) => { if (i % 7 === 0) { e.layer = 'Toggle'; e.r.v[0] = e.layer; } });
+  }
+  const buffer = input.startsWith('spline:') ? Buffer.from(writeDxf(splineDoc(Number(input.slice(7))))) : big ? Buffer.from(writeDxf(big)) : readFileSync(input);
   const server = spawn(process.execPath, ['serve.mjs', String(port)], { stdio: 'ignore', env: { ...process.env, PORT: String(port) } });
   let browser;
   try {
@@ -365,6 +396,7 @@ if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.m
     else if (mode === 'edit') await interactEdit(page, buffer, name);
     else if (mode === 'commit') await interactCommit(page, buffer, name);
     else if (mode === 'cmp') await interactCompare(page, buffer, name);
+    else if (mode === 'layers') await interactLayers(page, buffer, name);
     else await interactLayout(page, buffer, name, Number(mode.slice(4)));
   } finally { await browser?.close(); server.kill(); }
 }

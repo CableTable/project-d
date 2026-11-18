@@ -7670,6 +7670,62 @@ try {
     } finally { await context.close(); }
   });
 
+  await step('TODO 321: a layer eye keeps visible selections and picks on Drawings, Layouts and Compare', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const p = await context.newPage(), q = (id) => p.getByTestId(id);
+    await p.route('**/compare-list.js', (route) => {
+      const body = readFileSync('web/compare-list.js', 'utf8').replace('export function refreshGeometry(item, source) {',
+        'export function refreshGeometry(item, source) { window.visibilityRefreshes = (window.visibilityRefreshes || 0) + 1;');
+      return route.fulfill({ contentType: 'application/javascript', body });
+    });
+    const raw = newDoc(4);
+    addLayer(raw, 'Toggle');
+    addEntities(raw, dxfLine(100, 80, 180, 80), dxfLine(100, 120, 180, 120, { layer: 'Toggle' }));
+    const open = async (name, doc) => {
+      await q('picker').setInputFiles({ name, mimeType: 'text/plain', buffer: Buffer.from(writeDxf(doc)) });
+      await p.waitForFunction((n) => document.querySelector('.dtab.on .tname')?.textContent === n, name);
+    };
+    const click = async (x, y) => {
+      const pt = await p.locator('rect.sheet').evaluate((sheet, [x, y]) => {
+        const b = sheet.getBoundingClientRect(), k = b.width / +sheet.getAttribute('width');
+        return { x: b.x + x * k, y: b.y + (+sheet.getAttribute('height') - y) * k };
+      }, [x, y]);
+      await p.mouse.click(pt.x, pt.y);
+    };
+    const eye = p.locator('[data-layer-name="Toggle"] button[data-act=vis]');
+    const drawing = q('drawing'), num = () => q('obj-selected').textContent();
+    const layerCheck = async (kind) => {
+      await q('ptab-objects').click();
+      await p.keyboard.press('Control+a'); assert.equal(await num(), '2 selected', kind);
+      await eye.click(); assert.equal(await eye.getAttribute('aria-label'), 'Show');
+      assert.equal(await num(), '1 selected', `${kind}: hiding keeps the visible selection`);
+      await click(140, 120); assert.equal(await num(), '0 selected', `${kind}: an off layer cannot be picked`);
+      await click(140, 80); assert.equal(await num(), '1 selected', `${kind}: the other layer still picks`);
+      await eye.click(); assert.equal(await num(), '1 selected', `${kind}: showing does not reselect`);
+      await click(140, 120); assert.equal(await num(), '1 selected', `${kind}: showing restores picks`);
+    };
+    try {
+      await p.goto(URL_); await p.locator('[data-tool=select]').waitFor();
+      await open('drawing-321.dxf', raw);
+      await drawing.evaluate((c) => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      await layerCheck('Drawings');
+      await p.locator('[data-menu=File]').click(); await p.getByRole('menuitem', { name: 'Compare drawings…', exact: true }).click();
+      await layerCheck('Compare');
+      const tab = (name) => p.locator('.dtab').filter({ has: p.locator('.tname').getByText(name, { exact: true }) });
+      await tab('drawing-321.dxf').click(); await eye.click();
+      await tab('Compare').click(); assert.equal(await eye.getAttribute('aria-label'), 'Hide', 'the snapshot keeps its own layer on');
+      assert.equal(await p.evaluate(() => window.visibilityRefreshes || 0), 0, 'visibility changes do not refresh linked artwork');
+      const lay = newLayout('Layout 321'); lay.layers = raw.layers;
+      raw.entities.forEach((e, i) => {
+        const id = `object-${i}`, part = lay.parts[id] = objectPart(id, id, e, lay.layers);
+        lay.placed.push(objectPlacement(part));
+      });
+      await open('layout-321.dxf', layoutRaw(lay));
+      await layerCheck('Layouts');
+      await p.keyboard.press('Control+z'); assert.equal(await eye.getAttribute('aria-label'), 'Show', 'one Undo turns the layout layer off again');
+    } finally { await context.close(); }
+  });
+
   await step('TODO 156c3: Ctrl+Z drops a Line point in Compare, then falls to the source Undo', async () => {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
     const p = await context.newPage(), q = (id) => panelControl(p, p.getByTestId(id));

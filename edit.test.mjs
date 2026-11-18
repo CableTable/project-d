@@ -1,4 +1,5 @@
 // edit.js — picking by chain, box, delete / keep only, scaling every entity type, undo.   node edit.test.mjs
+import { indexWithVisibility, visibleSelection } from './web/edit.js';
 const { test } = await import('node:test');
 const assert = (await import('node:assert/strict')).default;
 const fs = await import('node:fs');
@@ -39,6 +40,47 @@ test('items of entities without an index match byEnt', () => {
     }
   }
   assert.deepEqual(E.itemsOfEntities(load('sample.dxf').fl, new Set()), []);
+});
+
+test('TODO 321: layer visibility keeps only still-visible selected entities and highlights', () => {
+  const raw = W.newDoc(4);
+  W.addLayer(raw, 'Off');
+  W.addBlock(raw, 'Mixed', [W.line(2, 0, 4, 0, { layer: 'Off' }), W.line(2, 2, 4, 2)]);
+  W.addEntities(raw, W.line(0, 0, 10, 0), W.line(0, 10, 10, 10, { layer: 'Off' }), W.insert('Mixed', 40, 10), W.line(0, 20, 10, 20));
+  const fl = D.flatten(raw), off = new Set([fl.layers.findIndex((l) => l.name === 'Off')]), sel = new Set([2, 1, 0, 3]);
+  const kept = visibleSelection(fl, sel, off, new Set([3]));
+  assert.deepEqual([...kept.sel], [2, 0]);
+  assert.deepEqual(kept.hl.map((it) => it.e), [2, 0], 'only the visible member of the INSERT stays highlighted');
+  assert.deepEqual([...sel], [2, 1, 0, 3]);
+  assert.deepEqual([...visibleSelection(fl, kept.sel, new Set()).sel], [2, 0], 'showing the layer does not reselect its objects');
+});
+
+test('TODO 321: reused index matches fresh hits and snaps with a layer off and on', () => {
+  const raw = W.newDoc(4);
+  W.addLayer(raw, 'Off');
+  W.addBlock(raw, 'Mixed', [W.line(2, 0, 4, 0, { layer: 'Off' }), W.line(2, 2, 4, 2)]);
+  W.addEntities(raw, W.line(0, 0, 10, 0), W.line(5, -5, 5, 5, { layer: 'Off' }), W.insert('Mixed', 40, 10),
+    W.insert('Mixed', 60, 10, { layer: 'Off' }), W.text(80, 10, 2, 'Note', { layer: 'Off' }), W.line(100, 0, 110, 0));
+  const fl = D.flatten(raw), layer = fl.layers.findIndex((l) => l.name === 'Off'), hid = new Set([5]);
+  const opts = SNAP.snapTypes({ insertion: true });
+  let ed = E.makeIndex(raw, fl, new Set(), hid);
+  const originalGrid = ed.ix, originalBoxes = ed.boxGrid;
+  for (const off of [new Set([layer]), new Set()]) {
+    ed = indexWithVisibility(ed, off, hid);
+    const fresh = E.makeIndex(raw, fl, off, hid);
+    assert.equal(ed.ix, originalGrid);
+    assert.equal(ed.boxGrid, originalBoxes);
+    for (const [x, y] of [[0, 0], [5, 0], [5, 4], [40, 10], [43, 10], [43, 12], [60, 10], [63, 12], [81, 11], [100, 0]]) {
+      for (const fn of [E.hitEntity, E.hitEntities, E.hitItem, E.snapEnd]) assert.deepEqual(fn(ed, x, y, .2), fn(fresh, x, y, .2));
+      assert.deepEqual(E.snapPick(ed, x, y, .2, true, -1, opts), E.snapPick(fresh, x, y, .2, true, -1, opts));
+    }
+    if (off.size) for (const [x, y] of [[5, 4], [43, 10], [63, 12], [81, 11]]) assert.equal(E.hitEntity(ed, x, y, .2), -1);
+    assert.equal(E.snapPick(ed, 40, 10, .2, true, -1, opts)?.kind, 'insertion', 'a visible block member keeps the insertion snap');
+    assert.equal(E.snapPick(ed, 60, 10, .2, true, -1, opts)?.kind, off.size ? undefined : 'insertion');
+    assert.equal(E.snapPick(ed, 5, 4, .2)?.kind, off.size ? undefined : 'near', 'off-layer geometry cannot snap');
+    assert.deepEqual(E.inBox(ed, [0, -5, 75, 20]), E.inBox(fresh, [0, -5, 75, 20]));
+    assert.deepEqual(E.crossBox(ed, [41, 9, 65, 11]), E.crossBox(fresh, [41, 9, 65, 11]));
+  }
 });
 
 test('P3: selection size from shown items matches the index without kept dimensions', () => {

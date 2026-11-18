@@ -326,7 +326,11 @@ const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(
 
 const note = (text) => { state.msg = text; if (ui.fontNote) ui.fontNote.hidden = true; renderCommand(); };
 const fmt = (n) => Number(n).toFixed(2);
-const partHid = (p) => { const d = curDoc(); return !!(d && d.hiddenParts && d.hiddenParts.has(p.partId)); };       // hidden in the Objects tab: not drawn, not hit, not selected
+const partHid = (p) => {
+  const d = curDoc(), part = d?.lay?.parts[p.partId];
+  const layer = part?.obj && LD.layersOf(d.lay)[part.raw.entities[0]?.layer];
+  return !!(d?.hiddenParts?.has(p.partId) || layer?.off || layer?.frozen);
+};
 const partSelectable = (p) => !state.hidden.parts && !partHid(p) && !p.lock;
 let cssCache = null;                // theme colours read from the page once per theme, not at every repaint
 const cssVar = (name, fallback) => { const c = cssCache || (cssCache = new Map()); if (!c.has(name)) c.set(name, getComputedStyle(ui.canvas).getPropertyValue(name).trim() || fallback); return c.get(name); };
@@ -1213,6 +1217,8 @@ function showDoc() {
   }
   state.paste = null;
   for (const item of cmpDoc()?.cmp.items || []) { const source = cmpSourceTab(item); if (source) cmpRefresh(source); }
+  const edit = changed ? editable() : null;
+  if (edit?.sel.size) Object.assign(edit, Ed.visibleSelection(edit.fl, edit.sel, cmpEditingItem(edit)?.off || edit.off, hidIdx(edit)));
   selectionCycle = null;
   if (state.pointDoc !== curDoc()) { state.pointLast = null; state.pointDoc = curDoc(); }
   ui.fontNote.hidden = true;
@@ -4185,6 +4191,10 @@ function layoutLayerRows(d, query) {
       e.stopPropagation();
       if (l.id) state.hidden[l.id] = !hidden;
       else { pushLay(d, null, '', 'Layer visibility'); d.lay.layers = { ...LD.layersOf(d.lay), [l.name]: { ...def, off: !hidden, frozen: false } }; d.dirty = true; }
+      if (!hidden && (!l.id || l.id === 'parts')) {
+        const sel = selIdxs(), visible = state.hidden.parts ? [] : sel.filter((i) => !partHid(placedNow[i]));
+        if (visible.length !== sel.length) selectMany(visible, visible.includes(state.sel) ? state.sel : undefined);
+      }
       update();
     });
     const lock = objBtn('lock', locked, locked ? 'Unlock' : 'Lock', locked ? ICONS.lock : ICONS.unlock);
@@ -4213,9 +4223,12 @@ function lockObjectPlaces(indexes) {
 }
 
 function cmpToggleLayer(tab, id, i) {
+  if (i < 0) return;
   const item = tab.cmp.items.find((x) => x.id === id), off = new Set(item.off);
   if (!off.delete(i)) off.add(i);
   tab.cmp.items = CMP.setItem(tab.cmp.items, id, CMP.setItemOff(item, off));
+  const source = cmpSourceTab(item);
+  if (source) layerVisibilitySelection(source, off);
   cmpMoved(tab);
 }
 
@@ -4454,7 +4467,9 @@ function objClick(e) {
 function toggleLayerVis(d, idx) {
   if (idx < 0) return;
   if (d.off.has(idx)) d.off.delete(idx); else d.off.add(idx);
-  layersChanged(d); paintOverlay(); renderLayers(); applyHidden(); renderStatus();
+  if (d.ed) d.ed = Ed.indexWithVisibility(d.ed, d.off, hidIdx(d));
+  layerVisibilitySelection(d, d.off);
+  renderEdit(); renderLayers(); applyHidden(); paintOverlay();
 }
 function toggleLayerLock(d, name) {
   const lk = d.locked || (d.locked = new Set());
@@ -5195,13 +5210,12 @@ function paintOverlay(gesture = false) {
       if (!state.hidden.parts) {
         const byPart = new Map(), liftedBy = new Map(), drag = pdrag?.moved ? pdrag.idxs : null, gripped = new Set(state.grip && state.grip.d.vlay === d ? gripShown(state.grip).map((e) => state.grip.d.at.get(state.grip.ents ? state.grip.ents.get(e) : state.grip.ent)) : []);       // the objects a grip drags are drawn by the overlay only
         for (const p of placedNow) {
-          if (p.src === 'loose' && gripped.has(p.i)) continue;
+          if (partHid(p) || p.src === 'loose' && gripped.has(p.i)) continue;
           const to = p.src === 'loose' && drag?.includes(p.i) ? liftedBy : byPart;
           if (!to.has(p.partId)) to.set(p.partId, []);
           to.get(p.partId).push(p);
         }
         for (const [id, part] of Object.entries(d.lay.parts)) {
-          if (d.hiddenParts && d.hiddenParts.has(id)) continue;                                // hidden in the Objects tab
           const fl = state.text.ed?.dim?.raw === part.raw ? state.text.ed.dim.fl : part.fl;
           const slotsOf = (list) => list.map((p) => placedMat(part, p, state.sheetH));
           for (const [list, to] of [[byPart.get(id) || [], calls], [liftedBy.get(id) || [], lifted]]) {
@@ -6328,8 +6342,18 @@ async function placePaste() {
   catch (err) { note(`Paste: ${err.message}`); }
   renderEdit(); paintOverlay();
 }
+const compareEditIndexes = new WeakMap();
 /** The edit index of a tab (pick grid, ends), built on first use and again after a change. */
-function edIndex(d) { if (!d.ed) d.ed =Ed.makeIndex(d.raw, d.fl, d.off, hidIdx(d)); return d.ed; }
+function edIndex(d) {
+  if (!d.ed) d.ed = Ed.makeIndex(d.raw, d.fl, d.off, hidIdx(d));
+  const item = cmpEditingItem(d);
+  if (!item || item.off.size === d.off.size && [...item.off].every((i) => d.off.has(i))) return d.ed;
+  const c = compareEditIndexes.get(item.off);
+  if (c?.base === d.ed && c.index.fl === d.fl) return c.index;
+  const index = Ed.indexWithVisibility(d.ed, item.off, hidIdx(d));
+  compareEditIndexes.set(item.off, { base: d.ed, index });
+  return index;
+}
 /** The entity under a point, unless its layer is locked (Objects tab): a locked layer is drawn and snapped to, but cannot be picked. -1 if none. */
 function hitAt(d, p) { const e = Ed.hitEntity(edIndex(d), p[0], p[1], pickTol(d)); return e >= 0 && lockedEnt(d, e) ? -1 : e; }
 const lockedEnt = (d, e) => (!!d.locked && d.locked.size > 0 && d.locked.has(d.raw.entities[e].layer)) || (!!d.lockedEnts && d.lockedEnts.has(d.raw.entities[e]));      // lockedEnts: a layout's locked objects
@@ -6348,6 +6372,14 @@ function warm(d) {
   requestAnimationFrame(() => setTimeout(() => { if (state.docs.includes(d) && d.fl) { if (!d.ed) { edIndex(d); d.outl = null; } if (curDoc() === d || editable() === d) renderEdit(); } }, 0));       // also refresh a Compare source, even when a hover built its index first
 }
 function layersChanged(d) { state.drawingRotate = null; selectionCycle = null; d.ed = null; d.outl = null; d.sel = new Set(); d.stretchSelection = null; d.hl = []; if (cmpDoc()) cmpRefresh(d); warm(d); renderEdit(); }
+
+function layerVisibilitySelection(d, off) {
+  state.drawingRotate = null; selectionCycle = null; d.outl = null;
+  snapWatch(null); snapRef = snapQuery = snapCycle = null;
+  const selection = Ed.visibleSelection(d.fl, d.sel, off, hidIdx(d));
+  if (selection.sel.size !== d.sel.size) { d.stretchSelection = null; d.lastPick = -1; }
+  Object.assign(d, selection);
+}
 
 /** A pointer position → drawing units (y up), and the pick distance (7 px) in them. */
 function toDrawing(d, cx, cy) {
@@ -6483,7 +6515,8 @@ function setSel(d, sel, stretchSelection = null) {
   d.sel = sel; d.lastPick = -1;       // lastPick: the entity just clicked (Shaping's target); a box or any other selection has none
   if (sel.size) state.balSel = null;
   // no index right after a commit: list from the items so the click does not build it (warm does, after the paint)
-  d.hl = d.ed ? [...sel].flatMap((e) => (d.ed.byEnt[e] || []).map((i) => d.ed.items[i])) : Ed.itemsOfEntities(d.fl, sel, d.off, hidIdx(d));
+  const ed = d.ed && edIndex(d);
+  d.hl = ed ? [...sel].flatMap((e) => (ed.byEnt[e] || []).map((i) => ed.items[i])) : Ed.itemsOfEntities(d.fl, sel, cmpEditingItem(d)?.off || d.off, hidIdx(d));
   if (!d.ed) warm(d);
   paintOverlay(); renderEdit();
   if (state.ptab === 'objects') renderObjects(true);
@@ -12119,12 +12152,12 @@ function closeContour() { if (state.tool === 'contour') setTool('select'); }
 /** The closed outlines the selection draws (cached for the selection and the drawing's index). */
 function contourLoops(d) {
   const sig = [...d.sel].sort((a, b) => a - b).join(',');
-  if (d.cAn && d.cAn.ed === d.ed && d.cAn.sig === sig) return d.cAn;
   const ed = edIndex(d), tol = Ed.chainTol(drawBox(d.fl), d.factor);
+  if (d.cAn && d.cAn.ed === ed && d.cAn.sig === sig) return d.cAn;
   const segs = d.sel.size > 4000 ? null : CT.segmentsFromItems(ed, d.sel, (e) => e.layer === Ed.DIM_LAYER || e.type === 'DIMENSION', tol);
   const r = segs ? CT.buildLoops(segs, tol) : { loops: [], open: 0, chains: [] };
   const partial = !!segs && CT.partialOutline(ed, d.sel, tol);
-  return (d.cAn = { ed: d.ed, sig, loops: r.loops, chains: r.chains, open: r.open, partial, big: !segs, n: segs ? segs.length : 0 });
+  return (d.cAn = { ed, sig, loops: r.loops, chains: r.chains, open: r.open, partial, big: !segs, n: segs ? segs.length : 0 });
 }
 /** The contour for the selection and the panel's values: { kind: 'none' | 'big' | 'open' | 'ok', an, res (CT.contour's result) }. */
 function contourCompute(d) {
@@ -12304,7 +12337,7 @@ function renderSelection(d) {
   ui.barKeep.disabled = ui.barExtract.disabled = ui['keep-only'].disabled = noPart;
   ui.barKeep.title = ui.barExtract.title = ui['keep-only'].title = n && noPart ? 'A kept dimension is not part of a part' : '';
   if (!n) { ui.selName.textContent = 'Nothing selected'; ui.selLayer.textContent = 'right-click an edge → Select connected'; ui.selArea.textContent = ''; return; }
-  const ed = d.ed;
+  const ed = d.ed && edIndex(d);
   if (!ed) { ui.selName.textContent = ui.selArea.textContent = '…'; ui.selLayer.textContent = 'layer ' + d.raw.entities[[...d.sel][0]].layer; return; }      // warm builds the index after the paint and renders again
   const sel = [...d.sel], k = outs ? outs.findIndex((o) => o.set.size === n && sel.every((e) => o.set.has(e))) : -1;
   ui.selName.textContent = wholeDrawingGroup(d.raw.groups, d.sel) ? drawingSelectionName(d) : k >= 0 ? 'Outline ' + (k + 1) : n + ' selected';
@@ -12534,7 +12567,7 @@ const cmpDoc = () => { const d = curDoc(); return d && d.cmp ? d : null; };
 const cmpCss = (id) => { const k = C.COLOURS.find((x) => x.id === id) || C.COLOURS[0]; return workDark() ? k.dark : k.css; };
 const cmpSelected = (c) => c.items.find((x) => x.id === c.selected);
 const cmpSourceTab = (item) => item?.tabId ? state.docs.find((d) => d.tabId === item.tabId && d.raw && !d.lay) : null;
-const cmpSourceState = (d) => [d.fl, d.raw.entities, d.factor, d.pdf?.page, d.name, ...d.off];
+const cmpSourceState = (d) => [d.fl, d.raw.entities, d.factor, d.pdf?.page, d.name];
 const cmpEditingItem = (d) => { const c = cmpDoc()?.cmp, item = c && cmpSelected(c); return d && cmpSourceTab(item) === d ? item : null; };
 const drawingTransform = (d) => { const item = cmpEditingItem(d); return item ? `translate(${item.offset[0]} ${-item.offset[1]})` : null; };
 function cmpEdit(action = 'edit') {
@@ -12858,11 +12891,13 @@ function cmpGlow(c, out) {
 /** A Compare side's snap index: the editor's own snap points and pick grid (edit.js snapPick), built once per side. */
 const cmpSnaps = new WeakMap();                                                             // off the side itself: snapshotOf structuredClones the sides, and the index holds a Proxy
 const cmpSnapEd = (sd) => {
-  if (!cmpSnaps.has(sd)) {
-    const vis = Uint8Array.from(sd.fl.items, (it) => (itemVisible(it, sd.off) ? 1 : 0));
-    cmpSnaps.set(sd, { ix: pickIndex(sd.fl, spaceOf(sd.fl) === 1, (i) => vis[i] === 1), items: sd.fl.items, vis });
-  }
-  return cmpSnaps.get(sd);
+  const c = cmpSnaps.get(sd.fl);
+  if (c?.off === sd.off) return c;
+  const space = spaceOf(sd.fl), items = sd.fl.items;
+  const vis = Uint8Array.from(items, (it) => (it.ps ? 1 : 0) === space && itemVisible(it, sd.off));
+  const index = { ix: c?.ix || pickIndex(sd.fl, space === 1), items, vis, off: sd.off };
+  cmpSnaps.set(sd.fl, index);
+  return index;
 };
 /** The snap near sheet point p (mm) on a side drawn at offset o (follows the SNAP button): { x, y (mm), kind } or null. */
 function cmpSnap(sd, o, p) {

@@ -1,5 +1,5 @@
 // Compare's session-only snapshots and results; no DOM or storage.
-import { COLOURS, polylines, lineUp, compareSteps } from './compare.js';
+import { COLOURS, polylines, boxOf, lineUp, compareSteps } from './compare.js';
 import { itemShown, areaPerimeterSteps, chainTol } from './edit.js';
 import { spaceOf } from './doc.js';
 import { drain, slice, scaled } from './perf.js';
@@ -8,19 +8,30 @@ export const MAX_ITEMS = 5;
 export const reference = (items) => items.find((x) => x.checked);
 export const removeItem = (items, id) => items.filter((x) => x.id !== id);
 export const setItem = (items, id, patch) => items.map((x) => x.id === id ? { ...x, ...patch } : x);
-const metrics = new WeakMap();      // keyed by the snapshot's artwork: copies made by lineUpItems / setItem share it, and every change of off / factor / source makes a new fl
+const metrics = new WeakMap();      // keyed by the visible outlines, which lineUpItems / setItem share
+const artwork = new WeakMap();      // a snapshot's sampled outlines, including layers it may show later
+
+function visibleOutlines(fl, factor, off) {
+  let all = artwork.get(fl);
+  if (!all) {
+    const layers = [];
+    all = { ...polylines(fl, factor, undefined, layers), layers };
+    artwork.set(fl, all);
+  }
+  const polys = off.size ? all.polys.filter((_, i) => all.layers[i].every((l) => !off.has(l))) : all.polys;
+  const box = off.size ? boxOf(polys) : all.box;
+  return { polys, box, w: box ? box[2] - box[0] : 0, h: box ? box[3] - box[1] : 0 };
+}
 
 /** Artwork and dimensions refreshed together, including an emptied drawing. */
 export function snapshotGeometry(source) {
-  // fl: a source edit makes a new fl (patchWidths keeps the old items untouched), so the snapshot owns the old one without a deep copy (that copy was 650 ms at 150 000 entities); the new top-level object is the key of `metrics`
+  // A source edit makes a new fl, so the snapshot owns the old artwork without a deep copy.
   const { name, raw, factor = 1 } = source, fl = { ...source.fl }, off = new Set(source.off);
-  const outlines = polylines(fl, factor, off);
-  return { name, fl, factor, off, raw: { entities: raw.entities.map(({ type, layer }) => ({ type, layer })) }, ...outlines,     // all that the measurements read, kept so a layer can be hidden later (no live link to the source)
-    w: outlines.box ? outlines.box[2] - outlines.box[0] : 0, h: outlines.box ? outlines.box[3] - outlines.box[1] : 0, sn: null };
+  return { name, fl, factor, off, raw: { entities: raw.entities.map(({ type, layer }) => ({ type, layer })) }, ...visibleOutlines(fl, factor, off), sn: null };
 }
 
 /** Hide or show layers in this snapshot only (its own off list): outlines and measurements follow; the source drawing is untouched. */
-export const setItemOff = (item, off) => ({ ...item, ...snapshotGeometry({ ...item, off }) });
+export const setItemOff = (item, off) => ({ ...item, off, ...visibleOutlines(item.fl, item.factor, off) });
 
 /** A snapshot's artwork from its source again; its hidden layers are kept by name, since layer numbers shift when a layer empties or appears. */
 export function refreshGeometry(item, source) {
@@ -68,13 +79,13 @@ export function* compareItemsSteps(items, tol, due = slice()) {
   const diffs = [], rows = [], units = 2 * chosen.length - 1;       // a metrics step per item, a compare step per item but the reference
   let truncated = false, unit = 0;
   for (const item of chosen) {
-    if (!metrics.has(item.fl)) {
+    if (!metrics.has(item.polys)) {
       const ed = loopIndex(item.raw, item.fl, item.off);
       const m = item.box && (yield* scaled(areaPerimeterSteps(ed, new Set(ed.shown), item.factor, chainTol(item.box, 1) / item.factor, due), unit / units, (unit + 1) / units));
-      metrics.set(item.fl, { area: m?.area || 0, perimeter: m?.perimeter || 0, w: item.w, h: item.h });
+      metrics.set(item.polys, { area: m?.area || 0, perimeter: m?.perimeter || 0, w: item.w, h: item.h });
     }
     unit++;
-    const current = metrics.get(item.fl), base = metrics.get(ref.fl);
+    const current = metrics.get(item.polys), base = metrics.get(ref.polys);
     const delta = Object.fromEntries(Object.keys(base).map((k) => [k, current[k] - base[k]]));
     rows.push({ id: item.id, ...delta });
     if (item === ref) continue;

@@ -28,13 +28,16 @@ const MAX_FAR = 60000;               // differing samples kept
 const MAX_DIFFS = 500;
 
 /** The outlines of a flattened drawing (drawing.js flatten) in mm, y up: lines, polylines, arcs, circles, ellipses; not text, fills or points. */
-export function polylines(fl, factor = 1, off = new Set()) {
+export function polylines(fl, factor = 1, off = new Set(), layers) {
   const polys = [], space = spaceOf(fl);
   for (const it of fl.items) {
     if (it.k !== 'p' || it.fill || (it.ps ? 1 : 0) !== space || !itemVisible(it, off)) continue;
     const m = fl.mats[it.m], sc = mscale(m) * factor, ops = it.ops;
     let cur = null;
-    const flush = () => { if (cur && cur.length >= 4) polys.push(Float64Array.from(cur)); cur = null; };
+    const flush = () => {
+      if (cur && cur.length >= 4) { polys.push(Float64Array.from(cur)); layers?.push(it.L); }
+      cur = null;
+    };
     const P = (x, y) => { const q = mapply(m, x, y); return [q[0] * factor, q[1] * factor]; };
     let start = null;
     for (let k = 0; k < ops.length;) {
