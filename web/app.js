@@ -1050,7 +1050,7 @@ async function duplicateTab(d) {
         parts: Object.fromEntries(Object.entries(d.lay.parts).map(([id, p]) => [id, p.obj ? structuredClone(p) : p])) };
       copy.hiddenParts = new Set(d.hiddenParts); copy.lhist = Ed.createHistory();
     } else if (d.cmp) {
-      copy.cmp = structuredClone(d.cmp); copy.cmp.selected = null; copy.cmp.sel = -1; copy.factor = d.factor;
+      copy.cmp = structuredClone(d.cmp); copy.cmp.selected = null; copy.cmp.sel = -1; copy.cmp.run = null; copy.factor = d.factor;
     } else {
       const { raw, hid, off, locked, addedLayers } = structuredClone({ raw: d.raw, hid: d.hid, off: d.off, locked: d.locked, addedLayers: d.addedLayers });
       Object.assign(copy, tabFields(raw, flatten(raw, hid)), { titleBlock: copy.titleBlock, drawingUnit: copy.drawingUnit, hid, off, locked, addedLayers, scratch: true });
