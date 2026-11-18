@@ -163,25 +163,58 @@ export function* areaPerimeterSteps(ed, ents, factor = 1, tol = 1e-6, due = slic
     return c;
   };
   const a = loops.map(shoelace);
-  if (due()) yield 0.3;
-  const boxes = loops.map((pts) => {
+  const boxes = [], sizes = [];
+  for (let j = 0; j < loops.length; j++) {
+    if (due()) yield 0.3 + 0.1 * j / loops.length;
     const b = [Infinity, Infinity, -Infinity, -Infinity];
-    for (const p of pts) {
+    for (const p of loops[j]) {
       b[0] = Math.min(b[0], p[0]); b[1] = Math.min(b[1], p[1]);
       b[2] = Math.max(b[2], p[0]); b[3] = Math.max(b[3], p[1]);
     }
-    return b;
-  });
+    boxes.push(b);
+    const size = Math.max(b[2] - b[0], b[3] - b[1]);
+    if (size > 0 && Number.isFinite(size)) sizes.push(size);
+  }
+  sizes.sort((x, y) => x - y);
+  const size = sizes[Math.floor(sizes.length / 2)] ?? 1;
+  const cellOf = (v) => Math.floor(v / size), keyOf = (x, y) => x + ',' + y, grid = new Map();
+  // Visit each box's cells, storing only the cells that have a loop's first point to test.
+  for (let i = 0; i < loops.length; i++) {
+    if (due()) yield 0.4 + 0.1 * i / loops.length;
+    const p = loops[i][0], x = cellOf(p[0]), y = cellOf(p[1]), key = keyOf(x, y);
+    const cell = grid.get(key);
+    if (cell) cell.probes.push(i); else grid.set(key, { x, y, probes: [i] });
+  }
+  const cellsFor = function* (x0, y0, x1, y1) {
+    // Wide boxes can span more cells than the drawing occupies, so scan occupied cells in that case.
+    if ((x1 - x0 + 1) * (y1 - y0 + 1) > 64 || ![x0, y0, x1, y1].every(Number.isSafeInteger)) {
+      yield* grid.values();
+      return;
+    }
+    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+      const cell = grid.get(keyOf(x, y));
+      if (cell) yield cell;
+    }
+  };
+  const depths = new Uint32Array(loops.length);
+  let visited = 0;
+  for (let j = 0; j < loops.length; j++) {
+    const progress = 0.5 + 0.5 * j / loops.length;
+    if (due()) yield progress;
+    const b = boxes[j], aj = a[j], x0 = cellOf(b[0]), y0 = cellOf(b[1]), x1 = cellOf(b[2]), y1 = cellOf(b[3]);
+    for (const cell of cellsFor(x0, y0, x1, y1)) {
+      if (++visited % 1024 === 0 && due()) yield progress;
+      if (!(cell.x >= x0 && cell.x <= x1 && cell.y >= y0 && cell.y <= y1)) continue;
+      for (let k = 0; k < cell.probes.length; k++) {
+        if (++visited % 1024 === 0 && due()) yield progress;
+        const i = cell.probes[k], p = loops[i][0], px = p[0], py = p[1], ai = a[i]; // edit.test.mjs counts two-element array iterations in inside()
+        if (aj > ai && px >= b[0] && py >= b[1] && px <= b[2] && py <= b[3] && inside(p, loops[j])) depths[i]++;
+      }
+    }
+  }
   let area = 0, holes = 0;
   for (let i = 0; i < loops.length; i++) {
-    if (due()) yield 0.3 + 0.7 * i / loops.length;
-    const L = loops[i], px = L[0][0], py = L[0][1], ai = a[i];     // no destructuring: edit.test.mjs counts inside() by the array iterations of 2-element arrays
-    let depth = 0;
-    for (let j = 0; j < loops.length; j++) {            // a plain loop: 6700 loops make 45 million box checks
-      const b = boxes[j];
-      if (a[j] > ai && px >= b[0] && py >= b[1] && px <= b[2] && py <= b[3] && inside(L[0], loops[j])) depth++;
-    }
-    if (depth % 2) { area -= a[i]; holes++; } else area += a[i];
+    if (depths[i] % 2) { area -= a[i]; holes++; } else area += a[i];
   }
   return { area: area * factor * factor, perimeter: len * factor, loops: loops.length, holes, gaps, open };
 }
