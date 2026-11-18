@@ -140,12 +140,15 @@ function s(tag, attrs, ...kids) {
 }
 
 /** One of our own fixed icon strings → an <svg> (parsed, never innerHTML). */
+const iconCache = new Map();
 function icon(inner, { size = 20, width = 1.6, cap, join, label, box = 24 } = {}) {
   const attrs = `xmlns="${SVGNS}" width="${size}" height="${size}" viewBox="0 0 ${box} ${box}" fill="none" stroke="currentColor" stroke-width="${width}"` +
     (cap ? ` stroke-linecap="${cap}"` : '') + (join ? ` stroke-linejoin="${join}"` : '') +
     (label ? ` role="img" aria-label="${label}"` : ' aria-hidden="true"');
-  const doc = new DOMParser().parseFromString(`<svg ${attrs}>${inner}</svg>`, 'image/svg+xml');
-  return document.importNode(doc.documentElement, true);
+  const markup = `<svg ${attrs}>${inner}</svg>`;
+  let tpl = iconCache.get(markup);                      // parsed once: an Objects rebuild asks for thousands of the same few icons (TODO 321b)
+  if (!tpl) iconCache.set(markup, tpl = document.importNode(new DOMParser().parseFromString(markup, 'image/svg+xml').documentElement, true));
+  return tpl.cloneNode(true);
 }
 
 // ---- tools (same order and icons as the mock-up) ----

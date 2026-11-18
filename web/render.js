@@ -200,15 +200,23 @@ function paintItems(c, fl, off, T, k, vr, dpr, col, sheetBg, hide, factor, wiref
 /** The selection: a dashed accent centre line leaves the object's own colour and fill visible. */
 function highlight(c, items, mats, T, k, dpr, accent, wireframe) {
   c.strokeStyle = accent;
-  let cur = -1, kk = k, pxPerUnit = 0, origin = [0, 0];
+  // One stroke per run of items with the same matrix, line style and dash (not one per item: 150k selected items took 0.4 s, TODO 323b); 5000 as in paintItems.
+  let cur = -1, kk = k, pxPerUnit = 0, origin = [0, 0], open = false, dashed = false, cap = '', join = '', run = 0;
+  const flush = () => { if (open) c.stroke(); open = false; };
   for (const it of items) {
-    if (it.m !== cur) { cur = it.m; const M = mats[cur], V = mmul(T, M); origin = viewOrigin(V); c.setTransform(...V.slice(0, 4), ...mapply(V, ...origin)); kk = k * mscale(M) || k; pxPerUnit = maxScale(V); }
-    c.lineWidth = 2.6 * dpr / kk;
-    c.lineCap = it.cap || 'butt'; c.lineJoin = it.join || 'miter'; c.miterLimit = 10;
-    c.beginPath();
-    if (it.k === 'p' || it.k === 'i' || (wireframe && it.ops)) { c.setLineDash([6 * dpr / kk, 6 * dpr / kk]); trace(c, it.ops, origin, pxPerUnit); c.stroke(); }
-    else { c.setLineDash([]); c.strokeRect(it.b[0] - origin[0], it.b[1] - origin[1], it.b[2] - it.b[0], it.b[3] - it.b[1]); }
+    if (it.m !== cur) { flush(); cur = it.m; const M = mats[cur], V = mmul(T, M); origin = viewOrigin(V); c.setTransform(...V.slice(0, 4), ...mapply(V, ...origin)); kk = k * mscale(M) || k; pxPerUnit = maxScale(V); }
+    const path = it.k === 'p' || it.k === 'i' || (wireframe && it.ops), nextCap = it.cap || 'butt', nextJoin = it.join || 'miter';
+    if (!open || path !== dashed || nextCap !== cap || nextJoin !== join || (path && it.ops[0] !== 0) || ++run > 5000) {      // an arc first in its ops would join the path before it
+      run = 1; flush();
+      c.lineWidth = 2.6 * dpr / kk;
+      c.lineCap = cap = nextCap; c.lineJoin = join = nextJoin; c.miterLimit = 10;
+      c.setLineDash(path ? [6 * dpr / kk, 6 * dpr / kk] : []);
+      c.beginPath(); open = true; dashed = path;
+    }
+    if (path) trace(c, it.ops, origin, pxPerUnit);
+    else c.rect(it.b[0] - origin[0], it.b[1] - origin[1], it.b[2] - it.b[0], it.b[3] - it.b[1]);
   }
+  flush();
 }
 
 /** The dimension being placed or moved (edit.js dimGeometry, drawing units): its lines, arrowheads and text, in the dimension colour. */

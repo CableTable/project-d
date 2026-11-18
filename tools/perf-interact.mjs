@@ -365,15 +365,33 @@ async function interactLayers(page, buffer, name) {
     await openFile(page, name, buffer, raw.entities.length);
     console.log(`Layer fixture: ${raw.entities.length} entities per drawing, ${raw.entities.filter((e) => e.layer === layer).length} on ${layer}`);
     await objects(); await toggle('Drawings');
+    // The layout's own row hides / shows its parts (the layout has no file layers of its own).
+    await menu(page, 'Layout', 'Add to layout');
+    await page.locator('.tabs .dtab').first().click();
+    await menu(page, 'Layout', 'Add to layout');
+    await objects();
+    const layoutEye = page.locator('[data-testid=obj-layout] button[data-act=vis]');
+    await frame(); await page.waitForTimeout(500);
+    for (const [action, label] of [['off', 'Show'], ['on', 'Hide']]) {
+      await run(`Layouts layer ${action}`, () => layoutEye.dispatchEvent('click'));
+      assert.equal(await layoutEye.getAttribute('aria-label'), label);
+    }
     await menu(page, 'File', 'Compare drawings…');
     await objects(); await toggle('Compare');
     for (const r of results) assert.equal(r.paints, 1, `${r.action}: full paints`);
+    return results;
   } finally { await stop(); }
+}
+
+/** The before / after table: headline per action is longTotal (all long tasks) and gapMax (longest frame gap), the < 100 ms target is judged on these. */
+export function headlineTable(results) {
+  const rows = results.map((r) => `${r.action.padEnd(28)} | ${r.longTotal.toFixed(0).padStart(5)} ms | ${r.gapMax.toFixed(0).padStart(5)} ms | ${String(r.paints).padStart(2)} | ${r.lineTo}`);
+  return ['action                       | longTotal | gapMax | full paints | lineTo', ...rows].join('\n');
 }
 
 /** TODO 323: select all and toggle Properties on warmed tabs, with a placed part on the layout. */
 async function interactSelection(page, buffer, name) {
-  const n = readDxf(decodeDxf(buffer)).entities.length, { frame, run, stop } = await instrument(page);
+  const n = readDxf(decodeDxf(buffer)).entities.length, { frame, run, results, stop } = await instrument(page);
   const first = page.locator('.tabs .dtab').first();
   const measure = async (tab, count) => {
     await fitView(page, frame);
@@ -398,6 +416,7 @@ async function interactSelection(page, buffer, name) {
     await openFile(page, '2-' + name, buffer, n);
     await menu(page, 'File', 'Compare drawings…');
     await measure('Compare', n);
+    return results;
   } finally { await stop(); }
 }
 
@@ -422,12 +441,13 @@ if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.m
     await page.goto(`http://localhost:${port}/?autosave=86400000`);
     await page.waitForSelector('[data-testid=count]', { state: 'attached' });
     const name = /^(spline|big):/.test(input) ? input.replace(':', '-') + '.dxf' : basename(input);
-    if (mode === 'draw') await interact(page, buffer, name);
-    else if (mode === 'edit') await interactEdit(page, buffer, name);
-    else if (mode === 'commit') await interactCommit(page, buffer, name);
-    else if (mode === 'cmp') await interactCompare(page, buffer, name);
-    else if (mode === 'layers') await interactLayers(page, buffer, name);
-    else if (mode === 'selection') await interactSelection(page, buffer, name);
-    else await interactLayout(page, buffer, name, Number(mode.slice(4)));
+    const results = mode === 'draw' ? await interact(page, buffer, name)
+      : mode === 'edit' ? await interactEdit(page, buffer, name)
+        : mode === 'commit' ? await interactCommit(page, buffer, name)
+          : mode === 'cmp' ? await interactCompare(page, buffer, name)
+            : mode === 'layers' ? await interactLayers(page, buffer, name)
+              : mode === 'selection' ? await interactSelection(page, buffer, name)
+                : await interactLayout(page, buffer, name, Number(mode.slice(4)));
+    if (results) console.log(`\n${headlineTable(results)}`);
   } finally { await browser?.close(); server.kill(); }
 }
