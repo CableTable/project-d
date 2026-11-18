@@ -1,4 +1,4 @@
-// T76 / T78 / P13: node tools/perf-interact.mjs <file.dxf|spline:900|big:20000> [draw|edit|commit|cmp|layers|selection|lay:<parts>] [port=5184]
+// T76 / T78 / P13: node tools/perf-interact.mjs <file.dxf|spline:900|big:20000> [draw|edit|commit|cmp|layers|selection|resize|lay:<parts>] [port=5184]
 // Counts are for the drawing canvas; timings include instrumentation and depend on the machine.
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
@@ -29,15 +29,21 @@ async function instrument(page) {
   const frame = () => page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
   const count = () => page.locator('[data-testid=entities]').textContent().then((s) => Number(s.replace(/\D/g, '')));
   const results = [];
-  const run = async (action, fn) => {
+  const run = async (action, fn, resized = false) => {
     const paints = await page.evaluate(() => {
       const { rec, observer } = window.__perfInteract;
       observer.takeRecords(); rec.frames = [performance.now()]; rec.long = []; rec.lineTo = 0;
       return Number(document.querySelector('[data-testid=drawing]').dataset.paints);
     });
     assert.ok(Number.isFinite(paints), 'data-paints full-paint counter is installed');
+    const size = resized && await page.getByTestId('drawing').evaluate((c) => [c.width, c.height]);
     const started = Date.now();
-    await fn(); await frame();
+    await fn();
+    if (size) await page.waitForFunction(([w, h]) => {
+      const c = document.querySelector('[data-testid=drawing]');
+      return c.width !== w || c.height !== h;
+    }, size);
+    else await frame();
     const ms = Date.now() - started;
     const snap = await page.locator('[data-testid=drawing]').getAttribute('data-snap');
     // Include the 120 ms gesture settle paint and delivery of long-task records.
@@ -53,7 +59,7 @@ async function instrument(page) {
       longTasks: rec.long.length, longTotal: rec.long.reduce((a, b) => a + b, 0), longMax: Math.max(0, ...rec.long),
       lineTo: rec.lineTo, paints: rec.paints - paints };
     results.push(r);
-    console.log(`${action}: ${ms} ms; frames ${r.frames}; gaps median/p90/max ${r.gapMedian.toFixed(1)}/${r.gapP90.toFixed(1)}/${r.gapMax.toFixed(1)} ms; long tasks ${r.longTasks}, total/max ${r.longTotal.toFixed(1)}/${r.longMax.toFixed(1)} ms; lineTo ${r.lineTo}; full paints ${r.paints}`);
+    console.log(`${action}: ${ms} ms; frames ${r.frames}; gaps median/p90/max ${r.gapMedian.toFixed(1)}/${r.gapP90.toFixed(1)}/${r.gapMax.toFixed(1)} ms; long tasks ${r.longTasks}, total/max ${r.longTotal.toFixed(1)}/${r.longMax.toFixed(1)} ms; lineTo ${r.lineTo}; full paints ${r.paints}${resized ? `; first picture: ${snap === '1' ? 'scaled' : 'full'}` : ''}`);
   };
   const stop = () => page.evaluate(() => { window.__perfInteract.stop(); delete window.__perfInteract; });
   return { frame, count, results, run, stop };
@@ -420,9 +426,37 @@ async function interactSelection(page, buffer, name) {
   } finally { await stop(); }
 }
 
+/** First resized canvas frame, then total full paints through settle on each warmed tab. */
+async function interactResize(page, buffer, name) {
+  const n = readDxf(decodeDxf(buffer)).entities.length, { frame, run, results, stop } = await instrument(page);
+  const viewport = page.viewportSize();
+  const measure = async (tab) => {
+    await fitView(page, frame);
+    await page.waitForTimeout(500);
+    await run(`${tab} resize`, () => page.setViewportSize({ width: viewport.width + 200, height: viewport.height + 100 }), true);
+    await run(`${tab} Ctrl+1 close`, () => page.keyboard.press('Control+1'), true);
+    await run(`${tab} Ctrl+1 open`, () => page.keyboard.press('Control+1'), true);
+    await page.setViewportSize(viewport);
+    await frame();
+  };
+  try {
+    await openFile(page, name, buffer, n);
+    console.log(`Resize fixture: ${n} entities per drawing, one placed part on Layouts, two snapshots in Compare`);
+    await measure('Drawings');
+    await menu(page, 'Layout', 'Add to layout');
+    await page.locator('.tabs .dtab').first().click();
+    await menu(page, 'Layout', 'Add to layout');
+    await measure('Layouts');
+    await openFile(page, '2-' + name, buffer, n);
+    await menu(page, 'File', 'Compare drawings…');
+    await measure('Compare');
+    return results;
+  } finally { await stop(); }
+}
+
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
   const input = process.argv[2], rest = process.argv.slice(3), port = Number(rest.find((a) => /^\d+$/.test(a))) || 5184, mode = rest.find((a) => !/^\d+$/.test(a)) || 'draw';
-  if (!input || !/^(draw|edit|commit|cmp|layers|selection|lay:\d+)$/.test(mode)) { console.error('usage: node tools/perf-interact.mjs <file.dxf|spline:900|big:20000> [draw|edit|commit|cmp|layers|selection|lay:<parts>] [port]'); process.exit(1); }
+  if (!input || !/^(draw|edit|commit|cmp|layers|selection|resize|lay:\d+)$/.test(mode)) { console.error('usage: node tools/perf-interact.mjs <file.dxf|spline:900|big:20000> [draw|edit|commit|cmp|layers|selection|resize|lay:<parts>] [port]'); process.exit(1); }
   const big = input.startsWith('big:') && bigDoc(Number(input.slice(4)));
   if (big && mode === 'layers') {
     addLayer(big, 'Toggle', { aci: 3 });
@@ -447,7 +481,8 @@ if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.m
           : mode === 'cmp' ? await interactCompare(page, buffer, name)
             : mode === 'layers' ? await interactLayers(page, buffer, name)
               : mode === 'selection' ? await interactSelection(page, buffer, name)
-                : await interactLayout(page, buffer, name, Number(mode.slice(4)));
+                : mode === 'resize' ? await interactResize(page, buffer, name)
+                  : await interactLayout(page, buffer, name, Number(mode.slice(4)));
     if (results) console.log(`\n${headlineTable(results)}`);
   } finally { await browser?.close(); server.kill(); }
 }

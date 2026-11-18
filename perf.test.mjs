@@ -121,10 +121,11 @@ test('snapPlace: the same view is the identity; a pan shifts; a zoom about a poi
   assert.equal(100 * p.r + p.dx, 100); assert.equal(50 * p.r + p.dy, 50);
 });
 
-test('snapUsable needs the same canvas size and a modest zoom change', () => {
+test('snapUsable accepts a canvas size or DPR change and still limits zoom', () => {
   const s = { view: { ox: 0, oy: 0, scale: 1 }, w: 100, h: 80 };
   assert.equal(snapUsable(s, { view: { ox: 5, oy: 0, scale: 2 }, w: 100, h: 80 }), true);
-  assert.equal(snapUsable(s, { view: { ox: 0, oy: 0, scale: 1 }, w: 101, h: 80 }), false);
+  assert.equal(snapUsable(s, { view: { ox: 0, oy: 0, scale: 1 }, w: 101, h: 80 }), true);
+  assert.equal(snapUsable(s, { view: s.view, w: 200, h: 160 }), true);
   assert.equal(snapUsable(s, { view: { ox: 0, oy: 0, scale: 30 }, w: 100, h: 80 }), false);
   assert.equal(snapUsable(null, s), false);
 });

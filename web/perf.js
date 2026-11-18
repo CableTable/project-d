@@ -63,9 +63,9 @@ export function blitCovers(box, dx, dy, w, h) {
   return x0 >= x1 || y0 >= y1 || (x0 >= 0 && y0 >= 0 && x1 <= w && y1 <= h);
 }
 
-/** The bitmap `snap` ({ view, w, h } as painted) can stand in for a paint of `want` ({ view, w, h }): same canvas size, and not zoomed far from it. */
+/** The bitmap can stand in at another canvas size, as long as the view has not zoomed far from it. */
 export function snapUsable(snap, want) {
-  if (!snap || snap.w !== want.w || snap.h !== want.h) return false;
+  if (!snap) return false;
   const r = want.view.scale / snap.view.scale;
   return r > 0.1 && r < 20;
 }

@@ -5170,8 +5170,8 @@ function previewBounds() {
   }
   return boxes.map((box) => box.map((v, i) => v + (i < 2 ? -3 : 3)));
 }
-// A heavy drawing (perf.js heavy) keeps the bitmap of its last full paint: wheel and pan frames move and scale that, and one full paint follows when the view settles (TODO 55)
-let paintFull = true, snap = null, snapCv = null, snapTimer = 0;
+// Wheel, pan and resize move and scale the last full paint of a heavy drawing until the view settles (TODO 55 / 328a).
+let paintFull = true, snap = null, snapCv = null, snapTimer = 0, paintSize = null;
 // A drawing tab whose own paint is slow keeps its bitmap (without selection, marks, previews): a hover or a select click paints only those on top (TODO 258 / 259).
 let kept = null, keptCv = null;
 const KEEP_MS = 10;
@@ -5194,8 +5194,13 @@ function paintOverlay(gesture = false) {
     drawOvl(true);
     const { w, h: ch } = canvasSize(), dpr = window.devicePixelRatio || 1, c = ui.dcanvas;
     const cw = Math.max(1, Math.round(w * dpr)), chh = Math.max(1, Math.round(ch * dpr));
+    if (w !== paintSize?.w || ch !== paintSize.h || dpr !== paintSize.dpr) {
+      paintSize = { w, h: ch, dpr };
+      kept = keptCv = null;
+      if (snap) snap.key = null;       // even a resize back to the original size needs a settled full paint
+    }
     if (c.width !== cw || c.height !== chh) { c.width = cw; c.height = chh; }
-    const want = { view: { ox: view.ox, oy: view.oy, scale: view.scale }, w: cw, h: chh };
+    const want = { view: { ox: view.ox, oy: view.oy, scale: view.scale }, w: cw, h: chh, dpr };
     clearTimeout(snapTimer);
     const full = paintFull; paintFull = false;
     const d = curDoc();
@@ -5246,8 +5251,9 @@ function paintOverlay(gesture = false) {
     }
     if (!full && snapUsable(snap, want)) {
       const { dx, dy, r } = snapPlace(snap.view, want.view), g = c.getContext('2d');
+      const scale = r * dpr / snap.dpr;
       g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, cw, chh);
-      g.drawImage(snapCv, dx * dpr, dy * dpr, cw * r, chh * r);
+      g.drawImage(snapCv, dx * dpr, dy * dpr, snap.w * scale, snap.h * scale);
       if (d?.lay) layOverlay(c, d, base, marks, lifted);
       if (d?.cmp?.dragged) cmpPaint(c, d.cmp, base, marks, true);
       c.dataset.snap = '1';
@@ -5359,7 +5365,7 @@ function paintEditable(c, d, base, marks, part, afterBase) {
   return drawn;
 }
 
-function fit() {
+function fit(gesture = false) {
   const { w, h: ch } = canvasSize();
   // the sheet and, if one is open, the drawing; room for the dimension lines around
   const d = curDoc(), part = partView(d), lay = !!(d && d.lay), cb = cmpBox(d);
@@ -5371,7 +5377,7 @@ function fit() {
   view.ox = r[0] - P - (w2 / view.scale - bw) / 2 - R / view.scale;
   view.oy = r[1] - P - (h2 / view.scale - bh) / 2 - R / view.scale;
   view.fitted = true;
-  applyView();
+  applyView(gesture === true);
 }
 
 function zoomAt(factor, px, py, gesture = false) {
@@ -5654,7 +5660,18 @@ function attachCanvasEvents() {
     const actions = selHasPart(d) ? [['Extract part…', extractPart], ['Keep only this', keepSelection]] : [];   // a dimension alone is not a part
     popMenu(e.clientX, e.clientY, partial ? [items[0], ...actions, ...items.slice(1)] : [...actions, ...items]);
   });
-  new ResizeObserver(() => { if (view.fitted) fit(); else applyView(); }).observe(c);
+  const resize = () => {
+    clearTimeout(snapTimer);
+    if (view.fitted) fit(true); else applyView(true);
+  };
+  new ResizeObserver(resize).observe(c);
+  const watchDpr = () => {
+    window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`).addEventListener('change', () => {
+      watchDpr();
+      resize();
+    }, { once: true });
+  };
+  watchDpr();
 }
 
 // ---- keeping the panels in step with the layout ----

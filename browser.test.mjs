@@ -27847,6 +27847,81 @@ try {
     await closeTabs(/big/);
   });
 
+  await step('TODO 328a: Ctrl+1 shows the scaled picture first, then one full paint', async () => {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    try {
+      const p = await ctx.newPage(), drawing = p.getByTestId('drawing'), fit = p.getByTestId('canvas').getByRole('button', { name: 'Fit', exact: true });
+      const frame = () => p.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+      const paints = async () => Number(await drawing.getAttribute('data-paints'));
+      await p.addInitScript(() => {
+        const match = window.matchMedia.bind(window);
+        window.matchMedia = (query) => {
+          const media = match(query);
+          if (query.startsWith('(resolution:')) window.dprMedia328a = media;
+          return media;
+        };
+      });
+      await p.goto(URL_ + '?autosave=86400000');
+      await p.getByTestId('picker').setInputFiles({ name: 't328a.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(bigDoc(20000))) });
+      await p.waitForFunction(() => document.querySelector('.dtab.on .tname')?.textContent === 't328a.dxf');
+      await fit.click(); await frame();
+      assert.ok(Number(await drawing.getAttribute('data-drawn')) > 15000, 'the fitted drawing is heavy');
+      const before = await paints();
+      await drawing.evaluate((c) => {
+        const w = c.width, old = document.createElement('canvas'), svg = c.parentElement.querySelector('svg');
+        const view = () => { const [x, y, width] = svg.getAttribute('viewBox').split(' ').map(Number); return { x, y, scale: c.getBoundingClientRect().width / width }; };
+        const a = view();
+        old.width = w; old.height = c.height; old.getContext('2d').drawImage(c, 0, 0);
+        window.firstResize328a = new Promise((resolve) => {
+          const obs = new MutationObserver(() => {
+            if (c.width === w) return;
+            obs.disconnect();
+            const b = view(), r = b.scale / a.scale, dpr = window.devicePixelRatio;
+            const expected = document.createElement('canvas'); expected.width = c.width; expected.height = c.height;
+            const x = (a.x - b.x) * b.scale * dpr, y = (a.y - b.y) * b.scale * dpr;
+            expected.getContext('2d').drawImage(old, x, y, old.width * r, old.height * r);
+            resolve({ snap: c.dataset.snap, paints: Number(c.dataset.paints), same: c.toDataURL() === expected.toDataURL(),
+              blankStrip: x + old.width * r < c.width - 1 && c.getContext('2d').getImageData(c.width - 1, c.height >> 1, 1, 1).data[3] === 0 });
+          });
+          obs.observe(c, { attributes: true, attributeFilter: ['width'] });
+        });
+      });
+      await p.keyboard.press('Control+1');
+      const first = await p.evaluate(() => window.firstResize328a);
+      assert.deepEqual(first, { snap: '1', paints: before, same: true, blankStrip: true }, 'first resized frame uses the old bitmap in the new view, with a blank strip');
+      await p.waitForFunction(() => document.querySelector('[data-testid=drawing]').dataset.snap === '');
+      assert.equal(await paints(), before + 1, 'exactly one settled full paint');
+      const settled = await drawing.evaluate((c) => { c.dataset.nokeep = '1'; return c.toDataURL(); });
+      await fit.click(); await frame();
+      assert.equal(await paints(), before + 2, 'Fit forces a fresh full paint at the same size');
+      assert.ok(await drawing.evaluate((c, settled) => c.toDataURL() === settled, settled), 'settled pixels equal a fresh full paint');
+      const light = `${shotDir}/t328a-light.png`, dark = `${shotDir}/t328a-dark.png`;
+      await p.screenshot({ path: light });
+      await p.locator('[data-menu=View]').click(); await p.getByRole('menuitemcheckbox', { name: /Theme: dark\b/ }).click(); await frame();
+      await p.screenshot({ path: dark });
+      for (const path of [light, dark]) assert.ok(readFileSync(path).length > 1000, 'required screenshot exists');
+      const dprBefore = await paints(), cdp = await ctx.newCDPSession(p);
+      await drawing.evaluate((c) => {
+        const width = c.width;
+        window.firstDpr328a = new Promise((resolve) => {
+          const obs = new MutationObserver(() => {
+            if (c.width !== 2 * width) return;
+            obs.disconnect(); resolve([c.dataset.snap, Number(c.dataset.paints)]);
+          });
+          obs.observe(c, { attributes: true, attributeFilter: ['width'] });
+        });
+      });
+      await cdp.send('Emulation.setDeviceMetricsOverride', { ...p.viewportSize(), deviceScaleFactor: 2, mobile: false });
+      // Headless CDP changes DPR without delivering the resolution change event.
+      await p.evaluate(() => window.dprMedia328a.dispatchEvent(new Event('change')));
+      await p.waitForFunction(() => window.firstDpr328a);
+      assert.deepEqual(await p.evaluate(() => window.firstDpr328a), ['1', dprBefore], 'DPR alone also blits first');
+      await p.waitForFunction(() => document.querySelector('[data-testid=drawing]').dataset.snap === '');
+      assert.equal(await paints(), dprBefore + 1, 'DPR also settles with one full paint');
+      console.log('328a: old bitmap and blank strip first, one settled full paint, pixels match; DPR blits then settles');
+    } finally { await ctx.close(); }
+  });
+
   await step('Layout and Compare: pan and wheel reuse the kept picture', async () => {
     const buffer = Buffer.from(writeDxf(bigDoc(20000)));
     for (const kind of ['Layout', 'Compare']) {
@@ -27985,7 +28060,14 @@ try {
         assert.ok(readFileSync(path).length > 1000, 'required screenshot exists');
       }
       await stale('wireframe', () => p.keyboard.press('F9'));
-      await stale('resize', () => p.setViewportSize({ width: 1450, height: 900 }));
+      await stale('resize', async () => {
+        const width = await drawing.evaluate((c) => c.width);
+        await p.setViewportSize({ width: 1450, height: 900 });
+        await p.waitForFunction((width) => {
+          const c = document.querySelector('[data-testid=drawing]');
+          return c.width !== width && c.dataset.snap === '';
+        }, width);
+      });
       const pick = await centre(); await p.mouse.click(pick.x, pick.y); await frame();
       await stale('nudge', () => p.keyboard.press('ArrowRight'));
       await stale('Undo nudge', () => p.keyboard.press('Control+z'));
