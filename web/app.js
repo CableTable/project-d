@@ -6622,14 +6622,15 @@ function selectSnapPreview(d) {
 /** TODO 338: the ◎ pivot drag snaps like a drawn point (objects incl. its own, guides; no polar / tracking). Alt or Snap off = the raw pointer. */
 let pivotHit = null;
 function pivotSnap(d, p, alt) {
-  pivotHit = null;
+  pivotHit = null; ui.canvas.dataset.pivotSnap = '';
   if (alt) return p;
+  snapRef = null;                                // no tracking / extension points: a pivot has no "from" point
   let q = snapPoint(d, p);
   if (!q[2] && d.lay && state.snap) {            // a layout's snapPoint has no guides: take them here
     const hit = snapGuideBox([p[0], p[1], p[0], p[1]]);
     if (hit.hits.length) q = [p[0] + hit.dx, p[1] + hit.dy, 'guide'];
   }
-  if (q[2]) pivotHit = q;
+  if (q[2]) { pivotHit = q; ui.canvas.dataset.pivotSnap = q[2]; }       // the test waits on this, not on canvas pixels
   return q;
 }
 const snapPoint = (d, p, skip = -1, extra = [], from = null) => {

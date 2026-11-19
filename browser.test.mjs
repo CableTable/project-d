@@ -14639,6 +14639,7 @@ try {
   /** Presses the ◎, drags it to `to` (client px), runs `during` with the button still down, lets go. `alt`: Alt is down from the press on. */
   const pivotDrag338 = async (scope, to, { alt = false, during = null } = {}) => {
     const from = await pivotAt338(scope);
+    await page.evaluate(() => { document.querySelector('[data-testid=canvas]').dataset.pivotSnap = ''; });
     await page.mouse.move(from.x, from.y); await page.mouse.down();
     try {
       if (alt) await page.keyboard.down('Alt');
@@ -14647,18 +14648,7 @@ try {
     } finally { await page.mouse.up(); await page.keyboard.up('Alt'); }
     await frames();
   };
-  const greenNear338 = async (pt) => {          // the snap marker (#029d03 outline) within 10 css px of the point, waited for up to 2 s
-    for (let n = 0; n < 20; n++) {
-      if (await t('drawing').evaluate((c, pt) => {
-        const b = c.getBoundingClientRect(), k = c.width / b.width, R = Math.round(10 * k), cx = Math.round((pt.x - b.x) * k), cy = Math.round((pt.y - b.y) * k);
-        const d = c.getContext('2d').getImageData(cx - R, cy - R, 2 * R, 2 * R).data;
-        for (let i = 0; i < d.length; i += 4) if (d[i + 3] > 200 && d[i] < 40 && d[i + 1] > 120 && d[i + 2] < 40) return true;
-        return false;
-      }, pt)) return true;
-      await page.waitForTimeout(100);
-    }
-    return false;
-  };
+  const greenNear338 = () => page.waitForFunction(() => !!document.querySelector('[data-testid=canvas]').dataset.pivotSnap, null, { timeout: 2000 }).then(() => true, () => false);       // app state (the kind pivotSnap found), not canvas pixels: paint timing made the pixel check flaky
   const near338 = (a, b, why, tol = 0.3) => { approx(a.x, b.x, tol, why + ' x'); approx(a.y, b.y, tol, why + ' y'); };
   /** One run of the rules on a tab in rotate mode: own node, another object, Snap off, Alt, Tab, release. own / other: the client points of two nodes; scope: where its ◎ is. */
   const pivotRules338 = async (scope, own, other, shot) => {
@@ -14726,6 +14716,12 @@ try {
     await pivotDrag338('.ovl', { x: other.x + 3, y: other.y + 2 }, { during: async () => { await page.screenshot({ path: `${shotDir}/todo338-drawings-dark.png` }); } });
     await menuItem('View', 'Theme: light'); await frames();
     await pivotTab338('.ovl', other, other.y);
+    await pivotDrag338('.ovl', { x: other.x + 3, y: other.y + 2 }, { during: async () => {       // hover the line's end past the 500 ms watch, then go out along its extension: no extension snap for a pivot
+      await page.waitForTimeout(800);
+      await page.mouse.move(other.x + 40, other.y, { steps: 3 }); await frames();
+      assert.equal(await page.locator('[data-testid=canvas]').getAttribute('data-pivot-snap'), '', 'no extension / tracking snap for a pivot');
+    } });
+    near338(await pivotAt338('.ovl'), { x: other.x + 40, y: other.y }, 'the ◎ stays on the raw pointer along the extension line');
     await pivotDrag338('.ovl', { x: other.x + 3, y: other.y + 2 });
     near338(await pivotAt338('.ovl'), other, 'on the node again');
     await turn338('.ovl', 23);
