@@ -5228,7 +5228,7 @@ function paintOverlay(gesture = false) {
       : (modLive() || layModLive()) && state.mod.kind === 'array' && state.mod.type === 'polar' ? { pts: state.mod.center ? [state.mod.center] : [], hover: state.mod.stage === 'center' ? state.mod.cur : null } : null);
     const hv = L2 && (typedAt() || L2.hover);                       // typed cursor fields: the rubber line goes to the typed point
     const dragSnap = (d?.lay || d?.cmp) && (state.paste?.to || (pdrag?.moved && state.snap && !pdrag.skipSnap && pdrag.to));
-    const preview = selectSnapPreview(d);
+    const preview = ownSnapHover(d) || selectSnapPreview(d);       // the selected object's own point wins: it is the grab point (TODO 340)
     const pivotMark = pivotHit && (pdrag?.kind === 'pivot' || state.drawingRotate?.drag?.kind === 'pivot') ? pivotHit : null;
     const marks = preview?.[2] ? [[preview[0], preview[1], preview[2], true]] : pivotMark ? [[pivotMark[0], pivotMark[1], pivotMark[2], true]] : dragSnap?.[2] ? [[dragSnap[0], dragSnap[1], dragSnap[2], true]] : L2 && d ? [...L2.pts.map((q) => [q[0], q[1], q[2], false]), ...(L2.pts.length < 2 && hv ? [[hv[0], hv[1], hv[2], true]] : [])] : null;
     const calls = [], lifted = [];                                   // lifted: the parts a drag moves, painted by the overlay (R11: on top until the drop)
@@ -5549,7 +5549,7 @@ function attachCanvasEvents() {
   let altPick = false, suppressAltUp = false;
   c.addEventListener('pointerdown', (e) => {
     snapPreviewHover = false;
-    if (state.snapPreview) paintOverlay();
+    if (state.snapPreview || (ownMark && e.button === 0)) paintOverlay();
     altPick = false;
     if (!e.altKey && selectionCycle) { selectionCycle = null; renderCommand(); }
     if (e.button !== 0 || !e.altKey || !['select', 'step'].includes(state.tool) || state.setlen || state.match || state.colourTool || state.zwin || state.grip || state.mod || state.entityDrag || e.target.closest('.zoombox, .contourpanel, .preflightpanel, input, textarea, button')) return;
@@ -5649,7 +5649,7 @@ function attachCanvasEvents() {
     }
   });
   c.addEventListener('pointermove', (e) => {
-    snapPointer = { clientX: e.clientX, clientY: e.clientY, shiftKey: e.shiftKey, buttons: e.buttons };
+    snapPointer = { clientX: e.clientX, clientY: e.clientY, shiftKey: e.shiftKey, altKey: e.altKey, buttons: e.buttons };
     snapPreviewHover = !e.buttons;
     snapQuery = null;
     if (pan) {                                                         // before the paste return: the middle button pans while a paste follows the cursor
@@ -5694,11 +5694,11 @@ function attachCanvasEvents() {
     const mx = view.ox + p.x / view.scale, my = view.oy + p.y / view.scale;
     const [cx, cy] = cursorMm(mx, my, state.sheetH);
     state.cursorMm = [cx, cy]; renderCoords();
-    if (state.snapPreview) paintOverlay();
+    if (state.snapPreview || !e.buttons && ownHoverSel(curDoc())) paintOverlay();
   });
   c.addEventListener('pointerleave', () => {
     snapCycle = null; snapQuery = null; snapPointer = null; snapRef = null; snapWatch(null);
-    if (state.snapPreview) paintOverlay();
+    if (state.snapPreview || ownMark) paintOverlay();
     clearTimeout(gripOptTimer);
     if (state.gripHover) { state.gripHover = null; drawOvl(); }
     if ((modLive() || layModLive()) && state.mod.kind === 'trim') { state.mod.client = null; state.mod.p = null; paintOverlay(); }
@@ -6798,13 +6798,34 @@ function drawingRotateOverlay(out) {
   out.push(s('g', { class: 'ptools' }, rotationControls(cor, c, toSheetPt(r.d, r.pivot), k, g?.items ? fmt1(g.angle) + '°' : null)));
 }
 
-function dragGrabPoint(d, point, sel) {
-  if (!state.snap) return point;
+/** The snap on the selected objects' own points near `point`: { x, y, kind } or null. It is the drag's grab and, before any press, the hover marker (TODO 340). */
+function ownSnap(d, point, sel) {
+  if (!state.snap) return null;
   const ed = !d.lay && edIndex(d);
-  const grab = d.lay ? placedSnap(d.lay.parts, [...sel].map((i) => placedNow[i]), ...point, pickTol(d), state.snapTypes)
+  return d.lay ? placedSnap(d.lay.parts, [...sel].map((i) => placedNow[i]), ...point, pickTol(d), state.snapTypes)
     : Ed.snapPick(ed, ...point, pickTol(d), state.snap, new Set(ed.shown.filter((i) => !sel.has(i))), state.snapTypes);
+}
+function dragGrabPoint(d, point, sel) {
+  const grab = ownSnap(d, point, sel);
   return grab ? [grab.x, grab.y] : point;
 }
+/** The selected object(s) whose own points show a marker on hover, per tab: entity ids (Drawings), placed indexes (Layouts) or the selected snapshot (Compare); null when none. */
+function ownHoverSel(d) {
+  if (!d || !state.snap || state.tool !== 'select') return null;
+  if (d.cmp) { const item = cmpSelected(d.cmp); return item?.visible && item.box ? item : null; }
+  if (d.lay) { const idx = selItems().map((x) => x.i); return idx.length && state.mode === 'select' ? new Set(idx) : null; }
+  return d.fl && d.sel?.size ? d.sel : null;
+}
+/** Hovering near the selected object's own snap points (Snap on, no Alt, the pickTol radius of the grab) shows the marker and its kind before any press, whatever Snap preview is (TODO 340). */
+function ownSnapHover(d) {
+  const sel = ownHoverSel(d);
+  ownMark = false;
+  if (!sel || !snapPointer || snapPointer.altKey || !snapPreviewHover || state.setlen || state.match || state.colourTool || state.zwin || state.orthoAsk || state.attdispAsk || state.eatteditAsk || state.paste || state.grip || state.entityDrag || state.drawingRotate?.drag || state.text.ed || state.text.drag || state.sheetDrag || state.balDrag || pdrag || gdrag || d.cmp?.moving) return null;
+  const sn = d.cmp ? cmpSnap(sel, sel.offset, sheetAt(snapPointer.clientX, snapPointer.clientY)) : ownSnap(d, d.lay ? sheetAt(snapPointer.clientX, snapPointer.clientY) : toDrawing(d, snapPointer.clientX, snapPointer.clientY), sel);
+  ownMark = !!sn;
+  return sn && [sn.x, sn.y, sn.kind];
+}
+let ownMark = false;                                           // the hover marker is on screen, so a press or leaving the canvas repaints it away
 
 function moveSelectionTo(g, e) {
   if (g.d !== editable() || g.raw !== g.d.raw.entities) { state.entityDrag = null; return false; }

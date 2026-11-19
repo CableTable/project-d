@@ -3023,7 +3023,7 @@ try {
       const placed = await p.locator('.part-hit').first().boundingBox();
       await p.mouse.move(placed.x + 2, placed.y + placed.height - 1); await labels(['end']);
       await chip.click(); await labels([]);
-      await p.mouse.move(placed.x + 2, placed.y + placed.height - 1); await labels([]);
+      await p.mouse.move(placed.x + 2, placed.y + placed.height - 1); await labels(['end']);       // the selected part's own point still shows: TODO 340 covers it whatever Snap preview is
       await chip.click();
       await q('picker').setInputFiles('fixtures/three-sheets.pdf'); await q('bal-sheets').waitFor();
       for (const raw of ['line', '20,30', '120,30']) {
@@ -14512,6 +14512,7 @@ try {
       await select(); const p = await at(x, y);
       await page.evaluate(() => { window.__drag195 = []; });
       await page.mouse.move(p.x + 1, p.y + .5); await page.mouse.down();
+      await page.evaluate(() => { window.__drag195 = []; });       // the hover marker of the selected block's own end (TODO 340) is not part of the drag
     };
     const land = async (x = b[0], y = b[1]) => { const p = await at(x, y); await page.mouse.move(p.x + 2, p.y + 1, { steps: 6 }); await frames(); return p; };
     const xy = (doc) => [10, 20].map((code) => fieldOf(doc.entities[0], code));
@@ -14812,11 +14813,12 @@ try {
       for (const n of ['stroke', 'fill', 'fillText', 'strokeText']) P[n] = function (...a) { if (this.canvas.dataset.testid === 'drawing') window.__ops339.push(n === 'fillText' ? a[0] : n); return window.__p339[n].apply(this, a); };
     });
     const lastOp = () => page.evaluate(() => window.__ops339.at(-1));
-    const drag = async (from, target, theme) => {
+    const drag = async (from, target, sg = 1) => {       // sg -1: a layout's y points up, so the press goes inside the part
       const p = await at(...from), q = await at(...target);
-      await page.mouse.move(p.x + 1, p.y + .5); await page.mouse.down();
-      await page.mouse.move(q.x + 2, q.y + 1, { steps: 6 }); await frames();
-      await page.evaluate(() => { window.__ops339 = []; }); await page.mouse.move(q.x + 1, q.y + .5); await frames();
+      await page.mouse.move(p.x + 1, p.y + .5 * sg); await page.mouse.down();
+      await page.mouse.move(q.x + 2, q.y + sg, { steps: 6 }); await frames();
+      await page.mouse.move(q.x + 14, q.y + 7 * sg); await frames();       // off the snap, so the next move paints the marker afresh on every tab
+      await page.evaluate(() => { window.__ops339 = []; }); await page.mouse.move(q.x + 1, q.y + .5 * sg); await frames();
       return q;
     };
     const proof = async (q, name) => {
@@ -14836,13 +14838,88 @@ try {
         await page.screenshot({ path: `${shotDir}/todo339-drawings-${colour}.png` });
         await proof(q, 'Drawings ' + colour);
         await page.mouse.up(); await closeTabs(/thick-339/);
+        // Layouts: a part dragged by its corner onto a corner of a part whose 8 mm edge crosses it
+        const lay = newLayout('Thick 339'), plate = addEntities(newDoc(4), dxfPoly([[0, 0], [100, 0], [100, 60], [0, 60]], { closed: true })), thick = addEntities(newDoc(4), dxfPoly([[0, 0], [100, 0], [100, 60], [0, 60]], { closed: true, lw: 800 }));
+        lay.parts.plate = makePart('plate', 'Plate', plate); lay.parts.thick = makePart('thick', 'Thick', thick);
+        lay.placed = [{ partId: 'plate', x: 200, y: 200, rot: 0 }, { partId: 'thick', x: 520, y: 400, rot: 0 }];
+        await t('picker').setInputFiles({ name: 'thick-339-lay.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
+        await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'thick-339-lay.dxf');
+        await page.locator('[data-tool=select]').click(); await click(240, 220);
+        const ql = await drag([200, 200], [520, 400], -1);
+        await page.screenshot({ path: `${shotDir}/todo339-layouts-${colour}.png` });
+        await proof(ql, 'Layouts ' + colour);
+        await page.mouse.up(); await closeTabs(/thick-339/);
+        // Compare: the dragged snapshot's own 3 mm line crosses the grabbed point
+        const rawc = newDoc(4);
+        addEntities(rawc, dxfLine(20, 20, 60, 20, { lw: 300 }), dxfLine(20, 20, 20, 60, { lw: 300 }));
+        await openGrips(writeDxf(rawc), 'thick-339-cmp.dxf');
+        await typeCmd('compare'); await t('cmp-item').first().waitFor();
+        const qc = await drag([20, 20], [100, 60]);
+        await page.screenshot({ path: `${shotDir}/todo339-compare-${colour}.png` });
+        await proof(qc, 'Compare ' + colour);
+        await page.mouse.up(); await closeTabs(/thick-339/);
       }
-      console.log('339: the marker and label are the last paint on Drawings');
+      console.log('339: the marker and label are the last paint on Drawings, Layouts and Compare');
     } finally {
       await page.mouse.up();
       await page.evaluate(() => { Object.assign(CanvasRenderingContext2D.prototype, window.__p339); delete window.__p339; delete window.__ops339; });
       await setChip('tog-snap', snapOn === 'true'); await setChip('tog-ortho', orthoOn === 'true');
       await menuItem('View', 'Theme: ' + theme); await closeTabs(/thick-339/);
+    }
+  });
+  await step('TODO 340: hovering the selected object\'s own snap point shows the marker before a press (not with Alt or Snap off); a press 5 px off lands exactly, on Drawings, Layouts and Compare', async () => {
+    const snapOn = await t('tog-snap').getAttribute('aria-pressed');
+    const setChip = async (on) => { if (await t('tog-snap').getAttribute('aria-pressed') !== String(on)) await t('tog-snap').click(); };
+    await page.evaluate(() => {
+      window.__tags340 = []; window.__fill340 = CanvasRenderingContext2D.prototype.fillText;
+      CanvasRenderingContext2D.prototype.fillText = function (text, ...a) { if (this.canvas.dataset.testid === 'drawing') window.__tags340.push(text); return window.__fill340.call(this, text, ...a); };
+    });
+    // hover at p (px): the kind tags painted after that move
+    const hover = async (p, name) => { await page.mouse.move(p.x - 40, p.y - 40); await frames(); await page.evaluate(() => { window.__tags340 = []; }); await page.mouse.move(p.x, p.y); await frames(); return page.evaluate(() => [...window.__tags340]); };
+    const checks = async (p, name) => {
+      assert.ok((await hover({ x: p.x + 2, y: p.y + 1 })).includes('end'), name + ': hovering the own end shows the marker with its kind before any press');
+      await page.keyboard.down('Alt'); const alt = await hover({ x: p.x + 2, y: p.y + 1 }); await page.keyboard.up('Alt');
+      assert.ok(!alt.includes('end'), name + ': Alt held, no marker');
+      await setChip(false); const off = await hover({ x: p.x + 2, y: p.y + 1 }); await setChip(true);
+      assert.ok(!off.includes('end'), name + ': Snap off, no marker');
+      assert.ok(!(await hover({ x: p.x + 40, y: p.y + 30 })).includes('end'), name + ': away from the point, no marker');
+    };
+    try {
+      await setChip(true);
+      const a = [20.1234, 20.4321], b = [100.9876, 60.8765], raw = newDoc(4);
+      addBlock(raw, 'Own340', [dxfLine(...a, a[0] + 40, a[1])]);
+      addEntities(raw, dxfInsert('Own340', 0, 0), dxfLine(...b, b[0], b[1] + 40));
+      await openGrips(writeDxf(raw), 'own-340.dxf');
+      await click(a[0] + 12, a[1]); await waitSel('1 selected');
+      const pa = await at(...a);
+      await checks(pa, 'Drawings');
+      await page.mouse.move(pa.x + 5, pa.y); await page.mouse.down();       // 5 px along the line from its end
+      const to = await at(...b); await page.mouse.move(to.x + 2, to.y + 1, { steps: 6 }); await page.mouse.up();
+      const moved = await savedDoc(), off = [10, 20].map((code) => fieldOf(moved.entities[0], code));
+      for (let i = 0; i < 2; i++) assert.ok(Math.abs(a[i] + off[i] - b[i]) < 1e-9, 'Drawings: a press 5 px off the end lands the end exactly on the other point');
+      await closeTabs(/own-340/);
+      const lay = newLayout('Own 340'), plate = addEntities(newDoc(4), dxfPoly([[0, 0], [100, 0], [100, 60], [0, 60]], { closed: true }));
+      lay.parts.plate = makePart('plate', 'Plate', plate);
+      lay.placed = [{ partId: 'plate', x: 200.1234, y: 200.4321, rot: 0 }, { partId: 'plate', x: 520.9876, y: 400.8765, rot: 0 }];
+      await t('picker').setInputFiles({ name: 'own-340-lay.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
+      await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'own-340-lay.dxf');
+      await page.locator('[data-tool=select]').click(); await click(400, 120); await click(240, 220);       // the empty click leaves a Rotate mode an earlier step left on
+      const pl =await at(200.1234, 200.4321);
+      await checks({ x: pl.x, y: pl.y - 1 }, 'Layouts');
+      await page.mouse.move(pl.x + 5, pl.y - 2); await page.mouse.down();
+      const tl = await at(520.9876, 400.8765); await page.mouse.move(tl.x + 2, tl.y - 1, { steps: 6 }); await page.mouse.up();
+      const placed = layoutFromRaw(await savedDoc()).placed[0];
+      assert.deepEqual([placed.x, placed.y], [520.9876, 400.8765], 'Layouts: a press 5 px off the corner lands it exactly on the other corner');
+      await closeTabs(/own-340/);
+      const rawc = newDoc(4); addEntities(rawc, dxfLine(20, 20, 60, 20), dxfLine(20, 20, 20, 60));
+      await openGrips(writeDxf(rawc), 'own-340-cmp.dxf');
+      await typeCmd('compare'); await t('cmp-item').first().waitFor();
+      await checks(await at(20, 20), 'Compare');
+      console.log('340: own-point hover marker (Snap on, no Alt) and exact landing from 5 px off on Drawings and Layouts; Compare hover (one drawing has no drop target)');
+    } finally {
+      await page.mouse.up(); await page.keyboard.up('Alt');
+      await page.evaluate(() => { CanvasRenderingContext2D.prototype.fillText = window.__fill340; delete window.__fill340; delete window.__tags340; });
+      await setChip(snapOn === 'true'); await closeTabs(/own-340/);
     }
   });
   await step('command messages: an error sits above the visible hint with a selection and grips on', async () => {
