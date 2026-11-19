@@ -31517,9 +31517,23 @@ try {
     };
     await freshLayoutWithPlate();
     await page.waitForFunction(() => document.querySelectorAll('[data-group=tools] .sel-box').length === 1);
-    await zoomed('[data-group=tools] .sel-box', 6);
+    const partBox = '[data-group=tools] .sel-box', plain = await look(partBox);
+    await zoomed(partBox, 6);
     for (const theme of ['light', 'dark']) { await menuItem('View', 'Theme: ' + theme); await page.screenshot({ path: `${shotDir}/337-part-8x-${theme}.png` }); }
     await menuItem('View', 'Theme: light');
+    await typeCmd('rotate'); await page.waitForFunction(() => document.querySelector('[data-group=tools] .sel-box[data-mode=rotate]'));
+    assert.deepEqual(await look(partBox), plain, 'the Layouts part box in Rotate mode (8x) looks as the plain one at 1x');
+    await closeTabs(/./);
+    // the Drawings Rotate box keeps its own look: 2.5 px solid, whatever the zoom
+    const rawRot = newDoc(4); addEntities(rawRot, dxfLine(20, 30, 120, 30));
+    await openGrips(writeDxf(rawRot), 'rotate337.dxf');
+    let p0 = await at(45, 30); await page.mouse.click(p0.x, p0.y); await gripWhen(3);
+    p0 = await at(45, 30); await page.mouse.click(p0.x, p0.y); await gripWhen(0);
+    await page.waitForFunction(() => document.querySelector('.ovl .drawing-rotate-box'));
+    const rotBox = '.ovl .drawing-rotate-box', rot1 = await look(rotBox);
+    assert.equal(rot1.width, 2.5, 'the Drawings Rotate box keeps its 2.5 px line'); assert.ok(rot1.dash.every(Number.isNaN), 'and no dash: ' + JSON.stringify(rot1));
+    await page.mouse.move((await canvasMid()).x, (await canvasMid()).y); await page.mouse.wheel(0, -900); await frames();
+    assert.deepEqual(await look(rotBox), rot1, 'the Drawings Rotate box stays 2.5 px solid after a zoom');
     await closeTabs(/./);
     await open97b(lines97b(), 'zoom337.dxf');
     await key97b('Control+a'); await key97b('Control+g'); await waitSel('Group of 2');

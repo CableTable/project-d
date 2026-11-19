@@ -6777,7 +6777,7 @@ function drawingRotateOverlay(out) {
   const pad = 20 * k / r.d.factor;
   const cor = [[b[0] - pad, b[1] - pad], [b[2] + pad, b[1] - pad], [b[2] + pad, b[3] + pad], [b[0] - pad, b[3] + pad]].map((p) => toSheetPt(r.d, matrix ? mapply(matrix, ...p) : p));
   const c = [(cor[0][0] + cor[2][0]) / 2, (cor[0][1] + cor[2][1]) / 2];
-  out.push(s('polygon', { class: 'sel-box', points: cor.map((p) => p.join(',')).join(' '), 'data-mode': 'rotate', 'vector-effect': 'non-scaling-stroke' }));
+  out.push(s('polygon', { class: 'drawing-rotate-box', points: cor.map((p) => p.join(',')).join(' '), 'data-mode': 'rotate', 'vector-effect': 'non-scaling-stroke' }));
   out.push(s('g', { class: 'ptools' }, rotationControls(cor, c, toSheetPt(r.d, r.pivot), k, g?.items ? fmt1(g.angle) + '°' : null)));
 }
 
