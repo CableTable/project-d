@@ -172,6 +172,13 @@ test('TODO 322d: a patch that is refused leaves the earlier index whole, so a fa
   patchStep(s0, without(s0, 12), 'Delete after the failed restore');
 });
 
+test('TODO 322c: restore keeps the index a failed restore left (edPrev) when the live one is gone, and none after a ready index', () => {
+  const raw = patchDoc(), s0 = stateOf(raw, D.flatten(raw)), kept = { ix: s0.ed.ix, fl: s0.fl };
+  assert.deepEqual(E.prevIndex(undefined, s0.ed, s0.fl, null), kept);       // live index: patched from it
+  assert.equal(E.prevIndex(undefined, null, s0.fl, kept), kept);            // after a DrawingError fallback d.ed is null: the earlier one is kept
+  assert.equal(E.prevIndex(s0.ed, s0.ed, s0.fl, kept), null);               // a ready index: nothing to patch
+});
+
 test('P3: selection size from shown items matches the index without kept dimensions', () => {
   const raw = W.newDoc(4);
   W.addEntities(raw, [W.lwpoly([[20, 20], [120, 20], [120, 80], [20, 80]], { closed: true }),

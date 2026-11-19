@@ -241,6 +241,8 @@ export function resizeItemsBox(raw, items, factor = 1) {
   return box ? box.map((n) => n * factor) : null;
 }
 
+/** The index restore patches the next one from: none when it was handed a ready index, else the live one with its drawing, else the one kept from a restore that failed (TODO 322c). */
+export const prevIndex = (index, ed, fl, edPrev) => index ? null : ed?.ix ? { ix: ed.ix, fl } : edPrev;
 /**
  * What the editor needs about a drawing: per shown entity its items and box, a pick grid, and the end points.
  * off: the layer indexes switched off (their entities are not there to pick); hid: entities hidden one by one (Objects tab), the same.

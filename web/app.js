@@ -7029,7 +7029,7 @@ function restore(d, st, drawn, layerNames, index) {
     restoreBg(d, st);
     d.dirty = true; if (cmpDoc()) cmpRefresh(d); showDoc(); return;
   }
-  const was = d.cnt?.entities === d.raw.entities && d.cnt.counts === d.counts && d.cnt.n === d.entities ? d.cnt : null, prevIx = !index && d.ed?.ix ? { ix: d.ed.ix, fl: d.fl } : null;       // before the entity list and fl change: the counts and the pick index are patched from these
+  const was = d.cnt?.entities === d.raw.entities && d.cnt.counts === d.counts && d.cnt.n === d.entities ? d.cnt : null, prevIx = Ed.prevIndex(index, d.ed, d.fl, d.edPrev);       // before the entity list and fl change: the counts and the pick index are patched from these
   d.raw.groups = st.groups || followGroups(d.raw.groups, d.raw.entities, st.entities);       // Undo / Redo bring the groups back; an edit follows its entities
   d.raw.entities = st.entities; d.raw.blocks = st.blocks;
   const names = layerNames || [...d.off].map((i) => d.fl.layers[i] && d.fl.layers[i].name);
@@ -7045,7 +7045,7 @@ function restore(d, st, drawn, layerNames, index) {
   d.off = new Set(fl.layers.map((l, i) => (names.includes(l.name) ? i : -1)).filter((i) => i >= 0));      // layer numbers can shift: keep them by name
   if (index) { index.fl = fl; index.items = fl.items; }
   const c = patchedCounts(was, d.raw, fl);
-  Object.assign(d, { fl, counts: c.counts, entities: c.n, cnt: { entities: d.raw.entities, names: fl.layers.map((l) => l.name), space: spaceOf(fl), counts: c.counts, n: c.n }, edPrev: index ? null : prevIx || d.edPrev, box: drawingBoxMm(fl, d.factor), dirty: true, ed: index || null, outl: null, sel: new Set(), stretchSelection: null, hl: [] });
+  Object.assign(d, { fl, counts: c.counts, entities: c.n, cnt: { entities: d.raw.entities, names: fl.layers.map((l) => l.name), space: spaceOf(fl), counts: c.counts, n: c.n }, edPrev: prevIx, box: drawingBoxMm(fl, d.factor), dirty: true, ed: index || null, outl: null, sel: new Set(), stretchSelection: null, hl: [] });
   if (cmpDoc()) cmpRefresh(d);
   quickNext = 'big';
   showDoc();
