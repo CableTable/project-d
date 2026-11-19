@@ -31,7 +31,7 @@ import * as BAL from './balloons.js';
 import * as PS from './pdf-sheets.js';
 import { paintDrawing, drawMarks, drawContour, drawDimPreview, ink, FONT_FAMILY } from './render.js';
 import { overlayBox } from './preview.js';
-import { snapPlace, snapUsable, heavy, sameBase, runChunks, blitCovers, QUICK_PX } from './perf.js';
+import { snapPlace, snapUsable, heavy, sameBase, runChunks, blitCovers, panStrips, QUICK_PX } from './perf.js';
 import { flatten, flattenEdit, patchWidths, primeSplines, unionBox, CAP, ACI, UNITS, mapply, mmul, pickIndex, arcSweep, DrawingError } from './drawing.js';
 import { writeDxf, writeDxfWithReport, saveReportNote, unwritable, addLayer, newDoc, lwpoly, point } from './dxf-write.js';
 import * as SH from './shaping.js';
@@ -5179,7 +5179,7 @@ let paintFull = true, snap = null, snapCv = null, snapTimer = 0, paintSize = nul
 // A layer toggle on a drawing whose last full paint was heavy paints once quick (items under QUICK_PX skipped, no kept bitmap), then settles with the 0.4 px paint after 120 ms (TODO 328b).
 let quickNext = false, lastHeavy = false;
 // A drawing tab whose own paint is slow keeps its bitmap (without selection, marks, previews): a hover or a select click paints only those on top (TODO 258 / 259).
-let kept = null, keptCv = null;
+let kept = null, keptCv = null, panCv = null;
 const KEEP_MS = 10;
 /** Everything the drawing's own pass reads, flat (compare with sameBase). While a grip or drag hides entities one by one, `drag` is set and their numbers end the key: that base is painted without them (TODO 320). */
 function paintKey(d, base, cw, chh) {
@@ -5220,6 +5220,15 @@ function paintOverlay(gesture = false) {
     const preview = selectSnapPreview(d);
     const marks = preview?.[2] ? [[preview[0], preview[1], preview[2], true]] : dragSnap?.[2] ? [[dragSnap[0], dragSnap[1], dragSnap[2], true]] : L2 && d ? [...L2.pts.map((q) => [q[0], q[1], q[2], false]), ...(L2.pts.length < 2 && hv ? [[hv[0], hv[1], hv[2], true]] : [])] : null;
     const calls = [], lifted = [];                                   // lifted: the parts a drag moves, painted by the overlay (R11: on top until the drop)
+    const layKey = (v) => {
+      const k = [d, v.ox, v.oy, v.scale, cw, chh, dpr, v.dark, v.wireframe, v.sheetH, state.hidden.parts];
+      for (const call of calls) {
+        k.push(call.fl, call.factor, call.tint, ...[...(call.off || [])].sort((a, b) => a - b), null);
+        for (const slot of call.slots) k.push(...slot);
+        k.push(null);
+      }
+      return k;
+    };
     let key = null;
     if (d?.lay) {
       if (!state.hidden.parts) {
@@ -5240,15 +5249,10 @@ function paintOverlay(gesture = false) {
           }
         }
       }
-      key = [d, base.ox, base.oy, base.scale, cw, chh, dpr, base.dark, base.wireframe, base.sheetH, state.hidden.parts];
-      for (const call of calls) {
-        key.push(call.fl, call.factor, call.tint, ...[...(call.off || [])].sort((a, b) => a - b), null);
-        for (const slot of call.slots) key.push(...slot);
-        key.push(null);
-      }
+      key = layKey(base);
     } else if (d?.cmp) key = cmpBaseKey(d, base, cw, chh);
     const ekey = d && d.fl && !d.lay && !d.cmp ? paintKey(d, base, cw, chh) : null, dkey = key?.drag ? key : ekey?.drag ? ekey : null, ckey = d?.cmp && !key ? cmpKeepKey(d, base, cw, chh) : null;
-    c.dataset.snap = ''; c.dataset.keep = ''; c.dataset.quick = '';
+    c.dataset.snap = ''; c.dataset.keep = ''; c.dataset.quick = ''; c.dataset.pan = '';
     if (full && dkey && c.dataset.nokeep !== '1' && !(kept && sameBase(kept.key, dkey))) {
       // a drag starts, or the view moved under it: the base without what is dragged is painted off screen once, so it is no counted full paint (TODO 317 / 320)
       snap = null; keptCv = keptCv || document.createElement('canvas'); keptCv.width = cw; keptCv.height = chh;
@@ -5290,6 +5294,26 @@ function paintOverlay(gesture = false) {
       ui.cmdUI.place();
       return;
     }
+    const keepSnap = (k) => {
+      snapCv = snapCv || document.createElement('canvas');
+      snapCv.width = cw; snapCv.height = chh;
+      snapCv.getContext('2d').drawImage(c, 0, 0);
+      snap = { ...want, key: k };
+    };
+    // Pan end (TODO 324a): the same scale and the same drawing as the kept base, only moved: that base is shifted and only the strip it no longer covers is painted
+    const nk = d?.lay ? key : d?.cmp ? ckey : ekey;
+    if (full && nk && !dkey && !quick && c.dataset.nokeep !== '1' && kept?.view
+      && panShift(c, d, base, want, calls, d.lay ? layKey : d.cmp ? (v) => cmpKeepKey(d, v, cw, chh) : (v) => paintKey(d, v, cw, chh), nk)) {
+      if (d.lay) { keepSnap(key); layOverlay(c, d, base, marks, lifted); }
+      else {
+        if (d.cmp) { c.dataset.preview = 0; cmpOver(c, d.cmp, base, state.paste?.d === d || preview ? null : marks, null); cmpTop(c, d, base, marks, preview); }
+        else paintEditable(c, d, base, marks, 'over');
+        keepSnap(null);
+      }
+      c.dataset.pan = '1';
+      ui.cmdUI.place();
+      return;
+    }
     snap = null; kept = null;
     c.dataset.paints = (+c.dataset.paints || 0) + 1;
     const t0 = performance.now();
@@ -5300,7 +5324,7 @@ function paintOverlay(gesture = false) {
       keptCv = keptCv || document.createElement('canvas');
       keptCv.width = cw; keptCv.height = chh;
       keptCv.getContext('2d').drawImage(c, 0, 0);
-      kept = { key, still: !!d.cmp };
+      kept = { key, still: !!d.cmp, view: want };
     });
     if (d?.cmp) {
       c.dataset.preview = 0;
@@ -5309,22 +5333,46 @@ function paintOverlay(gesture = false) {
     } else if (d && d.lay) {                // a layout: each part painted once for all the places it is placed at (its matrix per place)
       paintDrawing(c, { ...base, fl: null, factor: 1 });                                      // clears
       for (const call of calls) drawn += paintDrawing(c, { ...base, keep: true, ...call });
+      if (!quick) keepBase(key)(drawn);                                                        // the base alone, for the pan end
     } else drawn = paintEditable(c, d, base, marks, undefined, keepBase(ekey));
     c.dataset.drawn = drawn || 0;
     c.dataset.indexed = d && d.ed ? '1' : '0';       // test hook (P3): a paint right after a commit comes before the pick index
     const isHeavy = heavy(performance.now() - t0, drawn || 0);
     if (!quick && drawn) lastHeavy = isHeavy;       // an empty paint (every part hidden) says nothing about how heavy the next one is
-    if (isHeavy) {
-      snapCv = snapCv || document.createElement('canvas');
-      snapCv.width = cw; snapCv.height = chh;
-      snapCv.getContext('2d').drawImage(c, 0, 0);
-      snap = { ...want, key: quick ? null : key };       // a quick bitmap may scale under a wheel, but never stands in for a paint
-    }
+    if (isHeavy) keepSnap(quick ? null : key);       // a quick bitmap may scale under a wheel, but never stands in for a paint
     if (d?.lay) layOverlay(c, d, base, marks, lifted);
     if (d?.cmp?.dragged) cmpPaint(c, d.cmp, base, marks, true);
     if (quick) { c.dataset.quick = '1'; snapTimer = setTimeout(() => paintOverlay(), 120); }
     ui.cmdUI.place();
   });
+}
+
+/**
+ * Pan end (TODO 324a): the kept base (keptCv, painted at kept.view) is moved to the view now when only its place changed (same scale and size, a whole number of device px,
+ * the same content: keyOf(view) is the key at that view) and the strips it no longer covers are painted off screen at their own origin; the base alone is left on c and in keptCv.
+ * False when anything else changed: the caller paints in full. A zoom end stays a full paint (324b).
+ */
+function panShift(c, d, base, want, calls, keyOf, nkey) {
+  const v = kept.view, k = want.view.scale * want.dpr;
+  if (v.view.scale !== want.view.scale || v.w !== want.w || v.h !== want.h || v.dpr !== want.dpr) return false;
+  const dx = (v.view.ox - want.view.ox) * k, dy = (v.view.oy - want.view.oy) * k, rx = Math.round(dx), ry = Math.round(dy), strips = panStrips(rx, ry, want.w, want.h);
+  if (!strips || Math.abs(dx - rx) > 1e-6 || Math.abs(dy - ry) > 1e-6 || !sameBase(kept.key, keyOf({ ...base, ox: v.view.ox, oy: v.view.oy }))) return false;
+  const g = c.getContext('2d');
+  panCv = panCv || document.createElement('canvas');
+  g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, want.w, want.h);
+  g.drawImage(keptCv, rx, ry);
+  for (const [x0, y0, x1, y1] of strips) {
+    panCv.width = x1 - x0; panCv.height = y1 - y0;
+    const b = { ...base, ox: base.ox + x0 / k, oy: base.oy + y0 / k, w: panCv.width / want.dpr, h: panCv.height / want.dpr, strip: true };       // the view of just this strip
+    if (d.lay) { paintDrawing(panCv, { ...b, fl: null, factor: 1 }); for (const call of calls) paintDrawing(panCv, { ...b, keep: true, ...call }); }
+    else if (d.cmp) { paintDrawing(panCv, { ...b, fl: null, factor: 1 }); cmpItems(panCv, d.cmp, b, null, false, 'base'); }
+    else paintEditable(panCv, d, b, null, 'base');
+    g.drawImage(panCv, x0, y0);
+  }
+  const kg = keptCv.getContext('2d');
+  kg.setTransform(1, 0, 0, 1, 0, 0); kg.clearRect(0, 0, want.w, want.h); kg.drawImage(c, 0, 0);
+  kept = { key: nkey, still: !!d.cmp, view: want };
+  return true;
 }
 
 function layOverlay(c, d, base, marks, lifted) {

@@ -159,6 +159,24 @@ test('blitCovers: a shifted bitmap shows nothing its canvas did not hold', () =>
   assert.equal(perf.blitCovers(null, 1, 0, w, h), false, 'an unknown box is not trusted once shifted');
 });
 
+test('panStrips: the shifted bitmap plus the strips cover the canvas once', () => {
+  const w = 40, h = 30, area = ([a, b, c, d]) => (c - a) * (d - b);
+  for (const [dx, dy] of [[5, 7], [-5, 7], [5, -7], [-5, -7], [0, 7], [5, 0], [0, -7]]) {
+    const strips = perf.panStrips(dx, dy, w, h), seen = new Set();
+    for (const [x0, y0, x1, y1] of strips) for (let x = x0; x < x1; x++) for (let y = y0; y < y1; y++) { assert.ok(!seen.has(x + ',' + y), 'no pixel twice'); seen.add(x + ',' + y); }
+    const kept = (w - Math.abs(dx)) * (h - Math.abs(dy));
+    assert.equal(seen.size + kept, w * h, `${dx},${dy}: strips + the reused bitmap fill the canvas`);
+    for (const r of strips) assert.ok(r[0] >= 0 && r[1] >= 0 && r[2] <= w && r[3] <= h && area(r) > 0, 'inside the canvas');
+    for (const [x, y] of [[0, 0], [w - 1, h - 1], [0, h - 1], [w - 1, 0]]) {            // a corner is either in a strip or still covered by the moved bitmap
+      const moved = x - dx >= 0 && x - dx < w && y - dy >= 0 && y - dy < h;
+      assert.equal(seen.has(x + ',' + y), !moved, `${dx},${dy} corner ${x},${y}`);
+    }
+  }
+  assert.deepEqual(perf.panStrips(0, 0, w, h), [], 'no move, nothing to paint');
+  assert.equal(perf.panStrips(w, 0, w, h), null, 'moved by a whole canvas: nothing to reuse');
+  assert.equal(perf.panStrips(3, -h, w, h), null);
+});
+
 test('heavy: slow script or many items; a small quick drawing always repaints in full', () => {
   assert.equal(heavy(3, 200), false);
   assert.equal(heavy(40, 200), true);

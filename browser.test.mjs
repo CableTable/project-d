@@ -28105,7 +28105,7 @@ try {
             assert.equal(await drawing.getAttribute('data-snap'), '1', `${kind} ${gesture}: the gesture uses the kept picture`);
             assert.equal(await paints(), before, `${kind} ${gesture}: no full paint during the burst`);
             await p.waitForFunction(() => document.querySelector('[data-testid=drawing]').dataset.snap === '', null, { timeout: 5000 });
-            assert.equal(await paints(), before + 1, `${kind} ${gesture}: exactly one full paint after settling`);
+            assert.equal(await paints(), before + (gesture === 'pan' ? 0 : 1), `${kind} ${gesture}: ${gesture === 'pan' ? 'no full paint after settling (the kept picture is shifted, TODO 324a)' : 'exactly one full paint after settling'}`);
             assert.ok(Number(await drawing.getAttribute('data-drawn')) > 0, `${kind} ${gesture}: settled artwork is drawn`);
           }
           const path = `${shotDir}/p7a-${kind.toLowerCase()}-${theme}.png`;
@@ -28113,6 +28113,107 @@ try {
           assert.ok(readFileSync(path).length > 1000, 'required screenshot exists');
         }
         console.log(`P7a ${kind}: 20k fixture, light/dark pan and wheel reuse; zero burst paints, one settle paint`);
+      } finally { await ctx.close(); }
+    }
+  });
+
+  await step('TODO 324a: a pan end shifts the kept picture and paints only the exposed strip (Drawings, Layout, Compare)', async () => {
+    const buffer = Buffer.from(writeDxf(bigDoc(150000)));
+    for (const kind of ['Drawings', 'Layout', 'Compare']) {
+      const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+      try {
+        const p = await ctx.newPage(), drawing = p.getByTestId('drawing'), errors = [];
+        p.on('pageerror', (e) => errors.push(String(e)));
+        await p.route('**/app.js', (route) => route.fulfill({ contentType: 'text/javascript', body: readFileSync('web/app.js', 'utf8') + '\nwindow.t324 = () => paintOverlay();' }));
+        const frame = () => p.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+        const paints = async () => Number(await drawing.getAttribute('data-paints'));
+        const menu = async (top, name) => { await p.locator(`[data-menu=${top}]`).click(); await p.getByRole('menuitem', { name, exact: true }).click({ timeout: 120000 }); };
+        const open = async (name) => {
+          await p.getByTestId('picker').setInputFiles({ name, mimeType: 'text/plain', buffer });
+          await p.waitForFunction((n) => document.querySelector('.dtab.on .tname').textContent === n, name, { timeout: 120000 });
+          await frame();
+        };
+        const settled = () => p.waitForFunction(() => document.querySelector('[data-testid=drawing]').dataset.snap === '', null, { timeout: 10000 });
+        // the pixels of the strip [x0, y0, x1, y1] (css px = device px here): how many are not transparent, and a hash of them
+        const strip = (r) => drawing.evaluate((c, [x0, y0, x1, y1]) => {
+          const d = c.getContext('2d').getImageData(x0, y0, x1 - x0, y1 - y0).data; let on = 0, sum = 0;
+          for (let i = 3; i < d.length; i += 4) if (d[i]) { on++; sum = (sum * 31 + d[i - 3] + 7 * d[i - 2] + 13 * d[i - 1] + 17 * d[i]) % 1000003; }
+          return { on, sum };
+        }, r);
+        // the picture the pan end left, then a full paint of the same view (nokeep: no kept base, no kept picture): they must agree
+        const sameAsFull = async (label) => {
+          const before = await paints();
+          await drawing.evaluate((c) => { window.__A = c.getContext('2d').getImageData(0, 0, c.width, c.height); c.dataset.nokeep = '1'; });
+          await p.evaluate(() => window.t324()); await frame();
+          assert.equal(await paints(), before + 1, `${label}: the check itself is one full paint`);
+          const diff = await drawing.evaluate((c) => {
+            const a = window.__A, b = c.getContext('2d').getImageData(0, 0, c.width, c.height);
+            delete c.dataset.nokeep; delete window.__A;
+            let n16 = 0, n48 = 0;
+            for (let i = 0; i < a.data.length; i += 4) { let mx = 0; for (let j = 0; j < 4; j++) mx = Math.max(mx, Math.abs(a.data[i + j] - b.data[i + j])); if (mx > 16) n16++; if (mx > 48) n48++; }
+            return { n16, n48, total: c.width * c.height };
+          });
+          // Not byte-equal: the lines are stroked in batches of up to 5000 items, and a batch ends at other items in another view, so where lines overlap the antialiasing adds up differently (a few pixels, a few levels).
+          // A shift off by one pixel, a missing strip or a wrong colour is thousands of pixels.
+          assert.ok(diff.n16 <= diff.total * 0.004 && diff.n48 <= diff.total * 0.002, `${label}: the shifted picture equals a full paint (${diff.n16} pixels over 16 levels apart, ${diff.n48} over 48, of ${diff.total})`);
+          console.log(`324a ${label}: ${diff.n16} pixels over 16 levels apart, ${diff.n48} over 48, of ${diff.total}`);
+        };
+        await p.goto(URL_ + '?autosave=86400000');
+        await p.waitForSelector('[data-testid=count]', { state: 'attached' });
+        await open('t324-big.dxf');
+        if (kind === 'Layout') { await menu('Layout', 'Add to layout'); await p.locator('.tabs .dtab').first().click(); await menu('Layout', 'Add to layout'); }
+        if (kind === 'Compare') { await open('t324-other.dxf'); await menu('File', 'Compare drawings…'); }
+        await p.getByTestId('canvas').getByRole('button', { name: 'Fit', exact: true }).click(); await frame();
+        const b = await p.getByTestId('canvas').boundingBox(), cx = b.x + b.width / 2, cy = b.y + b.height / 2;
+        // the box of what is drawn, in canvas px: zoomed in on its middle until it fills the canvas, so a pan exposes drawing
+        const inkBox = () => drawing.evaluate((c) => {
+          const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let x0 = c.width, y0 = c.height, x1 = 0, y1 = 0;
+          for (let i = 3, n = c.width * c.height * 4; i < n; i += 4) if (d[i]) { const q = i >> 2, x = q % c.width, y = (q - x) / c.width; if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+          return { x0, y0, x1, y1, w: c.width, h: c.height };
+        });
+        let ink = await inkBox();
+        await p.mouse.move(b.x + (ink.x0 + ink.x1) / 2, b.y + (ink.y0 + ink.y1) / 2); await frame();
+        // a layout part is small on its sheet and a zoomed view of it is not heavy any more: it is panned out of the canvas and back instead
+        const out = kind === 'Layout', pans = out ? [[26, 8], [-26, -8]] : [[7, 5], [-9, -6]];
+        for (let i = 0; !out && i < 20 && (ink.x0 > 4 || ink.y0 > 4 || ink.x1 < ink.w - 5 || ink.y1 < ink.h - 5); i++) { await p.mouse.wheel(0, -100); await frame(); await settled(); ink = await inkBox(); }
+        assert.ok(Number(await drawing.getAttribute('data-drawn')) > (out ? 5000 : 15000), `${kind}: the view is heavy (${await drawing.getAttribute('data-drawn')} items drawn; a layout part is small on its sheet, the 150000 items still make the paint slow)`);
+        ink = await inkBox();
+        const w = await drawing.evaluate((c) => c.width), h = await drawing.evaluate((c) => c.height), R = 20 * Math.abs(pans[1][0]), V = 20 * Math.abs(pans[1][1]);
+        const pan = async (label, sx, sy) => {
+          const before = await paints();
+          await p.mouse.move(cx, cy); await frame();
+          await p.mouse.down({ button: 'middle' });
+          for (let i = 1; i <= 20; i++) { await p.mouse.move(cx + i * sx, cy + i * sy); await frame(); }
+          await p.mouse.up({ button: 'middle' });
+          await frame();
+          assert.equal(await drawing.getAttribute('data-snap'), '1', `${label}: the burst moves the kept picture`);
+          await settled();
+          assert.equal(await drawing.getAttribute('data-pan'), '1', `${label}: the pan end shifted the kept picture`);
+          assert.equal(await paints(), before, `${label}: no full paint at the pan end`);
+        };
+        await pan(`${kind} pan right and down`, ...pans[0]);               // the strips: a band on the left, a band on the top
+        const left = await strip([0, 20 * pans[0][1], 20 * pans[0][0], h]);
+        if (ink.x0 <= 4) assert.ok(left.on > 200, `${kind}: the exposed strip holds drawing (${left.on} pixels)`);       // when the drawing runs past that edge of the view
+        if (!out) await sameAsFull(`${kind} pan 1`);                       // a layout's full paint out here is light (the part is mostly out of the canvas): it would drop the kept base the pan back needs
+        await pan(`${kind} pan left and up`, ...pans[1]);                  // strips on the right and the bottom, on top of the picture kept by the first pan
+        const right = await strip([w - R, V, w, h - V]);
+        if (out ? ink.x1 > w - R + 40 : ink.x1 >= w - 5) assert.ok(right.on > 200, `${kind}: the exposed right strip holds drawing (${right.on} pixels)`);
+        await sameAsFull(`${kind} pan 2`);
+        if (kind === 'Drawings') {                                          // an object drawn into the strip shows, and the next pan still equals a full paint
+          const was = await strip([30, 200, 120, 400]), n = await p.getByTestId('entities').textContent();
+          await p.locator('[data-tool=line]').first().click();
+          await p.mouse.click(b.x + 40, b.y + 220); await p.mouse.click(b.x + 110, b.y + 380); await p.keyboard.press('Escape'); await frame();
+          assert.notEqual(await p.getByTestId('entities').textContent(), n, 'the line was added');
+          assert.notDeepEqual(await strip([30, 200, 120, 400]), was, 'the new line shows');
+          await p.locator('[data-tool=select]').first().click(); await frame();
+          await pan('Drawings pan after the edit', 6, -4);
+          await sameAsFull('Drawings pan 3');
+        }
+        assert.deepEqual(errors, [], `${kind}: no page errors`);
+        const path = `${shotDir}/t324a-${kind.toLowerCase()}-light.png`;
+        await p.screenshot({ path });
+        assert.ok(readFileSync(path).length > 1000, 'required screenshot exists');
+        console.log(`324a ${kind}: pan end shifts, strips ${left.on} / ${right.on} px, no full paint`);
       } finally { await ctx.close(); }
     }
   });

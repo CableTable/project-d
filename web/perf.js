@@ -64,6 +64,18 @@ export function blitCovers(box, dx, dy, w, h) {
   return x0 >= x1 || y0 >= y1 || (x0 >= 0 && y0 >= 0 && x1 <= w && y1 <= h);
 }
 
+/**
+ * A w x h bitmap moved by whole device px (dx, dy) (TODO 324a, pan end): the rectangles [x0, y0, x1, y1] it no longer covers, none twice
+ * (the full-width band on the side it moved away from, then the rest of the height); null when it moved by a whole canvas or more (nothing is left to reuse).
+ */
+export function panStrips(dx, dy, w, h) {
+  if (Math.abs(dx) >= w || Math.abs(dy) >= h) return null;
+  const out = [], y0 = Math.max(0, dy), y1 = Math.min(h, h + dy);
+  if (dy) out.push(dy > 0 ? [0, 0, w, dy] : [0, h + dy, w, h]);
+  if (dx) out.push(dx > 0 ? [0, y0, dx, y1] : [w + dx, y0, w, y1]);
+  return out;
+}
+
 /** The bitmap can stand in at another canvas size, as long as the view has not zoomed far from it. */
 export function snapUsable(snap, want) {
   if (!snap) return false;

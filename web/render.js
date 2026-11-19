@@ -55,7 +55,7 @@ function trace(c, ops, origin, pxPerUnit) {
 
 /**
  * Paints into `canvas` (already sized to w*dpr by h*dpr). Returns how many items the main drawing painted.
- * o: { keep (do not clear first: paint another drawing on top), fl, off, factor, sheetH, ox, oy, scale (px per sheet mm), w, h (css px), dpr, dark,
+ * o: { strip (a layout slot's items are culled to the view: the strip of a pan end, TODO 324a), keep (do not clear first: paint another drawing on top), fl, off, factor, sheetH, ox, oy, scale (px per sheet mm), w, h (css px), dpr, dark,
  *       tint (one css colour to draw everything in: a part off the sheet), previewBounds (optional callback with the flattened preview's CSS-pixel box),
  *       bg (the background picture: bitmap, w, h, mm, x, y, visible), hl (items drawn again in `accent`: the selection), marks ([x, y] points in drawing units: Set length's picks), dim (a dimension being placed or moved: edit.js dimGeometry), accent (css colour), gaps ([x, y] drawing units: a ring each), markCol (css colour of the rings) }
  */
@@ -81,16 +81,19 @@ export function paintDrawing(canvas, o) {
   const sheetBg = dark ? SHEETS.dark.bg : SHEETS.light.bg;
   if (o.slots) {
     let drawn = 0;
-    // Layout: the drawing once per slot (drawing units → sheet mm), any slot in view; no per-item culling
+    // Layout: the drawing once per slot (drawing units → sheet mm), any slot in view; no per-item culling, except for o.strip (a strip of a pan end, TODO 324a: only what lies in it, as the drawing tab does)
     const box = fl.boxes && fl.boxes[spaceOf(fl) ? 'paper' : 'model'];
     const view = [ox, oy, ox + w / scale, oy + h / scale];
     for (const M of o.slots) {
+      const det = M[0] * M[3] - M[1] * M[2];
+      const back = det ? [[view[0], view[1]], [view[2], view[1]], [view[0], view[3]], [view[2], view[3]]].map(([X, Y]) => [(M[3] * (X - M[4]) - M[2] * (Y - M[5])) / det, (M[0] * (Y - M[5]) - M[1] * (X - M[4])) / det]) : null;
+      const vr = o.strip && back && [Math.min(...back.map((p) => p[0])), Math.min(...back.map((p) => p[1])), Math.max(...back.map((p) => p[0])), Math.max(...back.map((p) => p[1]))];
       if (box) {
         const xs = [mapply(M, box[0], box[1]), mapply(M, box[2], box[3]), mapply(M, box[0], box[3]), mapply(M, box[2], box[1])];       // all four corners: a turned slot
         const X = xs.map((p) => p[0]), Y = xs.map((p) => p[1]);
         if (Math.max(...X) < view[0] || Math.min(...X) > view[2] || Math.max(...Y) < view[1] || Math.min(...Y) > view[3]) continue;
       }
-      drawn += paintItems(c, fl, off, mmul(V, M), k, null, dpr, col, sheetBg, null, factor, o.wireframe, o.minPx);
+      drawn += paintItems(c, fl, off, mmul(V, M), k, vr, dpr, col, sheetBg, null, factor, o.wireframe, o.minPx);
     }
     return drawn;
   }
