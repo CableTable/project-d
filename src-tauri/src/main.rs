@@ -34,6 +34,28 @@ fn grant_balloon_sidecar(app: tauri::AppHandle, path: std::path::PathBuf) -> Res
     scope.allow_file(units).map_err(|error| error.to_string())
 }
 
+/// A name is safe when it is one plain file name: `a..b-img1.png` is real, `../x.png`, `d/x.png` and `C:x.png` are not.
+fn picture_name_ok(name: &str) -> bool {
+    !name.is_empty() && std::path::Path::new(name).file_name().is_some_and(|f| f == name)
+}
+
+/// Save and Export write `<dxf name>-imgN.png` beside the DXF: allow exactly those files.
+#[tauri::command]
+fn grant_save_pictures(app: tauri::AppHandle, path: std::path::PathBuf, names: Vec<String>) -> Result<(), String> {
+    let scope = app.fs_scope();
+    if !path.is_absolute() || path.is_dir() || !scope.is_allowed(&path) {
+        return Err("The DXF file is outside the allowed scope".into());
+    }
+    let dir = path.parent().ok_or("The DXF has no folder")?;
+    if names.iter().any(|name| !picture_name_ok(name)) {
+        return Err("A picture name is not a plain file name".into());
+    }
+    for name in names {
+        scope.allow_file(dir.join(name)).map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
 #[tauri::command]
 async fn dwg_to_dxf(app: tauri::AppHandle, path: PathBuf) -> Result<tauri::ipc::Response, String> {
     if !cfg!(dwg_helper) {
@@ -76,7 +98,22 @@ fn main() {
         }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
-        .invoke_handler(tauri::generate_handler![grant_balloon_sidecar, take_launch_files, dwg_to_dxf, dwg_bytes_to_dxf])
+        .invoke_handler(tauri::generate_handler![grant_balloon_sidecar, grant_save_pictures, take_launch_files, dwg_to_dxf, dwg_bytes_to_dxf])
         .run(tauri::generate_context!())
         .expect("error while running Project D");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::picture_name_ok;
+
+    #[test]
+    fn picture_names_are_plain_file_names() {
+        for good in ["a-img1.png", "a..b-img1.png", "my drawing-img12.png"] {
+            assert!(picture_name_ok(good), "{good}");
+        }
+        for bad in ["", ".", "..", "../a-img1.png", "d/a-img1.png", "d\\a-img1.png", "C:a-img1.png", "C:\\a-img1.png", "a-img1.png/"] {
+            assert!(!picture_name_ok(bad), "{bad}");
+        }
+    }
 }

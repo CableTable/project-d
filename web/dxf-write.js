@@ -132,12 +132,13 @@ export function unwritable(doc) {
 }
 
 /** The same conversion and loss note for Save and the Parts library. */
-export function saveReportNote({ tables, skipped, unreadLabels = [] }) {
+export function saveReportNote({ tables, skipped, unreadLabels = [], picturesFailed = 0 }) {
   const changes = [];
   if (tables) changes.push(tables === 1 ? '1 table saved as a block (AutoCAD sees it as a block, not a table)' : `${tables} tables saved as blocks (AutoCAD sees them as blocks, not tables)`);
   const dropped = skipped.reduce((sum, b) => sum + b.count, 0);
   if (dropped) changes.push(`${dropped} ${dropped === 1 ? 'object' : 'objects'} not saved: ` + skipped.map((b) => b.type + ' x' + b.count).join(', '));
   if (unreadLabels.length) changes.push('Dimension labels kept unchanged (could not read): ' + unreadLabels.join(', '));
+  if (picturesFailed) changes.push(`${picturesFailed} picture(s) not saved`);
   return changes.length ? '. ' + changes.join('; ') : '';
 }
 

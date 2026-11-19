@@ -8696,8 +8696,9 @@ try {
       assert.equal(exp.entities.find((e) => e.type === 'IMAGE').r.file, 'final-export-img1.png');
       assert.equal(await p.locator('.dtab.on .tname').textContent(), 'renamed.dxf', 'Export keeps the source name');
       await p.evaluate(() => { window.__pics305.fail = true; window.__pics305.next = 'C:/jobs/failed.dxf'; });
-      await menu('Save As…'); await prompt('Save failed: PNG write failed');
-      assert.equal(await p.evaluate(() => window.__pics305.files['C:/jobs/failed.dxf']), undefined, 'no completed DXF after PNG failure');
+      await menu('Save As…'); await prompt('Saved failed.dxf');          // TODO 341: the DXF is written first; refused pictures are counted
+      await p.waitForFunction(() => /2 picture\(s\) not saved/.test(document.querySelector('[data-testid=cmd-prompt]').textContent));
+      assert.ok(await p.evaluate(() => window.__pics305.files['C:/jobs/failed.dxf']), 'the DXF is saved though the PNGs failed');
       await p.evaluate(() => { delete window.__pics305.files['C:/jobs/renamed-img1.png']; delete window.__pics305.files['C:/jobs/renamed-img2.png']; window.__pics305.next = 'C:/jobs/renamed.dxf'; });
       await p.locator('.dtab.on .x').click(); await menu('Open…'); await prompt('Opened renamed.dxf');
       assert.deepEqual(await ink(), [0, 0], 'missing native siblings leave undrawn IMAGEs');
@@ -8709,6 +8710,55 @@ try {
         let n = 0; for (let i = 4; i < d.length; i += 4) if (d[i] !== d[0] || d[i + 1] !== d[1] || d[i + 2] !== d[2]) n++;
         return n;
       }) > 100, 'a desktop open of a DXF without IMAGEs still draws');
+    } finally { await context.close(); }
+  });
+
+  await step('TODO 341: refused picture paths still save the DXF first, grant plain names, and warn "N picture(s) not saved"', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    try {
+      const p = await context.newPage(), q = (id) => p.getByTestId(id);
+      p.on('pageerror', (e) => errors.push(String(e)));
+      const menu = async (name) => { await p.locator('[data-menu=File]').click(); await p.getByRole('menuitem', { name, exact: true }).click(); };
+      const prompt = (text) => p.waitForFunction((text) => document.querySelector('[data-testid=cmd-prompt]').textContent.startsWith(text), text);
+      await p.goto(URL_ + '?autosave=86400000');
+      await p.evaluate(() => {
+        window.__pics341 = { log: [], grants: [], next: 'C:/jobs/a..b.dxf', dialogs: 0 };
+        window.__TAURI__ = {
+          dialog: { save: async () => { window.__pics341.dialogs++; return window.__pics341.next; }, open: async () => window.__pics341.next, ask: async () => true },
+          core: { invoke: async (command, args) => { if (command === 'grant_balloon_sidecar') return; if (command !== 'grant_save_pictures') throw new Error(command); window.__pics341.log.push('grant'); window.__pics341.grants.push(args); } },
+          fs: {
+            exists: async () => false,
+            readFile: async () => { throw new Error('missing'); },
+            writeFile: async (path) => { window.__pics341.log.push(path); if (/\.png$/i.test(path)) throw new Error('forbidden path'); },
+            writeTextFile: async (path) => { window.__pics341.log.push(path); },
+          },
+        };
+      });
+      await q('picker').setInputFiles(picturesPdf()); await prompt('Opened pictures.pdf');
+      await menu('Save As…'); await prompt('Saved a..b.dxf');
+      const text = () => q('cmd-prompt').textContent();
+      assert.match(await text(), /2 picture\(s\) not saved/);
+      const s = await p.evaluate(() => window.__pics341);
+      assert.deepEqual(s.grants, [{ path: 'C:/jobs/a..b.dxf', names: ['a..b-img1.png', 'a..b-img2.png'] }], 'the grant gets plain names');
+      assert.deepEqual(s.log, ['grant', 'C:/jobs/a..b.dxf', 'C:/jobs/a..b-img1.png', 'C:/jobs/a..b-img2.png'], 'grant, then the DXF, then each picture');
+      assert.equal(await p.locator('.dtab.on .dot').count(), 0, 'refused pictures do not mark the tab dirty');
+      // second Save: in place, no dialog, same order and note
+      await p.evaluate(() => { window.__pics341.log.length = 0; window.__pics341.grants.length = 0; window.__pics341.dialogs = 0; });
+      await menu('Save');
+      await p.waitForFunction(() => window.__pics341.log.length === 4);
+      assert.deepEqual(await p.evaluate(() => window.__pics341.log), ['grant', 'C:/jobs/a..b.dxf', 'C:/jobs/a..b-img1.png', 'C:/jobs/a..b-img2.png']);
+      assert.equal(await p.evaluate(() => window.__pics341.dialogs), 0, 'in-place Save asks for nothing');
+      assert.match(await text(), /^Saved a\.\.b\.dxf.*2 picture\(s\) not saved/);
+      // Export: the grant covers it too, and the note carries the count
+      await p.evaluate(() => { window.__pics341.log.length = 0; window.__pics341.grants.length = 0; window.__pics341.next = 'C:/jobs/out.dxf'; });
+      await menu('Export DXF…'); await q('export-dxf-go').click(); await prompt('Exported out.dxf');
+      assert.match(await text(), /2 picture\(s\) not saved/);
+      assert.deepEqual(await p.evaluate(() => window.__pics341.grants), [{ path: 'C:/jobs/out.dxf', names: ['out-img1.png', 'out-img2.png'] }]);
+      // a grant that throws carries on: the DXF is still written
+      await p.evaluate(() => { window.__TAURI__.core.invoke = async () => { throw new Error('refused'); }; window.__pics341.log.length = 0; window.__pics341.next = 'C:/jobs/b.dxf'; });
+      await menu('Save As…'); await prompt('Saved b.dxf');
+      assert.ok((await p.evaluate(() => window.__pics341.log)).includes('C:/jobs/b.dxf'));
+      assert.match(await text(), /2 picture\(s\) not saved/);
     } finally { await context.close(); }
   });
 

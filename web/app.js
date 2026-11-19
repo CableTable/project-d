@@ -3859,9 +3859,17 @@ function download(name, text, type = 'application/dxf') {
 async function writeDrawing(raw, name, path, opts = {}) {
   const report = writeDxfWithReport(raw, { ...opts, name }), t = window.__TAURI__;
   const bytes = (px) => Uint8Array.from(atob(px.slice(px.indexOf(',') + 1)), (c) => c.charCodeAt(0));
+  report.picturesFailed = 0;
   if (path && t?.fs?.writeTextFile) {
-    for (const pic of report.pictures) await t.fs.writeFile(path.replace(/[^\\/]+$/, '') + pic.name, bytes(pic.px));
-    await t.fs.writeTextFile(path, report.text);
+    if (report.pictures.length && t.core?.invoke) {
+      try { await t.core.invoke('grant_save_pictures', { path, names: report.pictures.map((pic) => pic.name) }); }
+      catch (err) { console.warn('Picture file scope:', err); } // The pictures then fail one by one and are counted below.
+    }
+    await t.fs.writeTextFile(path, report.text);                   // the DXF first: a refused picture must not lose it
+    for (const pic of report.pictures) {
+      try { await t.fs.writeFile(path.replace(/[^\\/]+$/, '') + pic.name, bytes(pic.px)); }
+      catch (err) { report.picturesFailed++; console.warn('Picture not saved:', pic.name, err); }
+    }
   } else {
     download(name, report.text);
     for (const pic of report.pictures) download(pic.name, bytes(pic.px), 'image/png');
@@ -3919,7 +3927,7 @@ async function save(forceAs) {
     } else {
       name = ask || !path ? want : dxfName(d.name);
     }
-    const { tables, skipped } = await writeDrawing(raw, name, path, { escapeUnicode: true, extents: d.lay || !d.fl ? null : d.fl.boxes.model });
+    const { tables, skipped, picturesFailed } = await writeDrawing(raw, name, path, { escapeUnicode: true, extents: d.lay || !d.fl ? null : d.fl.boxes.model });
     let unitError = '';
     try { await unitsSave(d, path, name); }
     catch (err) { unitError = err.message || String(err); d.unitsDirty = true; }
@@ -3934,8 +3942,9 @@ async function save(forceAs) {
     if (d.lay) d.lay.name = name;
     if (bad.length) d.acceptedLoss = true;
     renderTabs();
-    const saveNote = saveReportNote({ tables, skipped }) + backupNote;
-    if (unitError) { note('Saved; unit not saved: ' + unitError + backupNote + (!balloonsSaved ? '. ' + state.msg : '')); return; }
+    const saveNote = saveReportNote({ tables, skipped, picturesFailed }) + backupNote;
+    const picNote = picturesFailed ? `. ${picturesFailed} picture(s) not saved` : '';
+    if (unitError) { note('Saved; unit not saved: ' + unitError + backupNote + picNote + (!balloonsSaved ? '. ' + state.msg : '')); return; }
     if (!balloonsSaved) { note('Saved ' + name + saveNote + '. ' + state.msg); return; }
     const dir = path ? path.slice(0, Math.max(path.lastIndexOf('\\'), path.lastIndexOf('/'))) : '';
     note('Saved ' + name + (dir ? ' to ' + dir : '') + saveNote + (d.bg ? '. The background picture is not saved in the DXF' : ''));
