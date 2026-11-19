@@ -31500,6 +31500,36 @@ try {
     assert.deepEqual(errors, []);
   });
 
+  await step('TODO 337: a selected layout part and a drawing group box keep one thin dashed screen line at 1x and 8x zoom', async () => {
+    const canvasMid = async () => { const b = await t('canvas').boundingBox(); return { x: b.x + b.width / 2, y: b.y + b.height / 2 }; };
+    const sheetW = () => page.locator('rect.sheet').evaluate((e) => e.getBoundingClientRect().width);
+    const look = (sel) => page.locator(sel).first().evaluate((el) => {      // the line as drawn on screen: a non-scaling stroke ignores the zoom, any other is multiplied by it
+      const cs = getComputedStyle(el), f = cs.vectorEffect === 'non-scaling-stroke' ? 1 : Math.hypot(el.getScreenCTM().a, el.getScreenCTM().b);
+      return { width: parseFloat(cs.strokeWidth) * f, dash: cs.strokeDasharray.split(/[ ,]+/).map((d) => parseFloat(d) * f) };
+    });
+    const zoomed = async (sel, gap) => {
+      const before = await look(sel), w0 = await sheetW(), m = await canvasMid();
+      await page.mouse.move(m.x, m.y);
+      for (let i = 0; i < 40 && await sheetW() < 8 * w0; i++) { await page.mouse.wheel(0, -300); await frames(); }
+      assert.ok(await sheetW() >= 8 * w0, 'zoomed in 8x');
+      assert.deepEqual(await look(sel), before, `${sel} keeps its on-screen width and dash at 8x`);
+      assert.ok(before.width <= 2 && before.dash.length === 2 && before.dash[0] === 6 && before.dash[1] === gap, `${sel} is thin and dashed 6 ${gap} on screen: ${JSON.stringify(before)}`);
+    };
+    await freshLayoutWithPlate();
+    await page.waitForFunction(() => document.querySelectorAll('[data-group=tools] .sel-box').length === 1);
+    await zoomed('[data-group=tools] .sel-box', 6);
+    for (const theme of ['light', 'dark']) { await menuItem('View', 'Theme: ' + theme); await page.screenshot({ path: `${shotDir}/337-part-8x-${theme}.png` }); }
+    await menuItem('View', 'Theme: light');
+    await closeTabs(/./);
+    await open97b(lines97b(), 'zoom337.dxf');
+    await key97b('Control+a'); await key97b('Control+g'); await waitSel('Group of 2');
+    await zoomed('[data-testid=drawing-group-box]', 4);
+    await closeTabs(/./); await open97b(lines97b(), 'zoom337c.dxf');
+    await typeCmd('compare'); await key97b('Control+a'); await key97b('Control+g'); await waitSel('Group of 2');
+    await zoomed('[data-testid=drawing-group-box]', 4);                  // Compare draws the same box
+    await closeTabs(/./);
+  });
+
   const open97c = async (raw, name = 'break97c.dxf') => {
     await closeTabs(/./);
     await t('picker').setInputFiles({ name, mimeType: 'text/plain', buffer: Buffer.from(writeDxf(raw)) });

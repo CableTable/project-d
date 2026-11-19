@@ -5104,7 +5104,7 @@ function drawTools() {
   const cor = PL.corners(sel.part, sel.p).map(Y);
   if (pdrag && pdrag.ghost) out.push(s('polygon', { class: 'ghost', points: poly(PL.corners(sel.part, pdrag.ghost).map(Y)) }));
   if (pdrag && pdrag.ghosts) for (const gh of pdrag.ghosts) out.push(s('polygon', { class: 'ghost', points: poly(PL.corners(gh.part, gh.pl).map(Y)) }));
-  out.push(s('polygon', { class: 'sel-box', points: poly(cor), 'stroke-dasharray': `${6 * k} ${6 * k}`, 'data-mode': state.mode }));
+  out.push(s('polygon', { class: 'sel-box', points: poly(cor), 'data-mode': state.mode }));
   if (state.mode === 'rotate') {
     const mid = PL.centreOf(sel.part, sel.p), c = Y(mid), pv = Y(pivotPoint(sel.part, sel.p));
     out.push(...rotationControls(cor, c, pv, k, pdrag?.label?.text));
