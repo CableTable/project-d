@@ -71,7 +71,6 @@ import { extendEntity, extendRegion, previewEdit, curveShape, isBoundary, extend
 import { placedMat, placedBox, placement1, GRID_KEYS, gridLayout, bakeGrid, slotOf, relayGrid } from './apply.js';
 import { layoutSnap, placedSnap, layoutCandidates, layoutReference, partIndex, toPart } from './layoutsnap.js';
 import * as LD from './layoutdoc.js';
-import { labelGaps } from './pdf-source.js';
 import { isDimPart } from './layoutdim.js';
 import { dropPart } from './dropin.js';
 import { copySnapshot, copyPlacedSnapshot, drawingFromPlaced, pasteSnapshot, partFromSnapshot } from './clipboard.js';
@@ -3672,7 +3671,7 @@ function exportSource(selectionOnly = false, cut = true) {
     const lay = shownLayout(d);
     if (!LD.placedAll(lay).length) return null;
     const { gripTop, gripRight, gripBottom, gripLeft } = lay.s, hasSelection = !!selectedPlaced();
-    const sheet = (l) => ({ name: d.name, path, fl: flatten(LD.layoutRaw(l)), factor: 1, off: new Set(), sheetW: d.lay.s.sheetW, sheetH: d.lay.s.sheetH, grippers: { gripTop, gripRight, gripBottom, gripLeft }, gaps: labelGaps(LD.gridOf(l), l.s.sheetH), hide: ['Sheet', 'Marks'], hasSelection });
+    const sheet = (l) => ({ name: d.name, path, fl: flatten(LD.layoutRaw(l)), factor: 1, off: new Set(), sheetW: d.lay.s.sheetW, sheetH: d.lay.s.sheetH, grippers: { gripTop, gripRight, gripBottom, gripLeft }, hide: ['Sheet', 'Marks'], hasSelection });
     if (!selectionOnly) return sheet(lay);
     const picked = selIdxs().map((i) => placedNow[i]).filter((p) => !(d.hiddenParts && d.hiddenParts.has(p.partId)));       // the selected parts only (a grid copy is placed loose, in the same place); hidden ones stay out
     if (!picked.length) return null;

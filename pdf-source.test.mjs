@@ -30,13 +30,3 @@ test('TODO 202: batch keeps its own sheet size and hides nothing; a layout file 
     }
   }
 });
-
-test('TODO 333: a batch layout file carries its grid\'s measured gaps; a plain drawing carries none', () => {
-  const drawing = addEntities(newDoc(4), line(0, 0, 100, 80)), lay = newLayout('Batch');
-  Object.assign(lay.s, { sheetW: 1000, sheetH: 700, gridPart: 'p', fit: false, cols: 2, rows: 2, gapX: 5, gapY: 9 });
-  lay.parts.p = makePart('p', 'Plate', drawing);
-  for (const [raw, sizes] of [[layoutRaw(lay), [5, 9]], [drawing, undefined]]) {
-    const doc = readDxf(writeDxf(raw)), src = batchPdfSource({ doc, result: flatten(doc) }, { w: 1000, h: 700 });
-    assert.deepEqual(src.gaps?.map((g) => g.size), sizes);
-  }
-});

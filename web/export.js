@@ -24,7 +24,7 @@ const customSettings = (saved) => {
   return { scaleText, scale: parseScale(scaleText), customPaper: Object.hasOwn(PAPERS, saved.customPaper) ? saved.customPaper : DEFAULT_OPTIONS.customPaper };
 };
 const layoutSettings = {
-  ...DEFAULT_OPTIONS, ...customSettings(savedLayout), tab: 'one', pageIdx: 0, labelGap: savedLayout.labelGap === true,
+  ...DEFAULT_OPTIONS, ...customSettings(savedLayout), tab: 'one', pageIdx: 0,
   marginPreset: ['standard', 'office', 'custom'].includes(savedLayout.marginPreset) ? savedLayout.marginPreset : 'standard',
   margins: marginsOf({ margins: savedLayout.margins || OFFICE_MARGINS }),
   batch: { folder: '', dxf: true, dwg: true, cdr: true, sub: false, mode: 'same', saveTo: 'same', saveDir: null, all: [], busy: false },
@@ -147,7 +147,7 @@ export function openExport(host) {
   const opts = () => ({
     page: settings.page, tilePaper: settings.tilePaper, checkPaper: settings.checkPaper, customPaper: settings.customPaper, scale: settings.scale,
     mirror: settings.mirror && !scaled(), negative: settings.negative && !scaled(),
-    black: settings.black, separate: settings.separate, crop: settings.crop, reg: settings.reg, strip: settings.strip, sheetSizeGripper: settings.sheetSizeGripper, labelGap: settings.labelGap, titleBlock,
+    black: settings.black, separate: settings.separate, crop: settings.crop, reg: settings.reg, strip: settings.strip, sheetSizeGripper: settings.sheetSizeGripper, titleBlock,
     margins: settings.marginPreset === 'standard' ? undefined : settings.margins,
   });
 
@@ -288,8 +288,7 @@ export function openExport(host) {
     fieldset(part ? 'Label' : 'Marks',
       ...(part ? [] : [check('crop', 'Crop marks', 'pdf-crop'), check('reg', 'Registration marks', 'pdf-reg')]),
       check('strip', 'Job strip: file, date, colour', 'pdf-strip'),
-      ...(part ? [] : [check('sheetSizeGripper', 'Sheet size and gripper', 'pdf-sheet-size-gripper'), check('labelGap', 'Label gap', 'pdf-label-gap')])));
-  if (!part) ref.labelGap.addEventListener('change', () => save({ labelGap: ref.labelGap.checked }));
+      ...(part ? [] : [check('sheetSizeGripper', 'Sheet size and gripper', 'pdf-sheet-size-gripper')])));
   const right = h('div', { class: 'pd-right' }, ref.preLabel, ref.prevBox, ref.pageBtns);
   const oneBody = h('div', { class: 'pd-body' }, left, right);
 
@@ -401,7 +400,7 @@ export function openExport(host) {
     if (badScale) { ref.print.disabled = true; ref.go.disabled = true; }
     const p0 = plan.pages[0], oneCheck = check || (custom && !p0.tile);       // a custom page that is one page is a check print at the typed scale
     fillMargins();
-    if (!part) for (const k of ['sheetSizeGripper', 'labelGap']) { ref[k].disabled = !oneCheck; ref[k].title = oneCheck ? '' : custom ? 'Needs one page: pick a bigger paper or a smaller scale' : 'Check print only'; }
+    if (!part) { ref.sheetSizeGripper.disabled = !oneCheck; ref.sheetSizeGripper.title = oneCheck ? '' : custom ? 'Needs one page: pick a bigger paper or a smaller scale' : 'Check print only'; }
     if (document.activeElement !== ref.scaleBox) ref.scaleBox.value = check ? scaleText(p0.scale) : settings.scaleText;     // Check print / Scaled to fit: its computed scale, read out
     const typed = parseScale(settings.scaleText);
     ref.scaleOther.textContent = check ? '= ' + percentText(p0.scale) : custom && typed ? '= ' + (settings.scaleText.includes('%') ? scaleText(typed) : percentText(typed)) : '';
