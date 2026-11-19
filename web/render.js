@@ -5,7 +5,7 @@ import { placement, shownItems, itemVisible, spaceOf } from './doc.js';
 import { paintMode } from './wireframe.js';
 import { viewOrigin } from './view-origin.js';
 import { drawingPreviewBox, overlayBox } from './preview.js';
-import { outsideView, subPixel, skipPoint, maxScale } from './perf.js';
+import { outsideView, subPixel, skipPoint, maxScale, drain } from './perf.js';
 import { SNAP_NAME } from './snap.js';
 import { pictureBitmap } from './pictures.js';
 
@@ -59,7 +59,10 @@ function trace(c, ops, origin, pxPerUnit) {
  *       tint (one css colour to draw everything in: a part off the sheet), previewBounds (optional callback with the flattened preview's CSS-pixel box),
  *       bg (the background picture: bitmap, w, h, mm, x, y, visible), hl (items drawn again in `accent`: the selection), marks ([x, y] points in drawing units: Set length's picks), dim (a dimension being placed or moved: edit.js dimGeometry), accent (css colour), gaps ([x, y] drawing units: a ring each), markCol (css colour of the rings) }
  */
-export function paintDrawing(canvas, o) {
+export function paintDrawing(canvas, o) { return drain(paintDrawingSteps(canvas, o)); }
+
+/** paintDrawing as a generator (TODO 322c): the same canvas calls in the same order, but it yields wherever due() says a time slice is used up (only between two runs of strokes, so the picture is the one a single call paints); returns the drawn count. */
+export function* paintDrawingSteps(canvas, o, due) {
   const { fl, off, factor, sheetH, ox, oy, scale, w, h, dpr, dark } = o;
   const c = canvas.getContext('2d');
   const over = o.part === 'over';                      // part 'base' stops after the drawing itself, part 'over' paints only the rest on a base kept on the canvas (TODO 258 / 259)
@@ -95,7 +98,7 @@ export function paintDrawing(canvas, o) {
         const X = xs.map((p) => p[0]), Y = xs.map((p) => p[1]);
         if (Math.max(...X) < view[0] || Math.min(...X) > view[2] || Math.max(...Y) < view[1] || Math.min(...Y) > view[3]) continue;
       }
-      drawn += paintItems(c, fl, off, mmul(V, M), k, vr, dpr, col, sheetBg, null, factor, o.wireframe, o.minPx);
+      drawn += yield* paintItems(c, fl, off, mmul(V, M), k, vr, dpr, col, sheetBg, null, factor, o.wireframe, o.minPx, due);
     }
     return drawn;
   }
@@ -104,7 +107,7 @@ export function paintDrawing(canvas, o) {
   const xs = [ox / factor, (ox + w / scale) / factor];
   const ys = [(sheetH - oy - h / scale) / factor, (sheetH - oy) / factor];
   const vr = [Math.min(...xs), ys[0], Math.max(...xs), ys[1]];
-  const drawn = over ? 0 : paintItems(c, fl, off, T, k, vr, dpr, col, sheetBg, o.hide, factor, o.wireframe, o.minPx);
+  const drawn = over ? 0 : yield* paintItems(c, fl, off, T, k, vr, dpr, col, sheetBg, o.hide, factor, o.wireframe, o.minPx, due);
   if (o.part === 'base') return drawn;
   if (o.hl && o.hl.length) highlight(c, o.hl, fl.mats, T, k, dpr, o.accent || '#4f46e5', o.wireframe);
   if (o.dim) drawDimPreview(c, o.dim, T, dpr, o.dimCol || DIM_LIGHT);
@@ -162,7 +165,7 @@ function paintPictures(c, fl, off, T, vr, hide) {
 }
 
 /** The shown items through T (drawing units → canvas pixels), k pixels per unit; vr culls to the view (drawing units), or null. */
-function paintItems(c, fl, off, T, k, vr, dpr, col, sheetBg, hide, factor, wireframe, minPx) {
+function* paintItems(c, fl, off, T, k, vr, dpr, col, sheetBg, hide, factor, wireframe, minPx, due) {
   const mats = fl.mats;
   let cur = -1, kk = k, pxPerUnit = 0, open = false, pc = null, pw = 0, pd = null, cap = null, join = null, origin = [0, 0], drawn = 0, run = 0;
   const flush = () => { if (open) { if (wireframe) wireStroke(c, dpr); else c.stroke(); } open = false; };
@@ -187,6 +190,7 @@ function paintItems(c, fl, off, T, k, vr, dpr, col, sheetBg, hide, factor, wiref
       if (!open || css !== pc || lw !== pw || dash !== pd || nextCap !== cap || nextJoin !== join || ++run > 5000) {
         run = 1;
         flush();
+        if (due?.()) yield;       // 322c: the strokes so far are on the canvas, the next run starts from its own style
         c.strokeStyle = css; c.lineWidth = lw; c.setLineDash(dash === it.dpx && dash ? dash.map((x) => x * dpr / kk) : dash || []);
         c.lineCap = cap = nextCap; c.lineJoin = join = nextJoin; c.miterLimit = 10;
         c.beginPath(); open = true; pc = css; pw = lw; pd = dash;

@@ -29240,7 +29240,7 @@ try {
       paints0 = await paints(); index0 = await indexes();
       await p.mouse.click(at.x + 30, at.y + 10); await frame(); await p.waitForTimeout(1500); await frame();
       assert.equal((await labels()).length, steps + 1, 'the Stretch finish is one undo step');
-      assert.ok(await paints() - paints0 <= 1, `a Stretch finish does at most one full paint, did ${await paints() - paints0}`);
+      assert.ok(await paints() - paints0 <= 2, `a Stretch finish does at most two full paints (the quick frame, then the banded one: TODO 322c), did ${await paints() - paints0}`);
       assert.ok(await indexes() - index0 <= 1, `a Stretch finish rebuilds the index at most once, did ${await indexes() - index0}`);
       await pixels('Stretch finish');
       const { splineDoc } = await import('./tools/gen-big-dxf.mjs');
@@ -29653,6 +29653,121 @@ try {
     within(edit, { 'Ctrl+A': 1, 'object drag': 1, 'LINE grip drag': 2 });       // TODO 320: both were 20 full paints
     assert.ok(edit['Ctrl+A'].lineTo >= edit['Ctrl+Z'].lineTo, 'Ctrl+A paints the highlight too');
     assert.ok(edit['Ctrl+A'].lineTo <= 2 * edit['Ctrl+Z'].lineTo, `Ctrl+A traces the drawing at most twice (base and highlight): lineTo ${edit['Ctrl+A'].lineTo}, one full paint ${edit['Ctrl+Z'].lineTo}`);
+  });
+
+  await step('TODO 322c: a 150k drawing opens and redraws after Delete, Ctrl+Z and Ctrl+Y as one quick frame, then its sliced full paint; the settled picture equals a full paint', async () => {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    try {
+      const p = await ctx.newPage(), drawing = p.getByTestId('drawing'), errors = [];
+      p.on('pageerror', (e) => errors.push(String(e)));
+      await p.route('**/app.js', (route) => route.fulfill({ contentType: 'text/javascript', body: readFileSync('web/app.js', 'utf8') + '\nwindow.t322Paint = () => paintOverlay();' }));
+      await p.addInitScript(() => {       // the canvas' states in order: a quick frame, the sliced paint under it, the settled picture
+        window.t322Log = [];
+        new MutationObserver(() => {
+          const c = document.querySelector('[data-testid=drawing]');
+          window.t322Log.push(c.dataset.quick === '1' ? 'quick' : c.dataset.chunk === '1' ? 'chunk' : c.dataset.keep === '1' ? 'keep' : 'other');
+        }).observe(document, { subtree: true, attributes: true, attributeFilter: ['data-quick', 'data-chunk', 'data-keep'] });
+      });
+      const frame = () => p.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+      const log = () => p.evaluate(() => window.t322Log.filter((s, i, a) => s !== a[i - 1]));
+      const settled = async (label, want) => {
+        await p.waitForFunction(() => window.t322Log.at(-1) === 'keep', null, { timeout: 30000 }).catch(async (e) => { throw new Error(`${label}: log ${JSON.stringify(await log())}`, { cause: e }); });
+        const got = (await log()).filter((s) => s !== 'other');
+        assert.deepEqual(got.slice(0, 3), want, `${label}: quick frame, the sliced paint, then the kept picture (${JSON.stringify(got)})`);
+        await p.evaluate(() => { window.t322Log = []; });
+      };
+      const equalsFull = async (label) => {
+        await frame();
+        await drawing.evaluate((c) => { window.__A = c.getContext('2d').getImageData(0, 0, c.width, c.height); c.dataset.nokeep = '1'; });
+        await p.evaluate(() => window.t322Paint()); await frame();
+        const over = await drawing.evaluate((c) => {
+          const a = window.__A, b = c.getContext('2d').getImageData(0, 0, c.width, c.height);
+          delete c.dataset.nokeep; delete window.__A;
+          let n = 0;
+          for (let i = 0; i < a.data.length; i += 4) for (let j = 0; j < 4; j++) if (Math.abs(a.data[i + j] - b.data[i + j]) > 2) { n++; break; }
+          return n;
+        });
+        assert.equal(over, 0, `${label}: the settled picture equals a full paint (max channel difference 2)`);
+        await p.evaluate(() => { window.t322Log = []; });
+      };
+      await p.goto(URL_ + '?autosave=86400000'); await p.getByTestId('count').waitFor({ state: 'attached' });
+      await p.getByTestId('picker').setInputFiles({ name: 't322c.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(bigDoc(150000))) });
+      await settled('open', ['quick', 'chunk', 'keep']);
+      await equalsFull('open');
+      const box = await p.getByTestId('canvas').boundingBox();
+      for (const [dx, dy] of [[0, 0], [30, 7], [-41, 13], [77, -29]]) {
+        await p.mouse.click(box.x + box.width / 2 + dx, box.y + box.height / 2 + dy);
+        if (/^[1-9]/.test(await p.getByTestId('sel-count').textContent())) break;
+      }
+      const picked = await p.getByTestId('sel-count').textContent();
+      assert.match(picked, /^1 selected$/);
+      await p.evaluate(() => { window.t322Log = []; });
+      for (const [label, keys] of [['Delete', 'Delete'], ['Ctrl+Z', 'Control+z'], ['Ctrl+Y', 'Control+y']]) {
+        await p.keyboard.press(keys);
+        await settled(label, ['quick', 'chunk', 'keep']);
+        await equalsFull(label);
+        if (label === 'Delete') { const path = `${shotDir}/t322c-light.png`; await p.screenshot({ path }); assert.ok(readFileSync(path).length > 1000, 'required screenshot exists'); }
+      }
+      await p.locator('[data-menu=View]').click();
+      await p.getByRole('menuitemcheckbox', { name: /Theme: dark\b/ }).click();
+      await p.waitForTimeout(800); await frame();
+      const dark = `${shotDir}/t322c-dark.png`; await p.screenshot({ path: dark });
+      assert.ok(readFileSync(dark).length > 1000, 'required screenshot exists');
+      assert.deepEqual(errors, []);
+    } finally { await ctx.close(); }
+  });
+
+  await step('TODO 322c: on a 20k drawing a pick and a snap at a deleted spot find nothing, and find it again after Ctrl+Z (the patched pick index)', async () => {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    try {
+      const p = await ctx.newPage(), errors = [];
+      p.on('pageerror', (e) => errors.push(String(e)));
+      await p.addInitScript(() => {       // the snap marker's label ('end' beside the cursor) is text on the drawing canvas
+        const clear = CanvasRenderingContext2D.prototype.clearRect, text = CanvasRenderingContext2D.prototype.fillText;
+        window.__snapLabels = [];
+        CanvasRenderingContext2D.prototype.clearRect = function (...args) { if (this.canvas.dataset.testid === 'drawing') window.__snapLabels = []; return clear.apply(this, args); };
+        CanvasRenderingContext2D.prototype.fillText = function (label, ...args) { if (this.canvas.dataset.testid === 'drawing' && ['end', 'middle', 'nearest'].includes(label)) window.__snapLabels.push(label); return text.call(this, label, ...args); };
+      });
+      const frame = () => p.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+      await p.goto(URL_ + '?autosave=86400000'); await p.getByTestId('count').waitFor({ state: 'attached' });
+      await p.getByTestId('picker').setInputFiles({ name: 't322c-20k.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(bigDoc(20000))) });
+      await p.waitForFunction(() => Number(document.querySelector('[data-testid=entities]').textContent.replace(/\D/g, '')) === 20000, null, { timeout: 60000 });
+      await p.getByTestId('canvas').getByRole('button', { name: 'Fit', exact: true }).click(); await frame();
+      await p.waitForTimeout(1500);       // the pick index is built in idle slices
+      // entity 2400 is the line (1280, 160)-(1288, 165) of bigDoc's grid (142 columns, one 10 mm cell each): zoom to it, then its mid and its end are screen points
+      const at = async (x, y) => p.locator('rect.sheet').evaluate((el, [x, y]) => {
+        const b = el.getBoundingClientRect(), k = b.width / Number(el.getAttribute('width'));
+        return { x: b.x + x * k, y: b.y + (Number(el.getAttribute('height')) - y) * k };
+      }, [x, y]);
+      const mid = await at(1284, 162.5);
+      await p.mouse.move(mid.x, mid.y);
+      for (let i = 0; i < 8; i++) { await p.mouse.wheel(0, -150); await frame(); }
+      await p.waitForTimeout(600); await frame();
+      const spot = await at(1284, 162.5), end = await at(1288, 165);       // its second end: the neighbour's (1278, 160) is 2 mm from the first
+      const selected = async () => { await p.locator('[data-tool=select]').click(); await p.mouse.click(spot.x, spot.y); await frame(); return p.getByTestId('sel-count').textContent(); };
+      const snapped = async () => {       // the Line tool's snap marker at the line's end: its label, or none
+        await p.locator('[data-tool=line]').click();
+        await p.evaluate(() => { window.__snapLabels = []; });
+        await p.mouse.move(end.x + 40, end.y + 40); await frame(); await p.mouse.move(end.x + 1, end.y + 1); await p.waitForTimeout(700); await frame();
+        const labels = await p.evaluate(() => window.__snapLabels);
+        await p.keyboard.press('Escape'); await p.locator('[data-tool=select]').click();
+        return labels;
+      };
+      assert.match(await selected(), /^1 selected$/, 'the pick finds the line');
+      assert.ok((await snapped()).includes('end'), 'the snap finds its end');
+      assert.match(await selected(), /^1 selected$/);
+      await p.keyboard.press('Delete');
+      await p.waitForFunction(() => Number(document.querySelector('[data-testid=entities]').textContent.replace(/\D/g, '')) === 19999);
+      await p.waitForTimeout(800); await frame();       // the index is patched in the idle task after the paint
+      assert.doesNotMatch(await selected(), /^1 selected$/, 'after Delete the pick finds nothing at the deleted line');
+      assert.deepEqual(await snapped(), [], 'after Delete the snap finds nothing at its end');
+      await p.keyboard.press('Control+z');
+      await p.waitForFunction(() => Number(document.querySelector('[data-testid=entities]').textContent.replace(/\D/g, '')) === 20000);
+      await p.waitForTimeout(800); await frame();
+      assert.match(await selected(), /^1 selected$/, 'after Ctrl+Z the pick finds the line again');
+      assert.ok((await snapped()).includes('end'), 'after Ctrl+Z the snap finds its end again');
+      assert.deepEqual(errors, []);
+    } finally { await ctx.close(); }
   });
 
   const shiftRight = async (x, y) => {

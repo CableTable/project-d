@@ -29,9 +29,9 @@ import * as DM from './dims.js';
 import * as LR from './leader.js';
 import * as BAL from './balloons.js';
 import * as PS from './pdf-sheets.js';
-import { paintDrawing, paintMarks, drawMarks, drawContour, drawDimPreview, ink, FONT_FAMILY } from './render.js';
+import { paintDrawing, paintDrawingSteps, paintMarks, drawMarks, drawContour, drawDimPreview, ink, FONT_FAMILY } from './render.js';
 import { overlayBox } from './preview.js';
-import { snapPlace, snapUsable, heavy, sameBase, runChunks, blitCovers, panStrips, QUICK_PX } from './perf.js';
+import { snapPlace, snapUsable, heavy, sameBase, runChunks, blitCovers, panStrips, QUICK_PX, slice as timeSlice } from './perf.js';
 import { flatten, flattenEdit, patchWidths, primeSplines, unionBox, CAP, ACI, UNITS, mapply, mmul, pickIndex, arcSweep, DrawingError } from './drawing.js';
 import { writeDxf, writeDxfWithReport, saveReportNote, unwritable, addLayer, newDoc, lwpoly, point } from './dxf-write.js';
 import * as SH from './shaping.js';
@@ -5196,8 +5196,9 @@ function previewBounds() {
 // Wheel, pan and resize move and scale the last full paint of a heavy drawing until the view settles (TODO 55 / 328a).
 let paintFull = true, snap = null, snapCv = null, snapTimer = 0, paintSize = null;
 // A layer toggle on a drawing whose last full paint was heavy paints once quick (items under QUICK_PX skipped, no kept bitmap), then settles with the 0.4 px paint after 120 ms (TODO 328b).
-// quickNext = 'big' (TODO 322c): a tab just opened, or redrawn after Delete / Undo / Redo, paints quick when it holds over 15 000 items (the size `heavy` calls heavy), whatever the last paint was.
+// quickNext = 'big' (TODO 322c): a tab just opened, or redrawn after Delete / Undo / Redo, paints quick when it holds over BIG_ITEMS items (its full paint is the long task: 130 ms at 150k), whatever the last paint was.
 let quickNext = false, lastHeavy = false;
+const BIG_ITEMS = 50000;
 // A drawing tab whose own paint is slow keeps its bitmap (without selection, marks, previews): a hover or a select click paints only those on top (TODO 258 / 259).
 let kept = null, keptCv = null, panCv = null;
 // Zoom end (TODO 324b): the sharp paint in bands over timer ticks (zoomChunks); chunk = { view, key } while they run, chunkGen cancels them.
@@ -5233,7 +5234,7 @@ function paintOverlay(gesture = false) {
     const settled = settle; settle = false;
     const full = paintFull; paintFull = false;
     const d = curDoc();
-    const quick = quickNext === 'big' ? !!d?.fl && !d.lay && !d.cmp && d.fl.items.length > 15000 : quickNext && lastHeavy, big = quick && quickNext === 'big'; quickNext = false;
+    const quick = quickNext === 'big' ? !!d?.fl && !d.lay && !d.cmp && d.fl.items.length > BIG_ITEMS : quickNext && lastHeavy, big = quick && quickNext === 'big'; quickNext = false;
     // Artwork and layout sheet paper follow the same Work area.
     const base = { minPx: quick ? QUICK_PX : undefined, sheetH: state.sheetH, ox: view.ox, oy: view.oy, scale: view.scale, w, h: ch, dpr, dark: workDark(), wireframe: state.wireframe };
     const L2 = state.setlen || state.meas || state.dim || state.ldr || ((modLive() || layModLive()) && ['move', 'copy', 'stretch', 'rotate', 'scale', 'lengthen', 'align'].includes(state.mod.kind) ? { pts: state.mod.ref && state.mod.ref.step !== 'new' ? state.mod.ref.pts : state.mod.p1 ? [state.mod.p1] : [], hover: state.mod.cur }
@@ -5433,7 +5434,8 @@ function zoomChunks(c, d, base, want, calls, keyOf, nkey, afterQuick) {
   const g = chunkCv.getContext('2d'), run = ++chunkGen, bh = Math.ceil(want.h / ZOOM_BANDS);
   chunk = { view: want, key: nkey };
   c.dataset.chunk = '1';
-  const bands = function* () { for (let y = 0; y < want.h && chunkGen === run; y += bh) { paintStrip(g, d, base, want, calls, [0, y, want.w, Math.min(want.h, y + bh)]); yield y / want.h; } };
+  const sliced = function* () { yield* paintEditable(chunkCv, d, base, null, 'base', null, timeSlice(15)); };       // afterQuick: the very calls of a full paint, so the picture equals it (bands do not: strokes batch differently)
+  const bands = afterQuick ? sliced : function* () { for (let y = 0; y < want.h && chunkGen === run; y += bh) { paintStrip(g, d, base, want, calls, [0, y, want.w, Math.min(want.h, y + bh)]); yield y / want.h; } };
   runChunks(bands(), { alive: () => chunkGen === run }).then(() => {
     if (chunkGen !== run) return;
     chunk = null;
@@ -5474,7 +5476,7 @@ function layOverlay(c, d, base, marks, lifted) {
 }
 
 /** part: 'over' paints only what goes on top of the drawing (selection, marks, previews) on a base already on the canvas, 'base' only the drawing; afterBase(drawn), when given, is called between the drawing and that rest. The snap marker is painted last (TODO 339). */
-function paintEditable(c, d, base, marks, part, afterBase) {
+function paintEditable(c, d, base, marks, part, afterBase, due) {
   const ed = state.text.ed?.d === d && state.text.ed.dim ? state.text.ed : null;
   const dragSnap = state.paste?.d === d ? state.paste.to : state.entityDrag?.d === d && state.entityDrag.to, paste = state.paste;
   if (dragSnap?.[2]) marks = [[dragSnap[0], dragSnap[1], dragSnap[2], true]];
@@ -5487,6 +5489,7 @@ function paintEditable(c, d, base, marks, part, afterBase) {
     accent: cssVar('--selection', '#4f46e5'), snapCol: cssVar('--snap-mark', '#00c000'),
     dimCol: cssVar('--dim', '#0f766e'), previewBounds: (box) => { canvasPreviewBounds = unionBox(canvasPreviewBounds, box); } };
   let drawn;
+  if (due) return paintDrawingSteps(c, { ...o, part: 'base' }, due);       // 322c: the base alone as a generator, one time slice per step (the caller drives it)
   if (afterBase) { drawn = paintDrawing(c, { ...o, part: 'base' }); afterBase(drawn); paintDrawing(c, { ...o, part: 'over' }); }
   else drawn = paintDrawing(c, part ? { ...o, part } : o);
   if (part === 'base') return drawn;                                   // the base alone, off screen: no preview of a move in it

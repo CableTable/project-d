@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { outsideView, subPixel, snapPlace, snapUsable, heavy } from './web/perf.js';
 import * as perf from './web/perf.js';
-import { paintDrawing } from './web/render.js';
+import { paintDrawing, paintDrawingSteps } from './web/render.js';
 import { bigDoc } from './tools/gen-big-dxf.mjs';
 import { writeDxf } from './web/dxf-write.js';
 import { readDxf, flatten, mapply } from './web/drawing.js';
@@ -125,6 +125,29 @@ test('skipPoint keeps run ends and stays within half a pixel', () => {
     assert.equal(paint(ops, options).length, points.length, 'dashed batches keep every point and their dash phase');
   }
   assert.equal(paint(ops, { scale: 1000 }).length, points.length, 'zooming in redraws the original pieces');
+});
+
+test('TODO 322c: paintDrawingSteps makes the canvas calls of paintDrawing, in the same order, in slices between runs of strokes', () => {
+  const fl = flatten(readDxf(writeDxf(bigDoc(12000))));
+  fl.items = fl.items.filter((it) => it.k === 'p');       // no text: the recording context cannot measure it
+  assert.ok(fl.items.length > 5000, 'more than one run of strokes');
+  const record = () => {
+    const calls = [], c = new Proxy({}, { get: (t, name) => (name === 'canvas' ? {} : (...args) => { calls.push([name, ...args]); }), set: (t, name, v) => { calls.push(['=' + String(name), v]); return true; } });
+    return { calls, canvas: { width: 200, height: 200, getContext: () => c } };
+  };
+  const o = { fl, off: new Set(), factor: 1, sheetH: 3000 / 0.7, ox: 0, oy: 0, scale: 0.7, dpr: 1, w: 3000, h: 3000 };       // the whole drawing in view (the sheet's y runs up)
+  const whole = record(), sliced = record();
+  const drawn = paintDrawing(whole.canvas, o);
+  let slices = 0, got;
+  const gen = paintDrawingSteps(sliced.canvas, o, () => true);
+  for (let s = gen.next(); ; s = gen.next()) { if (s.done) { got = s.value; break; } slices++; }
+  assert.ok(slices >= 2, `a time slice ends between runs (${slices} yields)`);
+  assert.equal(got, drawn);
+  assert.ok(whole.calls.length > 1000);
+  assert.deepEqual(sliced.calls, whole.calls, 'the sliced paint is the single paint, call for call');
+  const lazy = record(), none = paintDrawingSteps(lazy.canvas, o, () => false);
+  assert.equal(none.next().done, true, 'with no time slice used up it runs to the end in one go');
+  assert.deepEqual(lazy.calls, whole.calls);
 });
 
 test('snapPlace: the same view is the identity; a pan shifts; a zoom about a point keeps that point', () => {
