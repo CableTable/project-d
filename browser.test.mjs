@@ -22878,15 +22878,15 @@ try {
     await page.waitForFunction(() => document.querySelector('.or.layer .onm').textContent === 'Cut');
   });
 
-  await step('Objects tab: a layer with hundreds of objects lists the first 500 and "Show … more"', async () => {
+  await step('Objects tab: a layer with hundreds of objects lists the first 200 and "Show … more"', async () => {
     const doc = newDoc(4);
-    addEntities(doc, ...Array.from({ length: 620 }, (_, i) => dxfLine(0, i % 300, 10 + (i % 7), i % 300, { layer: 'Cut' })));
+    addEntities(doc, ...Array.from({ length: 250 }, (_, i) => dxfLine(0, i % 300, 10 + (i % 7), i % 300, { layer: 'Cut' })));
     await openGrips(writeDxf(doc), 'many.dxf');
     await t('ptab-objects').click();
-    assert.equal(await page.locator('[data-testid=obj-tree] .or.obj').count(), 500);
-    assert.match(await t('obj-count').textContent(), /^620 objects · 2 layers$/);
+    assert.equal(await page.locator('[data-testid=obj-tree] .or.obj').count(), 200);
+    assert.match(await t('obj-count').textContent(), /^250 objects · 2 layers$/);
     await page.locator('.or.more').click();
-    assert.equal(await page.locator('[data-testid=obj-tree] .or.obj').count(), 620);
+    assert.equal(await page.locator('[data-testid=obj-tree] .or.obj').count(), 250);
     assert.equal(await page.locator('.or.more').count(), 0);
   });
 

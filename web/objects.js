@@ -17,7 +17,7 @@ import { typeName } from './props.js';
 import { DIM_BLOCK, LDR_BLOCK } from './edit.js';
 import { spaceOf, shownEntityIndexes } from './doc.js';
 
-export const CAP = 500;                // objects listed per layer before "show more"
+export const CAP = 200;               // objects listed per layer before "show more"
 export const MEMBERS = 200;            // members listed per block
 
 const t = (n) => String(+Number(n).toFixed(2));                       // 40, 8.5
