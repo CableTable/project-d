@@ -424,3 +424,17 @@ test('272b: 12000 same-colour strokes are painted as 3 paths of 5000, not one', 
   paintDrawing({ getContext: () => c }, { fl, factor: 1, off: new Set(), sheetH: 0, ox: 0, oy: 0, scale: 1, w: 100, h: 100, dpr: 1 });
   assert.equal(strokes, 3);
 });
+
+test('TODO 322a: the pick index built in slices is the same index, and a makeIndex given it keeps it', async () => {
+  const { bigDoc } = await import('./tools/gen-big-dxf.mjs');
+  const doc = bigDoc(5000), fl = D.flatten(doc), whole = D.pickIndex(fl, false);
+  const steps = E.pickSteps(fl);
+  let slices = 0, r;
+  while (!(r = steps.next()).done) slices++;
+  assert.ok(slices >= 2, 'a drawing of 5000 items takes more than one slice: ' + slices);
+  assert.deepEqual([r.value.pieces.length, r.value.snaps.length, r.value.G, r.value.pc.size, r.value.sc.size], [whole.pieces.length, whole.snaps.length, whole.G, whole.pc.size, whole.sc.size]);
+  assert.deepEqual(r.value.snaps.slice(0, 50), whole.snaps.slice(0, 50));
+  const pre = E.makeIndex(doc, fl, new Set(), null, undefined, null, r.value), plain = E.makeIndex(doc, fl);
+  assert.equal(pre.ix, r.value, 'the index that was built is the one used');
+  assert.deepEqual([pre.shown.length, pre.boxGrid.bc.size], [plain.shown.length, plain.boxGrid.bc.size]);
+});

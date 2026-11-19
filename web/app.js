@@ -6480,7 +6480,7 @@ async function placePaste() {
 const compareEditIndexes = new WeakMap();
 /** The edit index of a tab (pick grid, ends), built on first use and again after a change. */
 function edIndex(d) {
-  if (!d.ed) { d.ed = Ed.makeIndex(d.raw, d.fl, d.off, hidIdx(d), undefined, d.edPrev); d.edPrev = null; }       // edPrev: the index before the last edit, its parts for unchanged items are kept (TODO 319c)
+  if (!d.ed) { const pre = d.ixPre?.fl === d.fl ? d.ixPre.ix : undefined; d.ixPre = null; d.ed = Ed.makeIndex(d.raw, d.fl, d.off, hidIdx(d), undefined, d.edPrev, pre); d.edPrev = null; }       // edPrev: the index before the last edit, its parts for unchanged items are kept (TODO 319c); ixPre: the pick index warm() built in slices (TODO 322a)
   const item = cmpEditingItem(d);
   if (!item || item.off.size === d.off.size && [...item.off].every((i) => d.off.has(i))) return d.ed;
   const c = compareEditIndexes.get(item.off);
@@ -6504,7 +6504,20 @@ function warm(d) {
     };
     requestIdleCallback(chunk);
   }
-  requestAnimationFrame(() => setTimeout(() => { if (state.docs.includes(d) && d.fl) { if (!d.ed) { edIndex(d); d.outl = null; } if (curDoc() === d || editable() === d) renderEdit(); } }, 0));       // also refresh a Compare source, even when a hover built its index first
+  const ready = () => { if (state.docs.includes(d) && d.fl) { if (!d.ed) { edIndex(d); d.outl = null; } if (curDoc() === d || editable() === d) renderEdit(); } };       // also refresh a Compare source, even when a hover built its index first
+  requestAnimationFrame(() => setTimeout(() => {
+    const fl = d.fl;
+    if (!fl || d.ed || d.edPrev || fl.items.length < 20000) return ready();       // small, or an edit that keeps most of the old index: one go
+    // a big drawing's pick index is the longest task of its open (150k items: 0.5 s): build it in idle slices, a hover meanwhile builds it whole
+    const steps = Ed.pickSteps(fl), slice = (deadline) => {
+      if (!state.docs.includes(d) || d.fl !== fl || d.ed) return ready();
+      const start = performance.now();
+      let r;
+      while (!(r = steps.next()).done) if (deadline.timeRemaining() < 1 || performance.now() - start > 8) return requestIdleCallback(slice);
+      d.ixPre = { fl, ix: r.value }; ready();
+    };
+    requestIdleCallback(slice);
+  }, 0));
 }
 function layersChanged(d) { state.drawingRotate = null; selectionCycle = null; d.ed = null; d.outl = null; d.sel = new Set(); d.stretchSelection = null; d.hl = []; if (cmpDoc()) cmpRefresh(d); warm(d); renderEdit(); }
 

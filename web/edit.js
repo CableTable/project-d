@@ -13,7 +13,7 @@
 //   removeEntities / keepOnly    → { entities, blocks } without (or with only) some entities; unused blocks go too
 //   scaleAbout(raw, s, ax, ay)   → { entities, blocks, skipped } scaled uniformly about (ax, ay)
 //   createHistory()              → undo / redo of { entities, blocks } states
-import { mapply, mscale, pickIndex, pickAt, piecesNear, visibleSnapItem, flatten, ownBlock, unionBox } from './drawing.js';
+import { mapply, mscale, pickIndex, pickIndexSteps, pickAt, piecesNear, visibleSnapItem, flatten, ownBlock, unionBox } from './drawing.js';
 import { rotateRecord } from './rotate.js';
 import { format as formatLength, parse as parseLength } from './units.js';
 import { spaceOf, itemVisible } from './doc.js';
@@ -245,13 +245,16 @@ export function resizeItemsBox(raw, items, factor = 1) {
  * What the editor needs about a drawing: per shown entity its items and box, a pick grid, and the end points.
  * off: the layer indexes switched off (their entities are not there to pick); hid: entities hidden one by one (Objects tab), the same.
  */
-export function makeIndex(raw, fl, off = new Set(), hid = null, extremeFrame, prev = null) {
-  const ix = pickIndex(fl, spaceOf(fl) === 1, undefined, extremeFrame, prev);       // prev { ix, fl }: an earlier index of this drawing, its parts for unchanged items are kept (TODO 319c)
+export function makeIndex(raw, fl, off = new Set(), hid = null, extremeFrame, prev = null, ix = pickIndex(fl, spaceOf(fl) === 1, undefined, extremeFrame, prev)) {
+  // prev { ix, fl }: an earlier index of this drawing, its parts for unchanged items are kept (TODO 319c); ix: the pick index already built in slices (TODO 322a)
   const ed = indexWithVisibility({ raw, fl, ix }, off, hid);
   const all = off.size || hid?.size ? indexWithVisibility({ raw, fl, ix }, new Set(), null) : ed;
   ed.boxGrid = entityBoxGrid(all);
   return ed;
 }
+
+/** The pick index of a drawing as slices: call .next() until done, then pass the value to makeIndex as its ix (TODO 322a). */
+export const pickSteps = (fl) => pickIndexSteps(fl, spaceOf(fl) === 1);
 
 /** Keep the pieces and snaps spatially indexed. Only the visible entity summaries change. */
 export function indexWithVisibility(ed, off, hid) {

@@ -1071,7 +1071,14 @@ function reuser(prev, fl, paper, frame, stored, snaps, stride) {
  * The pickable pieces of one space (the model, or the sheet): straight pieces, arcs, and snap points (ends,
  * middles, centres, points), in the drawing's own coordinates, on a grid for quick lookups.
  */
-export function pickIndex(fl, paper, visible = () => true, extremeFrame = IDENT, prev = null) {
+export function pickIndex(...args) {
+  const g = pickIndexSteps(...args);
+  let r;
+  do r = g.next(); while (!r.done);
+  return r.value;
+}
+/** pickIndex as a generator: it yields every 2048 items, so a caller can build a big drawing's index in slices (TODO 322a). */
+export function* pickIndexSteps(fl, paper, visible = () => true, extremeFrame = IDENT, prev = null) {
   // Spline segments already live in ops: retain an item/op address, not another object and four boxed coordinates per segment.
   const stored = [], snaps = [], stride = fl.items.length, reuse = reuser(prev, fl, paper, extremeFrame, stored, snaps, stride);
   const pieces = new Proxy(stored, { get(target, key, receiver) {
@@ -1089,13 +1096,15 @@ export function pickIndex(fl, paper, visible = () => true, extremeFrame = IDENT,
     }
   }
   const head = snaps.length;
-  fl.items.forEach((it, idx) => {
-    if (!!it.ps !== !!paper) return;
-    if (reuse?.(it, idx)) return;
+  for (let idx = 0; idx < fl.items.length; idx++) {
+    if (idx % 2048 === 2047) yield;
+    const it = fl.items[idx];
+    if (!!it.ps !== !!paper) continue;
+    if (reuse?.(it, idx)) continue;
     const m = fl.mats[it.m];
     if (it.insertion) { const [x, y] = mapply(m, ...it.insertion); snaps.push({ x, y, kind: 'insertion', it: idx }); }
-    if (it.k === 'n') { const [x, y] = mapply(m, it.x, it.y); snaps.push({ x, y, kind: 'node', it: idx }); return; }
-    if (it.k !== 'i' && (it.k !== 'p' || it.fill)) return;                  // a picture's frame picks and snaps like a closed outline
+    if (it.k === 'n') { const [x, y] = mapply(m, it.x, it.y); snaps.push({ x, y, kind: 'node', it: idx }); continue; }
+    if (it.k !== 'i' && (it.k !== 'p' || it.fill)) continue;                  // a picture's frame picks and snaps like a closed outline
     const ops = it.ops, sim = similar(m), sc = mscale(m), flipped = m[0] * m[3] - m[1] * m[2] < 0;
     if (!it.ell && !it.spl) {
       const centre = pathCentre(ops);
@@ -1163,7 +1172,7 @@ export function pickIndex(fl, paper, visible = () => true, extremeFrame = IDENT,
     if (curve) turning(curvePoints, closed, !it.spl || it.refine, it.params, it.ell ? TAU : undefined);
     const endpoints = snaps.slice(s0).filter((p) => p.kind === 'end' || p.kind === 'quadrant');
     for (const [x, y] of extremes) if (!endpoints.some((p) => Math.hypot(p.x - x, p.y - y) < 1e-6)) snaps.push({ x, y, kind: 'extreme', it: idx });
-  });
+  }
   // the grid
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
   const grow = (a, b, c2, d) => { x0 = Math.min(x0, a); y0 = Math.min(y0, b); x1 = Math.max(x1, c2); y1 = Math.max(y1, d); };
