@@ -5792,6 +5792,76 @@ try {
     } finally { await ctx.close(); }
   });
 
+  await step('TODO 333: PDF / Print draws label gaps on a check print', async () => {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const p = await ctx.newPage(), q = (id) => p.getByTestId(id);
+    p.on('pageerror', (e) => errors.push(String(e)));
+    const raw = newDoc(4);
+    addEntities(raw, dxfPoly([[0, 0], [180, 0], [180, 100], [0, 100]], { closed: true }));
+    const lay = newLayout('Label gaps');
+    Object.assign(lay.s, { gridPart: 'p', fit: false, cols: 3, rows: 2, gapX: 5, gapY: 5, extraCols: [{ after: 2, mm: 7 }] });
+    lay.parts.p = makePart('p', 'Plate', raw);
+    const open = async () => { await q('pdf-open').click(); await q('pdf-dialog').waitFor(); };
+    const previewTexts = () => p.evaluate(() => window.__pdfTexts);
+    const clearTexts = () => p.evaluate(() => { window.__pdfTexts = []; });
+    const checked = (id, on) => p.waitForFunction(([i, v]) => document.querySelector(`[data-testid=${i}]`).checked === v, [id, on]);
+    try {
+      await p.goto(URL_);
+      await q('picker').setInputFiles({ name: 'label-gaps.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
+      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'label-gaps.dxf');
+      await p.evaluate(() => {
+        window.__pdfTexts = [];
+        const fillText = CanvasRenderingContext2D.prototype.fillText;
+        CanvasRenderingContext2D.prototype.fillText = function (...args) {
+          if (this.canvas.dataset.testid === 'pdf-preview') window.__pdfTexts.push(args[0]);
+          return fillText.apply(this, args);
+        };
+      });
+      await open();
+      const box = q('pdf-label-gap');
+      assert.equal(await box.isVisible(), true);
+      await checked('pdf-label-gap', false);                                 // off by default
+      assert.equal(await box.isDisabled(), true);
+      assert.equal(await box.getAttribute('title'), 'Check print only');
+      await q('pdf-page-check').check();
+      assert.equal(await box.isDisabled(), false);
+      const scale = await q('pdf-scale').textContent(), before = await q('pdf-preview').evaluate((c) => c.toDataURL());
+      await clearTexts(); await box.check();
+      const texts = await previewTexts();
+      assert.ok(texts.includes('5') && texts.includes('12'), 'preview draws the 5 and the 12 gaps: ' + texts);
+      assert.notEqual(await q('pdf-preview').evaluate((c) => c.toDataURL()), before, 'the dimensions change preview pixels');
+      await p.waitForFunction((s) => document.querySelector('[data-testid=pdf-scale]').textContent === s, scale);       // the scale is not reduced for them
+      await checked('pdf-sheet-size-gripper', false);                        // a separate box from Sheet size and gripper
+      await clearTexts(); await box.uncheck();
+      assert.equal((await previewTexts()).some((s) => s === '5' || s === '12'), false, 'unticked: none');
+      await box.check();
+      for (const theme of ['light', 'dark']) {
+        await p.evaluate((theme) => { document.documentElement.dataset.theme = theme; }, theme);
+        await p.screenshot({ path: `${shotDir}/todo333-label-gap-${theme}.png` });
+        assert.ok(readFileSync(`${shotDir}/todo333-label-gap-${theme}.png`).length > 1000, 'required preview screenshot exists');
+      }
+      for (const mode of ['sheet', 'tile']) {
+        await clearTexts(); await q('pdf-page-' + mode).check();
+        assert.equal(await box.isDisabled(), true);
+        assert.equal(await box.getAttribute('title'), 'Check print only');
+        assert.equal((await previewTexts()).some((s) => s === '5' || s === '12'), false, mode + ' ignores the tick');
+      }
+      await q('pdf-page-check').check(); await q('pdf-close').click(); await open();
+      await checked('pdf-label-gap', true);                                  // tick kept when the dialog is reopened
+      assert.equal(await p.evaluate(() => JSON.parse(localStorage.getItem('pd-pdf-drawing')).labelGap), true, 'remembered with the other PDF settings');
+      await p.setViewportSize({ width: 1024, height: 768 });
+      await p.screenshot({ path: `${shotDir}/todo333-label-gap-1024.png` });
+      await p.setViewportSize({ width: 1440, height: 900 });
+      const pending = p.waitForEvent('download'); await q('pdf-go').click();
+      const pdf = readFileSync(await (await pending).path(), 'latin1');
+      assert.ok(pdf.includes('(12)') && pdf.includes('(5)'), 'saved PDF has the gap labels');
+      await q('picker').setInputFiles({ name: 'part-gap.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(raw)) });
+      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'part-gap.dxf');
+      await open();
+      assert.equal(await q('pdf-label-gap').count(), 0, 'hidden for Part PDFs');
+    } finally { await ctx.close(); }
+  });
+
   await step('TODO 214a: PDF / Print Selection only', async () => {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const p = await ctx.newPage(), q = (id) => panelControl(p, p.getByTestId(id));
