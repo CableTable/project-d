@@ -28957,6 +28957,7 @@ try {
       const budgets = { open: [822680, 2], 'Measure hover': [16453720, 40], 'Line hover': [16453720, 40],
         'select click': [411797, 1], Delete: [410883, 1], 'Ctrl+Z': [411340, 1], wheel: [411340, 1], pan: [411340, 1], 'draw zoom in': [411340, 1] };
       assert.deepEqual(results.map((r) => r.action), Object.keys(budgets));
+      assert.equal(typeof results[0].inject?.longTotal, 'number', 'open splits the picker injection (TODO 322e) into its inject field');
       for (const r of results) {
         const [lineTo, paints] = budgets[r.action];
         assert.ok(r.lineTo <= lineTo, `${r.action}: lineTo ${r.lineTo} exceeds ${lineTo}`);
@@ -29004,6 +29005,7 @@ try {
     assert.equal(lay['Layout wheel'].snap, '1', 'Layout wheel reuses the kept picture after the burst');
     within(lay, { 'Layout wheel': 1, 'Layout pan': 1, 'Layout zoom in': 1, 'Layout Measure hover': 0, 'Layout Line hover': 0, 'Layout part click': 0, 'Layout part drag': 2, 'Layout undo': 2 });
     const cmp = await flow((p) => interactCompare(p, big, 'lag-big.dxf'));
+    assert.ok(lay.open.inject && cmp.open.inject, 'Layout and Compare open split the picker injection (TODO 322e)');
     assert.deepEqual(Object.keys(cmp), ['open', 'Compare start', 'Compare wheel', 'Compare pan', 'Compare zoom in', 'Compare click', 'Compare button', 'Compare button again', 'Compare grip drag', 'Compare drag']);
     assert.ok(cmp['Compare start'].lineTo > 30000, `both snapshots paint: lineTo ${cmp['Compare start'].lineTo}`);
     within(cmp, { 'Compare start': 1, 'Compare wheel': 21, 'Compare pan': 1, 'Compare zoom in': 1, 'Compare click': 0, 'Compare button': 2, 'Compare button again': 2, 'Compare grip drag': 2, 'Compare drag': 1 });       // TODO 317: a grip drag was 21 full paints, a body drag 2 (a grip press is one more paint when it does not share the frame of the first move)
