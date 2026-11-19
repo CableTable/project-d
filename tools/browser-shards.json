@@ -431,7 +431,7 @@
   "Objects tab: Lock is per layer: its objects cannot be picked on the sheet or from the tree, until unlocked": 0.24,
   "Objects tab: the search box filters the rows by label; clearing it brings the tree back": 0.05,
   "Objects tab: right-click a row: Select, Zoom to, Hide, Lock layer, Move to layer…, Show all hidden; right-click a layer: Rename…": 3.16,
-  "Objects tab: a layer with hundreds of objects lists the first 500 and \"Show … more\"": 2.93,
+  "Objects tab: a layer with hundreds of objects lists the first 200 and \"Show … more\"": 2.93,
   "Objects tab: a layout tab shows its parts; the eye hides a part on the sheet, and a place can be picked from the list": 3.19,
   "Objects tab: a part hidden on a layout is left out of the PDF (fewer drawing operators), and comes back when shown; Save is not affected": 3.59,
   "Objects tab: screenshots, light and dark": 6.38,
