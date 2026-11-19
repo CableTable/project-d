@@ -5181,7 +5181,7 @@ let quickNext = false, lastHeavy = false;
 // A drawing tab whose own paint is slow keeps its bitmap (without selection, marks, previews): a hover or a select click paints only those on top (TODO 258 / 259).
 let kept = null, keptCv = null, panCv = null;
 // Zoom end (TODO 324b): the sharp paint in bands over timer ticks (zoomChunks); chunk = { view, key } while they run, chunkGen cancels them.
-let chunk = null, chunkGen = 0, chunkCv = null;
+let chunk = null, chunkGen = 0, chunkCv = null, settle = false;       // settle: the paint the 120 ms snapTimer sends; only it may use bands
 const KEEP_MS = 10;
 /** Everything the drawing's own pass reads, flat (compare with sameBase). While a grip or drag hides entities one by one, `drag` is set and their numbers end the key: that base is painted without them (TODO 320). */
 function paintKey(d, base, cw, chh) {
@@ -5210,6 +5210,7 @@ function paintOverlay(gesture = false) {
     if (c.width !== cw || c.height !== chh) { c.width = cw; c.height = chh; }
     const want = { view: { ox: view.ox, oy: view.oy, scale: view.scale }, w: cw, h: chh, dpr };
     clearTimeout(snapTimer);
+    const settled = settle; settle = false;
     const full = paintFull; paintFull = false;
     const quick = quickNext && lastHeavy; quickNext = false;
     const d = curDoc();
@@ -5284,7 +5285,7 @@ function paintOverlay(gesture = false) {
     };
     if (!full && snapUsable(snap, want)) {
       drawSnap();
-      snapTimer = setTimeout(() => paintOverlay(), 120);
+      snapTimer = setTimeout(() => { settle = true; paintOverlay(); }, 120);
       ui.cmdUI.place();
       return;
     }
@@ -5325,7 +5326,7 @@ function paintOverlay(gesture = false) {
       return;
     }
     // Zoom end (TODO 324b): the scaled picture stays while the sharp base is painted in bands
-    if (full && nk && !dkey && !quick && c.dataset.nokeep !== '1' && snapUsable(snap, want)
+    if (settled && full && nk && !dkey && !quick && c.dataset.nokeep !== '1' && snapUsable(snap, want)
       && zoomChunks(c, d, base, want, calls, d.lay ? layKey : d.cmp ? (v) => cmpKeepKey(d, v, cw, chh) : (v) => paintKey(d, v, cw, chh), nk)) {
       drawSnap();
       c.dataset.paints = (+c.dataset.paints || 0) + 1;
@@ -5411,7 +5412,7 @@ function zoomChunks(c, d, base, want, calls, keyOf, nkey) {
   const g = chunkCv.getContext('2d'), run = ++chunkGen, bh = Math.ceil(want.h / ZOOM_BANDS);
   chunk = { view: want, key: nkey };
   c.dataset.chunk = '1';
-  const bands = function* () { for (let y = 0; y < want.h; y += bh) { paintStrip(g, d, base, want, calls, [0, y, want.w, Math.min(want.h, y + bh)]); yield y / want.h; } };
+  const bands = function* () { for (let y = 0; y < want.h && chunkGen === run; y += bh) { paintStrip(g, d, base, want, calls, [0, y, want.w, Math.min(want.h, y + bh)]); yield y / want.h; } };
   runChunks(bands(), { alive: () => chunkGen === run }).then(() => {
     if (chunkGen !== run) return;
     chunk = null;
