@@ -426,7 +426,7 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
 - [ ] 322. **Open: flatten on main thread** (bug, L, 260 row 7 + 13): 0.94 s at 150k. Profile (b-322a): a browser DXF already flattens in the worker (`dxf-worker.js:10`); the long tasks are below. Split `runs52/grill-322.md`. With 237.
   - [x] 322a. **Pick index in idle slices**: 619 ms task at 150k -> slices under 10 ms (`e3fe048` picked, King, rv-322a ship; Lows in `runs52/lows.txt`).
   - [x] 322b. **Worker reply clone**: measured, no change kept (b-322b, S52d): the reply task is 393 ms, but the open max of 954 ms is another task. Splitting the message gave 988 ms max, the JSON buffer gave 953 ms.
-  - [ ] 322f. **Desktop re-flatten on open**: `app.js:1324` `r.result = flatten(r.doc)` runs on every desktop open that has a path (`:1311` guard), not just files with an IMAGE; flatten only when a sibling PNG was attached.
+  - [x] 322f. **Desktop re-flatten on open** (done S52e `84ea21d`, rv-322f ship): `app.js:1324` `r.result = flatten(r.doc)` runs on every desktop open that has a path (`:1311` guard), not just files with an IMAGE; flatten only when a sibling PNG was attached.
   - [ ] 322c. **First paint on open**: 192 ms (`paintEditable` `app.js:5457` -> `paintDrawing`) at 150k.
   - [ ] 322d. **Delete / Ctrl+Z at 150k**: 623-643 / 488-566 ms long tasks (edit-path index rebuild), measured by b-322a / rv-322a with `perf-interact.mjs big:150000 draw`.
   - [x] 322e. **perf-interact open timing** (tool), done S52d (`9f18373`, rv-322e ship). Tasks before the picker's `change` now go to an `inject` field. At 150k the 956 ms task is inject; the real open max is 385 ms (2 long tasks, 565 ms total).
