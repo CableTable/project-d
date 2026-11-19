@@ -4289,7 +4289,7 @@ function objBtn(act, on, label, inner, cls = '') {
 /** What the Objects tree is made of, apart from which rows are picked: when it is the same as the last draw, a pick only re-marks the rows. */
 function objSig(d, dark) {
   const om = omOf(d), sets = JSON.stringify([om.query, om.filter, dark, om.layoutClosed, om.guidesOpen, [...om.openP], [...(om.open || [])], [...om.openB], [...om.show]]);
-  if (d.lay) return { a: d, b: d.lay.parts, c: d.lay.layers, str: sets + JSON.stringify([d.lay.name, d.lay.s, state.hidden, d.curLayer, Object.values(d.lay.parts).map((p) => p.name), [...(d.hiddenParts || [])], placedNow.map((p) => [p.partId, p.x, p.y, p.rot, p.lock, p.mirrorX, p.mirrorY])]) };
+  if (d.lay) return { a: d, b: d.lay.parts, c: d.lay.layers, str: sets + JSON.stringify([d.lay.name, d.lay.s, state.hidden, d.curLayer, Object.values(d.lay.parts).map((p) => p.name), [...(d.hiddenParts || [])], sheetDimCount(), placedNow.map((p) => [p.partId, p.x, p.y, p.rot, p.lock, p.mirrorX, p.mirrorY])]) };
   return { a: d, b: d.raw.entities, c: d.raw.layers, fl: d.fl, str: sets + JSON.stringify([[...d.off], [...(hidIdx(d) || [])], [...(d.locked || [])], curLayerName(d), d.factor, [...(d.addedLayers || [])], d.newLayer, d.bg?.visible]) };
 }
 let objSigLast = null;

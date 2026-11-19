@@ -9758,6 +9758,8 @@ try {
     await page.locator('[data-group=parts] .part-hit').first().click({ force: true });
     await t('ptab-objects').click();                                     // the layer rows are drawn when this tab opens
     assert.equal(await page.locator('.layer', { hasText: 'Dimensions' }).locator('.mono').textContent(), '3', 'sheet width and height, and the selected part\'s width');
+    await page.keyboard.press('Control+a');                              // several parts picked with Objects showing: no single width, so 2 (the tree is not stale)
+    await page.waitForFunction(() => [...document.querySelectorAll('.layer')].find((l) => l.textContent.includes('Dimensions'))?.querySelector('.mono')?.textContent === '2');   // several picked: sheet width and height only
     await t('ptab-drawing').click();
     assert.match((await partRows())[0], /^outline\|272 × 120 · \d+ copies$/);
     await shotBoth('layout-review');
