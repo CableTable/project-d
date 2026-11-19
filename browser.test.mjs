@@ -18,6 +18,7 @@ import { newDoc, addEntities, addLayer, addBlock, entity, insert as dxfInsert, t
 import { placedBox, placedMat } from './web/apply.js';
 import * as GR from './web/grips.js';
 import { rotateEntities } from './web/rotate.js';
+import { rotateAbout } from './web/place.js';
 import { curveShape } from './web/extend.js';
 import { closest, pathOf } from './web/modify.js';
 import { svgPath } from './web/draw.js';
@@ -14628,6 +14629,168 @@ try {
       await setChip(snapOn === 'true'); await closeTabs(/./);
     }
   });
+  // ---- TODO 338: the ◎ pivot drag snaps like a drawn point (Drawings, Layouts, Compare)
+  const exact338 = (x, y) => page.evaluate(([x, y]) => {          // the global `at` reads the sheet rect's box (a pixel out): this reads the overlay's own matrix
+    const svg = document.querySelector('[data-testid=overlay]'), h = +document.querySelector('rect.sheet').getAttribute('height');
+    const p = new DOMPoint(x, h - y).matrixTransform(svg.getScreenCTM()); return { x: p.x, y: p.y };
+  }, [x, y]);
+  const pivotAt338 = async (scope) => { const r = await rectOf(page.locator(`${scope} [data-pivot]`)); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; };
+  const arrowAt338 = (scope) => page.locator(`${scope} [data-rot]`).first().evaluate((el) => { const q = el.getPointAtLength(el.getTotalLength() / 2), p = new DOMPoint(q.x, q.y).matrixTransform(el.getScreenCTM()); return { x: p.x, y: p.y }; });
+  /** Presses the ◎, drags it to `to` (client px), runs `during` with the button still down, lets go. `alt`: Alt is down from the press on. */
+  const pivotDrag338 = async (scope, to, { alt = false, during = null } = {}) => {
+    const from = await pivotAt338(scope);
+    await page.mouse.move(from.x, from.y); await page.mouse.down();
+    try {
+      if (alt) await page.keyboard.down('Alt');
+      await page.mouse.move(to.x, to.y, { steps: 5 }); await frames();
+      if (during) await during();
+    } finally { await page.mouse.up(); await page.keyboard.up('Alt'); }
+    await frames();
+  };
+  const greenNear338 = async (pt) => {          // the snap marker (#029d03 outline) within 10 css px of the point, waited for up to 2 s
+    for (let n = 0; n < 20; n++) {
+      if (await t('drawing').evaluate((c, pt) => {
+        const b = c.getBoundingClientRect(), k = c.width / b.width, R = Math.round(10 * k), cx = Math.round((pt.x - b.x) * k), cy = Math.round((pt.y - b.y) * k);
+        const d = c.getContext('2d').getImageData(cx - R, cy - R, 2 * R, 2 * R).data;
+        for (let i = 0; i < d.length; i += 4) if (d[i + 3] > 200 && d[i] < 40 && d[i + 1] > 120 && d[i + 2] < 40) return true;
+        return false;
+      }, pt)) return true;
+      await page.waitForTimeout(100);
+    }
+    return false;
+  };
+  const near338 = (a, b, why, tol = 0.3) => { approx(a.x, b.x, tol, why + ' x'); approx(a.y, b.y, tol, why + ' y'); };
+  /** One run of the rules on a tab in rotate mode: own node, another object, Snap off, Alt, Tab, release. own / other: the client points of two nodes; scope: where its ◎ is. */
+  const pivotRules338 = async (scope, own, other, shot) => {
+    const off = (p, dx = 3, dy = 2) => ({ x: p.x + dx, y: p.y + dy });
+    const snapOn = await t('tog-snap').getAttribute('aria-pressed');
+    const setChip = async (on) => { if (await t('tog-snap').getAttribute('aria-pressed') !== String(on)) await t('tog-snap').click(); };
+    try {
+      await setChip(true);
+      await pivotDrag338(scope, off(own), { during: async () => { assert.equal(await greenNear338(own), true, 'the snap marker shows while the ◎ is dragged'); } });
+      near338(await pivotAt338(scope), own, 'the ◎ snaps to a node of the turned object itself');
+      await pivotDrag338(scope, off(other), { during: async () => {
+        assert.equal(await greenNear338(other), true, 'the snap marker shows on the other object’s end');
+        if (shot) await page.screenshot({ path: `${shotDir}/todo338-${shot}.png` });
+      } });
+      near338(await pivotAt338(scope), other, 'the ◎ snaps to the end of another object');
+      await pivotDrag338(scope, off(other), { alt: true });
+      near338(await pivotAt338(scope), off(other), 'Alt held: the raw pointer');
+      await pivotDrag338(scope, off(other));
+      near338(await pivotAt338(scope), other, 'back on the node without Alt');
+      await setChip(false);
+      await pivotDrag338(scope, off(own));
+      near338(await pivotAt338(scope), off(own), 'Snap off: the raw pointer');
+      await setChip(true);
+    } finally { await page.mouse.up(); await page.keyboard.up('Alt'); await setChip(snapOn === 'true'); }
+  };
+  /** Tab while the ◎ is held on `other` (a line end): it goes to another point of that line, and letting go keeps it there. */
+  const pivotTab338 = async (scope, other, lineY) => {
+    let during = null;
+    await pivotDrag338(scope, { x: other.x + 3, y: other.y + 2 }, { during: async () => {
+      await page.evaluate(() => document.activeElement?.blur());
+      for (let i = 0; i < 4; i++) {        // a line's first Tab visits Nearest, which sits on the end too; Tab until the ◎ has left it
+        await page.keyboard.press('Tab'); await frames();
+        during = await pivotAt338(scope);
+        if (Math.hypot(during.x - other.x, during.y - other.y) > 3) break;
+      }
+      assert.ok(Math.hypot(during.x - other.x, during.y - other.y) > 3, 'Tab moved the ◎ to another point of the line');
+      if (lineY != null) approx(during.y, lineY, 0.5, 'still on the line');
+    } });
+    near338(await pivotAt338(scope), during, 'letting go keeps the Tab point', 0.05);
+  };
+  const turn338 = async (scope, degrees) => {            // the first corner arrow, Shift held: the angle lands on a multiple of 15°
+    const a = await arrowAt338(scope), pv = await pivotAt338(scope), ang = degrees * Math.PI / 180, dx = a.x - pv.x, dy = a.y - pv.y;
+    await page.keyboard.down('Shift');
+    try {
+      await page.mouse.move(a.x, a.y); await page.mouse.down();
+      await page.mouse.move(pv.x + dx * Math.cos(ang) + dy * Math.sin(ang), pv.y - dx * Math.sin(ang) + dy * Math.cos(ang), { steps: 6 });
+      await frames();
+    } finally { await page.mouse.up(); await page.keyboard.up('Shift'); }
+    await frames();
+  };
+  const sameGeometry338 = (got, expected) => {
+    for (let i = 0; i < expected.entities.length; i++) for (const c of [10, 20, 11, 21]) approx(fieldOf(got.entities[i], c), fieldOf(expected.entities[i], c), 1e-4, `entity ${i} field ${c}`);
+  };
+
+  await step('TODO 338: Drawings: the ◎ pivot drag snaps (own node, another object, Alt, Snap off, Tab, release), the turn uses it', async () => {
+    const raw = newDoc(4); addEntities(raw, dxfLine(20, 30, 120, 30), dxfLine(60, 80, 160, 80));
+    await openGrips(writeDxf(raw), 'pivot-338.dxf');
+    const before = await savedDoc();
+    await click(45, 30); await gripWhen(3);
+    await click(45, 30); await frames();
+    await page.locator('.ovl [data-rot]').first().waitFor(); assert.equal(await page.locator('.ovl [data-rot]').count(), 4);
+    const own = await exact338(120, 30), other = await exact338(160, 80);
+    await pivotRules338('.ovl', own, other, 'drawings-light');
+    await menuItem('View', 'Theme: dark'); await frames();
+    await pivotDrag338('.ovl', { x: other.x + 3, y: other.y + 2 }, { during: async () => { await page.screenshot({ path: `${shotDir}/todo338-drawings-dark.png` }); } });
+    await menuItem('View', 'Theme: light'); await frames();
+    await pivotTab338('.ovl', other, other.y);
+    await pivotDrag338('.ovl', { x: other.x + 3, y: other.y + 2 });
+    near338(await pivotAt338('.ovl'), other, 'on the node again');
+    await turn338('.ovl', 23);
+    sameGeometry338(await savedDoc(), rotateEntities(before, new Set([0]), [160, 80], 30));
+    await page.keyboard.press('Control+z');
+    await closeTabs(/./);
+  });
+
+  await step('TODO 338: Layouts: the ◎ pivot drag snaps (own corner, another part, Alt, Snap off, Tab, release), the turn uses it', async () => {
+    await closeTabs(/./);
+    const lay = newLayout('Pivot 338'), plate = addEntities(newDoc(4), dxfPoly([[0, 0], [100, 0], [100, 60], [0, 60]], { closed: true }));
+    lay.parts.plate = makePart('plate', 'Plate', plate); lay.parts.other = makePart('other', 'Other', plate);
+    lay.placed = [{ partId: 'plate', x: 200, y: 200, rot: 0 }, { partId: 'other', x: 420, y: 330, rot: 0 }];
+    await t('picker').setInputFiles({ name: 'pivot-338-layout.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
+    await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'pivot-338-layout.dxf');
+    await page.locator('[data-tool=select]').click();
+    const [x0, y0, x1, y1] = placedBox(lay.parts.plate, lay.placed[0]), [, v0, u1] = placedBox(lay.parts.other, lay.placed[1]);
+    const own = await exact338(x1, y1), other = await exact338(u1, v0), centre = await exact338((x0 + x1) / 2, (y0 + y1) / 2);
+    await page.locator('[data-group=parts] .part-hit').first().click({ force: true });
+    await page.mouse.click(centre.x, centre.y);
+    await page.waitForFunction(() => document.querySelectorAll('[data-group=tools] [data-rot]').length === 4);
+    await pivotRules338('[data-group=tools]', own, other, 'layouts-light');
+    await menuItem('View', 'Theme: dark'); await frames();
+    await pivotDrag338('[data-group=tools]', { x: other.x + 3, y: other.y + 2 }, { during: async () => { await page.screenshot({ path: `${shotDir}/todo338-layouts-dark.png` }); } });
+    await menuItem('View', 'Theme: light'); await frames();
+    await pivotTab338('[data-group=tools]', other, null);
+    await pivotDrag338('[data-group=tools]', { x: other.x + 3, y: other.y + 2 });
+    near338(await pivotAt338('[data-group=tools]'), other, 'on the corner again');
+    await turn338('[data-group=tools]', 23);
+    await page.waitForFunction(() => document.querySelector('[data-testid=pa]').value.startsWith('30'));
+    const got = layoutFromRaw(await savedDoc()).placed.find((p) => p.partId === 'plate'), want = rotateAbout(lay.parts.plate, lay.placed[0], [u1, v0], 30);
+    approx(got.x, want.x, 0.01, 'the part turned about the snapped pivot: x'); approx(got.y, want.y, 0.01, 'the part turned about the snapped pivot: y'); approx(got.rot, 30, 0.01, 'turned 30°');
+    await page.keyboard.press('Control+z');
+    await closeTabs(/./);
+  });
+
+  await step('TODO 338: Compare: the ◎ pivot drag snaps (own node, the other item, Alt, Snap off), the turn uses it', async () => {
+    await closeTabs(/./);
+    const a = newDoc(4), b = newDoc(4); addEntities(a, dxfLine(20, 30, 120, 30)); addEntities(b, dxfLine(40, 50, 65, 50), dxfLine(65, 50, 140, 50));        // item 2 lines up on item 1 (same size, offset -20, -20): the join at (65, 50) lands on (45, 30), where item 1 has no node
+    for (const [name, doc] of [['pivot-338-a.dxf', a], ['pivot-338-b.dxf', b]]) {
+      await t('picker').setInputFiles({ name, mimeType: 'text/plain', buffer: Buffer.from(writeDxf(doc)) });
+      await page.waitForFunction((n) => document.querySelector('.tabs .dtab.on .tname').textContent === n, name);
+    }
+    await page.locator('.tabs .dtab', { hasText: 'pivot-338-a' }).click();
+    await menuItem('File', 'Compare drawings…');
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'Compare');
+    await t('cmp-run').click(); await page.waitForFunction(() => /difference/.test(document.querySelector('[data-testid=cmp-count]').textContent));
+    await t('cmp-name-1').click(); await page.locator('[data-tool=select]').click();
+    await page.keyboard.press('Escape'); await frames();
+    await click(45, 30); await frames(); await click(45, 30); await frames();
+    await page.locator('.ovl [data-rot]').first().waitFor(); assert.equal(await page.locator('.ovl [data-rot]').count(), 4);
+    const own = await exact338(120, 30), other = await exact338(45, 30);
+    await pivotRules338('.ovl', own, other, 'compare-light');
+    await pivotDrag338('.ovl', { x: other.x + 3, y: other.y + 2 });
+    near338(await pivotAt338('.ovl'), other, 'on the other item’s end again');
+    await pivotDrag338('.ovl', { x: other.x + 3, y: other.y + 2 }, { during: async () => {
+      await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Tab'); await page.keyboard.press('Tab'); await frames();
+      near338(await pivotAt338('.ovl'), other, 'Compare has no Tab cycle for any tool (snapObjectCandidates: d.cmp): the ◎ stays put');
+    } });
+    await turn338('.ovl', 23);
+    await page.locator('.tabs .dtab', { hasText: 'pivot-338-a' }).click();
+    sameGeometry338(await savedDoc(), rotateEntities(readDxf(writeDxf(a)), new Set([0]), [45, 30], 30));
+    await closeTabs(/./);
+  });
+
   await step('command messages: an error sits above the visible hint with a selection and grips on', async () => {
     await openGrips();
     await click(70, 30); await gripWhen(3);

@@ -3275,8 +3275,9 @@ function placedMove(e) {
   if (!p || !lay || !s) return;
   const here = sheetAt(e.clientX, e.clientY);
   if (p.kind === 'pivot') {
-    state.pivot = { kind: 'custom', x: r2(here[0]), y: r2(here[1]) };
-    drawTools(); renderProps(); renderCommand();
+    const q = pivotSnap(s.d, here, e.altKey), round = q[2] ? PL.r6 : r2;
+    state.pivot = { kind: 'custom', x: round(q[0]), y: round(q[1]) };
+    drawTools(); renderProps(); renderCommand(); paintOverlay();
     return;
   }
   if (p.kind === 'move') {
@@ -3329,7 +3330,7 @@ function placedUp() {
   pdrag = null;
   if (!p) return;
   flushUpdate();
-  if (p.kind === 'pivot') { update(); return; }
+  if (p.kind === 'pivot') { snapCycle = null; update(); return; }       // the Tab choice ends with the drag
   if (!p.moved) {
     if (p.kind !== 'move') return;
     if (p.toggle != null) {                                        // Shift-click on a selected part: out it goes (its whole group)
@@ -5228,7 +5229,8 @@ function paintOverlay(gesture = false) {
     const hv = L2 && (typedAt() || L2.hover);                       // typed cursor fields: the rubber line goes to the typed point
     const dragSnap = (d?.lay || d?.cmp) && (state.paste?.to || (pdrag?.moved && state.snap && !pdrag.skipSnap && pdrag.to));
     const preview = selectSnapPreview(d);
-    const marks = preview?.[2] ? [[preview[0], preview[1], preview[2], true]] : dragSnap?.[2] ? [[dragSnap[0], dragSnap[1], dragSnap[2], true]] : L2 && d ? [...L2.pts.map((q) => [q[0], q[1], q[2], false]), ...(L2.pts.length < 2 && hv ? [[hv[0], hv[1], hv[2], true]] : [])] : null;
+    const pivotMark = pivotHit && (pdrag?.kind === 'pivot' || state.drawingRotate?.drag?.kind === 'pivot') ? pivotHit : null;
+    const marks = preview?.[2] ? [[preview[0], preview[1], preview[2], true]] : pivotMark ? [[pivotMark[0], pivotMark[1], pivotMark[2], true]] : dragSnap?.[2] ? [[dragSnap[0], dragSnap[1], dragSnap[2], true]] : L2 && d ? [...L2.pts.map((q) => [q[0], q[1], q[2], false]), ...(L2.pts.length < 2 && hv ? [[hv[0], hv[1], hv[2], true]] : [])] : null;
     const calls = [], lifted = [];                                   // lifted: the parts a drag moves, painted by the overlay (R11: on top until the drop)
     const layKey = (v) => {
       const k = [d, v.ox, v.oy, v.scale, cw, chh, dpr, v.dark, v.wireframe, v.sheetH, state.hidden.parts];
@@ -5569,6 +5571,7 @@ function attachCanvasEvents() {
       pdrag.skipSnap = true;
       if (pdrag.pointer) placedMove(pdrag.pointer);
     }
+    if (e.key === 'Alt' && snapPointer && (pdrag?.kind === 'pivot' || state.drawingRotate?.drag?.kind === 'pivot')) ui.canvas.dispatchEvent(new PointerEvent('pointermove', { ...snapPointer, altKey: true, bubbles: true }));       // Alt pressed mid-drag: the ◎ goes to the raw pointer
     const eg = state.entityDrag;
     if (e.key === 'Alt' && eg?.last) { eg.skipSnap = true; moveSelectionTo(eg, eg.last); }
   }, true);
@@ -6616,6 +6619,19 @@ function selectSnapPreview(d) {
   snapQuery = query; snapCycle = cycle;
   return q;
 }
+/** TODO 338: the ◎ pivot drag snaps like a drawn point (objects incl. its own, guides; no polar / tracking). Alt or Snap off = the raw pointer. */
+let pivotHit = null;
+function pivotSnap(d, p, alt) {
+  pivotHit = null;
+  if (alt) return p;
+  let q = snapPoint(d, p);
+  if (!q[2] && d.lay && state.snap) {            // a layout's snapPoint has no guides: take them here
+    const hit = snapGuideBox([p[0], p[1], p[0], p[1]]);
+    if (hit.hits.length) q = [p[0] + hit.dx, p[1] + hit.dy, 'guide'];
+  }
+  if (q[2]) pivotHit = q;
+  return q;
+}
 const snapPoint = (d, p, skip = -1, extra = [], from = null) => {
   if (state.trk.d !== d) { trackClear(); state.trk.d = d; }
   const item = cmpEditingItem(d);
@@ -6671,7 +6687,7 @@ function snapObjectCandidates(q, candidates = true) {
   return e < 0 ? null : { object: ed, e, candidates: candidates ? Ed.snapCandidates(ed, e, ...p, tol, types, from) : [] };
 }
 function snapTab(e) {
-  if (e.key !== 'Tab' || e.ctrlKey || e.metaKey || e.altKey || e.shiftKey || e.isComposing || state.orthoAsk || state.attdispAsk || state.eatteditAsk || !state.snap || !snapPointer || snapPointer.buttons) return;
+  if (e.key !== 'Tab' || e.ctrlKey || e.metaKey || e.altKey || e.shiftKey || e.isComposing || state.orthoAsk || state.attdispAsk || state.eatteditAsk || !state.snap || !snapPointer || snapPointer.buttons && pdrag?.kind !== 'pivot' && state.drawingRotate?.drag?.kind !== 'pivot') return;
   if (document.querySelector('.pop-back, .pdlg-back, dialog[open], [data-testid=ctx-menu], :popover-open')) return;
   if (e.target !== document.body && !ui.canvas.contains(e.target) || e.target.closest?.('input, textarea, select, button, a, [contenteditable=true]')) return;
   if (cursorDynamic() && DI.hasTyped(cursorInput())) return;
@@ -6743,7 +6759,7 @@ function drawingRotateMove(e) {
   if (!g) return;
   if (r.d !== editable() || g.raw !== r.d.raw.entities) { r.drag = null; paintOverlay(); return; }
   const p = toDrawing(r.d, e.clientX, e.clientY);
-  if (g.kind === 'pivot') { r.pivot = p; paintOverlay(); return; }
+  if (g.kind === 'pivot') { r.pivot = pivotSnap(r.d, p, e.altKey).slice(0, 2); paintOverlay(); return; }
   if (!g.items && Math.hypot(e.clientX - g.px[0], e.clientY - g.px[1]) <= 3) return;
   if (!g.preview) {
     g.preview = flatten({ ...r.d.raw, entities: [...g.sel].map((i) => g.raw[i]) });
@@ -6757,7 +6773,7 @@ function drawingRotateUp(e) {
   drawingRotateMove(e);
   const r = state.drawingRotate, g = r?.drag;
   if (!g) return;
-  r.drag = null;
+  r.drag = null; snapCycle = null;
   if (g.kind === 'rotate' && g.items && g.angle && !moveLocked(r.d, g.sel, 'rotate')) {
     try {
       const next = rotateEntities(r.d.raw, g.sel, r.pivot, g.angle);
