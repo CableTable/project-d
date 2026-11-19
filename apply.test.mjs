@@ -129,6 +129,18 @@ test('inch drawing: INSERT scaled to mm', () => {
   near(bb[2] - bb[0], part.w); near(bb[3] - bb[1], part.h);
 });
 
+test('342 fix: the hull of a small inch circle is sampled to 0.01 mm, not 0.01 drawing units', () => {
+  const raw = W.newDoc(1); W.addEntities(raw, W.circle(0, 0, 0.5));
+  const fl = D.flatten(raw), f = unitFactor(fl.units); assert.equal(f, 25.4);
+  const h = A.partFromDrawing('c.dxf', raw, fl, f).hull;
+  assert.ok(h.length > 8);
+  for (let i = 0; i < h.length; i++) {
+    const a = h[i], b = h[(i + 1) % h.length];
+    const mid = Math.hypot((a[0] + b[0]) / 2, (a[1] + b[1]) / 2);
+    assert.ok((0.5 - mid) * f < 0.0101, 'edge sags ' + (0.5 - mid) * f + ' mm');
+  }
+});
+
 test('a drawing with no extents is not a part', () => {
   const doc = W.newDoc(); const fl = D.flatten(doc);
   assert.equal(A.partFromDrawing('x.dxf', doc, fl, 1), null);
