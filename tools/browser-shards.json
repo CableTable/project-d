@@ -248,6 +248,7 @@
   "Text: the command line takes Height, Left / Centre / Right, Style, Bold and x,y; text goes on the current layer": 3.29,
   "Text: screenshots, light and dark (selected text with its box, handles and tag; typing in place; a corner being dragged)": 9.86,
   "TODO 195: drag selection snaps to endpoint": 9.25,
+  "TODO 339: the snap marker and its label are painted last, above a 3 mm line, on Drawings, Layouts and Compare": 6,
   "command messages: an error sits above the visible hint with a selection and grips on": 3.57,
   "TODO 159: command log rows small": 4.88,
   "TODO 156a: drawing corner arrows, Shift turn, moved pivot, preview, undo, grips and layout arrows": 15.21,
