@@ -14897,21 +14897,29 @@ try {
       const to = await at(...b); await page.mouse.move(to.x + 2, to.y + 1, { steps: 6 }); await page.mouse.up();
       const moved = await savedDoc(), off = [10, 20].map((code) => fieldOf(moved.entities[0], code));
       for (let i = 0; i < 2; i++) assert.ok(Math.abs(a[i] + off[i] - b[i]) < 1e-9, 'Drawings: a press 5 px off the end lands the end exactly on the other point');
-      // Alt held at the press grabs raw: the same 5 px off press now lands 5 px short of the far end of the other line (no own-point grab)
+      // Alt at the press on Drawings stays the 71c cycle (two objects meet at b): it cycles and starts no drag (R3-1)
       const far = [b[0], b[1] + 40], pe = await at(...b), tf = await at(...far);
-      await page.keyboard.down('Alt'); await page.mouse.move(pe.x + 5, pe.y); await page.mouse.down();
+      await page.keyboard.down('Alt'); await page.mouse.click(pe.x, pe.y); await page.keyboard.up('Alt');
+      await said(/\d of 2 objects here/);       // Alt+click on two overlapping objects cycles them (71c)
+      await page.keyboard.down('Alt'); await page.mouse.move(pe.x, pe.y); await page.mouse.down();
       await page.mouse.move(tf.x, tf.y, { steps: 6 }); await page.mouse.up(); await page.keyboard.up('Alt');
-      const raw2 = (await savedDoc()).entities[0], end2 = [a[0] + fieldOf(raw2, 10), a[1] + fieldOf(raw2, 20)];
-      assert.ok(Math.hypot(end2[0] - far[0], end2[1] - far[1]) > 1e-3, 'Drawings: Alt at the press grabs raw, so the end does not land on the other point');
+      const after = (await savedDoc()).entities.map((en) => [fieldOf(en, 10), fieldOf(en, 20)]);
+      assert.deepEqual(after[0], off, 'Drawings: an Alt press-and-drag cycles and moves nothing: the insert stays exactly where the first drag put it');
       await closeTabs(/own-340/);
       // a press on a selected circle's centre (not on the circle) still drags it from the centre (R2-2)
-      const rawk = newDoc(4); addEntities(rawk, dxfCircle(60.1234, 40.4321, 15), dxfLine(150.9876, 90.8765, 190, 90.8765));
+      // 201 selected objects switch the grips off (MAX_SELECTED 200), so the press cannot go through gripDown: only the own-point path (ownSnap) can grab
+      const rawk = newDoc(4), tiny = [];
+      for (let i = 0; i < 201; i++) tiny.push(dxfLine(5 + (i % 21) * 13, 110 + Math.floor(i / 21) * 8, 7 + (i % 21) * 13, 110 + Math.floor(i / 21) * 8));
+      addEntities(rawk, dxfCircle(60.1234, 40.4321, 15), dxfLine(150.9876, 20.8765, 190, 20.8765), ...tiny);
       await openGrips(writeDxf(rawk), 'own-340-circle.dxf');
-      await click(75.1234, 40.4321); await waitSel('1 selected');
-      const pc = await at(60.1234, 40.4321), tc = await at(150.9876, 90.8765);
+      const w0 = await at(1, 24), w1 = await at(280, 200);       // a window round the circle and the tiny lines, not the target line below it
+      await page.mouse.move(w0.x, w0.y); await page.mouse.down(); await page.mouse.move(w1.x, w1.y, { steps: 6 }); await page.mouse.up();
+      await waitSel('202 selected');
+      await frames(); assert.equal(await gripCount(), 0, 'Drawings: grips are off with 202 selected');
+      const pc = await at(60.1234, 40.4321), tc = await at(150.9876, 20.8765);
       await page.mouse.move(pc.x + 3, pc.y + 1); await page.mouse.down(); await page.mouse.move(tc.x + 2, tc.y, { steps: 6 }); await page.mouse.up();
       const circ = (await savedDoc()).entities.find((en) => en.type === 'CIRCLE');
-      assert.ok(Math.abs(fieldOf(circ, 10) - 150.9876) < 1e-9 && Math.abs(fieldOf(circ, 20) - 90.8765) < 1e-9, 'Drawings: a press 3 px off a selected circle\'s centre drags it and lands the centre exactly on the other point');
+      assert.ok(Math.abs(fieldOf(circ, 10) - 150.9876) < 1e-9 && Math.abs(fieldOf(circ, 20) - 20.8765) < 1e-9, 'Drawings: a press 3 px off a selected circle\'s centre (grips off) drags it and lands the centre exactly on the other point: ' + [fieldOf(circ, 10), fieldOf(circ, 20)]);
       await closeTabs(/own-340/);
       const lay = newLayout('Own 340'), plate = addEntities(newDoc(4), dxfPoly([[0, 0], [100, 0], [100, 60], [0, 60]], { closed: true }));
       lay.parts.plate = makePart('plate', 'Plate', plate);
@@ -14919,8 +14927,15 @@ try {
       await t('picker').setInputFiles({ name: 'own-340-lay.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
       await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'own-340-lay.dxf');
       await page.locator('[data-tool=select]').click(); await click(400, 120); await click(240, 220);       // the empty click leaves a Rotate mode an earlier step left on
-      const pl =await at(200.1234, 200.4321);
-      await checks({ x: pl.x, y: pl.y - 1 }, 'Layouts');
+      const pl0 = await at(200.1234, 200.4321);
+      await checks({ x: pl0.x, y: pl0.y - 1 }, 'Layouts');
+      // Alt at the press on Layouts grabs raw: the part moves by exactly the pointer's travel (60 px right, 30 px down), 5 px off the corner and no own-point grab
+      const mm = (await at(1, 0)).x - (await at(0, 0)).x;
+      await page.keyboard.down('Alt'); await page.mouse.move(pl0.x + 5, pl0.y - 2); await page.mouse.down();
+      await page.mouse.move(pl0.x + 65, pl0.y + 28, { steps: 6 }); await page.mouse.up(); await page.keyboard.up('Alt');
+      const alt0 = layoutFromRaw(await savedDoc()).placed[0];
+      assert.ok(Math.abs(alt0.x - (200.1234 + 60 / mm)) < 0.3 && Math.abs(alt0.y - (200.4321 - 30 / mm)) < 0.3, `Layouts: Alt at the press moves the part by the raw pointer travel, got ${alt0.x}, ${alt0.y}, wanted ${200.1234 + 60 / mm}, ${200.4321 - 30 / mm}`);
+      const pl = await at(alt0.x, alt0.y);
       await page.mouse.move(pl.x + 5, pl.y - 2); await page.mouse.down();
       const tl = await at(520.9876, 400.8765); await page.mouse.move(tl.x + 2, tl.y - 1, { steps: 6 }); await page.mouse.up();
       const placed = layoutFromRaw(await savedDoc()).placed[0];
