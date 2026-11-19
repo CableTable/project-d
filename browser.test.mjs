@@ -11730,10 +11730,12 @@ try {
     await t('contour-apply').click();
     assert.match(await prompt(), /^Contour: 3 new outlines \(24 lines and arcs\) on the layer Contour\. Ctrl\+Z takes them away:?$/);
     assert.equal(await entCount(), base + 24);
+    await t('ptab-objects').click();                                     // the layer rows are drawn when this tab opens (TODO 325)
     const layerRow = page.locator('.layer', { hasText: 'Contour' });
     assert.equal(await layerRow.count(), 1);
     assert.equal(await layerRow.locator('[data-testid=layer-new]').textContent(), 'new');
     assert.equal(await layerRow.locator('.lbl.mono').textContent(), '24');
+    await t('ptab-drawing').click();
     assert.equal(await selCount(), '1 selected', 'the original stays selected');
     assert.equal(await t('contour-panel').isVisible(), true, 'the panel stays open to try another');
     // the original is untouched, the new ones are ordinary lines and arcs on the layer Contour (saved)
@@ -26856,8 +26858,10 @@ try {
         await work(area);
         assert.equal(await q('canvas').evaluate((el) => getComputedStyle(el).backgroundColor), background);
         assert.equal(await p.locator('body').evaluate((el) => getComputedStyle(el).backgroundColor), appBg);
+        await q('ptab-objects').click();                                   // the layer rows are drawn when this tab opens (TODO 325)
         const swatch = await p.locator('.layer[data-file-layer] .swatch').first().evaluate((el) => getComputedStyle(el).backgroundColor.match(/\d+/g).slice(0, 3).map(Number));
         assert.equal(Math.max(...swatch) > 128, app === 'dark', 'layer "0" swatch contrasts with the app-themed panel, not the work area');
+        await q('ptab-drawing').click();
         assert.ok(await pixels(ink) > 400, 'ACI 7 and black / white drawing lines contrast with the work area');
         assert.ok(await pixels(area === 'Dark' ? 'ffffff' : '000000') > 400, 'both white / ACI 7 and black lines remain visible');
         if (await q('gap-show').getAttribute('aria-pressed') === 'false') { await q('gap-show').click(); await frame(); } // TODO 92: rings start off per drawing
