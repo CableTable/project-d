@@ -1272,6 +1272,7 @@ function addTab(d, replaceEmpty = true) {
   const cur = curDoc();
   if (replaceEmpty && cur && cur.empty && !cur.dirty && !d.empty) state.docs[state.doc] = d;      // an untouched empty tab is used up
   else { state.docs.push(d); state.doc = state.docs.length - 1; }
+  quickNext = 'big';
   showDoc();
 }
 
@@ -5195,6 +5196,7 @@ function previewBounds() {
 // Wheel, pan and resize move and scale the last full paint of a heavy drawing until the view settles (TODO 55 / 328a).
 let paintFull = true, snap = null, snapCv = null, snapTimer = 0, paintSize = null;
 // A layer toggle on a drawing whose last full paint was heavy paints once quick (items under QUICK_PX skipped, no kept bitmap), then settles with the 0.4 px paint after 120 ms (TODO 328b).
+// quickNext = 'big' (TODO 322c): a tab just opened, or redrawn after Delete / Undo / Redo, paints quick when it holds over 15 000 items (the size `heavy` calls heavy), whatever the last paint was.
 let quickNext = false, lastHeavy = false;
 // A drawing tab whose own paint is slow keeps its bitmap (without selection, marks, previews): a hover or a select click paints only those on top (TODO 258 / 259).
 let kept = null, keptCv = null, panCv = null;
@@ -5230,8 +5232,8 @@ function paintOverlay(gesture = false) {
     clearTimeout(snapTimer);
     const settled = settle; settle = false;
     const full = paintFull; paintFull = false;
-    const quick = quickNext && lastHeavy; quickNext = false;
     const d = curDoc();
+    const quick = quickNext === 'big' ? !!d?.fl && !d.lay && !d.cmp && d.fl.items.length > 15000 : quickNext && lastHeavy, big = quick && quickNext === 'big'; quickNext = false;
     // Artwork and layout sheet paper follow the same Work area.
     const base = { minPx: quick ? QUICK_PX : undefined, sheetH: state.sheetH, ox: view.ox, oy: view.oy, scale: view.scale, w, h: ch, dpr, dark: workDark(), wireframe: state.wireframe };
     const L2 = state.setlen || state.meas || state.dim || state.ldr || ((modLive() || layModLive()) && ['move', 'copy', 'stretch', 'rotate', 'scale', 'lengthen', 'align'].includes(state.mod.kind) ? { pts: state.mod.ref && state.mod.ref.step !== 'new' ? state.mod.ref.pts : state.mod.p1 ? [state.mod.p1] : [], hover: state.mod.cur }
@@ -5346,7 +5348,7 @@ function paintOverlay(gesture = false) {
     }
     // Zoom end (TODO 324b): the scaled picture stays while the sharp base is painted in bands
     if (settled && full && nk && !dkey && !quick && c.dataset.nokeep !== '1' && snapUsable(snap, want)
-      && zoomChunks(c, d, base, want, calls, d.lay ? layKey : d.cmp ? (v) => cmpKeepKey(d, v, cw, chh) : (v) => paintKey(d, v, cw, chh), nk)) {
+      && zoomChunks(c, d, base, want, calls, d.lay ? layKey : d.cmp ? (v) => cmpKeepKey(d, v, cw, chh) : (v) => paintKey(d, v, cw, chh), nk, snap.big)) {
       drawSnap();
       c.dataset.paints = (+c.dataset.paints || 0) + 1;
       ui.cmdUI.place();
@@ -5377,10 +5379,10 @@ function paintOverlay(gesture = false) {
     c.dataset.indexed = d && d.ed ? '1' : '0';       // test hook (P3): a paint right after a commit comes before the pick index
     const isHeavy = heavy(performance.now() - t0, drawn || 0);
     if (!quick && drawn) lastHeavy = isHeavy;       // an empty paint (every part hidden) says nothing about how heavy the next one is
-    if (isHeavy) keepSnap(quick ? null : key);       // a quick bitmap may scale under a wheel, but never stands in for a paint
+    if (isHeavy) { keepSnap(quick ? null : key); if (big) { snap.big = true; lastHeavy = true; } }       // a quick bitmap may scale under a wheel, but never stands in for a paint; a big open / edit's one is the picture its sharp bands paint over (322c)
     if (d?.lay) layOverlay(c, d, base, marks, lifted);
     if (d?.cmp?.dragged) cmpPaint(c, d.cmp, base, marks, true);
-    if (quick) { c.dataset.quick = '1'; snapTimer = setTimeout(() => paintOverlay(), 120); }
+    if (quick) { c.dataset.quick = '1'; snapTimer = setTimeout(() => { settle = big; paintOverlay(); }, 120); }
     ui.cmdUI.place();
   });
 }
@@ -5423,9 +5425,9 @@ function paintStrip(g, d, base, want, calls, [x0, y0, x1, y1]) {
  * call stops the bands (chunkGen), except a full one for the same view and content. False when the kept base is not of this content: the caller paints in full.
  */
 const ZOOM_BANDS = 8;
-function zoomChunks(c, d, base, want, calls, keyOf, nkey) {
-  const v = kept?.view;
-  if (!v || v.w !== want.w || v.h !== want.h || v.dpr !== want.dpr || !sameBase(kept.key, keyOf({ ...base, ox: v.view.ox, oy: v.view.oy, scale: v.view.scale }))) return false;
+function zoomChunks(c, d, base, want, calls, keyOf, nkey, afterQuick) {
+  const v = kept?.view;       // afterQuick (322c): the picture on screen is the quick frame of this very content, no kept base to compare
+  if (!afterQuick && (!v || v.w !== want.w || v.h !== want.h || v.dpr !== want.dpr || !sameBase(kept.key, keyOf({ ...base, ox: v.view.ox, oy: v.view.oy, scale: v.view.scale })))) return false;
   chunkCv = chunkCv || document.createElement('canvas');
   chunkCv.width = want.w; chunkCv.height = want.h;
   const g = chunkCv.getContext('2d'), run = ++chunkGen, bh = Math.ceil(want.h / ZOOM_BANDS);
@@ -7042,6 +7044,7 @@ function restore(d, st, drawn, layerNames, index) {
   const c = patchedCounts(was, d.raw, fl);
   Object.assign(d, { fl, counts: c.counts, entities: c.n, cnt: { entities: d.raw.entities, names: fl.layers.map((l) => l.name), space: spaceOf(fl), counts: c.counts, n: c.n }, edPrev: index ? null : prevIx || d.edPrev, box: drawingBoxMm(fl, d.factor), dirty: true, ed: index || null, outl: null, sel: new Set(), stretchSelection: null, hl: [] });
   if (cmpDoc()) cmpRefresh(d);
+  quickNext = 'big';
   showDoc();
   warm(d);
   if (st.sel) setSel(d, new Set(st.sel.filter((i) => i < st.entities.length)));       // an object the step removed leaves the selection
