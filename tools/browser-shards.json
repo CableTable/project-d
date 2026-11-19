@@ -176,6 +176,7 @@
   "placing: Mirror X flips left to right, Mirror Y top to bottom; twice is the start; the Rotate/Mirror sections do the same": 3.11,
   "exe review fixes: with no grid part the step footer is only its hint (no floating 0); Duplicate says when copies land on other parts": 3.14,
   "placing: Duplicate along X or Y (gap edge to edge), Copy once / Ctrl+D, Delete, off the sheet is tinted and said once": 3.48,
+  "TODO 342: a turned part inside the sheet is not orange; a part in the top gripper is, with the gripper note once": 3,
   "placing: a part of the step and repeat grid becomes a placed part of its own when it is changed": 2.77,
   "placing: saved with its rotation and mirror, reopened the same, the PDF draws it; screenshots light and dark": 8.54,
   "TODO 36: Shift-click adds and removes parts; a rubber band selects the parts fully inside; the pick-order numbers, the box and its readout, the Arrange section": 4.65,

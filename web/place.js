@@ -3,7 +3,9 @@
 // A placed part is apply.js's { partId, x, y, rot, mirrorX, mirrorY }: (x, y) is where the part's own lower-left corner lands on
 // the sheet (mm, y up), rot is degrees anticlockwise, and a mirror flips the part about its own corner before it is turned.
 // Every function takes the part ({ w, h } in mm) and a placement and returns a NEW placement; nothing is changed in place.
-import { placedBox } from './apply.js';
+import { placedBox, placedMat } from './apply.js';
+import { mapply } from './drawing.js';
+import { gripOf } from './layout.js';
 import { parse } from './units.js';
 
 /** A number rounded to 6 decimals (what a DXF keeps), never "-0". */
@@ -150,10 +152,24 @@ export function turnBetween(a, b) {
   return d;
 }
 
-/** Does the part's box leave the sheet (0,0 to W,H)? A hair of tolerance for rounding. */
+/** The points of the part's real outline (apply.js partFromDrawing's hull) on the sheet, mm, y up; a part with none (an object, a bare { w, h }) gives its box corners. */
+function outlinePoints(part, pl, H) {
+  if (!part.hull?.length) return corners(part, pl);
+  const M = placedMat(part, pl, H);
+  return part.hull.map(([x, y]) => { const q = mapply(M, x, y); return [q[0], H - q[1]]; });
+}
+
+/** Does the part's real outline leave the sheet (0,0 to W,H)? A hair of tolerance for rounding. */
 export function offSheet(part, pl, W, H) {
-  const b = placedBox(part, pl), t = 1e-6;
-  return b[0] < -t || b[1] < -t || b[2] > W + t || b[3] > H + t;
+  const t = 1e-6;
+  return outlinePoints(part, pl, H).some(([x, y]) => x < -t || y < -t || x > W + t || y > H + t);
+}
+
+/** Does the part's real outline reach into a gripper (a side of the sheet `s` with a gripper; 0 = none)? A point on the band's line is not in it. */
+export function inGripper(part, pl, s) {
+  const t = 1e-6, L = gripOf(s, 'left'), R = gripOf(s, 'right'), T = gripOf(s, 'top'), B = gripOf(s, 'bottom');
+  if (!(L || R || T || B)) return false;
+  return outlinePoints(part, pl, s.sheetH).some(([x, y]) => L > 0 && x < L - t || R > 0 && x > s.sheetW - R + t || T > 0 && y > s.sheetH - T + t || B > 0 && y < B - t);
 }
 
 /** A length typed in the drawing unit → mm, or null; mm keeps decimal commas. */

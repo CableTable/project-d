@@ -2532,8 +2532,9 @@ const pivotPoint = (part, pl) => PL.pivotOf(part, pl, state.pivot.kind, [state.p
 const showBox = (i) => { if (multiSel()) { const b = selBox(); return b ? lengthText(b[i]) : '—'; } const s = selectedPlaced(); return s ? lengthText(placedBox(s.part, s.p)[i]) : '—'; };
 const showAngle = () => { if (multiSel()) return '0°'; const s = selectedPlaced(); return s ? +Number(s.p.rot).toFixed(2) + '°' : '—'; };
 const showNudge = () => fmt1(state.nudge);
-/** What to add to a message: that the part is off the sheet (it is drawn in orange, and still placed). */
-const offNote = (lay, part, pl) => (PL.offSheet(part, pl, lay.s.sheetW, lay.s.sheetH) ? `${part.name} is off the sheet (drawn in orange). It is still placed` : '');
+/** What to add to a message: that the part is off the sheet, or (only that) in a gripper (it is drawn in orange, and still placed). */
+const offNote = (lay, part, pl) => (PL.offSheet(part, pl, lay.s.sheetW, lay.s.sheetH) ? `${part.name} is off the sheet (drawn in orange). It is still placed`
+  : PL.inGripper(part, pl, lay.s) ? `${part.name} is in the gripper (drawn in orange). It is still placed` : '');
 const say = (...bits) => note(bits.filter(Boolean).join('. '));
 
 /** A change in progress: the layout is kept for undo once, when the first thing changes (and thrown away if it is cancelled). */
@@ -5264,7 +5265,7 @@ function paintOverlay(gesture = false) {
           const fl = state.text.ed?.dim?.raw === part.raw ? state.text.ed.dim.fl : part.fl;
           const slotsOf = (list) => list.map((p) => placedMat(part, p, state.sheetH));
           for (const [list, to] of [[byPart.get(id) || [], calls], [liftedBy.get(id) || [], lifted]]) {
-            const on = list.filter((p) => !p.off), outside = list.filter((p) => p.off);          // a part off the sheet is drawn in the mark colour
+            const on = list.filter((p) => !p.off && !p.grip), outside = list.filter((p) => p.off || p.grip);          // a part off the sheet or in a gripper is drawn in the mark colour
             if (on.length) to.push({ fl, off: part.off, factor: part.factor || 1, slots: slotsOf(on) });
             if (outside.length) to.push({ fl, off: part.off, factor: part.factor || 1, slots: slotsOf(outside), tint: cssVar('--mark', '#c2410c') });
           }
@@ -5938,7 +5939,7 @@ function update(refit = false, dimNames) {
   layout = gridNow();
   for (let i = 0; i < 3 && pruneGaps(); i++) layout = gridNow();
   placedNow = lay ? LD.placedAll(lay, layout) : [];
-  for (const p of placedNow) p.off = PL.offSheet(lay.parts[p.partId], p, lay.s.sheetW, lay.s.sheetH);       // off the sheet: drawn in orange
+  for (const p of placedNow) { p.off = PL.offSheet(lay.parts[p.partId], p, lay.s.sheetW, lay.s.sheetH); p.grip = PL.inGripper(lay.parts[p.partId], p, lay.s); }       // off the sheet or in a gripper: drawn in orange (the counts say only p.off)
   if (selLooseMany) {
     curDoc().stretchSelection = null;
     const l =selLooseMany.map((i) => placedNow.findIndex((p) => p.src === 'loose' && p.i === i)).filter((k) => k >= 0);

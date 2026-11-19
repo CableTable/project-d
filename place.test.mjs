@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import * as P from './web/place.js';
 import { placedBox, placedMat, placement1 } from './web/apply.js';
 import * as AR from './web/array.js';
+import { makePart } from './web/layoutdoc.js';
+import { newDoc, addEntities, line, rect, circle } from './web/dxf-write.js';
 
 const near = (a, b, t = 1e-6) => assert.ok(Math.abs(a - b) <= t, a + ' != ' + b);
 const nearPt = (a, b, t = 1e-5) => { near(a[0], b[0], t); near(a[1], b[1], t); };
@@ -189,6 +191,56 @@ test('TODO 156b1: move and copy offsets, array counts', () => {
   assert.deepEqual(AR.rectOffsets({ cols: 2, rows: 2, dx: 120, dy: 80 }), [[120, 0], [0, 80], [120, 80]]);
   const ring = AR.polarPlacements([0, 0], [50, 0], { items: 4, fill: 360, rotate: true }).map(({ deg }) => P.rotateAbout(part, pl(50, 0), [0, 0], deg));
   assert.equal(ring.length, 3); nearPt([ring[0].x, ring[0].y], [0, 50]); assert.equal(ring[0].rot, 90);
+});
+
+// A right triangle (0,0) (100,0) (100,60): its box is 100 × 60, but the box corner (0,60) is empty space.
+const tri = makePart('tri', 'Triangle', addEntities(newDoc(4), line(0, 0, 100, 0), line(100, 0, 100, 60), line(100, 60, 0, 0)), 1);
+const TRI = [[0, 0], [100, 0], [100, 60]];
+
+test('342: the hull is the part\'s own points, in drawing units, kept on the part', () => {
+  assert.deepEqual(sortPts(tri.hull), sortPts(TRI));
+  assert.equal(makePart('r', 'Rect', addEntities(newDoc(4), rect(5, 5, 100, 60)), 1).hull.length, 4);
+  const arc = makePart('c', 'Circle', addEntities(newDoc(4), circle(0, 0, 50)), 1);
+  assert.ok(arc.hull.length > 20 && arc.hull.every(([x, y]) => Math.abs(Math.hypot(x, y) - 50) < 1e-6), 'a circle is sampled');
+});
+
+test('342: a 5° part inside the sheet whose upright box pokes out is not off', () => {
+  const p = pl(0, 0, 5);
+  assert.ok(placedBox(tri, p)[0] < -5, 'the upright box reaches left of the sheet');
+  assert.equal(P.offSheet(tri, p, 1000, 700), false);
+  assert.equal(P.offSheet(tri, pl(-1, 0, 5), 1000, 700), true, 'its real corner at (0,0) goes left');
+  assert.equal(P.offSheet({ ...tri, hull: undefined }, p, 1000, 700), true, 'a part with no outline is judged by its box, as before');
+  assert.equal(P.offSheet({ ...tri, hull: [] }, p, 1000, 700), true);
+});
+
+test('342: mirrored, scaled and turned copies go through the same map as toSheet', () => {
+  for (const p of [{ ...pl(300, 10, 0, true), sc: 2 }, { ...pl(300, 10, 5, true, false), sc: 2 }, { ...pl(50, 400, 123, false, true), sc: 1.5 }]) {
+    const ref = TRI.map(([u, v]) => P.toSheet(p, u, v));
+    for (const [W, H] of [[300, 700], [1000, 130], [1000, 129.9], [400, 300], [1000, 700], [200, 200]]) {
+      const off = ref.some(([x, y]) => x < -1e-6 || y < -1e-6 || x > W + 1e-6 || y > H + 1e-6);
+      assert.equal(P.offSheet(tri, p, W, H), off, JSON.stringify([p, W, H]));
+    }
+  }
+  assert.equal(P.offSheet(tri, { ...pl(300, 10, 0, true), sc: 2 }, 300, 700), false, 'mirrored, it spans x 100..300');
+  assert.equal(P.offSheet(tri, { ...pl(300, 10), sc: 2 }, 300, 700), true);
+});
+
+test('342: in a gripper: the outline reaches into a band; on the line is not in; 0 = no band; y is up from the bottom', () => {
+  const s = { sheetW: 1000, sheetH: 700, gripTop: 30, gripRight: 0, gripBottom: 0, gripLeft: 0 };
+  const box = { w: 100, h: 60, factor: 1, box: [0, 0, 100, 60], hull: [[0, 0], [100, 0], [100, 60], [0, 60]] };
+  assert.equal(P.inGripper(box, pl(100, 620), s), true, 'its top is at 680, the top band starts at 670');
+  assert.equal(P.offSheet(box, pl(100, 620), 1000, 700), false, 'a part in a gripper is still on the sheet');
+  assert.equal(P.inGripper(box, pl(100, 610), s), false, 'its top is exactly on the band line');
+  assert.equal(P.inGripper(box, pl(100, 0), s), false, 'the bottom has no gripper');
+  assert.equal(P.inGripper(box, pl(100, 10), { ...s, gripBottom: 10 }), false, 'on the bottom line');
+  assert.equal(P.inGripper(box, pl(100, 9.5), { ...s, gripBottom: 10 }), true);
+  assert.equal(P.inGripper(box, pl(5, 100), { ...s, gripLeft: 10 }), true);
+  assert.equal(P.inGripper(box, pl(890, 100), { ...s, gripRight: 10 }), false, 'right edge at 990 = 1000 − 10 exactly');
+  assert.equal(P.inGripper(box, pl(891, 100), { ...s, gripRight: 10 }), true);
+  assert.equal(P.inGripper(box, pl(100, 620), { ...s, gripTop: 0 }), false);
+  assert.equal(P.inGripper(tri, pl(100, 620), s), true, 'the triangle\'s tip (200,680) is in the band');
+  assert.equal(P.inGripper(tri, pl(100, 600), s), false);
+  assert.equal(P.inGripper(tri, pl(100, 616, 5), s), true); assert.equal(P.inGripper({ w: 100, h: 60 }, pl(100, 620), s), true, 'no outline: the box');
 });
 
 console.log(n + ' tests passed');

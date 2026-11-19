@@ -9903,6 +9903,7 @@ try {
   });
 
   await step('review: the gripper label never sits on a registration mark; the selected slot\'s width is never drawn over another part', async () => {
+    if (only) await ensureLibraryParts();
     await t('new-layout').click();
     await t('panel-library').click();
     assert.ok((await libNames()).length > 0);
@@ -10444,6 +10445,33 @@ try {
     assert.match(await prompt(), /Plate A moved to X 950\.00 Y \d+\.\d\d\. Plate A is off the sheet \(drawn in orange\)\. It is still placed:?$/);
     await partTab(); await t('px').fill('900'); await t('px').press('Enter');
     assert.doesNotMatch(await prompt(), /off the sheet/);
+  });
+
+  await step('TODO 342: a turned part inside the sheet is not orange; a part in the top gripper is, with the gripper note once', async () => {
+    await closeTabs(/./);
+    await page.evaluate(() => { document.documentElement.dataset.theme = 'light'; });
+    const made = newLayout('Gripper 342'), wedge = newDoc(4);              // a right triangle: turned 5° at X 0 its box reaches 5 mm left of the sheet, the triangle does not
+    addEntities(wedge, dxfLine(0, 0, 100, 0), dxfLine(100, 0, 100, 60), dxfLine(100, 60, 0, 0));
+    made.parts.wedge = makePart('wedge', 'Wedge', wedge, 1);
+    Object.assign(made.s, { sheetW: 1000, sheetH: 700, gripTop: 30, gripBottom: 0, gripLeft: 0, gripRight: 0 });
+    made.placed = [{ partId: 'wedge', x: 0, y: 300, rot: 5 }];
+    await t('picker').setInputFiles({ name: 'gripper342.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(layoutRaw(made))) });
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'gripper342.dxf');
+    await page.locator('[data-tool=select]').click(); await t('ptab-drawing').click();
+    await page.locator('[data-group=parts] .part-hit').first().click({ force: true });
+    assert.ok((await pos())[0] < -5, 'the box of the turned part reaches left of the sheet');
+    await page.waitForTimeout(300);
+    assert.ok(await markPixels() < 20, 'inside the sheet: not drawn in orange');
+    await partTab(); await t('py').fill('620'); await t('py').press('Enter');
+    const inGrip = await said(/Wedge moved to X -?\d+\.\d\d Y 620\.00\. Wedge is in the gripper \(drawn in orange\)\. It is still placed:?$/);
+    assert.doesNotMatch(inGrip, /off the sheet/);
+    let orange = await markPixels();
+    for (let i = 0; i < 40 && orange <= 30; i++) { await page.waitForTimeout(50); orange = await markPixels(); }
+    assert.ok(orange > 30, 'a part in the gripper is drawn in the mark colour: ' + orange);
+    await shotBoth('step-gripper-mark-342');
+    await partTab(); await t('py').fill('300'); await t('py').press('Enter');
+    assert.doesNotMatch(await said(/Wedge moved to X -?\d+\.\d\d Y 300\.00/), /gripper/, 'said once: a part back out of the gripper has no note');
+    await closeTabs(/./);
   });
 
   await step('placing: a part of the step and repeat grid becomes a placed part of its own when it is changed', async () => {
