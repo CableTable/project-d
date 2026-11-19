@@ -108,11 +108,18 @@ export function paintDrawing(canvas, o) {
   if (o.part === 'base') return drawn;
   if (o.hl && o.hl.length) highlight(c, o.hl, fl.mats, T, k, dpr, o.accent || '#4f46e5', o.wireframe);
   if (o.dim) drawDimPreview(c, o.dim, T, dpr, o.dimCol || DIM_LIGHT);
-  if (o.marks && o.marks.length) drawMarks(c, o.marks, T, dpr, o.accent || '#4f46e5', o.snapCol);
+  if (o.marks && o.marks.length && !o.marksLast) drawMarks(c, o.marks, T, dpr, o.accent || '#4f46e5', o.snapCol);       // marksLast: the caller paints them with paintMarks after its previews (TODO 339)
   if (o.gaps && o.gaps.length) drawGaps(c, o.gaps, T, dpr, o.markCol || '#c2410c');
   if (o.contour && o.contour.length) drawContour(c, o.contour, T, dpr, o.contourCol || '#00ff00', o.contourDash || []);
   if (o.previewBounds && !o.keep) { const box = overlayBox(o, T, dpr); if (box) o.previewBounds(box); }
   return drawn;
+}
+
+/** The snap marker and its label painted again over everything already on the canvas (TODO 339); o is a paintDrawing option set (view, factor, marks, accent, snapCol). */
+export function paintMarks(canvas, o) {
+  if (!o.marks?.length) return;
+  const k = o.scale * o.dpr, T = mmul([k, 0, 0, k, -o.ox * k, -o.oy * k], placement(o.factor, o.sheetH));
+  drawMarks(canvas.getContext('2d'), o.marks, T, o.dpr, o.accent || '#4f46e5', o.snapCol);
 }
 
 /** Contour's preview: the chosen colour and style, translucent until Apply. */
@@ -310,6 +317,7 @@ export function drawMarks(c, pts, T, dpr, accent, snapCol = '#00c000') {
     if (k) {
       const name = SNAP_NAME[k] || k;
       c.font = `${11 * dpr}px system-ui, sans-serif`; c.textBaseline = 'middle'; c.lineJoin = 'round';
+      c.fillStyle = 'rgba(255, 255, 255, .88)'; c.fillRect(x + h + 2 * dpr, y - h - 9 * dpr, c.measureText(name).width + 4 * dpr, 14 * dpr);       // a pale box so the label reads on a coloured line (TODO 339)
       c.strokeStyle = 'rgba(0, 0, 0, .55)'; c.lineWidth = 3 * dpr; c.strokeText(name, x + h + 4 * dpr, y - h - 2 * dpr);
       c.fillStyle = snapCol; c.fillText(name, x + h + 4 * dpr, y - h - 2 * dpr);
     }

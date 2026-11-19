@@ -14797,6 +14797,54 @@ try {
     await closeTabs(/./);
   });
 
+  await step('TODO 339: the snap marker and its label are painted last, above a 3 mm line, on Drawings, Layouts and Compare', async () => {
+    const snapOn = await t('tog-snap').getAttribute('aria-pressed'), orthoOn = await t('tog-ortho').getAttribute('aria-pressed');
+    const theme = await page.locator('html').getAttribute('data-theme') || 'light';
+    const setChip = async (id, on) => { if (await t(id).getAttribute('aria-pressed') !== String(on)) await t(id).click(); };
+    // true when a green marker pixel sits within 2 px of the marker's right edge (x + 6 px), where the 3 mm line crosses it
+    const edgeGreen = (to) => t('drawing').evaluate((c, p) => {
+      const r = c.getBoundingClientRect(), k = c.width / r.width, x = Math.round((p.x - r.x + 6) * k), y = Math.round((p.y - r.y) * k), z = Math.ceil(2 * k);
+      const px = c.getContext('2d').getImageData(x - z, y - z, z * 2 + 1, z * 2 + 1).data;
+      return [...px.keys()].some((i) => i % 4 === 0 && px[i + 3] > 200 && px[i + 1] > px[i] + 60 && px[i + 1] > px[i + 2] + 60);       // green: the edge is 1.6 px wide, so a pixel may be a blend
+    }, to);
+    await page.evaluate(() => {
+      window.__ops339 = []; const P = CanvasRenderingContext2D.prototype; window.__p339 = { stroke: P.stroke, fill: P.fill, fillText: P.fillText, strokeText: P.strokeText };
+      for (const n of ['stroke', 'fill', 'fillText', 'strokeText']) P[n] = function (...a) { if (this.canvas.dataset.testid === 'drawing') window.__ops339.push(n === 'fillText' ? a[0] : n); return window.__p339[n].apply(this, a); };
+    });
+    const lastOp = () => page.evaluate(() => window.__ops339.at(-1));
+    const drag = async (from, target, theme) => {
+      const p = await at(...from), q = await at(...target);
+      await page.mouse.move(p.x + 1, p.y + .5); await page.mouse.down();
+      await page.mouse.move(q.x + 2, q.y + 1, { steps: 6 }); await frames();
+      await page.evaluate(() => { window.__ops339 = []; }); await page.mouse.move(q.x + 1, q.y + .5); await frames();
+      return q;
+    };
+    const proof = async (q, name) => {
+      assert.equal(await lastOp(), 'end', name + ': the kind label is the last thing painted');
+      assert.ok(await edgeGreen(q), name + ': the green marker edge shows where the 3 mm line crosses it');
+    };
+    try {
+      await setChip('tog-snap', true); await setChip('tog-ortho', false);
+      for (const colour of ['light', 'dark']) {
+        await menuItem('View', 'Theme: ' + colour);
+        const raw = newDoc(4);
+        addBlock(raw, 'Thick339', [dxfLine(20, 20, 60, 20, { lw: 300 })]);
+        addEntities(raw, dxfInsert('Thick339', 0, 0), dxfLine(100, 60, 100, 100, { lw: 300 }), dxfLine(100, 60, 130, 60, { lw: 300 }));
+        await openGrips(writeDxf(raw), 'thick-339.dxf');
+        await click(32, 20); await waitSel('1 selected');
+        const q = await drag([20, 20], [100, 60]);
+        await page.screenshot({ path: `${shotDir}/todo339-drawings-${colour}.png` });
+        await proof(q, 'Drawings ' + colour);
+        await page.mouse.up(); await closeTabs(/thick-339/);
+      }
+      console.log('339: the marker and label are the last paint on Drawings');
+    } finally {
+      await page.mouse.up();
+      await page.evaluate(() => { Object.assign(CanvasRenderingContext2D.prototype, window.__p339); delete window.__p339; delete window.__ops339; });
+      await setChip('tog-snap', snapOn === 'true'); await setChip('tog-ortho', orthoOn === 'true');
+      await menuItem('View', 'Theme: ' + theme); await closeTabs(/thick-339/);
+    }
+  });
   await step('command messages: an error sits above the visible hint with a selection and grips on', async () => {
     await openGrips();
     await click(70, 30); await gripWhen(3);
