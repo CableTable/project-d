@@ -28119,8 +28119,8 @@ try {
 
   await step('TODO 324a: a pan end shifts the kept picture and paints only the exposed strip (Drawings, Layout, Compare)', async () => {
     const buffer = Buffer.from(writeDxf(bigDoc(150000)));
-    for (const kind of ['Drawings', 'Layout', 'Compare']) {
-      const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    for (const [kind, dpr] of [['Drawings', 1], ['Layout', 1], ['Compare', 1], ['Drawings', 1.25], ['Compare', 1.25]]) {       // 1.25: a pan of n css px is a whole number of device px only when n is a multiple of 4 (review of 324a)
+      const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light', deviceScaleFactor: dpr });
       try {
         const p = await ctx.newPage(), drawing = p.getByTestId('drawing'), errors = [];
         p.on('pageerror', (e) => errors.push(String(e)));
@@ -28174,11 +28174,11 @@ try {
         let ink = await inkBox();
         await p.mouse.move(b.x + (ink.x0 + ink.x1) / 2, b.y + (ink.y0 + ink.y1) / 2); await frame();
         // a layout part is small on its sheet and a zoomed view of it is not heavy any more: it is panned out of the canvas and back instead
-        const out = kind === 'Layout', pans = out ? [[26, 8], [-26, -8]] : [[7, 5], [-9, -6]];
+        const out = kind === 'Layout', pans = out ? [[26, 8], [-26, -8]] : dpr === 1 ? [[7, 5], [-9, -6]] : [[7.1, 5.1], [-9.1, -6.1]];       // at 1.25 a total that is not a multiple of 4 css px
         for (let i = 0; !out && i < 20 && (ink.x0 > 4 || ink.y0 > 4 || ink.x1 < ink.w - 5 || ink.y1 < ink.h - 5); i++) { await p.mouse.wheel(0, -100); await frame(); await settled(); ink = await inkBox(); }
         assert.ok(Number(await drawing.getAttribute('data-drawn')) > (out ? 5000 : 15000), `${kind}: the view is heavy (${await drawing.getAttribute('data-drawn')} items drawn; a layout part is small on its sheet, the 150000 items still make the paint slow)`);
         ink = await inkBox();
-        const w = await drawing.evaluate((c) => c.width), h = await drawing.evaluate((c) => c.height), R = 20 * Math.abs(pans[1][0]), V = 20 * Math.abs(pans[1][1]);
+        const w = await drawing.evaluate((c) => c.width), h = await drawing.evaluate((c) => c.height), R = Math.round(20 * Math.abs(pans[1][0]) * dpr), V = Math.round(20 * Math.abs(pans[1][1]) * dpr);
         const pan = async (label, sx, sy) => {
           const before = await paints();
           await p.mouse.move(cx, cy); await frame();
@@ -28192,7 +28192,7 @@ try {
           assert.equal(await paints(), before, `${label}: no full paint at the pan end`);
         };
         await pan(`${kind} pan right and down`, ...pans[0]);               // the strips: a band on the left, a band on the top
-        const left = await strip([0, 20 * pans[0][1], 20 * pans[0][0], h]);
+        const left = await strip([0, Math.round(20 * pans[0][1] * dpr), Math.round(20 * pans[0][0] * dpr), h]);
         if (ink.x0 <= 4) assert.ok(left.on > 200, `${kind}: the exposed strip holds drawing (${left.on} pixels)`);       // when the drawing runs past that edge of the view
         if (!out) await sameAsFull(`${kind} pan 1`);                       // a layout's full paint out here is light (the part is mostly out of the canvas): it would drop the kept base the pan back needs
         await pan(`${kind} pan left and up`, ...pans[1]);                  // strips on the right and the bottom, on top of the picture kept by the first pan
@@ -28210,7 +28210,7 @@ try {
           await sameAsFull('Drawings pan 3');
         }
         assert.deepEqual(errors, [], `${kind}: no page errors`);
-        const path = `${shotDir}/t324a-${kind.toLowerCase()}-light.png`;
+        const path = `${shotDir}/t324a-${kind.toLowerCase()}${dpr === 1 ? '' : '-dpr' + dpr}-light.png`;
         await p.screenshot({ path });
         assert.ok(readFileSync(path).length > 1000, 'required screenshot exists');
         console.log(`324a ${kind}: pan end shifts, strips ${left.on} / ${right.on} px, no full paint`);

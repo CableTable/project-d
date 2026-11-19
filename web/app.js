@@ -5641,7 +5641,14 @@ function attachCanvasEvents() {
     if (state.gripHover) { state.gripHover = null; drawOvl(); }
     if ((modLive() || layModLive()) && state.mod.kind === 'trim') { state.mod.client = null; state.mod.p = null; paintOverlay(); }
   });
-  const end = () => { pan = null; c.classList.remove('panning'); };
+  const end = () => {
+    const v = kept?.view?.view;
+    if (pan && v && v.scale === view.scale) {          // TODO 324a: the pan ends on a whole number of device px from the kept base, so panShift also works at a dpr like 1.25 (moves the view by at most half a device px)
+      const k = view.scale * (window.devicePixelRatio || 1);
+      view.ox = v.ox - Math.round((v.ox - view.ox) * k) / k; view.oy = v.oy - Math.round((v.oy - view.oy) * k) / k;
+    }
+    pan = null; c.classList.remove('panning');
+  };
   c.addEventListener('pointerup', (e) => {
     if (gdrag) guideUp();
     if (state.sheetDrag && !state.sheetDrag.hot) sheetUp(e);
