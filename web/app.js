@@ -6546,7 +6546,15 @@ function warm(d) {
   const ready = () => { if (state.docs.includes(d) && d.fl) { if (!d.ed) { edIndex(d); d.outl = null; } if (curDoc() === d || editable() === d) renderEdit(); } };       // also refresh a Compare source, even when a hover built its index first
   requestAnimationFrame(() => setTimeout(() => {
     const fl = d.fl;
-    if (!fl || d.ed || d.edPrev || fl.items.length < 20000) return ready();       // small, or an edit that keeps most of the old index: one go
+    if (!fl || d.ed || fl.items.length < 20000) return ready();       // small: one go
+    if (d.edPrev) {       // an edit that keeps most of the old index: its pick index is patched in one task and the rest in the next (TODO 322d); the old index is spent either way
+      const prev = d.edPrev, steps = Ed.pickSteps(fl, prev);
+      d.edPrev = null;
+      let r;
+      while (!(r = steps.next()).done);
+      d.ixPre = { fl, ix: r.value };
+      return setTimeout(ready, 0);
+    }
     // a big drawing's pick index is the longest task of its open (150k items: 0.5 s): build it in idle slices, a hover meanwhile builds it whole
     const steps = Ed.pickSteps(fl), slice = (deadline) => {
       if (!state.docs.includes(d) || d.fl !== fl || d.ed) return ready();

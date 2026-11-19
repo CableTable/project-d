@@ -144,8 +144,9 @@ test('319c patchedCounts equals the full count for a delete, an insert and a mov
   assert.deepEqual(DOC.patchedCounts(null, less, f), { counts: DOC.layerCounts(less, f), n: DOC.entityCount(less, f) });
 });
 
-// the pick index of one state, as plain data (the grid depends on the same order and the same numbers)
-const shape = (ed) => clean({ pieces: [...ed.ix.pieces], snaps: ed.ix.snaps, G: ed.ix.G, cell: ed.ix.cell, x0: ed.ix.x0, y0: ed.ix.y0, pc: [...ed.ix.pc], sc: [...ed.ix.sc], wide: ed.ix.wide,
+// the pick index of one state, as plain data (the grid depends on the same order and the same numbers; the cells by key: a patched grid keeps its own Map order, TODO 322d)
+const byKey = (cells) => [...cells].sort((a, b) => a[0] - b[0]);
+const shape = (ed) => clean({ pieces: [...ed.ix.pieces], snaps: ed.ix.snaps, G: ed.ix.G, cell: ed.ix.cell, x0: ed.ix.x0, y0: ed.ix.y0, pc: byKey(ed.ix.pc), sc: byKey(ed.ix.sc), wide: ed.ix.wide,
   vis: [...ed.vis], byEnt: ed.byEnt, shown: ed.shown, box: [...ed.box], ends: [...ed.ends] });
 
 for (const [label, make] of [['mixed with INSERTs', () => readDxf(W.writeDxf(bigDoc(700)))], ['splines', () => readDxf(W.writeDxf(splineDoc(60)))]]) {

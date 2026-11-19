@@ -83,6 +83,95 @@ test('TODO 321: reused index matches fresh hits and snaps with a layer off and o
   }
 });
 
+// TODO 322d: the pick index patched from the earlier one (Delete, Undo, Redo, Move) is the one a fresh makeIndex gives.
+const patchDoc = () => {
+  const raw = W.newDoc(4);
+  W.addLayer(raw, 'Off');
+  W.addBlock(raw, 'Mixed', [W.line(2, 0, 4, 0, { layer: 'Off' }), W.line(2, 2, 4, 2), W.circle(3, 1, 1)]);
+  const ents = [];
+  for (let i = 0; i < 90; i++) {
+    const x = (i % 10) * 10, y = Math.floor(i / 10) * 10;
+    ents.push(i % 15 === 7 ? W.insert('Mixed', x, y) : i % 9 === 4 ? W.text(x, y, 2, 'T' + i) : i % 7 === 3 ? W.line(x, y, x + 8, y + 3, { layer: 'Off' }) : i % 5 === 0 ? W.circle(x + 3, y + 3, 2) : W.line(x, y, x + 8, y + 5));
+  }
+  ents.push(W.line(500, 500, 510, 505));       // alone at the far corner: deleting it shrinks the drawing's extent
+  W.addEntities(raw, ents);
+  return raw;
+};
+const byKey = (cells) => [...cells].sort((a, b) => a[0] - b[0]);
+function sameIndex(got, want, label) {
+  assert.deepEqual([...got.ix.pieces], [...want.ix.pieces], label + ': pieces');
+  assert.deepEqual(got.ix.snaps, want.ix.snaps, label + ': snaps');
+  for (const k of ['G', 'cell', 'x0', 'y0', 'x1', 'y1', 'wide', 'head']) assert.deepEqual(got.ix[k], want.ix[k], `${label}: ${k}`);
+  assert.deepEqual(byKey(got.ix.pc), byKey(want.ix.pc), label + ': piece cells');
+  assert.deepEqual(byKey(got.ix.sc), byKey(want.ix.sc), label + ': snap cells');
+  for (const k of ['byEnt', 'shown', 'areas']) assert.deepEqual(got[k], want[k], `${label}: ${k}`);
+  assert.deepEqual([...got.vis], [...want.vis], label + ': vis');
+  assert.deepEqual([...got.box], [...want.box], label + ': box');
+  assert.deepEqual(byKey(got.boxGrid.bc), byKey(want.boxGrid.bc), label + ': entity cells');
+  const opts = SNAP.snapTypes({ insertion: true });
+  for (let x = -5; x < 110; x += 7) for (let y = -5; y < 95; y += 6) {
+    for (const fn of [E.hitEntity, E.hitEntities, E.hitItem, E.snapEnd]) assert.deepEqual(fn(got, x, y, 2), fn(want, x, y, 2), `${label}: ${fn.name} ${x},${y}`);
+    assert.deepEqual(E.snapPick(got, x, y, 2, true, -1, opts), E.snapPick(want, x, y, 2, true, -1, opts), `${label}: snapPick ${x},${y}`);
+  }
+  assert.deepEqual(E.inBox(got, [0, 0, 60, 40]), E.inBox(want, [0, 0, 60, 40]), label + ': inBox');
+  assert.deepEqual(E.crossBox(got, [15, 15, 65, 45]), E.crossBox(want, [15, 15, 65, 45]), label + ': crossBox');
+}
+// One step of an edit history: the index of `to` patched from `from`'s (as restore and edIndex do), checked against a fresh one. patched: the grid was kept, not rebuilt.
+function patchStep(from, to, label, { off = new Set(), hid = null, patched = true } = {}) {
+  const ed = E.makeIndex(to.raw, to.fl, off, hid, undefined, { ix: from.ed.ix, fl: from.fl });
+  assert.equal(ed.ix.pc === from.ed.ix.pc, patched, `${label}: ${patched ? 'the grid is patched, not rebuilt' : 'the grid is rebuilt'}`);
+  sameIndex(ed, E.makeIndex(to.raw, to.fl, off, hid), label);
+  if (off.size) {       // the Compare index of another tab's layers is derived from the patched one (R2-3)
+    const other = new Set(), derived = E.indexWithVisibility(ed, other, hid);
+    sameIndex(derived, E.makeIndex(to.raw, to.fl, other, hid), label + ' compare');
+  }
+  return { ...to, ed };
+}
+const stateOf = (raw, fl, off = new Set(), hid = null) => ({ raw, fl, ed: E.makeIndex(raw, fl, off, hid) });
+const without = (s, ...drop) => { const raw = { ...s.raw, ...E.removeEntities(s.raw, new Set(drop)) }; return { raw, fl: D.flattenEdit(s.raw, raw, s.fl, new Set()) }; };
+
+for (const [label, layersOff] of [['all layers showing', false], ['a layer off and an object hidden', true]]) {
+  test(`TODO 322d: the patched pick index equals a fresh makeIndex after Delete, Undo and Redo (${label})`, () => {
+    const raw = patchDoc(), fl = D.flatten(raw), opt = layersOff ? { off: new Set([fl.layers.findIndex((l) => l.name === 'Off')]), hid: new Set([2]) } : {};
+    const s0 = stateOf(raw, fl, opt.off, opt.hid);
+    const deleted = without(s0, 12);                                   // a line before the INSERTs: their item ranges shift
+    const s1 = patchStep(s0, deleted, 'Delete', opt);
+    const s2 = patchStep(s1, s0, 'Undo', opt);                          // the stored fl brings the entity back
+    patchStep(s2, deleted, 'Redo', opt);
+  });
+}
+
+test('TODO 322d: Redo after a second edit, a Move, and the entities of a block expansion between', () => {
+  const raw = patchDoc(), s0 = stateOf(raw, D.flatten(raw));
+  const a = without(s0, 20), b = without(a, 12, 30);                   // 12 sits after the INSERT at 7 and before the one at 22, 30 after both
+  const s1 = patchStep(s0, a, 'Delete A'), s2 = patchStep(s1, b, 'Delete B');
+  const u1 = patchStep(s2, a, 'Undo B'), u0 = patchStep(u1, s0, 'Undo A');
+  const r1 = patchStep(u0, a, 'Redo A'), r2 = patchStep(r1, b, 'Redo B');
+  const moved = { ...r2.raw, ...E.moveEntities(r2.raw, new Set([5, 6]), 3, 2) };
+  const mv = patchStep(r2, { raw: moved, fl: D.flattenEdit(r2.raw, moved, r2.fl, new Set()) }, 'Move');
+  patchStep(mv, r2, 'Undo the Move');
+});
+
+test('TODO 322d: the grid is rebuilt (and still right) when a tenth of the items changed, the extent shrinks, or an INSERT goes', () => {
+  const raw = patchDoc(), s0 = stateOf(raw, D.flatten(raw));
+  patchStep(s0, without(s0, ...Array.from({ length: 20 }, (_, i) => i * 4 + 1)), 'twenty gone', { patched: false });
+  const s1 = stateOf(raw, D.flatten(raw)), last = raw.entities.length - 1;
+  patchStep(s1, without(s1, last), 'the far corner gone', { patched: false });
+  const s2 = stateOf(raw, D.flatten(raw)), insert = raw.entities.findIndex((e) => e.type === 'INSERT');
+  patchStep(s2, without(s2, insert), 'an INSERT gone', { patched: false });
+});
+
+test('TODO 322d: a patch that is refused leaves the earlier index whole, so a failed restore can still patch from it', () => {
+  const raw = patchDoc(), s0 = stateOf(raw, D.flatten(raw)), cells = byKey(s0.ed.ix.pc);
+  const nested = W.newDoc(4);
+  const dim = () => W.entity('DIMENSION', [[2, 'A']]);
+  W.addBlock(nested, 'A', Array.from({ length: 8 }, dim));
+  W.addEntities(nested, dim());
+  assert.throws(() => D.flatten(nested), D.DrawingError);               // restore's flatten fails: it returns before the index is touched
+  assert.deepEqual(byKey(s0.ed.ix.pc), cells);
+  patchStep(s0, without(s0, 12), 'Delete after the failed restore');
+});
+
 test('P3: selection size from shown items matches the index without kept dimensions', () => {
   const raw = W.newDoc(4);
   W.addEntities(raw, [W.lwpoly([[20, 20], [120, 20], [120, 80], [20, 80]], { closed: true }),

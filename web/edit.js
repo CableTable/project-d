@@ -253,8 +253,8 @@ export function makeIndex(raw, fl, off = new Set(), hid = null, extremeFrame, pr
   return ed;
 }
 
-/** The pick index of a drawing as slices: call .next() until done, then pass the value to makeIndex as its ix (TODO 322a). */
-export const pickSteps = (fl) => pickIndexSteps(fl, spaceOf(fl) === 1);
+/** The pick index of a drawing as slices: call .next() until done, then pass the value to makeIndex as its ix (TODO 322a). prev: as makeIndex's (TODO 322d). */
+export const pickSteps = (fl, prev = null) => pickIndexSteps(fl, spaceOf(fl) === 1, undefined, undefined, prev);
 
 /** Keep the pieces and snaps spatially indexed. Only the visible entity summaries change. */
 export function indexWithVisibility(ed, off, hid) {
