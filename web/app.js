@@ -536,7 +536,7 @@ function buildStartScreen() {
 function buildMenus() {
   // an item: [text, action, shortcut hint (shown, and only a hint for a key that is really bound), enabled? (a function, asked when the menu opens)]
   const menus = {
-    File: () => [['Open…', openFile], ['New layout', newLayoutTab], ['Save', () => save(false), 'Ctrl+S'], ['Save As…', () => save(true), 'Ctrl+Shift+S'], ['Export DXF…', exportDxf], ['Export for cutter…', exportCutter], ['Compare drawings…', cmpStart], ['Import background…', () => ui.bgPicker.click()], ['Trace bitmap…', traceBitmap], ['PDF / Print…', exportPdf],
+    File: () => [['Open…', openFile], ['New layout', newLayoutTab], ['Save', () => save(false), 'Ctrl+S'], ['Save As…', () => save(true), 'Ctrl+Shift+S'], ['Export DXF…', exportDxf], ['Export for cutter…', exportCutter], ['Compare drawings…', cmpStart], ['Import background…', () => ui.bgPicker.click()], ['Rotate background', rotateBackground], ['Trace bitmap…', traceBitmap], ['PDF / Print…', exportPdf],
       ...recentItems()],
     Edit: [['Undo', () => undoCurrent(), 'Ctrl+Z', () => ui.startScreen.hidden && (!!state.paste || !!state.grip || !!historyOf(curDoc())?.canUndo)],
       ['Redo', () => undoCurrent(true), 'Ctrl+Y', () => ui.startScreen.hidden && !!historyOf(curDoc())?.canRedo],
@@ -4710,7 +4710,7 @@ const DO = {
   dimstyle: () => showDimStyle(),
   nudge: () => ui.cmdUI.openNudge(String(state.nudge), setNudgeText),
   step: () => { setPtab('step'); docker.folds['step-panel'] = false; applySectionFold(ui.stepSec); rememberDocker(); setTool('step'); ui.stepSec.scrollIntoView({ block: 'nearest' }); },
-  extract: () => extractPart(), apply: () => apply(), nest: () => openNestDialog(), trace: () => traceBitmap(), textoutlines: () => textToOutlines(),
+  extract: () => extractPart(), apply: () => apply(), nest: () => openNestDialog(), trace: () => traceBitmap(), rotatebackground: () => rotateBackground(), textoutlines: () => textToOutlines(),
   weld: () => shapeSelection('weld'), shapetrim: () => shapeSelection('trim'), intersect: () => shapeSelection('intersect'),
   explode: () => explodeSelected(),
   burst: () => burstSelected(),
@@ -5189,9 +5189,9 @@ const KEEP_MS = 10;
 /** Everything the drawing's own pass reads, flat (compare with sameBase). While a grip or drag hides entities one by one, `drag` is set and their numbers end the key: that base is painted without them (TODO 320). */
 function paintKey(d, base, cw, chh) {
   const hide = hideNow(d), hid = hidIdx(d);
-  const ed = state.text.ed?.d === d && state.text.ed.dim ? state.text.ed : null, fl = ed ? ed.dim.fl : d.fl, bg = d.bg;
+  const ed = state.text.ed?.d === d && state.text.ed.dim ? state.text.ed : null, fl = ed ? ed.dim.fl : d.fl, bg = bgLive(d);
   const key = [d, fl, fl.items.length, hid, d.factor, base.ox, base.oy, base.scale, cw, chh, base.dpr, base.dark, base.wireframe, base.sheetH,
-    bg, bg?.visible, bg?.bitmap, bg?.x, bg?.y, bg?.mm, ...[...d.off || []].sort((a, b) => a - b)];       // d.off is changed in place: its layers are part of the key
+    bg, bg?.visible, bg?.bitmap, bg?.x, bg?.y, bg?.mm, bg?.rot,...[...d.off || []].sort((a, b) => a - b)];       // d.off is changed in place: its layers are part of the key
   if (hide && hide.size !== (hid ? hid.size : 0)) { key.drag = true; key.push(null); for (const e of hide) key.push(e); }
   return key;
 }
@@ -5461,7 +5461,7 @@ function paintEditable(c, d, base, marks, part, afterBase) {
   const dragSnap = state.paste?.d === d ? state.paste.to : state.entityDrag?.d === d && state.entityDrag.to;
   if (dragSnap?.[2]) marks = [[dragSnap[0], dragSnap[1], dragSnap[2], true]];
   const o = { ...base, fl: ed ? ed.dim.fl : d && d.fl, off: base.cmpOff || d && d.off, factor: d ? d.factor : 1,
-    bg: d && d.bg, hl: d ? ((state.drawingRotate?.drag?.items || state.entityDrag?.items) ? null : (state.grip && state.grip.d === d && state.grip.next ? d.hl.filter((it) => !gripShown(state.grip).includes(it.e)) : textSel(d) ? d.hl.filter((it) => it.k !== 't') : ed ? d.hl.filter((it) => it.e !== ed.e || it.k !== 't') : d.hl)) : null, hide: hideNow(d), marks: marks || (drawLive() && state.drawHover && state.drawHover[2] ? [[state.drawHover[0] / d.factor, state.drawHover[1] / d.factor, state.drawHover[2], true]] : state.grip && state.grip.d === d && state.grip.to && state.grip.to[2] ? [[state.grip.to[0], state.grip.to[1], state.grip.to[2], true]] : null), dim: previewDim(d), gaps: d && d.ed && editable() ? (d.gapShow ? Ed.gapMarks(gapsOf(d), true) : []) : null,
+    bg: d && bgLive(d), hl: d ? ((state.drawingRotate?.drag?.items || state.entityDrag?.items) ? null : (state.grip && state.grip.d === d && state.grip.next ? d.hl.filter((it) => !gripShown(state.grip).includes(it.e)) : textSel(d) ? d.hl.filter((it) => it.k !== 't') : ed ? d.hl.filter((it) => it.e !== ed.e || it.k !== 't') : d.hl)) : null, hide: hideNow(d), marks: marks || (drawLive() && state.drawHover && state.drawHover[2] ? [[state.drawHover[0] / d.factor, state.drawHover[1] / d.factor, state.drawHover[2], true]] : state.grip && state.grip.d === d && state.grip.to && state.grip.to[2] ? [[state.grip.to[0], state.grip.to[1], state.grip.to[2], true]] : null), dim: previewDim(d), gaps: d && d.ed && editable() ? (d.gapShow ? Ed.gapMarks(gapsOf(d), true) : []) : null,
     contour: d && d.cRes && state.tool === 'contour' ? d.cRes.polys : null,
     contourCol: d && d.cRes ? contourColour(d).replace('var(--text)', workDark() ? '#ededef' : '#18181b') : null, contourDash: contourStyle().dash,
     markCol: cssVar('--mark', '#c2410c'),
@@ -5982,6 +5982,35 @@ function removeBackground() {
   showDoc();
   note('Background removed');
 }
+/** Rotate background (TODO 331): the Rotate command with the picture as its target (m.bg): pivot, then the angle / drag / Reference flow of Rotate; Copy is not offered. */
+function rotateBackground() {
+  const d = editable();
+  if (!d?.bg) { note('No background picture to rotate'); return; }
+  setTool('rotate');
+  const m = state.mod;
+  if (!m) return;                                        // setTool refused (a locked selection, a Compare tab that cannot be edited)
+  m.bg = true; m.sel = new Set(); m.raw = d.raw.entities; m.stage = 'p1';
+  state.msg = 'Rotate background: pivot or x,y'; renderCommand(); paintOverlay();
+}
+/** The background as drawn: while Rotate background runs it is turned by the angle under the pointer (or the typed one), so the drag shows the picture turning. */
+function bgLive(d) {
+  const m = state.mod;
+  if (!d?.bg || !m?.bg || !m.p1 || !modLive() || state.modDoc !== d) return d?.bg;
+  const typed = modTypedValue(), a = typed ?? (m.ref && m.ref.step !== 'new' ? null : m.angle);
+  const turn = a == null ? 0 : m.ref ? referenceTurn(m.ref.value, a) : a;
+  return turn ? Ed.bgTurned(d.bg, m.p1.map((v) => v * d.factor), turn) : d.bg;
+}
+/** The angle is known: the picture turns about the pivot, one undo step. */
+function rotateBackgroundDo(d, deg) {
+  const pivot = state.mod.p1.map((v) => v * d.factor);
+  setTool('select');
+  if (!d.bg || !Number.isFinite(deg) || Math.abs(deg) < 1e-9) { note('Background not turned'); return; }
+  pushHistory(d, snapshotOf(d), `Rotate background ${+deg.toFixed(4)}°`);
+  d.bg = Ed.bgTurned(d.bg, pivot, deg);
+  if (view.fitted) fit(); else paintOverlay();
+  renderEdit();
+  note(`Background turned ${+deg.toFixed(4)}° about the pivot. Ctrl+Z takes it back`);
+}
 
 // ---- Trace a bitmap (TODO 40): the background picture becomes closed polylines on a layer, at the picture's position and size ----
 let traceAfter = false;                                            // the picker was opened by Trace, so the dialog opens once a picture is in
@@ -6003,7 +6032,8 @@ function applyTrace(d, polys, name) {
   const had = Object.keys(d.raw.layers).find((n) => n.toLowerCase() === name.toLowerCase()), layer = had || name;
   const doc = { layers: { ...d.raw.layers } };
   if (!had) addLayer(doc, layer, { aci: 1 });
-  const ents = TR.traceEntities(polys, { x: d.bg.x, y: d.bg.y, factor: d.factor, layer });
+  let ents = TR.traceEntities(polys, { x: d.bg.x, y: d.bg.y, factor: d.factor, layer });
+  if (d.bg.rot) ents = rotateEntities({ entities: ents, blocks: {} }, new Set(ents.map((_, i) => i)), [d.bg.x / d.factor, d.bg.y / d.factor], d.bg.rot).entities;       // the picture is turned: the outlines turn with it, about its corner
   if (!commit(d, { entities: [...d.raw.entities, ...ents], blocks: d.raw.blocks, layers: doc.layers }, `Trace bitmap × ${ents.length}`)) return;
   if (!had) d.newLayer = layer;
   renderLayers();
@@ -6304,7 +6334,7 @@ function renderGaps() {
 // ---- editing the opened drawing: pick objects, Keep only, Delete, size, Set length, undo (edit.js is the logic) ----
 /** What the size fields and Set length act on: the drawing, or the background (always, when it is all the tab has). */
 const sizeTarget = (d) => (d.bg && (!d.box || d.scaleTarget === 'bg') ? 'bg' : 'drawing');
-const sizeBox = (d) => (sizeTarget(d) === 'bg' ? Ed.bgBox(d.bg) : partBox(d));
+const sizeBox = (d) => (sizeTarget(d) === 'bg' ? Ed.bgOwnBox(d.bg) : partBox(d));       // a turned picture: its own width and height, not the outer box
 /**
  * The drawing's box in mm without its kept dimensions: the size of the part itself, which Width / Height and Set length
  * scale by (a dimension drawn outside the part must not change it). The drawing's own box when it has no dimension.
@@ -6335,7 +6365,7 @@ const pointTarget = () => state.tool === 'measure' ? measureTarget() : state.too
 const drawBox = (fl) => fl.boxes[spaceOf(fl) ? 'paper' : 'model'];
 const fmtSize = (v) => String(+Number(v).toFixed(2));
 /** fl + hid (TODO 319b): the drawn items of this state and the entities hidden one by one they were made with; Undo / Redo reuse them (see drawnOf). */
-const snapshotOf = (d) => ({ fl: d.fl, hid: d.hid?.size ? new Set(d.hid) : null, cmp: d.cmp && structuredClone(d.cmp), attmode: d.raw?.header.$ATTMODE, guides: d.guideState && structuredClone(d.guideState.s.guides), groups: d.raw?.groups, entities: d.raw?.entities, blocks: d.raw?.blocks, layers: d.raw?.layers, ltypes: d.raw?.ltypes, mm: d.bg ? d.bg.mm : null, pos: d.bg ? [d.bg.x, d.bg.y] : null, bl: d.balloons });
+const snapshotOf = (d) => ({ fl: d.fl, hid: d.hid?.size ? new Set(d.hid) : null, cmp: d.cmp && structuredClone(d.cmp), attmode: d.raw?.header.$ATTMODE, guides: d.guideState && structuredClone(d.guideState.s.guides), groups: d.raw?.groups, entities: d.raw?.entities, blocks: d.raw?.blocks, layers: d.raw?.layers, ltypes: d.raw?.ltypes, mm: d.bg ? d.bg.mm : null, pos: d.bg ? [d.bg.x, d.bg.y] : null, rot: d.bg ? d.bg.rot || 0 : null, bl: d.balloons });
 function copySelection() {
   const lay = curLay();
   if (lay) {
@@ -6913,6 +6943,7 @@ function layGripCommit(v, pairs, label, keepSel) {
 function restoreBg(d, st) {
   if (st.mm != null && d.bg) d.bg.mm = st.mm;
   if (st.pos && d.bg) [d.bg.x, d.bg.y] = st.pos;
+  if (st.rot != null && d.bg) d.bg.rot = st.rot;
 }
 /** The drawn items a stored step brings back, or undefined (restore draws them again): they were made with the entities hidden one by one that are hidden now. */
 const drawnOf = (d, st) => st.fl && (st.hid?.size || 0) === (d.hid?.size || 0) && [...(st.hid || [])].every((e) => d.hid.has(e)) ? st.fl : undefined;
@@ -6923,7 +6954,7 @@ function restore(d, st, drawn, layerNames, index) {
   if (st.guides) { guideTarget(d).s.guides = structuredClone(st.guides); rememberGuides(d); }
   if (d.cmp && st.cmp) { Object.assign(d.cmp, st.cmp); showDoc(); return; }
   const attributesChanged = d.raw && 'attmode' in st && st.attmode !== d.raw.header.$ATTMODE;
-  if (!d.raw || !groupsChanged && !attributesChanged && st.entities === d.raw.entities && st.blocks === d.raw.blocks && st.layers === d.raw.layers && st.ltypes === d.raw.ltypes && st.bl === d.balloons && st.mm === (d.bg ? d.bg.mm : null) && JSON.stringify(st.pos) === JSON.stringify(d.bg ? [d.bg.x, d.bg.y] : null)) { update(); return; }
+  if (!d.raw || !groupsChanged && !attributesChanged && st.entities === d.raw.entities && st.blocks === d.raw.blocks && st.layers === d.raw.layers && st.ltypes === d.raw.ltypes && st.bl === d.balloons && st.mm === (d.bg ? d.bg.mm : null) && JSON.stringify(st.pos) === JSON.stringify(d.bg ? [d.bg.x, d.bg.y] : null) && st.rot === (d.bg ? d.bg.rot || 0 : null)) { update(); return; }
   if (attributesChanged) d.raw.header = { ...d.raw.header, $ATTMODE: st.attmode };
   const layerTableChanged = st.layers && st.layers !== d.raw.layers;
   if (st.layers) d.raw.layers = st.layers;                      // the layer table is replaced, never edited, when a layer is added or changed by hand
@@ -7016,7 +7047,7 @@ function scaleDrawing(d, s, label = 'Scale') {
     d.bg = Ed.bgScaled(d.bg, s);
     if (view.fitted) fit(); else paintOverlay();
     renderEdit();
-    const b = Ed.bgBox(d.bg);
+    const b = Ed.bgOwnBox(d.bg);
     note(`Background scaled ×${+s.toPrecision(6)}: now ${fmtSize(b[2] - b[0])} × ${fmtSize(b[3] - b[1])} mm`);
     return;
   }
@@ -7038,7 +7069,7 @@ function unitFix(fix) {
     d.bg = UF.bgUnitFixed(d.bg, fix.s);
     if (view.fitted) fit(); else paintOverlay();
     renderEdit();
-    note(UF.unitFixLine(fix, was, UF.unitFixSize(Ed.bgBox(d.bg), 1)));
+    note(UF.unitFixLine(fix, was, UF.unitFixSize(Ed.bgOwnBox(d.bg), 1)));
     return;
   }
   const r = Ed.scaleAbout(d.raw, fix.s, 0, 0, spaceOf(d.fl));
@@ -8743,7 +8774,7 @@ function modPrompt(d) {
   if (m.kind === 'reverse') return { status: `Command: REVERSE   ${m.objs.length} selected`, prompt: 'Select objects:' };
   if (m.kind === 'align') return { status: `Command: ALIGN   ${m.sel?.size ?? d.sel.size} selected`, input, prompt: ALIGN_PROMPT[m.stage] };
   if (m.kind === 'scale') return { status: `Command: SCALE   ${m.sel?.size ?? d.sel.size} selected`, input, prompt: m.stage === 'pick' ? 'Select objects (click or drag a box), then Enter:' : m.stage === 'p1' ? 'Base point:' : refPrompt(m) || `Scale factor: ${m.copy ? 'Copy on. ' : ''}[Copy / Reference / Esc] (positive number or click):` };
-  if (m.kind === 'rotate') return { status: `Command: ROTATE   ${m.sel?.size ?? d.sel.size} selected`, input, prompt: m.stage === 'pick' ? 'Select objects (click or drag a box), then Enter:' : m.stage === 'p1' ? 'Pivot:' : refPrompt(m) || `Angle: ${m.copy ? 'Copy on. ' : ''}[Copy / Reference / Esc] (degrees or click; Shift = 15°):` };
+  if (m.kind === 'rotate') return { status: m.bg ? 'Command: ROTATE BACKGROUND' : `Command: ROTATE   ${m.sel?.size ?? d.sel.size} selected`, input, prompt: m.stage === 'pick' ? 'Select objects (click or drag a box), then Enter:' : m.stage === 'p1' ? 'Pivot:' : refPrompt(m) || `Angle: ${m.copy ? 'Copy on. ' : ''}[${m.bg ? '' : 'Copy / '}Reference / Esc] (degrees or click; Shift = 15°):` };
   if (['move', 'copy', 'stretch'].includes(m.kind)) return { status: `Command: ${m.kind.toUpperCase()}   ${m.sel?.size ?? d.sel.size} selected`, input, prompt: movePrompt(m.kind, m.stage, copyMode, stretchDisplacement) };
   if (m.kind === 'array') return arrayPrompt(d, m);
   if (m.kind === 'fillet') return { status: 'Command: FILLET', input, prompt: m.askR ? `Fillet radius <${drawingLength(state.filR)}>:`
@@ -8978,7 +9009,7 @@ function modTyped(d, raw) {
   }
   if (m.kind === 'rotate' && m.stage !== 'pick') {
     if (m.stage === 'p2' && !m.ref && (c === 'r' || c === 'reference')) { refStart(d); return true; }
-    if (m.stage === 'p2' && (c === 'c' || c === 'copy')) { m.copy = !m.copy; note(m.copy ? 'Rotate a copy: on' : 'Rotate a copy: off'); return true; }
+    if (m.stage === 'p2' && (c === 'c' || c === 'copy')) { if (m.bg) { note('Copy is not offered for the background picture'); return true; } m.copy = !m.copy; note(m.copy ? 'Rotate a copy: on' : 'Rotate a copy: off'); return true; }
     if (m.stage === 'p1') {
       const q = DR.typedPoint(DR.parseInput(raw, drawingUnit()), null);
       if (q) { transformBase(d, q.map((v) => v / d.factor)); return true; }
@@ -9311,7 +9342,7 @@ function transformBase(d, q) {
   m.p1 = q.slice(0, 2); m.cur = m.p1; m.stage = 'p2';
   const preview = flatten({ ...d.raw, entities: [...m.sel].map((i) => m.raw[i]) });
   m.move = { preview, items: preview.items, dx: 0, dy: 0 };
-  note(m.kind === 'scale' ? 'Scale: positive factor or click. C toggles a copy' : 'Rotate: angle in degrees or click. Shift = 15°; C toggles a copy'); paintOverlay();
+  note(m.kind === 'scale' ? 'Scale: positive factor or click. C toggles a copy' : m.bg ? 'Rotate background: angle in degrees or click. Shift = 15°; R = Reference' : 'Rotate: angle in degrees or click. Shift = 15°; C toggles a copy'); paintOverlay();
 }
 /** Reference (R at the angle / factor prompt): reference angle or length first, then the new one; typed, or two picked points (Set length's pick). Lengths are drawing units inside, mm when typed. */
 function refStart(d) {
@@ -9362,6 +9393,7 @@ function refTyped(d, R, kind, H, raw) {
 function transformDo(d, value) {
   const m = state.mod, scaling = m.kind === 'scale', label = scaling ? 'Scale' : 'Rotate';
   if (m.ref) { value = scaling ? referenceFactor(m.ref.value, value) : referenceTurn(m.ref.value, value); if (value == null) { note('The new length must be above 0'); return; } }
+  if (m.bg) { rotateBackgroundDo(d, value); return; }
   if (d.lay) { layScaleDo(d, value); return; }
   if (m.raw !== d.raw.entities) { setTool('select'); note(`Drawing changed: start ${label} again`); return; }
   if (moveLocked(d, m.sel)) { const msg = state.msg; setTool('select'); note(msg); return; }

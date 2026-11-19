@@ -1471,8 +1471,24 @@ export function formatMeasure(m, unit = 'mm') {
 
 // ---------------------------------------------------------------- the background (a picture under the drawing)
 
-/** A background { w, h (pixels), mm (mm per pixel), x, y (its bottom-left, mm, y up) } → its box [x0, y0, x1, y1] in mm. */
-export const bgBox = (bg) => [bg.x, bg.y, bg.x + bg.w * bg.mm, bg.y + bg.h * bg.mm];
+/** A background { w, h (pixels), mm (mm per pixel), x, y (its bottom-left, mm, y up), rot (degrees anticlockwise about that corner, default 0) } → the picture's own box [x0, y0, x1, y1] in mm, unturned (Size). */
+export const bgOwnBox = (bg) => [bg.x, bg.y, bg.x + bg.w * bg.mm, bg.y + bg.h * bg.mm];
+/** The four corners of the turned picture (mm), bottom-left first, anticlockwise. */
+export function bgCorners(bg) {
+  const a = (bg.rot || 0) * Math.PI / 180, c = Math.cos(a), s = Math.sin(a), w = bg.w * bg.mm, h = bg.h * bg.mm;
+  return [[0, 0], [w, 0], [w, h], [0, h]].map(([u, v]) => [bg.x + u * c - v * s, bg.y + u * s + v * c]);
+}
+/** The axis-aligned box [x0, y0, x1, y1] of the turned picture (view fit). */
+export function bgBox(bg) {
+  if (!bg.rot) return bgOwnBox(bg);
+  const p = bgCorners(bg), xs = p.map((q) => q[0]), ys = p.map((q) => q[1]);
+  return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
+}
+/** The same picture turned `deg` degrees (anticlockwise) about the pivot [px, py] (mm): rot adds up and the corner (x, y) turns with it. */
+export function bgTurned(bg, [px, py], deg) {
+  const a = deg * Math.PI / 180, c = Math.cos(a), s = Math.sin(a), dx = bg.x - px, dy = bg.y - py;
+  return { ...bg, rot: (bg.rot || 0) + deg, x: px + dx * c - dy * s, y: py + dx * s + dy * c };
+}
 /** The same picture, mm-per-pixel times s, still fixed at its bottom-left corner. */
 export const bgScaled = (bg, s) => ({ ...bg, mm: bg.mm * s });
 

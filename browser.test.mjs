@@ -20820,6 +20820,110 @@ try {
     await page.keyboard.press('Escape');
   });
 
+  await step('TODO 331: Rotate background: pivot, typed angle, drag preview, Reference, Esc, one Ctrl+Z; Set length and Trace on the turned picture; File menu; no-background note', async () => {
+    mkdirSync('shots-331', { recursive: true });
+    await closeTabs(/./);
+    const W = 400 * 25.4 / 96, H = 200 * 25.4 / 96;                       // bg.png at 96 dpi, mm
+    const corners = (x, y, rot, w = W, h = H) => { const a = rot * Math.PI / 180, c = Math.cos(a), s = Math.sin(a); return [[0, 0], [w, 0], [w, h], [0, h]].map(([u, v]) => [x + u * c - v * s, y + u * s + v * c]); };
+    // the ink of the drawing canvas (the picture alone is on it), as a client box
+    const inkBox = () => t('drawing').evaluate((c) => {
+      const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data, r = c.getBoundingClientRect();
+      let x0 = 1e9, y0 = 1e9, x1 = -1, y1 = -1;
+      for (let y = 0; y < c.height; y++) for (let x = 0; x < c.width; x++) if (d[(y * c.width + x) * 4 + 3] > 0) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+      return x1 < 0 ? null : [r.x + x0 * r.width / c.width, r.y + y0 * r.height / c.height, r.x + (x1 + 1) * r.width / c.width, r.y + (y1 + 1) * r.height / c.height];
+    });
+    const inkIs = async (pts, what, tol = 4) => {
+      let got, want;
+      for (let i = 0; i < 40; i++) {
+        const cl = await Promise.all(pts.map(([x, y]) => at(x, y)));
+        want = [Math.min(...cl.map((p) => p.x)), Math.min(...cl.map((p) => p.y)), Math.max(...cl.map((p) => p.x)), Math.max(...cl.map((p) => p.y))];
+        got = await inkBox();
+        if (got && got.every((v, k) => Math.abs(v - want[k]) <= tol)) return;
+        await page.waitForTimeout(100);
+      }
+      assert.fail(`${what}: the picture is drawn in ${got && got.map((v) => v.toFixed(1))}, wanted ${want.map((v) => v.toFixed(1))}`);
+    };
+    const undo = async () => { await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z'); };
+
+    // no background: the note, from the command and from the File menu (right after Import background…)
+    await typeCmd('rotatebackground'); await said(/No background picture to rotate/);
+    const labels = Object.keys(await menuItems('File'));
+    assert.equal(labels[labels.indexOf('Import background…') + 1], 'Rotate background', 'File menu: right after Import background…');
+    await page.keyboard.press('Escape');
+    await menuItem('File', 'Rotate background'); assert.match(await prompt(), /No background picture to rotate/);
+
+    await t('new-tab').click();
+    await menuItem('File', 'Import background…');
+    await t('bg-picker').setInputFiles('fixtures/bg.png');
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on').textContent.startsWith('bg.png'));
+    await typeCmd('fit'); await inkIs(corners(0, 0, 0), 'unturned');
+    await waitSize('105.83', '52.92');
+
+    // typed 90 about a pivot outside the picture: the corner (0, 0) goes to (-20, 20), the picture is drawn turned
+    await typeCmd('rotatebackground'); await said(/^Pivot:/);
+    await typeCmd('-20,0'); await said(/^Angle: \[Reference \/ Esc\]/);        // no Copy for a picture
+    await typeCmd('c'); assert.match(await histLine(), /Copy is not offered/);
+    await typeCmd('90');
+    await inkIs(corners(-20, 20, 90), 'typed 90 about (-20, 0)');
+    await waitSize('105.83', '52.92');                                          // Size stays the picture's own
+    assert.match((await histLabels()).at(-1), /^Rotate background 90°/);
+    await undo(); await inkIs(corners(0, 0, 0), 'one Ctrl+Z restores it');
+
+    // the drag: the picture turns with the pointer; Esc leaves it unturned
+    await typeCmd('fit');
+    await typeCmd('rbg'); await typeCmd(`${W / 2},${H / 2}`);                  // the centre: the pivot and pointer marks stay inside the picture's box
+    const mid = await at(W / 2, H / 2); await page.mouse.move(mid.x, mid.y); for (let i = 0; i < 2; i++) await page.mouse.wheel(0, 400);
+    await hoverPreview(W / 2, H / 2 + 40);
+    await inkIs(corners(W / 2 + H / 2, H / 2 - W / 2, 90), 'the live preview at the pointer straight above the pivot');
+    await page.screenshot({ path: 'shots-331/rotate-background-drag-light.png' });
+    await page.keyboard.press('Escape');
+    await inkIs(corners(0, 0, 0), 'Esc leaves it unturned');
+    await typeCmd('fit');
+
+    // Reference with two typed points (45°), Esc half way, then the new angle 90: turned by 45
+    await typeCmd('rbg'); await typeCmd('0,0'); await typeCmd('r');
+    await said(/Specify the reference angle <0>:/);
+    await typeCmd('0,0'); await said(/second point/);
+    await page.keyboard.press('Escape'); await inkIs(corners(0, 0, 0), 'Esc mid-Reference');
+    await typeCmd('rbg'); await typeCmd('0,0'); await typeCmd('r'); await typeCmd('0,0'); await typeCmd('10,10');
+    await said(/Specify the new angle/); await typeCmd('90');
+    await inkIs(corners(0, 0, 45), 'Reference 45 → 90 turns by 45');
+
+    // Set length on the turned picture: two points on its bottom edge, 60 mm apart, typed 30 → half size, the corner stays
+    const e = Math.SQRT1_2;
+    await t('set-length').click(); await click(20 * e, 20 * e); await click(80 * e, 80 * e);
+    await page.waitForFunction(() => /[\d.]+ mm measured/.test(document.querySelector('[data-testid=measured]').textContent));
+    const measured = Number((await t('measured').textContent()).match(/([\d.]+) mm measured/)[1]);
+    assert.ok(Math.abs(measured - 60) < 0.5, 'the two clicks on the turned edge are 60 mm apart: ' + measured);
+    await t('real-length').fill('30'); await t('real-length').press('Enter');
+    const k = 30 / measured;
+    await page.waitForFunction(([w, h2]) => Math.abs(parseFloat(document.querySelector('[data-testid=dw]').value) - w) < 0.011 && Math.abs(parseFloat(document.querySelector('[data-testid=dh]').value) - h2) < 0.011, [W * k, H * k]);
+    await inkIs(corners(0, 0, 45, W * k, H * k), 'Set length scaled the turned picture about its corner');
+
+    // Trace on the turned picture: the outlines lie on it
+    await typeCmd('trace'); await t('trace-dialog').waitFor();
+    await page.waitForFunction(() => document.querySelector('[data-testid=trace-dialog]').dataset.state === 'ready', null, { timeout: 60000 });
+    await t('trace-apply').click();
+    await page.waitForFunction(() => /Trace: \d+ closed outlines? on the layer Trace/.test(document.querySelector('[data-testid=cmd-prompt]').textContent));
+    const doc = await savedDoc();
+    const own = corners(0, 0, 45, W * k, H * k), ux = [Math.cos(Math.PI / 4), Math.sin(Math.PI / 4)], uy = [-ux[1], ux[0]];
+    let all = 0, out = 0, xs = [], ys = [];
+    for (const ent of doc.entities) (ent.r || ent).c.forEach((code, i) => {
+      if (code !== 10) return;
+      const x = +(ent.r || ent).v[i], y = +(ent.r || ent).v[i + 1], u = x * ux[0] + y * ux[1], v = x * uy[0] + y * uy[1];
+      all++; xs.push(x); ys.push(y);
+      if (u < -1 || u > W * k + 1 || v < -1 || v > H * k + 1) out++;
+    });
+    assert.ok(all >= 4, 'traced points: ' + all); assert.equal(out, 0, 'every traced point lies on the turned picture');
+    assert.ok(Math.abs(Math.min(...ys) - 0) < 1 && Math.abs(Math.max(...ys) - Math.max(...own.map((p) => p[1]))) < 1, 'the outlines span the turned picture: y ' + [Math.min(...ys), Math.max(...ys)]);
+    assert.ok(Math.abs(Math.min(...xs) - Math.min(...own.map((p) => p[0]))) < 1 && Math.abs(Math.max(...xs) - Math.max(...own.map((p) => p[0]))) < 1, 'and x ' + [Math.min(...xs), Math.max(...xs)]);
+    await page.screenshot({ path: 'shots-331/rotate-background-light.png' });
+    await menuItem('View', 'Theme: dark'); await page.waitForTimeout(250);
+    await page.screenshot({ path: 'shots-331/rotate-background-dark.png' });
+    await menuItem('View', 'Theme: light'); await page.waitForTimeout(100);
+    await closeTabs(/bg\.png|bg\.dxf/);
+  });
+
   await step('TODO 66a: Move', async () => {
     await menuItem('View', 'Theme: light');
     const raw = newDoc(4);

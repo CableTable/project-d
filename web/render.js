@@ -67,10 +67,12 @@ export function paintDrawing(canvas, o) {
   if (!o.keep && !over) c.clearRect(0, 0, canvas.width, canvas.height);
   if (!over && !o.wireframe && o.bg && o.bg.visible && o.bg.bitmap) {
     const b = o.bg, k = scale * dpr;                                  // the background, dimmed, under the drawing (mm, y up)
+    c.save();
     c.setTransform(k, 0, 0, k, 0, 0);
     c.globalAlpha = 0.4;
-    c.drawImage(b.bitmap, b.x - ox, sheetH - b.y - b.h * b.mm - oy, b.w * b.mm, b.h * b.mm);
-    c.globalAlpha = 1;
+    c.translate(b.x - ox, sheetH - b.y - oy); c.rotate(-(b.rot || 0) * Math.PI / 180);          // about the bottom-left corner; the canvas y runs down, so anticlockwise is minus
+    c.drawImage(b.bitmap, 0, -b.h * b.mm, b.w * b.mm, b.h * b.mm);
+    c.restore();
   }
   if (!fl) return;
   if (o.previewBounds && o.keep) o.previewBounds(drawingPreviewBox(o));       // a kept pass is a ghost: the whole flattened preview

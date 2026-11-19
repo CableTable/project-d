@@ -822,6 +822,21 @@ test('background: its box in mm from its pixels, and scaling keeps the bottom-le
   assert.equal(bg.mm, 0.25, 'the original is untouched');
 });
 
+test('TODO 331: a turned background: turning about a pivot adds to rot and turns the corner, bgBox is the box of the 4 turned corners, Size stays its own', () => {
+  const near = (a, b) => assert.ok(a.length === b.length && a.every((v, i) => Math.abs(v - b[i]) < 1e-9), `${a} ≠ ${b}`);
+  const bg = { w: 400, h: 200, mm: 0.25, x: 10, y: 20 };                       // 100 × 50 mm
+  const t = E.bgTurned(bg, [0, 0], 90);                                        // 90° anticlockwise about the origin: (10, 20) → (-20, 10)
+  assert.equal(t.rot, 90); near([t.x, t.y], [-20, 10]);
+  near(E.bgBox(t), [-70, 10, -20, 110]);                                       // the picture now 50 wide, 100 high, its corner at the bottom-right
+  near(E.bgOwnBox(t), [-20, 10, 80, 60]);                                      // Size keeps w × h of the picture itself
+  const u = E.bgTurned(t, [0, 0], -90);
+  near([u.x, u.y], [10, 20]); near([u.rot], [0]);
+  near(E.bgBox(E.bgTurned(bg, [10, 20], 45)), [10 - 50 * Math.SQRT1_2, 20, 10 + 100 * Math.SQRT1_2, 20 + 150 * Math.SQRT1_2]);       // about its own corner
+  assert.deepEqual(E.bgBox(bg), [10, 20, 110, 70], 'no rot: the plain box');
+  assert.equal(bg.rot, undefined, 'the original is untouched');
+  near(E.bgBox(E.bgScaled(t, 2)), [-120, 10, -20, 210]);                      // scaling keeps the turned corner
+});
+
 test('a kept dimension: line, two arrowheads and the length in mm, in one block with one INSERT on the layer Dimensions', () => {
   const { raw, fl } = load('outline.dxf');
   const dim = E.makeDimension([50, 20], [80, 40], 1, raw.blocks);
