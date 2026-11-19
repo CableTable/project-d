@@ -2904,8 +2904,9 @@ function ungroupSel() {
   const items = selItems();
   if (!items.length) { note('Ungroup: select a group first'); return; }
   if (!items.some((x) => x.p.g)) { note('Ungroup: the selection holds no group'); return; }
-  const n = items.filter((x) => x.p.g).length;
-  const r = editFlags(`Ungroup ${n} parts`, (pl) => { const { g, ...rest } = pl; return rest; });
+  if (A.oneItem(placedNow, selIdxs()) >= 0) { note('Ungroup: a part and its contour stay attached'); return; }
+  const n = items.filter((x) => x.p.g).length, marks = {};
+  const r = editFlags(`Ungroup ${n} parts`, (pl) => A.ungroupMark(pl, marks, newGroupId));       // a part keeps its contour: they get a new group of their own
   say(`Ungrouped: ${n} parts are separate again, still selected`, loosenedNote(r.g));
 }
 function lockSel(on) {
@@ -3239,7 +3240,8 @@ function placedDown(e, cycled = false) {
   if (s && rotEl) {
     const pivot = pivotPoint(s.part, s.p), a0 = PL.angleOf(pivot, here);
     if (s.p.lock) { note(LOCKED); return true; }
-    pdrag = { kind: 'rotate', cx: e.clientX, cy: e.clientY, orig: placementOf(s.p), pivot, a0, last: a0, acc: 0, moved: false, g: null, idx: null };
+    const ids = A.oneItem(placedNow, selIdxs()) >= 0 ? [...selIdxs().filter((k) => k !== state.sel), state.sel] : [state.sel];       // the part's contour(s) turn with it; the part is last (the main one after the turn)
+    pdrag = { kind: 'rotate', cx: e.clientX, cy: e.clientY, orig: placementOf(s.p), ids, origs: ids.map((k) => placementOf(placedNow[k])), pivot, a0, last: a0, acc: 0, moved: false, g: null, idx: null };
     return true;
   }
   if (s && pivEl) { pdrag = { kind: 'pivot' }; return true; }
@@ -3252,7 +3254,7 @@ function placedDown(e, cycled = false) {
     }
     const add = !cycled && e.shiftKey && !e.ctrlKey && !e.metaKey;            // Shift-click adds a part or takes it out (a Shift-drag still moves them straight)
     const grp = groupIdxs(i);
-    let toggle = null, was = cur.length === 1 && cur[0] === i && grp.length === 1;
+    let toggle = null, was = A.oneItem(placedNow, cur) >= 0 && A.oneItem(placedNow, grp) >= 0 && grp.every((k) => cur.includes(k));       // one part, or a part and its contour: one item
     const meta = stretchSelection(curDoc().stretchSelection, add, grp);
     if (add) {
       if (inSel) toggle = i;
@@ -3314,11 +3316,11 @@ function placedMove(e) {
   if (!p.moved) {
     if (Math.hypot(e.clientX - p.cx, e.clientY - p.cy) <= 3) return;
     p.moved = true; p.g = startGesture(s.d, 'Turn ' + s.part.name); gMark(p.g);
-    p.idx = gLoose(p.g, state.sel); p.idxs = [p.idx]; p.ghost = p.orig;
+    p.idxs = gLooseMany(p.g, p.ids); p.idx = p.idxs.at(-1); p.ghost = p.orig; p.ghosts = p.origs.slice(0, -1).map((pl) => ({ part: lay.parts[pl.partId], pl }));
   }
   let turn = p.acc;
   if (e.shiftKey) { turn = PL.snapAngle(p.orig.rot + p.acc) - p.orig.rot; turn += 360 * Math.round((p.acc - turn) / 360); }       // Shift: the angle lands on a multiple of 15°
-  lay.placed[p.idx] = PL.rotateAbout(s.part, p.orig, p.pivot, turn);
+  p.idxs.forEach((ix, k) => { lay.placed[ix] = PL.rotateAbout(lay.parts[p.origs[k].partId], p.origs[k], p.pivot, turn); });
   p.label = { text: fmt1(lay.placed[p.idx].rot) + '°' };
   selLooseMany = p.idxs; queueUpdate();
 }
@@ -3338,9 +3340,11 @@ function placedUp() {
     }
     // a click on a part of a selection of several: just that part (its group); on the part that was already selected: turn arrows on; once more: back to the size handles
     if (p.add) return;                                             // Shift-click added it: that is all
-    if (!p.copy && selIdxs().length > 1) { selectMany(groupIdxs(p.hitI), p.hitI); update(); return; }
+    const one = A.oneItem(placedNow, selIdxs());                    // a part and its contour are one item: they turn together
+    if (!p.copy && selIdxs().length > 1 && one < 0) { selectMany(groupIdxs(p.hitI), p.hitI); update(); return; }
     if (p.wasSel && !p.copy) {
       if (cursorTool()?.layoutRotate && DI.hasTyped(cursorInput())) { cursorCommit(); return; }   // a typed Rotate angle: the click applies it
+      if (one >= 0 && one !== state.sel) { const keep = selIdxs(); state.sel = one; state.picks = keep; }       // the turn arrows follow the part, not its contour (setting sel clears the picks)
       if (selectedPlaced().p.lock) { note(LOCKED); return; }
       state.mode = state.mode === 'rotate' ? 'select' : 'rotate'; state.pivot = centrePivot(); state.rotCopy = false; state.lref = null;
       update();
@@ -5075,7 +5079,7 @@ function drawTools() {
       out.push(s('polygon', { class: 'ghost', points: poly(PL.corners(x.part, pl).map(Y)) }));
     }
   }
-  if (items.length > 1) {                                           // several selected: each outline, the box round them with its readout, and the pick-order numbers
+  if (items.length > 1 && !(state.mode === 'rotate' && A.oneItem(placedNow, items.map((x) => x.i)) >= 0)) {       // several selected (not a part with its contour in rotate mode): each outline, the box round them with its readout, and the pick-order numbers
     const ghosts = pdrag && pdrag.ghosts;
     if (ghosts) for (const gh of ghosts) out.push(s('polygon', { class: 'ghost', points: poly(PL.corners(gh.part, gh.pl).map(Y)) }));
     for (const x of items) out.push(s('polygon', { class: 'sel-box sel-multi', points: poly(PL.corners(x.part, x.p).map(Y)), 'stroke-dasharray': '6 6' }));

@@ -214,6 +214,7 @@
   "TODO 142c: Add to layout saves the plain drawing source; reopening uses it, or the plain layout name when unknown": 9.7,
   "TODO 147 / T53: Contour on layout parts: one outline each, attached (a group), run again replaces, one Undo per run, moves with the part, saved and reopened; light and dark": 11.58,
   "TODO 147 review fixes: Pick colour, Ungroup, copies, turns, contour-free placement lists, and Parts list removal with one Undo": 9.98,
+  "TODO 335 / 336: a contoured part turns by hand on the second click (its contour with it, one Undo); Ungroup keeps each contour attached, one Undo each": 7,
   "TODO 111b: copy in a drawing, paste on a layout saves a named library part at the same mm position, selected; Undo keeps the part; second paste is numbered": 8.09,
   "TODO 111b: PDF layout paste remembers the base name and copied sheet after switching sheets and closing the source": 6.88,
   "TODO 115 / T32: PDF invisible search text stays out; visible text becomes outlines once, with one Undo": 4.21,

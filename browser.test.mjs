@@ -13238,6 +13238,128 @@ try {
       await t('ptab-drawing').click(); await closeTabs(/./);
     }
   });
+  await step('TODO 335 / 336: a contoured part turns by hand on the second click (its contour with it, one Undo); Ungroup keeps each contour attached, one Undo each', async () => {
+    await closeTabs(/./);
+    const errs0 = errors.length;
+    const rawA = newDoc(4), rawB = newDoc(4), src = newLayout('335 turn');
+    addEntities(rawA, ...[[0, 0, 100, 0], [100, 0, 100, 60], [100, 60, 0, 60], [0, 60, 0, 0]].map((q) => dxfLine(...q)));
+    addEntities(rawB, ...[[0, 0, 80, 0], [80, 0, 80, 80], [80, 80, 0, 80], [0, 80, 0, 0]].map((q) => dxfLine(...q)));
+    src.parts['335-a'] = makePart('335-a', 'Plate T', rawA, 1); src.parts['335-b'] = makePart('335-b', 'Block T', rawB, 1);
+    src.placed = [{ partId: '335-a', x: 100, y: 300, rot: 0, mirrorX: false, mirrorY: false }, { partId: '335-b', x: 400, y: 300, rot: 0, mirrorX: false, mirrorY: false }];
+    await t('picker').setInputFiles({ name: '335 turn.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(layoutRaw(src)), 'latin1') });
+    await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === '335 turn.dxf');
+    try {
+      // each part with its contour: [source, contour] by name, and the groups
+      const state = async () => {
+        const lay = layoutFromRaw(await savedDoc()), name = (p) => lay.parts[p.partId].name, plate = lay.placed.filter((p) => /^Plate T/.test(name(p))), block = lay.placed.filter((p) => /^Block T/.test(name(p)));
+        const pair = (l) => ({ own: l.find((p) => !p.ct), con: l.find((p) => p.ct) });
+        return { lay, plate: pair(plate), block: pair(block), groups: new Set(lay.placed.map((p) => p.g)).size };
+      };
+      const centre = (s, p) => { const b = placedBox(s.lay.parts[p.partId], p); return [(b[0] + b[2]) / 2, (b[1] + b[3]) / 2]; };
+      const deg = (a, b) => Math.abs(((a - b) % 360 + 540) % 360 - 180);       // the smallest angle between two
+      const attached = (s, who) => s[who].con.g === s[who].own.g && s[who].con.ct === s[who].own.cid;
+      await page.keyboard.press('Escape'); await page.keyboard.press('Control+a');
+      await typeCmd('contour');
+      await t('contour-steps').fill('1'); await t('contour-steps').press('Enter');
+      await t('contour-outside').click(); await t('contour-sharp').click();
+      await t('contour-dist').fill('10'); await t('contour-dist').press('Enter');
+      await t('contour-apply').click(); await t('contour-close').click();
+      assert.equal(await nParts(), 4);
+      let s = await state();
+      assert.ok(attached(s, 'plate') && attached(s, 'block') && s.groups === 2, 'a contour each, one group each');
+      // 335: click selects the part with its contour, click again: four turn arrows, and a drag turns both
+      await page.keyboard.press('Escape');
+      await click(150, 330);
+      const groupOf2 = () => page.waitForFunction(() => document.querySelector('[data-testid=pp-name]').textContent === 'Group of 2');
+      await groupOf2();
+      assert.equal(await page.locator('[data-group=tools] [data-rot]').count(), 0, 'no arrows after the first click');
+      await click(150, 330);
+      await page.waitForFunction(() => document.querySelectorAll('[data-group=tools] [data-rot]').length === 4);
+      await said(/^Angle </);            // the second click turns the Rotate mode on
+      await shotBoth('todo335-arrows');
+      const turnBy = async (d, keys = []) => {
+        const a = await arrowPoint(0), pv = await pivotPx(), r = Math.hypot(a.x - pv.x, a.y - pv.y), a0 = Math.atan2(a.y - pv.y, a.x - pv.x);
+        const to = (f) => ({ x: pv.x + r * Math.cos(a0 - f * d * Math.PI / 180), y: pv.y + r * Math.sin(a0 - f * d * Math.PI / 180) });
+        for (const k of keys) await page.keyboard.down(k);
+        try {
+          await page.mouse.move(a.x, a.y); await page.mouse.down();
+          for (let i = 1; i <= 4; i++) await page.mouse.move(to(i / 4).x, to(i / 4).y);
+          await page.mouse.up();
+        } finally { for (const k of keys.slice().reverse()) await page.keyboard.up(k); }
+      };
+      const sameTurn = (s2, who, why) => {
+        deg(s2[who].own.rot, s2[who].con.rot) < 0.01 || assert.fail(`${why}: the contour turned ${s2[who].con.rot}, the part ${s2[who].own.rot}`);
+        approx(centre(s2, s2[who].con)[0], centre(s2, s2[who].own)[0], 0.05, why + ': centre x'); approx(centre(s2, s2[who].con)[1], centre(s2, s2[who].own)[1], 0.05, why + ': centre y');
+      };
+      await turnBy(20);
+      s = await state();
+      approx(deg(s.plate.own.rot, 0), 20, 3, 'the part turned about 20°');
+      sameTurn(s, 'plate', 'after the arrow drag');
+      assert.equal(s.block.own.rot, 0); assert.equal(s.block.con.rot, 0, 'the other part and its contour stayed');
+      assert.ok(attached(s, 'plate'), 'still attached after the turn');
+      assert.equal(await page.locator('[data-group=tools] [data-rot]').count(), 4, 'still in Rotate mode');
+      const first = s.plate.own.rot;
+      await turnBy(23, ['Shift']);
+      s = await state();
+      assert.equal(s.plate.own.rot % 15, 0, 'Shift snaps the part to 15°, got ' + s.plate.own.rot);
+      sameTurn(s, 'plate', 'after the Shift drag');
+      await page.keyboard.press('Control+z');                    // one Undo takes the part and its contour back together
+      s = await state();
+      approx(deg(s.plate.own.rot, first), 0, 0.01, 'one Undo: the part is back at the first turn');
+      sameTurn(s, 'plate', 'after Undo');
+      await page.keyboard.press('Escape');
+      await page.keyboard.press('Control+z');
+      s = await state();
+      assert.equal(s.plate.own.rot, 0); assert.equal(s.plate.con.rot, 0, 'the second Undo: both back at 0');
+      // 336: group two contoured parts (4 placements), Ungroup: two parts again, each still attached
+      await page.keyboard.press('Escape'); await page.keyboard.press('Control+a');
+      await page.keyboard.press('Control+g');
+      s = await state();
+      assert.equal(s.groups, 1, 'Group: one group of four');
+      await page.keyboard.press('Control+Shift+g');
+      await said(/^Ungrouped: 4 parts are separate again/);
+      s = await state();
+      assert.equal(s.groups, 2, 'Ungroup: two groups, one per part');
+      assert.ok(attached(s, 'plate') && attached(s, 'block'), 'each contour is still attached to its own part');
+      assert.notEqual(s.plate.own.g, s.block.own.g);
+      await page.keyboard.press('Control+z');
+      assert.equal((await state()).groups, 1, 'one Undo undoes the Ungroup');
+      await page.keyboard.press('Control+z');
+      s = await state(); assert.equal(s.groups, 2, 'one more Undo undoes the Group');
+      await page.keyboard.press('Control+y'); await page.keyboard.press('Control+y');
+      s = await state(); assert.equal(s.groups, 2); assert.ok(attached(s, 'plate') && attached(s, 'block'), 'Redo Group, Redo Ungroup');
+      // after Ungroup: a click picks a part with its contour only, a move takes them along, the other part stays
+      await page.keyboard.press('Escape');
+      const before = s;
+      await click(150, 330);
+      await groupOf2();
+      await dragMm([150, 330], [250, 380]);
+      s = await state();
+      const moved = (p0, p1) => Math.hypot(p1.x - p0.x, p1.y - p0.y);
+      assert.ok(moved(before.plate.own, s.plate.own) > 10 && Math.abs(moved(before.plate.own, s.plate.own) - moved(before.plate.con, s.plate.con)) < 0.05, 'the Plate and its contour moved by the same');
+      assert.equal(moved(before.block.own, s.block.own), 0); assert.equal(moved(before.block.con, s.block.con), 0, 'the Block and its contour stayed');
+      // after Ungroup: the Block turns by hand with its contour; the Plate and its contour stay
+      await click(440, 340); await click(440, 340);
+      await page.waitForFunction(() => document.querySelectorAll('[data-group=tools] [data-rot]').length === 4);
+      await turnBy(30);
+      const after = await state();
+      approx(deg(after.block.own.rot, 0), 30, 3, 'the Block turned about 30°');
+      sameTurn(after, 'block', 'the Block after Ungroup');
+      assert.equal(after.plate.own.rot, s.plate.own.rot); assert.equal(after.plate.con.rot, s.plate.con.rot, 'the Plate and its contour did not turn');
+      assert.ok(attached(after, 'plate') && attached(after, 'block'));
+      assert.deepEqual(errors.slice(errs0), [], 'no errors');
+    } finally {
+      await menuItem('Layout', 'Parts library');
+      for (const name of ['Plate T', 'Block T']) {
+        if (!await libCard(name).count()) continue;
+        await libCard(name).locator('[data-testid=lib-menu]').click();
+        page.once('dialog', (d) => d.accept());
+        await page.getByRole('menuitem', { name: 'Delete from library', exact: true }).click();
+        await libCard(name).waitFor({ state: 'detached' });
+      }
+      await t('ptab-drawing').click(); await closeTabs(/./);
+    }
+  });
 
   await step('TODO 111b: copy in a drawing, paste on a layout saves a named library part at the same mm position, selected; Undo keeps the part; second paste is numbered', async () => {
     await closeTabs(/./);

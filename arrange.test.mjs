@@ -237,6 +237,29 @@ test('isWholeGroup', () => {
   assert.equal(A.isWholeGroup([{ g: undefined }, { g: undefined }], count), false);
 });
 
+test('oneItem: a part and its contour are one item (335)', () => {
+  const placed = [{ g: 'a', cid: 'c1' }, { g: 'a', ct: 'c1' }, { g: 'b', cid: 'c2' }, { g: 'b', ct: 'c2' }, {}, { g: 'a', ct: 'c1' }];
+  assert.equal(A.oneItem(placed, [4]), 4, 'a plain part');
+  assert.equal(A.oneItem(placed, [1, 0]), 0, 'the part comes back, whatever the order');
+  assert.equal(A.oneItem(placed, [0, 1, 5]), 0, 'a part with two contours');
+  assert.equal(A.oneItem(placed, [0, 1, 2, 3]), -1, 'two contoured parts are a real group');
+  assert.equal(A.oneItem(placed, [0, 3]), -1, 'a contour of another part');
+  assert.equal(A.oneItem(placed, [0, 4]), -1, 'a part and a plain part');
+  assert.equal(A.oneItem(placed, [1]), -1, 'a contour alone');
+  assert.equal(A.oneItem(placed, []), -1);
+});
+
+test('ungroupMark: Ungroup keeps each part and its contour together (336)', () => {
+  let n = 0;
+  const id = () => 'new' + ++n, marks = {};
+  const placed = [{ x: 1, g: 'a', cid: 'c1' }, { x: 2, g: 'a', ct: 'c1' }, { x: 3, g: 'a', cid: 'c2' }, { x: 4, g: 'a', ct: 'c2' }, { x: 5, g: 'a' }];
+  const out = placed.map((p) => A.ungroupMark(p, marks, id));
+  assert.deepEqual(out.map((p) => p.g), ['new1', 'new1', 'new2', 'new2', undefined], 'one new mark per part and contour; a plain part has none');
+  assert.ok(out.every((p, k) => p.x === placed[k].x), 'nothing else changes');
+  assert.ok(!('g' in out[4]));
+  assert.equal(n, 2);
+});
+
 test('mirrorAboutPoint: a selection mirrors as a whole (X and Y)', () => {
   const part = { w: 100, h: 60 };
   const a = placement1('a', 0, 0), b = placement1('a', 300, 100);
