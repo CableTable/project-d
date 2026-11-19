@@ -162,7 +162,7 @@ function paintItems(c, fl, off, T, k, vr, dpr, col, sheetBg, hide, factor, wiref
     if (it.k === 'i') continue;
     const b = it.b;
     const pad = it.k === 'p' && !it.fill ? strokeWidth(it, factor, mscale(mats[it.m])) / factor / 2 : 0;
-    if (vr && outsideView(b, pad, vr)) continue;
+    if (vr && outsideView(b, pad && Math.max(pad, 0.6 * dpr / k), vr)) continue;       // a stroke is drawn at least 1.2 px wide: its half reaches into the view (a band of a zoom end, TODO 324b)
     if (it.k !== 'n' && subPixel(b, pad, k, minPx)) continue;       // under 0.4 px (minPx: the quick paint's 1 px)
     if (!itemVisible(it, off)) continue;
     if (hide && hide.has(it.e)) continue;                                  // an entity being dragged by a grip is drawn by the overlay

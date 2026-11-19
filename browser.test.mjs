@@ -28218,6 +28218,94 @@ try {
     }
   });
 
+  await step('TODO 324b: a zoom end paints the sharp base in bands under the scaled picture (Drawings, Layout, Compare)', async () => {
+    const buffer = Buffer.from(writeDxf(bigDoc(150000)));
+    for (const [kind, dpr] of [['Drawings', 1], ['Layout', 1], ['Compare', 1], ['Drawings', 1.25]]) {       // 1.25: a band edge is a whole device px, its origin a fraction of a css px
+      const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light', deviceScaleFactor: dpr });
+      try {
+        const p = await ctx.newPage(), drawing = p.getByTestId('drawing'), errors = [];
+        p.on('pageerror', (e) => errors.push(String(e)));
+        await p.route('**/app.js', (route) => route.fulfill({ contentType: 'text/javascript', body: readFileSync('web/app.js', 'utf8') + '\nwindow.t324 = () => paintOverlay();' }));
+        const frame = () => p.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+        const paints = async () => Number(await drawing.getAttribute('data-paints'));
+        const menu = async (top, name) => { await p.locator(`[data-menu=${top}]`).click(); await p.getByRole('menuitem', { name, exact: true }).click({ timeout: 120000 }); };
+        const open = async (name) => {
+          await p.getByTestId('picker').setInputFiles({ name, mimeType: 'text/plain', buffer });
+          await p.waitForFunction((n) => document.querySelector('.dtab.on .tname').textContent === n, name, { timeout: 120000 });
+          await frame();
+        };
+        const settled = () => p.waitForFunction(() => { const c = document.querySelector('[data-testid=drawing]'); return c.dataset.snap === '' && c.dataset.chunk === ''; }, null, { timeout: 20000 });
+        const bands = () => p.evaluate(() => window.__bands);
+        // the picture the zoom end left, then a full paint of the same view (nokeep): they must agree (same tolerance as the pan end of 324a)
+        const sameAsFull = async (label) => {
+          const before = await paints();
+          await drawing.evaluate((c) => { window.__A = c.getContext('2d').getImageData(0, 0, c.width, c.height); c.dataset.nokeep = '1'; });
+          await p.evaluate(() => window.t324()); await frame();
+          assert.equal(await paints(), before + 1, `${label}: the check itself is one full paint`);
+          const diff = await drawing.evaluate((c) => {
+            const a = window.__A, b = c.getContext('2d').getImageData(0, 0, c.width, c.height);
+            delete c.dataset.nokeep; delete window.__A;
+            let n16 = 0, n48 = 0, ink = 0;
+            for (let i = 0; i < a.data.length; i += 4) { let mx = 0; for (let j = 0; j < 4; j++) mx = Math.max(mx, Math.abs(a.data[i + j] - b.data[i + j])); if (mx > 16) n16++; if (mx > 48) n48++; if (b.data[i + 3]) ink++; }
+            return { n16, n48, ink, total: c.width * c.height };
+          });
+          assert.ok(diff.ink > diff.total * 0.01, `${label}: the full paint holds drawing (${diff.ink} pixels)`);
+          assert.ok(diff.n16 <= diff.total * 0.004 && diff.n48 <= diff.total * 0.002, `${label}: the zoom end equals a full paint (${diff.n16} pixels over 16 levels apart, ${diff.n48} over 48, of ${diff.total})`);
+          console.log(`324b ${label}: ${diff.n16} pixels over 16 levels apart, ${diff.n48} over 48, of ${diff.total}`);
+        };
+        await p.goto(URL_ + '?autosave=86400000');
+        await p.waitForSelector('[data-testid=count]', { state: 'attached' });
+        await open('t324b-big.dxf');
+        if (kind === 'Layout') { await menu('Layout', 'Add to layout'); await p.locator('.tabs .dtab').first().click(); await menu('Layout', 'Add to layout'); }
+        if (kind === 'Compare') { await open('t324b-other.dxf'); await menu('File', 'Compare drawings…'); }
+        await p.getByTestId('canvas').getByRole('button', { name: 'Fit', exact: true }).click(); await frame();
+        assert.ok(Number(await drawing.getAttribute('data-drawn')) > (kind === 'Layout' ? 5000 : 15000), `${kind}: the view is heavy (${await drawing.getAttribute('data-drawn')} items drawn)`);
+        // every start of the bands: was the scaled picture on screen (not blank) at that moment
+        await drawing.evaluate((c) => {
+          window.__bands = { starts: 0, blank: 0 };
+          new MutationObserver(() => {
+            if (c.dataset.chunk !== '1') return;
+            window.__bands.starts++;
+            const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let on = 0;
+            for (let i = 3; i < d.length && !on; i += 4) if (d[i]) on = 1;
+            if (!on) window.__bands.blank++;
+          }).observe(c, { attributes: true, attributeFilter: ['data-chunk'] });
+        });
+        const b = await p.getByTestId('canvas').boundingBox(), cx = b.x + b.width / 2, cy = b.y + b.height / 2;
+        await p.mouse.move(cx, cy); await frame();
+        let before = await paints();
+        for (let i = 0; i < 2; i++) { await p.mouse.wheel(0, -100); await frame(); }
+        assert.equal(await drawing.getAttribute('data-snap'), '1', `${kind}: the burst uses the kept picture`);
+        assert.equal(await paints(), before, `${kind}: no full paint during the burst`);
+        await settled();
+        assert.equal(await paints(), before + 1, `${kind}: one paint after the zoom`);
+        assert.equal((await bands()).starts, 1, `${kind}: the sharp paint ran in bands`);
+        await sameAsFull(`${kind} zoom end`);
+        // a wheel turn while the bands run: they stop, the next zoom end's picture is the one of the last view
+        before = await paints();
+        await p.mouse.wheel(0, -100); await frame();
+        const at = await drawing.evaluate(async (c, [x, y]) => {
+          for (let i = 0; i < 300 && c.dataset.chunk !== '1'; i++) await new Promise((r) => requestAnimationFrame(r));
+          const was = c.dataset.chunk;
+          c.dispatchEvent(new WheelEvent('wheel', { deltaY: -100, clientX: x, clientY: y, bubbles: true, cancelable: true }));
+          return was;
+        }, [cx, cy]);
+        assert.equal(at, '1', `${kind}: the wheel came while the bands ran`);
+        await frame();
+        assert.equal(await drawing.getAttribute('data-chunk'), '', `${kind}: the wheel stopped the bands`);
+        await settled();
+        assert.equal((await bands()).starts, 3, `${kind}: the last zoom end ran its bands`);
+        assert.equal((await bands()).blank, 0, `${kind}: the scaled picture was on screen whenever the bands began`);
+        await sameAsFull(`${kind} zoom end after a wheel during the bands`);
+        assert.deepEqual(errors, [], `${kind}: no page errors`);
+        const path = `${shotDir}/t324b-${kind.toLowerCase()}${dpr === 1 ? '' : '-dpr' + dpr}-light.png`;
+        await p.screenshot({ path });
+        assert.ok(readFileSync(path).length > 1000, 'required screenshot exists');
+        console.log(`324b ${kind} dpr ${dpr}: zoom end in bands, scaled picture stayed, a wheel during them leaves no stale chunk`);
+      } finally { await ctx.close(); }
+    }
+  });
+
   await step('layout kept base: Measure hover and part click do no full paint, pixels equal a full paint', async () => {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
     try {
@@ -28792,7 +28880,7 @@ try {
       }
       const results = await interact(p, buffer, 'lag-spline.dxf');
       const budgets = { open: [822680, 2], 'Measure hover': [16453720, 40], 'Line hover': [16453720, 40],
-        'select click': [411797, 1], Delete: [410883, 1], 'Ctrl+Z': [411340, 1], wheel: [411340, 1], pan: [411340, 1] };
+        'select click': [411797, 1], Delete: [410883, 1], 'Ctrl+Z': [411340, 1], wheel: [411340, 1], pan: [411340, 1], 'draw zoom in': [411340, 1] };
       assert.deepEqual(results.map((r) => r.action), Object.keys(budgets));
       for (const r of results) {
         const [lineTo, paints] = budgets[r.action];
@@ -28836,14 +28924,14 @@ try {
     const within = (r, budgets) => { for (const [action, paints] of Object.entries(budgets)) assert.ok(r[action].paints <= paints, `${action}: full paints ${r[action].paints} exceeds ${paints}`); };
     const big = Buffer.from(writeDxf(bigDoc(20000)));
     const lay = await flow((p) => interactLayout(p, big, 'lag-big.dxf', 2));
-    assert.deepEqual(Object.keys(lay), ['open', 'Add to layout x 3', 'Layout wheel', 'Layout pan', 'Layout Measure hover', 'Layout Line hover', 'Layout part click', 'Layout part drag', 'Layout undo', 'Layout sheet size', 'Layout Apply']);
+    assert.deepEqual(Object.keys(lay), ['open', 'Add to layout x 3', 'Layout wheel', 'Layout pan', 'Layout zoom in', 'Layout Measure hover', 'Layout Line hover', 'Layout part click', 'Layout part drag', 'Layout undo', 'Layout sheet size', 'Layout Apply']);
     assert.ok(lay['Layout undo'].lineTo > 30000, `two placed parts paint: lineTo ${lay['Layout undo'].lineTo}`);
     assert.equal(lay['Layout wheel'].snap, '1', 'Layout wheel reuses the kept picture after the burst');
-    within(lay, { 'Layout wheel': 1, 'Layout pan': 1, 'Layout Measure hover': 0, 'Layout Line hover': 0, 'Layout part click': 0, 'Layout part drag': 2, 'Layout undo': 2 });
+    within(lay, { 'Layout wheel': 1, 'Layout pan': 1, 'Layout zoom in': 1, 'Layout Measure hover': 0, 'Layout Line hover': 0, 'Layout part click': 0, 'Layout part drag': 2, 'Layout undo': 2 });
     const cmp = await flow((p) => interactCompare(p, big, 'lag-big.dxf'));
-    assert.deepEqual(Object.keys(cmp), ['open', 'Compare start', 'Compare wheel', 'Compare pan', 'Compare click', 'Compare button', 'Compare button again', 'Compare grip drag', 'Compare drag']);
+    assert.deepEqual(Object.keys(cmp), ['open', 'Compare start', 'Compare wheel', 'Compare pan', 'Compare zoom in', 'Compare click', 'Compare button', 'Compare button again', 'Compare grip drag', 'Compare drag']);
     assert.ok(cmp['Compare start'].lineTo > 30000, `both snapshots paint: lineTo ${cmp['Compare start'].lineTo}`);
-    within(cmp, { 'Compare start': 1, 'Compare wheel': 21, 'Compare pan': 1, 'Compare click': 0, 'Compare button': 2, 'Compare button again': 2, 'Compare grip drag': 2, 'Compare drag': 1 });       // TODO 317: a grip drag was 21 full paints, a body drag 2 (a grip press is one more paint when it does not share the frame of the first move)
+    within(cmp, { 'Compare start': 1, 'Compare wheel': 21, 'Compare pan': 1, 'Compare zoom in': 1, 'Compare click': 0, 'Compare button': 2, 'Compare button again': 2, 'Compare grip drag': 2, 'Compare drag': 1 });       // TODO 317: a grip drag was 21 full paints, a body drag 2 (a grip press is one more paint when it does not share the frame of the first move)
     assert.ok(cmp['Compare button again'].longTotal < 1500, `Compare button again long tasks ${cmp['Compare button again'].longTotal} ms (the second press reuses the fl-keyed metrics cache; this head 338 ms; the first press measures both items)`);
     const firstPressBound = process.env.CI ? 6000 : 3000;
     assert.ok(cmp['Compare button'].longTotal < firstPressBound, `Compare button (the first press) long tasks ${cmp['Compare button'].longTotal} ms (bound ${firstPressBound} ms; CI allows 6000 ms for the slower runner; P14a: 4cff4b3 ~10300 ms, outlineLoops scanned every open piece per join)`);

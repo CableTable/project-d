@@ -119,6 +119,7 @@ export async function interact(page, buffer, name = 'spline.dxf') {
       for (let i = 0; i < 30; i++) { await page.mouse.move(cx + i * 4, cy + i * 2); await frame(); }
       await page.mouse.up({ button: 'middle' });
     });
+    await zoomIn(page, run, frame, 'draw', cx, cy);
     return results;
   } finally { await stop(); }
 }
@@ -142,6 +143,12 @@ const wheelAndPan = async (page, run, frame, label, cx, cy, moves = 20) => {
     for (let i = 0; i < moves; i++) { await page.mouse.move(cx + i * 4, cy + i * 2); await frame(); }
     await page.mouse.up({ button: 'middle' });
   });
+  await zoomIn(page, run, frame, label, cx, cy);
+};
+// One way (TODO 324b): the alternating wheel above returns to its first view and so paints nothing; this one ends on a new scale, the zoom end the chunked paint is for.
+const zoomIn = async (page, run, frame, label, cx, cy, notches = 2) => {
+  await page.mouse.move(cx, cy); await frame();
+  await run(`${label} zoom in`, async () => { for (let i = 0; i < notches; i++) { await page.mouse.wheel(0, -150); await frame(); } });
 };
 
 /** Layout with `n` placed parts (the drawing added n + 1 times: the first becomes the step-and-repeat grid). */

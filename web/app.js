@@ -5180,6 +5180,8 @@ let paintFull = true, snap = null, snapCv = null, snapTimer = 0, paintSize = nul
 let quickNext = false, lastHeavy = false;
 // A drawing tab whose own paint is slow keeps its bitmap (without selection, marks, previews): a hover or a select click paints only those on top (TODO 258 / 259).
 let kept = null, keptCv = null, panCv = null;
+// Zoom end (TODO 324b): the sharp paint in bands over timer ticks (zoomChunks); chunk = { view, key } while they run, chunkGen cancels them.
+let chunk = null, chunkGen = 0, chunkCv = null;
 const KEEP_MS = 10;
 /** Everything the drawing's own pass reads, flat (compare with sameBase). While a grip or drag hides entities one by one, `drag` is set and their numbers end the key: that base is painted without them (TODO 320). */
 function paintKey(d, base, cw, chh) {
@@ -5252,7 +5254,12 @@ function paintOverlay(gesture = false) {
       key = layKey(base);
     } else if (d?.cmp) key = cmpBaseKey(d, base, cw, chh);
     const ekey = d && d.fl && !d.lay && !d.cmp ? paintKey(d, base, cw, chh) : null, dkey = key?.drag ? key : ekey?.drag ? ekey : null, ckey = d?.cmp && !key ? cmpKeepKey(d, base, cw, chh) : null;
-    c.dataset.snap = ''; c.dataset.keep = ''; c.dataset.quick = ''; c.dataset.pan = '';
+    const nk = d?.lay ? key : d?.cmp ? ckey : ekey;
+    // bands of a zoom end still running for this very view and content: nothing to do; anything else stops them
+    if (chunk && full && nk && !dkey && !quick && chunk.view.w === want.w && chunk.view.h === want.h && chunk.view.dpr === want.dpr && chunk.view.view.ox === view.ox && chunk.view.view.oy === view.oy
+      && chunk.view.view.scale === view.scale && sameBase(chunk.key, nk)) { ui.cmdUI.place(); return; }
+    chunk = null; chunkGen++;
+    c.dataset.snap = ''; c.dataset.keep = ''; c.dataset.quick = ''; c.dataset.pan = ''; c.dataset.chunk = '';
     if (full && dkey && c.dataset.nokeep !== '1' && !(kept && sameBase(kept.key, dkey))) {
       // a drag starts, or the view moved under it: the base without what is dragged is painted off screen once, so it is no counted full paint (TODO 317 / 320)
       snap = null; keptCv = keptCv || document.createElement('canvas'); keptCv.width = cw; keptCv.height = chh;
@@ -5260,7 +5267,13 @@ function paintOverlay(gesture = false) {
       if (d.cmp) kept.drag = cmpBase(keptCv, d.cmp, base);
       else paintEditable(keptCv, d, base, null, 'base');
     }
-    if (!full && snapUsable(snap, want)) {
+    const keepSnap = (k) => {
+      snapCv = snapCv || document.createElement('canvas');
+      snapCv.width = cw; snapCv.height = chh;
+      snapCv.getContext('2d').drawImage(c, 0, 0);
+      snap = { ...want, key: k };
+    };
+    const drawSnap = () => {                       // the last full paint, moved and scaled to the view now
       const { dx, dy, r } = snapPlace(snap.view, want.view), g = c.getContext('2d');
       const scale = r * dpr / snap.dpr;
       g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, cw, chh);
@@ -5268,6 +5281,9 @@ function paintOverlay(gesture = false) {
       if (d?.lay) layOverlay(c, d, base, marks, lifted);
       if (d?.cmp?.dragged) cmpPaint(c, d.cmp, base, marks, true);
       c.dataset.snap = '1';
+    };
+    if (!full && snapUsable(snap, want)) {
+      drawSnap();
       snapTimer = setTimeout(() => paintOverlay(), 120);
       ui.cmdUI.place();
       return;
@@ -5290,18 +5306,12 @@ function paintOverlay(gesture = false) {
       if (d.cmp && kept.still) { c.dataset.preview = 0; cmpOver(c, d.cmp, base, state.paste?.d === d || preview ? null : marks, null); cmpTop(c, d, base, marks, preview); }       // a select click on a heavy Compare: the selection only (TODO 327)
       else if (d.cmp) cmpOver(c, d.cmp, base, marks, kept.drag);
       else paintEditable(c, d, base, marks, 'over');
+      if (snap?.stale) keepSnap(null);       // the picture a zoom end's bands made, now with its overlays
       c.dataset.keep = '1';
       ui.cmdUI.place();
       return;
     }
-    const keepSnap = (k) => {
-      snapCv = snapCv || document.createElement('canvas');
-      snapCv.width = cw; snapCv.height = chh;
-      snapCv.getContext('2d').drawImage(c, 0, 0);
-      snap = { ...want, key: k };
-    };
     // Pan end (TODO 324a): the same scale and the same drawing as the kept base, only moved: that base is shifted and only the strip it no longer covers is painted
-    const nk = d?.lay ? key : d?.cmp ? ckey : ekey;
     if (full && nk && !dkey && !quick && c.dataset.nokeep !== '1' && kept?.view
       && panShift(c, d, base, want, calls, d.lay ? layKey : d.cmp ? (v) => cmpKeepKey(d, v, cw, chh) : (v) => paintKey(d, v, cw, chh), nk)) {
       if (d.lay) { keepSnap(key); layOverlay(c, d, base, marks, lifted); }
@@ -5311,6 +5321,14 @@ function paintOverlay(gesture = false) {
         keepSnap(null);
       }
       c.dataset.pan = '1';
+      ui.cmdUI.place();
+      return;
+    }
+    // Zoom end (TODO 324b): the scaled picture stays while the sharp base is painted in bands
+    if (full && nk && !dkey && !quick && c.dataset.nokeep !== '1' && snapUsable(snap, want)
+      && zoomChunks(c, d, base, want, calls, d.lay ? layKey : d.cmp ? (v) => cmpKeepKey(d, v, cw, chh) : (v) => paintKey(d, v, cw, chh), nk)) {
+      drawSnap();
+      c.dataset.paints = (+c.dataset.paints || 0) + 1;
       ui.cmdUI.place();
       return;
     }
@@ -5350,7 +5368,7 @@ function paintOverlay(gesture = false) {
 /**
  * Pan end (TODO 324a): the kept base (keptCv, painted at kept.view) is moved to the view now when only its place changed (same scale and size, a whole number of device px,
  * the same content: keyOf(view) is the key at that view) and the strips it no longer covers are painted off screen at their own origin; the base alone is left on c and in keptCv.
- * False when anything else changed: the caller paints in full. A zoom end stays a full paint (324b).
+ * False when anything else changed: the caller paints in full. A zoom end is zoomChunks (324b).
  */
 function panShift(c, d, base, want, calls, keyOf, nkey) {
   const v = kept.view, k = want.view.scale * want.dpr;
@@ -5358,20 +5376,53 @@ function panShift(c, d, base, want, calls, keyOf, nkey) {
   const dx = (v.view.ox - want.view.ox) * k, dy = (v.view.oy - want.view.oy) * k, rx = Math.round(dx), ry = Math.round(dy), strips = panStrips(rx, ry, want.w, want.h);
   if (!strips || Math.abs(dx - rx) > 1e-6 || Math.abs(dy - ry) > 1e-6 || !sameBase(kept.key, keyOf({ ...base, ox: v.view.ox, oy: v.view.oy }))) return false;
   const g = c.getContext('2d');
-  panCv = panCv || document.createElement('canvas');
   g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, want.w, want.h);
   g.drawImage(keptCv, rx, ry);
-  for (const [x0, y0, x1, y1] of strips) {
-    panCv.width = x1 - x0; panCv.height = y1 - y0;
-    const b = { ...base, ox: base.ox + x0 / k, oy: base.oy + y0 / k, w: panCv.width / want.dpr, h: panCv.height / want.dpr, strip: true };       // the view of just this strip
-    if (d.lay) { paintDrawing(panCv, { ...b, fl: null, factor: 1 }); for (const call of calls) paintDrawing(panCv, { ...b, keep: true, ...call }); }
-    else if (d.cmp) { paintDrawing(panCv, { ...b, fl: null, factor: 1 }); cmpItems(panCv, d.cmp, b, null, false, 'base'); }
-    else paintEditable(panCv, d, b, null, 'base');
-    g.drawImage(panCv, x0, y0);
-  }
+  for (const s of strips) paintStrip(g, d, base, want, calls, s);
   const kg = keptCv.getContext('2d');
   kg.setTransform(1, 0, 0, 1, 0, 0); kg.clearRect(0, 0, want.w, want.h); kg.drawImage(c, 0, 0);
   kept = { key: nkey, still: !!d.cmp, view: want };
+  return true;
+}
+
+/** One strip [x0, y0, x1, y1] (device px) of the view painted off screen at its own origin and drawn onto g (TODO 324a pan end, 324b zoom end). */
+function paintStrip(g, d, base, want, calls, [x0, y0, x1, y1]) {
+  const k = want.view.scale * want.dpr;
+  panCv = panCv || document.createElement('canvas');
+  panCv.width = x1 - x0; panCv.height = y1 - y0;
+  const b = { ...base, ox: base.ox + x0 / k, oy: base.oy + y0 / k, w: panCv.width / want.dpr, h: panCv.height / want.dpr, strip: true };       // the view of just this strip
+  if (d.lay) { paintDrawing(panCv, { ...b, fl: null, factor: 1 }); for (const call of calls) paintDrawing(panCv, { ...b, keep: true, ...call }); }
+  else if (d.cmp) { paintDrawing(panCv, { ...b, fl: null, factor: 1 }); cmpItems(panCv, d.cmp, b, null, false, 'base'); }
+  else paintEditable(panCv, d, b, null, 'base');
+  g.drawImage(panCv, x0, y0);
+}
+
+/**
+ * Zoom end (TODO 324b): the scale changed but the content did not (keyOf(kept view) is the kept key): the sharp base is painted in ZOOM_BANDS bands, one per timer tick, into chunkCv
+ * while the scaled picture stays on screen; at the end it becomes the kept base and paintOverlay runs once more to draw it with the overlays of that moment. Any other paintOverlay
+ * call stops the bands (chunkGen), except a full one for the same view and content. False when the kept base is not of this content: the caller paints in full.
+ */
+const ZOOM_BANDS = 8;
+function zoomChunks(c, d, base, want, calls, keyOf, nkey) {
+  const v = kept?.view;
+  if (!v || v.w !== want.w || v.h !== want.h || v.dpr !== want.dpr || !sameBase(kept.key, keyOf({ ...base, ox: v.view.ox, oy: v.view.oy, scale: v.view.scale }))) return false;
+  chunkCv = chunkCv || document.createElement('canvas');
+  chunkCv.width = want.w; chunkCv.height = want.h;
+  const g = chunkCv.getContext('2d'), run = ++chunkGen, bh = Math.ceil(want.h / ZOOM_BANDS);
+  chunk = { view: want, key: nkey };
+  c.dataset.chunk = '1';
+  const bands = function* () { for (let y = 0; y < want.h; y += bh) { paintStrip(g, d, base, want, calls, [0, y, want.w, Math.min(want.h, y + bh)]); yield y / want.h; } };
+  runChunks(bands(), { alive: () => chunkGen === run }).then(() => {
+    if (chunkGen !== run) return;
+    chunk = null;
+    [keptCv, chunkCv] = [chunkCv, keptCv];
+    kept = { key: nkey, still: !!d.cmp, view: want };
+    snapCv = snapCv || document.createElement('canvas');
+    snapCv.width = want.w; snapCv.height = want.h;
+    snapCv.getContext('2d').drawImage(keptCv, 0, 0);
+    snap = { ...want, key: d.lay ? nkey : null, stale: true };       // stale: the next kept-base paint takes the picture with its overlays
+    paintOverlay();
+  }).catch((e) => { if (chunkGen === run) { chunk = null; c.dataset.chunk = ''; } throw e; });       // a failed band must not leave the next paint waiting for it
   return true;
 }
 
