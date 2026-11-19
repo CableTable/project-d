@@ -259,7 +259,8 @@ select.fld { font-family: var(--sans); }
 .part-hit { fill: transparent; stroke: none; cursor: move; }
 .part-hit.ob { fill: none; stroke: transparent; stroke-width: 14px; stroke-linecap: round; vector-effect: non-scaling-stroke; pointer-events: stroke; }     /* a layout object: only its own lines catch a click */
 .marks { stroke: var(--mark); stroke-width: 1.2; fill: none; }
-.sel-box { fill: none; stroke: var(--accent); stroke-width: 2.5; stroke-linejoin: round; pointer-events: none; }
+.sel-box { fill: none; stroke: var(--accent); stroke-width: 1.6; stroke-dasharray: 6 6; vector-effect: non-scaling-stroke; stroke-linejoin: round; pointer-events: none; }
+.drawing-rotate-box { fill: none; stroke: var(--accent); stroke-width: 2.5; stroke-linejoin: round; pointer-events: none; }
 .grip-sq { fill: var(--accent); pointer-events: none; }
 /* over the selected placed part: the turn arrows and the pivot (rotate mode) take the pointer, the rest lets it through */
 .ptools * { pointer-events: none; }

@@ -3,7 +3,9 @@
 // The layout is a new document (dxf-write.js shape): the part as a block, one INSERT per position on layer "Parts",
 // the sheet outline on "Sheet", crop / registration marks on "Marks". Units are mm; 0,0 is the sheet's bottom-left
 // and y is up. layout.js works from the top-left with y down, so every y here is sheetH - y.
-import { spaceOf } from './doc.js';
+import { spaceOf, startHidden, itemVisible } from './doc.js';
+import { polylines } from './compare.js';
+import { hull as convexHull } from './nestshape.js';
 import { baseName } from './savepath.js';
 import { markGeometry, stepRepeat, usableArea } from './layout.js';
 import { newDoc, addLayer, addBlock, addEntities, insert, rect, roundRect, line, circle } from './dxf-write.js';
@@ -23,7 +25,21 @@ export function blockName(fileName) {
 export function partFromDrawing(name, raw, fl, factor) {
   const sp = spaceOf(fl), box = fl.boxes && fl.boxes[sp ? 'paper' : 'model'];
   if (!box || !(box[2] > box[0]) || !(box[3] > box[1])) return null;
-  return { name, raw, space: sp, factor, box, w: (box[2] - box[0]) * factor, h: (box[3] - box[1]) * factor };
+  return { name, raw, space: sp, factor, box, w: (box[2] - box[0]) * factor, h: (box[3] - box[1]) * factor, hull: hullOf(fl, sp, factor || 1) };
+}
+
+/**
+ * The convex hull of everything the part draws, in drawing units ([[x, y], …], kept in memory only: place.js offSheet / inGripper map it
+ * through placedMat). Paths are sampled (arcs to 0.01 mm); text, hatches, pictures and paper-space viewports count by their box corners.
+ * An empty list (nothing to test) makes callers use the box.
+ */
+function hullOf(fl, space, factor) {
+  const hidden = startHidden(fl), pts = [];
+  // sampled in mm (so the 0.01 mm sag is true mm whatever the unit), then back to drawing units
+  for (const q of polylines({ ...fl, items: fl.items.filter((it) => it.k === 'p').map((it) => it.fill ? { ...it, fill: 0 } : it) }, factor, hidden).polys) for (let i = 0; i < q.length; i += 2) pts.push([q[i] / factor, q[i + 1] / factor]);
+  for (const it of fl.items) if (it.k !== 'p' && (it.ps ? 1 : 0) === space && itemVisible(it, hidden)) pts.push([it.b[0], it.b[1]], [it.b[2], it.b[1]], [it.b[2], it.b[3]], [it.b[0], it.b[3]]);
+  if (space) for (const v of fl.vports) pts.push([v.cx - v.w / 2, v.cy - v.h / 2], [v.cx + v.w / 2, v.cy - v.h / 2], [v.cx + v.w / 2, v.cy + v.h / 2], [v.cx - v.w / 2, v.cy + v.h / 2]);
+  return convexHull(pts);
 }
 
 /** Where each copy's INSERT goes, y up: [{ x, y, rot }]. A rotated copy is turned 90° clockwise, as the preview shows it. */

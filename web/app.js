@@ -29,9 +29,9 @@ import * as DM from './dims.js';
 import * as LR from './leader.js';
 import * as BAL from './balloons.js';
 import * as PS from './pdf-sheets.js';
-import { paintDrawing, drawMarks, drawContour, drawDimPreview, ink, FONT_FAMILY } from './render.js';
+import { paintDrawing, paintDrawingSteps, paintMarks, drawMarks, drawContour, drawDimPreview, ink, FONT_FAMILY } from './render.js';
 import { overlayBox } from './preview.js';
-import { snapPlace, snapUsable, heavy, sameBase, runChunks, blitCovers, QUICK_PX } from './perf.js';
+import { snapPlace, snapUsable, heavy, sameBase, runChunks, blitCovers, panStrips, QUICK_PX, slice as timeSlice } from './perf.js';
 import { flatten, flattenEdit, patchWidths, primeSplines, unionBox, CAP, ACI, UNITS, mapply, mmul, pickIndex, arcSweep, DrawingError } from './drawing.js';
 import { writeDxf, writeDxfWithReport, saveReportNote, unwritable, addLayer, newDoc, lwpoly, point } from './dxf-write.js';
 import * as SH from './shaping.js';
@@ -97,7 +97,7 @@ import { loadFont } from './fontload.js';
 import { fontForStyle, fontSubstitutions } from './fontsub.js';
 import { outlineOf } from './nestshape.js';
 import { partSource, readTitleBlock, withTitleBlock } from './pdf-export.js';
-import { readPdf, renderPdfPage, isPdf } from './pdf-read.js';
+import { readPdf, renderPdfPage, renderPdfPages, isPdf } from './pdf-read.js';
 import { preloadPictures, rawPixels } from './pictures.js';
 import { panelWidth } from './docker.js';
 
@@ -536,7 +536,7 @@ function buildStartScreen() {
 function buildMenus() {
   // an item: [text, action, shortcut hint (shown, and only a hint for a key that is really bound), enabled? (a function, asked when the menu opens)]
   const menus = {
-    File: () => [['Open…', openFile], ['New layout', newLayoutTab], ['Save', () => save(false), 'Ctrl+S'], ['Save As…', () => save(true), 'Ctrl+Shift+S'], ['Export DXF…', exportDxf], ['Export for cutter…', exportCutter], ['Compare drawings…', cmpStart], ['Import background…', () => ui.bgPicker.click()], ['Trace bitmap…', traceBitmap], ['PDF / Print…', exportPdf],
+    File: () => [['Open…', openFile], ['New layout', newLayoutTab], ['Save', () => save(false), 'Ctrl+S'], ['Save As…', () => save(true), 'Ctrl+Shift+S'], ['Export DXF…', exportDxf], ['Export for cutter…', exportCutter], ['Compare drawings…', cmpStart], ['Import background…', () => ui.bgPicker.click()], ['Rotate background', rotateBackground], ['Trace bitmap…', traceBitmap], ['PDF / Print…', exportPdf],
       ...recentItems()],
     Edit: [['Undo', () => undoCurrent(), 'Ctrl+Z', () => ui.startScreen.hidden && (!!state.paste || !!state.grip || !!historyOf(curDoc())?.canUndo)],
       ['Redo', () => undoCurrent(true), 'Ctrl+Y', () => ui.startScreen.hidden && !!historyOf(curDoc())?.canRedo],
@@ -1272,6 +1272,7 @@ function addTab(d, replaceEmpty = true) {
   const cur = curDoc();
   if (replaceEmpty && cur && cur.empty && !cur.dirty && !d.empty) state.docs[state.doc] = d;      // an untouched empty tab is used up
   else { state.docs.push(d); state.doc = state.docs.length - 1; }
+  quickNext = 'big';
   showDoc();
 }
 
@@ -1309,6 +1310,7 @@ async function openBytes(name, buf, path = null, batch = {}) {
   if (!r.ok) { note(name + ': ' + (r.sorry || 'could not read this drawing' + (r.error ? ' (' + r.error + ')' : ''))); return; }
   const t = window.__TAURI__;
   if (path && t?.fs?.readFile) {
+    let attached = false;
     for (const e of [...r.doc.entities, ...Object.values(r.doc.blocks).flatMap((b) => b.entities)]) {
       const file = e.r?.file;
       if (e.type !== 'IMAGE' || !file || !/^[^<>:"/\\|?*\x00-\x1f]+\.png$/i.test(file)) continue; // only a sibling PNG, never a file-supplied path
@@ -1319,9 +1321,10 @@ async function openBytes(name, buf, path = null, batch = {}) {
           reader.onload = () => resolve(reader.result); reader.onerror = () => reject(reader.error);
           reader.readAsDataURL(new Blob([bytes], { type: 'image/png' }));
         });
+        attached = true;
       } catch { /* Missing or unreadable sibling: keep the undrawn IMAGE. */ }
     }
-    r.result = flatten(r.doc);
+    if (attached) r.result = flatten(r.doc);
   }
   await preloadPictures(r.result.items);
   const fl = r.result;
@@ -2530,8 +2533,9 @@ const pivotPoint = (part, pl) => PL.pivotOf(part, pl, state.pivot.kind, [state.p
 const showBox = (i) => { if (multiSel()) { const b = selBox(); return b ? lengthText(b[i]) : '—'; } const s = selectedPlaced(); return s ? lengthText(placedBox(s.part, s.p)[i]) : '—'; };
 const showAngle = () => { if (multiSel()) return '0°'; const s = selectedPlaced(); return s ? +Number(s.p.rot).toFixed(2) + '°' : '—'; };
 const showNudge = () => fmt1(state.nudge);
-/** What to add to a message: that the part is off the sheet (it is drawn in orange, and still placed). */
-const offNote = (lay, part, pl) => (PL.offSheet(part, pl, lay.s.sheetW, lay.s.sheetH) ? `${part.name} is off the sheet (drawn in orange). It is still placed` : '');
+/** What to add to a message: that the part is off the sheet, or (only that) in a gripper (it is drawn in orange, and still placed). */
+const offNote = (lay, part, pl) => (PL.offSheet(part, pl, lay.s.sheetW, lay.s.sheetH) ? `${part.name} is off the sheet (drawn in orange). It is still placed`
+  : PL.inGripper(part, pl, lay.s) ? `${part.name} is in the gripper (drawn in orange). It is still placed` : '');
 const say = (...bits) => note(bits.filter(Boolean).join('. '));
 
 /** A change in progress: the layout is kept for undo once, when the first thing changes (and thrown away if it is cancelled). */
@@ -2902,8 +2906,9 @@ function ungroupSel() {
   const items = selItems();
   if (!items.length) { note('Ungroup: select a group first'); return; }
   if (!items.some((x) => x.p.g)) { note('Ungroup: the selection holds no group'); return; }
-  const n = items.filter((x) => x.p.g).length;
-  const r = editFlags(`Ungroup ${n} parts`, (pl) => { const { g, ...rest } = pl; return rest; });
+  if (A.oneItem(placedNow, selIdxs()) >= 0) { note('Ungroup: a part and its contour stay attached'); return; }
+  const n = items.filter((x) => x.p.g).length, marks = {};
+  const r = editFlags(`Ungroup ${n} parts`, (pl) => A.ungroupMark(pl, marks, newGroupId));       // a part keeps its contour: they get a new group of their own
   say(`Ungrouped: ${n} parts are separate again, still selected`, loosenedNote(r.g));
 }
 function lockSel(on) {
@@ -3237,7 +3242,8 @@ function placedDown(e, cycled = false) {
   if (s && rotEl) {
     const pivot = pivotPoint(s.part, s.p), a0 = PL.angleOf(pivot, here);
     if (s.p.lock) { note(LOCKED); return true; }
-    pdrag = { kind: 'rotate', cx: e.clientX, cy: e.clientY, orig: placementOf(s.p), pivot, a0, last: a0, acc: 0, moved: false, g: null, idx: null };
+    const ids = A.oneItem(placedNow, selIdxs()) >= 0 ? [...selIdxs().filter((k) => k !== state.sel), state.sel] : [state.sel];       // the part's contour(s) turn with it; the part is last (the main one after the turn)
+    pdrag = { kind: 'rotate', cx: e.clientX, cy: e.clientY, orig: placementOf(s.p), ids, origs: ids.map((k) => placementOf(placedNow[k])), pivot, a0, last: a0, acc: 0, moved: false, g: null, idx: null };
     return true;
   }
   if (s && pivEl) { pdrag = { kind: 'pivot' }; return true; }
@@ -3250,7 +3256,7 @@ function placedDown(e, cycled = false) {
     }
     const add = !cycled && e.shiftKey && !e.ctrlKey && !e.metaKey;            // Shift-click adds a part or takes it out (a Shift-drag still moves them straight)
     const grp = groupIdxs(i);
-    let toggle = null, was = cur.length === 1 && cur[0] === i && grp.length === 1;
+    let toggle = null, was = A.oneItem(placedNow, cur) >= 0 && A.oneItem(placedNow, grp) >= 0 && grp.every((k) => cur.includes(k));       // one part, or a part and its contour: one item
     const meta = stretchSelection(curDoc().stretchSelection, add, grp);
     if (add) {
       if (inSel) toggle = i;
@@ -3271,8 +3277,9 @@ function placedMove(e) {
   if (!p || !lay || !s) return;
   const here = sheetAt(e.clientX, e.clientY);
   if (p.kind === 'pivot') {
-    state.pivot = { kind: 'custom', x: r2(here[0]), y: r2(here[1]) };
-    drawTools(); renderProps(); renderCommand();
+    const q = pivotSnap(s.d, here, e.altKey), round = q[2] ? PL.r6 : r2;
+    state.pivot = { kind: 'custom', x: round(q[0]), y: round(q[1]) };
+    drawTools(); renderProps(); renderCommand(); paintOverlay();
     return;
   }
   if (p.kind === 'move') {
@@ -3312,11 +3319,11 @@ function placedMove(e) {
   if (!p.moved) {
     if (Math.hypot(e.clientX - p.cx, e.clientY - p.cy) <= 3) return;
     p.moved = true; p.g = startGesture(s.d, 'Turn ' + s.part.name); gMark(p.g);
-    p.idx = gLoose(p.g, state.sel); p.idxs = [p.idx]; p.ghost = p.orig;
+    p.idxs = gLooseMany(p.g, p.ids); p.idx = p.idxs.at(-1); p.ghost = p.orig; p.ghosts = p.origs.slice(0, -1).map((pl) => ({ part: lay.parts[pl.partId], pl }));
   }
   let turn = p.acc;
   if (e.shiftKey) { turn = PL.snapAngle(p.orig.rot + p.acc) - p.orig.rot; turn += 360 * Math.round((p.acc - turn) / 360); }       // Shift: the angle lands on a multiple of 15°
-  lay.placed[p.idx] = PL.rotateAbout(s.part, p.orig, p.pivot, turn);
+  p.idxs.forEach((ix, k) => { lay.placed[ix] = PL.rotateAbout(lay.parts[p.origs[k].partId], p.origs[k], p.pivot, turn); });
   p.label = { text: fmt1(lay.placed[p.idx].rot) + '°' };
   selLooseMany = p.idxs; queueUpdate();
 }
@@ -3325,7 +3332,7 @@ function placedUp() {
   pdrag = null;
   if (!p) return;
   flushUpdate();
-  if (p.kind === 'pivot') { update(); return; }
+  if (p.kind === 'pivot') { snapCycle = null; update(); return; }       // the Tab choice ends with the drag
   if (!p.moved) {
     if (p.kind !== 'move') return;
     if (p.toggle != null) {                                        // Shift-click on a selected part: out it goes (its whole group)
@@ -3336,9 +3343,11 @@ function placedUp() {
     }
     // a click on a part of a selection of several: just that part (its group); on the part that was already selected: turn arrows on; once more: back to the size handles
     if (p.add) return;                                             // Shift-click added it: that is all
-    if (!p.copy && selIdxs().length > 1) { selectMany(groupIdxs(p.hitI), p.hitI); update(); return; }
+    const one = A.oneItem(placedNow, selIdxs());                    // a part and its contour are one item: they turn together
+    if (!p.copy && selIdxs().length > 1 && one < 0) { selectMany(groupIdxs(p.hitI), p.hitI); update(); return; }
     if (p.wasSel && !p.copy) {
       if (cursorTool()?.layoutRotate && DI.hasTyped(cursorInput())) { cursorCommit(); return; }   // a typed Rotate angle: the click applies it
+      if (one >= 0 && one !== state.sel) { const keep = selIdxs(); state.sel = one; state.picks = keep; }       // the turn arrows follow the part, not its contour (setting sel clears the picks)
       if (selectedPlaced().p.lock) { note(LOCKED); return; }
       state.mode = state.mode === 'rotate' ? 'select' : 'rotate'; state.pivot = centrePivot(); state.rotCopy = false; state.lref = null;
       update();
@@ -3852,9 +3861,17 @@ function download(name, text, type = 'application/dxf') {
 async function writeDrawing(raw, name, path, opts = {}) {
   const report = writeDxfWithReport(raw, { ...opts, name }), t = window.__TAURI__;
   const bytes = (px) => Uint8Array.from(atob(px.slice(px.indexOf(',') + 1)), (c) => c.charCodeAt(0));
+  report.picturesFailed = 0;
   if (path && t?.fs?.writeTextFile) {
-    for (const pic of report.pictures) await t.fs.writeFile(path.replace(/[^\\/]+$/, '') + pic.name, bytes(pic.px));
-    await t.fs.writeTextFile(path, report.text);
+    if (report.pictures.length && t.core?.invoke) {
+      try { await t.core.invoke('grant_save_pictures', { path, names: report.pictures.map((pic) => pic.name) }); }
+      catch (err) { console.warn('Picture file scope:', err); } // The pictures then fail one by one and are counted below.
+    }
+    await t.fs.writeTextFile(path, report.text);                   // the DXF first: a refused picture must not lose it
+    for (const pic of report.pictures) {
+      try { await t.fs.writeFile(path.replace(/[^\\/]+$/, '') + pic.name, bytes(pic.px)); }
+      catch (err) { report.picturesFailed++; console.warn('Picture not saved:', pic.name, err); }
+    }
   } else {
     download(name, report.text);
     for (const pic of report.pictures) download(pic.name, bytes(pic.px), 'image/png');
@@ -3912,7 +3929,7 @@ async function save(forceAs) {
     } else {
       name = ask || !path ? want : dxfName(d.name);
     }
-    const { tables, skipped } = await writeDrawing(raw, name, path, { escapeUnicode: true, extents: d.lay || !d.fl ? null : d.fl.boxes.model });
+    const { tables, skipped, picturesFailed } = await writeDrawing(raw, name, path, { escapeUnicode: true, extents: d.lay || !d.fl ? null : d.fl.boxes.model });
     let unitError = '';
     try { await unitsSave(d, path, name); }
     catch (err) { unitError = err.message || String(err); d.unitsDirty = true; }
@@ -3927,8 +3944,9 @@ async function save(forceAs) {
     if (d.lay) d.lay.name = name;
     if (bad.length) d.acceptedLoss = true;
     renderTabs();
-    const saveNote = saveReportNote({ tables, skipped }) + backupNote;
-    if (unitError) { note('Saved; unit not saved: ' + unitError + backupNote + (!balloonsSaved ? '. ' + state.msg : '')); return; }
+    const saveNote = saveReportNote({ tables, skipped, picturesFailed }) + backupNote;
+    const picNote = picturesFailed ? `. ${picturesFailed} picture(s) not saved` : '';
+    if (unitError) { note('Saved; unit not saved: ' + unitError + backupNote + picNote + (!balloonsSaved ? '. ' + state.msg : '')); return; }
     if (!balloonsSaved) { note('Saved ' + name + saveNote + '. ' + state.msg); return; }
     const dir = path ? path.slice(0, Math.max(path.lastIndexOf('\\'), path.lastIndexOf('/'))) : '';
     note('Saved ' + name + (dir ? ' to ' + dir : '') + saveNote + (d.bg ? '. The background picture is not saved in the DXF' : ''));
@@ -4179,9 +4197,10 @@ function addedSwatch(d, l) {
 function searchEsc(input) {
   input.addEventListener('keydown', (e) => { if (e.key === 'Escape' && input.value) { e.stopPropagation(); input.value = ''; input.dispatchEvent(new Event('input')); } });
 }
+/** The tree is drawn only while its tab shows (setPtab draws it on open); renderObjects' own sig decides whether a draw changes anything.
+ *  The Guides section lives in the tree on a layout and beside Parts on a drawing: a hidden draw is still made when it sits in the wrong place. */
 function renderLayers() {
-  objSigLast = null;
-  renderObjects();
+  if (state.ptab === 'objects' || !!curDoc()?.lay !== ui.objTree?.contains(ui.guideSec)) renderObjects();
 }
 
 /** The layout's existing layer rows are siblings of its parts, never parents of them. */
@@ -4288,8 +4307,8 @@ function objBtn(act, on, label, inner, cls = '') {
 /** What the Objects tree is made of, apart from which rows are picked: when it is the same as the last draw, a pick only re-marks the rows. */
 function objSig(d, dark) {
   const om = omOf(d), sets = JSON.stringify([om.query, om.filter, dark, om.layoutClosed, om.guidesOpen, [...om.openP], [...(om.open || [])], [...om.openB], [...om.show]]);
-  if (d.lay) return { a: d, b: d.lay.parts, c: d.lay.layers, str: sets + JSON.stringify([d.lay.name, d.lay.s, state.hidden, d.curLayer, Object.values(d.lay.parts).map((p) => p.name), [...(d.hiddenParts || [])], placedNow.map((p) => [p.partId, p.x, p.y, p.rot, p.lock, p.mirrorX, p.mirrorY])]) };
-  return { a: d, b: d.raw.entities, c: d.raw.layers, str: sets + JSON.stringify([[...d.off], [...(hidIdx(d) || [])], [...(d.locked || [])], curLayerName(d), d.factor, [...(d.addedLayers || [])]]) };
+  if (d.lay) return { a: d, b: d.lay.parts, c: d.lay.layers, str: sets + JSON.stringify([d.lay.name, d.lay.s, state.hidden, d.curLayer, Object.values(d.lay.parts).map((p) => p.name), [...(d.hiddenParts || [])], sheetDimCount(), placedNow.map((p) => [p.partId, p.x, p.y, p.rot, p.lock, p.mirrorX, p.mirrorY])]) };
+  return { a: d, b: d.raw.entities, c: d.raw.layers, fl: d.fl, str: sets + JSON.stringify([[...d.off], [...(hidIdx(d) || [])], [...(d.locked || [])], curLayerName(d), d.factor, [...(d.addedLayers || [])], d.newLayer, d.bg?.visible]) };
 }
 let objSigLast = null;
 /** Only the picked rows changed: toggles the .sel marks on the rows already there. False if a picked object has no row yet (the tree is rebuilt, which opens its layer). */
@@ -4315,8 +4334,9 @@ function renderObjects(reveal = false) {
     ui.objFlocked.hidden = !!lay;
   };
   const rows = [];
+  if (ed) { const om = omOf(d); if (!om.open) { const names = d.fl.layers.map((l) => l.name), cur = curLayerName(d); om.open = new Set([names.includes(cur) ? cur : names[0]].filter(Boolean)); } }       // the current layer is open, else the first; set before the sig, or the next draw sees a new sig and builds the tree again
   const sig = !item && (lay || ed) ? objSig(d, dark) : null;
-  if (sig && objSigLast && objSigLast.a === sig.a && objSigLast.b === sig.b && objSigLast.c === sig.c && objSigLast.str === sig.str && markObjSel(d, reveal)) return;
+  if (sig && objSigLast && objSigLast.a === sig.a && objSigLast.b === sig.b && objSigLast.c === sig.c && objSigLast.fl === sig.fl && objSigLast.str === sig.str && markObjSel(d, reveal)) return;
   objSigLast = sig;
   if (!lay && ui.objTree.contains(ui.guideSec)) { ui.partsSec.after(ui.guideSec); applySectionFold(ui.guideSec); }
   if (lay) {
@@ -4358,7 +4378,6 @@ function renderObjects(reveal = false) {
     return;
   }
   const om = omOf(d);
-  if (!om.open) { const names = d.fl.layers.map((l) => l.name), cur = curLayerName(d); om.open = new Set([names.includes(cur) ? cur : names[0]].filter(Boolean)); }       // the current layer is open, else the first
   if (ui.objSearch.value !== om.query) ui.objSearch.value = om.query;
   let tree = OB.buildTree(d.raw, d.fl, objOpts(d, om));
   if (reveal && d.sel.size && d.sel.size <= 50) {                        // an object picked on the sheet: its layer opens and its row is listed
@@ -4707,7 +4726,7 @@ const DO = {
   dimstyle: () => showDimStyle(),
   nudge: () => ui.cmdUI.openNudge(String(state.nudge), setNudgeText),
   step: () => { setPtab('step'); docker.folds['step-panel'] = false; applySectionFold(ui.stepSec); rememberDocker(); setTool('step'); ui.stepSec.scrollIntoView({ block: 'nearest' }); },
-  extract: () => extractPart(), apply: () => apply(), nest: () => openNestDialog(), trace: () => traceBitmap(), textoutlines: () => textToOutlines(),
+  extract: () => extractPart(), apply: () => apply(), nest: () => openNestDialog(), trace: () => traceBitmap(), rotatebackground: () => rotateBackground(), textoutlines: () => textToOutlines(),
   weld: () => shapeSelection('weld'), shapetrim: () => shapeSelection('trim'), intersect: () => shapeSelection('intersect'),
   explode: () => explodeSelected(),
   burst: () => burstSelected(),
@@ -5072,7 +5091,7 @@ function drawTools() {
       out.push(s('polygon', { class: 'ghost', points: poly(PL.corners(x.part, pl).map(Y)) }));
     }
   }
-  if (items.length > 1) {                                           // several selected: each outline, the box round them with its readout, and the pick-order numbers
+  if (items.length > 1 && !(state.mode === 'rotate' && A.oneItem(placedNow, items.map((x) => x.i)) >= 0)) {       // several selected (not a part with its contour in rotate mode): each outline, the box round them with its readout, and the pick-order numbers
     const ghosts = pdrag && pdrag.ghosts;
     if (ghosts) for (const gh of ghosts) out.push(s('polygon', { class: 'ghost', points: poly(PL.corners(gh.part, gh.pl).map(Y)) }));
     for (const x of items) out.push(s('polygon', { class: 'sel-box sel-multi', points: poly(PL.corners(x.part, x.p).map(Y)), 'stroke-dasharray': '6 6' }));
@@ -5097,7 +5116,7 @@ function drawTools() {
   const cor = PL.corners(sel.part, sel.p).map(Y);
   if (pdrag && pdrag.ghost) out.push(s('polygon', { class: 'ghost', points: poly(PL.corners(sel.part, pdrag.ghost).map(Y)) }));
   if (pdrag && pdrag.ghosts) for (const gh of pdrag.ghosts) out.push(s('polygon', { class: 'ghost', points: poly(PL.corners(gh.part, gh.pl).map(Y)) }));
-  out.push(s('polygon', { class: 'sel-box', points: poly(cor), 'stroke-dasharray': `${6 * k} ${6 * k}`, 'data-mode': state.mode }));
+  out.push(s('polygon', { class: 'sel-box', points: poly(cor), 'data-mode': state.mode }));
   if (state.mode === 'rotate') {
     const mid = PL.centreOf(sel.part, sel.p), c = Y(mid), pv = Y(pivotPoint(sel.part, sel.p));
     out.push(...rotationControls(cor, c, pv, k, pdrag?.label?.text));
@@ -5177,16 +5196,20 @@ function previewBounds() {
 // Wheel, pan and resize move and scale the last full paint of a heavy drawing until the view settles (TODO 55 / 328a).
 let paintFull = true, snap = null, snapCv = null, snapTimer = 0, paintSize = null;
 // A layer toggle on a drawing whose last full paint was heavy paints once quick (items under QUICK_PX skipped, no kept bitmap), then settles with the 0.4 px paint after 120 ms (TODO 328b).
+// quickNext = 'big' (TODO 322c): a tab just opened, or redrawn after Delete / Undo / Redo, paints quick when it holds over BIG_ITEMS items (its full paint is the long task: 130 ms at 150k), whatever the last paint was.
 let quickNext = false, lastHeavy = false;
+const BIG_ITEMS = 50000;
 // A drawing tab whose own paint is slow keeps its bitmap (without selection, marks, previews): a hover or a select click paints only those on top (TODO 258 / 259).
-let kept = null, keptCv = null;
+let kept = null, keptCv = null, panCv = null;
+// Zoom end (TODO 324b): the sharp paint in bands over timer ticks (zoomChunks); chunk = { view, key } while they run, chunkGen cancels them.
+let chunk = null, chunkGen = 0, chunkCv = null, settle = false;       // settle: the paint the 120 ms snapTimer sends; only it may use bands
 const KEEP_MS = 10;
 /** Everything the drawing's own pass reads, flat (compare with sameBase). While a grip or drag hides entities one by one, `drag` is set and their numbers end the key: that base is painted without them (TODO 320). */
 function paintKey(d, base, cw, chh) {
   const hide = hideNow(d), hid = hidIdx(d);
-  const ed = state.text.ed?.d === d && state.text.ed.dim ? state.text.ed : null, fl = ed ? ed.dim.fl : d.fl, bg = d.bg;
+  const ed = state.text.ed?.d === d && state.text.ed.dim ? state.text.ed : null, fl = ed ? ed.dim.fl : d.fl, bg = bgLive(d);
   const key = [d, fl, fl.items.length, hid, d.factor, base.ox, base.oy, base.scale, cw, chh, base.dpr, base.dark, base.wireframe, base.sheetH,
-    bg, bg?.visible, bg?.bitmap, bg?.x, bg?.y, bg?.mm, ...[...d.off || []].sort((a, b) => a - b)];       // d.off is changed in place: its layers are part of the key
+    bg, bg?.visible, bg?.bitmap, bg?.x, bg?.y, bg?.mm, bg?.rot,...[...d.off || []].sort((a, b) => a - b)];       // d.off is changed in place: its layers are part of the key
   if (hide && hide.size !== (hid ? hid.size : 0)) { key.drag = true; key.push(null); for (const e of hide) key.push(e); }
   return key;
 }
@@ -5208,18 +5231,29 @@ function paintOverlay(gesture = false) {
     if (c.width !== cw || c.height !== chh) { c.width = cw; c.height = chh; }
     const want = { view: { ox: view.ox, oy: view.oy, scale: view.scale }, w: cw, h: chh, dpr };
     clearTimeout(snapTimer);
+    const settled = settle; settle = false;
     const full = paintFull; paintFull = false;
-    const quick = quickNext && lastHeavy; quickNext = false;
     const d = curDoc();
+    const quick = quickNext === 'big' ? !!d?.fl && !d.lay && !d.cmp && d.fl.items.length > BIG_ITEMS : quickNext && lastHeavy, big = quick && quickNext === 'big'; quickNext = false;
     // Artwork and layout sheet paper follow the same Work area.
     const base = { minPx: quick ? QUICK_PX : undefined, sheetH: state.sheetH, ox: view.ox, oy: view.oy, scale: view.scale, w, h: ch, dpr, dark: workDark(), wireframe: state.wireframe };
     const L2 = state.setlen || state.meas || state.dim || state.ldr || ((modLive() || layModLive()) && ['move', 'copy', 'stretch', 'rotate', 'scale', 'lengthen', 'align'].includes(state.mod.kind) ? { pts: state.mod.ref && state.mod.ref.step !== 'new' ? state.mod.ref.pts : state.mod.p1 ? [state.mod.p1] : [], hover: state.mod.cur }
       : (modLive() || layModLive()) && state.mod.kind === 'array' && state.mod.type === 'polar' ? { pts: state.mod.center ? [state.mod.center] : [], hover: state.mod.stage === 'center' ? state.mod.cur : null } : null);
     const hv = L2 && (typedAt() || L2.hover);                       // typed cursor fields: the rubber line goes to the typed point
     const dragSnap = (d?.lay || d?.cmp) && (state.paste?.to || (pdrag?.moved && state.snap && !pdrag.skipSnap && pdrag.to));
-    const preview = selectSnapPreview(d);
-    const marks = preview?.[2] ? [[preview[0], preview[1], preview[2], true]] : dragSnap?.[2] ? [[dragSnap[0], dragSnap[1], dragSnap[2], true]] : L2 && d ? [...L2.pts.map((q) => [q[0], q[1], q[2], false]), ...(L2.pts.length < 2 && hv ? [[hv[0], hv[1], hv[2], true]] : [])] : null;
+    const preview = ownSnapHover(d) || selectSnapPreview(d);       // the selected object's own point wins: it is the grab point (TODO 340)
+    const pivotMark = pivotHit && (pdrag?.kind === 'pivot' || state.drawingRotate?.drag?.kind === 'pivot') ? pivotHit : null;
+    const marks = preview?.[2] ? [[preview[0], preview[1], preview[2], true]] : pivotMark ? [[pivotMark[0], pivotMark[1], pivotMark[2], true]] : dragSnap?.[2] ? [[dragSnap[0], dragSnap[1], dragSnap[2], true]] : L2 && d ? [...L2.pts.map((q) => [q[0], q[1], q[2], false]), ...(L2.pts.length < 2 && hv ? [[hv[0], hv[1], hv[2], true]] : [])] : null;
     const calls = [], lifted = [];                                   // lifted: the parts a drag moves, painted by the overlay (R11: on top until the drop)
+    const layKey = (v) => {
+      const k = [d, v.ox, v.oy, v.scale, cw, chh, dpr, v.dark, v.wireframe, v.sheetH, state.hidden.parts];
+      for (const call of calls) {
+        k.push(call.fl, call.factor, call.tint, ...[...(call.off || [])].sort((a, b) => a - b), null);
+        for (const slot of call.slots) k.push(...slot);
+        k.push(null);
+      }
+      return k;
+    };
     let key = null;
     if (d?.lay) {
       if (!state.hidden.parts) {
@@ -5234,21 +5268,21 @@ function paintOverlay(gesture = false) {
           const fl = state.text.ed?.dim?.raw === part.raw ? state.text.ed.dim.fl : part.fl;
           const slotsOf = (list) => list.map((p) => placedMat(part, p, state.sheetH));
           for (const [list, to] of [[byPart.get(id) || [], calls], [liftedBy.get(id) || [], lifted]]) {
-            const on = list.filter((p) => !p.off), outside = list.filter((p) => p.off);          // a part off the sheet is drawn in the mark colour
+            const on = list.filter((p) => !p.off && !p.grip), outside = list.filter((p) => p.off || p.grip);          // a part off the sheet or in a gripper is drawn in the mark colour
             if (on.length) to.push({ fl, off: part.off, factor: part.factor || 1, slots: slotsOf(on) });
             if (outside.length) to.push({ fl, off: part.off, factor: part.factor || 1, slots: slotsOf(outside), tint: cssVar('--mark', '#c2410c') });
           }
         }
       }
-      key = [d, base.ox, base.oy, base.scale, cw, chh, dpr, base.dark, base.wireframe, base.sheetH, state.hidden.parts];
-      for (const call of calls) {
-        key.push(call.fl, call.factor, call.tint, ...[...(call.off || [])].sort((a, b) => a - b), null);
-        for (const slot of call.slots) key.push(...slot);
-        key.push(null);
-      }
+      key = layKey(base);
     } else if (d?.cmp) key = cmpBaseKey(d, base, cw, chh);
     const ekey = d && d.fl && !d.lay && !d.cmp ? paintKey(d, base, cw, chh) : null, dkey = key?.drag ? key : ekey?.drag ? ekey : null, ckey = d?.cmp && !key ? cmpKeepKey(d, base, cw, chh) : null;
-    c.dataset.snap = ''; c.dataset.keep = ''; c.dataset.quick = '';
+    const nk = d?.lay ? key : d?.cmp ? ckey : ekey;
+    // bands of a zoom end still running for this very view and content: nothing to do; anything else stops them
+    if (chunk && full && nk && !dkey && !quick && chunk.view.w === want.w && chunk.view.h === want.h && chunk.view.dpr === want.dpr && chunk.view.view.ox === view.ox && chunk.view.view.oy === view.oy
+      && chunk.view.view.scale === view.scale && sameBase(chunk.key, nk)) { ui.cmdUI.place(); return; }
+    chunk = null; chunkGen++;
+    c.dataset.snap = ''; c.dataset.keep = ''; c.dataset.quick = ''; c.dataset.pan = ''; c.dataset.chunk = '';
     if (full && dkey && c.dataset.nokeep !== '1' && !(kept && sameBase(kept.key, dkey))) {
       // a drag starts, or the view moved under it: the base without what is dragged is painted off screen once, so it is no counted full paint (TODO 317 / 320)
       snap = null; keptCv = keptCv || document.createElement('canvas'); keptCv.width = cw; keptCv.height = chh;
@@ -5256,7 +5290,13 @@ function paintOverlay(gesture = false) {
       if (d.cmp) kept.drag = cmpBase(keptCv, d.cmp, base);
       else paintEditable(keptCv, d, base, null, 'base');
     }
-    if (!full && snapUsable(snap, want)) {
+    const keepSnap = (k) => {
+      snapCv = snapCv || document.createElement('canvas');
+      snapCv.width = cw; snapCv.height = chh;
+      snapCv.getContext('2d').drawImage(c, 0, 0);
+      snap = { ...want, key: k };
+    };
+    const drawSnap = () => {                       // the last full paint, moved and scaled to the view now
       const { dx, dy, r } = snapPlace(snap.view, want.view), g = c.getContext('2d');
       const scale = r * dpr / snap.dpr;
       g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, cw, chh);
@@ -5264,7 +5304,10 @@ function paintOverlay(gesture = false) {
       if (d?.lay) layOverlay(c, d, base, marks, lifted);
       if (d?.cmp?.dragged) cmpPaint(c, d.cmp, base, marks, true);
       c.dataset.snap = '1';
-      snapTimer = setTimeout(() => paintOverlay(), 120);
+    };
+    if (!full && snapUsable(snap, want)) {
+      drawSnap();
+      snapTimer = setTimeout(() => { settle = true; paintOverlay(); }, 120);
       ui.cmdUI.place();
       return;
     }
@@ -5286,7 +5329,29 @@ function paintOverlay(gesture = false) {
       if (d.cmp && kept.still) { c.dataset.preview = 0; cmpOver(c, d.cmp, base, state.paste?.d === d || preview ? null : marks, null); cmpTop(c, d, base, marks, preview); }       // a select click on a heavy Compare: the selection only (TODO 327)
       else if (d.cmp) cmpOver(c, d.cmp, base, marks, kept.drag);
       else paintEditable(c, d, base, marks, 'over');
+      if (snap?.stale) keepSnap(null);       // the picture a zoom end's bands made, now with its overlays
       c.dataset.keep = '1';
+      ui.cmdUI.place();
+      return;
+    }
+    // Pan end (TODO 324a): the same scale and the same drawing as the kept base, only moved: that base is shifted and only the strip it no longer covers is painted
+    if (full && nk && !dkey && !quick && c.dataset.nokeep !== '1' && kept?.view
+      && panShift(c, d, base, want, calls, d.lay ? layKey : d.cmp ? (v) => cmpKeepKey(d, v, cw, chh) : (v) => paintKey(d, v, cw, chh), nk)) {
+      if (d.lay) { keepSnap(key); layOverlay(c, d, base, marks, lifted); }
+      else {
+        if (d.cmp) { c.dataset.preview = 0; cmpOver(c, d.cmp, base, state.paste?.d === d || preview ? null : marks, null); cmpTop(c, d, base, marks, preview); }
+        else paintEditable(c, d, base, marks, 'over');
+        keepSnap(null);
+      }
+      c.dataset.pan = '1';
+      ui.cmdUI.place();
+      return;
+    }
+    // Zoom end (TODO 324b): the scaled picture stays while the sharp base is painted in bands
+    if (settled && full && nk && !dkey && !quick && c.dataset.nokeep !== '1' && snapUsable(snap, want)
+      && zoomChunks(c, d, base, want, calls, d.lay ? layKey : d.cmp ? (v) => cmpKeepKey(d, v, cw, chh) : (v) => paintKey(d, v, cw, chh), nk, snap.big)) {
+      drawSnap();
+      c.dataset.paints = (+c.dataset.paints || 0) + 1;
       ui.cmdUI.place();
       return;
     }
@@ -5300,7 +5365,7 @@ function paintOverlay(gesture = false) {
       keptCv = keptCv || document.createElement('canvas');
       keptCv.width = cw; keptCv.height = chh;
       keptCv.getContext('2d').drawImage(c, 0, 0);
-      kept = { key, still: !!d.cmp };
+      kept = { key, still: !!d.cmp, view: want };
     });
     if (d?.cmp) {
       c.dataset.preview = 0;
@@ -5309,22 +5374,80 @@ function paintOverlay(gesture = false) {
     } else if (d && d.lay) {                // a layout: each part painted once for all the places it is placed at (its matrix per place)
       paintDrawing(c, { ...base, fl: null, factor: 1 });                                      // clears
       for (const call of calls) drawn += paintDrawing(c, { ...base, keep: true, ...call });
+      if (!quick) keepBase(key)(drawn);                                                        // the base alone, for the pan end
     } else drawn = paintEditable(c, d, base, marks, undefined, keepBase(ekey));
     c.dataset.drawn = drawn || 0;
     c.dataset.indexed = d && d.ed ? '1' : '0';       // test hook (P3): a paint right after a commit comes before the pick index
     const isHeavy = heavy(performance.now() - t0, drawn || 0);
     if (!quick && drawn) lastHeavy = isHeavy;       // an empty paint (every part hidden) says nothing about how heavy the next one is
-    if (isHeavy) {
-      snapCv = snapCv || document.createElement('canvas');
-      snapCv.width = cw; snapCv.height = chh;
-      snapCv.getContext('2d').drawImage(c, 0, 0);
-      snap = { ...want, key: quick ? null : key };       // a quick bitmap may scale under a wheel, but never stands in for a paint
-    }
+    if (isHeavy) { keepSnap(quick ? null : key); if (big) { snap.big = true; lastHeavy = true; } }       // a quick bitmap may scale under a wheel, but never stands in for a paint; a big open / edit's one is the picture its sharp bands paint over (322c)
     if (d?.lay) layOverlay(c, d, base, marks, lifted);
     if (d?.cmp?.dragged) cmpPaint(c, d.cmp, base, marks, true);
-    if (quick) { c.dataset.quick = '1'; snapTimer = setTimeout(() => paintOverlay(), 120); }
+    if (quick) { c.dataset.quick = '1'; snapTimer = setTimeout(() => { settle = big; paintOverlay(); }, 120); }
     ui.cmdUI.place();
   });
+}
+
+/**
+ * Pan end (TODO 324a): the kept base (keptCv, painted at kept.view) is moved to the view now when only its place changed (same scale and size, a whole number of device px,
+ * the same content: keyOf(view) is the key at that view) and the strips it no longer covers are painted off screen at their own origin; the base alone is left on c and in keptCv.
+ * False when anything else changed: the caller paints in full. A zoom end is zoomChunks (324b).
+ */
+function panShift(c, d, base, want, calls, keyOf, nkey) {
+  const v = kept.view, k = want.view.scale * want.dpr;
+  if (v.view.scale !== want.view.scale || v.w !== want.w || v.h !== want.h || v.dpr !== want.dpr) return false;
+  const dx = (v.view.ox - want.view.ox) * k, dy = (v.view.oy - want.view.oy) * k, rx = Math.round(dx), ry = Math.round(dy), strips = panStrips(rx, ry, want.w, want.h);
+  if (!strips || Math.abs(dx - rx) > 1e-6 || Math.abs(dy - ry) > 1e-6 || !sameBase(kept.key, keyOf({ ...base, ox: v.view.ox, oy: v.view.oy }))) return false;
+  const g = c.getContext('2d');
+  g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, want.w, want.h);
+  g.drawImage(keptCv, rx, ry);
+  for (const s of strips) paintStrip(g, d, base, want, calls, s);
+  const kg = keptCv.getContext('2d');
+  kg.setTransform(1, 0, 0, 1, 0, 0); kg.clearRect(0, 0, want.w, want.h); kg.drawImage(c, 0, 0);
+  kept = { key: nkey, still: !!d.cmp, view: want };
+  return true;
+}
+
+/** One strip [x0, y0, x1, y1] (device px) of the view painted off screen at its own origin and drawn onto g (TODO 324a pan end, 324b zoom end). */
+function paintStrip(g, d, base, want, calls, [x0, y0, x1, y1]) {
+  const k = want.view.scale * want.dpr;
+  panCv = panCv || document.createElement('canvas');
+  panCv.width = x1 - x0; panCv.height = y1 - y0;
+  const b = { ...base, ox: base.ox + x0 / k, oy: base.oy + y0 / k, w: panCv.width / want.dpr, h: panCv.height / want.dpr, strip: true };       // the view of just this strip
+  if (d.lay) { paintDrawing(panCv, { ...b, fl: null, factor: 1 }); for (const call of calls) paintDrawing(panCv, { ...b, keep: true, ...call }); }
+  else if (d.cmp) { paintDrawing(panCv, { ...b, fl: null, factor: 1 }); cmpItems(panCv, d.cmp, b, null, false, 'base'); }
+  else paintEditable(panCv, d, b, null, 'base');
+  g.drawImage(panCv, x0, y0);
+}
+
+/**
+ * Zoom end (TODO 324b): the scale changed but the content did not (keyOf(kept view) is the kept key): the sharp base is painted in ZOOM_BANDS bands, one per timer tick, into chunkCv
+ * while the scaled picture stays on screen; at the end it becomes the kept base and paintOverlay runs once more to draw it with the overlays of that moment. Any other paintOverlay
+ * call stops the bands (chunkGen), except a full one for the same view and content. False when the kept base is not of this content: the caller paints in full.
+ */
+const ZOOM_BANDS = 8;
+function zoomChunks(c, d, base, want, calls, keyOf, nkey, afterQuick) {
+  const v = kept?.view;       // afterQuick (322c): the picture on screen is the quick frame of this very content, no kept base to compare
+  if (!afterQuick && (!v || v.w !== want.w || v.h !== want.h || v.dpr !== want.dpr || !sameBase(kept.key, keyOf({ ...base, ox: v.view.ox, oy: v.view.oy, scale: v.view.scale })))) return false;
+  chunkCv = chunkCv || document.createElement('canvas');
+  chunkCv.width = want.w; chunkCv.height = want.h;
+  const g = chunkCv.getContext('2d'), run = ++chunkGen, bh = Math.ceil(want.h / ZOOM_BANDS);
+  chunk = { view: want, key: nkey };
+  c.dataset.chunk = '1';
+  const sliced = function* () { yield* paintEditable(chunkCv, d, base, null, 'base', null, timeSlice(15)); };       // afterQuick: the very calls of a full paint, so the picture equals it (bands do not: strokes batch differently)
+  const bands = afterQuick ? sliced : function* () { for (let y = 0; y < want.h && chunkGen === run; y += bh) { paintStrip(g, d, base, want, calls, [0, y, want.w, Math.min(want.h, y + bh)]); yield y / want.h; } };
+  runChunks(bands(), { alive: () => chunkGen === run }).then(() => {
+    if (chunkGen !== run) return;
+    chunk = null;
+    [keptCv, chunkCv] = [chunkCv, keptCv];
+    kept = { key: nkey, still: !!d.cmp, view: want };
+    snapCv = snapCv || document.createElement('canvas');
+    snapCv.width = want.w; snapCv.height = want.h;
+    snapCv.getContext('2d').drawImage(keptCv, 0, 0);
+    snap = { ...want, key: d.lay ? nkey : null, stale: true };       // stale: the next kept-base paint takes the picture with its overlays
+    paintOverlay();
+  }).catch((e) => { if (chunkGen === run) { chunk = null; c.dataset.chunk = ''; } throw e; });       // a failed band must not leave the next paint waiting for it
+  return true;
 }
 
 function layOverlay(c, d, base, marks, lifted) {
@@ -5352,26 +5475,27 @@ function layOverlay(c, d, base, marks, lifted) {
   }
 }
 
-/** part: 'over' paints only what goes on top of the drawing (selection, marks, previews) on a base already on the canvas, 'base' only the drawing; afterBase(drawn), when given, is called between the drawing and that rest. */
-function paintEditable(c, d, base, marks, part, afterBase) {
+/** part: 'over' paints only what goes on top of the drawing (selection, marks, previews) on a base already on the canvas, 'base' only the drawing; afterBase(drawn), when given, is called between the drawing and that rest. The snap marker is painted last (TODO 339). */
+function paintEditable(c, d, base, marks, part, afterBase, due) {
   const ed = state.text.ed?.d === d && state.text.ed.dim ? state.text.ed : null;
-  const dragSnap = state.paste?.d === d ? state.paste.to : state.entityDrag?.d === d && state.entityDrag.to;
+  const dragSnap = state.paste?.d === d ? state.paste.to : state.entityDrag?.d === d && state.entityDrag.to, paste = state.paste;
   if (dragSnap?.[2]) marks = [[dragSnap[0], dragSnap[1], dragSnap[2], true]];
+  const move = state.drawingRotate?.drag || state.entityDrag || (state.grip?.d === d && state.grip.move) || (modLive() && ['move', 'copy', 'stretch', 'array', 'rotate', 'scale', 'mirror', 'align'].includes(state.mod.kind) ? state.mod.move : null);
   const o = { ...base, fl: ed ? ed.dim.fl : d && d.fl, off: base.cmpOff || d && d.off, factor: d ? d.factor : 1,
-    bg: d && d.bg, hl: d ? ((state.drawingRotate?.drag?.items || state.entityDrag?.items) ? null : (state.grip && state.grip.d === d && state.grip.next ? d.hl.filter((it) => !gripShown(state.grip).includes(it.e)) : textSel(d) ? d.hl.filter((it) => it.k !== 't') : ed ? d.hl.filter((it) => it.e !== ed.e || it.k !== 't') : d.hl)) : null, hide: hideNow(d), marks: marks || (drawLive() && state.drawHover && state.drawHover[2] ? [[state.drawHover[0] / d.factor, state.drawHover[1] / d.factor, state.drawHover[2], true]] : state.grip && state.grip.d === d && state.grip.to && state.grip.to[2] ? [[state.grip.to[0], state.grip.to[1], state.grip.to[2], true]] : null), dim: previewDim(d), gaps: d && d.ed && editable() ? (d.gapShow ? Ed.gapMarks(gapsOf(d), true) : []) : null,
+    bg: d && bgLive(d), hl: d ? ((state.drawingRotate?.drag?.items || state.entityDrag?.items) ? null : (state.grip && state.grip.d === d && state.grip.next ? d.hl.filter((it) => !gripShown(state.grip).includes(it.e)) : textSel(d) ? d.hl.filter((it) => it.k !== 't') : ed ? d.hl.filter((it) => it.e !== ed.e || it.k !== 't') : d.hl)) : null, hide: hideNow(d), marks: marks || (drawLive() && state.drawHover && state.drawHover[2] ? [[state.drawHover[0] / d.factor, state.drawHover[1] / d.factor, state.drawHover[2], true]] : state.grip && state.grip.d === d && state.grip.to && state.grip.to[2] ? [[state.grip.to[0], state.grip.to[1], state.grip.to[2], true]] : null), marksLast: !!(move?.items || paste?.d === d && paste.from), dim: previewDim(d), gaps: d && d.ed && editable() ? (d.gapShow ? Ed.gapMarks(gapsOf(d), true) : []) : null,
     contour: d && d.cRes && state.tool === 'contour' ? d.cRes.polys : null,
     contourCol: d && d.cRes ? contourColour(d).replace('var(--text)', workDark() ? '#ededef' : '#18181b') : null, contourDash: contourStyle().dash,
     markCol: cssVar('--mark', '#c2410c'),
     accent: cssVar('--selection', '#4f46e5'), snapCol: cssVar('--snap-mark', '#00c000'),
     dimCol: cssVar('--dim', '#0f766e'), previewBounds: (box) => { canvasPreviewBounds = unionBox(canvasPreviewBounds, box); } };
   let drawn;
+  if (due) return paintDrawingSteps(c, { ...o, part: 'base' }, due);       // 322c: the base alone as a generator, one time slice per step (the caller drives it)
   if (afterBase) { drawn = paintDrawing(c, { ...o, part: 'base' }); afterBase(drawn); paintDrawing(c, { ...o, part: 'over' }); }
   else drawn = paintDrawing(c, part ? { ...o, part } : o);
   if (part === 'base') return drawn;                                   // the base alone, off screen: no preview of a move in it
-  const move = state.drawingRotate?.drag || state.entityDrag || (state.grip?.d === d && state.grip.move) || (modLive() && ['move', 'copy', 'stretch', 'array', 'rotate', 'scale', 'mirror', 'align'].includes(state.mod.kind) ? state.mod.move : null);
   c.dataset.preview = move?.items ? paintDrawing(c, { ...base, ox: base.ox - move.dx * d.factor, oy: base.oy + move.dy * d.factor, keep: true, fl: move.preview, off: d.off, factor: d.factor, slots: (!state.entityDrag && !state.grip && modTypedSlots(d)) || move.slots, tint: cssVar('--selection', '#4f46e5'), previewBounds: (box) => { canvasPreviewBounds = unionBox(canvasPreviewBounds, box); } }) : 0;
-  const paste = state.paste;
   if (paste?.d === d && paste.from) c.dataset.preview = paintDrawing(c, { ...base, ox: base.ox - paste.dx * d.factor, oy: base.oy + paste.dy * d.factor, keep: true, fl: paste.preview, off: d.off, factor: d.factor, tint: `color-mix(in srgb, ${cssVar('--selection', '#4f46e5')} 50%, transparent)`, previewBounds: (box) => { canvasPreviewBounds = unionBox(canvasPreviewBounds, box); } });
+  if (o.marksLast) paintMarks(c, o);
   return drawn;
 }
 
@@ -5440,7 +5564,7 @@ function attachCanvasEvents() {
   let altPick = false, suppressAltUp = false;
   c.addEventListener('pointerdown', (e) => {
     snapPreviewHover = false;
-    if (state.snapPreview) paintOverlay();
+    if (state.snapPreview || (ownMark && e.button === 0)) paintOverlay();
     altPick = false;
     if (!e.altKey && selectionCycle) { selectionCycle = null; renderCommand(); }
     if (e.button !== 0 || !e.altKey || !['select', 'step'].includes(state.tool) || state.setlen || state.match || state.colourTool || state.zwin || state.grip || state.mod || state.entityDrag || e.target.closest('.zoombox, .contourpanel, .preflightpanel, input, textarea, button')) return;
@@ -5462,6 +5586,7 @@ function attachCanvasEvents() {
       pdrag.skipSnap = true;
       if (pdrag.pointer) placedMove(pdrag.pointer);
     }
+    if (e.key === 'Alt' && snapPointer && (pdrag?.kind === 'pivot' || state.drawingRotate?.drag?.kind === 'pivot')) ui.canvas.dispatchEvent(new PointerEvent('pointermove', { ...snapPointer, altKey: true, bubbles: true }));       // Alt pressed mid-drag: the ◎ goes to the raw pointer
     const eg = state.entityDrag;
     if (e.key === 'Alt' && eg?.last) { eg.skipSnap = true; moveSelectionTo(eg, eg.last); }
   }, true);
@@ -5526,7 +5651,7 @@ function attachCanvasEvents() {
         drag = { x: e.clientX, y: e.clientY, p: toDrawing(d, e.clientX, e.clientY), moved: false, shift: e.shiftKey };
         lengthenDown(d, drag);
         if ((state.tool === 'select' || state.tool === 'contour') && !state.setlen) drag.dim = dimGrab(d, drag.p);
-        if (state.tool === 'select' && !state.setlen && !state.match && !drag.dim && d.sel?.has(hitAt(d, drag.p))) {
+        if (state.tool === 'select' && !state.setlen && !state.match && !drag.dim && d.sel?.size && (d.sel.has(hitAt(d, drag.p)) || !e.altKey && ownSnap(d, drag.p, d.sel))) {       // a shown own-point marker (a circle's centre) grabs even when the press misses the object
           const sel = new Set(d.sel);
           drag.move = state.entityDrag = { d, sel, raw: d.raw.entities, from: dragGrabPoint(d, drag.p, sel), copy: e.ctrlKey || e.metaKey };
         }
@@ -5539,7 +5664,7 @@ function attachCanvasEvents() {
     }
   });
   c.addEventListener('pointermove', (e) => {
-    snapPointer = { clientX: e.clientX, clientY: e.clientY, shiftKey: e.shiftKey, buttons: e.buttons };
+    snapPointer = { clientX: e.clientX, clientY: e.clientY, shiftKey: e.shiftKey, altKey: e.altKey, buttons: e.buttons };
     snapPreviewHover = !e.buttons;
     snapQuery = null;
     if (pan) {                                                         // before the paste return: the middle button pans while a paste follows the cursor
@@ -5584,16 +5709,23 @@ function attachCanvasEvents() {
     const mx = view.ox + p.x / view.scale, my = view.oy + p.y / view.scale;
     const [cx, cy] = cursorMm(mx, my, state.sheetH);
     state.cursorMm = [cx, cy]; renderCoords();
-    if (state.snapPreview) paintOverlay();
+    if (state.snapPreview || !e.buttons && ownHoverSel(curDoc())) paintOverlay();
   });
   c.addEventListener('pointerleave', () => {
     snapCycle = null; snapQuery = null; snapPointer = null; snapRef = null; snapWatch(null);
-    if (state.snapPreview) paintOverlay();
+    if (state.snapPreview || ownMark) paintOverlay();
     clearTimeout(gripOptTimer);
     if (state.gripHover) { state.gripHover = null; drawOvl(); }
     if ((modLive() || layModLive()) && state.mod.kind === 'trim') { state.mod.client = null; state.mod.p = null; paintOverlay(); }
   });
-  const end = () => { pan = null; c.classList.remove('panning'); };
+  const end = () => {
+    const v = kept?.view?.view;
+    if (pan && v && v.scale === view.scale) {          // TODO 324a: the pan ends on a whole number of device px from the kept base, so panShift also works at a dpr like 1.25 (moves the view by at most half a device px)
+      const k = view.scale * (window.devicePixelRatio || 1);
+      view.ox = v.ox - Math.round((v.ox - view.ox) * k) / k; view.oy = v.oy - Math.round((v.oy - view.oy) * k) / k;
+    }
+    pan = null; c.classList.remove('panning');
+  };
   c.addEventListener('pointerup', (e) => {
     if (gdrag) guideUp();
     if (state.sheetDrag && !state.sheetDrag.hot) sheetUp(e);
@@ -5812,7 +5944,7 @@ function update(refit = false, dimNames) {
   layout = gridNow();
   for (let i = 0; i < 3 && pruneGaps(); i++) layout = gridNow();
   placedNow = lay ? LD.placedAll(lay, layout) : [];
-  for (const p of placedNow) p.off = PL.offSheet(lay.parts[p.partId], p, lay.s.sheetW, lay.s.sheetH);       // off the sheet: drawn in orange
+  for (const p of placedNow) { p.off = PL.offSheet(lay.parts[p.partId], p, lay.s.sheetW, lay.s.sheetH); p.grip = PL.inGripper(lay.parts[p.partId], p, lay.s); }       // off the sheet or in a gripper: drawn in orange (the counts say only p.off)
   if (selLooseMany) {
     curDoc().stretchSelection = null;
     const l =selLooseMany.map((i) => placedNow.findIndex((p) => p.src === 'loose' && p.i === i)).filter((k) => k >= 0);
@@ -5837,19 +5969,15 @@ async function importBackground(file) {
   try { bitmap = await createImageBitmap(file); } catch { note(file.name + ': could not read this picture'); return; }
   placeBackground(file.name, bitmap, 25.4 / 96, 'shown at 96 dpi. Set length makes it true size');
 }
-/** A PDF page (page 1, or the one asked for when there are more) as the background, at true size (a 150 dpi picture of it). */
+/** Every page of a PDF as ONE background picture, side by side, at true size (150 dpi, lower when the picture would be too big). One sheet: d.pdf.sheets is [1]. */
 async function importBackgroundPdf(name, bytes, newTab = false, path = null) {
-  let page = 1;
-  const keep = bytes.slice(0);                                      // pdf.js takes the buffer it is given: a copy stays for the other sheets
+  const keep = bytes.slice(0);                                      // pdf.js takes the buffer it is given: a copy stays for the sheet reads
   try {
-    const probe = await renderPdfPage(bytes.slice(0), { page: 1, dpi: 20 });
-    if (probe.pages > 1) {
-      const a = window.prompt(`${name} has ${probe.pages} pages. Which page?`, '1');
-      if (a === null) { note(''); return; }
-      page = Math.min(probe.pages, Math.max(1, parseInt(a, 10) || 1));
-    }
-    const r = await renderPdfPage(bytes, { page, dpi: 150 });
-    placeBackground(name, await createImageBitmap(r.canvas), r.mmPerPx, `page ${page} of ${r.pages}, true size from the PDF`, newTab, { path, pdf: { name, bytes: keep, pages: r.pages, page, picture: true } });
+    const r = await renderPdfPages(bytes, { onPage: (k, n) => note(`Rendering page ${k} of ${n}`) });
+    const bitmap = await createImageBitmap(r.canvas);
+    r.canvas.width = r.canvas.height = 0;
+    placeBackground(name, bitmap, r.mmPerPx, r.pages > 1 ? `all ${r.pages} pages side by side, true size from the PDF` : 'page 1 of 1, true size from the PDF', newTab, { path, pdf: { name, bytes: keep, pages: r.pages, page: 1, sheets: [1], allPages: true, picture: true } });
+    if (r.dpi < 150) note(`Background at ${r.dpi} dpi (${r.pages} pages)`);
   } catch (err) { note(name + ': could not draw this PDF (' + (err && err.message ? err.message : err) + ')'); }
 }
 function placeBackground(name, bitmap, mm, how, newTab = false, src = null) {
@@ -5876,6 +6004,35 @@ function removeBackground() {
   showDoc();
   note('Background removed');
 }
+/** Rotate background (TODO 331): the Rotate command with the picture as its target (m.bg): pivot, then the angle / drag / Reference flow of Rotate; Copy is not offered. */
+function rotateBackground() {
+  const d = editable();
+  if (!d?.bg) { note('No background picture to rotate'); return; }
+  setTool('rotate');
+  const m = state.mod;
+  if (!m) return;                                        // setTool refused (a locked selection, a Compare tab that cannot be edited)
+  m.bg = true; m.sel = new Set(); m.raw = d.raw.entities; m.stage = 'p1';
+  state.msg = 'Rotate background: pivot or x,y'; renderCommand(); paintOverlay();
+}
+/** The background as drawn: while Rotate background runs it is turned by the angle under the pointer (or the typed one), so the drag shows the picture turning. */
+function bgLive(d) {
+  const m = state.mod;
+  if (!d?.bg || !m?.bg || !m.p1 || !modLive() || state.modDoc !== d) return d?.bg;
+  const typed = modTypedValue(), a = typed ?? (m.ref && m.ref.step !== 'new' ? null : m.angle);
+  const turn = a == null ? 0 : m.ref ? referenceTurn(m.ref.value, a) : a;
+  return turn ? Ed.bgTurned(d.bg, m.p1.map((v) => v * d.factor), turn) : d.bg;
+}
+/** The angle is known: the picture turns about the pivot, one undo step. */
+function rotateBackgroundDo(d, deg) {
+  const pivot = state.mod.p1.map((v) => v * d.factor);
+  setTool('select');
+  if (!d.bg || !Number.isFinite(deg) || Math.abs(deg) < 1e-9) { note('Background not turned'); return; }
+  pushHistory(d, snapshotOf(d), `Rotate background ${+deg.toFixed(4)}°`);
+  d.bg = Ed.bgTurned(d.bg, pivot, deg);
+  if (view.fitted) fit(); else paintOverlay();
+  renderEdit();
+  note(`Background turned ${+deg.toFixed(4)}° about the pivot. Ctrl+Z takes it back`);
+}
 
 // ---- Trace a bitmap (TODO 40): the background picture becomes closed polylines on a layer, at the picture's position and size ----
 let traceAfter = false;                                            // the picker was opened by Trace, so the dialog opens once a picture is in
@@ -5897,7 +6054,8 @@ function applyTrace(d, polys, name) {
   const had = Object.keys(d.raw.layers).find((n) => n.toLowerCase() === name.toLowerCase()), layer = had || name;
   const doc = { layers: { ...d.raw.layers } };
   if (!had) addLayer(doc, layer, { aci: 1 });
-  const ents = TR.traceEntities(polys, { x: d.bg.x, y: d.bg.y, factor: d.factor, layer });
+  let ents = TR.traceEntities(polys, { x: d.bg.x, y: d.bg.y, factor: d.factor, layer });
+  if (d.bg.rot) ents = rotateEntities({ entities: ents, blocks: {} }, new Set(ents.map((_, i) => i)), [d.bg.x / d.factor, d.bg.y / d.factor], d.bg.rot).entities;       // the picture is turned: the outlines turn with it, about its corner
   if (!commit(d, { entities: [...d.raw.entities, ...ents], blocks: d.raw.blocks, layers: doc.layers }, `Trace bitmap × ${ents.length}`)) return;
   if (!had) d.newLayer = layer;
   renderLayers();
@@ -6198,7 +6356,7 @@ function renderGaps() {
 // ---- editing the opened drawing: pick objects, Keep only, Delete, size, Set length, undo (edit.js is the logic) ----
 /** What the size fields and Set length act on: the drawing, or the background (always, when it is all the tab has). */
 const sizeTarget = (d) => (d.bg && (!d.box || d.scaleTarget === 'bg') ? 'bg' : 'drawing');
-const sizeBox = (d) => (sizeTarget(d) === 'bg' ? Ed.bgBox(d.bg) : partBox(d));
+const sizeBox = (d) => (sizeTarget(d) === 'bg' ? Ed.bgOwnBox(d.bg) : partBox(d));       // a turned picture: its own width and height, not the outer box
 /**
  * The drawing's box in mm without its kept dimensions: the size of the part itself, which Width / Height and Set length
  * scale by (a dimension drawn outside the part must not change it). The drawing's own box when it has no dimension.
@@ -6229,7 +6387,7 @@ const pointTarget = () => state.tool === 'measure' ? measureTarget() : state.too
 const drawBox = (fl) => fl.boxes[spaceOf(fl) ? 'paper' : 'model'];
 const fmtSize = (v) => String(+Number(v).toFixed(2));
 /** fl + hid (TODO 319b): the drawn items of this state and the entities hidden one by one they were made with; Undo / Redo reuse them (see drawnOf). */
-const snapshotOf = (d) => ({ fl: d.fl, hid: d.hid?.size ? new Set(d.hid) : null, cmp: d.cmp && structuredClone(d.cmp), attmode: d.raw?.header.$ATTMODE, guides: d.guideState && structuredClone(d.guideState.s.guides), groups: d.raw?.groups, entities: d.raw?.entities, blocks: d.raw?.blocks, layers: d.raw?.layers, ltypes: d.raw?.ltypes, mm: d.bg ? d.bg.mm : null, pos: d.bg ? [d.bg.x, d.bg.y] : null, bl: d.balloons });
+const snapshotOf = (d) => ({ fl: d.fl, hid: d.hid?.size ? new Set(d.hid) : null, cmp: d.cmp && structuredClone(d.cmp), attmode: d.raw?.header.$ATTMODE, guides: d.guideState && structuredClone(d.guideState.s.guides), groups: d.raw?.groups, entities: d.raw?.entities, blocks: d.raw?.blocks, layers: d.raw?.layers, ltypes: d.raw?.ltypes, mm: d.bg ? d.bg.mm : null, pos: d.bg ? [d.bg.x, d.bg.y] : null, rot: d.bg ? d.bg.rot || 0 : null, bl: d.balloons });
 function copySelection() {
   const lay = curLay();
   if (lay) {
@@ -6376,7 +6534,7 @@ async function placePaste() {
 const compareEditIndexes = new WeakMap();
 /** The edit index of a tab (pick grid, ends), built on first use and again after a change. */
 function edIndex(d) {
-  if (!d.ed) { d.ed = Ed.makeIndex(d.raw, d.fl, d.off, hidIdx(d), undefined, d.edPrev); d.edPrev = null; }       // edPrev: the index before the last edit, its parts for unchanged items are kept (TODO 319c)
+  if (!d.ed) { const pre = d.ixPre?.fl === d.fl ? d.ixPre.ix : undefined; d.ixPre = null; d.ed = Ed.makeIndex(d.raw, d.fl, d.off, hidIdx(d), undefined, d.edPrev, pre); d.edPrev = null; }       // edPrev: the index before the last edit, its parts for unchanged items are kept (TODO 319c); ixPre: the pick index warm() built in slices (TODO 322a)
   const item = cmpEditingItem(d);
   if (!item || item.off.size === d.off.size && [...item.off].every((i) => d.off.has(i))) return d.ed;
   const c = compareEditIndexes.get(item.off);
@@ -6400,7 +6558,28 @@ function warm(d) {
     };
     requestIdleCallback(chunk);
   }
-  requestAnimationFrame(() => setTimeout(() => { if (state.docs.includes(d) && d.fl) { if (!d.ed) { edIndex(d); d.outl = null; } if (curDoc() === d || editable() === d) renderEdit(); } }, 0));       // also refresh a Compare source, even when a hover built its index first
+  const ready = () => { if (state.docs.includes(d) && d.fl) { if (!d.ed) { edIndex(d); d.outl = null; } if (curDoc() === d || editable() === d) renderEdit(); } };       // also refresh a Compare source, even when a hover built its index first
+  requestAnimationFrame(() => setTimeout(() => {
+    const fl = d.fl;
+    if (!fl || d.ed || fl.items.length < 20000) return ready();       // small: one go
+    if (d.edPrev) {       // an edit that keeps most of the old index: its pick index is patched in one task and the rest in the next (TODO 322d); the old index is spent either way
+      const prev = d.edPrev, steps = Ed.pickSteps(fl, prev);
+      d.edPrev = null;
+      let r;
+      while (!(r = steps.next()).done);
+      d.ixPre = { fl, ix: r.value };
+      return setTimeout(ready, 0);
+    }
+    // a big drawing's pick index is the longest task of its open (150k items: 0.5 s): build it in idle slices, a hover meanwhile builds it whole
+    const steps = Ed.pickSteps(fl), slice = (deadline) => {
+      if (!state.docs.includes(d) || d.fl !== fl || d.ed) return ready();
+      const start = performance.now();
+      let r;
+      while (!(r = steps.next()).done) if (deadline.timeRemaining() < 1 || performance.now() - start > 8) return requestIdleCallback(slice);
+      d.ixPre = { fl, ix: r.value }; ready();
+    };
+    requestIdleCallback(slice);
+  }, 0));
 }
 function layersChanged(d) { state.drawingRotate = null; selectionCycle = null; d.ed = null; d.outl = null; d.sel = new Set(); d.stretchSelection = null; d.hl = []; if (cmpDoc()) cmpRefresh(d); warm(d); renderEdit(); }
 
@@ -6463,6 +6642,20 @@ function selectSnapPreview(d) {
   snapQuery = query; snapCycle = cycle;
   return q;
 }
+/** TODO 338: the ◎ pivot drag snaps like a drawn point (objects incl. its own, guides; no polar / tracking). Alt or Snap off = the raw pointer. */
+let pivotHit = null;
+function pivotSnap(d, p, alt) {
+  pivotHit = null; ui.canvas.dataset.pivotSnap = '';
+  if (alt) return p;
+  snapRef = null;                                // no tracking / extension points: a pivot has no "from" point
+  let q = snapPoint(d, p);
+  if (!q[2] && d.lay && state.snap) {            // a layout's snapPoint has no guides: take them here
+    const hit = snapGuideBox([p[0], p[1], p[0], p[1]]);
+    if (hit.hits.length) q = [p[0] + hit.dx, p[1] + hit.dy, 'guide'];
+  }
+  if (q[2]) { pivotHit = q; ui.canvas.dataset.pivotSnap = q[2]; }       // the test waits on this, not on canvas pixels
+  return q;
+}
 const snapPoint = (d, p, skip = -1, extra = [], from = null) => {
   if (state.trk.d !== d) { trackClear(); state.trk.d = d; }
   const item = cmpEditingItem(d);
@@ -6518,7 +6711,7 @@ function snapObjectCandidates(q, candidates = true) {
   return e < 0 ? null : { object: ed, e, candidates: candidates ? Ed.snapCandidates(ed, e, ...p, tol, types, from) : [] };
 }
 function snapTab(e) {
-  if (e.key !== 'Tab' || e.ctrlKey || e.metaKey || e.altKey || e.shiftKey || e.isComposing || state.orthoAsk || state.attdispAsk || state.eatteditAsk || !state.snap || !snapPointer || snapPointer.buttons) return;
+  if (e.key !== 'Tab' || e.ctrlKey || e.metaKey || e.altKey || e.shiftKey || e.isComposing || state.orthoAsk || state.attdispAsk || state.eatteditAsk || !state.snap || !snapPointer || snapPointer.buttons && pdrag?.kind !== 'pivot' && state.drawingRotate?.drag?.kind !== 'pivot') return;
   if (document.querySelector('.pop-back, .pdlg-back, dialog[open], [data-testid=ctx-menu], :popover-open')) return;
   if (e.target !== document.body && !ui.canvas.contains(e.target) || e.target.closest?.('input, textarea, select, button, a, [contenteditable=true]')) return;
   if (cursorDynamic() && DI.hasTyped(cursorInput())) return;
@@ -6590,7 +6783,7 @@ function drawingRotateMove(e) {
   if (!g) return;
   if (r.d !== editable() || g.raw !== r.d.raw.entities) { r.drag = null; paintOverlay(); return; }
   const p = toDrawing(r.d, e.clientX, e.clientY);
-  if (g.kind === 'pivot') { r.pivot = p; paintOverlay(); return; }
+  if (g.kind === 'pivot') { r.pivot = pivotSnap(r.d, p, e.altKey).slice(0, 2); paintOverlay(); return; }
   if (!g.items && Math.hypot(e.clientX - g.px[0], e.clientY - g.px[1]) <= 3) return;
   if (!g.preview) {
     g.preview = flatten({ ...r.d.raw, entities: [...g.sel].map((i) => g.raw[i]) });
@@ -6604,7 +6797,7 @@ function drawingRotateUp(e) {
   drawingRotateMove(e);
   const r = state.drawingRotate, g = r?.drag;
   if (!g) return;
-  r.drag = null;
+  r.drag = null; snapCycle = null;
   if (g.kind === 'rotate' && g.items && g.angle && !moveLocked(r.d, g.sel, 'rotate')) {
     try {
       const next = rotateEntities(r.d.raw, g.sel, r.pivot, g.angle);
@@ -6624,17 +6817,38 @@ function drawingRotateOverlay(out) {
   const pad = 20 * k / r.d.factor;
   const cor = [[b[0] - pad, b[1] - pad], [b[2] + pad, b[1] - pad], [b[2] + pad, b[3] + pad], [b[0] - pad, b[3] + pad]].map((p) => toSheetPt(r.d, matrix ? mapply(matrix, ...p) : p));
   const c = [(cor[0][0] + cor[2][0]) / 2, (cor[0][1] + cor[2][1]) / 2];
-  out.push(s('polygon', { class: 'sel-box', points: cor.map((p) => p.join(',')).join(' '), 'data-mode': 'rotate', 'vector-effect': 'non-scaling-stroke' }));
+  out.push(s('polygon', { class: 'drawing-rotate-box', points: cor.map((p) => p.join(',')).join(' '), 'data-mode': 'rotate', 'vector-effect': 'non-scaling-stroke' }));
   out.push(s('g', { class: 'ptools' }, rotationControls(cor, c, toSheetPt(r.d, r.pivot), k, g?.items ? fmt1(g.angle) + '°' : null)));
 }
 
-function dragGrabPoint(d, point, sel) {
-  if (!state.snap) return point;
+/** The snap on the selected objects' own points near `point`: { x, y, kind } or null. It is the drag's grab and, before any press, the hover marker (TODO 340). */
+function ownSnap(d, point, sel) {
+  if (!state.snap) return null;
   const ed = !d.lay && edIndex(d);
-  const grab = d.lay ? placedSnap(d.lay.parts, [...sel].map((i) => placedNow[i]), ...point, pickTol(d), state.snapTypes)
+  return d.lay ? placedSnap(d.lay.parts, [...sel].map((i) => placedNow[i]), ...point, pickTol(d), state.snapTypes)
     : Ed.snapPick(ed, ...point, pickTol(d), state.snap, new Set(ed.shown.filter((i) => !sel.has(i))), state.snapTypes);
+}
+function dragGrabPoint(d, point, sel) {
+  const grab = ownSnap(d, point, sel);
   return grab ? [grab.x, grab.y] : point;
 }
+/** The selected object(s) whose own points show a marker on hover, per tab: entity ids (Drawings), placed indexes (Layouts) or the selected snapshot (Compare); null when none. */
+function ownHoverSel(d) {
+  if (!d || !state.snap || state.tool !== 'select') return null;
+  if (d.cmp) { const item = cmpSelected(d.cmp); return item?.visible && item.box ? item : null; }
+  if (d.lay) { const idx = selItems().map((x) => x.i); return idx.length && state.mode === 'select' ? new Set(idx) : null; }
+  return d.fl && d.sel?.size ? d.sel : null;
+}
+/** Hovering near the selected object's own snap points (Snap on, no Alt, the pickTol radius of the grab) shows the marker and its kind before any press, whatever Snap preview is (TODO 340). */
+function ownSnapHover(d) {
+  const sel = ownHoverSel(d);
+  ownMark = false;
+  if (!sel || !snapPointer || snapPointer.altKey || !snapPreviewHover || state.setlen || state.match || state.colourTool || state.zwin || state.orthoAsk || state.attdispAsk || state.eatteditAsk || state.paste || state.grip || state.entityDrag || state.drawingRotate?.drag || state.text.ed || state.text.drag || state.sheetDrag || state.balDrag || pdrag || gdrag || d.cmp?.moving) return null;
+  const sn = d.cmp ? cmpSnap(sel, sel.offset, sheetAt(snapPointer.clientX, snapPointer.clientY)) : ownSnap(d, d.lay ? sheetAt(snapPointer.clientX, snapPointer.clientY) : toDrawing(d, snapPointer.clientX, snapPointer.clientY), sel);
+  ownMark = !!sn;
+  return sn && [sn.x, sn.y, sn.kind];
+}
+let ownMark = false;                                           // the hover marker is on screen, so a press or leaving the canvas repaints it away
 
 function moveSelectionTo(g, e) {
   if (g.d !== editable() || g.raw !== g.d.raw.entities) { state.entityDrag = null; return false; }
@@ -6794,6 +7008,7 @@ function layGripCommit(v, pairs, label, keepSel) {
 function restoreBg(d, st) {
   if (st.mm != null && d.bg) d.bg.mm = st.mm;
   if (st.pos && d.bg) [d.bg.x, d.bg.y] = st.pos;
+  if (st.rot != null && d.bg) d.bg.rot = st.rot;
 }
 /** The drawn items a stored step brings back, or undefined (restore draws them again): they were made with the entities hidden one by one that are hidden now. */
 const drawnOf = (d, st) => st.fl && (st.hid?.size || 0) === (d.hid?.size || 0) && [...(st.hid || [])].every((e) => d.hid.has(e)) ? st.fl : undefined;
@@ -6804,7 +7019,7 @@ function restore(d, st, drawn, layerNames, index) {
   if (st.guides) { guideTarget(d).s.guides = structuredClone(st.guides); rememberGuides(d); }
   if (d.cmp && st.cmp) { Object.assign(d.cmp, st.cmp); showDoc(); return; }
   const attributesChanged = d.raw && 'attmode' in st && st.attmode !== d.raw.header.$ATTMODE;
-  if (!d.raw || !groupsChanged && !attributesChanged && st.entities === d.raw.entities && st.blocks === d.raw.blocks && st.layers === d.raw.layers && st.ltypes === d.raw.ltypes && st.bl === d.balloons && st.mm === (d.bg ? d.bg.mm : null) && JSON.stringify(st.pos) === JSON.stringify(d.bg ? [d.bg.x, d.bg.y] : null)) { update(); return; }
+  if (!d.raw || !groupsChanged && !attributesChanged && st.entities === d.raw.entities && st.blocks === d.raw.blocks && st.layers === d.raw.layers && st.ltypes === d.raw.ltypes && st.bl === d.balloons && st.mm === (d.bg ? d.bg.mm : null) && JSON.stringify(st.pos) === JSON.stringify(d.bg ? [d.bg.x, d.bg.y] : null) && st.rot === (d.bg ? d.bg.rot || 0 : null)) { update(); return; }
   if (attributesChanged) d.raw.header = { ...d.raw.header, $ATTMODE: st.attmode };
   const layerTableChanged = st.layers && st.layers !== d.raw.layers;
   if (st.layers) d.raw.layers = st.layers;                      // the layer table is replaced, never edited, when a layer is added or changed by hand
@@ -6814,7 +7029,7 @@ function restore(d, st, drawn, layerNames, index) {
     restoreBg(d, st);
     d.dirty = true; if (cmpDoc()) cmpRefresh(d); showDoc(); return;
   }
-  const was = d.cnt?.entities === d.raw.entities && d.cnt.counts === d.counts && d.cnt.n === d.entities ? d.cnt : null, prevIx = !index && d.ed?.ix ? { ix: d.ed.ix, fl: d.fl } : null;       // before the entity list and fl change: the counts and the pick index are patched from these
+  const was = d.cnt?.entities === d.raw.entities && d.cnt.counts === d.counts && d.cnt.n === d.entities ? d.cnt : null, prevIx = Ed.prevIndex(index, d.ed, d.fl, d.edPrev);       // before the entity list and fl change: the counts and the pick index are patched from these
   d.raw.groups = st.groups || followGroups(d.raw.groups, d.raw.entities, st.entities);       // Undo / Redo bring the groups back; an edit follows its entities
   d.raw.entities = st.entities; d.raw.blocks = st.blocks;
   const names = layerNames || [...d.off].map((i) => d.fl.layers[i] && d.fl.layers[i].name);
@@ -6830,8 +7045,9 @@ function restore(d, st, drawn, layerNames, index) {
   d.off = new Set(fl.layers.map((l, i) => (names.includes(l.name) ? i : -1)).filter((i) => i >= 0));      // layer numbers can shift: keep them by name
   if (index) { index.fl = fl; index.items = fl.items; }
   const c = patchedCounts(was, d.raw, fl);
-  Object.assign(d, { fl, counts: c.counts, entities: c.n, cnt: { entities: d.raw.entities, names: fl.layers.map((l) => l.name), space: spaceOf(fl), counts: c.counts, n: c.n }, edPrev: index ? null : prevIx || d.edPrev, box: drawingBoxMm(fl, d.factor), dirty: true, ed: index || null, outl: null, sel: new Set(), stretchSelection: null, hl: [] });
+  Object.assign(d, { fl, counts: c.counts, entities: c.n, cnt: { entities: d.raw.entities, names: fl.layers.map((l) => l.name), space: spaceOf(fl), counts: c.counts, n: c.n }, edPrev: prevIx, box: drawingBoxMm(fl, d.factor), dirty: true, ed: index || null, outl: null, sel: new Set(), stretchSelection: null, hl: [] });
   if (cmpDoc()) cmpRefresh(d);
+  quickNext = 'big';
   showDoc();
   warm(d);
   if (st.sel) setSel(d, new Set(st.sel.filter((i) => i < st.entities.length)));       // an object the step removed leaves the selection
@@ -6897,7 +7113,7 @@ function scaleDrawing(d, s, label = 'Scale') {
     d.bg = Ed.bgScaled(d.bg, s);
     if (view.fitted) fit(); else paintOverlay();
     renderEdit();
-    const b = Ed.bgBox(d.bg);
+    const b = Ed.bgOwnBox(d.bg);
     note(`Background scaled ×${+s.toPrecision(6)}: now ${fmtSize(b[2] - b[0])} × ${fmtSize(b[3] - b[1])} mm`);
     return;
   }
@@ -6919,7 +7135,7 @@ function unitFix(fix) {
     d.bg = UF.bgUnitFixed(d.bg, fix.s);
     if (view.fitted) fit(); else paintOverlay();
     renderEdit();
-    note(UF.unitFixLine(fix, was, UF.unitFixSize(Ed.bgBox(d.bg), 1)));
+    note(UF.unitFixLine(fix, was, UF.unitFixSize(Ed.bgOwnBox(d.bg), 1)));
     return;
   }
   const r = Ed.scaleAbout(d.raw, fix.s, 0, 0, spaceOf(d.fl));
@@ -7575,7 +7791,7 @@ async function balSheet(d, n) {
   try {
     let next = P.states?.get(n);
     if (P.picture) {
-      const r = await renderPdfPage(P.bytes.slice(0), { page: n, dpi: 150 }), bm = await createImageBitmap(r.canvas);
+      const r = P.allPages ? await renderPdfPages(P.bytes.slice(0)) : await renderPdfPage(P.bytes.slice(0), { page: n, dpi: 150 }), bm = await createImageBitmap(r.canvas);
       if (!next) { const raw = newDoc(); next = { ...tabFields(raw, flatten(raw)), hist: Ed.createHistory(), name: P.name, path: null, dirty: false }; }
       next = { ...next, bg: { name: P.name, mm: r.mmPerPx, x: 0, y: 0, visible: true, ...next.bg, bitmap: bm, w: bm.width, h: bm.height } };
     } else if (!next) {
@@ -7842,7 +8058,7 @@ function renderBalloons() {
     }));
   }
   ui.balPic.hidden = !(d && tool && !balTexts(d).length);
-  ui.balSheets.hidden = !(P && P.pages > 1);
+  ui.balSheets.hidden = !(P && P.pages > 1 && !P.allPages);                 // a background PDF is one picture of all its pages: one sheet, no chips
   if (!ui.balSheets.hidden) {
     const key = P.page + ':' + sheets.join(',') + ':' + P.name;
     if (ui.balSheets.dataset.sig !== key) {
@@ -7854,7 +8070,7 @@ function renderBalloons() {
         h('button', { class: 'btn', type: 'button', 'data-testid': 'delete-sheet', disabled: sheets.length === 1, onclick: () => deleteSheet(editable()) }, 'Delete sheet'));
     }
   }
-  ui.sheetChip.hidden = !(P && P.pages > 1);
+  ui.sheetChip.hidden = !(P && P.pages > 1 && !P.allPages);
   if (P) ui.sheetChip.textContent = `Sheet ${P.page} / ${sheets.length}`;
 }
 
@@ -8624,7 +8840,7 @@ function modPrompt(d) {
   if (m.kind === 'reverse') return { status: `Command: REVERSE   ${m.objs.length} selected`, prompt: 'Select objects:' };
   if (m.kind === 'align') return { status: `Command: ALIGN   ${m.sel?.size ?? d.sel.size} selected`, input, prompt: ALIGN_PROMPT[m.stage] };
   if (m.kind === 'scale') return { status: `Command: SCALE   ${m.sel?.size ?? d.sel.size} selected`, input, prompt: m.stage === 'pick' ? 'Select objects (click or drag a box), then Enter:' : m.stage === 'p1' ? 'Base point:' : refPrompt(m) || `Scale factor: ${m.copy ? 'Copy on. ' : ''}[Copy / Reference / Esc] (positive number or click):` };
-  if (m.kind === 'rotate') return { status: `Command: ROTATE   ${m.sel?.size ?? d.sel.size} selected`, input, prompt: m.stage === 'pick' ? 'Select objects (click or drag a box), then Enter:' : m.stage === 'p1' ? 'Pivot:' : refPrompt(m) || `Angle: ${m.copy ? 'Copy on. ' : ''}[Copy / Reference / Esc] (degrees or click; Shift = 15°):` };
+  if (m.kind === 'rotate') return { status: m.bg ? 'Command: ROTATE BACKGROUND' : `Command: ROTATE   ${m.sel?.size ?? d.sel.size} selected`, input, prompt: m.stage === 'pick' ? 'Select objects (click or drag a box), then Enter:' : m.stage === 'p1' ? 'Pivot:' : refPrompt(m) || `Angle: ${m.copy ? 'Copy on. ' : ''}[${m.bg ? '' : 'Copy / '}Reference / Esc] (degrees or click; Shift = 15°):` };
   if (['move', 'copy', 'stretch'].includes(m.kind)) return { status: `Command: ${m.kind.toUpperCase()}   ${m.sel?.size ?? d.sel.size} selected`, input, prompt: movePrompt(m.kind, m.stage, copyMode, stretchDisplacement) };
   if (m.kind === 'array') return arrayPrompt(d, m);
   if (m.kind === 'fillet') return { status: 'Command: FILLET', input, prompt: m.askR ? `Fillet radius <${drawingLength(state.filR)}>:`
@@ -8859,7 +9075,7 @@ function modTyped(d, raw) {
   }
   if (m.kind === 'rotate' && m.stage !== 'pick') {
     if (m.stage === 'p2' && !m.ref && (c === 'r' || c === 'reference')) { refStart(d); return true; }
-    if (m.stage === 'p2' && (c === 'c' || c === 'copy')) { m.copy = !m.copy; note(m.copy ? 'Rotate a copy: on' : 'Rotate a copy: off'); return true; }
+    if (m.stage === 'p2' && (c === 'c' || c === 'copy')) { if (m.bg) { note('Copy is not offered for the background picture'); return true; } m.copy = !m.copy; note(m.copy ? 'Rotate a copy: on' : 'Rotate a copy: off'); return true; }
     if (m.stage === 'p1') {
       const q = DR.typedPoint(DR.parseInput(raw, drawingUnit()), null);
       if (q) { transformBase(d, q.map((v) => v / d.factor)); return true; }
@@ -9192,7 +9408,7 @@ function transformBase(d, q) {
   m.p1 = q.slice(0, 2); m.cur = m.p1; m.stage = 'p2';
   const preview = flatten({ ...d.raw, entities: [...m.sel].map((i) => m.raw[i]) });
   m.move = { preview, items: preview.items, dx: 0, dy: 0 };
-  note(m.kind === 'scale' ? 'Scale: positive factor or click. C toggles a copy' : 'Rotate: angle in degrees or click. Shift = 15°; C toggles a copy'); paintOverlay();
+  note(m.kind === 'scale' ? 'Scale: positive factor or click. C toggles a copy' : m.bg ? 'Rotate background: angle in degrees or click. Shift = 15°; R = Reference' : 'Rotate: angle in degrees or click. Shift = 15°; C toggles a copy'); paintOverlay();
 }
 /** Reference (R at the angle / factor prompt): reference angle or length first, then the new one; typed, or two picked points (Set length's pick). Lengths are drawing units inside, mm when typed. */
 function refStart(d) {
@@ -9243,6 +9459,7 @@ function refTyped(d, R, kind, H, raw) {
 function transformDo(d, value) {
   const m = state.mod, scaling = m.kind === 'scale', label = scaling ? 'Scale' : 'Rotate';
   if (m.ref) { value = scaling ? referenceFactor(m.ref.value, value) : referenceTurn(m.ref.value, value); if (value == null) { note('The new length must be above 0'); return; } }
+  if (m.bg) { rotateBackgroundDo(d, value); return; }
   if (d.lay) { layScaleDo(d, value); return; }
   if (m.raw !== d.raw.entities) { setTool('select'); note(`Drawing changed: start ${label} again`); return; }
   if (moveLocked(d, m.sel)) { const msg = state.msg; setTool('select'); note(msg); return; }

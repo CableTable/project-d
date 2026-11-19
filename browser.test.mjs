@@ -18,6 +18,7 @@ import { newDoc, addEntities, addLayer, addBlock, entity, insert as dxfInsert, t
 import { placedBox, placedMat } from './web/apply.js';
 import * as GR from './web/grips.js';
 import { rotateEntities } from './web/rotate.js';
+import { rotateAbout } from './web/place.js';
 import { curveShape } from './web/extend.js';
 import { closest, pathOf } from './web/modify.js';
 import { svgPath } from './web/draw.js';
@@ -79,6 +80,10 @@ function panelControl(page, locator) {
     if (['locator', 'first', 'last', 'nth', 'filter', 'getByRole', 'getByText'].includes(key)) return (...args) => panelControl(page, target[key](...args));
     if (['click', 'fill', 'check', 'uncheck', 'selectOption', 'focus', 'press', 'waitFor'].includes(key)) return async (...args) => {
       if (key === 'waitFor' && ['hidden', 'detached', 'attached'].includes(args[0]?.state)) return target[key](...args);
+      if (!(await target.count())) await target.first().waitFor({ state: 'attached', timeout: 1500 }).catch(async () => {     // the Objects tree is drawn only while its tab shows (TODO 325)
+        const tab = page.locator('[data-tab=objects]');
+        if (await tab.count() && await tab.getAttribute('aria-selected') !== 'true') await tab.click();
+      });
       const { panel, pane } = await target.evaluate((el) => ({ panel: !!el.closest('aside.panel'), pane: el.closest('[data-docker]')?.dataset.docker }));
       if (panel && await page.locator('[data-testid=panel-show]').isVisible()) await page.locator('[data-testid=panel-show]').click();
       if (pane) {
@@ -2776,6 +2781,7 @@ try {
       await p.evaluate(() => { window.EyeDropper = class { async open() { throw new DOMException('Cancelled', 'AbortError'); } }; });
       await q('colour-screen').click(); assert.equal(await q('colour-hex').inputValue(), '#123456');
       await q('colour-cancel').click();
+      await p.locator('[data-tab=objects]').click();            // the Objects tree is drawn when its tab opens: the theme was changed while it was hidden
       const layerCss = () => q('layer-colour').first().evaluate((el) => el.style.backgroundColor), layerBefore = await layerCss();
       await q('layer-colour').first().click(); await q('colour-hex').fill('123456'); await q('colour-ok').click();
       assert.equal(readDxf(await save()).layers['0'].tc, 0x123456);
@@ -3017,7 +3023,7 @@ try {
       const placed = await p.locator('.part-hit').first().boundingBox();
       await p.mouse.move(placed.x + 2, placed.y + placed.height - 1); await labels(['end']);
       await chip.click(); await labels([]);
-      await p.mouse.move(placed.x + 2, placed.y + placed.height - 1); await labels([]);
+      await p.mouse.move(placed.x + 2, placed.y + placed.height - 1); await labels(['end']);       // the selected part's own point still shows: TODO 340 covers it whatever Snap preview is
       await chip.click();
       await q('picker').setInputFiles('fixtures/three-sheets.pdf'); await q('bal-sheets').waitFor();
       for (const raw of ['line', '20,30', '120,30']) {
@@ -3980,14 +3986,14 @@ try {
       await p.locator('.dtab.on .x').click(); await q('close-dialog').waitFor(); await q('close-discard').click();
       await q('picker').setInputFiles('fixtures/three-sheets.pdf'); await q('bal-sheets').waitFor();
       assert.deepEqual(await p.locator('[data-sheet]').evaluateAll((els) => els.map((el) => el.dataset.sheet)), ['1', '2', '3'], 'reopen restores all PDF pages');
-      // Picture pages re-render, while geometry drawn over them keeps its own Undo.
-      p.once('dialog', (d) => d.accept('1'));
+      // A picture PDF is one picture of all its pages on one sheet (TODO 330): no sheet buttons, and geometry drawn over it keeps its Undo.
       await q('bg-picker').setInputFiles({ name: 'picture-sheets.pdf', mimeType: 'application/pdf', buffer: Buffer.from(writePdf([new Page(80, 50), new Page(120, 90)])) });
       await p.waitForFunction(() => document.querySelector('[data-testid=bg-name]').textContent === 'picture-sheets.pdf');
-      await circle(3); await sheet(2, 2); await circle(4); await sheet(1, 2);
+      await circle(3);                                              // (the bar redraws on the first edit: placeBackground sets d.pdf after its showDoc, today's order)
+      assert.equal(await q('bal-sheets').isVisible(), false, 'no sheet buttons for a picture PDF');
       assert.deepEqual(circles(await saved()), [3]);
       await p.keyboard.press('Control+z'); assert.deepEqual(circles(await saved()), []);
-      await sheet(2, 2); assert.deepEqual(circles(await saved()), [4]);
+      await p.keyboard.press('Control+y'); assert.deepEqual(circles(await saved()), [3]);
 
       // Each dirty sheet survives autosave while another, clean sheet is shown.
       await p.goto(URL_ + '?autosave=300');
@@ -7244,7 +7250,9 @@ try {
     assert.equal(await vis('sheet-panel'), false); assert.equal(await vis('step-panel'), false); assert.equal(await vis('parts-panel'), false);
     assert.equal(await vis('propbar'), false);
     assert.equal(await page.locator('rect.sheet').evaluate((r) => getComputedStyle(r.ownerSVGElement).visibility), 'hidden', 'no sheet outline');
+    await t('ptab-objects').click();                                     // the layer rows are drawn when this tab opens
     assert.deepEqual(await page.locator('.layer .nm').allTextContents(), ['0']);
+    await t('ptab-drawing').click();
     assert.equal(await page.locator('[data-tool=select]').getAttribute('class'), 'tool on', 'Select is the tool on a drawing');
     assert.equal(await t('ptab-drawing').getAttribute('aria-label'), 'Properties');
     assert.ok(await fitsPanel(), 'panel fits on a drawing tab');
@@ -7273,7 +7281,9 @@ try {
     assert.equal(await t('propbar').count(), 0);
     assert.equal(await t('ptab-drawing').getAttribute('aria-label'), 'Properties');
     assert.equal(await partText(), 'outline · 100 × 60');
+    await t('ptab-objects').click();                                     // the layer rows are drawn when this tab opens
     assert.ok((await page.locator('.layer .nm').allTextContents()).includes('Parts'));
+    await t('ptab-drawing').click();
     assert.equal(await page.locator('[data-tool=step]').getAttribute('class'), 'tool on');
     assert.equal(await t('count').textContent(), String(stepRepeat({ ...base, gripBottom: 0, partW: 100, partH: 60 }).count));
     // the part itself is drawn in every slot, and nothing of it is left off the sheet
@@ -7306,7 +7316,9 @@ try {
   await step('layouts: "+ New layout" and File → New layout; each layout has its own sheet settings; an empty drawing tab shows no sheet', async () => {
     await t('new-tab').click();
     assert.equal(await vis('sheet-panel'), false);
+    await t('ptab-objects').click();                                     // the layer rows are drawn when this tab opens
     assert.deepEqual(await page.locator('.layer .nm').allTextContents(), []);
+    await t('ptab-drawing').click();
     await t('new-layout').click();
     assert.equal(await page.locator('.tabs .dtab.on').getAttribute('data-kind'), 'layout');
     assert.match((await tabNames()).at(-1), /^Layout 1$/);
@@ -8126,7 +8138,6 @@ try {
     await page.waitForFunction(() => document.querySelector('.tabs .dtab.on').textContent.startsWith('outline.dxf'));
     await t('bg-picker').setInputFiles('fixtures/bg.png');
     await page.waitForFunction(() => document.querySelector('[data-testid=bg-name]').textContent === 'bg.png');
-    assert.ok((await page.locator('.layer .nm').allTextContents()).includes('Background'));
     assert.equal(await t('scale-target').isVisible(), true);
     assert.equal(await t('scale-target').inputValue(), 'drawing');
     assert.deepEqual(await sizeNow(), ['136', '60'], 'the drawing\'s size by default');
@@ -8151,7 +8162,8 @@ try {
     const ink = await inkedWhen((n) => n > 200);
     await t('drawing').evaluate(() => {});
     const eye = panelControl(page, page.locator('[data-layer=bg]'));
-    await eye.click();
+    await eye.click();                                             // (the helper opens the Objects tab, where the tree is drawn)
+    assert.ok((await page.locator('.layer .nm').allTextContents()).includes('Background'));
     assert.ok((await inkedWhen((n) => n < ink)) < ink, 'hidden: less ink');
     await eye.click();
     await inkedWhen((n) => n >= ink);
@@ -8165,7 +8177,9 @@ try {
     await page.screenshot({ path: shotDir + '/s8-background-dark.png' });
     await menuItem('View', 'Theme: light');
     await t('bg-remove').click();
+    await t('ptab-objects').click();                                     // the layer rows are drawn when this tab opens
     assert.ok(!(await page.locator('.layer .nm').allTextContents()).includes('Background'));
+    await t('ptab-drawing').click();
     await page.locator('.tabs .dtab.on .x').click();
   });
 
@@ -8231,8 +8245,10 @@ try {
     await page.waitForFunction(() => document.querySelector('[data-testid=trace-dialog]').dataset.state === 'ready', null, { timeout: 60000 });
     await t('trace-apply').click();
     assert.equal(await dlg.count(), 0);
-    assert.ok((await page.locator('.layer .nm').allTextContents()).includes('Trace'), 'the new layer');
     assert.match(await t('cmd-prompt').textContent(), /Trace: \d+ closed outlines? on the layer Trace/);
+    await t('ptab-objects').click();                                     // the layer rows are drawn when this tab opens
+    assert.ok((await page.locator('.layer .nm').allTextContents()).includes('Trace'), 'the new layer');
+    await t('ptab-drawing').click();
     // true size: the picture is 400 × 200 px at 96 dpi = 105.83 × 52.92 mm; the traced frame is that, within a pixel (0.27 mm) or two
     await t('scale-target').selectOption('drawing');
     await page.waitForFunction(() => Math.abs(parseFloat(document.querySelector('[data-testid=dw]').value) - 105.83) < 1, null, { timeout: 5000 });
@@ -8244,7 +8260,9 @@ try {
     await menuItem('View', 'Theme: light'); await page.waitForTimeout(150);
     // one undo takes the outlines and the layer away
     await page.keyboard.press('Control+z');
+    await t('ptab-objects').click();                                     // the layer rows are drawn when this tab opens
     await page.waitForFunction(() => ![...document.querySelectorAll('.layer .nm')].some((n) => n.textContent === 'Trace'));
+    await t('ptab-drawing').click();
     assert.equal(await t('scale-target').isVisible(), false, 'only the picture again');
     await closeTabs(/bg\.png/);
   });
@@ -8264,7 +8282,9 @@ try {
     assert.deepEqual(await tabNames(), [...before, 'overlay.dxf'], 'the background tab stays');
     await page.locator('.tabs .dtab', { hasText: keptName }).click();
     assert.equal(await t('bg-name').textContent(), 'bg.png');
+    await t('ptab-objects').click();                                     // the layer rows are drawn when this tab opens
     assert.ok((await page.locator('.layer .nm').allTextContents()).includes('Background'));
+    await t('ptab-drawing').click();
     assert.ok((await inkedWhen((n) => n > 200)) > 200, 'the picture is still drawn');
     await page.locator('.tabs .dtab', { hasText: 'overlay.dxf' }).last().click();
     await page.locator('.tabs .dtab.on .x').click();
@@ -8284,6 +8304,7 @@ try {
       assert.ok((await picker.getAttribute('accept')).split(',').includes('.ai'));
       await picker.setInputFiles('fixtures/colours.ai');
       await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'colours.dxf');
+      await p.getByTestId('ptab-objects').click();                      // the layer rows are drawn when this tab opens
       assert.deepEqual(await p.locator('.layer .nm').allTextContents(), ['#FF0000', '#00FF00', '#0000FF']);
       const [download] = await Promise.all([p.waitForEvent('download'), p.keyboard.press('Control+s')]);
       const doc = readDxf(readFileSync(await download.path(), 'utf8'));
@@ -8307,6 +8328,7 @@ try {
         window.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true }));
       }, bytes);
       await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'dropped.dxf');
+      await p.getByTestId('ptab-objects').click();
       assert.deepEqual(await p.locator('.layer .nm').allTextContents(), ['#FF0000', '#00FF00', '#0000FF']);
       // A PDF is told by its first four bytes, never inside a .dxf: a .dxf holding PDF bytes is read as a DXF (and refused), a .ai with the signature later has no PDF part.
       let seen = '';
@@ -8416,19 +8438,49 @@ try {
     } finally { await context.close(); }
   });
 
-  await step('TODO 309: Background on a two-page PDF still asks which page', async () => {
+  await step('TODO 309 / 330: Background on a two-page PDF asks nothing: both pages side by side, width = page 1 + 10 mm + page 2', async () => {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     try {
       const p = await context.newPage(), q = (id) => p.getByTestId(id);
       await p.goto(URL_ + '?autosave=86400000'); await q('picker').waitFor({ state: 'attached' });
       await p.evaluate(() => { window.__pdfopenManual = true; });
       const sheet = new Page(80, 50); sheet.rect(10, 10, 30, 20); sheet.stroke();
-      let asked = 0;
-      p.on('dialog', async (d) => { assert.equal(d.type(), 'prompt'); assert.equal(d.message(), 'two-pages.pdf has 2 pages. Which page?'); asked++; await d.accept('2'); });
+      p.on('dialog', () => assert.fail('a background PDF no longer asks which page'));
       await q('picker').setInputFiles({ name: 'two-pages.pdf', mimeType: 'application/pdf', buffer: Buffer.from(writePdf([sheet, new Page(120, 90)])) });
       await q('pdfopen-background').click();
-      await p.waitForFunction(() => document.querySelector('[data-testid=cmd-prompt]').textContent.includes('page 2 of 2, true size from the PDF'));
-      assert.equal(asked, 1); assert.equal(await q('bg-name').textContent(), 'two-pages.pdf');
+      await p.waitForFunction(() => document.querySelector('[data-testid=cmd-prompt]').textContent.includes('all 2 pages side by side, true size from the PDF'));
+      assert.equal(await q('bg-name').textContent(), 'two-pages.pdf');
+      const [w, h] = [Number(await q('dw').inputValue()), Number(await q('dh').inputValue())];
+      assert.ok(Math.abs(w - (80 + 10 + 120)) < 0.5 && Math.abs(h - 90) < 0.5, `picture ${w} × ${h} mm, want 210 × 90`);
+      assert.equal(await q('sheet-chip').isVisible(), false, 'one sheet: no per-page chip');
+      assert.equal(await p.locator('[data-sheet]').count(), 0, 'one sheet: no per-page buttons');
+    } finally { await context.close(); }
+  });
+
+  await step('TODO 330: a background of three mixed-size pages: top edges aligned, width = the pages + 2 × 10 mm, own size each', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    try {
+      const p = await context.newPage(), q = (id) => p.getByTestId(id);
+      await p.goto(URL_ + '?autosave=86400000'); await q('picker').waitFor({ state: 'attached' });
+      await p.evaluate(() => { window.__pdfopenManual = true; });
+      const solid = (w, h) => { const pg = new Page(w, h); pg.rect(0, 0, w, h); pg.fill(); return pg; };       // a black sheet: its pixels show where it landed
+      const bytes = writePdf([solid(80, 50), solid(40, 120), solid(100, 70)]);
+      await q('picker').setInputFiles({ name: 'three.pdf', mimeType: 'application/pdf', buffer: Buffer.from(bytes) });
+      await q('pdfopen-background').click();
+      await p.waitForFunction(() => document.querySelector('[data-testid=cmd-prompt]').textContent.includes('all 3 pages side by side, true size from the PDF'));
+      const [w, h] = [Number(await q('dw').inputValue()), Number(await q('dh').inputValue())];
+      assert.ok(Math.abs(w - (80 + 40 + 100 + 2 * 10)) < 0.6 && Math.abs(h - 120) < 0.5, `picture ${w} × ${h} mm, want 240 × 120`);
+      const alpha = await p.evaluate(async (bytes) => {
+        const { renderPdfPages } = await import('./pdf-read.js');
+        const seen = []; const r = await renderPdfPages(Uint8Array.from(bytes), { onPage: (k, n) => seen.push([k, n]) });
+        const c = r.canvas.getContext('2d'), a = (x, y) => c.getImageData(Math.round(x / r.mmPerPx), Math.round(y / r.mmPerPx), 1, 1).data[3];
+        return { seen, pages: r.pages, dpi: r.dpi, top: [40, 110, 190].map((x) => a(x, 0.5)), gap: [a(85, 10), a(135, 10)], under: [a(40, 60), a(110, 100), a(190, 60), a(190, 80)] };
+      }, [...bytes]);
+      assert.deepEqual(alpha.seen, [[1, 3], [2, 3], [3, 3]], 'status "Rendering page k of N" per page');
+      assert.deepEqual([alpha.pages, alpha.dpi], [3, 150]);
+      assert.deepEqual(alpha.top, [255, 255, 255], 'every page starts at the top edge');
+      assert.deepEqual(alpha.gap, [0, 0], 'the 10 mm gaps stay empty');
+      assert.deepEqual(alpha.under, [0, 255, 255, 0], 'each page keeps its own height (50 / 120 / 70 mm)');
     } finally { await context.close(); }
   });
 
@@ -8547,7 +8599,9 @@ try {
     await page.waitForFunction(() => document.querySelector('.tabs .dtab.on').textContent.startsWith('outline.dxf'));
     await t('bg-picker').setInputFiles('fixtures/text-only.pdf');
     await page.waitForFunction(() => document.querySelector('[data-testid=bg-name]').textContent === 'text-only.pdf', null, { timeout: 60000 });
+    await t('ptab-objects').click();                                     // the layer rows are drawn when this tab opens
     assert.ok((await page.locator('.layer .nm').allTextContents()).includes('Background'));
+    await t('ptab-drawing').click();
     await page.locator('.tabs .dtab.on .x').click();
     await page.locator('.tabs .dtab', { hasText: 'sample-copy.dxf' }).click();
     await page.locator('[data-tool=step]').click();
@@ -8642,11 +8696,69 @@ try {
       assert.equal(exp.entities.find((e) => e.type === 'IMAGE').r.file, 'final-export-img1.png');
       assert.equal(await p.locator('.dtab.on .tname').textContent(), 'renamed.dxf', 'Export keeps the source name');
       await p.evaluate(() => { window.__pics305.fail = true; window.__pics305.next = 'C:/jobs/failed.dxf'; });
-      await menu('Save As…'); await prompt('Save failed: PNG write failed');
-      assert.equal(await p.evaluate(() => window.__pics305.files['C:/jobs/failed.dxf']), undefined, 'no completed DXF after PNG failure');
+      await menu('Save As…'); await prompt('Saved failed.dxf');          // TODO 341: the DXF is written first; refused pictures are counted
+      await p.waitForFunction(() => /2 picture\(s\) not saved/.test(document.querySelector('[data-testid=cmd-prompt]').textContent));
+      assert.ok(await p.evaluate(() => window.__pics305.files['C:/jobs/failed.dxf']), 'the DXF is saved though the PNGs failed');
       await p.evaluate(() => { delete window.__pics305.files['C:/jobs/renamed-img1.png']; delete window.__pics305.files['C:/jobs/renamed-img2.png']; window.__pics305.next = 'C:/jobs/renamed.dxf'; });
       await p.locator('.dtab.on .x').click(); await menu('Open…'); await prompt('Opened renamed.dxf');
       assert.deepEqual(await ink(), [0, 0], 'missing native siblings leave undrawn IMAGEs');
+      // TODO 322f: a desktop open of a DXF with no IMAGE keeps readDrawing's result and still draws
+      await p.evaluate((dxf) => { window.__pics305.files['C:/jobs/outline.dxf'] = [...new TextEncoder().encode(dxf)]; window.__pics305.next = 'C:/jobs/outline.dxf'; }, readFileSync('fixtures/outline.dxf', 'utf8'));
+      await menu('Open…'); await prompt('Opened outline.dxf');
+      assert.ok(await q('drawing').evaluate((c) => {
+        const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+        let n = 0; for (let i = 4; i < d.length; i += 4) if (d[i] !== d[0] || d[i + 1] !== d[1] || d[i + 2] !== d[2]) n++;
+        return n;
+      }) > 100, 'a desktop open of a DXF without IMAGEs still draws');
+    } finally { await context.close(); }
+  });
+
+  await step('TODO 341: refused picture paths still save the DXF first, grant plain names, and warn "N picture(s) not saved"', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    try {
+      const p = await context.newPage(), q = (id) => p.getByTestId(id);
+      p.on('pageerror', (e) => errors.push(String(e)));
+      const menu = async (name) => { await p.locator('[data-menu=File]').click(); await p.getByRole('menuitem', { name, exact: true }).click(); };
+      const prompt = (text) => p.waitForFunction((text) => document.querySelector('[data-testid=cmd-prompt]').textContent.startsWith(text), text);
+      await p.goto(URL_ + '?autosave=86400000');
+      await p.evaluate(() => {
+        window.__pics341 = { log: [], grants: [], next: 'C:/jobs/a..b.dxf', dialogs: 0 };
+        window.__TAURI__ = {
+          dialog: { save: async () => { window.__pics341.dialogs++; return window.__pics341.next; }, open: async () => window.__pics341.next, ask: async () => true },
+          core: { invoke: async (command, args) => { if (command === 'grant_balloon_sidecar') return; if (command !== 'grant_save_pictures') throw new Error(command); window.__pics341.log.push('grant'); window.__pics341.grants.push(args); } },
+          fs: {
+            exists: async () => false,
+            readFile: async () => { throw new Error('missing'); },
+            writeFile: async (path) => { window.__pics341.log.push(path); if (/\.png$/i.test(path)) throw new Error('forbidden path'); },
+            writeTextFile: async (path) => { window.__pics341.log.push(path); },
+          },
+        };
+      });
+      await q('picker').setInputFiles(picturesPdf()); await prompt('Opened pictures.pdf');
+      await menu('Save As…'); await prompt('Saved a..b.dxf');
+      const text = () => q('cmd-prompt').textContent();
+      assert.match(await text(), /2 picture\(s\) not saved/);
+      const s = await p.evaluate(() => window.__pics341);
+      assert.deepEqual(s.grants, [{ path: 'C:/jobs/a..b.dxf', names: ['a..b-img1.png', 'a..b-img2.png'] }], 'the grant gets plain names');
+      assert.deepEqual(s.log, ['grant', 'C:/jobs/a..b.dxf', 'C:/jobs/a..b-img1.png', 'C:/jobs/a..b-img2.png'], 'grant, then the DXF, then each picture');
+      assert.equal(await p.locator('.dtab.on .dot').count(), 0, 'refused pictures do not mark the tab dirty');
+      // second Save: in place, no dialog, same order and note
+      await p.evaluate(() => { window.__pics341.log.length = 0; window.__pics341.grants.length = 0; window.__pics341.dialogs = 0; });
+      await menu('Save');
+      await p.waitForFunction(() => window.__pics341.log.length === 4);
+      assert.deepEqual(await p.evaluate(() => window.__pics341.log), ['grant', 'C:/jobs/a..b.dxf', 'C:/jobs/a..b-img1.png', 'C:/jobs/a..b-img2.png']);
+      assert.equal(await p.evaluate(() => window.__pics341.dialogs), 0, 'in-place Save asks for nothing');
+      assert.match(await text(), /^Saved a\.\.b\.dxf.*2 picture\(s\) not saved/);
+      // Export: the grant covers it too, and the note carries the count
+      await p.evaluate(() => { window.__pics341.log.length = 0; window.__pics341.grants.length = 0; window.__pics341.next = 'C:/jobs/out.dxf'; });
+      await menu('Export DXF…'); await q('export-dxf-go').click(); await prompt('Exported out.dxf');
+      assert.match(await text(), /2 picture\(s\) not saved/);
+      assert.deepEqual(await p.evaluate(() => window.__pics341.grants), [{ path: 'C:/jobs/out.dxf', names: ['out-img1.png', 'out-img2.png'] }]);
+      // a grant that throws carries on: the DXF is still written
+      await p.evaluate(() => { window.__TAURI__.core.invoke = async () => { throw new Error('refused'); }; window.__pics341.log.length = 0; window.__pics341.next = 'C:/jobs/b.dxf'; });
+      await menu('Save As…'); await prompt('Saved b.dxf');
+      assert.ok((await p.evaluate(() => window.__pics341.log)).includes('C:/jobs/b.dxf'));
+      assert.match(await text(), /2 picture\(s\) not saved/);
     } finally { await context.close(); }
   });
 
@@ -8680,7 +8792,9 @@ try {
     await t('picker').setInputFiles(picturesPdf());
     await page.waitForFunction(() => document.querySelector('.tabs .dtab.on').textContent.startsWith('pictures.dxf'), null, { timeout: 60000 });
     assert.match(await t('cmd-prompt').textContent(), /Opened pictures\.pdf as a drawing \(page 1 of 1\): .*1 stencil pictures not shown/);
+    await t('ptab-objects').click();                                     // the layer rows are drawn when this tab opens
     assert.ok((await page.locator('.layer .nm').allTextContents()).includes('PDF pictures'));
+    await t('ptab-drawing').click();
     // the canvas colour at a drawing point (mm, y up), [r, g, b]
     const colour = async (x, y) => {
       const p = await at(x, y);
@@ -8902,9 +9016,11 @@ try {
     assert.equal(await t('meas-keep').isVisible(), true);
     await t('meas-keep').click();
     await page.waitForFunction(() => document.querySelector('[data-testid=entities]').textContent.trim() === 'Entities 16');
-    assert.ok((await page.locator('.layer .nm').allTextContents()).includes('Dimensions'));
     assert.match(await t('cmd-prompt').textContent(), /Dimension kept: 36\.06 mm  \(ΔX 30\.00, ΔY 20\.00\)/);
     assert.equal(await t('meas-keep').isVisible(), false);
+    await t('ptab-objects').click();                                     // the layer rows are drawn when this tab opens
+    assert.ok((await page.locator('.layer .nm').allTextContents()).includes('Dimensions'));
+    await t('ptab-drawing').click();
     // Enter keeps a second one
     await click(10, 0); await click(90, 0);
     await page.keyboard.press('Enter');
@@ -9671,7 +9787,9 @@ try {
     await page.keyboard.press('Escape');
     await t('extract').click();
     assert.match(await t('cmd-prompt').textContent(), /a kept dimension is not part of a part/);
+    await t('ptab-objects').click();                                     // the layer rows are drawn when this tab opens
     assert.equal(await page.locator('.layer', { hasText: 'Dimensions' }).locator('.mono').textContent(), '1', 'a dimension counts as one entity in Layers');
+    await t('ptab-drawing').click();
     assert.equal(await entitiesN(), n0 + 1, 'and one in the Entities readout');
     // the selection of the plate and a dimension together: the size is the plate's
     await clickConnected(50, 0, { shift: true });
@@ -9697,7 +9815,11 @@ try {
 
   await step('review: layout: the Dimensions row is the real count; the parts list says copies; Apply stays in view; each Add puts a new copy 10 mm further on', async () => {
     await page.locator('[data-group=parts] .part-hit').first().click({ force: true });
+    await t('ptab-objects').click();                                     // the layer rows are drawn when this tab opens
     assert.equal(await page.locator('.layer', { hasText: 'Dimensions' }).locator('.mono').textContent(), '3', 'sheet width and height, and the selected part\'s width');
+    await page.keyboard.press('Control+a');                              // several parts picked with Objects showing: no single width, so 2 (the tree is not stale)
+    await page.waitForFunction(() => [...document.querySelectorAll('.layer')].find((l) => l.textContent.includes('Dimensions'))?.querySelector('.mono')?.textContent === '2');   // several picked: sheet width and height only
+    await t('ptab-drawing').click();
     assert.match((await partRows())[0], /^outline\|272 × 120 · \d+ copies$/);
     await shotBoth('layout-review');
     // Apply and the count are in the panel's visible part with the panel scrolled to the top
@@ -9781,6 +9903,7 @@ try {
   });
 
   await step('review: the gripper label never sits on a registration mark; the selected slot\'s width is never drawn over another part', async () => {
+    if (only) await ensureLibraryParts();
     await t('new-layout').click();
     await t('panel-library').click();
     assert.ok((await libNames()).length > 0);
@@ -10322,6 +10445,33 @@ try {
     assert.match(await prompt(), /Plate A moved to X 950\.00 Y \d+\.\d\d\. Plate A is off the sheet \(drawn in orange\)\. It is still placed:?$/);
     await partTab(); await t('px').fill('900'); await t('px').press('Enter');
     assert.doesNotMatch(await prompt(), /off the sheet/);
+  });
+
+  await step('TODO 342: a turned part inside the sheet is not orange; a part in the top gripper is, with the gripper note once', async () => {
+    await closeTabs(/./);
+    await page.evaluate(() => { document.documentElement.dataset.theme = 'light'; });
+    const made = newLayout('Gripper 342'), wedge = newDoc(4);              // a right triangle: turned 5° at X 0 its box reaches 5 mm left of the sheet, the triangle does not
+    addEntities(wedge, dxfLine(0, 0, 100, 0), dxfLine(100, 0, 100, 60), dxfLine(100, 60, 0, 0));
+    made.parts.wedge = makePart('wedge', 'Wedge', wedge, 1);
+    Object.assign(made.s, { sheetW: 1000, sheetH: 700, gripTop: 30, gripBottom: 0, gripLeft: 0, gripRight: 0 });
+    made.placed = [{ partId: 'wedge', x: 0, y: 300, rot: 5 }];
+    await t('picker').setInputFiles({ name: 'gripper342.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(layoutRaw(made))) });
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'gripper342.dxf');
+    await page.locator('[data-tool=select]').click(); await t('ptab-drawing').click();
+    await page.locator('[data-group=parts] .part-hit').first().click({ force: true });
+    assert.ok((await pos())[0] < -5, 'the box of the turned part reaches left of the sheet');
+    await page.waitForTimeout(300);
+    assert.ok(await markPixels() < 20, 'inside the sheet: not drawn in orange');
+    await partTab(); await t('py').fill('620'); await t('py').press('Enter');
+    const inGrip = await said(/Wedge moved to X -?\d+\.\d\d Y 620\.00\. Wedge is in the gripper \(drawn in orange\)\. It is still placed:?$/);
+    assert.doesNotMatch(inGrip, /off the sheet/);
+    let orange = await markPixels();
+    for (let i = 0; i < 40 && orange <= 30; i++) { await page.waitForTimeout(50); orange = await markPixels(); }
+    assert.ok(orange > 30, 'a part in the gripper is drawn in the mark colour: ' + orange);
+    await shotBoth('step-gripper-mark-342');
+    await partTab(); await t('py').fill('300'); await t('py').press('Enter');
+    assert.doesNotMatch(await said(/Wedge moved to X -?\d+\.\d\d Y 300\.00/), /gripper/, 'said once: a part back out of the gripper has no note');
+    await closeTabs(/./);
   });
 
   await step('placing: a part of the step and repeat grid becomes a placed part of its own when it is changed', async () => {
@@ -11667,10 +11817,12 @@ try {
     await t('contour-apply').click();
     assert.match(await prompt(), /^Contour: 3 new outlines \(24 lines and arcs\) on the layer Contour\. Ctrl\+Z takes them away:?$/);
     assert.equal(await entCount(), base + 24);
+    await t('ptab-objects').click();                                     // the layer rows are drawn when this tab opens (TODO 325)
     const layerRow = page.locator('.layer', { hasText: 'Contour' });
     assert.equal(await layerRow.count(), 1);
     assert.equal(await layerRow.locator('[data-testid=layer-new]').textContent(), 'new');
     assert.equal(await layerRow.locator('.lbl.mono').textContent(), '24');
+    await t('ptab-drawing').click();
     assert.equal(await selCount(), '1 selected', 'the original stays selected');
     assert.equal(await t('contour-panel').isVisible(), true, 'the panel stays open to try another');
     // the original is untouched, the new ones are ordinary lines and arcs on the layer Contour (saved)
@@ -13165,6 +13317,128 @@ try {
       await t('ptab-drawing').click(); await closeTabs(/./);
     }
   });
+  await step('TODO 335 / 336: a contoured part turns by hand on the second click (its contour with it, one Undo); Ungroup keeps each contour attached, one Undo each', async () => {
+    await closeTabs(/./);
+    const errs0 = errors.length;
+    const rawA = newDoc(4), rawB = newDoc(4), src = newLayout('335 turn');
+    addEntities(rawA, ...[[0, 0, 100, 0], [100, 0, 100, 60], [100, 60, 0, 60], [0, 60, 0, 0]].map((q) => dxfLine(...q)));
+    addEntities(rawB, ...[[0, 0, 80, 0], [80, 0, 80, 80], [80, 80, 0, 80], [0, 80, 0, 0]].map((q) => dxfLine(...q)));
+    src.parts['335-a'] = makePart('335-a', 'Plate T', rawA, 1); src.parts['335-b'] = makePart('335-b', 'Block T', rawB, 1);
+    src.placed = [{ partId: '335-a', x: 100, y: 300, rot: 0, mirrorX: false, mirrorY: false }, { partId: '335-b', x: 400, y: 300, rot: 0, mirrorX: false, mirrorY: false }];
+    await t('picker').setInputFiles({ name: '335 turn.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(layoutRaw(src)), 'latin1') });
+    await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === '335 turn.dxf');
+    try {
+      // each part with its contour: [source, contour] by name, and the groups
+      const state = async () => {
+        const lay = layoutFromRaw(await savedDoc()), name = (p) => lay.parts[p.partId].name, plate = lay.placed.filter((p) => /^Plate T/.test(name(p))), block = lay.placed.filter((p) => /^Block T/.test(name(p)));
+        const pair = (l) => ({ own: l.find((p) => !p.ct), con: l.find((p) => p.ct) });
+        return { lay, plate: pair(plate), block: pair(block), groups: new Set(lay.placed.map((p) => p.g)).size };
+      };
+      const centre = (s, p) => { const b = placedBox(s.lay.parts[p.partId], p); return [(b[0] + b[2]) / 2, (b[1] + b[3]) / 2]; };
+      const deg = (a, b) => Math.abs(((a - b) % 360 + 540) % 360 - 180);       // the smallest angle between two
+      const attached = (s, who) => s[who].con.g === s[who].own.g && s[who].con.ct === s[who].own.cid;
+      await page.keyboard.press('Escape'); await page.keyboard.press('Control+a');
+      await typeCmd('contour');
+      await t('contour-steps').fill('1'); await t('contour-steps').press('Enter');
+      await t('contour-outside').click(); await t('contour-sharp').click();
+      await t('contour-dist').fill('10'); await t('contour-dist').press('Enter');
+      await t('contour-apply').click(); await t('contour-close').click();
+      assert.equal(await nParts(), 4);
+      let s = await state();
+      assert.ok(attached(s, 'plate') && attached(s, 'block') && s.groups === 2, 'a contour each, one group each');
+      // 335: click selects the part with its contour, click again: four turn arrows, and a drag turns both
+      await page.keyboard.press('Escape');
+      await click(150, 330);
+      const groupOf2 = () => page.waitForFunction(() => document.querySelector('[data-testid=pp-name]').textContent === 'Group of 2');
+      await groupOf2();
+      assert.equal(await page.locator('[data-group=tools] [data-rot]').count(), 0, 'no arrows after the first click');
+      await click(150, 330);
+      await page.waitForFunction(() => document.querySelectorAll('[data-group=tools] [data-rot]').length === 4);
+      await said(/^Angle </);            // the second click turns the Rotate mode on
+      await shotBoth('todo335-arrows');
+      const turnBy = async (d, keys = []) => {
+        const a = await arrowPoint(0), pv = await pivotPx(), r = Math.hypot(a.x - pv.x, a.y - pv.y), a0 = Math.atan2(a.y - pv.y, a.x - pv.x);
+        const to = (f) => ({ x: pv.x + r * Math.cos(a0 - f * d * Math.PI / 180), y: pv.y + r * Math.sin(a0 - f * d * Math.PI / 180) });
+        for (const k of keys) await page.keyboard.down(k);
+        try {
+          await page.mouse.move(a.x, a.y); await page.mouse.down();
+          for (let i = 1; i <= 4; i++) await page.mouse.move(to(i / 4).x, to(i / 4).y);
+          await page.mouse.up();
+        } finally { for (const k of keys.slice().reverse()) await page.keyboard.up(k); }
+      };
+      const sameTurn = (s2, who, why) => {
+        deg(s2[who].own.rot, s2[who].con.rot) < 0.01 || assert.fail(`${why}: the contour turned ${s2[who].con.rot}, the part ${s2[who].own.rot}`);
+        approx(centre(s2, s2[who].con)[0], centre(s2, s2[who].own)[0], 0.05, why + ': centre x'); approx(centre(s2, s2[who].con)[1], centre(s2, s2[who].own)[1], 0.05, why + ': centre y');
+      };
+      await turnBy(20);
+      s = await state();
+      approx(deg(s.plate.own.rot, 0), 20, 3, 'the part turned about 20°');
+      sameTurn(s, 'plate', 'after the arrow drag');
+      assert.equal(s.block.own.rot, 0); assert.equal(s.block.con.rot, 0, 'the other part and its contour stayed');
+      assert.ok(attached(s, 'plate'), 'still attached after the turn');
+      assert.equal(await page.locator('[data-group=tools] [data-rot]').count(), 4, 'still in Rotate mode');
+      const first = s.plate.own.rot;
+      await turnBy(23, ['Shift']);
+      s = await state();
+      assert.equal(s.plate.own.rot % 15, 0, 'Shift snaps the part to 15°, got ' + s.plate.own.rot);
+      sameTurn(s, 'plate', 'after the Shift drag');
+      await page.keyboard.press('Control+z');                    // one Undo takes the part and its contour back together
+      s = await state();
+      approx(deg(s.plate.own.rot, first), 0, 0.01, 'one Undo: the part is back at the first turn');
+      sameTurn(s, 'plate', 'after Undo');
+      await page.keyboard.press('Escape');
+      await page.keyboard.press('Control+z');
+      s = await state();
+      assert.equal(s.plate.own.rot, 0); assert.equal(s.plate.con.rot, 0, 'the second Undo: both back at 0');
+      // 336: group two contoured parts (4 placements), Ungroup: two parts again, each still attached
+      await page.keyboard.press('Escape'); await page.keyboard.press('Control+a');
+      await page.keyboard.press('Control+g');
+      s = await state();
+      assert.equal(s.groups, 1, 'Group: one group of four');
+      await page.keyboard.press('Control+Shift+g');
+      await said(/^Ungrouped: 4 parts are separate again/);
+      s = await state();
+      assert.equal(s.groups, 2, 'Ungroup: two groups, one per part');
+      assert.ok(attached(s, 'plate') && attached(s, 'block'), 'each contour is still attached to its own part');
+      assert.notEqual(s.plate.own.g, s.block.own.g);
+      await page.keyboard.press('Control+z');
+      assert.equal((await state()).groups, 1, 'one Undo undoes the Ungroup');
+      await page.keyboard.press('Control+z');
+      s = await state(); assert.equal(s.groups, 2, 'one more Undo undoes the Group');
+      await page.keyboard.press('Control+y'); await page.keyboard.press('Control+y');
+      s = await state(); assert.equal(s.groups, 2); assert.ok(attached(s, 'plate') && attached(s, 'block'), 'Redo Group, Redo Ungroup');
+      // after Ungroup: a click picks a part with its contour only, a move takes them along, the other part stays
+      await page.keyboard.press('Escape');
+      const before = s;
+      await click(150, 330);
+      await groupOf2();
+      await dragMm([150, 330], [250, 380]);
+      s = await state();
+      const moved = (p0, p1) => Math.hypot(p1.x - p0.x, p1.y - p0.y);
+      assert.ok(moved(before.plate.own, s.plate.own) > 10 && Math.abs(moved(before.plate.own, s.plate.own) - moved(before.plate.con, s.plate.con)) < 0.05, 'the Plate and its contour moved by the same');
+      assert.equal(moved(before.block.own, s.block.own), 0); assert.equal(moved(before.block.con, s.block.con), 0, 'the Block and its contour stayed');
+      // after Ungroup: the Block turns by hand with its contour; the Plate and its contour stay
+      await click(440, 340); await click(440, 340);
+      await page.waitForFunction(() => document.querySelectorAll('[data-group=tools] [data-rot]').length === 4);
+      await turnBy(30);
+      const after = await state();
+      approx(deg(after.block.own.rot, 0), 30, 3, 'the Block turned about 30°');
+      sameTurn(after, 'block', 'the Block after Ungroup');
+      assert.equal(after.plate.own.rot, s.plate.own.rot); assert.equal(after.plate.con.rot, s.plate.con.rot, 'the Plate and its contour did not turn');
+      assert.ok(attached(after, 'plate') && attached(after, 'block'));
+      assert.deepEqual(errors.slice(errs0), [], 'no errors');
+    } finally {
+      await menuItem('Layout', 'Parts library');
+      for (const name of ['Plate T', 'Block T']) {
+        if (!await libCard(name).count()) continue;
+        await libCard(name).locator('[data-testid=lib-menu]').click();
+        page.once('dialog', (d) => d.accept());
+        await page.getByRole('menuitem', { name: 'Delete from library', exact: true }).click();
+        await libCard(name).waitFor({ state: 'detached' });
+      }
+      await t('ptab-drawing').click(); await closeTabs(/./);
+    }
+  });
 
   await step('TODO 111b: copy in a drawing, paste on a layout saves a named library part at the same mm position, selected; Undo keeps the part; second paste is numbered', async () => {
     await closeTabs(/./);
@@ -13497,7 +13771,9 @@ try {
     assert.equal(await t('tool-chip').textContent(), 'Tool: Line');
     assert.equal(await t('cmd-hist').textContent(), 'Command: LINE   layer 0');
     assert.equal(await prompt(), 'Specify first point (x,y):');
+    await t('ptab-objects').click();                                     // the layer rows are drawn when this tab opens
     assert.equal(await page.locator('.layer', { hasText: '0' }).locator('[data-testid=layer-current]').textContent(), 'current', 'layer 0 is the current layer to begin with');
+    await t('ptab-drawing').click();
     assert.equal(await page.locator('.tabs .dtab .dot').count(), 0, 'nothing drawn yet: still untouched');
     await page.keyboard.press('Escape');
   });
@@ -13690,9 +13966,10 @@ try {
     await closeTabs(/./);
     await t('picker').setInputFiles({ name: 'shapes.dxf', mimeType: 'text/plain', buffer: Buffer.from(shapesDoc(), 'latin1') });
     await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'shapes.dxf');
+    await t('ptab-objects').click();                                     // the layer rows are drawn when this tab opens
     assert.equal(await page.locator('[data-testid=layer-current]').count(), 1);
     assert.equal(await page.locator('.layer.current .nm').textContent(), '0');
-    await t('ptab-objects').click(); await page.locator('.layer', { hasText: 'Open' }).click();
+    await page.locator('.layer', { hasText: 'Open' }).click();
     assert.equal(await page.locator('.layer.current .nm').textContent(), 'Open');
     assert.match((await t('cmd-hist').textContent()) + (await prompt()), /Current layer: Open/);
     await page.locator('[data-tool=circle]').click();
@@ -13708,6 +13985,7 @@ try {
     await closeTabs(/./);
     await t('picker').setInputFiles({ name: 'shapes.dxf', mimeType: 'text/plain', buffer: Buffer.from(shapesDoc(), 'latin1') });
     await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'shapes.dxf');
+    await t('ptab-objects').click();                                     // the layer rows are drawn when this tab opens
     const add = t('layer-add'), name = t('layer-name'), rows = page.locator('.layer');
     assert.equal(await add.isDisabled(), false);
     assert.equal(await add.getAttribute('aria-disabled'), null, '+ Add is built, not greyed');
@@ -14312,6 +14590,7 @@ try {
       await select(); const p = await at(x, y);
       await page.evaluate(() => { window.__drag195 = []; });
       await page.mouse.move(p.x + 1, p.y + .5); await page.mouse.down();
+      await page.evaluate(() => { window.__drag195 = []; });       // the hover marker of the selected block's own end (TODO 340) is not part of the drag
     };
     const land = async (x = b[0], y = b[1]) => { const p = await at(x, y); await page.mouse.move(p.x + 2, p.y + 1, { steps: 6 }); await frames(); return p; };
     const xy = (doc) => [10, 20].map((code) => fieldOf(doc.entities[0], code));
@@ -14427,6 +14706,328 @@ try {
     } finally {
       await page.mouse.up(); await page.keyboard.up('Alt');
       await setChip(snapOn === 'true'); await closeTabs(/./);
+    }
+  });
+  // ---- TODO 338: the ◎ pivot drag snaps like a drawn point (Drawings, Layouts, Compare)
+  const exact338 = (x, y) => page.evaluate(([x, y]) => {          // the global `at` reads the sheet rect's box (a pixel out): this reads the overlay's own matrix
+    const svg = document.querySelector('[data-testid=overlay]'), h = +document.querySelector('rect.sheet').getAttribute('height');
+    const p = new DOMPoint(x, h - y).matrixTransform(svg.getScreenCTM()); return { x: p.x, y: p.y };
+  }, [x, y]);
+  const pivotAt338 = async (scope) => { const r = await rectOf(page.locator(`${scope} [data-pivot]`)); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; };
+  const arrowAt338 = (scope) => page.locator(`${scope} [data-rot]`).first().evaluate((el) => { const q = el.getPointAtLength(el.getTotalLength() / 2), p = new DOMPoint(q.x, q.y).matrixTransform(el.getScreenCTM()); return { x: p.x, y: p.y }; });
+  /** Presses the ◎, drags it to `to` (client px), runs `during` with the button still down, lets go. `alt`: Alt is down from the press on. */
+  const pivotDrag338 = async (scope, to, { alt = false, during = null } = {}) => {
+    const from = await pivotAt338(scope);
+    await page.evaluate(() => { document.querySelector('[data-testid=canvas]').dataset.pivotSnap = ''; });
+    await page.mouse.move(from.x, from.y); await page.mouse.down();
+    try {
+      if (alt) await page.keyboard.down('Alt');
+      await page.mouse.move(to.x, to.y, { steps: 5 }); await frames();
+      if (during) await during();
+    } finally { await page.mouse.up(); await page.keyboard.up('Alt'); }
+    await frames();
+  };
+  const greenNear338 = () => page.waitForFunction(() => !!document.querySelector('[data-testid=canvas]').dataset.pivotSnap, null, { timeout: 2000 }).then(() => true, () => false);       // app state (the kind pivotSnap found), not canvas pixels: paint timing made the pixel check flaky
+  const settle338 = async (scope) => {         // wait until the ◎ and the sheet stop moving (the first drag after a tab opens raced a late re-layout)
+    let last = '', same = 0;
+    for (let i = 0; i < 60 && same < 5; i++) {
+      const now = JSON.stringify([await pivotAt338(scope), await exact338(0, 0)]); same = now === last ? same + 1 : 0; last = now; await frames();
+    }
+  };
+  const near338 = (a, b, why, tol = 0.3) => { approx(a.x, b.x, tol, why + ' x'); approx(a.y, b.y, tol, why + ' y'); };
+  /** One run of the rules on a tab in rotate mode: own node, another object, Snap off, Alt, Tab, release. own / other: the client points of two nodes; scope: where its ◎ is. */
+  const pivotRules338 = async (scope, own, other, shot) => {
+    const off = (p, dx = 3, dy = 2) => ({ x: p.x + dx, y: p.y + dy });
+    const snapOn = await t('tog-snap').getAttribute('aria-pressed');
+    const setChip = async (on) => { if (await t('tog-snap').getAttribute('aria-pressed') !== String(on)) await t('tog-snap').click(); };
+    try {
+      await setChip(true);
+      await pivotDrag338(scope, off(own), { during: async () => { assert.equal(await greenNear338(own), true, 'the pivot snap is found while the ◎ is dragged (app state)'); } });
+      near338(await pivotAt338(scope), own, 'the ◎ snaps to a node of the turned object itself');
+      await pivotDrag338(scope, off(other), { during: async () => {
+        assert.equal(await greenNear338(other), true, 'the pivot snap is found on the other object’s end (app state)');
+        if (shot) await page.screenshot({ path: `${shotDir}/todo338-${shot}.png` });
+      } });
+      near338(await pivotAt338(scope), other, 'the ◎ snaps to the end of another object');
+      await pivotDrag338(scope, off(other), { alt: true });
+      near338(await pivotAt338(scope), off(other), 'Alt held: the raw pointer');
+      await pivotDrag338(scope, off(other));
+      near338(await pivotAt338(scope), other, 'back on the node without Alt');
+      await setChip(false);
+      await pivotDrag338(scope, off(own));
+      near338(await pivotAt338(scope), off(own), 'Snap off: the raw pointer');
+      await setChip(true);
+    } finally { await page.mouse.up(); await page.keyboard.up('Alt'); await setChip(snapOn === 'true'); }
+  };
+  /** Tab while the ◎ is held on `other` (a line end): it goes to another point of that line, and letting go keeps it there. */
+  const pivotTab338 = async (scope, other, lineY) => {
+    let during = null;
+    await pivotDrag338(scope, { x: other.x + 3, y: other.y + 2 }, { during: async () => {
+      await page.evaluate(() => document.activeElement?.blur());
+      for (let i = 0; i < 4; i++) {        // a line's first Tab visits Nearest, which sits on the end too; Tab until the ◎ has left it
+        await page.keyboard.press('Tab'); await frames();
+        during = await pivotAt338(scope);
+        if (Math.hypot(during.x - other.x, during.y - other.y) > 3) break;
+      }
+      assert.ok(Math.hypot(during.x - other.x, during.y - other.y) > 3, 'Tab moved the ◎ to another point of the line');
+      if (lineY != null) approx(during.y, lineY, 0.5, 'still on the line');
+    } });
+    near338(await pivotAt338(scope), during, 'letting go keeps the Tab point', 0.05);
+  };
+  const turn338 = async (scope, degrees) => {            // the first corner arrow, Shift held: the angle lands on a multiple of 15°
+    const a = await arrowAt338(scope), pv = await pivotAt338(scope), ang = degrees * Math.PI / 180, dx = a.x - pv.x, dy = a.y - pv.y;
+    await page.keyboard.down('Shift');
+    try {
+      await page.mouse.move(a.x, a.y); await page.mouse.down();
+      await page.mouse.move(pv.x + dx * Math.cos(ang) + dy * Math.sin(ang), pv.y - dx * Math.sin(ang) + dy * Math.cos(ang), { steps: 6 });
+      await frames();
+    } finally { await page.mouse.up(); await page.keyboard.up('Shift'); }
+    await frames();
+  };
+  const sameGeometry338 = (got, expected) => {
+    for (let i = 0; i < expected.entities.length; i++) for (const c of [10, 20, 11, 21]) approx(fieldOf(got.entities[i], c), fieldOf(expected.entities[i], c), 1e-4, `entity ${i} field ${c}`);
+  };
+
+  await step('TODO 338: Drawings: the ◎ pivot drag snaps (own node, another object, Alt, Snap off, Tab, release), the turn uses it', async () => {
+    const raw = newDoc(4); addEntities(raw, dxfLine(20, 30, 120, 30), dxfLine(60, 80, 160, 80));
+    await openGrips(writeDxf(raw), 'pivot-338.dxf');
+    const before = await savedDoc();
+    await click(45, 30); await gripWhen(3);
+    await click(45, 30); await frames();
+    await page.locator('.ovl [data-rot]').first().waitFor(); assert.equal(await page.locator('.ovl [data-rot]').count(), 4);
+    await settle338('.ovl');
+    const own = await exact338(120, 30), other = await exact338(160, 80);
+    await pivotRules338('.ovl', own, other, 'drawings-light');
+    await menuItem('View', 'Theme: dark'); await frames();
+    await pivotDrag338('.ovl', { x: other.x + 3, y: other.y + 2 }, { during: async () => { await page.screenshot({ path: `${shotDir}/todo338-drawings-dark.png` }); } });
+    await menuItem('View', 'Theme: light'); await frames();
+    await pivotTab338('.ovl', other, other.y);
+    await pivotDrag338('.ovl', { x: other.x + 3, y: other.y + 2 }, { during: async () => {       // hover the line's end past the 500 ms watch, then go out along its extension, 3 px off the line (an extension snap would pull the ◎ onto it): no extension snap for a pivot
+      await page.waitForTimeout(800);
+      await page.mouse.move(other.x + 40, other.y + 3, { steps: 3 }); await frames();
+      assert.equal(await page.locator('[data-testid=canvas]').getAttribute('data-pivot-snap'), '', 'no extension / tracking snap for a pivot');
+    } });
+    near338(await pivotAt338('.ovl'), { x: other.x + 40, y: other.y + 3 }, 'the ◎ stays on the raw pointer beside the extension line');
+    await pivotDrag338('.ovl', { x: other.x + 3, y: other.y + 2 });
+    near338(await pivotAt338('.ovl'), other, 'on the node again');
+    await turn338('.ovl', 23);
+    sameGeometry338(await savedDoc(), rotateEntities(before, new Set([0]), [160, 80], 30));
+    await page.keyboard.press('Control+z');
+    await closeTabs(/./);
+  });
+
+  await step('TODO 338: Layouts: the ◎ pivot drag snaps (own corner, another part, Alt, Snap off, Tab, release), the turn uses it', async () => {
+    await closeTabs(/./);
+    const lay = newLayout('Pivot 338'), plate = addEntities(newDoc(4), dxfPoly([[0, 0], [100, 0], [100, 60], [0, 60]], { closed: true }));
+    lay.parts.plate = makePart('plate', 'Plate', plate); lay.parts.other = makePart('other', 'Other', plate);
+    lay.placed = [{ partId: 'plate', x: 200, y: 200, rot: 0 }, { partId: 'other', x: 420, y: 330, rot: 0 }];
+    await t('picker').setInputFiles({ name: 'pivot-338-layout.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
+    await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'pivot-338-layout.dxf');
+    await page.locator('[data-tool=select]').click();
+    const [x0, y0, x1, y1] = placedBox(lay.parts.plate, lay.placed[0]), [, v0, u1] = placedBox(lay.parts.other, lay.placed[1]);
+    const centre = await exact338((x0 + x1) / 2, (y0 + y1) / 2);
+    await page.locator('[data-group=parts] .part-hit').first().click({ force: true });
+    await page.mouse.click(centre.x, centre.y);
+    await page.waitForFunction(() => document.querySelectorAll('[data-group=tools] [data-rot]').length === 4);
+    await settle338('[data-group=tools]');
+    const own = await exact338(x1, y1), other = await exact338(u1, v0);
+    await pivotRules338('[data-group=tools]', own, other, 'layouts-light');
+    await menuItem('View', 'Theme: dark'); await frames();
+    await pivotDrag338('[data-group=tools]', { x: other.x + 3, y: other.y + 2 }, { during: async () => { await page.screenshot({ path: `${shotDir}/todo338-layouts-dark.png` }); } });
+    await menuItem('View', 'Theme: light'); await frames();
+    await pivotTab338('[data-group=tools]', other, null);
+    await pivotDrag338('[data-group=tools]', { x: other.x + 3, y: other.y + 2 });
+    near338(await pivotAt338('[data-group=tools]'), other, 'on the corner again');
+    await turn338('[data-group=tools]', 23);
+    await page.waitForFunction(() => document.querySelector('[data-testid=pa]').value.startsWith('30'));
+    const got = layoutFromRaw(await savedDoc()).placed.find((p) => p.partId === 'plate'), want = rotateAbout(lay.parts.plate, lay.placed[0], [u1, v0], 30);
+    approx(got.x, want.x, 0.01, 'the part turned about the snapped pivot: x'); approx(got.y, want.y, 0.01, 'the part turned about the snapped pivot: y'); approx(got.rot, 30, 0.01, 'turned 30°');
+    await page.keyboard.press('Control+z');
+    await closeTabs(/./);
+  });
+
+  await step('TODO 338: Compare: the ◎ pivot drag snaps (own node, the other item, Alt, Snap off), the turn uses it', async () => {
+    await closeTabs(/./);
+    const a = newDoc(4), b = newDoc(4); addEntities(a, dxfLine(20, 30, 120, 30)); addEntities(b, dxfLine(40, 50, 65, 50), dxfLine(65, 50, 140, 50));        // item 2 lines up on item 1 (same size, offset -20, -20): the join at (65, 50) lands on (45, 30), where item 1 has no node
+    for (const [name, doc] of [['pivot-338-a.dxf', a], ['pivot-338-b.dxf', b]]) {
+      await t('picker').setInputFiles({ name, mimeType: 'text/plain', buffer: Buffer.from(writeDxf(doc)) });
+      await page.waitForFunction((n) => document.querySelector('.tabs .dtab.on .tname').textContent === n, name);
+    }
+    await page.locator('.tabs .dtab', { hasText: 'pivot-338-a' }).click();
+    await menuItem('File', 'Compare drawings…');
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'Compare');
+    await t('cmp-run').click(); await page.waitForFunction(() => /difference/.test(document.querySelector('[data-testid=cmp-count]').textContent));
+    await t('cmp-name-1').click(); await page.locator('[data-tool=select]').click();
+    await page.keyboard.press('Escape'); await frames();
+    await click(45, 30); await frames(); await click(45, 30); await frames();
+    await page.locator('.ovl [data-rot]').first().waitFor(); assert.equal(await page.locator('.ovl [data-rot]').count(), 4);
+    await settle338('.ovl');
+    const own = await exact338(120, 30), other = await exact338(45, 30);
+    await pivotRules338('.ovl', own, other, 'compare-light');
+    await pivotDrag338('.ovl', { x: other.x + 3, y: other.y + 2 });
+    near338(await pivotAt338('.ovl'), other, 'on the other item’s end again');
+    await pivotDrag338('.ovl', { x: other.x + 3, y: other.y + 2 }, { during: async () => {
+      await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Tab'); await page.keyboard.press('Tab'); await frames();
+      near338(await pivotAt338('.ovl'), other, 'Compare has no Tab cycle for any tool (snapObjectCandidates: d.cmp): the ◎ stays put');
+    } });
+    await turn338('.ovl', 23);
+    await page.locator('.tabs .dtab', { hasText: 'pivot-338-a' }).click();
+    sameGeometry338(await savedDoc(), rotateEntities(readDxf(writeDxf(a)), new Set([0]), [45, 30], 30));
+    await closeTabs(/./);
+  });
+
+  await step('TODO 339: the snap marker and its label are painted last, above a 3 mm line, on Drawings, Layouts and Compare', async () => {
+    const snapOn = await t('tog-snap').getAttribute('aria-pressed'), orthoOn = await t('tog-ortho').getAttribute('aria-pressed');
+    const theme = await page.locator('html').getAttribute('data-theme') || 'light';
+    const setChip = async (id, on) => { if (await t(id).getAttribute('aria-pressed') !== String(on)) await t(id).click(); };
+    // true when a green marker pixel sits within 2 px of the marker's right edge (x + 6 px), where the 3 mm line crosses it
+    const edgeGreen = (to) => t('drawing').evaluate((c, p) => {
+      const r = c.getBoundingClientRect(), k = c.width / r.width, x = Math.round((p.x - r.x + 6) * k), y = Math.round((p.y - r.y) * k), z = Math.ceil(2 * k);
+      const px = c.getContext('2d').getImageData(x - z, y - z, z * 2 + 1, z * 2 + 1).data;
+      return [...px.keys()].some((i) => i % 4 === 0 && px[i + 3] > 200 && px[i + 1] > px[i] + 60 && px[i + 1] > px[i + 2] + 60);       // green: the edge is 1.6 px wide, so a pixel may be a blend
+    }, to);
+    await page.evaluate(() => {
+      window.__ops339 = []; const P = CanvasRenderingContext2D.prototype; window.__p339 = { stroke: P.stroke, fill: P.fill, fillText: P.fillText, strokeText: P.strokeText };
+      for (const n of ['stroke', 'fill', 'fillText', 'strokeText']) P[n] = function (...a) { if (this.canvas.dataset.testid === 'drawing') window.__ops339.push(n === 'fillText' ? a[0] : n); return window.__p339[n].apply(this, a); };
+    });
+    const lastOp = () => page.evaluate(() => window.__ops339.at(-1));
+    const drag = async (from, target, sg = 1) => {       // sg -1: a layout's y points up, so the press goes inside the part
+      const p = await at(...from), q = await at(...target);
+      await page.mouse.move(p.x + 1, p.y + .5 * sg); await page.mouse.down();
+      await page.mouse.move(q.x + 2, q.y + sg, { steps: 6 }); await frames();
+      await page.mouse.move(q.x + 14, q.y + 7 * sg); await frames();       // off the snap, so the next move paints the marker afresh on every tab
+      await page.evaluate(() => { window.__ops339 = []; }); await page.mouse.move(q.x + 1, q.y + .5 * sg); await frames();
+      return q;
+    };
+    const proof = async (q, name) => {
+      assert.equal(await lastOp(), 'end', name + ': the kind label is the last thing painted');
+      assert.ok(await edgeGreen(q), name + ': the green marker edge shows where the 3 mm line crosses it');
+    };
+    try {
+      await setChip('tog-snap', true); await setChip('tog-ortho', false);
+      for (const colour of ['light', 'dark']) {
+        await menuItem('View', 'Theme: ' + colour);
+        const raw = newDoc(4);
+        addBlock(raw, 'Thick339', [dxfLine(20, 20, 60, 20, { lw: 300 })]);
+        addEntities(raw, dxfInsert('Thick339', 0, 0), dxfLine(100, 60, 100, 100, { lw: 300 }), dxfLine(100, 60, 130, 60, { lw: 300 }));
+        await openGrips(writeDxf(raw), 'thick-339.dxf');
+        await click(32, 20); await waitSel('1 selected');
+        const q = await drag([20, 20], [100, 60]);
+        await page.screenshot({ path: `${shotDir}/todo339-drawings-${colour}.png` });
+        await proof(q, 'Drawings ' + colour);
+        await page.mouse.up(); await closeTabs(/thick-339/);
+        // Layouts: a part dragged by its corner onto a corner of a part whose 8 mm edge crosses it
+        const lay = newLayout('Thick 339'), plate = addEntities(newDoc(4), dxfPoly([[0, 0], [100, 0], [100, 60], [0, 60]], { closed: true })), thick = addEntities(newDoc(4), dxfPoly([[0, 0], [100, 0], [100, 60], [0, 60]], { closed: true, lw: 800 }));
+        lay.parts.plate = makePart('plate', 'Plate', plate); lay.parts.thick = makePart('thick', 'Thick', thick);
+        lay.placed = [{ partId: 'plate', x: 200, y: 200, rot: 0 }, { partId: 'thick', x: 520, y: 400, rot: 0 }];
+        await t('picker').setInputFiles({ name: 'thick-339-lay.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
+        await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'thick-339-lay.dxf');
+        await page.locator('[data-tool=select]').click(); await click(240, 220);
+        const ql = await drag([200, 200], [520, 400], -1);
+        await page.screenshot({ path: `${shotDir}/todo339-layouts-${colour}.png` });
+        await proof(ql, 'Layouts ' + colour);
+        await page.mouse.up(); await closeTabs(/thick-339/);
+        // Compare: the dragged snapshot's own 3 mm line crosses the grabbed point
+        const rawc = newDoc(4);
+        addEntities(rawc, dxfLine(20, 20, 60, 20, { lw: 300 }), dxfLine(20, 20, 20, 60, { lw: 300 }));
+        await openGrips(writeDxf(rawc), 'thick-339-cmp.dxf');
+        await typeCmd('compare'); await t('cmp-item').first().waitFor();
+        const qc = await drag([20, 20], [100, 60]);
+        await page.screenshot({ path: `${shotDir}/todo339-compare-${colour}.png` });
+        await proof(qc, 'Compare ' + colour);
+        await page.mouse.up(); await closeTabs(/thick-339/);
+      }
+      console.log('339: the marker and label are the last paint on Drawings, Layouts and Compare');
+    } finally {
+      await page.mouse.up();
+      await page.evaluate(() => { Object.assign(CanvasRenderingContext2D.prototype, window.__p339); delete window.__p339; delete window.__ops339; });
+      await setChip('tog-snap', snapOn === 'true'); await setChip('tog-ortho', orthoOn === 'true');
+      await menuItem('View', 'Theme: ' + theme); await closeTabs(/thick-339/);
+    }
+  });
+  await step('TODO 340: hovering the selected object\'s own snap point shows the marker before a press (not with Alt or Snap off); a press 5 px off lands exactly, on Drawings, Layouts and Compare', async () => {
+    const snapOn = await t('tog-snap').getAttribute('aria-pressed');
+    const setChip = async (on) => { if (await t('tog-snap').getAttribute('aria-pressed') !== String(on)) await t('tog-snap').click(); };
+    await page.evaluate(() => {
+      window.__tags340 = []; window.__fill340 = CanvasRenderingContext2D.prototype.fillText;
+      CanvasRenderingContext2D.prototype.fillText = function (text, ...a) { if (this.canvas.dataset.testid === 'drawing') window.__tags340.push(text); return window.__fill340.call(this, text, ...a); };
+    });
+    // hover at p (px): the kind tags painted after that move
+    const hover = async (p, name) => { await page.mouse.move(p.x - 40, p.y - 40); await frames(); await page.evaluate(() => { window.__tags340 = []; }); await page.mouse.move(p.x, p.y); await frames(); return page.evaluate(() => [...window.__tags340]); };
+    const checks = async (p, name) => {
+      assert.ok((await hover({ x: p.x + 2, y: p.y + 1 })).includes('end'), name + ': hovering the own end shows the marker with its kind before any press');
+      await page.keyboard.down('Alt'); const alt = await hover({ x: p.x + 2, y: p.y + 1 }); await page.keyboard.up('Alt');
+      assert.ok(!alt.includes('end'), name + ': Alt held, no marker');
+      await setChip(false); const off = await hover({ x: p.x + 2, y: p.y + 1 }); await setChip(true);
+      assert.ok(!off.includes('end'), name + ': Snap off, no marker');
+      assert.ok(!(await hover({ x: p.x + 40, y: p.y + 30 })).includes('end'), name + ': away from the point, no marker');
+    };
+    try {
+      await setChip(true);
+      const a = [20.1234, 20.4321], b = [100.9876, 60.8765], raw = newDoc(4);
+      addBlock(raw, 'Own340', [dxfLine(...a, a[0] + 40, a[1])]);
+      addEntities(raw, dxfInsert('Own340', 0, 0), dxfLine(...b, b[0], b[1] + 40));
+      await openGrips(writeDxf(raw), 'own-340.dxf');
+      await click(a[0] + 12, a[1]); await waitSel('1 selected');
+      const pa = await at(...a);
+      await checks(pa, 'Drawings');
+      await page.mouse.move(pa.x + 5, pa.y); await page.mouse.down();       // 5 px along the line from its end
+      const to = await at(...b); await page.mouse.move(to.x + 2, to.y + 1, { steps: 6 }); await page.mouse.up();
+      const moved = await savedDoc(), off = [10, 20].map((code) => fieldOf(moved.entities[0], code));
+      for (let i = 0; i < 2; i++) assert.ok(Math.abs(a[i] + off[i] - b[i]) < 1e-9, 'Drawings: a press 5 px off the end lands the end exactly on the other point');
+      // Alt at the press on Drawings stays the 71c cycle (two objects meet at b): it cycles and starts no drag (R3-1)
+      const far = [b[0], b[1] + 40], pe = await at(...b), tf = await at(...far);
+      await page.keyboard.down('Alt'); await page.mouse.click(pe.x, pe.y); await page.keyboard.up('Alt');
+      await said(/\d of 2 objects here/);       // Alt+click on two overlapping objects cycles them (71c)
+      await page.keyboard.down('Alt'); await page.mouse.move(pe.x, pe.y); await page.mouse.down();
+      await page.mouse.move(tf.x, tf.y, { steps: 6 }); await page.mouse.up(); await page.keyboard.up('Alt');
+      const after = (await savedDoc()).entities.map((en) => [fieldOf(en, 10), fieldOf(en, 20)]);
+      assert.deepEqual(after[0], off, 'Drawings: an Alt press-and-drag cycles and moves nothing: the insert stays exactly where the first drag put it');
+      await closeTabs(/own-340/);
+      // a press on a selected circle's centre (not on the circle) still drags it from the centre (R2-2)
+      // 201 selected objects switch the grips off (MAX_SELECTED 200), so the press cannot go through gripDown: only the own-point path (ownSnap) can grab
+      const rawk = newDoc(4), tiny = [];
+      for (let i = 0; i < 201; i++) tiny.push(dxfLine(5 + (i % 21) * 13, 110 + Math.floor(i / 21) * 8, 7 + (i % 21) * 13, 110 + Math.floor(i / 21) * 8));
+      addEntities(rawk, dxfCircle(60.1234, 40.4321, 15), dxfLine(150.9876, 20.8765, 190, 20.8765), ...tiny);
+      await openGrips(writeDxf(rawk), 'own-340-circle.dxf');
+      const w0 = await at(1, 24), w1 = await at(280, 200);       // a window round the circle and the tiny lines, not the target line below it
+      await page.mouse.move(w0.x, w0.y); await page.mouse.down(); await page.mouse.move(w1.x, w1.y, { steps: 6 }); await page.mouse.up();
+      await waitSel('202 selected');
+      await frames(); assert.equal(await gripCount(), 0, 'Drawings: grips are off with 202 selected');
+      const pc = await at(60.1234, 40.4321), tc = await at(150.9876, 20.8765);
+      await page.mouse.move(pc.x + 3, pc.y + 1); await page.mouse.down(); await page.mouse.move(tc.x + 2, tc.y, { steps: 6 }); await page.mouse.up();
+      const circ = (await savedDoc()).entities.find((en) => en.type === 'CIRCLE');
+      assert.ok(Math.abs(fieldOf(circ, 10) - 150.9876) < 1e-9 && Math.abs(fieldOf(circ, 20) - 20.8765) < 1e-9, 'Drawings: a press 3 px off a selected circle\'s centre (grips off) drags it and lands the centre exactly on the other point: ' + [fieldOf(circ, 10), fieldOf(circ, 20)]);
+      await closeTabs(/own-340/);
+      const lay = newLayout('Own 340'), plate = addEntities(newDoc(4), dxfPoly([[0, 0], [100, 0], [100, 60], [0, 60]], { closed: true }));
+      lay.parts.plate = makePart('plate', 'Plate', plate);
+      lay.placed = [{ partId: 'plate', x: 200.1234, y: 200.4321, rot: 0 }, { partId: 'plate', x: 520.9876, y: 400.8765, rot: 0 }];
+      await t('picker').setInputFiles({ name: 'own-340-lay.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
+      await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'own-340-lay.dxf');
+      await page.locator('[data-tool=select]').click(); await click(400, 120); await click(240, 220);       // the empty click leaves a Rotate mode an earlier step left on
+      const pl0 = await at(200.1234, 200.4321);
+      await checks({ x: pl0.x, y: pl0.y - 1 }, 'Layouts');
+      // Alt at the press on Layouts grabs raw: the part moves by exactly the pointer's travel (60 px right, 30 px down), 5 px off the corner and no own-point grab
+      const mm = (await at(1, 0)).x - (await at(0, 0)).x;
+      await page.keyboard.down('Alt'); await page.mouse.move(pl0.x + 5, pl0.y - 2); await page.mouse.down();
+      await page.mouse.move(pl0.x + 65, pl0.y + 28, { steps: 6 }); await page.mouse.up(); await page.keyboard.up('Alt');
+      const alt0 = layoutFromRaw(await savedDoc()).placed[0];
+      assert.ok(Math.abs(alt0.x - (200.1234 + 60 / mm)) < 0.3 && Math.abs(alt0.y - (200.4321 - 30 / mm)) < 0.3, `Layouts: Alt at the press moves the part by the raw pointer travel, got ${alt0.x}, ${alt0.y}, wanted ${200.1234 + 60 / mm}, ${200.4321 - 30 / mm}`);
+      const pl = await at(alt0.x, alt0.y);
+      await page.mouse.move(pl.x + 5, pl.y - 2); await page.mouse.down();
+      const tl = await at(520.9876, 400.8765); await page.mouse.move(tl.x + 2, tl.y - 1, { steps: 6 }); await page.mouse.up();
+      const placed = layoutFromRaw(await savedDoc()).placed[0];
+      assert.deepEqual([placed.x, placed.y], [520.9876, 400.8765], 'Layouts: a press 5 px off the corner lands it exactly on the other corner');
+      await closeTabs(/own-340/);
+      const rawc = newDoc(4); addEntities(rawc, dxfLine(20, 20, 60, 20), dxfLine(20, 20, 20, 60));
+      await openGrips(writeDxf(rawc), 'own-340-cmp.dxf');
+      await typeCmd('compare'); await t('cmp-item').first().waitFor();
+      await checks(await at(20, 20), 'Compare');
+      console.log('340: own-point hover marker (Snap on, no Alt) and exact landing from 5 px off on Drawings and Layouts; Compare hover (one drawing has no drop target)');
+    } finally {
+      await page.mouse.up(); await page.keyboard.up('Alt');
+      await page.evaluate(() => { CanvasRenderingContext2D.prototype.fillText = window.__fill340; delete window.__fill340; delete window.__tags340; });
+      await setChip(snapOn === 'true'); await closeTabs(/own-340/);
     }
   });
   await step('command messages: an error sits above the visible hint with a selection and grips on', async () => {
@@ -17744,31 +18345,24 @@ try {
     }
   });
 
-  await step('Picture PDF: changing sheets keeps independent Undo and Redo and background scale', async () => {
+  await step('Picture PDF (TODO 330): all pages are one picture on one sheet: no sheet chips, the scale and Undo / Redo work on the whole picture', async () => {
     await closeTabs(/./);
-    page.once('dialog', (d) => d.accept('1'));
+    const asked = []; const onDialog = (d) => { asked.push(d.message()); d.dismiss(); }; page.on('dialog', onDialog);
     await t('bg-picker').setInputFiles({ name: 'picture-sheets.pdf', mimeType: 'application/pdf', buffer: Buffer.from(writePdf([new Page(80, 50), new Page(120, 90)])) });
     await page.waitForFunction(() => document.querySelector('[data-testid=bg-name]').textContent === 'picture-sheets.pdf');
-    const original = await sizeNow();
+    page.off('dialog', onDialog); assert.deepEqual(asked, [], 'a background PDF no longer asks which page');
+    const original = (await sizeNow()).map(Number);
+    assert.ok(Math.abs(original[0] - 210) < 0.5 && Math.abs(original[1] - 90) < 0.5, `both pages: ${original} mm, want 210 × 90`);
+    assert.equal(await t('sheet-chip').isVisible(), false, 'no sheet chip');
+    assert.equal(await page.locator('[data-sheet]').count(), 0, 'no per-page sheet buttons');
+    assert.equal(await t('undo').isDisabled(), true);
     await t('unit-up').click();
-    const enlarged = await sizeNow();
+    const enlarged = (await sizeNow()).map(Number);
+    original.forEach((v, i) => assert.ok(Math.abs(enlarged[i] - v * 25.4) < 0.2, `the whole picture scales: ${enlarged[i]} vs ${v * 25.4}`));       // the fields show 2 decimals: ×25.4 of a rounded value is off by up to 0.13
     assert.equal(await t('undo').isDisabled(), false);
-    await page.locator('[data-sheet="2"]').click();
-    await page.waitForFunction(() => document.querySelector('[data-testid=sheet-chip]').textContent === 'Sheet 2 / 2');
-    assert.equal(await t('undo').isDisabled(), true, 'unvisited sheet 2 has no history');
-    const before = await sizeNow();
-    await page.keyboard.press('Control+z'); assert.deepEqual(await sizeNow(), before, 'sheet 2 size stays put');
-    await t('unit-up').click(); await page.keyboard.press('Control+z');
-    assert.deepEqual(await sizeNow(), before, 'sheet 2 has its own working undo');
+    await page.keyboard.press('Control+z'); assert.deepEqual((await sizeNow()).map(Number), original, 'Undo takes the whole picture back');
     assert.equal(await t('redo').isDisabled(), false);
-    await page.locator('[data-sheet="1"]').click();
-    await page.waitForFunction(() => document.querySelector('[data-testid=sheet-chip]').textContent === 'Sheet 1 / 2');
-    assert.equal(await t('redo').isDisabled(), true, 'sheet 1 has no redo');
-    assert.deepEqual(await sizeNow(), enlarged, 'sheet 1 keeps its background scale');
-    await page.keyboard.press('Control+z'); assert.deepEqual(await sizeNow(), original, 'sheet 1 Undo still works');
-    await page.locator('[data-sheet="2"]').click();
-    await page.waitForFunction(() => document.querySelector('[data-testid=sheet-chip]').textContent === 'Sheet 2 / 2');
-    assert.equal(await t('redo').isDisabled(), false, 'sheet 2 redo stays with sheet 2');
+    await t('redo').click(); assert.deepEqual((await sizeNow()).map(Number), enlarged, 'Redo scales the whole picture again');
     await closeTabs(/./);
   });
 
@@ -17935,6 +18529,17 @@ try {
   });
 
   await step('Compare: tolerance is editable (bad values refused), Show differences hides the glow, a click on a difference zooms to it', async () => {
+    const onTab = page.locator('.tabs .dtab.on .tname');
+    if (!(await onTab.count()) || (await onTab.textContent()) !== 'Compare') {        // alone, the step before has not opened it (cmpSec stays hidden without a Compare tab)
+      await closeTabs(/./);
+      await t('picker').setInputFiles(plateDxf('plate-b.dxf', 30));
+      await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'plate-b.dxf');
+      await t('picker').setInputFiles(plateDxf('plate-c.dxf', 30.6));
+      await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'plate-c.dxf');
+      await page.locator('.tabs .dtab', { hasText: 'plate-b' }).click();
+      await menuItem('File', 'Compare drawings…');
+      await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'Compare');
+    }
     await t('cmp-tol').fill('1'); await t('cmp-tol').press('Enter');
     await t('cmp-run').click();
     await page.waitForFunction(() => document.querySelector('[data-testid=cmp-count]').textContent === 'No differences');
@@ -20739,6 +21344,110 @@ try {
     await page.keyboard.press('Escape');
   });
 
+  await step('TODO 331: Rotate background: pivot, typed angle, drag preview, Reference, Esc, one Ctrl+Z; Set length and Trace on the turned picture; File menu; no-background note', async () => {
+    mkdirSync('shots-331', { recursive: true });
+    await closeTabs(/./);
+    const W = 400 * 25.4 / 96, H = 200 * 25.4 / 96;                       // bg.png at 96 dpi, mm
+    const corners = (x, y, rot, w = W, h = H) => { const a = rot * Math.PI / 180, c = Math.cos(a), s = Math.sin(a); return [[0, 0], [w, 0], [w, h], [0, h]].map(([u, v]) => [x + u * c - v * s, y + u * s + v * c]); };
+    // the ink of the drawing canvas (the picture alone is on it), as a client box
+    const inkBox = () => t('drawing').evaluate((c) => {
+      const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data, r = c.getBoundingClientRect();
+      let x0 = 1e9, y0 = 1e9, x1 = -1, y1 = -1;
+      for (let y = 0; y < c.height; y++) for (let x = 0; x < c.width; x++) if (d[(y * c.width + x) * 4 + 3] > 0) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+      return x1 < 0 ? null : [r.x + x0 * r.width / c.width, r.y + y0 * r.height / c.height, r.x + (x1 + 1) * r.width / c.width, r.y + (y1 + 1) * r.height / c.height];
+    });
+    const inkIs = async (pts, what, tol = 4) => {
+      let got, want;
+      for (let i = 0; i < 40; i++) {
+        const cl = await Promise.all(pts.map(([x, y]) => at(x, y)));
+        want = [Math.min(...cl.map((p) => p.x)), Math.min(...cl.map((p) => p.y)), Math.max(...cl.map((p) => p.x)), Math.max(...cl.map((p) => p.y))];
+        got = await inkBox();
+        if (got && got.every((v, k) => Math.abs(v - want[k]) <= tol)) return;
+        await page.waitForTimeout(100);
+      }
+      assert.fail(`${what}: the picture is drawn in ${got && got.map((v) => v.toFixed(1))}, wanted ${want.map((v) => v.toFixed(1))}`);
+    };
+    const undo = async () => { await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z'); };
+
+    // no background: the note, from the command and from the File menu (right after Import background…)
+    await typeCmd('rotatebackground'); await said(/No background picture to rotate/);
+    const labels = Object.keys(await menuItems('File'));
+    assert.equal(labels[labels.indexOf('Import background…') + 1], 'Rotate background', 'File menu: right after Import background…');
+    await page.keyboard.press('Escape');
+    await menuItem('File', 'Rotate background'); assert.match(await prompt(), /No background picture to rotate/);
+
+    await t('new-tab').click();
+    await menuItem('File', 'Import background…');
+    await t('bg-picker').setInputFiles('fixtures/bg.png');
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on').textContent.startsWith('bg.png'));
+    await typeCmd('fit'); await inkIs(corners(0, 0, 0), 'unturned');
+    await waitSize('105.83', '52.92');
+
+    // typed 90 about a pivot outside the picture: the corner (0, 0) goes to (-20, 20), the picture is drawn turned
+    await typeCmd('rotatebackground'); await said(/^Pivot:/);
+    await typeCmd('-20,0'); await said(/^Angle: \[Reference \/ Esc\]/);        // no Copy for a picture
+    await typeCmd('c'); assert.match(await histLine(), /Copy is not offered/);
+    await typeCmd('90');
+    await inkIs(corners(-20, 20, 90), 'typed 90 about (-20, 0)');
+    await waitSize('105.83', '52.92');                                          // Size stays the picture's own
+    assert.match((await histLabels()).at(-1), /^Rotate background 90°/);
+    await undo(); await inkIs(corners(0, 0, 0), 'one Ctrl+Z restores it');
+
+    // the drag: the picture turns with the pointer; Esc leaves it unturned
+    await typeCmd('fit');
+    await typeCmd('rbg'); await typeCmd(`${W / 2},${H / 2}`);                  // the centre: the pivot and pointer marks stay inside the picture's box
+    const mid = await at(W / 2, H / 2); await page.mouse.move(mid.x, mid.y); for (let i = 0; i < 2; i++) await page.mouse.wheel(0, 400);
+    await hoverPreview(W / 2, H / 2 + 40);
+    await inkIs(corners(W / 2 + H / 2, H / 2 - W / 2, 90), 'the live preview at the pointer straight above the pivot');
+    await page.screenshot({ path: 'shots-331/rotate-background-drag-light.png' });
+    await page.keyboard.press('Escape');
+    await inkIs(corners(0, 0, 0), 'Esc leaves it unturned');
+    await typeCmd('fit');
+
+    // Reference with two typed points (45°), Esc half way, then the new angle 90: turned by 45
+    await typeCmd('rbg'); await typeCmd('0,0'); await typeCmd('r');
+    await said(/Specify the reference angle <0>:/);
+    await typeCmd('0,0'); await said(/second point/);
+    await page.keyboard.press('Escape'); await inkIs(corners(0, 0, 0), 'Esc mid-Reference');
+    await typeCmd('rbg'); await typeCmd('0,0'); await typeCmd('r'); await typeCmd('0,0'); await typeCmd('10,10');
+    await said(/Specify the new angle/); await typeCmd('90');
+    await inkIs(corners(0, 0, 45), 'Reference 45 → 90 turns by 45');
+
+    // Set length on the turned picture: two points on its bottom edge, 60 mm apart, typed 30 → half size, the corner stays
+    const e = Math.SQRT1_2;
+    await t('set-length').click(); await click(20 * e, 20 * e); await click(80 * e, 80 * e);
+    await page.waitForFunction(() => /[\d.]+ mm measured/.test(document.querySelector('[data-testid=measured]').textContent));
+    const measured = Number((await t('measured').textContent()).match(/([\d.]+) mm measured/)[1]);
+    assert.ok(Math.abs(measured - 60) < 0.5, 'the two clicks on the turned edge are 60 mm apart: ' + measured);
+    await t('real-length').fill('30'); await t('real-length').press('Enter');
+    const k = 30 / measured;
+    await page.waitForFunction(([w, h2]) => Math.abs(parseFloat(document.querySelector('[data-testid=dw]').value) - w) < 0.011 && Math.abs(parseFloat(document.querySelector('[data-testid=dh]').value) - h2) < 0.011, [W * k, H * k]);
+    await inkIs(corners(0, 0, 45, W * k, H * k), 'Set length scaled the turned picture about its corner');
+
+    // Trace on the turned picture: the outlines lie on it
+    await typeCmd('trace'); await t('trace-dialog').waitFor();
+    await page.waitForFunction(() => document.querySelector('[data-testid=trace-dialog]').dataset.state === 'ready', null, { timeout: 60000 });
+    await t('trace-apply').click();
+    await page.waitForFunction(() => /Trace: \d+ closed outlines? on the layer Trace/.test(document.querySelector('[data-testid=cmd-prompt]').textContent));
+    const doc = await savedDoc();
+    const own = corners(0, 0, 45, W * k, H * k), ux = [Math.cos(Math.PI / 4), Math.sin(Math.PI / 4)], uy = [-ux[1], ux[0]];
+    let all = 0, out = 0, xs = [], ys = [];
+    for (const ent of doc.entities) (ent.r || ent).c.forEach((code, i) => {
+      if (code !== 10) return;
+      const x = +(ent.r || ent).v[i], y = +(ent.r || ent).v[i + 1], u = x * ux[0] + y * ux[1], v = x * uy[0] + y * uy[1];
+      all++; xs.push(x); ys.push(y);
+      if (u < -1 || u > W * k + 1 || v < -1 || v > H * k + 1) out++;
+    });
+    assert.ok(all >= 4, 'traced points: ' + all); assert.equal(out, 0, 'every traced point lies on the turned picture');
+    assert.ok(Math.abs(Math.min(...ys) - 0) < 1 && Math.abs(Math.max(...ys) - Math.max(...own.map((p) => p[1]))) < 1, 'the outlines span the turned picture: y ' + [Math.min(...ys), Math.max(...ys)]);
+    assert.ok(Math.abs(Math.min(...xs) - Math.min(...own.map((p) => p[0]))) < 1 && Math.abs(Math.max(...xs) - Math.max(...own.map((p) => p[0]))) < 1, 'and x ' + [Math.min(...xs), Math.max(...xs)]);
+    await page.screenshot({ path: 'shots-331/rotate-background-light.png' });
+    await menuItem('View', 'Theme: dark'); await page.waitForTimeout(250);
+    await page.screenshot({ path: 'shots-331/rotate-background-dark.png' });
+    await menuItem('View', 'Theme: light'); await page.waitForTimeout(100);
+    await closeTabs(/bg\.png|bg\.dxf/);
+  });
+
   await step('TODO 66a: Move', async () => {
     await menuItem('View', 'Theme: light');
     const raw = newDoc(4);
@@ -22670,7 +23379,7 @@ try {
       dxfLine(50, 0, 51, 1, { layer: 'Later' }), dxfLine(51, 1, 52, 2, { layer: 'Later' }));
     await t('picker').setInputFiles({ name: 'draw-limit.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(doc, { extents: [0, 0, 52, 2] }), 'latin1') });
     await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'draw-limit.dxf');
-    await t('ptab-drawing').click();
+    await t('ptab-objects').click();                                     // the layer rows are drawn when this tab opens
     const later = page.locator('.layer[data-file-layer]', { hasText: 'Later' });
     assert.equal(await later.locator('.lbl').textContent(), '2');
     assert.equal(await t('entities').textContent(), 'Entities 3');
@@ -22807,15 +23516,15 @@ try {
     await page.waitForFunction(() => document.querySelector('.or.layer .onm').textContent === 'Cut');
   });
 
-  await step('Objects tab: a layer with hundreds of objects lists the first 500 and "Show … more"', async () => {
+  await step('Objects tab: a layer with hundreds of objects lists the first 200 and "Show … more"', async () => {
     const doc = newDoc(4);
-    addEntities(doc, ...Array.from({ length: 620 }, (_, i) => dxfLine(0, i % 300, 10 + (i % 7), i % 300, { layer: 'Cut' })));
+    addEntities(doc, ...Array.from({ length: 250 }, (_, i) => dxfLine(0, i % 300, 10 + (i % 7), i % 300, { layer: 'Cut' })));
     await openGrips(writeDxf(doc), 'many.dxf');
     await t('ptab-objects').click();
-    assert.equal(await page.locator('[data-testid=obj-tree] .or.obj').count(), 500);
-    assert.match(await t('obj-count').textContent(), /^620 objects · 2 layers$/);
+    assert.equal(await page.locator('[data-testid=obj-tree] .or.obj').count(), 200);
+    assert.match(await t('obj-count').textContent(), /^250 objects · 2 layers$/);
     await page.locator('.or.more').click();
-    assert.equal(await page.locator('[data-testid=obj-tree] .or.obj').count(), 620);
+    assert.equal(await page.locator('[data-testid=obj-tree] .or.obj').count(), 250);
     assert.equal(await page.locator('.or.more').count(), 0);
   });
 
@@ -22861,6 +23570,28 @@ try {
     await show(); await page.waitForTimeout(250); await page.screenshot({ path: `${shotDir}/s8-objects-light.png` }); await page.keyboard.press('Escape');
     await menuItem('View', 'Theme: dark'); await show(); await page.waitForTimeout(300); await page.screenshot({ path: `${shotDir}/s8-objects-dark.png` }); await page.keyboard.press('Escape');
     await menuItem('View', 'Theme: light'); await t('ptab-drawing').click();
+    await closeTabs(/./);
+  });
+
+  await step('TODO 325: Objects tab: layer change while hidden does not render; open is fast', async () => {
+    const doc = newDoc(4);
+    addEntities(doc, ...Array.from({ length: 620 }, (_, i) => dxfLine(0, i % 300, 10 + (i % 7), i % 300, { layer: 'Cut' })), dxfLine(0, 0, 5, 5, { layer: 'Engrave' }));
+    await openGrips(writeDxf(doc), 'many325.dxf');
+    // a redraw of the tree replaces the children of obj-tree (a pick only toggles classes): the observer counts them
+    await page.evaluate(() => { window.__objDraws = 0; new MutationObserver((r) => { window.__objDraws += r.length; }).observe(document.querySelector('[data-testid=obj-tree]'), { childList: true }); });
+    const draws = () => page.evaluate(() => { const n = window.__objDraws; window.__objDraws = 0; return n; });
+    await draws();
+    await t('ptab-objects').click();
+    assert.equal(await draws(), 1, 'the first open of a drawing builds the tree once (its open layer is set before the sig)');
+    await t('ptab-drawing').click();
+    await page.getByRole('combobox', { name: 'Current layer', exact: true }).selectOption('Engrave');
+    assert.equal(await draws(), 0, 'a layer change with the Objects tab hidden draws no tree');
+    await t('ptab-objects').click();
+    assert.equal(await draws(), 1, 'the tree is drawn once, on open');
+    assert.deepEqual(await page.locator('[data-testid=obj-tree] .or.layer.cur .onm').allTextContents(), ['Engrave'], 'the change shows on open');
+    await t('ptab-drawing').click(); await t('ptab-objects').click();
+    assert.equal(await draws(), 0, 'reopened with nothing changed: the tree (and its 620-object walk) is not rebuilt');
+    await t('ptab-drawing').click();
     await closeTabs(/./);
   });
 
@@ -23441,39 +24172,27 @@ try {
     } finally { await context.close(); }
   });
 
-  await step('TODO 253b: PDF page prompt Cancel imports nothing; invalid input falls back to page 1', async () => {
+  await step('TODO 253b / 330: a picture-only two-page PDF opened as a background asks no page: both pages in one picture', async () => {
     const pdf = [...writePdf([new Page(80, 50), new Page(120, 90)])];
-    for (const [answer, expected] of [[null, null], ['', 1], ['bad', 1], ['0', 1], ['-3', 1], ['2', 2], ['99', 2]]) {
-      const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
-      const p = await context.newPage();
-      p.on('pageerror', (e) => errors.push(String(e)));
-      try {
-        await p.addInitScript(({ answer, pdf }) => {
-          window.__pagePrompts = [];
-          window.prompt = (message, value) => { window.__pagePrompts.push([message, value]); return answer; };
-          window.__TAURI__ = { dialog: { open: async () => 'C:/jobs/pages.pdf', ask: async () => true },
-            fs: { readFile: async () => new Uint8Array(pdf) } };
-        }, { answer, pdf });
-        await p.goto(URL_ + '?autosave=86400000');
-        await p.getByTestId('count').waitFor({ state: 'attached' });
-        const before = await p.locator('.dtab .tname').allTextContents();
-        await p.getByTestId('open').click();
-        // the expected note text (empty after Cancel), wrapped so the empty string is truthy
-        const shown = await (await p.waitForFunction((expected) => {
-          const s = document.querySelector('[data-testid=cmd-prompt]').textContent;
-          return window.__pagePrompts.length && (expected === null ? s === '' : s.includes(`page ${expected} of 2, true size from the PDF`)) && { s };
-        }, expected)).jsonValue();
-        assert.deepEqual(await p.evaluate(() => window.__pagePrompts), [['pages.pdf has 2 pages. Which page?', '1']]);
-        if (expected === null) {
-          assert.deepEqual(await p.locator('.dtab .tname').allTextContents(), before);
-          assert.equal(shown.s, '');
-          assert.equal(await p.getByTestId('bg-name').textContent(), '');
-        } else {
-          assert.match(shown.s, new RegExp(`page ${expected} of 2, true size from the PDF`));
-          assert.equal(await panelControl(p, p.getByTestId('bg-name')).textContent(), 'pages.pdf');
-        }
-      } finally { await context.close(); }
-    }
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const p = await context.newPage();
+    p.on('pageerror', (e) => errors.push(String(e)));
+    try {
+      await p.addInitScript(({ pdf }) => {
+        window.__pagePrompts = [];
+        window.prompt = (message, value) => { window.__pagePrompts.push([message, value]); return '2'; };
+        window.__TAURI__ = { dialog: { open: async () => 'C:/jobs/pages.pdf', ask: async () => true },
+          fs: { readFile: async () => new Uint8Array(pdf) } };
+      }, { pdf });
+      await p.goto(URL_ + '?autosave=86400000');
+      await p.getByTestId('count').waitFor({ state: 'attached' });
+      await p.getByTestId('open').click();
+      await p.waitForFunction(() => document.querySelector('[data-testid=cmd-prompt]').textContent.includes('all 2 pages side by side, true size from the PDF'));
+      assert.deepEqual(await p.evaluate(() => window.__pagePrompts), [], 'no "Which page?"');
+      assert.equal(await panelControl(p, p.getByTestId('bg-name')).textContent(), 'pages.pdf');
+      const w = Number(await p.getByTestId('dw').inputValue());
+      assert.ok(Math.abs(w - 210) < 0.5, `both pages: ${w} mm wide, want 210`);
+    } finally { await context.close(); }
   });
 
   await step('TODO 253b: reopening matches both drawing paths and skips PDF backgrounds', async () => {
@@ -24610,6 +25329,7 @@ try {
     await undo(); assert.equal(await nParts(), n0 + 1, 'one Undo takes the circle away');
     await page.keyboard.press('Control+y'); assert.equal(await nParts(), n0 + 2, 'Redo brings it back');
     // layers: the Layers panel lists the layer of the objects; + Add makes a new current layer that the next shape goes on
+    await t('ptab-objects').click();                                     // the layer rows are drawn when this tab opens
     assert.equal(await page.locator('.layer', { hasText: '0' }).locator('[data-testid=layer-current]').count(), 1);
     await t('layer-add').click();
     assert.equal(await page.locator('.layer.current .nm, .layer.current input').count() > 0, true, 'a new current layer');
@@ -26774,8 +27494,10 @@ try {
         await work(area);
         assert.equal(await q('canvas').evaluate((el) => getComputedStyle(el).backgroundColor), background);
         assert.equal(await p.locator('body').evaluate((el) => getComputedStyle(el).backgroundColor), appBg);
+        await q('ptab-objects').click();                                   // the layer rows are drawn when this tab opens (TODO 325)
         const swatch = await p.locator('.layer[data-file-layer] .swatch').first().evaluate((el) => getComputedStyle(el).backgroundColor.match(/\d+/g).slice(0, 3).map(Number));
         assert.equal(Math.max(...swatch) > 128, app === 'dark', 'layer "0" swatch contrasts with the app-themed panel, not the work area');
+        await q('ptab-drawing').click();
         assert.ok(await pixels(ink) > 400, 'ACI 7 and black / white drawing lines contrast with the work area');
         assert.ok(await pixels(area === 'Dark' ? 'ffffff' : '000000') > 400, 'both white / ACI 7 and black lines remain visible');
         if (await q('gap-show').getAttribute('aria-pressed') === 'false') { await q('gap-show').click(); await frame(); } // TODO 92: rings start off per drawing
@@ -28094,7 +28816,7 @@ try {
             assert.equal(await drawing.getAttribute('data-snap'), '1', `${kind} ${gesture}: the gesture uses the kept picture`);
             assert.equal(await paints(), before, `${kind} ${gesture}: no full paint during the burst`);
             await p.waitForFunction(() => document.querySelector('[data-testid=drawing]').dataset.snap === '', null, { timeout: 5000 });
-            assert.equal(await paints(), before + 1, `${kind} ${gesture}: exactly one full paint after settling`);
+            assert.equal(await paints(), before + (gesture === 'pan' ? 0 : 1), `${kind} ${gesture}: ${gesture === 'pan' ? 'no full paint after settling (the kept picture is shifted, TODO 324a)' : 'exactly one full paint after settling'}`);
             assert.ok(Number(await drawing.getAttribute('data-drawn')) > 0, `${kind} ${gesture}: settled artwork is drawn`);
           }
           const path = `${shotDir}/p7a-${kind.toLowerCase()}-${theme}.png`;
@@ -28102,6 +28824,195 @@ try {
           assert.ok(readFileSync(path).length > 1000, 'required screenshot exists');
         }
         console.log(`P7a ${kind}: 20k fixture, light/dark pan and wheel reuse; zero burst paints, one settle paint`);
+      } finally { await ctx.close(); }
+    }
+  });
+
+  await step('TODO 324a: a pan end shifts the kept picture and paints only the exposed strip (Drawings, Layout, Compare)', async () => {
+    const buffer = Buffer.from(writeDxf(bigDoc(150000)));
+    for (const [kind, dpr] of [['Drawings', 1], ['Layout', 1], ['Compare', 1], ['Drawings', 1.25], ['Compare', 1.25]]) {       // 1.25: a pan of n css px is a whole number of device px only when n is a multiple of 4 (review of 324a)
+      const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light', deviceScaleFactor: dpr });
+      try {
+        const p = await ctx.newPage(), drawing = p.getByTestId('drawing'), errors = [];
+        p.on('pageerror', (e) => errors.push(String(e)));
+        await p.route('**/app.js', (route) => route.fulfill({ contentType: 'text/javascript', body: readFileSync('web/app.js', 'utf8') + '\nwindow.t324 = () => paintOverlay();' }));
+        const frame = () => p.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+        const paints = async () => Number(await drawing.getAttribute('data-paints'));
+        const menu = async (top, name) => { await p.locator(`[data-menu=${top}]`).click(); await p.getByRole('menuitem', { name, exact: true }).click({ timeout: 120000 }); };
+        const open = async (name) => {
+          await p.getByTestId('picker').setInputFiles({ name, mimeType: 'text/plain', buffer });
+          await p.waitForFunction((n) => document.querySelector('.dtab.on .tname').textContent === n, name, { timeout: 120000 });
+          await frame();
+        };
+        const settled = () => p.waitForFunction(() => document.querySelector('[data-testid=drawing]').dataset.snap === '', null, { timeout: 10000 });
+        // the pixels of the strip [x0, y0, x1, y1] (css px = device px here): how many are not transparent, and a hash of them
+        const strip = (r) => drawing.evaluate((c, [x0, y0, x1, y1]) => {
+          const d = c.getContext('2d').getImageData(x0, y0, x1 - x0, y1 - y0).data; let on = 0, sum = 0;
+          for (let i = 3; i < d.length; i += 4) if (d[i]) { on++; sum = (sum * 31 + d[i - 3] + 7 * d[i - 2] + 13 * d[i - 1] + 17 * d[i]) % 1000003; }
+          return { on, sum };
+        }, r);
+        // the picture the pan end left, then a full paint of the same view (nokeep: no kept base, no kept picture): they must agree
+        const sameAsFull = async (label) => {
+          const before = await paints();
+          await drawing.evaluate((c) => { window.__A = c.getContext('2d').getImageData(0, 0, c.width, c.height); c.dataset.nokeep = '1'; });
+          await p.evaluate(() => window.t324()); await frame();
+          assert.equal(await paints(), before + 1, `${label}: the check itself is one full paint`);
+          const diff = await drawing.evaluate((c) => {
+            const a = window.__A, b = c.getContext('2d').getImageData(0, 0, c.width, c.height);
+            delete c.dataset.nokeep; delete window.__A;
+            let n16 = 0, n48 = 0;
+            for (let i = 0; i < a.data.length; i += 4) { let mx = 0; for (let j = 0; j < 4; j++) mx = Math.max(mx, Math.abs(a.data[i + j] - b.data[i + j])); if (mx > 16) n16++; if (mx > 48) n48++; }
+            return { n16, n48, total: c.width * c.height };
+          });
+          // Not byte-equal: the lines are stroked in batches of up to 5000 items, and a batch ends at other items in another view, so where lines overlap the antialiasing adds up differently (a few pixels, a few levels).
+          // A shift off by one pixel, a missing strip or a wrong colour is thousands of pixels.
+          assert.ok(diff.n16 <= diff.total * 0.004 && diff.n48 <= diff.total * 0.002, `${label}: the shifted picture equals a full paint (${diff.n16} pixels over 16 levels apart, ${diff.n48} over 48, of ${diff.total})`);
+          console.log(`324a ${label}: ${diff.n16} pixels over 16 levels apart, ${diff.n48} over 48, of ${diff.total}`);
+        };
+        await p.goto(URL_ + '?autosave=86400000');
+        await p.waitForSelector('[data-testid=count]', { state: 'attached' });
+        await open('t324-big.dxf');
+        if (kind === 'Layout') { await menu('Layout', 'Add to layout'); await p.locator('.tabs .dtab').first().click(); await menu('Layout', 'Add to layout'); }
+        if (kind === 'Compare') { await open('t324-other.dxf'); await menu('File', 'Compare drawings…'); }
+        await p.getByTestId('canvas').getByRole('button', { name: 'Fit', exact: true }).click(); await frame();
+        const b = await p.getByTestId('canvas').boundingBox(), cx = b.x + b.width / 2, cy = b.y + b.height / 2;
+        // the box of what is drawn, in canvas px: zoomed in on its middle until it fills the canvas, so a pan exposes drawing
+        const inkBox = () => drawing.evaluate((c) => {
+          const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let x0 = c.width, y0 = c.height, x1 = 0, y1 = 0;
+          for (let i = 3, n = c.width * c.height * 4; i < n; i += 4) if (d[i]) { const q = i >> 2, x = q % c.width, y = (q - x) / c.width; if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+          return { x0, y0, x1, y1, w: c.width, h: c.height };
+        });
+        let ink = await inkBox();
+        await p.mouse.move(b.x + (ink.x0 + ink.x1) / 2, b.y + (ink.y0 + ink.y1) / 2); await frame();
+        // a layout part is small on its sheet and a zoomed view of it is not heavy any more: it is panned out of the canvas and back instead
+        const out = kind === 'Layout', pans = out ? [[26, 8], [-26, -8]] : dpr === 1 ? [[7, 5], [-9, -6]] : [[7.1, 5.1], [-9.1, -6.1]];       // at 1.25 a total that is not a multiple of 4 css px
+        for (let i = 0; !out && i < 20 && (ink.x0 > 4 || ink.y0 > 4 || ink.x1 < ink.w - 5 || ink.y1 < ink.h - 5); i++) { await p.mouse.wheel(0, -100); await frame(); await settled(); ink = await inkBox(); }
+        assert.ok(Number(await drawing.getAttribute('data-drawn')) > (out ? 5000 : 15000), `${kind}: the view is heavy (${await drawing.getAttribute('data-drawn')} items drawn; a layout part is small on its sheet, the 150000 items still make the paint slow)`);
+        ink = await inkBox();
+        const w = await drawing.evaluate((c) => c.width), h = await drawing.evaluate((c) => c.height), R = Math.round(20 * Math.abs(pans[1][0]) * dpr), V = Math.round(20 * Math.abs(pans[1][1]) * dpr);
+        const pan = async (label, sx, sy) => {
+          const before = await paints();
+          await p.mouse.move(cx, cy); await frame();
+          await p.mouse.down({ button: 'middle' });
+          for (let i = 1; i <= 20; i++) { await p.mouse.move(cx + i * sx, cy + i * sy); await frame(); }
+          await p.mouse.up({ button: 'middle' });
+          await frame();
+          assert.equal(await drawing.getAttribute('data-snap'), '1', `${label}: the burst moves the kept picture`);
+          await settled();
+          assert.equal(await drawing.getAttribute('data-pan'), '1', `${label}: the pan end shifted the kept picture`);
+          assert.equal(await paints(), before, `${label}: no full paint at the pan end`);
+        };
+        await pan(`${kind} pan right and down`, ...pans[0]);               // the strips: a band on the left, a band on the top
+        const left = await strip([0, Math.round(20 * pans[0][1] * dpr), Math.round(20 * pans[0][0] * dpr), h]);
+        if (ink.x0 <= 4) assert.ok(left.on > 200, `${kind}: the exposed strip holds drawing (${left.on} pixels)`);       // when the drawing runs past that edge of the view
+        if (!out) await sameAsFull(`${kind} pan 1`);                       // a layout's full paint out here is light (the part is mostly out of the canvas): it would drop the kept base the pan back needs
+        await pan(`${kind} pan left and up`, ...pans[1]);                  // strips on the right and the bottom, on top of the picture kept by the first pan
+        const right = await strip([w - R, V, w, h - V]);
+        if (out ? ink.x1 > w - R + 40 : ink.x1 >= w - 5) assert.ok(right.on > 200, `${kind}: the exposed right strip holds drawing (${right.on} pixels)`);
+        await sameAsFull(`${kind} pan 2`);
+        if (kind === 'Drawings') {                                          // an object drawn into the strip shows, and the next pan still equals a full paint
+          const was = await strip([30, 200, 120, 400]), n = await p.getByTestId('entities').textContent();
+          await p.locator('[data-tool=line]').first().click();
+          await p.mouse.click(b.x + 40, b.y + 220); await p.mouse.click(b.x + 110, b.y + 380); await p.keyboard.press('Escape'); await frame();
+          assert.notEqual(await p.getByTestId('entities').textContent(), n, 'the line was added');
+          assert.notDeepEqual(await strip([30, 200, 120, 400]), was, 'the new line shows');
+          await p.locator('[data-tool=select]').first().click(); await frame();
+          await pan('Drawings pan after the edit', 6, -4);
+          await sameAsFull('Drawings pan 3');
+        }
+        assert.deepEqual(errors, [], `${kind}: no page errors`);
+        const path = `${shotDir}/t324a-${kind.toLowerCase()}${dpr === 1 ? '' : '-dpr' + dpr}-light.png`;
+        await p.screenshot({ path });
+        assert.ok(readFileSync(path).length > 1000, 'required screenshot exists');
+        console.log(`324a ${kind}: pan end shifts, strips ${left.on} / ${right.on} px, no full paint`);
+      } finally { await ctx.close(); }
+    }
+  });
+
+  await step('TODO 324b: a zoom end paints the sharp base in bands under the scaled picture (Drawings, Layout, Compare)', async () => {
+    const buffer = Buffer.from(writeDxf(bigDoc(150000)));
+    for (const [kind, dpr] of [['Drawings', 1], ['Layout', 1], ['Compare', 1], ['Drawings', 1.25]]) {       // 1.25: a band edge is a whole device px, its origin a fraction of a css px
+      const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light', deviceScaleFactor: dpr });
+      try {
+        const p = await ctx.newPage(), drawing = p.getByTestId('drawing'), errors = [];
+        p.on('pageerror', (e) => errors.push(String(e)));
+        await p.route('**/app.js', (route) => route.fulfill({ contentType: 'text/javascript', body: readFileSync('web/app.js', 'utf8') + '\nwindow.t324 = () => paintOverlay();' }));
+        const frame = () => p.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+        const paints = async () => Number(await drawing.getAttribute('data-paints'));
+        const menu = async (top, name) => { await p.locator(`[data-menu=${top}]`).click(); await p.getByRole('menuitem', { name, exact: true }).click({ timeout: 120000 }); };
+        const open = async (name) => {
+          await p.getByTestId('picker').setInputFiles({ name, mimeType: 'text/plain', buffer });
+          await p.waitForFunction((n) => document.querySelector('.dtab.on .tname').textContent === n, name, { timeout: 120000 });
+          await frame();
+        };
+        const settled = () => p.waitForFunction(() => { const c = document.querySelector('[data-testid=drawing]'); return c.dataset.snap === '' && c.dataset.chunk === ''; }, null, { timeout: 20000 });
+        const bands = () => p.evaluate(() => window.__bands);
+        // the picture the zoom end left, then a full paint of the same view (nokeep): they must agree (same tolerance as the pan end of 324a)
+        const sameAsFull = async (label) => {
+          const before = await paints();
+          await drawing.evaluate((c) => { window.__A = c.getContext('2d').getImageData(0, 0, c.width, c.height); c.dataset.nokeep = '1'; });
+          await p.evaluate(() => window.t324()); await frame();
+          assert.equal(await paints(), before + 1, `${label}: the check itself is one full paint`);
+          const diff = await drawing.evaluate((c) => {
+            const a = window.__A, b = c.getContext('2d').getImageData(0, 0, c.width, c.height);
+            delete c.dataset.nokeep; delete window.__A;
+            let n16 = 0, n48 = 0, ink = 0;
+            for (let i = 0; i < a.data.length; i += 4) { let mx = 0; for (let j = 0; j < 4; j++) mx = Math.max(mx, Math.abs(a.data[i + j] - b.data[i + j])); if (mx > 16) n16++; if (mx > 48) n48++; if (b.data[i + 3]) ink++; }
+            return { n16, n48, ink, total: c.width * c.height };
+          });
+          assert.ok(diff.ink > diff.total * 0.01, `${label}: the full paint holds drawing (${diff.ink} pixels)`);
+          assert.ok(diff.n16 <= diff.total * 0.004 && diff.n48 <= diff.total * 0.002, `${label}: the zoom end equals a full paint (${diff.n16} pixels over 16 levels apart, ${diff.n48} over 48, of ${diff.total})`);
+          console.log(`324b ${label}: ${diff.n16} pixels over 16 levels apart, ${diff.n48} over 48, of ${diff.total}`);
+        };
+        await p.goto(URL_ + '?autosave=86400000');
+        await p.waitForSelector('[data-testid=count]', { state: 'attached' });
+        await open('t324b-big.dxf');
+        if (kind === 'Layout') { await menu('Layout', 'Add to layout'); await p.locator('.tabs .dtab').first().click(); await menu('Layout', 'Add to layout'); }
+        if (kind === 'Compare') { await open('t324b-other.dxf'); await menu('File', 'Compare drawings…'); }
+        await p.getByTestId('canvas').getByRole('button', { name: 'Fit', exact: true }).click(); await frame();
+        assert.ok(Number(await drawing.getAttribute('data-drawn')) > (kind === 'Layout' ? 5000 : 15000), `${kind}: the view is heavy (${await drawing.getAttribute('data-drawn')} items drawn)`);
+        // every start of the bands: was the scaled picture on screen (not blank) at that moment
+        await drawing.evaluate((c) => {
+          window.__bands = { starts: 0, blank: 0 };
+          new MutationObserver(() => {
+            if (c.dataset.chunk !== '1') return;
+            window.__bands.starts++;
+            const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let on = 0;
+            for (let i = 3; i < d.length && !on; i += 4) if (d[i]) on = 1;
+            if (!on) window.__bands.blank++;
+          }).observe(c, { attributes: true, attributeFilter: ['data-chunk'] });
+        });
+        const b = await p.getByTestId('canvas').boundingBox(), cx = b.x + b.width / 2, cy = b.y + b.height / 2;
+        await p.mouse.move(cx, cy); await frame();
+        let before = await paints();
+        for (let i = 0; i < 2; i++) { await p.mouse.wheel(0, -100); await frame(); }
+        assert.equal(await drawing.getAttribute('data-snap'), '1', `${kind}: the burst uses the kept picture`);
+        assert.equal(await paints(), before, `${kind}: no full paint during the burst`);
+        await settled();
+        assert.equal(await paints(), before + 1, `${kind}: one paint after the zoom`);
+        assert.equal((await bands()).starts, 1, `${kind}: the sharp paint ran in bands`);
+        await sameAsFull(`${kind} zoom end`);
+        // a wheel turn while the bands run: they stop, the next zoom end's picture is the one of the last view
+        before = await paints();
+        await p.mouse.wheel(0, -100); await frame();
+        const at = await drawing.evaluate(async (c, [x, y]) => {
+          for (let i = 0; i < 300 && c.dataset.chunk !== '1'; i++) await new Promise((r) => requestAnimationFrame(r));
+          const was = c.dataset.chunk;
+          c.dispatchEvent(new WheelEvent('wheel', { deltaY: -100, clientX: x, clientY: y, bubbles: true, cancelable: true }));
+          return was;
+        }, [cx, cy]);
+        assert.equal(at, '1', `${kind}: the wheel came while the bands ran`);
+        await frame();
+        assert.equal(await drawing.getAttribute('data-chunk'), '', `${kind}: the wheel stopped the bands`);
+        await settled();
+        assert.equal((await bands()).starts, 3, `${kind}: the last zoom end ran its bands`);
+        assert.equal((await bands()).blank, 0, `${kind}: the scaled picture was on screen whenever the bands began`);
+        await sameAsFull(`${kind} zoom end after a wheel during the bands`);
+        assert.deepEqual(errors, [], `${kind}: no page errors`);
+        const path = `${shotDir}/t324b-${kind.toLowerCase()}${dpr === 1 ? '' : '-dpr' + dpr}-light.png`;
+        await p.screenshot({ path });
+        assert.ok(readFileSync(path).length > 1000, 'required screenshot exists');
+        console.log(`324b ${kind} dpr ${dpr}: zoom end in bands, scaled picture stayed, a wheel during them leaves no stale chunk`);
       } finally { await ctx.close(); }
     }
   });
@@ -28327,9 +29238,11 @@ try {
       await p.keyboard.press('Enter'); await frame();
       await p.mouse.click(at.x, at.y); await frame(); await p.mouse.move(at.x + 30, at.y + 10); await frame();
       paints0 = await paints(); index0 = await indexes();
+      await p.evaluate(() => { window.t322Quick = 0; new MutationObserver((rs) => { rs.forEach((r, i) => { if ((rs[i + 1] ? rs[i + 1].oldValue : r.target.dataset.quick) === '1') window.t322Quick++; }); }).observe(document.querySelector('[data-testid=drawing]'), { attributes: true, attributeOldValue: true, attributeFilter: ['data-quick'] }); });       // each record's new value is the next record's old value
       await p.mouse.click(at.x + 30, at.y + 10); await frame(); await p.waitForTimeout(1500); await frame();
       assert.equal((await labels()).length, steps + 1, 'the Stretch finish is one undo step');
-      assert.ok(await paints() - paints0 <= 1, `a Stretch finish does at most one full paint, did ${await paints() - paints0}`);
+      const quick = await p.evaluate(() => window.t322Quick), full = await paints() - paints0 - quick;
+      assert.ok(quick <= 1 && full <= 1, `a Stretch finish does at most one quick frame and one full paint (the quick frame counted apart: TODO 322c), did ${quick} quick and ${full} full`);
       assert.ok(await indexes() - index0 <= 1, `a Stretch finish rebuilds the index at most once, did ${await indexes() - index0}`);
       await pixels('Stretch finish');
       const { splineDoc } = await import('./tools/gen-big-dxf.mjs');
@@ -28680,8 +29593,9 @@ try {
       }
       const results = await interact(p, buffer, 'lag-spline.dxf');
       const budgets = { open: [822680, 2], 'Measure hover': [16453720, 40], 'Line hover': [16453720, 40],
-        'select click': [411797, 1], Delete: [410883, 1], 'Ctrl+Z': [411340, 1], wheel: [411340, 1], pan: [411340, 1] };
+        'select click': [411797, 1], Delete: [410883, 1], 'Ctrl+Z': [411340, 1], wheel: [411340, 1], pan: [411340, 1], 'draw zoom in': [411340, 1] };
       assert.deepEqual(results.map((r) => r.action), Object.keys(budgets));
+      assert.equal(typeof results[0].inject?.longTotal, 'number', 'open splits the picker injection (TODO 322e) into its inject field');
       for (const r of results) {
         const [lineTo, paints] = budgets[r.action];
         assert.ok(r.lineTo <= lineTo, `${r.action}: lineTo ${r.lineTo} exceeds ${lineTo}`);
@@ -28724,14 +29638,15 @@ try {
     const within = (r, budgets) => { for (const [action, paints] of Object.entries(budgets)) assert.ok(r[action].paints <= paints, `${action}: full paints ${r[action].paints} exceeds ${paints}`); };
     const big = Buffer.from(writeDxf(bigDoc(20000)));
     const lay = await flow((p) => interactLayout(p, big, 'lag-big.dxf', 2));
-    assert.deepEqual(Object.keys(lay), ['open', 'Add to layout x 3', 'Layout wheel', 'Layout pan', 'Layout Measure hover', 'Layout Line hover', 'Layout part click', 'Layout part drag', 'Layout undo', 'Layout sheet size', 'Layout Apply']);
+    assert.deepEqual(Object.keys(lay), ['open', 'Add to layout x 3', 'Layout wheel', 'Layout pan', 'Layout zoom in', 'Layout Measure hover', 'Layout Line hover', 'Layout part click', 'Layout part drag', 'Layout undo', 'Layout sheet size', 'Layout Apply']);
     assert.ok(lay['Layout undo'].lineTo > 30000, `two placed parts paint: lineTo ${lay['Layout undo'].lineTo}`);
     assert.equal(lay['Layout wheel'].snap, '1', 'Layout wheel reuses the kept picture after the burst');
-    within(lay, { 'Layout wheel': 1, 'Layout pan': 1, 'Layout Measure hover': 0, 'Layout Line hover': 0, 'Layout part click': 0, 'Layout part drag': 2, 'Layout undo': 2 });
+    within(lay, { 'Layout wheel': 1, 'Layout pan': 1, 'Layout zoom in': 1, 'Layout Measure hover': 0, 'Layout Line hover': 0, 'Layout part click': 0, 'Layout part drag': 2, 'Layout undo': 2 });
     const cmp = await flow((p) => interactCompare(p, big, 'lag-big.dxf'));
-    assert.deepEqual(Object.keys(cmp), ['open', 'Compare start', 'Compare wheel', 'Compare pan', 'Compare click', 'Compare button', 'Compare button again', 'Compare grip drag', 'Compare drag']);
+    assert.ok(lay.open.inject && cmp.open.inject, 'Layout and Compare open split the picker injection (TODO 322e)');
+    assert.deepEqual(Object.keys(cmp), ['open', 'Compare start', 'Compare wheel', 'Compare pan', 'Compare zoom in', 'Compare click', 'Compare button', 'Compare button again', 'Compare grip drag', 'Compare drag']);
     assert.ok(cmp['Compare start'].lineTo > 30000, `both snapshots paint: lineTo ${cmp['Compare start'].lineTo}`);
-    within(cmp, { 'Compare start': 1, 'Compare wheel': 21, 'Compare pan': 1, 'Compare click': 0, 'Compare button': 2, 'Compare button again': 2, 'Compare grip drag': 2, 'Compare drag': 1 });       // TODO 317: a grip drag was 21 full paints, a body drag 2 (a grip press is one more paint when it does not share the frame of the first move)
+    within(cmp, { 'Compare start': 1, 'Compare wheel': 21, 'Compare pan': 1, 'Compare zoom in': 1, 'Compare click': 0, 'Compare button': 2, 'Compare button again': 2, 'Compare grip drag': 2, 'Compare drag': 1 });       // TODO 317: a grip drag was 21 full paints, a body drag 2 (a grip press is one more paint when it does not share the frame of the first move)
     assert.ok(cmp['Compare button again'].longTotal < 1500, `Compare button again long tasks ${cmp['Compare button again'].longTotal} ms (the second press reuses the fl-keyed metrics cache; this head 338 ms; the first press measures both items)`);
     const firstPressBound = process.env.CI ? 6000 : 3000;
     assert.ok(cmp['Compare button'].longTotal < firstPressBound, `Compare button (the first press) long tasks ${cmp['Compare button'].longTotal} ms (bound ${firstPressBound} ms; CI allows 6000 ms for the slower runner; P14a: 4cff4b3 ~10300 ms, outlineLoops scanned every open piece per join)`);
@@ -28740,6 +29655,129 @@ try {
     within(edit, { 'Ctrl+A': 1, 'object drag': 1, 'LINE grip drag': 2 });       // TODO 320: both were 20 full paints
     assert.ok(edit['Ctrl+A'].lineTo >= edit['Ctrl+Z'].lineTo, 'Ctrl+A paints the highlight too');
     assert.ok(edit['Ctrl+A'].lineTo <= 2 * edit['Ctrl+Z'].lineTo, `Ctrl+A traces the drawing at most twice (base and highlight): lineTo ${edit['Ctrl+A'].lineTo}, one full paint ${edit['Ctrl+Z'].lineTo}`);
+  });
+
+  await step('TODO 322c: a 150k drawing opens and redraws after Delete, Ctrl+Z and Ctrl+Y as one quick frame, then its sliced full paint; the settled picture equals a full paint', async () => {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    try {
+      const p = await ctx.newPage(), drawing = p.getByTestId('drawing'), errors = [];
+      p.on('pageerror', (e) => errors.push(String(e)));
+      await p.route('**/app.js', (route) => route.fulfill({ contentType: 'text/javascript', body: readFileSync('web/app.js', 'utf8') + '\nwindow.t322Paint = () => paintOverlay();' }));
+      await p.addInitScript(() => {       // the canvas' states in order: a quick frame, the sliced paint under it, the settled picture
+        window.t322Log = [];
+        new MutationObserver(() => {
+          const c = document.querySelector('[data-testid=drawing]');
+          window.t322Log.push(c.dataset.quick === '1' ? 'quick' : c.dataset.chunk === '1' ? 'chunk' : c.dataset.keep === '1' ? 'keep' : 'other');
+        }).observe(document, { subtree: true, attributes: true, attributeFilter: ['data-quick', 'data-chunk', 'data-keep'] });
+      });
+      const frame = () => p.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+      const log = () => p.evaluate(() => window.t322Log.filter((s, i, a) => s !== a[i - 1]));
+      const settled = async (label, want) => {
+        const read = await p.waitForFunction(() => window.t322Log.at(-1) === 'keep' && window.t322Log.filter((s, i, a) => s !== a[i - 1]), null, { timeout: 30000 }).catch(async (e) => { throw new Error(`${label}: log ${JSON.stringify(await log())}`, { cause: e }); });
+        const got = (await read.jsonValue()).filter((s) => s !== 'other');       // the log it waited on, not a second read
+        assert.deepEqual(got.slice(0, 3), want, `${label}: quick frame, the sliced paint, then the kept picture (${JSON.stringify(got)})`);
+        await p.evaluate(() => { window.t322Log = []; });
+      };
+      const equalsFull = async (label) => {
+        await frame();
+        await drawing.evaluate((c) => { window.__A = c.getContext('2d').getImageData(0, 0, c.width, c.height); c.dataset.nokeep = '1'; });
+        await p.evaluate(() => window.t322Paint()); await frame();
+        const over = await drawing.evaluate((c) => {
+          const a = window.__A, b = c.getContext('2d').getImageData(0, 0, c.width, c.height);
+          delete c.dataset.nokeep; delete window.__A;
+          let n = 0;
+          for (let i = 0; i < a.data.length; i += 4) for (let j = 0; j < 4; j++) if (Math.abs(a.data[i + j] - b.data[i + j]) > 2) { n++; break; }
+          return n;
+        });
+        assert.equal(over, 0, `${label}: the settled picture equals a full paint (max channel difference 2)`);
+        await p.evaluate(() => { window.t322Log = []; });
+      };
+      await p.goto(URL_ + '?autosave=86400000'); await p.getByTestId('count').waitFor({ state: 'attached' });
+      await p.getByTestId('picker').setInputFiles({ name: 't322c.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(bigDoc(150000))) });
+      await settled('open', ['quick', 'chunk', 'keep']);
+      await equalsFull('open');
+      const box = await p.getByTestId('canvas').boundingBox();
+      for (const [dx, dy] of [[0, 0], [30, 7], [-41, 13], [77, -29]]) {
+        await p.mouse.click(box.x + box.width / 2 + dx, box.y + box.height / 2 + dy);
+        if (await p.waitForFunction(() => /^[1-9]/.test(document.querySelector('[data-testid=sel-count]').textContent), null, { timeout: 1500 }).then(() => true, () => false)) break;       // wait for the new label; a miss times out and the next spot is tried
+      }
+      const picked = await p.getByTestId('sel-count').textContent();
+      assert.match(picked, /^1 selected$/);
+      await p.evaluate(() => { window.t322Log = []; });
+      for (const [label, keys] of [['Delete', 'Delete'], ['Ctrl+Z', 'Control+z'], ['Ctrl+Y', 'Control+y']]) {
+        await p.keyboard.press(keys);
+        await settled(label, ['quick', 'chunk', 'keep']);
+        await equalsFull(label);
+        if (label === 'Delete') { const path = `${shotDir}/t322c-light.png`; await p.screenshot({ path }); assert.ok(readFileSync(path).length > 1000, 'required screenshot exists'); }
+      }
+      await p.locator('[data-menu=View]').click();
+      await p.getByRole('menuitemcheckbox', { name: /Theme: dark\b/ }).click();
+      await p.waitForTimeout(800); await frame();
+      const dark = `${shotDir}/t322c-dark.png`; await p.screenshot({ path: dark });
+      assert.ok(readFileSync(dark).length > 1000, 'required screenshot exists');
+      assert.deepEqual(errors, []);
+    } finally { await ctx.close(); }
+  });
+
+  await step('TODO 322c: on a 20k drawing a pick and a snap at a deleted spot find nothing, and find it again after Ctrl+Z (the patched pick index)', async () => {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    try {
+      const p = await ctx.newPage(), errors = [];
+      p.on('pageerror', (e) => errors.push(String(e)));
+      await p.addInitScript(() => {       // the snap marker's label ('end' beside the cursor) is text on the drawing canvas
+        const clear = CanvasRenderingContext2D.prototype.clearRect, text = CanvasRenderingContext2D.prototype.fillText;
+        window.__snapLabels = [];
+        CanvasRenderingContext2D.prototype.clearRect = function (...args) { if (this.canvas.dataset.testid === 'drawing') window.__snapLabels = []; return clear.apply(this, args); };
+        CanvasRenderingContext2D.prototype.fillText = function (label, ...args) { if (this.canvas.dataset.testid === 'drawing' && ['end', 'middle', 'nearest'].includes(label)) window.__snapLabels.push(label); return text.call(this, label, ...args); };
+      });
+      await p.addInitScript(() => {       // quick frames seen on the drawing canvas (the BIG_ITEMS gate: a 20k drawing gets none on open, Delete or Ctrl+Z)
+        window.__quick = 0;
+        new MutationObserver((rs) => { for (const r of rs) if (r.target.dataset.quick === '1') window.__quick++; }).observe(document, { subtree: true, attributes: true, attributeFilter: ['data-quick'] });
+      });
+      const frame = () => p.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+      await p.goto(URL_ + '?autosave=86400000'); await p.getByTestId('count').waitFor({ state: 'attached' });
+      await p.getByTestId('picker').setInputFiles({ name: 't322c-20k.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(bigDoc(20000))) });
+      await p.waitForFunction(() => Number(document.querySelector('[data-testid=entities]').textContent.replace(/\D/g, '')) === 20000, null, { timeout: 60000 });
+      await p.waitForTimeout(500); await frame();
+      assert.equal(await p.evaluate(() => window.__quick), 0, 'a 20k drawing opens without a quick frame');
+      await p.getByTestId('canvas').getByRole('button', { name: 'Fit', exact: true }).click(); await frame();
+      await p.waitForTimeout(1500);       // the pick index is built in idle slices
+      // entity 2400 is the line (1280, 160)-(1288, 165) of bigDoc's grid (142 columns, one 10 mm cell each): zoom to it, then its mid and its end are screen points
+      const at = async (x, y) => p.locator('rect.sheet').evaluate((el, [x, y]) => {
+        const b = el.getBoundingClientRect(), k = b.width / Number(el.getAttribute('width'));
+        return { x: b.x + x * k, y: b.y + (Number(el.getAttribute('height')) - y) * k };
+      }, [x, y]);
+      const mid = await at(1284, 162.5);
+      await p.mouse.move(mid.x, mid.y);
+      for (let i = 0; i < 8; i++) { await p.mouse.wheel(0, -150); await frame(); }
+      await p.waitForTimeout(600); await frame();
+      const spot = await at(1284, 162.5), end = await at(1288, 165);       // its second end: the neighbour's (1278, 160) is 2 mm from the first
+      const selected = async () => { await p.locator('[data-tool=select]').click(); await p.mouse.click(spot.x, spot.y); await frame(); return p.getByTestId('sel-count').textContent(); };
+      const snapped = async () => {       // the Line tool's snap marker at the line's end: its label, or none
+        await p.locator('[data-tool=line]').click();
+        await p.evaluate(() => { window.__snapLabels = []; });
+        await p.mouse.move(end.x + 40, end.y + 40); await frame(); await p.mouse.move(end.x + 1, end.y + 1); await p.waitForTimeout(700); await frame();
+        const labels = await p.evaluate(() => window.__snapLabels);
+        await p.keyboard.press('Escape'); await p.locator('[data-tool=select]').click();
+        return labels;
+      };
+      assert.match(await selected(), /^1 selected$/, 'the pick finds the line');
+      assert.ok((await snapped()).includes('end'), 'the snap finds its end');
+      assert.match(await selected(), /^1 selected$/);
+      await p.evaluate(() => { window.__quick = 0; });
+      await p.keyboard.press('Delete');
+      await p.waitForFunction(() => Number(document.querySelector('[data-testid=entities]').textContent.replace(/\D/g, '')) === 19999);
+      await p.waitForTimeout(800); await frame();       // the index is patched in the idle task after the paint
+      assert.doesNotMatch(await selected(), /^1 selected$/, 'after Delete the pick finds nothing at the deleted line');
+      assert.deepEqual(await snapped(), [], 'after Delete the snap finds nothing at its end');
+      await p.keyboard.press('Control+z');
+      await p.waitForFunction(() => Number(document.querySelector('[data-testid=entities]').textContent.replace(/\D/g, '')) === 20000);
+      await p.waitForTimeout(800); await frame();
+      assert.match(await selected(), /^1 selected$/, 'after Ctrl+Z the pick finds the line again');
+      assert.ok((await snapped()).includes('end'), 'after Ctrl+Z the snap finds its end again');
+      assert.equal(await p.evaluate(() => window.__quick), 0, 'a 20k drawing gets no quick frame after Delete or Ctrl+Z');
+      assert.deepEqual(errors, []);
+    } finally { await ctx.close(); }
   });
 
   const shiftRight = async (x, y) => {
@@ -30607,6 +31645,7 @@ try {
     await typeCmd('x');
     assert.match(await prompt(), /Explode: 1 part exploded → 5 objects/);
     assert.equal(await nParts(), 5);
+    await t('ptab-objects').click();                                     // the layer rows are drawn when this tab opens
     assert.ok((await layerNames()).includes('CUT') && (await layerNames()).includes('MARK'), 'the part layers are in the Layers panel');
     const p1 = await pos();
     approx(p1[0], p0[0], 0.01, 'same X'); approx(p1[1], p0[1], 0.01, 'same Y');
@@ -30986,6 +32025,50 @@ try {
     await key97b('Control+Shift+g'); assert.equal(await page.locator('[data-group=tools] .group-tag').count(), 0);
     await closeTabs(/./);
     assert.deepEqual(errors, []);
+  });
+
+  await step('TODO 337: a selected layout part and a drawing group box keep one thin dashed screen line at 1x and 8x zoom', async () => {
+    const canvasMid = async () => { const b = await t('canvas').boundingBox(); return { x: b.x + b.width / 2, y: b.y + b.height / 2 }; };
+    const sheetW = () => page.locator('rect.sheet').evaluate((e) => e.getBoundingClientRect().width);
+    const look = (sel) => page.locator(sel).first().evaluate((el) => {      // the line as drawn on screen: a non-scaling stroke ignores the zoom, any other is multiplied by it
+      const cs = getComputedStyle(el), f = cs.vectorEffect === 'non-scaling-stroke' ? 1 : Math.hypot(el.getScreenCTM().a, el.getScreenCTM().b);
+      return { width: parseFloat(cs.strokeWidth) * f, dash: cs.strokeDasharray.split(/[ ,]+/).map((d) => parseFloat(d) * f) };
+    });
+    const zoomed = async (sel, gap) => {
+      const before = await look(sel), w0 = await sheetW(), m = await canvasMid();
+      await page.mouse.move(m.x, m.y);
+      for (let i = 0; i < 40 && await sheetW() < 8 * w0; i++) { await page.mouse.wheel(0, -300); await frames(); }
+      assert.ok(await sheetW() >= 8 * w0, 'zoomed in 8x');
+      assert.deepEqual(await look(sel), before, `${sel} keeps its on-screen width and dash at 8x`);
+      assert.ok(before.width <= 2 && before.dash.length === 2 && before.dash[0] === 6 && before.dash[1] === gap, `${sel} is thin and dashed 6 ${gap} on screen: ${JSON.stringify(before)}`);
+    };
+    await freshLayoutWithPlate();
+    await page.waitForFunction(() => document.querySelectorAll('[data-group=tools] .sel-box').length === 1);
+    const partBox = '[data-group=tools] .sel-box', plain = await look(partBox);
+    await zoomed(partBox, 6);
+    for (const theme of ['light', 'dark']) { await menuItem('View', 'Theme: ' + theme); await page.screenshot({ path: `${shotDir}/337-part-8x-${theme}.png` }); }
+    await menuItem('View', 'Theme: light');
+    await typeCmd('rotate'); await page.waitForFunction(() => document.querySelector('[data-group=tools] .sel-box[data-mode=rotate]'));
+    assert.deepEqual(await look(partBox), plain, 'the Layouts part box in Rotate mode (8x) looks as the plain one at 1x');
+    await closeTabs(/./);
+    // the Drawings Rotate box keeps its own look: 2.5 px solid, whatever the zoom
+    const rawRot = newDoc(4); addEntities(rawRot, dxfLine(20, 30, 120, 30));
+    await openGrips(writeDxf(rawRot), 'rotate337.dxf');
+    let p0 = await at(45, 30); await page.mouse.click(p0.x, p0.y); await gripWhen(3);
+    p0 = await at(45, 30); await page.mouse.click(p0.x, p0.y); await gripWhen(0);
+    await page.waitForFunction(() => document.querySelector('.ovl .drawing-rotate-box'));
+    const rotBox = '.ovl .drawing-rotate-box', rot1 = await look(rotBox);
+    assert.equal(rot1.width, 2.5, 'the Drawings Rotate box keeps its 2.5 px line'); assert.ok(rot1.dash.every(Number.isNaN), 'and no dash: ' + JSON.stringify(rot1));
+    await page.mouse.move((await canvasMid()).x, (await canvasMid()).y); await page.mouse.wheel(0, -900); await frames();
+    assert.deepEqual(await look(rotBox), rot1, 'the Drawings Rotate box stays 2.5 px solid after a zoom');
+    await closeTabs(/./);
+    await open97b(lines97b(), 'zoom337.dxf');
+    await key97b('Control+a'); await key97b('Control+g'); await waitSel('Group of 2');
+    await zoomed('[data-testid=drawing-group-box]', 4);
+    await closeTabs(/./); await open97b(lines97b(), 'zoom337c.dxf');
+    await typeCmd('compare'); await key97b('Control+a'); await key97b('Control+g'); await waitSel('Group of 2');
+    await zoomed('[data-testid=drawing-group-box]', 4);                  // Compare draws the same box
+    await closeTabs(/./);
   });
 
   const open97c = async (raw, name = 'break97c.dxf') => {

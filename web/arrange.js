@@ -133,3 +133,16 @@ export function isWholeGroup(items, groupCount) {
   if (items.length < 2 || !items[0].g) return false;
   return items.every((it) => it.g === items[0].g) && items.length === groupCount(items[0].g);
 }
+
+/** Do these placed indexes make one item: one part, or one part with its contour(s) (a contour has ct = the part's cid)? → the part's index, else -1. */
+export function oneItem(placed, idxs) {
+  const srcs = idxs.filter((i) => !placed[i].ct), cid = srcs.length === 1 && placed[srcs[0]].cid;
+  return srcs.length === 1 && idxs.every((i) => i === srcs[0] || (cid && placed[i].ct === cid)) ? srcs[0] : -1;
+}
+
+/** Ungroup one placement: its group mark goes, but a part with a contour (cid) and its contour (ct) get one new shared mark, so they stay attached.
+ * marks: link → new mark, one object for the whole Ungroup; newId() makes a mark. */
+export function ungroupMark(pl, marks, newId) {
+  const { g, ...rest } = pl, link = pl.cid || pl.ct;
+  return link ? { ...rest, g: marks[link] || (marks[link] = newId()) } : rest;
+}

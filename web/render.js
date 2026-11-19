@@ -5,7 +5,7 @@ import { placement, shownItems, itemVisible, spaceOf } from './doc.js';
 import { paintMode } from './wireframe.js';
 import { viewOrigin } from './view-origin.js';
 import { drawingPreviewBox, overlayBox } from './preview.js';
-import { outsideView, subPixel, skipPoint, maxScale } from './perf.js';
+import { outsideView, subPixel, skipPoint, maxScale, drain } from './perf.js';
 import { SNAP_NAME } from './snap.js';
 import { pictureBitmap } from './pictures.js';
 
@@ -55,11 +55,14 @@ function trace(c, ops, origin, pxPerUnit) {
 
 /**
  * Paints into `canvas` (already sized to w*dpr by h*dpr). Returns how many items the main drawing painted.
- * o: { keep (do not clear first: paint another drawing on top), fl, off, factor, sheetH, ox, oy, scale (px per sheet mm), w, h (css px), dpr, dark,
+ * o: { strip (a layout slot's items are culled to the view: the strip of a pan end, TODO 324a), keep (do not clear first: paint another drawing on top), fl, off, factor, sheetH, ox, oy, scale (px per sheet mm), w, h (css px), dpr, dark,
  *       tint (one css colour to draw everything in: a part off the sheet), previewBounds (optional callback with the flattened preview's CSS-pixel box),
  *       bg (the background picture: bitmap, w, h, mm, x, y, visible), hl (items drawn again in `accent`: the selection), marks ([x, y] points in drawing units: Set length's picks), dim (a dimension being placed or moved: edit.js dimGeometry), accent (css colour), gaps ([x, y] drawing units: a ring each), markCol (css colour of the rings) }
  */
-export function paintDrawing(canvas, o) {
+export function paintDrawing(canvas, o) { return drain(paintDrawingSteps(canvas, o)); }
+
+/** paintDrawing as a generator (TODO 322c): the same canvas calls in the same order, but it yields wherever due() says a time slice is used up (only between two runs of strokes, so the picture is the one a single call paints); returns the drawn count. */
+export function* paintDrawingSteps(canvas, o, due) {
   const { fl, off, factor, sheetH, ox, oy, scale, w, h, dpr, dark } = o;
   const c = canvas.getContext('2d');
   const over = o.part === 'over';                      // part 'base' stops after the drawing itself, part 'over' paints only the rest on a base kept on the canvas (TODO 258 / 259)
@@ -67,10 +70,12 @@ export function paintDrawing(canvas, o) {
   if (!o.keep && !over) c.clearRect(0, 0, canvas.width, canvas.height);
   if (!over && !o.wireframe && o.bg && o.bg.visible && o.bg.bitmap) {
     const b = o.bg, k = scale * dpr;                                  // the background, dimmed, under the drawing (mm, y up)
+    c.save();
     c.setTransform(k, 0, 0, k, 0, 0);
     c.globalAlpha = 0.4;
-    c.drawImage(b.bitmap, b.x - ox, sheetH - b.y - b.h * b.mm - oy, b.w * b.mm, b.h * b.mm);
-    c.globalAlpha = 1;
+    c.translate(b.x - ox, sheetH - b.y - oy); c.rotate(-(b.rot || 0) * Math.PI / 180);          // about the bottom-left corner; the canvas y runs down, so anticlockwise is minus
+    c.drawImage(b.bitmap, 0, -b.h * b.mm, b.w * b.mm, b.h * b.mm);
+    c.restore();
   }
   if (!fl) return;
   if (o.previewBounds && o.keep) o.previewBounds(drawingPreviewBox(o));       // a kept pass is a ghost: the whole flattened preview
@@ -81,16 +86,19 @@ export function paintDrawing(canvas, o) {
   const sheetBg = dark ? SHEETS.dark.bg : SHEETS.light.bg;
   if (o.slots) {
     let drawn = 0;
-    // Layout: the drawing once per slot (drawing units → sheet mm), any slot in view; no per-item culling
+    // Layout: the drawing once per slot (drawing units → sheet mm), any slot in view; no per-item culling, except for o.strip (a strip of a pan end, TODO 324a: only what lies in it, as the drawing tab does)
     const box = fl.boxes && fl.boxes[spaceOf(fl) ? 'paper' : 'model'];
     const view = [ox, oy, ox + w / scale, oy + h / scale];
     for (const M of o.slots) {
+      const det = M[0] * M[3] - M[1] * M[2];
+      const back = det ? [[view[0], view[1]], [view[2], view[1]], [view[0], view[3]], [view[2], view[3]]].map(([X, Y]) => [(M[3] * (X - M[4]) - M[2] * (Y - M[5])) / det, (M[0] * (Y - M[5]) - M[1] * (X - M[4])) / det]) : null;
+      const vr = o.strip && back && [Math.min(...back.map((p) => p[0])), Math.min(...back.map((p) => p[1])), Math.max(...back.map((p) => p[0])), Math.max(...back.map((p) => p[1]))];
       if (box) {
         const xs = [mapply(M, box[0], box[1]), mapply(M, box[2], box[3]), mapply(M, box[0], box[3]), mapply(M, box[2], box[1])];       // all four corners: a turned slot
         const X = xs.map((p) => p[0]), Y = xs.map((p) => p[1]);
         if (Math.max(...X) < view[0] || Math.min(...X) > view[2] || Math.max(...Y) < view[1] || Math.min(...Y) > view[3]) continue;
       }
-      drawn += paintItems(c, fl, off, mmul(V, M), k, null, dpr, col, sheetBg, null, factor, o.wireframe, o.minPx);
+      drawn += yield* paintItems(c, fl, off, mmul(V, M), k, vr, dpr, col, sheetBg, null, factor, o.wireframe, o.minPx, due);
     }
     return drawn;
   }
@@ -99,15 +107,22 @@ export function paintDrawing(canvas, o) {
   const xs = [ox / factor, (ox + w / scale) / factor];
   const ys = [(sheetH - oy - h / scale) / factor, (sheetH - oy) / factor];
   const vr = [Math.min(...xs), ys[0], Math.max(...xs), ys[1]];
-  const drawn = over ? 0 : paintItems(c, fl, off, T, k, vr, dpr, col, sheetBg, o.hide, factor, o.wireframe, o.minPx);
+  const drawn = over ? 0 : yield* paintItems(c, fl, off, T, k, vr, dpr, col, sheetBg, o.hide, factor, o.wireframe, o.minPx, due);
   if (o.part === 'base') return drawn;
   if (o.hl && o.hl.length) highlight(c, o.hl, fl.mats, T, k, dpr, o.accent || '#4f46e5', o.wireframe);
   if (o.dim) drawDimPreview(c, o.dim, T, dpr, o.dimCol || DIM_LIGHT);
-  if (o.marks && o.marks.length) drawMarks(c, o.marks, T, dpr, o.accent || '#4f46e5', o.snapCol);
+  if (o.marks && o.marks.length && !o.marksLast) drawMarks(c, o.marks, T, dpr, o.accent || '#4f46e5', o.snapCol);       // marksLast: the caller paints them with paintMarks after its previews (TODO 339)
   if (o.gaps && o.gaps.length) drawGaps(c, o.gaps, T, dpr, o.markCol || '#c2410c');
   if (o.contour && o.contour.length) drawContour(c, o.contour, T, dpr, o.contourCol || '#00ff00', o.contourDash || []);
   if (o.previewBounds && !o.keep) { const box = overlayBox(o, T, dpr); if (box) o.previewBounds(box); }
   return drawn;
+}
+
+/** The snap marker and its label painted again over everything already on the canvas (TODO 339); o is a paintDrawing option set (view, factor, marks, accent, snapCol). */
+export function paintMarks(canvas, o) {
+  if (!o.marks?.length) return;
+  const k = o.scale * o.dpr, T = mmul([k, 0, 0, k, -o.ox * k, -o.oy * k], placement(o.factor, o.sheetH));
+  drawMarks(canvas.getContext('2d'), o.marks, T, o.dpr, o.accent || '#4f46e5', o.snapCol);
 }
 
 /** Contour's preview: the chosen colour and style, translucent until Apply. */
@@ -150,7 +165,7 @@ function paintPictures(c, fl, off, T, vr, hide) {
 }
 
 /** The shown items through T (drawing units → canvas pixels), k pixels per unit; vr culls to the view (drawing units), or null. */
-function paintItems(c, fl, off, T, k, vr, dpr, col, sheetBg, hide, factor, wireframe, minPx) {
+function* paintItems(c, fl, off, T, k, vr, dpr, col, sheetBg, hide, factor, wireframe, minPx, due) {
   const mats = fl.mats;
   let cur = -1, kk = k, pxPerUnit = 0, open = false, pc = null, pw = 0, pd = null, cap = null, join = null, origin = [0, 0], drawn = 0, run = 0;
   const flush = () => { if (open) { if (wireframe) wireStroke(c, dpr); else c.stroke(); } open = false; };
@@ -159,7 +174,7 @@ function paintItems(c, fl, off, T, k, vr, dpr, col, sheetBg, hide, factor, wiref
     if (it.k === 'i') continue;
     const b = it.b;
     const pad = it.k === 'p' && !it.fill ? strokeWidth(it, factor, mscale(mats[it.m])) / factor / 2 : 0;
-    if (vr && outsideView(b, pad, vr)) continue;
+    if (vr && outsideView(b, pad && Math.max(pad, 0.6 * dpr / k), vr)) continue;       // a stroke is drawn at least 1.2 px wide: its half reaches into the view (a band of a zoom end, TODO 324b)
     if (it.k !== 'n' && subPixel(b, pad, k, minPx)) continue;       // under 0.4 px (minPx: the quick paint's 1 px)
     if (!itemVisible(it, off)) continue;
     if (hide && hide.has(it.e)) continue;                                  // an entity being dragged by a grip is drawn by the overlay
@@ -175,6 +190,7 @@ function paintItems(c, fl, off, T, k, vr, dpr, col, sheetBg, hide, factor, wiref
       if (!open || css !== pc || lw !== pw || dash !== pd || nextCap !== cap || nextJoin !== join || ++run > 5000) {
         run = 1;
         flush();
+        if (due?.()) yield;       // 322c: the strokes so far are on the canvas, the next run starts from its own style
         c.strokeStyle = css; c.lineWidth = lw; c.setLineDash(dash === it.dpx && dash ? dash.map((x) => x * dpr / kk) : dash || []);
         c.lineCap = cap = nextCap; c.lineJoin = join = nextJoin; c.miterLimit = 10;
         c.beginPath(); open = true; pc = css; pw = lw; pd = dash;
@@ -305,6 +321,7 @@ export function drawMarks(c, pts, T, dpr, accent, snapCol = '#00c000') {
     if (k) {
       const name = SNAP_NAME[k] || k;
       c.font = `${11 * dpr}px system-ui, sans-serif`; c.textBaseline = 'middle'; c.lineJoin = 'round';
+      c.fillStyle = 'rgba(255, 255, 255, .88)'; c.fillRect(x + h + 2 * dpr, y - h - 9 * dpr, c.measureText(name).width + 4 * dpr, 14 * dpr);       // a pale box so the label reads on a coloured line (TODO 339)
       c.strokeStyle = 'rgba(0, 0, 0, .55)'; c.lineWidth = 3 * dpr; c.strokeText(name, x + h + 4 * dpr, y - h - 2 * dpr);
       c.fillStyle = snapCol; c.fillText(name, x + h + 4 * dpr, y - h - 2 * dpr);
     }

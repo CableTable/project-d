@@ -20,8 +20,10 @@ async function instrument(page) {
       return lineTo.apply(this, args);
     };
     pathProto.lineTo = function (...args) { rec.lineTo++; return pathLineTo.apply(this, args); };       // the selection overlay builds Path2D runs (TODO 329a)
-    const observer = new PerformanceObserver((list) => { for (const e of list.getEntries()) rec.long.push(e.duration); });
+    const observer = new PerformanceObserver((list) => { for (const e of list.getEntries()) rec.long.push([e.startTime, e.duration]); });
     observer.observe({ entryTypes: ['longtask'] });
+    // TODO 322e: the picker's first `change` in a run; long tasks that start before it are Playwright's setInputFiles (building the File), not the app's open.
+    document.addEventListener('change', (e) => { if (e.target.dataset?.testid === 'picker' && rec.change == null) rec.change = performance.now(); }, true);
     let raf;
     const tick = (t) => { rec.frames.push(t); raf = requestAnimationFrame(tick); };
     raf = requestAnimationFrame(tick);
@@ -33,7 +35,7 @@ async function instrument(page) {
   const run = async (action, fn, resized = false) => {
     const paints = await page.evaluate(() => {
       const { rec, observer } = window.__perfInteract;
-      observer.takeRecords(); rec.frames = [performance.now()]; rec.long = []; rec.lineTo = 0;
+      observer.takeRecords(); rec.frames = [performance.now()]; rec.long = []; rec.lineTo = 0; rec.change = null;
       return Number(document.querySelector('[data-testid=drawing]').dataset.paints);
     });
     assert.ok(Number.isFinite(paints), 'data-paints full-paint counter is installed');
@@ -51,15 +53,19 @@ async function instrument(page) {
     await page.waitForTimeout(500); await frame();
     const rec = await page.evaluate(() => {
       const { rec, observer } = window.__perfInteract;
-      for (const e of observer.takeRecords()) rec.long.push(e.duration);
+      for (const e of observer.takeRecords()) rec.long.push([e.startTime, e.duration]);
       return { ...rec, paints: Number(document.querySelector('[data-testid=drawing]').dataset.paints) };
     });
+    const injected = rec.change == null ? [] : rec.long.filter(([s]) => s < rec.change).map(([, d]) => d);
+    rec.long = rec.long.filter(([s]) => rec.change == null || s >= rec.change).map(([, d]) => d);
     const gaps = rec.frames.slice(1).map((t, i) => t - rec.frames[i]).sort((a, b) => a - b);
     const r = { action, ms, snap, frames: gaps.length, gapMedian: gaps[Math.floor(gaps.length / 2)] || 0,
       gapP90: gaps[Math.floor(gaps.length * .9)] || 0, gapMax: gaps.at(-1) || 0,
       longTasks: rec.long.length, longTotal: rec.long.reduce((a, b) => a + b, 0), longMax: Math.max(0, ...rec.long),
       lineTo: rec.lineTo, paints: rec.paints - paints };
+    if (rec.change != null) r.inject = { longTasks: injected.length, longTotal: injected.reduce((a, b) => a + b, 0), longMax: Math.max(0, ...injected) };
     results.push(r);
+    if (r.inject) console.log(`${action} inject (before the picker's change): long tasks ${r.inject.longTasks}, total/max ${r.inject.longTotal.toFixed(1)}/${r.inject.longMax.toFixed(1)} ms`);
     console.log(`${action}: ${ms} ms; frames ${r.frames}; gaps median/p90/max ${r.gapMedian.toFixed(1)}/${r.gapP90.toFixed(1)}/${r.gapMax.toFixed(1)} ms; long tasks ${r.longTasks}, total/max ${r.longTotal.toFixed(1)}/${r.longMax.toFixed(1)} ms; lineTo ${r.lineTo}; full paints ${r.paints}${resized ? `; first picture: ${snap === '1' ? 'scaled' : 'full'}` : ''}`);
   };
   const stop = () => page.evaluate(() => { window.__perfInteract.stop(); delete window.__perfInteract; });
@@ -119,6 +125,7 @@ export async function interact(page, buffer, name = 'spline.dxf') {
       for (let i = 0; i < 30; i++) { await page.mouse.move(cx + i * 4, cy + i * 2); await frame(); }
       await page.mouse.up({ button: 'middle' });
     });
+    await zoomIn(page, run, frame, 'draw', cx, cy);
     return results;
   } finally { await stop(); }
 }
@@ -142,6 +149,12 @@ const wheelAndPan = async (page, run, frame, label, cx, cy, moves = 20) => {
     for (let i = 0; i < moves; i++) { await page.mouse.move(cx + i * 4, cy + i * 2); await frame(); }
     await page.mouse.up({ button: 'middle' });
   });
+  await zoomIn(page, run, frame, label, cx, cy);
+};
+// One way (TODO 324b): the alternating wheel above returns to its first view and so paints nothing; this one ends on a new scale, the zoom end the chunked paint is for.
+const zoomIn = async (page, run, frame, label, cx, cy, notches = 2) => {
+  await page.mouse.move(cx, cy); await frame();
+  await run(`${label} zoom in`, async () => { for (let i = 0; i < notches; i++) { await page.mouse.wheel(0, -150); await frame(); } });
 };
 
 /** Layout with `n` placed parts (the drawing added n + 1 times: the first becomes the step-and-repeat grid). */

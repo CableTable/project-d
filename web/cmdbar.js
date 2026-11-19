@@ -41,6 +41,7 @@ const TABLE = [
   ['mirror', 'Edit', 'Mirror objects about a line', ['mi'], 'draw'],
   ['contour', 'Edit', 'Offset a closed outline in steps', ['ct'], ''],
   ['trace', 'Edit', 'Trace a picture into closed outlines', ['tb'], 'draw'],
+  ['rotatebackground', 'Edit', 'Turn the background picture about a pivot', ['rbg'], ''],
   ['textoutlines', 'Edit', 'Turn the selected text into closed outlines', ['txo'], 'draw'],
   ['weld', 'Edit', 'Shaping: join the selected closed outlines into one', [], 'draw'],
   ['explode', 'Edit', 'Split polylines, blocks or dimensions into their members', ['x'], ''],

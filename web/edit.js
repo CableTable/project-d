@@ -13,7 +13,7 @@
 //   removeEntities / keepOnly    → { entities, blocks } without (or with only) some entities; unused blocks go too
 //   scaleAbout(raw, s, ax, ay)   → { entities, blocks, skipped } scaled uniformly about (ax, ay)
 //   createHistory()              → undo / redo of { entities, blocks } states
-import { mapply, mscale, pickIndex, pickAt, piecesNear, visibleSnapItem, flatten, ownBlock, unionBox } from './drawing.js';
+import { mapply, mscale, pickIndex, pickIndexSteps, pickAt, piecesNear, visibleSnapItem, flatten, ownBlock, unionBox } from './drawing.js';
 import { rotateRecord } from './rotate.js';
 import { format as formatLength, parse as parseLength } from './units.js';
 import { spaceOf, itemVisible } from './doc.js';
@@ -241,17 +241,22 @@ export function resizeItemsBox(raw, items, factor = 1) {
   return box ? box.map((n) => n * factor) : null;
 }
 
+/** The index restore patches the next one from: none when it was handed a ready index, else the live one with its drawing, else the one kept from a restore that failed (TODO 322c). */
+export const prevIndex = (index, ed, fl, edPrev) => index ? null : ed?.ix ? { ix: ed.ix, fl } : edPrev;
 /**
  * What the editor needs about a drawing: per shown entity its items and box, a pick grid, and the end points.
  * off: the layer indexes switched off (their entities are not there to pick); hid: entities hidden one by one (Objects tab), the same.
  */
-export function makeIndex(raw, fl, off = new Set(), hid = null, extremeFrame, prev = null) {
-  const ix = pickIndex(fl, spaceOf(fl) === 1, undefined, extremeFrame, prev);       // prev { ix, fl }: an earlier index of this drawing, its parts for unchanged items are kept (TODO 319c)
+export function makeIndex(raw, fl, off = new Set(), hid = null, extremeFrame, prev = null, ix = pickIndex(fl, spaceOf(fl) === 1, undefined, extremeFrame, prev)) {
+  // prev { ix, fl }: an earlier index of this drawing, its parts for unchanged items are kept (TODO 319c); ix: the pick index already built in slices (TODO 322a)
   const ed = indexWithVisibility({ raw, fl, ix }, off, hid);
   const all = off.size || hid?.size ? indexWithVisibility({ raw, fl, ix }, new Set(), null) : ed;
   ed.boxGrid = entityBoxGrid(all);
   return ed;
 }
+
+/** The pick index of a drawing as slices: call .next() until done, then pass the value to makeIndex as its ix (TODO 322a). prev: as makeIndex's (TODO 322d). */
+export const pickSteps = (fl, prev = null) => pickIndexSteps(fl, spaceOf(fl) === 1, undefined, undefined, prev);
 
 /** Keep the pieces and snaps spatially indexed. Only the visible entity summaries change. */
 export function indexWithVisibility(ed, off, hid) {
@@ -1468,8 +1473,24 @@ export function formatMeasure(m, unit = 'mm') {
 
 // ---------------------------------------------------------------- the background (a picture under the drawing)
 
-/** A background { w, h (pixels), mm (mm per pixel), x, y (its bottom-left, mm, y up) } → its box [x0, y0, x1, y1] in mm. */
-export const bgBox = (bg) => [bg.x, bg.y, bg.x + bg.w * bg.mm, bg.y + bg.h * bg.mm];
+/** A background { w, h (pixels), mm (mm per pixel), x, y (its bottom-left, mm, y up), rot (degrees anticlockwise about that corner, default 0) } → the picture's own box [x0, y0, x1, y1] in mm, unturned (Size). */
+export const bgOwnBox = (bg) => [bg.x, bg.y, bg.x + bg.w * bg.mm, bg.y + bg.h * bg.mm];
+/** The four corners of the turned picture (mm), bottom-left first, anticlockwise. */
+export function bgCorners(bg) {
+  const a = (bg.rot || 0) * Math.PI / 180, c = Math.cos(a), s = Math.sin(a), w = bg.w * bg.mm, h = bg.h * bg.mm;
+  return [[0, 0], [w, 0], [w, h], [0, h]].map(([u, v]) => [bg.x + u * c - v * s, bg.y + u * s + v * c]);
+}
+/** The axis-aligned box [x0, y0, x1, y1] of the turned picture (view fit). */
+export function bgBox(bg) {
+  if (!bg.rot) return bgOwnBox(bg);
+  const p = bgCorners(bg), xs = p.map((q) => q[0]), ys = p.map((q) => q[1]);
+  return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
+}
+/** The same picture turned `deg` degrees (anticlockwise) about the pivot [px, py] (mm): rot adds up and the corner (x, y) turns with it. */
+export function bgTurned(bg, [px, py], deg) {
+  const a = deg * Math.PI / 180, c = Math.cos(a), s = Math.sin(a), dx = bg.x - px, dy = bg.y - py;
+  return { ...bg, rot: (bg.rot || 0) + deg, x: px + dx * c - dy * s, y: py + dx * s + dy * c };
+}
 /** The same picture, mm-per-pixel times s, still fixed at its bottom-left corner. */
 export const bgScaled = (bg, s) => ({ ...bg, mm: bg.mm * s });
 

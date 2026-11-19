@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { outsideView, subPixel, snapPlace, snapUsable, heavy } from './web/perf.js';
 import * as perf from './web/perf.js';
-import { paintDrawing } from './web/render.js';
+import { paintDrawing, paintDrawingSteps } from './web/render.js';
 import { bigDoc } from './tools/gen-big-dxf.mjs';
 import { writeDxf } from './web/dxf-write.js';
 import { readDxf, flatten, mapply } from './web/drawing.js';
@@ -127,6 +127,29 @@ test('skipPoint keeps run ends and stays within half a pixel', () => {
   assert.equal(paint(ops, { scale: 1000 }).length, points.length, 'zooming in redraws the original pieces');
 });
 
+test('TODO 322c: paintDrawingSteps makes the canvas calls of paintDrawing, in the same order, in slices between runs of strokes', () => {
+  const fl = flatten(readDxf(writeDxf(bigDoc(12000))));
+  fl.items = fl.items.filter((it) => it.k === 'p');       // no text: the recording context cannot measure it
+  assert.ok(fl.items.length > 5000, 'more than one run of strokes');
+  const record = () => {
+    const calls = [], c = new Proxy({}, { get: (t, name) => (name === 'canvas' ? {} : (...args) => { calls.push([name, ...args]); }), set: (t, name, v) => { calls.push(['=' + String(name), v]); return true; } });
+    return { calls, canvas: { width: 200, height: 200, getContext: () => c } };
+  };
+  const o = { fl, off: new Set(), factor: 1, sheetH: 3000 / 0.7, ox: 0, oy: 0, scale: 0.7, dpr: 1, w: 3000, h: 3000 };       // the whole drawing in view (the sheet's y runs up)
+  const whole = record(), sliced = record();
+  const drawn = paintDrawing(whole.canvas, o);
+  let slices = 0, got;
+  const gen = paintDrawingSteps(sliced.canvas, o, () => true);
+  for (let s = gen.next(); ; s = gen.next()) { if (s.done) { got = s.value; break; } slices++; }
+  assert.ok(slices >= 2, `a time slice ends between runs (${slices} yields)`);
+  assert.equal(got, drawn);
+  assert.ok(whole.calls.length > 1000);
+  assert.deepEqual(sliced.calls, whole.calls, 'the sliced paint is the single paint, call for call');
+  const lazy = record(), none = paintDrawingSteps(lazy.canvas, o, () => false);
+  assert.equal(none.next().done, true, 'with no time slice used up it runs to the end in one go');
+  assert.deepEqual(lazy.calls, whole.calls);
+});
+
 test('snapPlace: the same view is the identity; a pan shifts; a zoom about a point keeps that point', () => {
   const a = { ox: 10, oy: 20, scale: 2 };
   assert.deepEqual(snapPlace(a, a), { dx: 0, dy: 0, r: 1 });
@@ -157,6 +180,24 @@ test('blitCovers: a shifted bitmap shows nothing its canvas did not hold', () =>
   assert.equal(perf.blitCovers([-50, 100, 50, 200], -20, 0, w, h), true, 'it moves further out of the view');
   assert.equal(perf.blitCovers(null, 0, 0, w, h), true, 'no shift needs no box');
   assert.equal(perf.blitCovers(null, 1, 0, w, h), false, 'an unknown box is not trusted once shifted');
+});
+
+test('panStrips: the shifted bitmap plus the strips cover the canvas once', () => {
+  const w = 40, h = 30, area = ([a, b, c, d]) => (c - a) * (d - b);
+  for (const [dx, dy] of [[5, 7], [-5, 7], [5, -7], [-5, -7], [0, 7], [5, 0], [0, -7]]) {
+    const strips = perf.panStrips(dx, dy, w, h), seen = new Set();
+    for (const [x0, y0, x1, y1] of strips) for (let x = x0; x < x1; x++) for (let y = y0; y < y1; y++) { assert.ok(!seen.has(x + ',' + y), 'no pixel twice'); seen.add(x + ',' + y); }
+    const kept = (w - Math.abs(dx)) * (h - Math.abs(dy));
+    assert.equal(seen.size + kept, w * h, `${dx},${dy}: strips + the reused bitmap fill the canvas`);
+    for (const r of strips) assert.ok(r[0] >= 0 && r[1] >= 0 && r[2] <= w && r[3] <= h && area(r) > 0, 'inside the canvas');
+    for (const [x, y] of [[0, 0], [w - 1, h - 1], [0, h - 1], [w - 1, 0]]) {            // a corner is either in a strip or still covered by the moved bitmap
+      const moved = x - dx >= 0 && x - dx < w && y - dy >= 0 && y - dy < h;
+      assert.equal(seen.has(x + ',' + y), !moved, `${dx},${dy} corner ${x},${y}`);
+    }
+  }
+  assert.deepEqual(perf.panStrips(0, 0, w, h), [], 'no move, nothing to paint');
+  assert.equal(perf.panStrips(w, 0, w, h), null, 'moved by a whole canvas: nothing to reuse');
+  assert.equal(perf.panStrips(3, -h, w, h), null);
 });
 
 test('heavy: slow script or many items; a small quick drawing always repaints in full', () => {

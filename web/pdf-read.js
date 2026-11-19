@@ -4,6 +4,7 @@
 //
 //   readPdf(bytes, { page, pdfjs })   → { doc, paths, texts, pictures, stencils, pages, page, mm: [w, h] }   (the drawing, in mm; pictures are IMAGE entities)
 //   renderPdfPage(bytes, { page, dpi }) → { canvas, w, h, mmPerPx, pages }              (the page as a picture)
+//   renderPdfPages(bytes, { onPage }) → { canvas, w, h, mmPerPx, dpi, pages }          (every page side by side on one picture; pageLayout is the pure placement)
 //   pdfToDoc({ ops, text, view, rotate }, OPS) → { doc, paths, texts }                  (the pure part; rotate: the page's /Rotate)
 import { newDoc, addLayer, arc, lwpoly, text, entity } from './dxf-write.js';
 import { toRgba, encodePng } from './pictures.js';
@@ -312,6 +313,50 @@ export async function renderPdfPage(bytes, { page = 1, dpi = 150 } = {}) {
     c.fillStyle = '#ffffff'; c.fillRect(0, 0, canvas.width, canvas.height);
     await pg.render({ canvasContext: c, viewport: vp }).promise;
     return { canvas, w: canvas.width, h: canvas.height, mmPerPx: 25.4 / dpi, pages: pdf.numPages, page: n };
+  } finally { try { await pdf.destroy(); } catch { /* already gone */ } }
+}
+
+/** Where every page goes on one picture: left to right, `gapMm` apart, top edges aligned, each at its own size, one mm per px. `sizes` are [w, h] in PDF points (as shown, rotation included).
+ *  dpi = min(maxDpi, the largest that keeps a side <= maxSide px and the area <= maxArea px). → { dpi, mmPerPx, W, H, cells: [{ x, y, w, h }] } (pixels). */
+export function pageLayout(sizes, { maxDpi = 150, gapMm = 10, maxSide = 16384, maxArea = 64e6 } = {}) {
+  const at = (dpi) => {
+    const gap = Math.round(gapMm / 25.4 * dpi), cells = [];
+    let x = 0;
+    for (const [w, h] of sizes) { const c = { x, y: 0, w: Math.ceil(w * dpi / 72), h: Math.ceil(h * dpi / 72) }; cells.push(c); x += c.w + gap; }
+    return { dpi, mmPerPx: 25.4 / dpi, W: x - gap, H: Math.max(...cells.map((c) => c.h)), cells };
+  };
+  const fits = (l) => l.W <= maxSide && l.H <= maxSide && l.W * l.H <= maxArea;
+  let dpi = maxDpi, lay = at(dpi);
+  if (fits(lay)) return lay;
+  dpi = Math.max(1, Math.floor(dpi * Math.min(maxSide / lay.W, maxSide / lay.H, Math.sqrt(maxArea / (lay.W * lay.H)))));   // the size is linear in dpi: jump close to it, then settle past the rounding
+  while (dpi > 1 && !fits(at(dpi))) dpi--;
+  while (dpi < maxDpi && fits(at(dpi + 1))) dpi++;
+  return at(dpi);
+}
+
+/** Every page of a PDF on ONE canvas (pageLayout; 10 mm between pages), one page at a time, the PDF opened once. `onPage(k, n)` runs before page k of n is drawn.
+ *  → { canvas, w, h, mmPerPx, dpi, pages }. Browser only. */
+export async function renderPdfPages(bytes, { onPage = () => {}, ...opts } = {}) {
+  const lib = await loadPdfjs();
+  const pdf = await lib.getDocument({ data: new Uint8Array(bytes), verbosity: 0 }).promise;
+  try {
+    const pages = [];
+    for (let n = 1; n <= pdf.numPages; n++) pages.push(await pdf.getPage(n));
+    const lay = pageLayout(pages.map((pg) => { const v = pg.getViewport({ scale: 1 }); return [v.width, v.height]; }), opts);
+    const canvas = document.createElement('canvas');
+    canvas.width = lay.W; canvas.height = lay.H;
+    const out = canvas.getContext('2d');
+    for (const [i, pg] of pages.entries()) {
+      onPage(i + 1, pages.length);
+      const cell = lay.cells[i], part = document.createElement('canvas');
+      part.width = cell.w; part.height = cell.h;
+      const c = part.getContext('2d');
+      c.fillStyle = '#ffffff'; c.fillRect(0, 0, cell.w, cell.h);
+      await pg.render({ canvasContext: c, viewport: pg.getViewport({ scale: lay.dpi / 72 }) }).promise;
+      out.drawImage(part, cell.x, cell.y);
+      part.width = part.height = 0; pg.cleanup();                                   // the page's canvas is freed at once
+    }
+    return { canvas, w: lay.W, h: lay.H, mmPerPx: lay.mmPerPx, dpi: lay.dpi, pages: pages.length };
   } finally { try { await pdf.destroy(); } catch { /* already gone */ } }
 }
 

@@ -1049,29 +1049,102 @@ function curveExtremes(points, closed, refine, period) {
  */
 function reuser(prev, fl, paper, frame, stored, snaps, stride) {
   const o = prev?.ix, of = prev?.fl;
-  if (!o?.stored || o.paper !== !!paper || o.frame !== frame || of.mats !== fl.mats) return null;
-  const at = new Map(), n = of.items.length;
-  for (let i = 0; i < n; i++) { const k = of.items[i].ops ?? of.items[i]; if (at.has(k)) return null; at.set(k, i); }
-  const starts = (list, itemOf, from) => {       // list is in item order: where each old item's run begins (and ends)
-    const s = new Int32Array(n + 1);
-    for (let i = 0, p = from; i <= n; i++) { while (p < list.length && itemOf(list[p]) < i) p++; s[i] = p; }
-    return s;
-  };
-  const ps = starts(o.stored, (v) => (typeof v === 'number' ? v % o.stride : v.it), 0), ss = starts(o.snaps, (s) => s.it, o.head);
-  return (it, idx) => {
-    const i = at.get(it.ops ?? it);
-    if (i === undefined || of.items[i].m !== it.m) return false;
-    for (let k = ps[i]; k < ps[i + 1]; k++) { const v = o.stored[k]; if (typeof v === 'number') stored.push(Math.floor(v / o.stride) * stride + idx); else { v.it = idx; stored.push(v); } }
-    for (let k = ss[i]; k < ss[i + 1]; k++) { const s = o.snaps[k]; s.it = idx; snaps.push(s); }
+  if (!o?.stored || !o.pst || o.paper !== !!paper || o.frame !== frame || of.mats !== fl.mats) return null;
+  const at = new Map(), n = of.items.length, ps = o.pst, ss = o.sst;       // ps / ss: where each old item's run of pieces / snaps begins (and ends), in item order
+  for (let i = 0; i < n; i++) { const k = of.items[i].ops ?? of.items[i].b; if (at.has(k)) return null; at.set(k, i); }       // text and points have no ops: an edit patch keeps their box (TODO 322d)
+  const keep = { p: new Int32Array(o.stored.length).fill(-1), s: new Int32Array(o.snaps.length).fill(-1), old: new Uint8Array(n), used: new Uint8Array(fl.items.length) };       // where each kept piece / snap went (-1: removed) and which items matched, for patchGrid (TODO 322d)
+  const reuse = (it, idx) => {
+    const i = at.get(it.ops ?? it.b);
+    if (i === undefined || keep.old[i] || of.items[i].m !== it.m) return false;       // an old item feeds one new item only
+    keep.old[i] = keep.used[idx] = 1;
+    for (let k = ps[i]; k < ps[i + 1]; k++) { const v = o.stored[k]; keep.p[k] = stored.length; if (typeof v === 'number') stored.push(Math.floor(v / o.stride) * stride + idx); else { v.it = idx; stored.push(v); } }
+    for (let k = ss[i]; k < ss[i + 1]; k++) { const s = o.snaps[k]; keep.s[k] = snaps.length; s.it = idx; snaps.push(s); }
     return true;
   };
+  reuse.keep = keep;
+  return reuse;
+}
+
+const pbox = (p) => p.t === 's' ? [Math.min(p.x1, p.x2), Math.min(p.y1, p.y2), Math.max(p.x1, p.x2), Math.max(p.y1, p.y2)] : [p.cx - p.r, p.cy - p.r, p.cx + p.r, p.cy + p.r];
+const cellAt = (ix, v) => Math.min(ix.G - 1, Math.max(0, Math.floor(v)));
+/** Puts n in a cell's list, keeping the numbers ascending (a fresh build only ever appends). */
+function sortedPush(list, n) {
+  let k = list.length; list.push(n);
+  while (k > 0 && list[k - 1] > n) { list[k] = list[k - 1]; k--; }
+  list[k] = n;
+}
+function gridPiece(ix, p, n) {
+  const [a, b, c, d] = pbox(p), i0 = cellAt(ix, (a - ix.x0) / ix.cell), i1 = cellAt(ix, (c - ix.x0) / ix.cell), j0 = cellAt(ix, (b - ix.y0) / ix.cell), j1 = cellAt(ix, (d - ix.y0) / ix.cell);
+  if ((i1 - i0 + 1) * (j1 - j0 + 1) > 256) { sortedPush(ix.wide, n); return; }
+  for (let i = i0; i <= i1; i++) for (let j = j0; j <= j1; j++) { const kk = i * 4096 + j; let list = ix.pc.get(kk); if (!list) ix.pc.set(kk, list = []); sortedPush(list, n); }
+}
+function gridSnap(ix, s, n) {
+  const kk = cellAt(ix, (s.x - ix.x0) / ix.cell) * 4096 + cellAt(ix, (s.y - ix.y0) / ix.cell);
+  let list = ix.sc.get(kk); if (!list) ix.sc.set(kk, list = []); sortedPush(list, n);
+}
+
+/** The box of everything in the index: pieces, snaps and the boxes of the space's items. */
+function extent(pieces, snaps, items, paper) {
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  const grow = (a, b, c2, d) => { x0 = Math.min(x0, a); y0 = Math.min(y0, b); x1 = Math.max(x1, c2); y1 = Math.max(y1, d); };
+  for (const p of pieces) grow(...pbox(p));
+  for (const s of snaps) grow(s.x, s.y, s.x, s.y);
+  for (const it of items) if (!!it.ps === !!paper) grow(...it.b);
+  return [x0, y0, x1, y1];
+}
+const gridSize = (pieces, snaps, items) => Math.min(512, Math.max(1, Math.ceil(Math.sqrt((pieces.length + snaps.length + items.length) / 3))));
+
+/**
+ * TODO 322d: the earlier index's grid (prev.ix) with only what the edit changed taken out and put in, instead of a grid built from scratch.
+ * The kept pieces and snaps moved to new numbers (`keep`): the cells are renumbered in place (the earlier index is spent), removed ones drop out,
+ * new ones are added. The result is the fresh grid: null (the caller builds one, nothing touched) when more than a tenth of the items changed,
+ * the kept ones changed order, the insertion snaps moved, or the grid size or the drawing's extent would differ from a fresh build's.
+ */
+function patchGrid(prev, keep, fl, paper, ix) {
+  const o = prev.ix, { pieces, snaps, head } = ix;
+  if (!o.G || o.head !== head || gridSize(pieces, snaps, fl.items) !== o.G) return null;
+  for (let k = 0; k < head; k++) if (o.snaps[k].x !== snaps[k].x || o.snaps[k].y !== snaps[k].y) return null;
+  for (let k = 0; k < head; k++) keep.s[k] = k;
+  for (const m of [keep.p, keep.s]) for (let k = 0, last = -1; k < m.length; k++) if (m[k] >= 0) { if (m[k] <= last) return null; last = m[k]; }
+  const gone = prev.fl.items.filter((it, i) => !keep.old[i] && !!it.ps === !!paper), added = fl.items.filter((it, i) => !keep.used[i] && !!it.ps === !!paper);
+  if ((gone.length + added.length) * 10 > fl.items.length) return null;
+  const had = (m, total) => { const a = new Uint8Array(total); for (const v of m) if (v >= 0) a[v] = 1; return a; };
+  const hadP = had(keep.p, pieces.length), hadS = had(keep.s, snaps.length);
+  // the extent: a new part beyond it changes it; a removed one on it may (a scan tells)
+  const inside = (a, b, c, d) => a >= o.x0 && b >= o.y0 && c <= o.x1 && d <= o.y1, onEdge = (a, b, c, d) => a <= o.x0 || b <= o.y0 || c >= o.x1 || d >= o.y1;
+  if (!added.every((it) => inside(...it.b))) return null;
+  for (let n = 0; n < pieces.length; n++) if (!hadP[n] && !inside(...pbox(pieces[n]))) return null;
+  for (let n = head; n < snaps.length; n++) if (!hadS[n] && !inside(snaps[n].x, snaps[n].y, snaps[n].x, snaps[n].y)) return null;
+  let touched = gone.some((it) => onEdge(...it.b));
+  for (let k = 0; !touched && k < keep.p.length; k++) if (keep.p[k] < 0 && onEdge(...pbox(o.pieces[k]))) touched = true;
+  for (let k = head; !touched && k < keep.s.length; k++) if (keep.s[k] < 0 && onEdge(o.snaps[k].x, o.snaps[k].y, o.snaps[k].x, o.snaps[k].y)) touched = true;
+  if (touched && extent(pieces, snaps, fl.items, paper).some((v, i) => v !== [o.x0, o.y0, o.x1, o.y1][i])) return null;
+  const remap = (cells, m) => {
+    for (const [key, list] of cells) {
+      let w = 0;
+      for (let r = 0; r < list.length; r++) { const v = m[list[r]]; if (v >= 0) list[w++] = v; }
+      if (w) list.length = w; else cells.delete(key);
+    }
+  };
+  Object.assign(ix, { G: o.G, cell: o.cell, x0: o.x0, y0: o.y0, x1: o.x1, y1: o.y1, pc: o.pc, sc: o.sc, wide: o.wide.map((n) => keep.p[n]).filter((n) => n >= 0) });
+  remap(ix.pc, keep.p); remap(ix.sc, keep.s);
+  for (let n = 0; n < pieces.length; n++) if (!hadP[n]) gridPiece(ix, pieces[n], n);
+  for (let n = 0; n < snaps.length; n++) if (!hadS[n]) gridSnap(ix, snaps[n], n);
+  return ix;
 }
 
 /**
  * The pickable pieces of one space (the model, or the sheet): straight pieces, arcs, and snap points (ends,
  * middles, centres, points), in the drawing's own coordinates, on a grid for quick lookups.
  */
-export function pickIndex(fl, paper, visible = () => true, extremeFrame = IDENT, prev = null) {
+export function pickIndex(...args) {
+  const g = pickIndexSteps(...args);
+  let r;
+  do r = g.next(); while (!r.done);
+  return r.value;
+}
+/** pickIndex as a generator: it yields every 2048 items, so a caller can build a big drawing's index in slices (TODO 322a). */
+export function* pickIndexSteps(fl, paper, visible = () => true, extremeFrame = IDENT, prev = null) {
   // Spline segments already live in ops: retain an item/op address, not another object and four boxed coordinates per segment.
   const stored = [], snaps = [], stride = fl.items.length, reuse = reuser(prev, fl, paper, extremeFrame, stored, snaps, stride);
   const pieces = new Proxy(stored, { get(target, key, receiver) {
@@ -1088,14 +1161,17 @@ export function pickIndex(fl, paper, visible = () => true, extremeFrame = IDENT,
       break;
     }
   }
-  const head = snaps.length;
-  fl.items.forEach((it, idx) => {
-    if (!!it.ps !== !!paper) return;
-    if (reuse?.(it, idx)) return;
+  const head = snaps.length, pst = new Int32Array(stride + 1), sst = new Int32Array(stride + 1);       // pst / sst: where each item's run of pieces / snaps begins, for the next edit's reuser
+  for (let idx = 0; idx < fl.items.length; idx++) {
+    if (idx % 2048 === 2047) yield;
+    pst[idx] = stored.length; sst[idx] = snaps.length;
+    const it = fl.items[idx];
+    if (!!it.ps !== !!paper) continue;
+    if (reuse?.(it, idx)) continue;
     const m = fl.mats[it.m];
     if (it.insertion) { const [x, y] = mapply(m, ...it.insertion); snaps.push({ x, y, kind: 'insertion', it: idx }); }
-    if (it.k === 'n') { const [x, y] = mapply(m, it.x, it.y); snaps.push({ x, y, kind: 'node', it: idx }); return; }
-    if (it.k !== 'i' && (it.k !== 'p' || it.fill)) return;                  // a picture's frame picks and snaps like a closed outline
+    if (it.k === 'n') { const [x, y] = mapply(m, it.x, it.y); snaps.push({ x, y, kind: 'node', it: idx }); continue; }
+    if (it.k !== 'i' && (it.k !== 'p' || it.fill)) continue;                  // a picture's frame picks and snaps like a closed outline
     const ops = it.ops, sim = similar(m), sc = mscale(m), flipped = m[0] * m[3] - m[1] * m[2] < 0;
     if (!it.ell && !it.spl) {
       const centre = pathCentre(ops);
@@ -1163,27 +1239,17 @@ export function pickIndex(fl, paper, visible = () => true, extremeFrame = IDENT,
     if (curve) turning(curvePoints, closed, !it.spl || it.refine, it.params, it.ell ? TAU : undefined);
     const endpoints = snaps.slice(s0).filter((p) => p.kind === 'end' || p.kind === 'quadrant');
     for (const [x, y] of extremes) if (!endpoints.some((p) => Math.hypot(p.x - x, p.y - y) < 1e-6)) snaps.push({ x, y, kind: 'extreme', it: idx });
-  });
+  }
+  pst[stride] = stored.length; sst[stride] = snaps.length;
+  const ix = { pieces, snaps, stored, stride, head, paper: !!paper, frame: extremeFrame, pst, sst };
+  if (reuse && patchGrid(prev, reuse.keep, fl, paper, ix)) return ix;
   // the grid
-  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-  const grow = (a, b, c2, d) => { x0 = Math.min(x0, a); y0 = Math.min(y0, b); x1 = Math.max(x1, c2); y1 = Math.max(y1, d); };
-  const pbox = (p) => p.t === 's' ? [Math.min(p.x1, p.x2), Math.min(p.y1, p.y2), Math.max(p.x1, p.x2), Math.max(p.y1, p.y2)] : [p.cx - p.r, p.cy - p.r, p.cx + p.r, p.cy + p.r];
-  for (const p of pieces) grow(...pbox(p));
-  for (const s of snaps) grow(s.x, s.y, s.x, s.y);
-  for (const it of fl.items) if (!!it.ps === !!paper) grow(...it.b);
+  const [x0, y0, x1, y1] = extent(pieces, snaps, fl.items, paper);
   if (!Number.isFinite(x0)) return { pieces, snaps, G: 0 };
-  const G = Math.min(512, Math.max(1, Math.ceil(Math.sqrt((pieces.length + snaps.length + fl.items.length) / 3))));
-  const cell = Math.max(x1 - x0, y1 - y0, 1e-9) / G;
-  const ix = { pieces, snaps, G, cell, x0, y0, pc: new Map(), sc: new Map(), wide: [], stored, stride, head, paper: !!paper, frame: extremeFrame };
-  const key = (i, j) => i * 4096 + j;
-  const at = (x) => Math.min(G - 1, Math.max(0, Math.floor(x)));
-  pieces.forEach((p, n) => {
-    const [a, b, c2, d] = pbox(p);
-    const i0 = at((a - x0) / cell), i1 = at((c2 - x0) / cell), j0 = at((b - y0) / cell), j1 = at((d - y0) / cell);
-    if ((i1 - i0 + 1) * (j1 - j0 + 1) > 256) { ix.wide.push(n); return; }
-    for (let i = i0; i <= i1; i++) for (let j = j0; j <= j1; j++) { const kk = key(i, j); if (!ix.pc.has(kk)) ix.pc.set(kk, []); ix.pc.get(kk).push(n); }
-  });
-  snaps.forEach((s, n) => { const kk = key(at((s.x - x0) / cell), at((s.y - y0) / cell)); if (!ix.sc.has(kk)) ix.sc.set(kk, []); ix.sc.get(kk).push(n); });
+  const G = gridSize(pieces, snaps, fl.items);
+  Object.assign(ix, { G, cell: Math.max(x1 - x0, y1 - y0, 1e-9) / G, x0, y0, x1, y1, pc: new Map(), sc: new Map(), wide: [] });
+  pieces.forEach((p, n) => gridPiece(ix, p, n));
+  snaps.forEach((s, n) => gridSnap(ix, s, n));
   return ix;
 }
 

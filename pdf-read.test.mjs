@@ -379,3 +379,19 @@ test('TODO 305a: a picture becomes an IMAGE with its place from the ctm (to 0.01
   const w = W.writeDxf(r.doc);
   assert.ok(!w.includes('data:image') && /\nIMAGE\r?\n/.test(w), 'DXF Save writes the IMAGE reference without pixels (305b)');
 });
+
+test('TODO 330: pageLayout puts pages left to right, 10 mm apart, tops aligned, and caps the size', () => {
+  const one = R.pageLayout([[595, 842]]);
+  assert.deepEqual([one.dpi, one.W, one.H, one.cells.length], [150, Math.ceil(595 * 150 / 72), Math.ceil(842 * 150 / 72), 1], 'one page: as renderPdfPage draws it');
+  const a = R.pageLayout([[200, 100], [100, 300], [150, 50]]), gap = Math.round(10 / 25.4 * 150);
+  assert.equal(a.dpi, 150);
+  assert.deepEqual(a.cells.map((c) => c.y), [0, 0, 0], 'top edges aligned');
+  assert.equal(a.cells[1].x, a.cells[0].w + gap); assert.equal(a.cells[2].x, a.cells[1].x + a.cells[1].w + gap);
+  assert.equal(a.W, a.cells[0].w + a.cells[1].w + a.cells[2].w + 2 * gap, 'width = the pages + 2 gaps');
+  assert.equal(a.H, a.cells[1].h, 'height = the tallest page');
+  const big = R.pageLayout(Array(40).fill([2384, 3370]));              // 40 A0 sheets: far over 16384 px
+  assert.ok(big.dpi < 150 && big.W <= 16384 && big.H <= 16384 && big.W * big.H <= 64e6, `capped ${big.dpi} dpi ${big.W}x${big.H}`);
+  assert.equal(R.pageLayout([[2000, 2000]]).dpi, 150, '4167 px a side, 17 MP: under both caps');
+  assert.equal(R.pageLayout([[4000, 4000]]).dpi, 144, '8333 px a side = 69 MP at 150 dpi: the area cap gives 8000 x 8000 = 64 MP at 144');
+  assert.equal(R.pageLayout([[10000, 100]]).dpi, 117, 'the side cap: 16384 px / 138.9 in = 117.96: 117 dpi (118 would be 16389 px)');
+});

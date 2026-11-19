@@ -166,4 +166,14 @@ test('TODO 282b2: searching keeps a matching empty layer available as the curren
   assert.equal(O.buildTree(raw, fl, { extra: ['Layer1'], query: 'missing' }).layers.length, 0);
 });
 
+test('TODO 325: entities that alternate between layers keep their own list, in order; no hidden set still counts none hidden', () => {
+  const d = newDoc(4);
+  addLayer(d, 'A', { aci: 7 }); addLayer(d, 'B', { aci: 5 });
+  addEntities(d, line(0, 0, 1, 0, { layer: 'A' }), line(0, 1, 1, 1, { layer: 'B' }), line(0, 2, 1, 2, { layer: 'A' }), line(0, 3, 1, 3, { layer: 'A' }), line(0, 4, 1, 4, { layer: 'B' }));
+  const raw = readDxf(writeDxf(d)), fl = flatten(raw), t = O.buildTree(raw, fl, { open: new Set(['A', 'B']) });
+  assert.deepEqual(t.layers.map((l) => [l.name, l.ents]), [['A', [0, 2, 3]], ['B', [1, 4]]]);
+  assert.equal(t.hiddenN, 0);
+  assert.equal(O.buildTree(raw, fl, { hid: new Set([2]) }).hiddenN, 1);
+});
+
 console.log(n + ' tests passed');
