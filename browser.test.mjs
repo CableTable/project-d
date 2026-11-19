@@ -14649,6 +14649,12 @@ try {
     await frames();
   };
   const greenNear338 = () => page.waitForFunction(() => !!document.querySelector('[data-testid=canvas]').dataset.pivotSnap, null, { timeout: 2000 }).then(() => true, () => false);       // app state (the kind pivotSnap found), not canvas pixels: paint timing made the pixel check flaky
+  const settle338 = async (scope) => {         // wait until the ◎ and the sheet stop moving (the first drag after a tab opens raced a late re-layout)
+    let last = '', same = 0;
+    for (let i = 0; i < 60 && same < 5; i++) {
+      const now = JSON.stringify([await pivotAt338(scope), await exact338(0, 0)]); same = now === last ? same + 1 : 0; last = now; await frames();
+    }
+  };
   const near338 = (a, b, why, tol = 0.3) => { approx(a.x, b.x, tol, why + ' x'); approx(a.y, b.y, tol, why + ' y'); };
   /** One run of the rules on a tab in rotate mode: own node, another object, Snap off, Alt, Tab, release. own / other: the client points of two nodes; scope: where its ◎ is. */
   const pivotRules338 = async (scope, own, other, shot) => {
@@ -14657,10 +14663,10 @@ try {
     const setChip = async (on) => { if (await t('tog-snap').getAttribute('aria-pressed') !== String(on)) await t('tog-snap').click(); };
     try {
       await setChip(true);
-      await pivotDrag338(scope, off(own), { during: async () => { assert.equal(await greenNear338(own), true, 'the snap marker shows while the ◎ is dragged'); } });
+      await pivotDrag338(scope, off(own), { during: async () => { assert.equal(await greenNear338(own), true, 'the pivot snap is found while the ◎ is dragged (app state)'); } });
       near338(await pivotAt338(scope), own, 'the ◎ snaps to a node of the turned object itself');
       await pivotDrag338(scope, off(other), { during: async () => {
-        assert.equal(await greenNear338(other), true, 'the snap marker shows on the other object’s end');
+        assert.equal(await greenNear338(other), true, 'the pivot snap is found on the other object’s end (app state)');
         if (shot) await page.screenshot({ path: `${shotDir}/todo338-${shot}.png` });
       } });
       near338(await pivotAt338(scope), other, 'the ◎ snaps to the end of another object');
@@ -14710,18 +14716,19 @@ try {
     await click(45, 30); await gripWhen(3);
     await click(45, 30); await frames();
     await page.locator('.ovl [data-rot]').first().waitFor(); assert.equal(await page.locator('.ovl [data-rot]').count(), 4);
+    await settle338('.ovl');
     const own = await exact338(120, 30), other = await exact338(160, 80);
     await pivotRules338('.ovl', own, other, 'drawings-light');
     await menuItem('View', 'Theme: dark'); await frames();
     await pivotDrag338('.ovl', { x: other.x + 3, y: other.y + 2 }, { during: async () => { await page.screenshot({ path: `${shotDir}/todo338-drawings-dark.png` }); } });
     await menuItem('View', 'Theme: light'); await frames();
     await pivotTab338('.ovl', other, other.y);
-    await pivotDrag338('.ovl', { x: other.x + 3, y: other.y + 2 }, { during: async () => {       // hover the line's end past the 500 ms watch, then go out along its extension: no extension snap for a pivot
+    await pivotDrag338('.ovl', { x: other.x + 3, y: other.y + 2 }, { during: async () => {       // hover the line's end past the 500 ms watch, then go out along its extension, 3 px off the line (an extension snap would pull the ◎ onto it): no extension snap for a pivot
       await page.waitForTimeout(800);
-      await page.mouse.move(other.x + 40, other.y, { steps: 3 }); await frames();
+      await page.mouse.move(other.x + 40, other.y + 3, { steps: 3 }); await frames();
       assert.equal(await page.locator('[data-testid=canvas]').getAttribute('data-pivot-snap'), '', 'no extension / tracking snap for a pivot');
     } });
-    near338(await pivotAt338('.ovl'), { x: other.x + 40, y: other.y }, 'the ◎ stays on the raw pointer along the extension line');
+    near338(await pivotAt338('.ovl'), { x: other.x + 40, y: other.y + 3 }, 'the ◎ stays on the raw pointer beside the extension line');
     await pivotDrag338('.ovl', { x: other.x + 3, y: other.y + 2 });
     near338(await pivotAt338('.ovl'), other, 'on the node again');
     await turn338('.ovl', 23);
@@ -14739,10 +14746,12 @@ try {
     await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'pivot-338-layout.dxf');
     await page.locator('[data-tool=select]').click();
     const [x0, y0, x1, y1] = placedBox(lay.parts.plate, lay.placed[0]), [, v0, u1] = placedBox(lay.parts.other, lay.placed[1]);
-    const own = await exact338(x1, y1), other = await exact338(u1, v0), centre = await exact338((x0 + x1) / 2, (y0 + y1) / 2);
+    const centre = await exact338((x0 + x1) / 2, (y0 + y1) / 2);
     await page.locator('[data-group=parts] .part-hit').first().click({ force: true });
     await page.mouse.click(centre.x, centre.y);
     await page.waitForFunction(() => document.querySelectorAll('[data-group=tools] [data-rot]').length === 4);
+    await settle338('[data-group=tools]');
+    const own = await exact338(x1, y1), other = await exact338(u1, v0);
     await pivotRules338('[data-group=tools]', own, other, 'layouts-light');
     await menuItem('View', 'Theme: dark'); await frames();
     await pivotDrag338('[data-group=tools]', { x: other.x + 3, y: other.y + 2 }, { during: async () => { await page.screenshot({ path: `${shotDir}/todo338-layouts-dark.png` }); } });
@@ -14773,6 +14782,7 @@ try {
     await page.keyboard.press('Escape'); await frames();
     await click(45, 30); await frames(); await click(45, 30); await frames();
     await page.locator('.ovl [data-rot]').first().waitFor(); assert.equal(await page.locator('.ovl [data-rot]').count(), 4);
+    await settle338('.ovl');
     const own = await exact338(120, 30), other = await exact338(45, 30);
     await pivotRules338('.ovl', own, other, 'compare-light');
     await pivotDrag338('.ovl', { x: other.x + 3, y: other.y + 2 });
