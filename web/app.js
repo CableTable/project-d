@@ -4316,6 +4316,7 @@ function renderObjects(reveal = false) {
     ui.objFlocked.hidden = !!lay;
   };
   const rows = [];
+  if (ed) { const om = omOf(d); if (!om.open) { const names = d.fl.layers.map((l) => l.name), cur = curLayerName(d); om.open = new Set([names.includes(cur) ? cur : names[0]].filter(Boolean)); } }       // the current layer is open, else the first; set before the sig, or the next draw sees a new sig and builds the tree again
   const sig = !item && (lay || ed) ? objSig(d, dark) : null;
   if (sig && objSigLast && objSigLast.a === sig.a && objSigLast.b === sig.b && objSigLast.c === sig.c && objSigLast.fl === sig.fl && objSigLast.str === sig.str && markObjSel(d, reveal)) return;
   objSigLast = sig;
@@ -4359,7 +4360,6 @@ function renderObjects(reveal = false) {
     return;
   }
   const om = omOf(d);
-  if (!om.open) { const names = d.fl.layers.map((l) => l.name), cur = curLayerName(d); om.open = new Set([names.includes(cur) ? cur : names[0]].filter(Boolean)); }       // the current layer is open, else the first
   if (ui.objSearch.value !== om.query) ui.objSearch.value = om.query;
   let tree = OB.buildTree(d.raw, d.fl, objOpts(d, om));
   if (reveal && d.sel.size && d.sel.size <= 50) {                        // an object picked on the sheet: its layer opens and its row is listed

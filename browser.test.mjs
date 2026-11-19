@@ -22939,11 +22939,12 @@ try {
     const doc = newDoc(4);
     addEntities(doc, ...Array.from({ length: 620 }, (_, i) => dxfLine(0, i % 300, 10 + (i % 7), i % 300, { layer: 'Cut' })), dxfLine(0, 0, 5, 5, { layer: 'Engrave' }));
     await openGrips(writeDxf(doc), 'many325.dxf');
-    await t('ptab-objects').click();
     // a redraw of the tree replaces the children of obj-tree (a pick only toggles classes): the observer counts them
     await page.evaluate(() => { window.__objDraws = 0; new MutationObserver((r) => { window.__objDraws += r.length; }).observe(document.querySelector('[data-testid=obj-tree]'), { childList: true }); });
     const draws = () => page.evaluate(() => { const n = window.__objDraws; window.__objDraws = 0; return n; });
     await draws();
+    await t('ptab-objects').click();
+    assert.equal(await draws(), 1, 'the first open of a drawing builds the tree once (its open layer is set before the sig)');
     await t('ptab-drawing').click();
     await page.getByRole('combobox', { name: 'Current layer', exact: true }).selectOption('Engrave');
     assert.equal(await draws(), 0, 'a layer change with the Objects tab hidden draws no tree');
