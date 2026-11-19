@@ -90,17 +90,18 @@ export function buildTree(raw, fl, o = {}) {
   const q = String(o.query || '').trim().toLowerCase();
   const names = fl.layers.map((l) => l.name), at = new Map(names.map((n, i) => [n, i])), by = new Map(names.map((n) => [n, []]));
   for (const n of extra) if (!by.has(n)) by.set(n, []);                 // layers added by hand, still empty (the file's other empty layers are not listed, as in the Layers section)
+  let lastName, lastList;                                               // entities come in runs on one layer: one Map lookup per run
   for (const i of shownEntityIndexes(raw, fl)) {
-    const e = raw.entities[i];
-    if (!by.has(e.layer)) by.set(e.layer, []);
-    by.get(e.layer).push(i);
+    const n = raw.entities[i].layer;
+    if (n !== lastName || !lastList) { if (!by.has(n)) by.set(n, []); lastName = n; lastList = by.get(n); }
+    lastList.push(i);
   }
   const layers = [];
   let objects = 0, hiddenN = 0, lockedN = 0;
   for (const [name, list] of by) {
     const idx = at.has(name) ? at.get(name) : -1, layerHidden = idx >= 0 && off.has(idx), isLocked = locked.has(name);
     objects += list.length;
-    const hidList = layerHidden ? list : list.filter((e) => hid.has(e));
+    const hidList = layerHidden ? list : hid.size ? list.filter((e) => hid.has(e)) : [];
     hiddenN += hidList.length;
     if (isLocked) lockedN += list.length;
     const pool = filter === 'hidden' ? hidList : filter === 'locked' ? (isLocked ? list : []) : list;

@@ -79,6 +79,10 @@ function panelControl(page, locator) {
     if (['locator', 'first', 'last', 'nth', 'filter', 'getByRole', 'getByText'].includes(key)) return (...args) => panelControl(page, target[key](...args));
     if (['click', 'fill', 'check', 'uncheck', 'selectOption', 'focus', 'press', 'waitFor'].includes(key)) return async (...args) => {
       if (key === 'waitFor' && ['hidden', 'detached', 'attached'].includes(args[0]?.state)) return target[key](...args);
+      if (!(await target.count())) await target.first().waitFor({ state: 'attached', timeout: 1500 }).catch(async () => {     // the Objects tree is drawn only while its tab shows (TODO 325)
+        const tab = page.locator('[data-tab=objects]');
+        if (await tab.count() && await tab.getAttribute('aria-selected') !== 'true') await tab.click();
+      });
       const { panel, pane } = await target.evaluate((el) => ({ panel: !!el.closest('aside.panel'), pane: el.closest('[data-docker]')?.dataset.docker }));
       if (panel && await page.locator('[data-testid=panel-show]').isVisible()) await page.locator('[data-testid=panel-show]').click();
       if (pane) {
@@ -2776,6 +2780,7 @@ try {
       await p.evaluate(() => { window.EyeDropper = class { async open() { throw new DOMException('Cancelled', 'AbortError'); } }; });
       await q('colour-screen').click(); assert.equal(await q('colour-hex').inputValue(), '#123456');
       await q('colour-cancel').click();
+      await p.locator('[data-tab=objects]').click();            // the Objects tree is drawn when its tab opens: the theme was changed while it was hidden
       const layerCss = () => q('layer-colour').first().evaluate((el) => el.style.backgroundColor), layerBefore = await layerCss();
       await q('layer-colour').first().click(); await q('colour-hex').fill('123456'); await q('colour-ok').click();
       assert.equal(readDxf(await save()).layers['0'].tc, 0x123456);
@@ -7244,7 +7249,9 @@ try {
     assert.equal(await vis('sheet-panel'), false); assert.equal(await vis('step-panel'), false); assert.equal(await vis('parts-panel'), false);
     assert.equal(await vis('propbar'), false);
     assert.equal(await page.locator('rect.sheet').evaluate((r) => getComputedStyle(r.ownerSVGElement).visibility), 'hidden', 'no sheet outline');
+    await t('ptab-objects').click();                                     // the layer rows are drawn when this tab opens
     assert.deepEqual(await page.locator('.layer .nm').allTextContents(), ['0']);
+    await t('ptab-drawing').click();
     assert.equal(await page.locator('[data-tool=select]').getAttribute('class'), 'tool on', 'Select is the tool on a drawing');
     assert.equal(await t('ptab-drawing').getAttribute('aria-label'), 'Properties');
     assert.ok(await fitsPanel(), 'panel fits on a drawing tab');
@@ -7273,7 +7280,9 @@ try {
     assert.equal(await t('propbar').count(), 0);
     assert.equal(await t('ptab-drawing').getAttribute('aria-label'), 'Properties');
     assert.equal(await partText(), 'outline · 100 × 60');
+    await t('ptab-objects').click();                                     // the layer rows are drawn when this tab opens
     assert.ok((await page.locator('.layer .nm').allTextContents()).includes('Parts'));
+    await t('ptab-drawing').click();
     assert.equal(await page.locator('[data-tool=step]').getAttribute('class'), 'tool on');
     assert.equal(await t('count').textContent(), String(stepRepeat({ ...base, gripBottom: 0, partW: 100, partH: 60 }).count));
     // the part itself is drawn in every slot, and nothing of it is left off the sheet
@@ -7306,7 +7315,9 @@ try {
   await step('layouts: "+ New layout" and File → New layout; each layout has its own sheet settings; an empty drawing tab shows no sheet', async () => {
     await t('new-tab').click();
     assert.equal(await vis('sheet-panel'), false);
+    await t('ptab-objects').click();                                     // the layer rows are drawn when this tab opens
     assert.deepEqual(await page.locator('.layer .nm').allTextContents(), []);
+    await t('ptab-drawing').click();
     await t('new-layout').click();
     assert.equal(await page.locator('.tabs .dtab.on').getAttribute('data-kind'), 'layout');
     assert.match((await tabNames()).at(-1), /^Layout 1$/);
@@ -8126,7 +8137,6 @@ try {
     await page.waitForFunction(() => document.querySelector('.tabs .dtab.on').textContent.startsWith('outline.dxf'));
     await t('bg-picker').setInputFiles('fixtures/bg.png');
     await page.waitForFunction(() => document.querySelector('[data-testid=bg-name]').textContent === 'bg.png');
-    assert.ok((await page.locator('.layer .nm').allTextContents()).includes('Background'));
     assert.equal(await t('scale-target').isVisible(), true);
     assert.equal(await t('scale-target').inputValue(), 'drawing');
     assert.deepEqual(await sizeNow(), ['136', '60'], 'the drawing\'s size by default');
@@ -8151,7 +8161,8 @@ try {
     const ink = await inkedWhen((n) => n > 200);
     await t('drawing').evaluate(() => {});
     const eye = panelControl(page, page.locator('[data-layer=bg]'));
-    await eye.click();
+    await eye.click();                                             // (the helper opens the Objects tab, where the tree is drawn)
+    assert.ok((await page.locator('.layer .nm').allTextContents()).includes('Background'));
     assert.ok((await inkedWhen((n) => n < ink)) < ink, 'hidden: less ink');
     await eye.click();
     await inkedWhen((n) => n >= ink);
@@ -8165,7 +8176,9 @@ try {
     await page.screenshot({ path: shotDir + '/s8-background-dark.png' });
     await menuItem('View', 'Theme: light');
     await t('bg-remove').click();
+    await t('ptab-objects').click();                                     // the layer rows are drawn when this tab opens
     assert.ok(!(await page.locator('.layer .nm').allTextContents()).includes('Background'));
+    await t('ptab-drawing').click();
     await page.locator('.tabs .dtab.on .x').click();
   });
 
@@ -8231,8 +8244,10 @@ try {
     await page.waitForFunction(() => document.querySelector('[data-testid=trace-dialog]').dataset.state === 'ready', null, { timeout: 60000 });
     await t('trace-apply').click();
     assert.equal(await dlg.count(), 0);
-    assert.ok((await page.locator('.layer .nm').allTextContents()).includes('Trace'), 'the new layer');
     assert.match(await t('cmd-prompt').textContent(), /Trace: \d+ closed outlines? on the layer Trace/);
+    await t('ptab-objects').click();                                     // the layer rows are drawn when this tab opens
+    assert.ok((await page.locator('.layer .nm').allTextContents()).includes('Trace'), 'the new layer');
+    await t('ptab-drawing').click();
     // true size: the picture is 400 × 200 px at 96 dpi = 105.83 × 52.92 mm; the traced frame is that, within a pixel (0.27 mm) or two
     await t('scale-target').selectOption('drawing');
     await page.waitForFunction(() => Math.abs(parseFloat(document.querySelector('[data-testid=dw]').value) - 105.83) < 1, null, { timeout: 5000 });
@@ -8244,7 +8259,9 @@ try {
     await menuItem('View', 'Theme: light'); await page.waitForTimeout(150);
     // one undo takes the outlines and the layer away
     await page.keyboard.press('Control+z');
+    await t('ptab-objects').click();                                     // the layer rows are drawn when this tab opens
     await page.waitForFunction(() => ![...document.querySelectorAll('.layer .nm')].some((n) => n.textContent === 'Trace'));
+    await t('ptab-drawing').click();
     assert.equal(await t('scale-target').isVisible(), false, 'only the picture again');
     await closeTabs(/bg\.png/);
   });
@@ -8264,7 +8281,9 @@ try {
     assert.deepEqual(await tabNames(), [...before, 'overlay.dxf'], 'the background tab stays');
     await page.locator('.tabs .dtab', { hasText: keptName }).click();
     assert.equal(await t('bg-name').textContent(), 'bg.png');
+    await t('ptab-objects').click();                                     // the layer rows are drawn when this tab opens
     assert.ok((await page.locator('.layer .nm').allTextContents()).includes('Background'));
+    await t('ptab-drawing').click();
     assert.ok((await inkedWhen((n) => n > 200)) > 200, 'the picture is still drawn');
     await page.locator('.tabs .dtab', { hasText: 'overlay.dxf' }).last().click();
     await page.locator('.tabs .dtab.on .x').click();
@@ -8284,6 +8303,7 @@ try {
       assert.ok((await picker.getAttribute('accept')).split(',').includes('.ai'));
       await picker.setInputFiles('fixtures/colours.ai');
       await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'colours.dxf');
+      await p.getByTestId('ptab-objects').click();                      // the layer rows are drawn when this tab opens
       assert.deepEqual(await p.locator('.layer .nm').allTextContents(), ['#FF0000', '#00FF00', '#0000FF']);
       const [download] = await Promise.all([p.waitForEvent('download'), p.keyboard.press('Control+s')]);
       const doc = readDxf(readFileSync(await download.path(), 'utf8'));
@@ -8307,6 +8327,7 @@ try {
         window.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true }));
       }, bytes);
       await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'dropped.dxf');
+      await p.getByTestId('ptab-objects').click();
       assert.deepEqual(await p.locator('.layer .nm').allTextContents(), ['#FF0000', '#00FF00', '#0000FF']);
       // A PDF is told by its first four bytes, never inside a .dxf: a .dxf holding PDF bytes is read as a DXF (and refused), a .ai with the signature later has no PDF part.
       let seen = '';
@@ -8577,7 +8598,9 @@ try {
     await page.waitForFunction(() => document.querySelector('.tabs .dtab.on').textContent.startsWith('outline.dxf'));
     await t('bg-picker').setInputFiles('fixtures/text-only.pdf');
     await page.waitForFunction(() => document.querySelector('[data-testid=bg-name]').textContent === 'text-only.pdf', null, { timeout: 60000 });
+    await t('ptab-objects').click();                                     // the layer rows are drawn when this tab opens
     assert.ok((await page.locator('.layer .nm').allTextContents()).includes('Background'));
+    await t('ptab-drawing').click();
     await page.locator('.tabs .dtab.on .x').click();
     await page.locator('.tabs .dtab', { hasText: 'sample-copy.dxf' }).click();
     await page.locator('[data-tool=step]').click();
@@ -8710,7 +8733,9 @@ try {
     await t('picker').setInputFiles(picturesPdf());
     await page.waitForFunction(() => document.querySelector('.tabs .dtab.on').textContent.startsWith('pictures.dxf'), null, { timeout: 60000 });
     assert.match(await t('cmd-prompt').textContent(), /Opened pictures\.pdf as a drawing \(page 1 of 1\): .*1 stencil pictures not shown/);
+    await t('ptab-objects').click();                                     // the layer rows are drawn when this tab opens
     assert.ok((await page.locator('.layer .nm').allTextContents()).includes('PDF pictures'));
+    await t('ptab-drawing').click();
     // the canvas colour at a drawing point (mm, y up), [r, g, b]
     const colour = async (x, y) => {
       const p = await at(x, y);
@@ -8932,9 +8957,11 @@ try {
     assert.equal(await t('meas-keep').isVisible(), true);
     await t('meas-keep').click();
     await page.waitForFunction(() => document.querySelector('[data-testid=entities]').textContent.trim() === 'Entities 16');
-    assert.ok((await page.locator('.layer .nm').allTextContents()).includes('Dimensions'));
     assert.match(await t('cmd-prompt').textContent(), /Dimension kept: 36\.06 mm  \(ΔX 30\.00, ΔY 20\.00\)/);
     assert.equal(await t('meas-keep').isVisible(), false);
+    await t('ptab-objects').click();                                     // the layer rows are drawn when this tab opens
+    assert.ok((await page.locator('.layer .nm').allTextContents()).includes('Dimensions'));
+    await t('ptab-drawing').click();
     // Enter keeps a second one
     await click(10, 0); await click(90, 0);
     await page.keyboard.press('Enter');
@@ -9701,7 +9728,9 @@ try {
     await page.keyboard.press('Escape');
     await t('extract').click();
     assert.match(await t('cmd-prompt').textContent(), /a kept dimension is not part of a part/);
+    await t('ptab-objects').click();                                     // the layer rows are drawn when this tab opens
     assert.equal(await page.locator('.layer', { hasText: 'Dimensions' }).locator('.mono').textContent(), '1', 'a dimension counts as one entity in Layers');
+    await t('ptab-drawing').click();
     assert.equal(await entitiesN(), n0 + 1, 'and one in the Entities readout');
     // the selection of the plate and a dimension together: the size is the plate's
     await clickConnected(50, 0, { shift: true });
@@ -9727,7 +9756,9 @@ try {
 
   await step('review: layout: the Dimensions row is the real count; the parts list says copies; Apply stays in view; each Add puts a new copy 10 mm further on', async () => {
     await page.locator('[data-group=parts] .part-hit').first().click({ force: true });
+    await t('ptab-objects').click();                                     // the layer rows are drawn when this tab opens
     assert.equal(await page.locator('.layer', { hasText: 'Dimensions' }).locator('.mono').textContent(), '3', 'sheet width and height, and the selected part\'s width');
+    await t('ptab-drawing').click();
     assert.match((await partRows())[0], /^outline\|272 × 120 · \d+ copies$/);
     await shotBoth('layout-review');
     // Apply and the count are in the panel's visible part with the panel scrolled to the top
@@ -13527,7 +13558,9 @@ try {
     assert.equal(await t('tool-chip').textContent(), 'Tool: Line');
     assert.equal(await t('cmd-hist').textContent(), 'Command: LINE   layer 0');
     assert.equal(await prompt(), 'Specify first point (x,y):');
+    await t('ptab-objects').click();                                     // the layer rows are drawn when this tab opens
     assert.equal(await page.locator('.layer', { hasText: '0' }).locator('[data-testid=layer-current]').textContent(), 'current', 'layer 0 is the current layer to begin with');
+    await t('ptab-drawing').click();
     assert.equal(await page.locator('.tabs .dtab .dot').count(), 0, 'nothing drawn yet: still untouched');
     await page.keyboard.press('Escape');
   });
@@ -13720,9 +13753,10 @@ try {
     await closeTabs(/./);
     await t('picker').setInputFiles({ name: 'shapes.dxf', mimeType: 'text/plain', buffer: Buffer.from(shapesDoc(), 'latin1') });
     await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'shapes.dxf');
+    await t('ptab-objects').click();                                     // the layer rows are drawn when this tab opens
     assert.equal(await page.locator('[data-testid=layer-current]').count(), 1);
     assert.equal(await page.locator('.layer.current .nm').textContent(), '0');
-    await t('ptab-objects').click(); await page.locator('.layer', { hasText: 'Open' }).click();
+    await page.locator('.layer', { hasText: 'Open' }).click();
     assert.equal(await page.locator('.layer.current .nm').textContent(), 'Open');
     assert.match((await t('cmd-hist').textContent()) + (await prompt()), /Current layer: Open/);
     await page.locator('[data-tool=circle]').click();
@@ -13738,6 +13772,7 @@ try {
     await closeTabs(/./);
     await t('picker').setInputFiles({ name: 'shapes.dxf', mimeType: 'text/plain', buffer: Buffer.from(shapesDoc(), 'latin1') });
     await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'shapes.dxf');
+    await t('ptab-objects').click();                                     // the layer rows are drawn when this tab opens
     const add = t('layer-add'), name = t('layer-name'), rows = page.locator('.layer');
     assert.equal(await add.isDisabled(), false);
     assert.equal(await add.getAttribute('aria-disabled'), null, '+ Add is built, not greyed');
@@ -17958,6 +17993,17 @@ try {
   });
 
   await step('Compare: tolerance is editable (bad values refused), Show differences hides the glow, a click on a difference zooms to it', async () => {
+    const onTab = page.locator('.tabs .dtab.on .tname');
+    if (!(await onTab.count()) || (await onTab.textContent()) !== 'Compare') {        // alone, the step before has not opened it (cmpSec stays hidden without a Compare tab)
+      await closeTabs(/./);
+      await t('picker').setInputFiles(plateDxf('plate-b.dxf', 30));
+      await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'plate-b.dxf');
+      await t('picker').setInputFiles(plateDxf('plate-c.dxf', 30.6));
+      await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'plate-c.dxf');
+      await page.locator('.tabs .dtab', { hasText: 'plate-b' }).click();
+      await menuItem('File', 'Compare drawings…');
+      await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'Compare');
+    }
     await t('cmp-tol').fill('1'); await t('cmp-tol').press('Enter');
     await t('cmp-run').click();
     await page.waitForFunction(() => document.querySelector('[data-testid=cmp-count]').textContent === 'No differences');
@@ -22693,7 +22739,7 @@ try {
       dxfLine(50, 0, 51, 1, { layer: 'Later' }), dxfLine(51, 1, 52, 2, { layer: 'Later' }));
     await t('picker').setInputFiles({ name: 'draw-limit.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(doc, { extents: [0, 0, 52, 2] }), 'latin1') });
     await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'draw-limit.dxf');
-    await t('ptab-drawing').click();
+    await t('ptab-objects').click();                                     // the layer rows are drawn when this tab opens
     const later = page.locator('.layer[data-file-layer]', { hasText: 'Later' });
     assert.equal(await later.locator('.lbl').textContent(), '2');
     assert.equal(await t('entities').textContent(), 'Entities 3');
@@ -22884,6 +22930,27 @@ try {
     await show(); await page.waitForTimeout(250); await page.screenshot({ path: `${shotDir}/s8-objects-light.png` }); await page.keyboard.press('Escape');
     await menuItem('View', 'Theme: dark'); await show(); await page.waitForTimeout(300); await page.screenshot({ path: `${shotDir}/s8-objects-dark.png` }); await page.keyboard.press('Escape');
     await menuItem('View', 'Theme: light'); await t('ptab-drawing').click();
+    await closeTabs(/./);
+  });
+
+  await step('TODO 325: Objects tab: layer change while hidden does not render; open is fast', async () => {
+    const doc = newDoc(4);
+    addEntities(doc, ...Array.from({ length: 620 }, (_, i) => dxfLine(0, i % 300, 10 + (i % 7), i % 300, { layer: 'Cut' })), dxfLine(0, 0, 5, 5, { layer: 'Engrave' }));
+    await openGrips(writeDxf(doc), 'many325.dxf');
+    await t('ptab-objects').click();
+    // a redraw of the tree replaces the children of obj-tree (a pick only toggles classes): the observer counts them
+    await page.evaluate(() => { window.__objDraws = 0; new MutationObserver((r) => { window.__objDraws += r.length; }).observe(document.querySelector('[data-testid=obj-tree]'), { childList: true }); });
+    const draws = () => page.evaluate(() => { const n = window.__objDraws; window.__objDraws = 0; return n; });
+    await draws();
+    await t('ptab-drawing').click();
+    await page.getByRole('combobox', { name: 'Current layer', exact: true }).selectOption('Engrave');
+    assert.equal(await draws(), 0, 'a layer change with the Objects tab hidden draws no tree');
+    await t('ptab-objects').click();
+    assert.equal(await draws(), 1, 'the tree is drawn once, on open');
+    assert.deepEqual(await page.locator('[data-testid=obj-tree] .or.layer.cur .onm').allTextContents(), ['Engrave'], 'the change shows on open');
+    await t('ptab-drawing').click(); await t('ptab-objects').click();
+    assert.equal(await draws(), 0, 'reopened with nothing changed: the tree (and its 620-object walk) is not rebuilt');
+    await t('ptab-drawing').click();
     await closeTabs(/./);
   });
 
@@ -24621,6 +24688,7 @@ try {
     await undo(); assert.equal(await nParts(), n0 + 1, 'one Undo takes the circle away');
     await page.keyboard.press('Control+y'); assert.equal(await nParts(), n0 + 2, 'Redo brings it back');
     // layers: the Layers panel lists the layer of the objects; + Add makes a new current layer that the next shape goes on
+    await t('ptab-objects').click();                                     // the layer rows are drawn when this tab opens
     assert.equal(await page.locator('.layer', { hasText: '0' }).locator('[data-testid=layer-current]').count(), 1);
     await t('layer-add').click();
     assert.equal(await page.locator('.layer.current .nm, .layer.current input').count() > 0, true, 'a new current layer');
@@ -30807,6 +30875,7 @@ try {
     await typeCmd('x');
     assert.match(await prompt(), /Explode: 1 part exploded → 5 objects/);
     assert.equal(await nParts(), 5);
+    await t('ptab-objects').click();                                     // the layer rows are drawn when this tab opens
     assert.ok((await layerNames()).includes('CUT') && (await layerNames()).includes('MARK'), 'the part layers are in the Layers panel');
     const p1 = await pos();
     approx(p1[0], p0[0], 0.01, 'same X'); approx(p1[1], p0[1], 0.01, 'same Y');

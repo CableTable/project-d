@@ -4179,9 +4179,10 @@ function addedSwatch(d, l) {
 function searchEsc(input) {
   input.addEventListener('keydown', (e) => { if (e.key === 'Escape' && input.value) { e.stopPropagation(); input.value = ''; input.dispatchEvent(new Event('input')); } });
 }
+/** The tree is drawn only while its tab shows (setPtab draws it on open); renderObjects' own sig decides whether a draw changes anything.
+ *  The Guides section lives in the tree on a layout and beside Parts on a drawing: a hidden draw is still made when it sits in the wrong place. */
 function renderLayers() {
-  objSigLast = null;
-  renderObjects();
+  if (state.ptab === 'objects' || !!curDoc()?.lay !== ui.objTree?.contains(ui.guideSec)) renderObjects();
 }
 
 /** The layout's existing layer rows are siblings of its parts, never parents of them. */
@@ -4289,7 +4290,7 @@ function objBtn(act, on, label, inner, cls = '') {
 function objSig(d, dark) {
   const om = omOf(d), sets = JSON.stringify([om.query, om.filter, dark, om.layoutClosed, om.guidesOpen, [...om.openP], [...(om.open || [])], [...om.openB], [...om.show]]);
   if (d.lay) return { a: d, b: d.lay.parts, c: d.lay.layers, str: sets + JSON.stringify([d.lay.name, d.lay.s, state.hidden, d.curLayer, Object.values(d.lay.parts).map((p) => p.name), [...(d.hiddenParts || [])], placedNow.map((p) => [p.partId, p.x, p.y, p.rot, p.lock, p.mirrorX, p.mirrorY])]) };
-  return { a: d, b: d.raw.entities, c: d.raw.layers, str: sets + JSON.stringify([[...d.off], [...(hidIdx(d) || [])], [...(d.locked || [])], curLayerName(d), d.factor, [...(d.addedLayers || [])]]) };
+  return { a: d, b: d.raw.entities, c: d.raw.layers, fl: d.fl, str: sets + JSON.stringify([[...d.off], [...(hidIdx(d) || [])], [...(d.locked || [])], curLayerName(d), d.factor, [...(d.addedLayers || [])], d.newLayer, d.bg?.visible]) };
 }
 let objSigLast = null;
 /** Only the picked rows changed: toggles the .sel marks on the rows already there. False if a picked object has no row yet (the tree is rebuilt, which opens its layer). */
@@ -4316,7 +4317,7 @@ function renderObjects(reveal = false) {
   };
   const rows = [];
   const sig = !item && (lay || ed) ? objSig(d, dark) : null;
-  if (sig && objSigLast && objSigLast.a === sig.a && objSigLast.b === sig.b && objSigLast.c === sig.c && objSigLast.str === sig.str && markObjSel(d, reveal)) return;
+  if (sig && objSigLast && objSigLast.a === sig.a && objSigLast.b === sig.b && objSigLast.c === sig.c && objSigLast.fl === sig.fl && objSigLast.str === sig.str && markObjSel(d, reveal)) return;
   objSigLast = sig;
   if (!lay && ui.objTree.contains(ui.guideSec)) { ui.partsSec.after(ui.guideSec); applySectionFold(ui.guideSec); }
   if (lay) {

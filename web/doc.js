@@ -46,7 +46,9 @@ export function startHidden(fl) {
 /** Top-level entity indexes in the shown space, including unsupported objects preserved on Save. */
 export function shownEntityIndexes(raw, fl) {
   const sp = spaceOf(fl);
-  return raw.entities.flatMap((e, i) => !e.hidden && (e.ps ? 1 : 0) === sp ? [i] : []);
+  const out = [], ents = raw.entities;                 // a loop, not flatMap: that makes an array per entity (30 ms at 150k)
+  for (let i = 0; i < ents.length; i++) if (!ents[i].hidden && (ents[i].ps ? 1 : 0) === sp) out.push(i);
+  return out;
 }
 
 /** Entities in the shown space: a block or dimension counts once, on its own layer. */
