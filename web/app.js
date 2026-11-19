@@ -1309,6 +1309,7 @@ async function openBytes(name, buf, path = null, batch = {}) {
   if (!r.ok) { note(name + ': ' + (r.sorry || 'could not read this drawing' + (r.error ? ' (' + r.error + ')' : ''))); return; }
   const t = window.__TAURI__;
   if (path && t?.fs?.readFile) {
+    let attached = false;
     for (const e of [...r.doc.entities, ...Object.values(r.doc.blocks).flatMap((b) => b.entities)]) {
       const file = e.r?.file;
       if (e.type !== 'IMAGE' || !file || !/^[^<>:"/\\|?*\x00-\x1f]+\.png$/i.test(file)) continue; // only a sibling PNG, never a file-supplied path
@@ -1319,9 +1320,10 @@ async function openBytes(name, buf, path = null, batch = {}) {
           reader.onload = () => resolve(reader.result); reader.onerror = () => reject(reader.error);
           reader.readAsDataURL(new Blob([bytes], { type: 'image/png' }));
         });
+        attached = true;
       } catch { /* Missing or unreadable sibling: keep the undrawn IMAGE. */ }
     }
-    r.result = flatten(r.doc);
+    if (attached) r.result = flatten(r.doc);
   }
   await preloadPictures(r.result.items);
   const fl = r.result;

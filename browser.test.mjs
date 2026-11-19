@@ -8700,6 +8700,14 @@ try {
       await p.evaluate(() => { delete window.__pics305.files['C:/jobs/renamed-img1.png']; delete window.__pics305.files['C:/jobs/renamed-img2.png']; window.__pics305.next = 'C:/jobs/renamed.dxf'; });
       await p.locator('.dtab.on .x').click(); await menu('Open…'); await prompt('Opened renamed.dxf');
       assert.deepEqual(await ink(), [0, 0], 'missing native siblings leave undrawn IMAGEs');
+      // TODO 322f: a desktop open of a DXF with no IMAGE keeps readDrawing's result and still draws
+      await p.evaluate((dxf) => { window.__pics305.files['C:/jobs/outline.dxf'] = [...new TextEncoder().encode(dxf)]; window.__pics305.next = 'C:/jobs/outline.dxf'; }, readFileSync('fixtures/outline.dxf', 'utf8'));
+      await menu('Open…'); await prompt('Opened outline.dxf');
+      assert.ok(await q('drawing').evaluate((c) => {
+        const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+        let n = 0; for (let i = 4; i < d.length; i += 4) if (d[i] !== d[0] || d[i + 1] !== d[1] || d[i + 2] !== d[2]) n++;
+        return n;
+      }) > 100, 'a desktop open of a DXF without IMAGEs still draws');
     } finally { await context.close(); }
   });
 
