@@ -356,6 +356,7 @@
   "tracking: Shift in Measure drops the tracking guide and keeps the pick straight along X": 3.24,
   "tracking: on a layout tab Measure shows no tracking guide": 5.44,
   "TODO 345a: a dimension too short for its arrows puts them outside, and its text drags along the line (past an extension line too), across it, one Undo, Esc puts it back": 4.5,
+  "TODO 345b1: a selected dimension is solid (no dashes) and has grips (linear 5, diameter 3, radius 3); its text grip and an origin grip drag, one Undo each, Esc puts them back; a linked one keeps following; save and reopen keep the edits": 5,
   "TODO 344a: the text of a diameter and a radius dimension drags out of its circle (a straight leader, no landing) and back in; one Undo per drag, Esc puts it back; save and reopen keep it": 6,
   "TODO 344b: DDI (ribbon) and DRA (typed) with the last click outside the circle put the text there, a click inside keeps the inside look; Move and Scale of the circle carry the text (Scale by k), one Undo; save and reopen keep it": 12,
   "TODO 344b: on a PDF sheet, DDI with the last click outside puts the text there, and the text drags out further and back in (one Undo, Esc puts it back)": 6,

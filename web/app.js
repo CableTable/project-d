@@ -11179,7 +11179,7 @@ const sheetPx = (d, p) => { const [sx, sy] = toSheetPt(d, p), r = ui.canvas.getB
 /** The grip under a pointer position (8 px), or null. */
 function gripAt(d, cx, cy) {
   let best = null, bd = 8.5;
-  for (const g of gripList(d)) { const [px, py] = sheetPx(d, [g.x, g.y]), dd = Math.hypot(cx - px, cy - py); if (dd <= bd) { bd = dd; best = g; } }
+  for (const g of gripList(d)) { const [px, py] = sheetPx(d, [g.x, g.y]), dd = Math.hypot(cx - px, cy - py); if (dd < bd || (dd <= bd && g.kind !== 'dim')) { bd = dd; best = g; } }       // a tie with a dimension's grip (its origin on the line's end it measures) goes to the other object
   return best;
 }
 /** The point under the pointer for a grip: the snaps (the 0.01 mm grid when free), and Shift / ORTHO along X or Y from where the rubber band starts. */
