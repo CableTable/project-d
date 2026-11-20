@@ -13427,7 +13427,9 @@ try {
       await said(/^Angle </);            // the second click turns the Rotate mode on
       await shotBoth('todo335-arrows');
       const turnBy = async (d, keys = []) => {
-        const a = await arrowPoint(0), pv = await pivotPx(), r = Math.hypot(a.x - pv.x, a.y - pv.y), a0 = Math.atan2(a.y - pv.y, a.x - pv.x);
+        let pv = await pivotPx();
+        while (!pv.x && !pv.y) { await page.waitForTimeout(50); pv = await pivotPx(); }       // the tools layer was redrawn mid-read: a detached dot reads 0,0, which put the drag's centre at the page corner
+        const a = await arrowPoint(0), r = Math.hypot(a.x - pv.x, a.y - pv.y), a0 = Math.atan2(a.y - pv.y, a.x - pv.x);
         const to = (f) => ({ x: pv.x + r * Math.cos(a0 - f * d * Math.PI / 180), y: pv.y + r * Math.sin(a0 - f * d * Math.PI / 180) });
         for (const k of keys) await page.keyboard.down(k);
         try {
@@ -13490,6 +13492,7 @@ try {
       // after Ungroup: the Block turns by hand with its contour; the Plate and its contour stay
       await click(440, 340); await click(440, 340);
       await page.waitForFunction(() => document.querySelectorAll('[data-group=tools] [data-rot]').length === 4);
+      await said(/^Angle </);            // the second click's update is done: arrows and pivot are where the drag reads them
       await turnBy(30);
       const after = await state();
       approx(deg(after.block.own.rot, 0), 30, 3, 'the Block turned about 30°');
