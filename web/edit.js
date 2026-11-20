@@ -1760,7 +1760,7 @@ export function readDim(name, block) {
     const ln = ents.find((e) => e.type === 'LINE'), sd = ents.find((e) => e.type === 'SOLID'), ar = ents.find((e) => e.type === 'ARC'), look = lookOf(ents);
     if (tag === 'R' && ln && sd) {
       const c = [g(ln, 10), g(ln, 20)], tx = ents.find((e) => e.type === 'TEXT'), params = { ...look, c, r: Math.hypot(g(sd, 10) - c[0], g(sd, 20) - c[1]), p: [g(ln, 11), g(ln, 21)] };
-      if (tx && look.pos === 'centre') params.tp = [g(tx, 10) - c[0], g(tx, 20) - c[1]];         // a text of its own place is centred; the old landing's is above its line
+      if (tx && look.pos === 'centre') { params.tp = [g(tx, 10) - c[0], g(tx, 20) - c[1]]; params.p = [g(tx, 10), g(tx, 20)]; }       // a text of its own place is centred; the old landing's is above its line
       return { kind: 'radius', params };
     }
     return tag === 'A' && ar ? { kind: 'angle', params: { ...look, v: [g(ar, 10), g(ar, 20)], r: g(ar, 40), a0: g(ar, 50), a1: g(ar, 51) } } : null;
