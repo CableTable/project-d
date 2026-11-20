@@ -26,7 +26,7 @@ const rectangle = (T) => T.kind === 'rect' || T.kind === 'rrect';
 const STAGES = { measure: ['xy'], setlen: ['xy', 'polar'], dimension: ['xy', 'polar', 'xy'],
   circle: ['xy', 'radius'], ellipse: ['xy', 'polar', 'length'], arc: ['xy', 'polar', 'polar'] };
 export const isSingle = (mode) => ['angle', 'factor', 'radius', 'length', 'distance'].includes(mode);
-export const inputMode = (T) => T.point ? T.valueMode || (firstPoint(T) ? 'xy' : 'polar') : STAGES[T.kind] ? (T.kind === 'circle' && (T.mode === '2p' || T.mode === '3p') ? ['xy', 'polar', 'polar'] : STAGES[T.kind])[T.pts.length] ?? null : T.stage !== 'radius' && ['line', 'polyline', 'rect', 'rrect'].includes(T.kind)
+export const inputMode = (T) => T.point ? T.valueMode || (firstPoint(T) ? 'xy' : 'polar') : STAGES[T.kind] ? T.kind === 'circle' && (T.mode === 'ttr' || T.mode === 'ttt') ? null : (T.kind === 'circle' && (T.mode === '2p' || T.mode === '3p') ? ['xy', 'polar', 'polar'] : STAGES[T.kind])[T.pts.length] ?? null : T.stage !== 'radius' && ['line', 'polyline', 'rect', 'rrect'].includes(T.kind)
   ? !T.pts.length ? 'xy' : rectangle(T) ? 'size' : 'polar' : null;
 export const readOnlyLength = (T) => T.kind === 'measure' && T.pts.length === 1;
 

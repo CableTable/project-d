@@ -719,5 +719,8 @@
   "TODO 349: Centre to page horizontally / vertically": 4,
   "TODO 346a: typed 2P and 3P at the CIRCLE centre prompt (a bare 2 / 3 is a number, an unknown word is refused), *Invalid* picks refused, typed C is Centre, Radius, one Undo per circle: Drawings, Layouts, Compare": 5.5,
   "TODO 346a: the Circle button shows and starts the last mode (remembered as pd-circlemode); the flyout opens from its triangle, a hold or a right-click, and from the ribbon and Draw > Circle >; typed C stays Centre, Radius: Drawings, Layouts, Compare": 7,
-  "TODO 346a: screenshots, light and dark (the Circle flyout open on a 3-Point button)": 1.5
+  "TODO 346a: screenshots, light and dark (the Circle flyout open on a 3-Point button)": 1.5,
+  "TODO 346b: typed T at the CIRCLE centre prompt starts Tan, Tan, Radius: two object picks, then the radius; the error lines; one Undo per circle: Drawings, Layouts, Compare": 5.5,
+  "TODO 346b: Tan, Tan, Tan from the flyout and Draw > Circle > (no typed keyword), Tan, Tan, Radius from the submenu; the button remembers both: Drawings, Layouts, Compare": 7,
+  "TODO 346b: screenshots, light and dark (the Circle flyout open on a Tan, Tan, Tan button, a Tan, Tan, Radius circle being sized)": 2
 }

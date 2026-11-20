@@ -69,7 +69,8 @@ import { openQuickSelect } from './qselectdlg.js';
 import * as FI from './fill.js';
 import { extendEntity, extendRegion, previewEdit, curveShape, isBoundary, extendable } from './extend.js';
 import { placedMat, placedBox, placement1, GRID_KEYS, gridLayout, bakeGrid, slotOf, relayGrid } from './apply.js';
-import { layoutSnap, placedSnap, layoutCandidates, layoutReference, partIndex, toPart } from './layoutsnap.js';
+import { layoutSnap, placedSnap, layoutCandidates, layoutReference, layoutTangentObject, partIndex, toPart } from './layoutsnap.js';
+import { nearestObject } from './tangent.js';
 import * as LD from './layoutdoc.js';
 import { labelGaps } from './pdf-source.js';
 import { isDimPart } from './layoutdim.js';
@@ -215,6 +216,8 @@ const CIRCLE_ICONS = {
   cd: '<circle cx="10" cy="10" r="7"/><path d="M3 10h14"/>',
   '2p': `<circle cx="10" cy="10" r="7"/>${DOT(3, 10)}${DOT(17, 10)}`,
   '3p': `<circle cx="10" cy="10" r="7"/>${DOT(10, 3)}${DOT(16, 13.5)}${DOT(4, 13.5)}`,
+  ttr: '<path d="M1 3h18M1 17h18"/><circle cx="10" cy="10" r="7"/>',                 // a circle touching two lines
+  ttt: '<path d="M10 2L18 17H2z"/><circle cx="10" cy="12.2" r="4.8"/>',               // a triangle and its inscribed circle
 };
 const circleRows = () => DR.CIRCLE_MODES.map(([mode, name, key]) => [name, () => setCircleMode(mode), key, null, CIRCLE_ICONS[mode]]);
 
@@ -8299,7 +8302,14 @@ function drawClick(e) {
   state.drawHover = q; state.msg = null;
   if (cursorDynamic() && DI.hasTyped(cursorInput())) { DR.toolHover(state.draw, q.slice(0, 2)); cursorCommit(); return; }
   state.draw.cursorInput = null;
-  drawApply(DR.toolClick(state.draw, [q[0], q[1]]));
+  drawApply(DR.toolClick(state.draw, [q[0], q[1]], DR.tangentMode(state.draw) ? tangentObjectAt(d, e.clientX, e.clientY) : null));
+}
+/** The line, circle or arc under a click (mm) for a Circle's tangent pick, on a drawing, a Compare source or a layout; null when the click is on none (or on a spline or ellipse). */
+function tangentObjectAt(d, cx, cy) {
+  const p = toDrawing(d, cx, cy);
+  if (d.lay) return layoutTangentObject(d.lay.parts, snapPlaced(), ...p, pickTol(d))?.o || null;
+  const ed = edIndex(d), f = d.factor;
+  return nearestObject(ed.ix, (i) => ed.vis[i] === 1, p[0], p[1], pickTol(d), (q) => [q[0] * f, q[1] * f], f)?.o || null;
 }
 /** What a tool action gave: shapes become ONE labelled undo step; otherwise its message and the new prompt. */
 function drawApply(r) {
@@ -8309,6 +8319,7 @@ function drawApply(r) {
   if (r.made) trackClear();                                         // the tool action is over: the acquired points go
   if (T.kind === 'rrect' && T.radius !== state.drawCfg.radius) { state.drawCfg.radius = T.radius; try { localStorage.setItem('pd-rradius', String(T.radius)); } catch { /* ignore */ } }
   if (r.made && r.made.length) { drawCommit(d, T.kind, r.made); return; }
+  if (r.end) { setTool('select'); note(r.msg); return; }              // "Circle does not exist.": nothing drawn, the command ends
   state.msg = r.msg || null; renderCommand(); paintOverlay();
 }
 /** Enter / Esc / right-click: the tool ends what it has (a line or polyline keeps it) and the acquired points go. */

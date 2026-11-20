@@ -3,6 +3,7 @@ import { placedMat } from './apply.js';
 import { mapply } from './drawing.js';
 import { makeIndex, snapPick, snapObject, snapCandidates, snapReference } from './edit.js';
 import { DEFAULT_TYPES, preferSnap, orderCandidates } from './snap.js';
+import { nearestObject } from './tangent.js';
 
 const indexes = new WeakMap();
 const placedIndexes = new WeakMap();
@@ -74,6 +75,19 @@ export function layoutCandidates(parts, placed, W, H, x, y, tol, types = DEFAULT
     const q = { x: a[0] + t * dx, y: a[1] + t * dy, kind: 'near' }, d = Math.hypot(x - q.x, y - q.y);
     if (d > tol || best && d >= best.distance) continue;
     best = { object: 'sheet', e, distance: d, candidates: candidates ? orderCandidates([{ x: a[0], y: a[1], kind: 'end' }, { x: b[0], y: b[1], kind: 'end' }, { x: (a[0] + b[0]) / 2, y: (a[1] + b[1]) / 2, kind: 'mid' }, q], types, x, y) : [] };
+  }
+  return best;
+}
+
+/** The line, circle or arc of a placed object under a sheet point, in sheet mm (a Circle's tangent pick, TODO 346b): the nearest one, or null. */
+export function layoutTangentObject(parts, placed, x, y, tol) {
+  let best = null;
+  for (const pl of placed) {
+    const part = parts[pl.partId];
+    if (!part?.fl) continue;
+    const ed = partIndex(part), M = placedMat(part, pl, 0), scale = Math.sqrt(Math.abs(M[0] * M[3] - M[1] * M[2]));
+    const hit = nearestObject(ed.ix, (i) => ed.vis[i] === 1, ...toPart(part, pl, x, y), tol / (part.factor || 1), (q) => { const w = mapply(M, q[0], q[1]); return [w[0], -w[1]]; }, scale);
+    if (hit && (!best || hit.d * scale < best.d)) best = { d: hit.d * scale, o: hit.o };
   }
   return best;
 }

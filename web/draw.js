@@ -15,6 +15,7 @@
 //            | { t: 'ellipse', c, m: [mx, my], ratio }     (arc angles in degrees, anticlockwise from +X, drawn from a0 to a1)
 //   toEntity(shape, o, factor) → the DXF entity record (dxf-write.js); svgPath(shape, H) → an SVG path for the preview.
 import { line, lwpoly, circle, arc, ellipse } from './dxf-write.js';
+import { tangentCircle } from './tangent.js';
 
 export const KINDS = ['line', 'polyline', 'rect', 'rrect', 'circle', 'ellipse', 'arc'];
 export const LABELS = { line: 'Line', polyline: 'Polyline', rect: 'Rectangle', rrect: 'Rounded rectangle', circle: 'Circle', ellipse: 'Ellipse', arc: 'Arc' };
@@ -237,16 +238,20 @@ export function svgPath(sh, H) {
 
 // ---------------------------------------------------------------- the tools
 
-/** The Circle tool's modes (the flyout and the Draw menu list these; 346b adds Ttr and Tan-Tan-Tan): [mode, name, typed way in]. */
-export const CIRCLE_MODES = [['cr', 'Centre, Radius', 'C'], ['cd', 'Centre, Diameter', 'C D'], ['2p', '2-Point', 'C 2P'], ['3p', '3-Point', 'C 3P']];
+/** The Circle tool's modes (the flyout and the Draw menu list these): [mode, name, typed way in]. Tan, Tan, Tan has no typed way in (AutoCAD has none). */
+export const CIRCLE_MODES = [['cr', 'Centre, Radius', 'C'], ['cd', 'Centre, Diameter', 'C D'], ['2p', '2-Point', 'C 2P'], ['3p', '3-Point', 'C 3P'], ['ttr', 'Tan, Tan, Radius', 'C T'], ['ttt', 'Tan, Tan, Tan', null]];
 const byPoints = (T) => T.kind === 'circle' && (T.mode === '2p' || T.mode === '3p');
+/** Tan, Tan, Radius and Tan, Tan, Tan: the picks are objects (the app finds the object under each click and gives it to toolClick), not points. */
+export const tangentMode = (T) => T.kind === 'circle' && (T.mode === 'ttr' || T.mode === 'ttt');
+const TAN = 'Requires a TAN object-snap and selection of Circle, Arc, or Line.';
+const radiusStage = (T) => T.mode === 'ttr' && T.pts.length === 2;        // Tan, Tan, Radius: both objects are picked, the radius is next
 
 /** A new tool. cfg: { radius } is the rounded rectangle's corner radius (kept between uses by the app); { mode } the Circle's mode (CIRCLE_MODES, default Centre, Radius). */
 export function createTool(kind, cfg = {}) {
   if (!KINDS.includes(kind)) throw new Error('unknown tool ' + kind);
   const radius = cfg.radius > 0 ? cfg.radius : 5;
   const mode = kind === 'circle' && CIRCLE_MODES.some((m) => m[0] === cfg.mode) ? cfg.mode : 'cr';
-  const T = { kind, pts: [], trail: [], last: null, hover: null, dia: mode === 'cd', mode, radius, stage: kind === 'rrect' ? 'radius' : 'pts', back: null, msg: null };
+  const T = { kind, pts: [], objs: [], rbase: null, trail: [], last: null, hover: null, dia: mode === 'cd', mode, radius, stage: kind === 'rrect' ? 'radius' : 'pts', back: null, msg: null };
   return T;
 }
 
@@ -261,7 +266,7 @@ export function toolRef(T) {
 /** How many points are placed (0 = nothing in progress). */
 export const toolBusy = (T) => T.pts.length > 0;
 
-function reset(T) { T.pts = []; T.trail = []; T.hover = null; T.dia = T.mode === 'cd'; }
+function reset(T) { T.pts = []; T.objs = []; T.rbase = null; T.trail = []; T.hover = null; T.dia = T.mode === 'cd'; }
 
 /** The polyline of what is picked, null when it has fewer than 2 points (a Line commits each segment as it is picked: see addPoint). */
 function chain(T, closed) {
@@ -277,14 +282,34 @@ function finishChain(T, closed) {
 }
 
 /** A point picked or typed. */
-function addPoint(T, p) {
-  const result = placePoint(T, p);
+function addPoint(T, p, obj) {
+  const result = placePoint(T, p, obj);
   if (!result.msg) T.last = p.slice(0, 2);
   return result;
 }
 
-function placePoint(T, p) {
+/** The circle of a Tan, Tan, Radius / Tan, Tan, Tan pick set: made, or "does not exist" and the command ends. A radius of 0 or less is refused and asked again. */
+function tangentDone(T, r) {
+  if (r != null && !(r > 1e-9)) { T.rbase = null; return say('Value must be positive and nonzero.'); }
+  const c = tangentCircle(T.objs, T.pts, r);
+  reset(T);
+  return c ? done([{ t: 'circle', c: c.c, r: c.r }]) : { made: null, msg: 'Circle does not exist.', end: true };
+}
+
+/** A pick in a tangent mode: an object (obj: { t: 'l', a, b } | { t: 'c', c, r }, in mm) at the point p; after both objects of Tan, Tan, Radius, two points are the radius. */
+function tangentClick(T, p, obj) {
+  if (radiusStage(T)) {
+    if (!T.rbase) { T.rbase = p; return say(null); }
+    return tangentDone(T, dist(T.rbase, p));
+  }
+  if (!obj) return say(TAN);
+  T.pts.push(p); T.objs.push(obj);
+  return T.mode === 'ttt' && T.pts.length === 3 ? tangentDone(T, null) : say(null);
+}
+
+function placePoint(T, p, obj) {
   p = [p[0], p[1]];
+  if (tangentMode(T)) return tangentClick(T, p, obj);
   const k = T.kind, n = T.pts.length;
   if (k === 'line' || k === 'polyline') {
     if (n && dist(T.pts[n - 1], p) < 1e-9) return say('That is the last point again: pick another');
@@ -352,11 +377,11 @@ function ellipseOf(T, half2) {
   return done([{ t: 'ellipse', ...e }]);
 }
 
-/** A click (already snapped to a point of the drawing, or free). */
-export function toolClick(T, p) {
+/** A click (already snapped to a point of the drawing, or free); obj: the line, circle or arc under it for a tangent pick (see tangentClick), null when there is none. */
+export function toolClick(T, p, obj = null) {
   if (T.stage === 'radius') T.stage = 'pts';                          // clicking the first corner keeps the remembered radius
   T.hover = [p[0], p[1]];
-  return addPoint(T, p);
+  return addPoint(T, p, obj);
 }
 
 /** The pointer moved (a snapped point): the rubber band follows. */
@@ -385,7 +410,9 @@ export function toolUndoSeg(T) {
 function undoPoint(T) {
   if (!T.pts.length) return say('Nothing to undo');
   if (T.kind === 'line' && T.trail.length) return { made: null, msg: null, undoSeg: true };         // the app undoes the segment's step
+  if (T.rbase) { T.rbase = null; return say(null); }                  // Tan, Tan, Radius: the radius' first point
   T.pts.pop();
+  T.objs.length = Math.min(T.objs.length, T.pts.length);
   T.last = T.pts.at(-1) || null;
   return say(null);
 }
@@ -416,6 +443,8 @@ export function toolType(T, text, unit = 'mm') {
     if (w === 'u' || w === 'undo') return undoPoint(T);
     if (k === 'circle' && !T.pts.length && (w === '2p' || w === '3p')) { T.mode = w; return say(null); }        // CIRCLE's centre prompt: AutoCAD's 2P / 3P options
     if (k === 'circle' && !T.pts.length && (w === 'c' || w === 'circle')) { T.mode = 'cr'; T.dia = false; return say(null); }      // typed C is always Centre, Radius
+    if (k === 'circle' && !T.pts.length && (w === 't' || w === 'ttr')) { T.mode = 'ttr'; T.dia = false; return say(null); }       // T / TTR: Tan, Tan, Radius (AutoCAD: T alone is enough)
+    if (tangentMode(T)) return say(radiusStage(T) ? 'Specify the radius as a number, or pick two points' : TAN);
     if (byPoints(T) || k === 'circle' && !T.pts.length && !['d', 'diameter', 'r', 'radius'].includes(w)) return say('Point or option keyword required.');
     if (k === 'circle' && (w === 'd' || w === 'diameter')) { T.dia = true; if (arg != null && +arg > 0 && T.pts.length) return circleOf(T, +arg / 2); return say(null); }
     if (k === 'circle' && (w === 'r' || w === 'radius')) { T.dia = false; if (arg != null && +arg > 0 && T.pts.length) return circleOf(T, +arg); return say(null); }
@@ -428,8 +457,14 @@ export function toolType(T, text, unit = 'mm') {
   // a point or a length
   if (!T.pts.length) {
     const p = typedPoint(inp, T.last);
-    if (!p) return say(k === 'circle' && !byPoints(T) || k === 'ellipse' ? 'Type the centre as x,y' : 'Type the first point as x,y (or click it)');
+    if (!p) return say(tangentMode(T) ? TAN : k === 'circle' && !byPoints(T) || k === 'ellipse' ? 'Type the centre as x,y' : 'Type the first point as x,y (or click it)');
     return addPoint(T, p);
+  }
+  if (tangentMode(T)) {                                               // objects are picked, not typed; Tan, Tan, Radius takes the radius as a length
+    if (!radiusStage(T)) return say(TAN);
+    if (inp.kind === 'len') return tangentDone(T, inp.v);
+    const p = typedPoint(inp, T.rbase || T.pts[1]);
+    return p ? addPoint(T, p) : say('Type the radius');
   }
   if (k === 'rect' || k === 'rrect') {                                // the second corner: W,H (also @W,H), or #x,y for an absolute corner
     const p = typedPoint(inp.kind === 'xy' ? { ...inp, rel: inp.rel || !inp.abs } : inp, T.pts[0]);
@@ -470,6 +505,13 @@ export function toolPreview(T) {
   if (k === 'rect' || k === 'rrect') {
     if (Math.abs(H[0] - P[0][0]) > 1e-9 && Math.abs(H[1] - P[0][1]) > 1e-9) out.shapes.push({ t: 'poly', pts: rectPts(P[0], H, k === 'rrect' ? T.radius : 0), closed: true });
     out.readout = `W ${n2(Math.abs(H[0] - P[0][0]))} × H ${n2(Math.abs(H[1] - P[0][1]))}` + (k === 'rrect' ? ` · R ${n2(T.radius)}` : '');
+    return out;
+  }
+  if (tangentMode(T)) {                                               // only the radius' two points show a live circle
+    if (!radiusStage(T) || !T.rbase) return out;
+    const r = dist(T.rbase, H), c = r > 1e-9 && tangentCircle(T.objs, P, r);
+    if (c) out.shapes.push({ t: 'circle', c: c.c, r: c.r });
+    out.guides.push([T.rbase, H]); out.readout = `R ${n2(r)}`;
     return out;
   }
   if (byPoints(T)) {
@@ -530,12 +572,17 @@ export function toolPrompt(T, layer = '0') {
     if (!n) return { status: st(`layer ${layer}` + (k === 'rrect' ? ` · R ${n2(T.radius)}` : '')), prompt: 'Specify first corner' + (k === 'rrect' ? ' [Radius]' : '') + ':' };
     return { status: st(`first corner ${n2(T.pts[0][0])}, ${n2(T.pts[0][1])}`), prompt: 'Other corner, or size W,H (also @W,H)' + (k === 'rrect' ? ' [Radius]' : '') + ':' };
   }
+  if (tangentMode(T)) {
+    const name = T.mode === 'ttr' ? 'Tan, Tan, Radius' : 'Tan, Tan, Tan';
+    if (radiusStage(T)) return { status: st(`${name} · radius next · layer ${layer}`), input: T.rbase ? undefined : 'number', prompt: T.rbase ? 'Specify second point:' : 'Specify radius of circle:' };
+    return { status: st(`${name} · ${n} of ${T.mode === 'ttr' ? 2 : 3} picked · layer ${layer}`), prompt: `Specify point on object for ${['first', 'second', 'third'][n]} tangent of circle:` };
+  }
   if (byPoints(T)) {
     const two = T.mode === '2p', ord = ['first', 'second', 'third'][n];
     return { status: st(`${two ? '2-Point' : '3-Point'} · ${n} point${n === 1 ? '' : 's'} · layer ${layer}`), prompt: two ? `Specify ${ord} end point of circle's diameter (x,y):` : `Specify ${ord} point on circle (x,y):` };
   }
   if (k === 'circle') {
-    if (!n) return { status: st(`layer ${layer}`), prompt: 'Specify centre (x,y) [3P/2P/Diameter]:' };
+    if (!n) return { status: st(`layer ${layer}`), prompt: 'Specify centre (x,y) [3P/2P/Ttr (tan tan radius)/Diameter]:' };
     return { status: st(`centre ${n2(T.pts[0][0])}, ${n2(T.pts[0][1])}`), prompt: T.dia ? 'Diameter [Radius]:' : 'Radius [Diameter]:' };
   }
   if (k === 'ellipse') {
@@ -555,7 +602,7 @@ export function toolWords(T) {
   const k = T.kind;
   if (T.stage === 'radius') return new Set();
   if (k === 'line' || k === 'polyline') return new Set(['c', 'close', 'u', 'undo']);
-  if (k === 'circle') return new Set(['d', 'diameter', 'r', 'radius', 'u', 'undo', '2p', '3p']);
+  if (k === 'circle') return new Set(['d', 'diameter', 'r', 'radius', 'u', 'undo', '2p', '3p', 't', 'ttr']);
   if (k === 'rrect') return new Set(['r', 'radius', 'u', 'undo']);
   return new Set(['u', 'undo']);
 }

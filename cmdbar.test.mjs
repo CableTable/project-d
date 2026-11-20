@@ -141,6 +141,7 @@ test('parseOptions: the words in the last [bracket], with the underlined letters
   const o = CB.parseOptions('Angle <0.00>: [Pivot / Copy / Esc]:');
   assert.deepEqual(o.map((x) => [x.word, x.key, x.rest]), [['Pivot', 'P', 'ivot'], ['Copy', 'C', 'opy']]);
   assert.deepEqual(CB.parseOptions('Specify centre point or [3P/2P/Ttr]:').map((x) => x.key), ['3P', '2P', 'T']);
+  assert.deepEqual(CB.parseOptions('Specify centre (x,y) [3P/2P/Ttr (tan tan radius)/Diameter]:').map((x) => [x.word, x.key]), [['3P', '3P'], ['2P', '2P'], ['Ttr', 'T'], ['Diameter', 'D']], 'a note in brackets after an option is not part of it');
   assert.deepEqual(CB.parseOptions('Option [Inside / Outside / Distance / Steps / Sharp / Rounded / Apply]:').map((x) => x.key), ['I', 'O', 'D', 'S', 'Sh', 'R', 'A']);
   assert.deepEqual(CB.parseOptions('Erase source objects? [Yes / No] <No>:').map((x) => x.word), ['Yes', 'No']);
   assert.deepEqual(CB.parseOptions('Click an outline to select it. [Extract / Keep only / Measure]:'), [], 'a phrase is not a one-word option');

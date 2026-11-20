@@ -443,7 +443,7 @@ test('Circle 2P / 3P (346a): typed options at the centre prompt, the circle, *In
   assert.deepEqual(DR.parseInput('2P'), { kind: 'word', w: '2p' });
   assert.deepEqual(DR.parseInput('3'), { kind: 'len', v: 3 });                 // 2 and 3 alone stay numbers
   const T = DR.createTool('circle');
-  assert.match(DR.toolPrompt(T).prompt, /^Specify centre \(x,y\) \[3P\/2P\/Diameter\]:$/);
+  assert.match(DR.toolPrompt(T).prompt, /^Specify centre \(x,y\) \[3P\/2P\/Ttr \(tan tan radius\)\/Diameter\]:$/);
   assert.equal(DR.toolType(T, 'foo').msg, 'Point or option keyword required.');
   assert.equal(DR.toolType(DR.createTool('rect'), 'foo').msg, '"foo" is not an option here', 'other tools keep their message');
   DR.toolType(T, '2P');
@@ -473,6 +473,50 @@ test('Circle 2P / 3P (346a): typed options at the centre prompt, the circle, *In
   assert.equal(DR.toolClick(cd, [10, 0]).made[0].r, 5, 'Centre, Diameter');
   assert.equal(cd.dia, true, 'and the next circle asks for a diameter too');
   assert.equal(DR.createTool('circle', { mode: 'bogus' }).mode, 'cr');
+});
+
+test('Circle Tan, Tan, Radius and Tan, Tan, Tan (346b): typed T / TTR, object picks, the radius, "Circle does not exist."', () => {
+  const X = { t: 'l', a: [0, 0], b: [10, 0] }, Y = { t: 'l', a: [0, 0], b: [0, 10] };
+  assert.deepEqual(DR.CIRCLE_MODES.slice(-2).map((m) => m[0]), ['ttr', 'ttt']);
+  assert.ok(DR.toolWords(DR.createTool('circle')).has('t') && DR.toolWords(DR.createTool('circle')).has('ttr'));
+  for (const w of ['T', 'ttr', 'TTR']) { const c = DR.createTool('circle'); DR.toolType(c, w); assert.equal(c.mode, 'ttr', w); }
+  const T = DR.createTool('circle');
+  DR.toolType(T, 'T');
+  assert.equal(DR.toolPrompt(T).prompt, 'Specify point on object for first tangent of circle:');
+  assert.equal(DR.toolClick(T, [5, 5]).msg, 'Requires a TAN object-snap and selection of Circle, Arc, or Line.', 'a pick on no object');
+  assert.equal(DR.toolType(T, '3,4').msg, 'Requires a TAN object-snap and selection of Circle, Arc, or Line.', 'a typed point is no object either');
+  assert.equal(T.pts.length, 0, 'the prompt repeats');
+  DR.toolClick(T, [5, 0], X);
+  assert.equal(DR.toolPrompt(T).prompt, 'Specify point on object for second tangent of circle:');
+  DR.toolClick(T, [0, 5], Y);
+  assert.equal(DR.toolPrompt(T).prompt, 'Specify radius of circle:');
+  assert.equal(DR.toolType(T, '0').msg, 'Value must be positive and nonzero.');
+  assert.equal(DR.toolType(T, '-3').msg, 'Value must be positive and nonzero.');
+  assert.equal(T.pts.length, 2, 'the radius is asked again');
+  const made = DR.toolType(T, '2').made[0];
+  assert.equal(made.t, 'circle'); nearPt(made.c, [2, 2]); near(made.r, 2);
+  assert.equal(T.mode, 'ttr', 'the tool stays in its mode'); assert.equal(T.pts.length, 0);
+  DR.toolClick(T, [5, 0], X); DR.toolClick(T, [0, 5], Y);                // the radius by two points
+  assert.equal(DR.toolClick(T, [20, 20]).msg, null); assert.equal(DR.toolPrompt(T).prompt, 'Specify second point:');
+  DR.toolHover(T, [20, 23]);
+  assert.equal(DR.toolPreview(T).shapes[0].r, 3, 'a live circle of the distance between the two points');
+  const two = DR.toolClick(T, [20, 23]).made[0];
+  nearPt(two.c, [3, 3]); near(two.r, 3);
+  DR.toolClick(T, [5, 0], X); DR.toolClick(T, [5, 0], X);                // both picks on one object: no circle, the command ends
+  const none = DR.toolType(T, '2');
+  assert.deepEqual([none.made, none.msg, none.end], [null, 'Circle does not exist.', true]);
+  assert.equal(T.pts.length, 0);
+  DR.toolClick(T, [5, 0], X); DR.toolType(T, 'u'); assert.equal(T.pts.length, 0); assert.equal(T.objs.length, 0, 'U takes the last pick back');
+  DR.toolType(T, 'c'); assert.equal(T.mode, 'cr', 'typed C is Centre, Radius');
+  const ttt = DR.createTool('circle', { mode: 'ttt' });                  // Tan, Tan, Tan: three picks make it
+  assert.equal(DR.toolType(ttt, 'foo').msg, 'Requires a TAN object-snap and selection of Circle, Arc, or Line.');
+  DR.toolClick(ttt, [5, 0], X); DR.toolClick(ttt, [0, 5], Y);
+  assert.equal(DR.toolPrompt(ttt).prompt, 'Specify point on object for third tangent of circle:');
+  const r = DR.toolClick(ttt, [5, 5], { t: 'l', a: [10, 0], b: [0, 10] });
+  nearPt(r.made[0].c, [10 - 5 * Math.SQRT2, 10 - 5 * Math.SQRT2]); near(r.made[0].r, 10 - 5 * Math.SQRT2);       // the incircle of the right triangle with legs 10
+  DR.toolClick(ttt, [5, 0], X); DR.toolClick(ttt, [5, 0], X);
+  const par = DR.toolClick(ttt, [5, 10], { t: 'l', a: [0, 10], b: [10, 10] });
+  assert.deepEqual([par.made, par.msg, par.end], [null, 'Circle does not exist.', true]);
 });
 
 console.log(n + ' draw tests passed');

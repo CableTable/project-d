@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { layoutSnap } from './web/layoutsnap.js';
+import { layoutSnap, layoutTangentObject } from './web/layoutsnap.js';
 import { makePart } from './web/layoutdoc.js';
 import { newDoc, addEntities, rect, circle } from './web/dxf-write.js';
 import { snapTypes } from './web/snap.js';
@@ -50,4 +50,14 @@ test('layout snap ticks filter part and sheet candidates before choosing their s
   assert.equal(pick([], 399.9, 123, { near: false }), null);
   at(pick([{ partId: 'p', x: 100, y: 0.3 }], 100.1, 0.1, {}), 100, 0.3, 'end');
   at(pick([{ partId: 'p', x: 100, y: 0.3 }], 100.1, 0.1, { end: false }), 100.1, 0, 'near');
+});
+
+test('TODO 346b: the line or circle under a sheet point, in sheet mm, with the placement applied', () => {
+  const p = { partId: 'p', x: 150, y: 100, rot: 90 };
+  assert.deepEqual(layoutTangentObject(parts, [p], 149.9, 123, 0.5).o, { t: 'l', a: [150, 100], b: [150, 180] }, 'a rectangle side');
+  assert.deepEqual(layoutTangentObject(parts, [{ ...p, mirrorX: true }], 110.1, 20.1, 0.5).o, { t: 'l', a: [150, 20], b: [110, 20] }, 'mirrored');
+  const c = layoutTangentObject(parts, [p], 138, 140, 0.5).o;           // the part's circle (r 4 in a part of factor 2)
+  assert.equal(c.t, 'c'); assert.ok(Math.abs(c.c[0] - 130) < 1e-8 && Math.abs(c.c[1] - 140) < 1e-8 && Math.abs(c.r - 8) < 1e-8, JSON.stringify(c));
+  assert.equal(layoutTangentObject(parts, [p], 130, 140, 0.5), null, 'the circle\'s centre is no object');
+  assert.equal(layoutTangentObject(parts, [{ partId: 'missing', x: 1, y: 1 }], 1, 1, 5), null);
 });

@@ -34750,7 +34750,7 @@ try {
     ['Layouts', () => freshLayoutWithPlate()],
     ['Compare', async () => { await open97c(doc97f2(dxfLine(10, 10, 300, 10)), 'circle346-c.dxf'); await typeCmd('compare'); }],
   ];
-  const centre346 = 'Specify centre (x,y) [3P/2P/Diameter]:', first2p346 = "Specify first end point of circle's diameter (x,y):", first3p346 = 'Specify first point on circle (x,y):';
+  const centre346 = 'Specify centre (x,y) [3P/2P/Ttr (tan tan radius)/Diameter]:', first2p346 = "Specify first end point of circle's diameter (x,y):", first3p346 = 'Specify first point on circle (x,y):';
   const prompt346 = async (text, label = '') => { try { await said(new RegExp('^' + text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$')); } catch { throw new Error(`${label}: expected the prompt "${text}", got "${await prompt()}"`); } };
   const said346 = async () => (await t('cmd-hist').textContent()) + ' | ' + await prompt();
   const stop346 = async () => { await key97c('Escape'); await key97c('Escape'); await page.locator('[data-tool=select]').click(); };
@@ -34798,7 +34798,7 @@ try {
   });
 
   await step('TODO 346a: the Circle button shows and starts the last mode (remembered as pd-circlemode); the flyout opens from its triangle, a hold or a right-click, and from the ribbon and Draw > Circle >; typed C stays Centre, Radius: Drawings, Layouts, Compare', async () => {
-    const items = ['Centre, Radius C', 'Centre, Diameter C D', '2-Point C 2P', '3-Point C 3P'];
+    const items = ['Centre, Radius C', 'Centre, Diameter C D', '2-Point C 2P', '3-Point C 3P', 'Tan, Tan, Radius C T', 'Tan, Tan, Tan'];
     const stored = () => page.evaluate(() => localStorage.getItem('pd-circlemode'));
     const pick = (name) => page.locator('.ctxmenu .mi', { hasText: name }).click();
     const home = async () => { await page.locator('[data-ribbon-tab=Home]').click(); return page.locator('.ribbon-body [data-panel=Draw]'); };
@@ -34867,6 +34867,125 @@ try {
       await page.keyboard.press('Escape');
     }
     await menuItem('View', 'Theme: light');
+    await t('circle-flyout').click(); await page.locator('.ctxmenu .mi', { hasText: 'Centre, Radius' }).click();
+    await stop346(); await closeTabs(/./);
+  });
+
+  // ---- TODO 346b: Circle Tan, Tan, Radius (typed T) and Tan, Tan, Tan (flyout / submenu): the object picks, the radius, the error lines; Drawings, Layouts and Compare ----
+  const tabs346b = [                                                                          // the same tabs, with two long lines so the opened view shows the whole triangle
+    ['Drawings', () => open97c(doc97f2(dxfLine(0, 0, 300, 0), dxfLine(0, 0, 0, 300)), 'circle346-d.dxf')],
+    circleTabs346[1],
+    ['Compare', async () => { await open97c(doc97f2(dxfLine(0, 0, 300, 0), dxfLine(0, 0, 0, 300)), 'circle346-c.dxf'); await typeCmd('compare'); }],
+  ];
+  const first346 = 'Specify point on object for first tangent of circle:', second346 = 'Specify point on object for second tangent of circle:', third346 = 'Specify point on object for third tangent of circle:';
+  const tan346 = 'Requires a TAN object-snap and selection of Circle, Arc, or Line.';
+  const at346 = (x, y) => page.evaluate(([x, y]) => {
+    const svg = document.querySelector('[data-testid=overlay]'), h = +document.querySelector('rect.sheet').getAttribute('height');
+    const p = new DOMPoint(x, h - y).matrixTransform(svg.getScreenCTM()); return { x: p.x, y: p.y };
+  }, [x, y]);
+  const click346 = async (x, y) => { const p = await at346(x, y); await page.mouse.click(p.x, p.y); await frames(); };
+  const triangle346 = async () => {                                                          // a right triangle of three lines, legs 140, corner (60, 60)
+    for (const [a, b] of [['60,60', '200,60'], ['60,60', '60,200'], ['200,60', '60,200']]) { await typeCmd('l'); await typeCmd(a); await typeCmd(b); await stop346(); }
+  };
+  const circleAt346 = (c, x, y, r, label) => { assert.ok(c, label + ': a circle was made'); [[10, x], [20, y], [40, r]].forEach(([code, v]) => assert.ok(Math.abs(fieldOf(c, code) - v) < 0.05, `${label}: code ${code} is ${fieldOf(c, code)}, wanted ${v}`)); };
+  const circlesOf346 = async (kind) => kind === 'Drawings' ? (await savedDoc()).entities.filter((e) => e.type === 'CIRCLE') : kind === 'Compare' ? sourceCircles346('circle346-c') : [];
+  await step('TODO 346b: typed T at the CIRCLE centre prompt starts Tan, Tan, Radius: two object picks, then the radius; the error lines; one Undo per circle: Drawings, Layouts, Compare', async () => {
+    for (const [kind, setup] of tabs346b) {
+      await setup(); await triangle346();
+      const n0 = kind === 'Layouts' ? await nParts() : 0;
+      await typeCmd('c'); await prompt346(centre346, kind);
+      await typeCmd('T');
+      await prompt346(first346, kind + ': T starts Tan, Tan, Radius');
+      await click346(150, 150);                                                              // on no object
+      assert.match(await said346(), /Requires a TAN object-snap and selection of Circle, Arc, or Line\./, kind); await prompt346(first346, kind + ': the prompt repeats');
+      await typeCmd('10,10'); assert.match(await said346(), /Requires a TAN object-snap/, kind + ': a typed point is no object'); await prompt346(first346, kind);
+      await click346(120, 60); await prompt346(second346, kind);
+      await click346(60, 120); await prompt346('Specify radius of circle:', kind);
+      await typeCmd('0'); assert.match(await said346(), /Value must be positive and nonzero\./, kind); await prompt346('Specify radius of circle:', kind + ': asked again');
+      await typeCmd('-4'); assert.match(await said346(), /Value must be positive and nonzero\./, kind);
+      await typeCmd('30');
+      assert.match(await said346(), /Circle made on layer/, kind);
+      if (kind === 'Layouts') assert.equal(await nParts(), n0 + 1, kind + ': the circle');
+      await prompt346(first346, kind + ': the tool stays in Tan, Tan, Radius');
+      await click346(120, 60); await click346(60, 120);                                      // the radius by two points
+      await click346(300, 250); await prompt346('Specify second point:', kind);
+      await click346(300, 280);                                                              // a distance of 30
+      assert.match(await said346(), /Circle made on layer/, kind);
+      if (kind === 'Layouts') assert.equal(await nParts(), n0 + 2, kind);
+      await click346(120, 60); await click346(150, 60); await typeCmd('5');                  // both picks on one line: no circle, the command ends
+      assert.match(await said346(), /Circle does not exist\./, kind);
+      assert.equal(await page.locator('[data-tool=select].on').count(), 1, kind + ': the command ended');
+      if (kind === 'Layouts') assert.equal(await nParts(), n0 + 2, kind + ': nothing drawn');
+      if (kind === 'Drawings') { const cs = await circlesOf346(kind); assert.equal(cs.length, 2, kind); circleAt346(cs[0], 90, 90, 30, kind + ' typed radius'); circleAt346(cs[1], 90, 90, 30, kind + ' two-point radius'); }
+      await key97c('Control+z');
+      if (kind === 'Layouts') assert.equal(await nParts(), n0 + 1, kind + ': one Undo per circle');
+      else { const cs = await circlesOf346(kind); assert.equal(cs.length, 1, kind + ': one Undo per circle'); circleAt346(cs[0], 90, 90, 30, kind); }
+      await closeTabs(/./);
+    }
+    assert.deepEqual(errors, []);
+  });
+
+  await step('TODO 346b: Tan, Tan, Tan from the flyout and Draw > Circle > (no typed keyword), Tan, Tan, Radius from the submenu; the button remembers both: Drawings, Layouts, Compare', async () => {
+    const stored = () => page.evaluate(() => localStorage.getItem('pd-circlemode'));
+    const pick = (text) => page.locator('.ctxmenu .mi', { hasText: text }).click();
+    for (const [kind, setup] of tabs346b) {
+      await setup(); await triangle346();
+      await t('circle-flyout').click(); await pick('Tan, Tan, Tan');
+      await prompt346(first346, kind + ': the flyout starts Tan, Tan, Tan');
+      assert.equal(await stored(), 'ttt', kind);
+      assert.match(await page.locator('[data-tool=circle]').getAttribute('title'), /Tan, Tan, Tan/, kind + ': the button shows the mode');
+      await click346(150, 150); assert.match(await said346(), /Requires a TAN object-snap/, kind); await prompt346(first346, kind);
+      await click346(120, 60); await prompt346(second346, kind);
+      await click346(60, 120); await prompt346(third346, kind);
+      await click346(130, 130);                                                              // the hypotenuse
+      assert.match(await said346(), /Circle made on layer/, kind);
+      await prompt346(first346, kind + ': the tool stays in Tan, Tan, Tan');
+      await stop346();
+      await page.locator('[data-tool=circle]').click(); await prompt346(first346, kind + ': the button starts the last mode');
+      await click346(120, 60); await click346(60, 120); await click346(130, 130);              // the same circle again: still made
+      assert.match(await said346(), /Circle made on layer/, kind);
+      await typeCmd('c'); await prompt346(centre346, kind + ': typed C is Centre, Radius');
+      await stop346();
+      await key97c('Control+z');                                                             // one Undo takes the second circle
+      await menuItem('Draw', 'Circle');                                                      // Draw > Circle > submenu
+      assert.deepEqual(await flyoutItems(), ['Centre, Radius C', 'Centre, Diameter C D', '2-Point C 2P', '3-Point C 3P', 'Tan, Tan, Radius C T', 'Tan, Tan, Tan'], kind + ': Draw menu');
+      await pick('Tan, Tan, Radius'); await prompt346(first346, kind + ': submenu pick'); assert.equal(await stored(), 'ttr', kind);
+      await click346(120, 60); await click346(60, 120); await typeCmd('30');
+      assert.match(await said346(), /Circle made on layer/, kind);
+      await stop346();
+      await t('circle-flyout').click(); await pick('Centre, Radius');                       // back to the default for the other steps
+      assert.equal(await stored(), 'cr'); await prompt346(centre346, kind);
+      await stop346();
+      if (kind !== 'Layouts') {                                                              // the incircle (Tan, Tan, Tan) and the Tan, Tan, Radius circle: two circles, the second one's Undo took the repeat
+        const cs = await circlesOf346(kind), r = 140 - 70 * Math.SQRT2;
+        assert.equal(cs.length, 2, kind + ': one Undo per circle'); circleAt346(cs[0], 60 + r, 60 + r, r, kind + ' incircle'); circleAt346(cs[1], 90, 90, 30, kind + ' Tan, Tan, Radius');
+      }
+      if (kind === 'Layouts') {                                                              // the last circle (centre 90,90, r 30): clicked on its own edge, its width is 60 mm
+        await click346(90 + 30 * Math.SQRT1_2, 90 + 30 * Math.SQRT1_2);
+        assert.deepEqual(await Promise.all(['pw', 'ph', 'px', 'py'].map((id) => t(id).inputValue())), ['60.00', '60.00', '60.00', '60.00'], 'Layouts: the circle sits at 60,60 and is 60 wide');
+      }
+      await closeTabs(/./);
+    }
+    assert.deepEqual(errors, []);
+  });
+
+  await step('TODO 346b: screenshots, light and dark (the Circle flyout open on a Tan, Tan, Tan button, a Tan, Tan, Radius circle being sized)', async () => {
+    await tabs346b[0][1](); await triangle346();
+    await t('circle-flyout').click(); await page.locator('.ctxmenu .mi', { hasText: 'Tan, Tan, Tan' }).click();
+    await stop346();
+    for (const theme of ['light', 'dark']) {
+      await menuItem('View', 'Theme: ' + theme); await frames();
+      await t('circle-flyout').click(); await page.mouse.move(5, 5);
+      const path = `${shotDir}/s346b-circleflyout-${theme}.png`;
+      await page.screenshot({ path }); assert.ok(readFileSync(path).length > 1000);
+      await page.keyboard.press('Escape');
+    }
+    await menuItem('View', 'Theme: light');
+    await typeCmd('c'); await typeCmd('T'); await click346(120, 60); await click346(60, 120); await click346(300, 150);
+    const p = await at346(340, 150); await page.mouse.move(p.x, p.y); await frames();
+    const path = `${shotDir}/s346b-ttr-preview.png`;
+    await page.screenshot({ path }); assert.ok(readFileSync(path).length > 1000);
+    await stop346();
     await t('circle-flyout').click(); await page.locator('.ctxmenu .mi', { hasText: 'Centre, Radius' }).click();
     await stop346(); await closeTabs(/./);
   });
