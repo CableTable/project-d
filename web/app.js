@@ -13355,7 +13355,7 @@ function cmpDown(e) {
   const d = cmpDoc(), c = d && d.cmp, item = c && cmpSelected(c), ref = c && CMP.reference(c.items);
   if (!c || !item?.visible || !item.box) return false;
   const source = editable(), p = source && toDrawing(source, e.clientX, e.clientY);
-  if (source && (e.target.closest('[data-rot], [data-pivot]') || gripOn(source) && gripAt(source, e.clientX, e.clientY) || dimGrab(source, p))) return false;       // a press on the selected dimension moves it in its drawing (TODO 345a), not the snapshot
+  if (source && (e.target.closest('[data-rot], [data-pivot]') || gripOn(source) && gripAt(source, e.clientX, e.clientY) || dimGrab(source, p)?.text)) return false;       // a press on the selected dimension's text moves it in its drawing (TODO 345a); on its line the snapshot moves, as before
   const target = ref === item ? c.items.find((x) => x !== item && x.checked && x.visible) : ref?.visible ? ref : null;
   const p0 = sheetAt(e.clientX, e.clientY), m0 = [...item.offset], mode0 = c.mode;
   let grab, g;                        // looked up at the first move, so a click builds no snap index (150 000 entities: 350 ms, TODO 327)

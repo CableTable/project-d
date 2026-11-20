@@ -9490,7 +9490,7 @@ try {
 
   await step('extract: a selection with a kept dimension is sized without it; a taken name is refused; the command line and the dial work too', async () => {
     await page.locator('[data-tool=measure]').click();
-    await click(50, 20); await click(80, 40); await t('meas-keep').click();
+    await click(10, 0); await click(90, 0); await t('meas-keep').click();         // 80 mm: its 3.5 mm "<>  (ΔX, ΔY)" text fits inside (TODO 345a best fit puts a text too wide for its line outside, here past the box)
     await page.waitForFunction(() => document.querySelector('[data-testid=entities]').textContent.trim() === 'Entities 16');
     await page.locator('[data-tool=select]').click();
     const a = await at(-5, -5), b = await at(101, 61);
