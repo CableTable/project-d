@@ -334,4 +334,17 @@ test('TODO 344a radius with its text outside (acad-344 fact 4) has no landing, i
   assert.equal(E.radiusGeometry({ ...base, tp: [0, 0], p: [120, 50] }, 1).lines.length, 2, 'a text point at the centre falls back to the old look');
 });
 
+test('TODO 344b circleDraft: the last click places the text; outside the circle it is the outside look, inside the inside look', () => {
+  const c = [100, 50], out = E.circleDraft('diameter', c, 10, [120, 55]), inn = E.circleDraft('diameter', c, 10, [103, 51]);
+  near(out.params.tp[0], 20); near(out.params.tp[1], 5, 'a click outside is the text point');
+  assert.equal(inn.params.tp, undefined, 'a click inside a diameter is today\'s look'); near(inn.params.a[1], 50 - 10 * 1 / Math.hypot(3, 1), 'its line goes the way the pointer is');
+  assert.equal(E.dimGeom('diameter', { ...out.params, textH: 2.5 }, 1).lines.length, 2, 'outside: the line and one leader');
+  const rout = E.circleDraft('radius', c, 10, [120, 55]), rin = E.circleDraft('radius', c, 10, [105, 50]);
+  near(rout.params.tp[0], 20); near(rin.params.tp[0], 5, 'a radius keeps the text where the click was, in or out');
+  assert.equal(E.dimGeom('radius', { ...rout.params, textH: 2.5 }, 1).lines.length, 2, 'a radius outside has no landing: the line and one leader');
+  assert.equal(E.dimGeom('radius', { ...rin.params, textH: 1 }, 1).arrows.length, 1, 'inside: one arrow on the circle');
+  assert.equal(E.circleDraft('radius', c, 10, c), null); assert.equal(E.circleDraft('diameter', c, 10, c), null, 'a click on the centre is no dimension');
+  near(read(E.buildDim('radius', { ...rout.params, textH: 2.5 }, 1, 'PD_DIM_R1')).params.tp[1], 5, 'it saves and reads back');
+});
+
 console.log(n + ' dims tests passed');

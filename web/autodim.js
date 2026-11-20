@@ -4,7 +4,7 @@
 //   autoDraft(target, at, as) → { kind, params } for edit.js dimGeom with the pointer at `at` (as: 'radius' | 'diameter' for an arc / circle), or null
 //   stageOf / optionsOf / promptOf / optionOf / back / secondLine → the prompt, its options (Text, Undo, Diameter / Radius), Undo's step back and the two-line angle test
 //   ghostAt(target, p, off)  → where the faint hover preview puts its pointer (a line's dimension line `off` beside the line)
-import { circleOf, segmentOf, linearAxis, dimOffsetAt, diameterEnds, angleBetween } from './edit.js';
+import { circleOf, segmentOf, linearAxis, dimOffsetAt, circleDraft, angleBetween } from './edit.js';
 
 export function targetOf(ent, p) {
   const l = segmentOf(ent, p);
@@ -31,9 +31,7 @@ export function autoDraft(target, at, as) {
     const a = [target.l[0], target.l[1]], b = [target.l[2], target.l[3]], axis = lineAxis(target.l, at);
     return { kind: axis ? 'linear' : 'aligned', params: { a, b, ...(axis && { axis }), offset: dimOffsetAt(a, b, at, axis) } };
   }
-  if (asOf(target, as) === 'radius') return { kind: 'radius', params: { c: target.c, r: target.r, p: at } };
-  const ends = diameterEnds(target.c, target.r, at);
-  return ends && { kind: 'diameter', params: { ...ends, offset: 0 } };
+  return circleDraft(asOf(target, as), target.c, target.r, at);
 }
 
 /** What DIM waits for, from its picks { obj, lines, pts }: 'first' | 'second' (points mode: the second origin) | 'points' (points mode: the location) | 'line' | 'arc' | 'circle' | 'angle'. */

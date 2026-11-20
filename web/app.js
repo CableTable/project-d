@@ -7425,9 +7425,7 @@ function dimDraft(at) {
     return D.obj && AD.autoDraft(D.obj, at, D.as);
   }
   if (!D.obj || !at) return null;
-  if (type === 'radius') return { kind: 'radius', params: { c: D.obj.c, r: D.obj.r, p: at } };
-  const ends = Ed.diameterEnds(D.obj.c, D.obj.r, at);
-  return ends && { kind: 'diameter', params: { ...ends, offset: 0 } };
+  return Ed.circleDraft(type, D.obj.c, D.obj.r, at);
 }
 /** The dimension being placed or moved as a drawing (edit.js dimGeom), or null. */
 function previewDim(d) {

@@ -1633,6 +1633,17 @@ export function diameterEnds(c, r, p) {
   const ux = (p[0] - c[0]) / d * r, uy = (p[1] - c[1]) / d * r;
   return { a: [c[0] - ux, c[1] - uy], b: [c[0] + ux, c[1] + uy] };
 }
+/**
+ * TODO 344b: the radius or diameter dimension of circle (c, r) with the last click at `at`: the click places the text, as in AutoCAD. A radius keeps the text's
+ * place (tp, from the centre) wherever it is; a diameter does only outside the circle (inside it keeps its look). → { kind, params } or null (the click is the centre).
+ */
+export function circleDraft(kind, c, r, at) {
+  const tp = [at[0] - c[0], at[1] - c[1]], out = Math.hypot(tp[0], tp[1]) > r * (1 + 1e-9);
+  if (!(Math.hypot(tp[0], tp[1]) > 1e-9)) return null;
+  if (kind === 'radius') return { kind, params: { c, r, p: at, tp } };
+  const ends = diameterEnds(c, r, at);
+  return { kind, params: { ...ends, offset: 0, ...(out && { tp }) } };
+}
 /** { c, r } of a CIRCLE or ARC (not a mirrored one), else null; and [x1, y1, x2, y2] of a LINE with a length, else null. */
 export function circleOf(ent) {
   if (!ent || !ent.r || (ent.type !== 'CIRCLE' && ent.type !== 'ARC')) return null;

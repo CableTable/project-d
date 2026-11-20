@@ -19621,6 +19621,96 @@ try {
     await closeTabs(/./);
   });
   await step('TODO 344a: the text of a diameter and a radius dimension drags out of its circle (a straight leader, no landing) and back in; one Undo per drag, Esc puts it back; save and reopen keep it', circleTextDrag344a);
+  await step('TODO 344b: DDI (ribbon) and DRA (typed) with the last click outside the circle put the text there, a click inside keeps the inside look; Move and Scale of the circle carry the text (Scale by k), one Undo; save and reopen keep it', async () => {
+    const raw = newDoc(4);
+    addEntities(raw, dxfCircle(100, 100, 20), dxfCircle(250, 100, 20));
+    await openGrips(writeDxf(raw), 'dims344b.dxf');
+    const dim = async (name) => (await dimBlocks())[name].params;
+    const types = async (name) => (await savedDoc()).blocks[name].entities.map((e) => e.type);
+    const near = (a, b, msg) => assert.ok(a && Math.abs(a[0] - b[0]) < 1 && Math.abs(a[1] - b[1]) < 1, msg + ': ' + JSON.stringify([a, b]));
+    const undo = async () => { await page.keyboard.press('Escape'); await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z'); };
+    const middle = (kind, p) => dimTextMiddle(dimGeom(kind, p, 1, 2).text);
+    // DDI from the ribbon: the last click is the text
+    await t('dim-flyout').click(); await page.locator('.ctxmenu .mi', { hasText: 'Diameter' }).click();
+    await said(/^Select arc or circle:$/);
+    await click(120, 100); await click(135, 130);
+    await said(/Dimension placed: Ø40\.00 mm/);
+    near((await dim('PD_DIM_D1')).tp, [35, 30], 'the diameter text is where the last click was, from the centre');
+    assert.deepEqual(await types('PD_DIM_D1'), ['LINE', 'LWPOLYLINE', 'SOLID', 'SOLID', 'TEXT'], 'one line through the centre, one leader: no landing');
+    // DRA typed
+    await typeCmd('dra'); await click(270, 100); await click(290, 140);
+    await said(/Dimension placed: R20\.00 mm/);
+    near((await dim('PD_DIM_R1')).tp, [40, 40], 'the radius text is where the last click was');
+    assert.deepEqual(await types('PD_DIM_R1'), ['LINE', 'LWPOLYLINE', 'SOLID', 'TEXT'], 'a radius leader, no horizontal landing');
+    await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click();
+    await shotBoth('dim-text-circle-created-outside');
+    // a click inside the circle: the inside look
+    await typeCmd('ddi'); await click(120, 100); await click(105, 102);
+    await said(/Dimension placed: Ø40\.00 mm/);
+    assert.equal((await dim('PD_DIM_D2')).tp, undefined, 'a click inside a diameter is the old look');
+    assert.deepEqual(await types('PD_DIM_D2'), ['LINE', 'SOLID', 'SOLID', 'TEXT']);
+    await undo();
+    await typeCmd('dra'); await click(270, 100); await click(262, 100);
+    const inner = await dim('PD_DIM_R2'); assert.ok(Math.hypot(...inner.tp) < 20, 'a click inside a radius keeps the text inside: ' + inner.tp); near(inner.tp, [12, 0], 'on the radius line');
+    assert.ok((await types('PD_DIM_R2')).includes('SOLID') && !(await types('PD_DIM_R2')).includes('LWPOLYLINE'), 'inside: one arrow, no leader');
+    await shotBoth('dim-text-circle-created-inside');
+    await undo();
+    assert.deepEqual(Object.keys(await dimBlocks()).sort(), ['PD_DIM_D1', 'PD_DIM_R1'], 'the two inside dimensions are gone with their Undo');
+    // Move and Scale of the circle: the text goes with it (Scale: by k)
+    for (const [kind, name, edge, c, tp] of [['diameter', 'PD_DIM_D1', [80, 100], [100, 100], [35, 30]], ['radius', 'PD_DIM_R1', [230, 100], [250, 100], [40, 40]]]) {
+      const circleAt = (p) => kind === 'radius' ? p.c : [(p.a[0] + p.b[0]) / 2, (p.a[1] + p.b[1]) / 2];
+      const select = async () => { await page.keyboard.press('Escape'); await click(...edge); await waitSel('1 selected'); };
+      const m0 = middle(kind, await dim(name));
+      await select(); await typeCmd('move'); await typeCmd('0,0'); await typeCmd('20,10');
+      let p = await dim(name);
+      near(circleAt(p), [c[0] + 20, c[1] + 10], kind + ': the dimension went with its circle'); near(p.tp, tp, kind + ': the text keeps its place from the centre');
+      near(middle(kind, p), [m0[0] + 20, m0[1] + 10], kind + ': so the text moved by the same amount');
+      await undo(); p = await dim(name); near(circleAt(p), c, kind + ': one Undo puts the circle back'); near(p.tp, tp, kind + ': and the text');
+      await select(); await typeCmd('sc'); await typeCmd(c.join(',')); await typeCmd('2');
+      p = await dim(name); near(circleAt(p), c, kind + ': scaled about its centre'); near(p.tp, [tp[0] * 2, tp[1] * 2], kind + ': the text point scales by 2 with the circle');
+      near(middle(kind, p), [c[0] + tp[0] * 2, c[1] + tp[1] * 2], kind + ': the text');
+      await undo(); near((await dim(name)).tp, tp, kind + ': one Undo restores the text point'); await page.keyboard.press('Control+y');
+      near((await dim(name)).tp, [tp[0] * 2, tp[1] * 2], kind + ': Redo');
+    }
+    await shotBoth('dim-text-circle-scaled');
+    const text = (await downloaded(() => page.keyboard.press('Control+s'))).text;
+    await openGrips(text, 'dims344b-again.dxf');
+    near((await dim('PD_DIM_D1')).tp, [70, 60], 'reopened: the diameter text point'); near((await dim('PD_DIM_R1')).tp, [80, 80], 'reopened: the radius text point');
+    await closeTabs(/./);
+  });
+  await step('TODO 344b: on a PDF sheet, DDI with the last click outside puts the text there, and the text drags out further and back in (one Undo, Esc puts it back)', async () => {
+    await closeTabs(/./);
+    const sheet = new Page(300, 240); sheet.moveTo(0, 0); sheet.lineTo(300, 0); sheet.moveTo(0, 240); sheet.lineTo(300, 240); sheet.stroke();      // lines along the page edges, so Fit shows the whole page
+    await t('picker').setInputFiles({ name: 'dim344b-sheet.pdf', mimeType: 'application/pdf', buffer: Buffer.from(writePdf([sheet, sheet])) });
+    await t('bal-sheets').waitFor();
+    await page.locator('[data-testid=canvas]').getByRole('button', { name: 'Fit', exact: true }).click();
+    const dim = async () => Object.values(await dimBlocks())[0]?.params;
+    const near = (a, b, msg) => assert.ok(a && Math.abs(a[0] - b[0]) < 1.5 && Math.abs(a[1] - b[1]) < 1.5, msg + ': ' + JSON.stringify([a, b]));
+    const undo = async () => { await page.keyboard.press('Escape'); await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z'); };
+    const drag = async (from, to, esc = false) => {
+      const a = await at(...from), b = await at(...to);
+      await page.mouse.move(a.x, a.y); await page.mouse.down();
+      await page.mouse.move((a.x + b.x) / 2, (a.y + b.y) / 2, { steps: 4 }); await page.mouse.move(b.x, b.y, { steps: 4 });
+      if (esc) await page.keyboard.press('Escape');
+      await page.mouse.up(); await frames();
+    };
+    await typeCmd('c'); await typeCmd('150,120'); await typeCmd('40'); await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
+    await typeCmd('ddi'); await click(190, 120); await click(200, 160);
+    await said(/Dimension placed: Ø80\.00 mm/);
+    await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click();
+    near((await dim()).tp, [50, 40], 'the PDF sheet diameter text is where the last click was, from the centre');
+    const middle = async () => dimTextMiddle(dimGeom('diameter', await dim(), 1, 2).text);
+    const pick = async () => { await page.keyboard.press('Escape'); const m = await middle(); await click(...m); await waitSel('1 selected'); return m; };
+    await drag(await pick(), [230, 190]);
+    near((await dim()).tp, [80, 70], 'dragged further out');
+    await undo(); near((await dim()).tp, [50, 40], 'one Undo takes the drag back');
+    await drag(await pick(), [160, 120], true);
+    near((await dim()).tp, [50, 40], 'Esc: the text stays');
+    await drag(await pick(), [155, 125]);
+    assert.equal((await dim()).tp, undefined, 'dragged back inside the circle: the old look');
+    await undo(); near((await dim()).tp, [50, 40], 'and one Undo');
+    await closeTabs(/./);
+  });
 
   // ---- TODO 155l1: DIM, the Automatic dimension: hover ghost, line / arc / circle picks, repeats until Enter ----
   const tealInk = () => t('drawing').evaluate((c) => {            // pixels in the dimension colour's hue (teal), also when faint
@@ -26002,11 +26092,11 @@ try {
     };
     const middle = async (kind) => dimTextMiddle(dimGeom(kind, await params(kind), 1, 2).text);
     const pick = async (kind) => { await page.keyboard.press('Escape'); const m = await middle(kind); await click(...m); await frames(); return m; };
-    assert.equal((await params('radius')).tp, undefined);
+    near((await params('radius')).tp, [70, 40], 'TODO 344b: the layout radius was placed with its text where the last click was');
     await drag(await pick('radius'), [300, 280]);
     near((await params('radius')).tp, [100, 80], 'on the layout the radius text point, from the centre');
     await page.screenshot({ path: shotDir + '/s12-dim-text-circle-layout-light.png' });
-    await undo(); assert.equal((await params('radius')).tp, undefined, 'one Undo takes the drag back');
+    await undo(); near((await params('radius')).tp, [70, 40], 'one Undo takes the drag back');
     await page.keyboard.press('Control+y'); near((await params('radius')).tp, [100, 80], 'redo');
     await drag(await pick('radius'), [210, 200]);
     near((await params('radius')).tp, [10, 0], 'back inside: on the radius line');
@@ -26017,6 +26107,33 @@ try {
     await drag(await pick('diameter'), [425, 200]);
     assert.equal((await params('diameter')).tp, undefined, 'back inside: the old look');
     await undo(); near((await params('diameter')).tp, [50, 60], 'one Undo');
+  });
+  await step('TODO 344b: on a layout, DRA and DDI with the last click outside the circle put the text there (a click inside keeps the inside look); a Move of the circle carries it, one Undo restores both', async () => {
+    await freshLayoutWithPlate();
+    const save = async () => (await downloaded(() => page.keyboard.press('Control+s'))).text;
+    const params = async (kind) => Object.values(Object.fromEntries(Object.entries(readDxf(await save()).blocks).filter(([k]) => /^PD_DIM_/.test(k)).map(([k, b]) => [k, readDim(k, b)]))).find((d) => d.kind === kind)?.params;
+    const undo = async () => { await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z'); };
+    const near = (a, b, msg) => assert.ok(a && Math.abs(a[0] - b[0]) < 1.5 && Math.abs(a[1] - b[1]) < 1.5, msg + ': ' + JSON.stringify([a, b]));
+    await typeCmd('circle'); await typeCmd('200,200'); await typeCmd('40'); await page.keyboard.press('Escape');
+    await typeCmd('circle'); await typeCmd('420,200'); await typeCmd('40'); await page.keyboard.press('Escape');
+    await typeCmd('dra'); await click(160, 200); await click(270, 240);
+    await said(/Dimension placed: R40\.00/); await page.keyboard.press('Escape');
+    near((await params('radius')).tp, [70, 40], 'the layout radius text is where the last click was');
+    await typeCmd('ddi'); await click(460, 200); await click(430, 215);
+    await said(/Dimension placed: Ø80\.00/); await page.keyboard.press('Escape');
+    assert.equal((await params('diameter')).tp, undefined, 'a click inside a diameter is the old look');
+    await undo(); await typeCmd('ddi'); await click(460, 200); await click(500, 260);
+    await said(/Dimension placed: Ø80\.00/); await page.keyboard.press('Escape');
+    near((await params('diameter')).tp, [80, 60], 'outside: the diameter text is where the click was');
+    await page.locator('[data-tool=select]').click();
+    const before = await params('radius');
+    await click(160, 200); await frames();                                // the left side of the first circle (the dimension runs out to the right)
+    await typeCmd('move'); await typeCmd('0,0'); await typeCmd('30,20');
+    const moved = await params('radius');
+    near(moved.c, [before.c[0] + 30, before.c[1] + 20], 'the dimension went with its circle');
+    near(moved.tp, before.tp, 'a Move of the circle keeps the text where it was from the centre');
+    await undo(); near((await params('radius')).c, before.c, 'one Undo puts the circle and its dimension back');
+    await page.screenshot({ path: shotDir + '/s12-dim-text-circle-create-layout-light.png' });
   });
   await step('TODO 156b2c1: on a layout, Dimension (linear, aligned) makes a dimension object (one Undo, Esc cancels); saved with its block, reopened as an object; Move of the shape it measures carries it along', async () => {
     await freshLayoutWithPlate();
@@ -33258,6 +33375,21 @@ try {
     assert.ok(Math.abs(s[0] - 60) < 1.5 && Math.abs(s[1] - 50) < 1.5, 'Compare: Esc leaves the text where it was: ' + s);
     await key97c('Control+z');
     assert.equal(await tpOf(), undefined, 'one Undo takes the drag back (and no phantom one for the Esc)');
+    await closeTabs(/./);
+  });
+
+  await step('TODO 344b: in Compare, Radius Dimension with the last click outside the circle puts the text there in the linked drawing, one Undo', async () => {
+    const raw = newDoc(4); addEntities(raw, dxfCircle(100, 100, 20));
+    await open97c(raw, 'dim344b-compare.dxf');
+    const tab = () => page.locator('.dtab').filter({ has: page.locator('.tname', { hasText: /^dim344b-compare(?:-edited)*\.dxf$/ }) }).click();
+    const tpOf = async () => { await tab(); return Object.values(await dimBlocks())[0]?.params.tp; };
+    assert.equal(await tpOf(), undefined);
+    await typeCmd('compare'); await typeCmd('dra'); await click(120, 100); await click(160, 150);
+    await said(/Dimension placed: R20\.00/);
+    const s = await tpOf();
+    assert.ok(s && Math.abs(s[0] - 60) < 1.5 && Math.abs(s[1] - 50) < 1.5, 'Compare: the radius text is where the last click was, from the centre: ' + s);
+    await typeCmd('compare'); await key97c('Control+z');
+    assert.equal(await tpOf(), undefined, 'one Undo takes the dimension back');
     await closeTabs(/./);
   });
 
