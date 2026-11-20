@@ -10188,7 +10188,7 @@ try {
   };
   /** The client position of a point inside the selected part: the centre moved f of the way to its first corner. */
   const partPoint = (f) => page.evaluate((fr) => {
-    const poly = document.querySelector('[data-group=tools] .sel-box'), m = poly.getScreenCTM();
+    const poly = document.querySelector('[data-group=tools] .sel-box'), m = poly.ownerSVGElement.getScreenCTM(); // points are sheet mm: skip the path's own part transform (TODO 352)
     const pts = poly.getAttribute('points').split(' ').map((p) => p.split(',').map(Number));
     const cx = pts.reduce((s, p) => s + p[0], 0) / 4, cy = pts.reduce((s, p) => s + p[1], 0) / 4;
     const x = cx + fr * (pts[0][0] - cx), y = cy + fr * (pts[0][1] - cy);
