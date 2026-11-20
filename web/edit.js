@@ -1517,15 +1517,18 @@ export function linearAxis(a, b, p) {
  * the dimension line runs parallel to a→b (axis null) or along X ('h') or Y ('v'), `offset` to its left (negative: to its right);
  * extension lines go from `gap` off the point (default 0.4 text heights) to an overshoot past the line (the gap and 0.4 text heights, 0.8 with
  * the default gap, which is how the gap is read back), and are left out at offset 0; arrowheads (arrow, else 1.1 text heights) and the text
- * scale with the text height; the text is 0.4 text heights above the line or, with pos 'centre', in the line, which is then broken round it. → { line, ext, more, lines, arrows, text: { x, y, h,
- * rot, label, va }, mm, label, th } or null for two equal points.
+ * scale with the text height; the text is 0.4 text heights above the line or, with pos 'centre', in the line, which is then broken round it.
+ * Best fit (AutoCAD DIMATFIT 3, see dimFit): both inside, else the text inside and the arrows outside pointing in with stubs one arrow long (`extras`), else
+ * the arrows outside and the text outside beyond the second point; `shift` (distance of the text from the middle along the line, signed, 0 = where the fit puts it)
+ * is the text dragged by hand, the line going on under it; fit false: always inside, arrows at most 0.4 of the length (a diameter).
+ * → { line, ext, more, extras, lines, arrows, text: { x, y, h, rot, label, va }, mm, label, th, tx, len, u } or null for two equal points.
  */
-export function dimGeometry({ a, b, offset = 0, textH, arrow, gap, pos = 'above', units = 'mm', axis = null, prefix = '', override }, factor, dp = 2) {
+export function dimGeometry({ a, b, offset = 0, textH, arrow, gap, pos = 'above', units = 'mm', axis = null, prefix = '', override, shift = 0, fit = true }, factor, dp = 2) {
   const dx = b[0] - a[0], dy = b[1] - a[1], f = factor || 1;
   const len = axis === 'h' ? Math.abs(dx) : axis === 'v' ? Math.abs(dy) : Math.hypot(dx, dy);
   if (!(len > 1e-9)) return null;
   const ux = axis === 'h' ? Math.sign(dx) : axis === 'v' ? 0 : dx / len, uy = axis === 'v' ? Math.sign(dy) : axis === 'h' ? 0 : dy / len, nx = -uy, ny = ux;
-  const mm = len * f, th = textH > 0 ? textH : defaultTextH(len, f), ar = Math.min(arrow > 0 ? arrow : 1.1 * th, len * 0.4), half = ar * 0.18;
+  const mm = len * f, th = textH > 0 ? textH : defaultTextH(len, f), ar0 = arrow > 0 ? arrow : 1.1 * th, ar = fit ? ar0 : Math.min(ar0, len * 0.4), half = ar * 0.18;
   const off = Math.abs(offset) * f < 1e-6 ? 0 : offset;
   const a2 = [a[0] + nx * off, a[1] + ny * off], b2 = [a2[0] + ux * len, a2[1] + uy * len];
   const offB = off - ((b[0] - a[0]) * nx + (b[1] - a[1]) * ny);            // b's own distance from the line (off, when aligned)
@@ -1536,12 +1539,29 @@ export function dimGeometry({ a, b, offset = 0, textH, arrow, gap, pos = 'above'
   }
   const flip = ux < -1e-9 || (Math.abs(ux) <= 1e-9 && uy < 0);              // read it left to right (bottom to top when upright)
   const rx = flip ? -ux : ux, ry = flip ? -uy : uy, rot = Math.atan2(ry, rx) / DEG;
-  const measured = dimLabel(mm, dp, units, prefix), label = dimensionText(measured, override), mid = [(a2[0] + b2[0]) / 2, (a2[1] + b2[1]) / 2], tg = 0.4 * th, centred = pos === 'centre';
-  const text = centred ? { x: mid[0], y: mid[1], h: th, rot, label, va: 2 } : { x: mid[0] - ry * tg, y: mid[1] + rx * tg, h: th, rot, label, va: 1 };
+  const measured = dimLabel(mm, dp, units, prefix), label = dimensionText(measured, override), tg = 0.4 * th, centred = pos === 'centre';
   const hw = 0.3 * th * label.length + tg;                                    // half the text and its gap, along the line
+  const mode = fit ? dimFit(len, 2 * (hw - tg), ar, tg) : 'both', user = Math.abs(shift) * f >= 1e-6 ? shift : 0;     // user: the text dragged along the line by hand
+  const tx = user ? len / 2 + user : mode === 'none' ? (flip ? -(2 * ar + hw) : len + 2 * ar + hw) : len / 2;           // where the text sits along the line from a2; nothing fits: outside, to the right
+  const inside = tx - hw >= -1e-9 && tx + hw <= len + 1e-9, arrowsIn = !fit || (user ? len >= 2 * ar + (inside ? 2 * hw : 0) : mode === 'both');
+  const tp = [a2[0] + ux * tx, a2[1] + uy * tx];
+  const text = centred ? { x: tp[0], y: tp[1], h: th, rot, label, va: 2 } : { x: tp[0] - ry * tg, y: tp[1] + rx * tg, h: th, rot, label, va: 1 };
   let line = [a2[0], a2[1], b2[0], b2[1]], more = [];
-  if (centred && 2 * hw < len - 2 * ar) { line = [a2[0], a2[1], mid[0] - ux * hw, mid[1] - uy * hw]; more = [[mid[0] + ux * hw, mid[1] + uy * hw, b2[0], b2[1]]]; }
-  return { line, ext, more, lines: [line, ...ext, ...more], arrows: [arrowHead(b2, ux, uy, ar, half), arrowHead(a2, -ux, -uy, ar, half)], text, mm, label, measured, th };
+  if (centred && inside && 2 * hw < len - (arrowsIn ? 2 * ar : 0)) { line = [a2[0], a2[1], tp[0] - ux * hw, tp[1] - uy * hw]; more = [[tp[0] + ux * hw, tp[1] + uy * hw, b2[0], b2[1]]]; }
+  const at = (t) => [a2[0] + ux * t, a2[1] + uy * t], extras = [];           // the line goes on past an extension line: arrow stubs one arrow long, and under a text that is outside
+  if (fit) {
+    const hiEnd = Math.max(arrowsIn ? len : len + 2 * ar, centred ? tx - hw : tx + hw), loEnd = Math.min(arrowsIn ? 0 : -2 * ar, centred ? tx + hw : tx - hw);
+    for (const [t0, t1] of [[arrowsIn ? len : len + ar, hiEnd], [arrowsIn ? 0 : -ar, loEnd]]) if (Math.abs(t1 - t0) * f > 1e-6) extras.push([...at(t0), ...at(t1)]);
+  }
+  const arrows = arrowsIn ? [arrowHead(b2, ux, uy, ar, half), arrowHead(a2, -ux, -uy, ar, half)] : [arrowHead(b2, -ux, -uy, ar, half), arrowHead(a2, ux, uy, ar, half)];
+  return { line, ext, more, extras, lines: [line, ...ext, ...more, ...extras], arrows, text, mm, label, measured, th, tx, len, u: [ux, uy] };
+}
+/** Where the text of a dimension of length len goes with arrows of size ar and a text tw wide (tg: its gap each side): 'both' inside, 'text' (arrows outside) or 'none' (both outside), as AutoCAD's DIMATFIT 3. */
+export const dimFit = (len, tw, ar, tg) => len >= tw + 2 * tg + 2 * ar ? 'both' : len >= tw + 2 * tg ? 'text' : 'none';
+/** Is the point p on a dimension's text (dimGeometry's `text`), `pad` drawing units round it? */
+export function dimTextHit(t, p, pad = 0) {
+  const c = Math.cos(t.rot * DEG), s = Math.sin(t.rot * DEG), dx = p[0] - t.x, dy = p[1] - t.y, along = dx * c + dy * s, up = -dx * s + dy * c;
+  return Math.abs(along) <= 0.3 * t.h * t.label.length + pad && up >= (t.va === 2 ? -t.h / 2 : 0) - pad && up <= (t.va === 2 ? t.h / 2 : t.h) + pad;
 }
 /**
  * A radius dimension, from { c, r (the circle), p (the pointer), textH, arrow, units }: a line from the centre through p to a short landing
@@ -1622,7 +1642,7 @@ export function segmentOf(ent, p) {
 export function dimGeom(kind, params, factor, dp = 2) {
   if (kind === 'radius') return radiusGeometry(params, factor, dp);
   if (kind === 'angle') return angleGeometry(params, factor, dp);
-  return dimGeometry(kind === 'diameter' ? { ...params, offset: 0, axis: null, prefix: 'Ø' } : params, factor, dp);
+  return dimGeometry(kind === 'diameter' ? { ...params, offset: 0, axis: null, prefix: 'Ø', fit: false } : params, factor, dp);     // a diameter keeps its look until TODO 344
 }
 /**
  * A dimension (see dimGeom) as a block called `name`: its lines (the dimension line first, then the extension lines), the arc of an angle,
@@ -1632,7 +1652,8 @@ export function dimBlock(g, name) {
   const o = { layer: '0' }, t = g.text;
   const solid = ([p, q, r]) => entity('SOLID', [[10, p[0]], [20, p[1]], [30, 0], [11, q[0]], [21, q[1]], [31, 0], [12, r[0]], [22, r[1]], [32, 0]], o);
   const txt = entity('TEXT', [[10, t.x], [20, t.y], [30, 0], [40, t.h], [1, t.label], [50, t.rot], [72, 1], [11, t.x], [21, t.y], [31, 0], [73, t.va || 1]], o);
-  const ents = [...g.lines.map((l) => line(...l, o)), ...(g.arcs || []).map((a) => arc(...a, o)), ...g.arrows.map(solid), txt];
+  const extras = g.extras || [], ents = [...g.lines.filter((l) => !extras.includes(l)).map((l) => line(...l, o)), ...extras.map((l) => lwpoly([[l[0], l[1]], [l[2], l[3]]], o)),     // stubs and the line under an outside text are not LINEs: dimParams reads the LINEs as the dimension line and its extension lines
+    ...(g.arcs || []).map((a) => arc(...a, o)), ...g.arrows.map(solid), txt];
   return { name, block: { base: [0, 0], xref: false, entities: ents }, insert: insert(name, 0, 0, { layer: DIM_LAYER }), mm: g.mm, label: g.label };
 }
 export const buildDim = (kind, params, factor, name, dp = 2) => {
@@ -1705,6 +1726,11 @@ export function readDim(name, block) {
   const p = dimParams(block);
   const axis = { H: 'h', V: 'v' }[tag] || block.dimAxis;
   if (p && axis) p.axis = axis;
+  const txt = ents.find((e) => e.type === 'TEXT'), g0 = p && txt && tag !== 'D' && dimGeometry({ ...p, override: fieldOf(txt.r, 1) }, 1);     // the same dimension with its text where the fit rule puts it
+  if (g0) {         // the text is somewhere else along the line: moved by hand
+    const s = (g(txt, 10) - g0.line[0]) * g0.u[0] + (g(txt, 20) - g0.line[1]) * g0.u[1];
+    if (Math.abs(s - g0.tx) > 1e-4 * g0.th && Math.abs(s - g0.len / 2) > 1e-4 * g0.th) p.shift = s - g0.len / 2;
+  }
   return p && { kind: tag === 'D' ? 'diameter' : p.axis ? 'linear' : 'aligned', params: p };
 }
 /** The signed offset of a dimension line through point p, for a dimension from a to b (positive: left of a→b); axis 'h' / 'v': of a linear one. */

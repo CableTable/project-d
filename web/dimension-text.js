@@ -53,14 +53,22 @@ export function dimensionEditorOverride(edit) {
   return overrideText(value);
 }
 
-/** Our exported native dimensions use world-coordinate PD blocks; edit them internally as identity INSERTs. */
+/** The middle of a dimension block's TEXT, the point group 11 of its DIMENSION holds: the insertion point lifted half a text height (bottom aligned) or lowered (top aligned). */
+export function textMiddle(tx) {
+  const g = (c) => +field(tx, c), angle = g(50) * Math.PI / 180, rise = ({ 1: .5, 3: -.5 }[g(73)] || 0) * g(40);
+  return [g(10) - Math.sin(angle) * rise, g(20) + Math.cos(angle) * rise];
+}
+
+/** Our exported native dimensions use world-coordinate PD blocks; edit them internally as identity INSERTs. A user-placed text (bit 128 of group 70) goes where group 11 says. */
 export function restoreDimensionInserts(doc) {
   doc.entities = doc.entities.map((e) => {
     const name = field(e, 2), block = ownBlock(doc.blocks, name);
     if (e.type !== 'DIMENSION' || !/^PD_DIM_/.test(name) || !block || !textRecord(block.entities)) return e;
     const override = overrideText(field(e, 1)), measured = measuredText(block.entities), record = textRecord(block.entities);
+    const put = (+field(e, 70) & 128) && e.r.c.includes(11) && e.r.c.includes(21) ? [+field(e, 11), +field(e, 21)] : null;
     block.entities = block.entities.map((child) => child === record ? overrideRecord(override, measured) : child.type === 'TEXT'
-      ? { ...child, r: { ...child.r, v: child.r.v.map((v, k) => child.r.c[k] === 1 ? dimensionText(measured, override) : v) } } : child);
+      ? { ...child, r: { ...child.r, v: child.r.v.map((v, k) => { const c = child.r.c[k], m = put && textMiddle(child), d = m && Math.hypot(put[0] - m[0], put[1] - m[1]) > 1e-9 && [put[0] - m[0], put[1] - m[1]];
+        return c === 1 ? dimensionText(measured, override) : d && (c === 10 || c === 11) ? String(+v + d[0]) : d && (c === 20 || c === 21) ? String(+v + d[1]) : v; }) } } : child);
     return { ...e, type: 'INSERT', r: { type: 'INSERT', c: [2, 10, 20, 30], v: [name, '0', '0', '0'] } };
   });
   return doc;

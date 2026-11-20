@@ -7403,7 +7403,7 @@ function previewDim(d) {
   if (!d || !dimTarget()) return null;
   if (state.ldr) return ldrPreview(d);
   const G = state.dimDrag;
-  if (G && G.moved) return Ed.dimGeom(G.kind, { ...G.params, offset: G.offset }, d.factor, G.dp);
+  if (G && G.moved) return Ed.dimGeom(G.kind, { ...G.params, offset: G.offset, shift: G.shift }, d.factor, G.dp);
   const D = state.dim, look = dimNew(d), auto = D && state.dimType === 'auto', ghost = auto && !D.obj && !D.pts.length && D.ghost && D.cursor;       // Automatic, before the pick: a faint ghost of what a click on the hovered object makes
   const hot = auto && D.hot && D.cursor && !D.lines.length;                                                          // ... and a second line under the pointer: a faint angle to it, the line marked
   const m = ghost ? AD.autoDraft(D.ghost, AD.ghostAt(D.ghost, D.cursor, 3 * look.textH)) : hot ? { kind: 'angle', params: Ed.angleBetween(D.obj.l, D.hot, D.cursor) } : dimDraft(D && (D.pts.length === 2 && typedAt() || D.cursor));
@@ -7537,21 +7537,25 @@ function dimSel(d) {
 /** A press on the one selected aligned or linear dimension starts moving it (otherwise null: the press selects or draws a box). */
 function dimGrab(d, p) {
   const sd = dimSel(d);
-  if (!sd || (sd.kind !== 'aligned' && sd.kind !== 'linear') || Ed.hitEntity(edIndex(d), p[0], p[1], pickTol(d)) !== sd.e) return null;
-  return { ...sd, start: p, offset: sd.params.offset, moved: false, cancelled: false };
+  if (!sd || (sd.kind !== 'aligned' && sd.kind !== 'linear')) return null;
+  const sh = Ed.dimGeom(sd.kind, sd.params, d.factor, sd.dp), onText = !!sh && Ed.dimTextHit(sh.text, p, pickTol(d));      // a press on the text moves it along the line (and across it: the offset)
+  if (!onText && Ed.hitEntity(edIndex(d), p[0], p[1], pickTol(d)) !== sd.e) return null;
+  return { ...sd, start: p, offset: sd.params.offset, shift: sd.params.shift, text: onText, u: sh && sh.u, tx0: sh && sh.tx, len: sh && sh.len, moved: false, cancelled: false };
 }
 function dimDragTo(d, g, p) {
   const a = g.params.a, b = g.params.b, ax = g.params.axis;
   g.offset = g.params.offset + Ed.dimOffsetAt(a, b, p, ax) - Ed.dimOffsetAt(a, b, g.start, ax);
+  if (g.text) g.shift = g.tx0 - g.len / 2 + (p[0] - g.start[0]) * g.u[0] + (p[1] - g.start[1]) * g.u[1];
   g.moved = true; state.dimDrag = g;
   paintOverlay();
 }
 function dimDragEnd(d, g) {
   state.dimDrag = null;
-  if (g.cancelled || Math.abs(g.offset - g.params.offset) * d.factor < 0.001) { paintOverlay(); return; }
-  if (!commit(d, Ed.replaceDimension(d.raw, Ed.buildDim(g.kind, { ...g.params, offset: g.offset }, d.factor, g.name, g.dp)), 'Move dimension')) { paintOverlay(); return; }
+  const off = Math.abs(g.offset - g.params.offset) * d.factor, sh = g.text ? Math.abs(g.shift - (g.tx0 - g.len / 2)) * d.factor : 0;
+  if (g.cancelled || (off < 0.001 && sh < 0.001)) { paintOverlay(); return; }
+  if (!commit(d, Ed.replaceDimension(d.raw, Ed.buildDim(g.kind, { ...g.params, offset: g.offset, shift: g.shift }, d.factor, g.name, g.dp)), 'Move dimension')) { paintOverlay(); return; }
   setSel(d, new Set([g.e]));
-  note(`Dimension moved: its line is ${fmtSize(Math.abs(g.offset) * d.factor)} mm from the points. Ctrl+Z undoes it`);
+  note(sh >= 0.001 ? `Dimension text moved ${fmtSize(Math.abs(g.shift) * d.factor)} mm from the middle of its line. Ctrl+Z undoes it` : `Dimension moved: its line is ${fmtSize(Math.abs(g.offset) * d.factor)} mm from the points. Ctrl+Z undoes it`);
 }
 /** The text height typed in the right panel: the selected dimension is rebuilt (arrowheads and extension lines follow). */
 function dimHeightTyped() {

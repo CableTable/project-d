@@ -1053,8 +1053,9 @@ test('buildDimension: the line at the offset, extension lines with a gap and an 
   near(g(E.buildDimension({ a: [100, 0], b: [0, 0], offset: 5, textH: 2 }, 1, 'x').block.entities.at(-1), 50), 0, 'upright');
   const up = E.buildDimension({ a: [0, 0], b: [0, 50], offset: 5, textH: 2 }, 1, 'x').block.entities;
   near(g(up[0], 10), -5, 'left of an upward line is -x'); near(g(up.at(-1), 50), 90); near(g(up.at(-1), 10), -5 - 0.8, 'text on the far side from the part, upright');
-  // offset 0: no extension lines (makeDimension's shape)
-  assert.deepEqual(E.buildDimension({ a: [0, 0], b: [10, 0], offset: 0 }, 1, 'x').block.entities.map((e) => e.type), ['LINE', 'SOLID', 'SOLID', 'TEXT']);
+  // offset 0: no extension lines (makeDimension's shape); 10 is too short for the arrows beside the text: they go outside with a stub each (TODO 345a, LWPOLYLINEs)
+  assert.deepEqual(E.buildDimension({ a: [0, 0], b: [10, 0], offset: 0 }, 1, 'x').block.entities.map((e) => e.type), ['LINE', 'LWPOLYLINE', 'LWPOLYLINE', 'SOLID', 'SOLID', 'TEXT']);
+  assert.deepEqual(E.buildDimension({ a: [0, 0], b: [40, 0], offset: 0 }, 1, 'x').block.entities.map((e) => e.type), ['LINE', 'SOLID', 'SOLID', 'TEXT']);
   assert.equal(E.buildDimension({ a: [1, 1], b: [1, 1] }, 1, 'x'), null);
   // text height scales the arrowheads with it
   const sz = (th) => { const s = E.buildDimension({ a: [0, 0], b: [100, 0], offset: 10, textH: th }, 1, 'x').block.entities[3]; return Math.abs(g(s, 10) - g(s, 11)); };
