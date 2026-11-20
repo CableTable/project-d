@@ -661,7 +661,7 @@ select.fld { font-family: var(--sans); }
 .member .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .propbar .vsep { width: 1px; height: 24px; background: var(--line); }
 .sel-multi { stroke-width: 1.6; vector-effect: non-scaling-stroke; }
-.sel-union { fill: none; stroke: var(--accent); stroke-dasharray: 6 4; stroke-width: 1.4; vector-effect: non-scaling-stroke; pointer-events: none; }
+.sel-box.off { stroke: var(--mark); }
 .sel-readout { fill: var(--accent); font-family: var(--mono); font-weight: 500; }
 .group-tag { fill: var(--accent); }
 .drawing-group-box { stroke-width: 1.5; stroke-dasharray: 6 4; vector-effect: non-scaling-stroke; }

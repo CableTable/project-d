@@ -1910,7 +1910,9 @@ function buildCanvas() {
   ui.guideTip = h('div', { class: 'pop guidetip', hidden: true, 'data-testid': 'guide-tip' });
   ui.ovl = s('svg', { 'aria-hidden': 'true', 'data-testid': 'overlay' });
   ui.grips = s('svg', { 'aria-hidden': 'true', style: 'position:absolute;inset:0', preserveAspectRatio: 'none' });
-  ui.ovlWrap = h('div', { class: 'ovl' }, ui.ovl, ui.grips);
+  ui.gSel = s('g', { class: 'ptools', 'data-group': 'tools' });         // a selected layout part's dashed outline (TODO 352): above the canvas, which would cover it on the part's own lines; the rest of the tools stay in ui.svg
+  ui.selTop = s('svg', { 'aria-hidden': 'true', style: 'position:absolute;inset:0', preserveAspectRatio: 'none' }, ui.gSel);
+  ui.ovlWrap = h('div', { class: 'ovl' }, ui.selTop, ui.ovl, ui.grips);
   ui.tip = h('div', { class: 'drawtip', hidden: true, 'data-testid': 'draw-tip' });
   ui.keepMeas = h('button', { class: 'btn sm', type: 'button', 'data-testid': 'meas-keep', title: 'Keep this measure as a dimension (Enter)', onclick: keepMeasure }, 'Keep');
   ui.measText = h('span', { 'data-testid': 'meas-tag-text' });
@@ -5155,6 +5157,17 @@ function drawSheet() {
 
 /** The hit target of a layout object: its own lines and arcs (a stroke 14 px wide), so a click inside a frame still reaches what is under it. */
 function objHit(part, p, H) {
+  const dd = partPathD(part);
+  if (!dd) return s('polygon', { class: 'part-hit ob', points: polyPoints(PL.corners(part, p), H) });
+  const transform = `matrix(${placedMat(part, p, H).join(' ')})`, path = s('path', { class: 'part-hit ob', d: dd, transform });
+  return isDimPart(part) ? s('g', null, path, part.fl.items.filter((it) => it.k === 't').map((it) => s('rect', { fill: 'transparent', cursor: 'move', x: it.b[0], y: it.b[1], width: it.b[2] - it.b[0], height: it.b[3] - it.b[1], transform }))) : path;
+}
+
+/** SVG path data of a part's own lines and arcs (its drawing units, placedMat maps them to the sheet), '' when it has none; kept per flattened drawing. */
+const pathDs = new WeakMap();
+function partPathD(part) {
+  if (!part.fl) return '';
+  if (pathDs.has(part.fl)) return pathDs.get(part.fl);
   let dd = '';
   for (const it of part.fl.items) {
     const o = it.ops;
@@ -5167,9 +5180,8 @@ function objHit(part, p, H) {
       } else i++;
     }
   }
-  if (!dd) return s('polygon', { class: 'part-hit ob', points: polyPoints(PL.corners(part, p), H) });
-  const transform = `matrix(${placedMat(part, p, H).join(' ')})`, path = s('path', { class: 'part-hit ob', d: dd, transform });
-  return isDimPart(part) ? s('g', null, path, part.fl.items.filter((it) => it.k === 't').map((it) => s('rect', { fill: 'transparent', cursor: 'move', x: it.b[0], y: it.b[1], width: it.b[2] - it.b[0], height: it.b[3] - it.b[1], transform }))) : path;
+  pathDs.set(part.fl, dd);
+  return dd;
 }
 
 /** Points of an SVG polygon from sheet points (mm, y up). */
@@ -5203,9 +5215,15 @@ function drawTools() {
   const g = ui.gTools;
   if (!g) return;
   const lay = curLay(), sel = selectedPlaced();
-  if (!lay || state.hidden.parts || sheetSelOn()) { g.replaceChildren(); return; }
-  const H = state.sheetH, k = 1 / view.scale, Y = (q) => [q[0], H - q[1]], out = [];
+  if (!lay || state.hidden.parts || sheetSelOn()) { g.replaceChildren(); ui.gSel.replaceChildren(); return; }
+  const H = state.sheetH, k = 1 / view.scale, Y = (q) => [q[0], H - q[1]], out = [], top = [];
   const poly = (pts) => pts.map((q) => `${+q[0].toFixed(3)},${+q[1].toFixed(3)}`).join(' ');
+  /** A selected part drawn dashed along its own lines and arcs (TODO 352: no box; a part with none, text alone, keeps the box); orange off the sheet or in a gripper. points = the outline area's corners. */
+  const outline = (x, attrs) => {
+    const dd = partPathD(x.part), a = { ...attrs, class: attrs.class + (x.p.off || x.p.grip ? ' off' : ''), points: poly(PL.corners(x.part, x.p).map(Y)) };
+    top.push(dd ? s('path', { ...a, d: dd, transform: `matrix(${placedMat(x.part, x.p, H).join(' ')})` }) : s('polygon', a));
+  };
+  const done = () => { g.replaceChildren(...out); ui.gSel.replaceChildren(...top); };
   for (const p of placedNow) {                                      // a padlock on the upper-right corner of every locked part
     if (!p.lock || !lay.parts[p.partId]) continue;
     const b = placedBox(lay.parts[p.partId], p);
@@ -5226,9 +5244,8 @@ function drawTools() {
   if (items.length > 1 && !(state.mode === 'rotate' && A.oneItem(placedNow, items.map((x) => x.i)) >= 0)) {       // several selected (not a part with its contour in rotate mode): each outline, the box round them with its readout, and the pick-order numbers
     const ghosts = pdrag && pdrag.ghosts;
     if (ghosts) for (const gh of ghosts) out.push(s('polygon', { class: 'ghost', points: poly(PL.corners(gh.part, gh.pl).map(Y)) }));
-    for (const x of items) out.push(s('polygon', { class: 'sel-box sel-multi', points: poly(PL.corners(x.part, x.p).map(Y)), 'stroke-dasharray': '6 6' }));
+    for (const x of items) outline(x, { class: 'sel-box sel-multi', 'stroke-dasharray': '6 6' });
     const ub = A.unionBox(items.map(boxOf)), pad = 8 * k, x0 = ub[0] - pad, x1 = ub[2] + pad, yT = H - ub[3] - pad, yB = H - ub[1] + pad, xm = (x0 + x1) / 2, ym = (yT + yB) / 2;
-    out.push(s('rect', { class: 'sel-union', x: x0, y: yT, width: x1 - x0, height: yB - yT }));
     out.push(s('g', { class: 'grip-sq' }, [[x0, yT], [xm, yT], [x1, yT], [x0, ym], [x1, ym], [x0, yB], [xm, yB], [x1, yB]].map((q) => s('rect', { x: q[0] - 6 * k, y: q[1] - 6 * k, width: 12 * k, height: 12 * k }))));
     const whole = wholeGroup(), text = whole ? `Group of ${items.length}` : `${items.length} parts · ${fmt(ub[2] - ub[0])} × ${fmt(ub[3] - ub[1])}`;
     if (whole) {
@@ -5241,21 +5258,21 @@ function drawTools() {
         out.push(s('g', { class: 'pick-badge' }, s('circle', { cx, cy, r: 11 * k }), s('text', { x: cx, y: cy + 4.5 * k, 'text-anchor': 'middle', 'font-size': 13 * k }, String(n + 1))));
       });
     }
-    g.replaceChildren(...out);
+    done();
     return;
   }
-  if (!sel) { g.replaceChildren(...out); return; }
+  if (!sel) { done(); return; }
   const cor = PL.corners(sel.part, sel.p).map(Y);
   if (pdrag && pdrag.ghost) out.push(s('polygon', { class: 'ghost', points: poly(PL.corners(sel.part, pdrag.ghost).map(Y)) }));
   if (pdrag && pdrag.ghosts) for (const gh of pdrag.ghosts) out.push(s('polygon', { class: 'ghost', points: poly(PL.corners(gh.part, gh.pl).map(Y)) }));
-  if (!gripDoc()?.layDim) out.push(s('polygon', { class: 'sel-box', points: poly(cor), 'data-mode': state.mode }));       // a dimension with grips is drawn solid instead (TODO 345b3)
+  if (!gripDoc()?.layDim) outline(sel, { class: 'sel-box', 'data-mode': state.mode });       // a dimension with grips is drawn solid instead (TODO 345b3)
   if (state.mode === 'rotate') {
     const mid = PL.centreOf(sel.part, sel.p), c = Y(mid), pv = Y(pivotPoint(sel.part, sel.p));
     out.push(...rotationControls(cor, c, pv, k, pdrag?.label?.text));
   } else if (!(sel.part.obj && sel.p.src === 'loose' && !sel.p.lock && gripOn(gripDoc()))) {      // an object with grips of its own has no resize squares on top of them
     out.push(s('g', { class: 'grip-sq' }, PL.handlePoints(sel.part, sel.p).map(Y).map((q) => s('rect', { x: q[0] - 3.5 * k, y: q[1] - 3.5 * k, width: 7 * k, height: 7 * k }))));
   }
-  g.replaceChildren(...out);
+  done();
 }
 
 function applyHidden() {
@@ -5264,7 +5281,7 @@ function applyHidden() {
   ui.gMarks.style.display = state.hidden.marks ? 'none' : '';
   ui.gDims.style.display = state.hidden.dims ? 'none' : '';
   ui.gGaps.style.display = state.hidden.parts ? 'none' : '';
-  ui.gTools.style.display = state.hidden.parts ? 'none' : '';
+  ui.gTools.style.display = ui.gSel.style.display = state.hidden.parts ? 'none' : '';
 }
 
 // ---- view: zoom, pan, fit ----
@@ -5277,6 +5294,7 @@ function applyView(gesture = false) {
   ui.gridDisplay.style.backgroundPosition = `${-view.ox * view.scale - step / 2}px ${(state.sheetH - view.oy) * view.scale - step / 2}px`;
   ui.svg.setAttribute('viewBox', `${view.ox} ${view.oy} ${w / view.scale} ${ch / view.scale}`);
   ui.ovl.setAttribute('viewBox', `${view.ox} ${view.oy} ${w / view.scale} ${ch / view.scale}`); ui.ovl.setAttribute('preserveAspectRatio', 'none');
+  ui.selTop.setAttribute('viewBox', `${view.ox} ${view.oy} ${w / view.scale} ${ch / view.scale}`);
   ui.grips.setAttribute('viewBox', `0 0 ${w} ${ch}`);
   ui.svg.setAttribute('preserveAspectRatio', 'none');
   // 100% = real size on a 96 dpi screen (3.78 px per mm)

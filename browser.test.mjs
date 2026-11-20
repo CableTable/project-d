@@ -10775,7 +10775,7 @@ try {
     const badges = await page.locator('[data-group=tools] .pick-badge text').allTextContents();
     assert.deepEqual(badges, ['1', '2', '3']);
     assert.match(await t('sel-readout').textContent(), /^3 parts · \d+\.\d\d × \d+\.\d\d$/);
-    assert.equal(await page.locator('[data-group=tools] .sel-union').count(), 1);
+    assert.equal(await page.locator('[data-group=tools] .sel-union').count(), 0, 'no group box line (TODO 352)');
     assert.equal(await page.locator('[data-group=tools] .grip-sq rect').count(), 8);
     assert.equal(await t('members').locator('li').count(), 3);
     assert.equal(await t('hint-pill').textContent(), 'Rubber-band or Shift-click to select several parts · the number is the pick order');
@@ -32901,6 +32901,64 @@ try {
     await typeCmd('compare'); await key97b('Control+a'); await key97b('Control+g'); await waitSel('Group of 2');
     await zoomed('[data-testid=drawing-group-box]', 4);                  // Compare draws the same box
     await closeTabs(/./);
+  });
+
+  await step('TODO 352: a selected rotated layout part is a dashed outline of its own lines, no box line, at 1x and 8x; two selected = two outlines, no group box; orange in the gripper', async () => {
+    await closeTabs(/./);
+    await page.evaluate(() => { document.documentElement.dataset.theme = 'light'; });
+    const made = newLayout('Outline 352'), wedge = newDoc(4);               // a right triangle: its outline is not its box
+    addEntities(wedge, dxfLine(0, 0, 100, 0), dxfLine(100, 0, 100, 60), dxfLine(100, 60, 0, 0));
+    made.parts.wedge = makePart('wedge', 'Wedge', wedge, 1);
+    Object.assign(made.s, { sheetW: 1000, sheetH: 700, gripTop: 30, gripBottom: 0, gripLeft: 0, gripRight: 0 });
+    made.placed = [{ partId: 'wedge', x: 200, y: 300, rot: 30 }, { partId: 'wedge', x: 600, y: 300, rot: 30 }];
+    await t('picker').setInputFiles({ name: 'outline352.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(layoutRaw(made))) });
+    await waitTab(page, 'outline352.dxf');
+    await page.locator('[data-tool=select]').click(); await t('ptab-drawing').click();
+    const hit = (i) => page.locator(`[data-group=parts] [data-i="${i}"] .part-hit`);
+    /** What the tools layer draws: the outlines (tag, their sub-paths, screen width and dash), and any other line (a box, a union box). */
+    const tools = () => page.evaluate(() => {
+      const all = (sel) => [...document.querySelectorAll(`[data-group=tools] ${sel}`)], canvas = document.querySelector('[data-testid=drawing]');
+      const px = (el, v) => parseFloat(v) * (getComputedStyle(el).vectorEffect === 'non-scaling-stroke' ? 1 : Math.hypot(el.getScreenCTM().a, el.getScreenCTM().b));
+      return {         // above: the outline comes after the drawing canvas, so the part's own lines do not cover it
+        outlines: all('.sel-box').map((el) => { const cs = getComputedStyle(el); return { tag: el.tagName, moves: (el.getAttribute('d') || '').split('M').length - 1, width: px(el, cs.strokeWidth), dash: cs.strokeDasharray.split(/[ ,]+/).map((d) => px(el, d)), stroke: cs.stroke, mode: el.dataset.mode || '', above: !!(canvas.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING) }; }),
+        boxes: [...all('polygon'), ...all('rect')].filter((el) => !el.closest('.grip-sq, .pick-badge, .padlock') && getComputedStyle(el).stroke !== 'none').length,
+        grips: all('.grip-sq rect').length, arrows: all('.rot-arrow').length, pivot: all('.pivot').length, badges: all('.pick-badge').length,
+      };
+    });
+    const until = async (ok) => { let r = await tools(); for (let i = 0; i < 50 && !ok(r); i++) { await frames(); r = await tools(); } return r; };
+    const one = { tag: 'path', moves: 3, width: 1.6, dash: [6, 6], above: true };
+    await page.keyboard.press('Escape'); await hit(0).click({ force: true });         // Escape first: a second click on a selected part turns rotate mode on
+    const plain = await until((r) => r.outlines.length === 1 && Number.isFinite(r.outlines[0].width));
+    assert.deepEqual({ ...plain.outlines[0], stroke: undefined, mode: undefined }, { ...one, stroke: undefined, mode: undefined }, 'one selected: the wedge\'s three lines dashed 6 6 on screen: ' + JSON.stringify(plain));
+    assert.equal(plain.boxes, 0, 'and no box line'); assert.equal(plain.grips, 8, 'the resize squares stay');
+    await typeCmd('rotate');
+    const rot = await until((r) => r.outlines[0]?.mode === 'rotate' && r.arrows === 4);
+    assert.deepEqual({ ...rot.outlines[0], mode: undefined }, { ...plain.outlines[0], mode: undefined }, 'rotate mode draws the same outline');
+    assert.equal(rot.boxes, 0, 'rotate mode: no box line'); assert.equal(rot.pivot, 1, 'the turn arrows and the pivot stay');
+    const w0 = await page.locator('rect.sheet').evaluate((e) => e.getBoundingClientRect().width), cb = await t('canvas').boundingBox();
+    await page.mouse.move(cb.x + cb.width / 2, cb.y + cb.height / 2);
+    for (let i = 0; i < 40 && await page.locator('rect.sheet').evaluate((e) => e.getBoundingClientRect().width) < 8 * w0; i++) { await page.mouse.wheel(0, -300); await frames(); }
+    const big = await until((r) => r.outlines.length === 1 && Number.isFinite(r.outlines[0].width));
+    assert.deepEqual(big.outlines, rot.outlines, 'at 8x the outline keeps its screen width and dash'); assert.equal(big.boxes, 0, 'and still no box line at 8x');
+    await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
+    await typeCmd('fit'); await frames();
+    await hit(0).click({ force: true }); await hit(1).click({ force: true, modifiers: ['Shift'] });
+    const two = await until((r) => r.outlines.length === 2 && r.badges === 2);
+    assert.deepEqual(two.outlines.map((o) => o.tag + o.moves + o.above), ['path3true', 'path3true'], 'two selected: two outlines of their own lines, over the canvas');
+    assert.equal(two.boxes, 0, 'no group box and no part box'); assert.equal(two.grips, 8, 'the union grips stay');
+    await page.keyboard.press('Escape');
+    await hit(0).click({ force: true }); await hit(0).click({ force: true }); await until((r) => r.arrows === 4);       // the second click turns rotate mode on
+    const hb = await hit(0).boundingBox(); await page.mouse.move(hb.x + hb.width / 2, hb.y + hb.height / 2);
+    for (let i = 0; i < 3; i++) { await page.mouse.wheel(0, -300); await frames(); }
+    await page.screenshot({ path: `${shotDir}/352-rotated-part-light.png` });
+    await menuItem('View', 'Theme: dark'); await frames(); await page.screenshot({ path: `${shotDir}/352-rotated-part-dark.png` }); await menuItem('View', 'Theme: light');
+    await page.keyboard.press('Escape'); await page.keyboard.press('Escape'); await typeCmd('fit'); await frames();
+    await hit(0).click({ force: true });
+    await partTab(); await t('py').fill('620'); await t('py').press('Enter');
+    const grip = await until((r) => r.outlines.length === 1 && r.outlines[0].stroke !== plain.outlines[0].stroke);
+    assert.equal(grip.outlines[0].stroke, await page.evaluate(() => getComputedStyle(document.querySelector('.marks')).stroke), 'in the gripper the outline is orange (the mark colour)');
+    await closeTabs(/./);
+    assert.equal(await page.locator('.sel-box').count(), 0, 'no outline is left over once the layout is closed');
   });
 
   const open97c = async (raw, name = 'break97c.dxf') => {
