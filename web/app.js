@@ -5767,6 +5767,12 @@ function attachCanvasEvents() {
         drag.move = state.entityDrag = { d: gd, sel: new Set(gg.group.members), raw: gd.raw.entities, from: p, copy: e.ctrlKey || e.metaKey };
         capture(c, e); return;
       }
+      if (gg?.kind === 'dim' && !state.grip) {         // a grip of a selected dimension (345b1): the drag is the dimension's own (dimGrab), not a grip run
+        const p = toDrawing(gd, e.clientX, e.clientY), g = dimGrab(gd, p, gg);
+        if (g) drag = { x: e.clientX, y: e.clientY, p, moved: false, shift: e.shiftKey, dim: g };
+        else note('Drag the text of a diameter or radius dimension; its other grips are not editable yet');
+        capture(c, e); return;
+      }
       if (gripDown(e)) { capture(c, e); return; }
       if (!state.match && !state.drawingRotate && textHandleDown(e)) { capture(c, e); return; }
       if (state.tool === 'text' && drawTarget()) { textToolDown(e); return; }
@@ -6858,6 +6864,12 @@ function pickPoint(d, p, pts, shift, hover = false) {
   return tq ? [tq[0], tq[1]] : straight && q.length === 2 ? Ed.orthoLock(base, q) : q;
 }
 
+/** The selection's items with those of a selected kept dimension marked solid (render.js: no dashes, TODO 345b1); hl itself when no dimension is selected. */
+function solidDims(d, sel, hl) {
+  const dims = new Set();
+  for (const e of sel) { const x = d.raw.entities[e]; if (x && x.type === 'INSERT' && Ed.DIM_BLOCK.test(x.r.v[x.r.c.indexOf(2)])) dims.add(e); }
+  return dims.size ? hl.map((it) => dims.has(it.e) ? { ...it, solid: true } : it) : hl;
+}
 let selectionEditDoc = null, selectionEditFrame = 0;
 const DEFER_SELECTION_EDIT = 2000; // above this many selected items the ribbon / Properties refresh waits two frames (329b)
 function setSel(d, sel, stretchSelection = null, prefiltered = false) {
@@ -6871,8 +6883,8 @@ function setSel(d, sel, stretchSelection = null, prefiltered = false) {
   if (ed) {
     const hl = [];
     for (const e of sel) if (ed.byEnt[e]) for (const i of ed.byEnt[e]) hl.push(ed.items[i]);
-    d.hl = hl;
-  } else d.hl = Ed.itemsOfEntities(d.fl, sel, cmpEditingItem(d)?.off || d.off, hidIdx(d));
+    d.hl = solidDims(d, sel, hl);
+  } else d.hl = solidDims(d, sel, Ed.itemsOfEntities(d.fl, sel, cmpEditingItem(d)?.off || d.off, hidIdx(d)));
   if (!d.ed) warm(d);
   paintOverlay();
   cancelAnimationFrame(selectionEditFrame); selectionEditDoc = null;
@@ -7432,7 +7444,7 @@ function previewDim(d) {
   if (!d || !dimTarget()) return null;
   if (state.ldr) return ldrPreview(d);
   const G = state.dimDrag;
-  if (G && G.moved) return Ed.dimGeom(G.kind, G.circ ? circleTextParams(G) : { ...G.params, offset: G.offset, shift: G.shift }, d.factor, G.dp);
+  if (G && G.moved) return Ed.dimGeom(G.kind, G.circ ? circleTextParams(G) : { ...G.params, offset: G.offset, shift: G.shift, ...(G.origin && { a: G.pa, b: G.pb }) }, d.factor, G.dp);
   const D = state.dim, look = dimNew(d), auto = D && state.dimType === 'auto', ghost = auto && !D.obj && !D.pts.length && D.ghost && D.cursor;       // Automatic, before the pick: a faint ghost of what a click on the hovered object makes
   const hot = auto && D.hot && D.cursor && !D.lines.length;                                                          // ... and a second line under the pointer: a faint angle to it, the line marked
   const m = ghost ? AD.autoDraft(D.ghost, AD.ghostAt(D.ghost, D.cursor, 3 * look.textH)) : hot ? { kind: 'angle', params: Ed.angleBetween(D.obj.l, D.hot, D.cursor) } : dimDraft(D && (D.pts.length === 2 && typedAt() || D.cursor));
@@ -7564,21 +7576,23 @@ function dimSel(d) {
   return o && { e, ...o };
 }
 /** A press on the one selected aligned or linear dimension starts moving it (otherwise null: the press selects or draws a box). */
-function dimGrab(d, p) {
-  const sd = dimSel(d);
+function dimGrab(d, p, grip = null) {
+  const o = grip && Ed.dimOfEntity(d.raw, grip.e), sd = grip ? o && { e: grip.e, ...o } : dimSel(d);       // grip: a grip of the dimension (gripList kind 'dim', TODO 345b1) instead of a press on its text or line
   if (!sd) return null;
-  if (sd.kind === 'radius' || sd.kind === 'diameter') return circleTextGrab(sd, p, d.factor, pickTol(d));
+  if (sd.kind === 'radius' || sd.kind === 'diameter') return grip && grip.id !== 't' ? null : circleTextGrab(sd, p, d.factor, pickTol(d), grip && d.sel);       // the other grips of a circle's dimension: TODO 345b2
   if (sd.kind !== 'aligned' && sd.kind !== 'linear') return null;
-  const sh = Ed.dimGeom(sd.kind, sd.params, d.factor, sd.dp), onText = !!sh && Ed.dimTextHit(sh.text, p, pickTol(d));      // a press on the text moves it along the line (and across it: the offset)
-  if (!onText && Ed.hitEntity(edIndex(d), p[0], p[1], pickTol(d)) !== sd.e) return null;
-  return { ...sd, start: p, offset: sd.params.offset, shift: sd.params.shift, text: onText, u: sh && sh.u, tx0: sh && sh.tx, len: sh && sh.len, moved: false, cancelled: false };
+  const sh = Ed.dimGeom(sd.kind, sd.params, d.factor, sd.dp), onText = grip ? grip.id === 't' : !!sh && Ed.dimTextHit(sh.text, p, pickTol(d));      // a press on the text moves it along the line (and across it: the offset)
+  if (!grip && !onText && Ed.hitEntity(edIndex(d), p[0], p[1], pickTol(d)) !== sd.e) return null;
+  const origin = grip && { o0: 'a', o1: 'b' }[grip.id];       // an origin grip moves that measured point; the dimension line stays where it is (through its middle)
+  return { ...sd, start: p, offset: sd.params.offset, shift: sd.params.shift, text: onText, u: sh && sh.u, tx0: sh && sh.tx, len: sh && sh.len, moved: false, cancelled: false,
+    ...(grip && { grip: grip.id, sel: new Set(d.sel) }), ...(origin && { origin, pa: sd.params.a, pb: sd.params.b }) };
 }
-/** A press on the text of a selected radius or diameter dimension (sd: dimSel / Ed.dimOfEntity) drags the text round its circle, in or out (TODO 344); else null. */
-function circleTextGrab(sd, p, factor, tol) {
+/** A press on the text of a selected radius or diameter dimension (sd: dimSel / Ed.dimOfEntity) drags the text round its circle, in or out (TODO 344); else null (sel: the drawing's selection when the press is on the dimension's text grip, wherever the text is). */
+function circleTextGrab(sd, p, factor, tol, sel = null) {
   const sh = Ed.dimGeom(sd.kind, sd.params, factor, sd.dp);
-  if (!sh || !Ed.dimTextHit(sh.text, p, tol)) return null;
+  if (!sh || !sel && !Ed.dimTextHit(sh.text, p, tol)) return null;
   const { c } = Ed.circleOfDim(sd.kind, sd.params), m = Ed.dimTextMiddle(sh.text), tp0 = [m[0] - c[0], m[1] - c[1]];
-  return { ...sd, start: p, circ: true, tp0, tp: tp0, text: true, moved: false, cancelled: false };
+  return { ...sd, start: p, circ: true, tp0, tp: tp0, text: true, moved: false, cancelled: false, ...(sel && { grip: 't', sel: new Set(sel) }) };
 }
 /** The params of a radius or diameter dimension after its text was dragged to g.tp: a diameter's text back inside the circle is its old look again (no tp). */
 function circleTextParams(g) {
@@ -7594,6 +7608,15 @@ function dimDragTo(d, g, p) {
     return;
   }
   const a = g.params.a, b = g.params.b, ax = g.params.axis;
+  if (g.origin) {         // a measured point goes to the pointer (snapped); the line stays through where its middle was, so the value changes (as AutoCAD's stretch of an extension line origin)
+    let q = snapPoint(d, p, g.e);
+    if (q.length === 2) q = [Math.round(q[0] * d.factor * 100) / 100 / d.factor, Math.round(q[1] * d.factor * 100) / 100 / d.factor];
+    const n = Ed.dimMovePoint(g.kind, g.params, g.origin, q.slice(0, 2), d.factor, g.dp);
+    if (n) { g.pa = n.a; g.pb = n.b; g.offset = n.offset; }       // two equal points draw nothing: the last good place stays
+    g.moved = true; state.dimDrag = g;
+    paintOverlay();
+    return;
+  }
   g.offset = g.params.offset + Ed.dimOffsetAt(a, b, p, ax) - Ed.dimOffsetAt(a, b, g.start, ax);
   if (g.text) g.shift = g.tx0 - g.len / 2 + (p[0] - g.start[0]) * g.u[0] + (p[1] - g.start[1]) * g.u[1];
   g.moved = true; state.dimDrag = g;
@@ -7603,14 +7626,17 @@ function dimDragEnd(d, g) {
   state.dimDrag = null;
   if (g.circ) {
     if (g.cancelled || !circleTextMoved(g, d.factor) || !commit(d, Ed.replaceDimension(d.raw, Ed.buildDim(g.kind, circleTextParams(g), d.factor, g.name, g.dp)), 'Move dimension')) { paintOverlay(); return; }
-    setSel(d, new Set([g.e]));
+    setSel(d, g.sel || new Set([g.e]));
     note('Dimension text moved. Ctrl+Z undoes it');
     return;
   }
   const off = Math.abs(g.offset - g.params.offset) * d.factor, sh = g.text ? Math.abs(g.shift - (g.tx0 - g.len / 2)) * d.factor : 0;
-  if (g.cancelled || (off < 0.001 && sh < 0.001)) { paintOverlay(); return; }
-  if (!commit(d, Ed.replaceDimension(d.raw, Ed.buildDim(g.kind, { ...g.params, offset: g.offset, shift: g.shift }, d.factor, g.name, g.dp)), 'Move dimension')) { paintOverlay(); return; }
-  setSel(d, new Set([g.e]));
+  const pt = g.origin ? Math.hypot(g.pa[0] - g.params.a[0], g.pa[1] - g.params.a[1], g.pb[0] - g.params.b[0], g.pb[1] - g.params.b[1]) * d.factor : 0;
+  if (g.cancelled || (off < 0.001 && sh < 0.001 && pt < 0.001)) { paintOverlay(); return; }
+  const built = Ed.buildDim(g.kind, { ...g.params, offset: g.offset, shift: g.shift, ...(g.origin && { a: g.pa, b: g.pb }) }, d.factor, g.name, g.dp);
+  if (!commit(d, Ed.replaceDimension(d.raw, built), g.origin ? 'Stretch dimension' : 'Move dimension')) { paintOverlay(); return; }
+  setSel(d, g.sel || new Set([g.e]));
+  if (pt >= 0.001) { note(`Dimension point moved: it measures ${built.label} now. Ctrl+Z undoes it`); return; }
   note(sh >= 0.001 ? `Dimension text moved ${fmtSize(Math.abs(g.shift) * d.factor)} mm from the middle of its line. Ctrl+Z undoes it` : `Dimension moved: its line is ${fmtSize(Math.abs(g.offset) * d.factor)} mm from the points. Ctrl+Z undoes it`);
 }
 /** The text height typed in the right panel: the selected dimension is rebuilt (arrowheads and extension lines follow). */
@@ -11120,10 +11146,12 @@ function gripDoc() {
 const gripOn = (d) => !!d && !state.drawingRotate && !state.match && !state.colourTool && gripDoc() === d && state.tool === 'select' && !state.setlen && !!d.sel && d.sel !== d.txoSel && d.sel.size > 0 && (d.sel.size <= GR.MAX_SELECTED || !!wholeDrawingGroup(d.raw.groups, d.sel)) && !textEditing();
 /** 164a: the drawing's attribute display mode (0 none, 1 normal, 2 all): the block attribute grips follow it. */
 const attMode = (d) => { const v = Number(d.raw.header?.$ATTMODE ?? 1); return Number.isFinite(v) ? v : 1; };
+/** Does a dimension of d show grips: a drawing tab (not a layout, Compare or a PDF sheet: TODO 345b2)? */
+const dimGripsOk = (d) => curDoc() === d && !d.vlay && !d.lay && !d.pdf;
 /** Every grip of the selection: [{ e, id, kind, x, y }] (drawing units); kept while the selection and the drawing stay the same. */
 function gripList(d) {
   const ents = d.raw.entities;
-  if (d.gripCache && d.gripCache.sel === d.sel && d.gripCache.ents === ents && d.gripCache.groups === d.raw.groups) return d.gripCache.list;
+  if (d.gripCache && d.gripCache.sel === d.sel && d.gripCache.ents === ents && d.gripCache.blocks === d.raw.blocks && d.gripCache.groups === d.raw.groups) return d.gripCache.list;       // blocks: an edited dimension keeps its entity list
   const list = [], grouped = new Set();
   for (const g of d.raw.groups || []) {
     if (g.selectable === false || !g.members.every((i) => d.sel.has(i))) continue;
@@ -11135,11 +11163,16 @@ function gripList(d) {
     if (grouped.has(e)) continue;
     const ent = ents[e], lp = ent && ldrPseudo(d, e);
     if (lp) { for (const g of GR.gripsOf(lp)) list.push({ e, ...g }); continue; }       // a leader: a grip at each point
-    if (!ent || ent.layer === Ed.DIM_LAYER || (d.lockedEnts && d.lockedEnts.has(ent))) continue;      // lockedEnts: a layout's locked objects
+    if (!ent || (d.lockedEnts && d.lockedEnts.has(ent))) continue;      // lockedEnts: a layout's locked objects
+    if (ent.layer === Ed.DIM_LAYER) {       // a kept dimension (345b1): grips in a drawing tab only, the other tabs are 345b2
+      const sd = dimGripsOk(d) && !lockedEnt(d, e) && Ed.dimOfEntity(d.raw, e);       // a locked dimension (its layer locked) has none
+      if (sd) for (const g of GR.dimGripsOf(sd.kind, sd.params, d.factor, sd.dp)) list.push({ e, ...g });
+      continue;
+    }
     for (const g of GR.gripsOf(ent, attMode(d))) list.push({ e, ...g });
   }
   const shown = GR.capGrips(list);
-  d.gripCache = { sel: d.sel, ents, groups: d.raw.groups, list: shown };
+  d.gripCache = { sel: d.sel, ents, blocks: d.raw.blocks, groups: d.raw.groups, list: shown };
   return shown;
 }
 const sheetPx = (d, p) => { const [sx, sy] = toSheetPt(d, p), r = ui.canvas.getBoundingClientRect(); return [(sx - view.ox) * view.scale + r.left, (sy - view.oy) * view.scale + r.top]; };
@@ -11321,7 +11354,7 @@ function gripHoverAt(e) {
   if (id === state.gripHover) return;
   state.gripHover = id; drawOvl();
   clearTimeout(gripOptTimer);
-  if (hit && !hit.group && !ui.ctx) gripOptTimer = setTimeout(() => gripOptionsOpen(hit), 300);       // 163a: the grip's options list after 300 ms of rest
+  if (hit && !hit.group && hit.kind !== 'dim' && !ui.ctx) gripOptTimer = setTimeout(() => gripOptionsOpen(hit), 300);       // 163a: the grip's options list after 300 ms of rest
 }
 /** The hot grips (Shift-click) of d's selection as a Map 'e:id' → grip, or null when there are none or the selection / drawing changed since. */
 function hotsOf(d) {
@@ -11601,7 +11634,8 @@ function gripOvl(d, out, k, grips) {
   const hots = hotsOf(d);
   for (const x of list) {
     const move = x.group && state.entityDrag?.d === d && x.group.members.every((i) => state.entityDrag.sel.has(i)) ? state.entityDrag : null;
-    grips.push(square([x.x + (move?.dx || 0), x.y + (move?.dy || 0)], !!move || !!hots && hots.has(x.e + ':' + x.id), x.e + ':' + x.id, x.tri));
+    const dragged = x.kind === 'dim' && state.dimDrag?.moved && state.dimDrag.e === x.e && state.dimDrag.grip === x.id;       // the dimension grip being dragged is hot (red)
+    grips.push(square([x.x + (move?.dx || 0), x.y + (move?.dy || 0)], !!move || dragged || !!hots && hots.has(x.e + ':' + x.id), x.e + ':' + x.id, x.tri));
     if (x.kind === 'centre') { const [sx, sy] = toSheetPt(d, [x.x, x.y]), px = (sx - view.ox) / k, py = (sy - view.oy) / k; grips.push(s('path', { class: 'gr-cross', d: `M${px - 12} ${py}h24M${px} ${py - 12}v24` })); }
   }
   return null;

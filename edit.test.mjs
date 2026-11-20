@@ -1516,3 +1516,23 @@ test('P14a: joining open pieces through the end grid gives the loops the scan of
   try { E.outlineLoops(ed, new Set(ed.shown), 0.01); } finally { Math.hypot = hypot; }
   assert.ok(calls < 2500000, `joining 1505 open pieces made ${calls} Math.hypot calls, bound 2500000`);
 });
+
+test('TODO 345b1: dimMovePoint moves one measured point, the dimension line stays through its middle, the value follows, a save and reopen keeps it', () => {
+  const dist = (p, l) => Math.abs((l[2] - l[0]) * (p[1] - l[1]) - (l[3] - l[1]) * (p[0] - l[0])) / Math.hypot(l[2] - l[0], l[3] - l[1]);       // p from the endless line l
+  const aligned = { a: [0, 0], b: [100, 0], offset: 30, textH: 3 };
+  const g0 = E.dimGeom('aligned', aligned, 1), mid = [50, 30];
+  assert.ok(Math.abs(g0.line[1] - 30) < 1e-9 && g0.mm === 100);
+  const n = E.dimMovePoint('aligned', aligned, 'b', [100, 50], 1);                    // b up 50: the line turns about its middle
+  assert.deepEqual([n.a, n.b], [[0, 0], [100, 50]]); assert.equal(n.textH, 3);
+  const g1 = E.dimGeom('aligned', n, 1);
+  assert.ok(dist(mid, g1.line) < 1e-9, 'the line still runs through where its middle was'); assert.ok(Math.abs(g1.mm - Math.hypot(100, 50)) < 1e-9, 'the value follows: ' + g1.mm);
+  const lin = { a: [0, 0], b: [100, 40], offset: 50, axis: 'h', textH: 3 }, gl0 = E.dimGeom('linear', lin, 1);
+  const m = E.dimMovePoint('linear', lin, 'a', [10, 5], 1), gl1 = E.dimGeom('linear', m, 1);
+  assert.ok(Math.abs(gl1.line[1] - gl0.line[1]) < 1e-9 && Math.abs(gl1.line[3] - gl0.line[3]) < 1e-9, 'a linear dimension line stays at its height: ' + [gl0.line[1], gl1.line[1]]);
+  assert.ok(Math.abs(gl1.mm - 90) < 1e-9, 'it now measures 90 along X: ' + gl1.mm);
+  assert.equal(E.dimMovePoint('aligned', aligned, 'a', [100, 0], 1), null, 'the same point twice draws nothing');
+  const built = E.buildDim('aligned', n, 1, 'PD_DIM_1', 2), back = E.readDim('PD_DIM_1', built.block);
+  assert.equal(back.kind, 'aligned');
+  assert.ok(Math.abs(back.params.b[1] - 50) < 1e-6 && Math.abs(back.params.offset - n.offset) < 1e-6, 'the moved point and the line come back: ' + JSON.stringify(back.params));
+  assert.equal(built.label, '111.80', 'the label is the new length');
+});

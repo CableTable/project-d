@@ -20,7 +20,8 @@
 // Where the app drives grips (app.js; grep the name):
 //   gripDoc (Drawings, Layouts): the doc grips work on: a drawing tab, or a layout's selected objects as a drawing (layObjSelDoc); else null.
 //   gripOn (Drawings, Layouts): do grips show (Select tool, 1..MAX_SELECTED selected, no text edit); gripDoc() must be that doc.
-//   gripList (Drawings, Layouts): every grip of the selection via gripsOf (a leader via ldrPseudo), cached; skips locked and dimension objects.
+//   gripList (Drawings, Layouts): every grip of the selection via gripsOf (a leader via ldrPseudo), cached; skips locked objects; a kept dimension (drawing tab only) gets dimGripsOf's, dragged through dimGrab (TODO 345b1).
+//   dimGripsOf(kind, params, factor, dp) → the grips of a kept dimension: linear / aligned 'o0' 'o1' 'l0' 'l1' 't'; diameter 'e0' 'e1' 't'; radius 'c' 'p' 't' (kind 'dim')
 //   gripAt (Drawings, Layouts): hit-test the nearest grip under the pointer.
 //   gripDown (Drawings, Layouts): start a grip run, or put down a hot grip.
 //   gripPick (Drawings, Layouts): the point under the pointer: the snaps (0.01 mm grid when free), then Shift / ORTHO along X or Y from the base.
@@ -36,7 +37,7 @@
 //   gripStretchHots (Drawings, Layouts): with several hot grips every one moves by the base → pick vector, through stretch.js stretchGrips.
 //   stretchHots (here): normalize hot grips so each vertex stretches once.
 import { arcThrough3, sweepOf, angleOf, dist, n2 } from './draw.js';
-import { moveEntities } from './edit.js';          // a move-type grip moves the whole object the way the Move command does (155e4)
+import { moveEntities, dimGeom, dimTextMiddle } from './edit.js';          // a move-type grip moves the whole object the way the Move command does (155e4); a dimension's grips follow its drawn shape (345b1)
 import { format as formatLength } from './units.js';
 import { bulgeOf3 } from './contour.js';             // 163b: the bulge of the arc through a pointer
 import { mtextBox } from './drawing.js';             // 164a: an MTEXT's box
@@ -49,6 +50,21 @@ export const MAX_GRIPS = 5000;    // shortcut: hide all grips above 5000 handles
 export const capGrips = (list) => (list.length > MAX_GRIPS ? [] : list);
 const DEG = Math.PI / 180;
 const TYPES = new Set(['LINE', 'ARC', 'CIRCLE', 'LWPOLYLINE']);
+
+/**
+ * 345b1: the grips of a kept dimension (edit.js dimOfEntity: kind, params; drawing units, y up), as { id, kind: 'dim', x, y }: linear / aligned 'o0' 'o1' (the two measured points,
+ * the extension lines' origins), 'l0' 'l1' (the ends of the dimension line), 't' (the text); diameter 'e0' 'e1' (the ends of its chord), 't'; radius 'c' (the centre),
+ * 'p' (the point on the arc), 't'. [] for an angle or a dimension that draws nothing.
+ */
+export function dimGripsOf(kind, params, factor, dp = 2) {
+  const g = (kind === 'aligned' || kind === 'linear' || kind === 'diameter' || kind === 'radius') && dimGeom(kind, params, factor, dp);
+  if (!g) return [];
+  const pt = (id, p) => ({ id, kind: 'dim', x: p[0], y: p[1] }), t = pt('t', dimTextMiddle(g.text));
+  if (kind === 'radius') return [pt('c', params.c), pt('p', g.arrows[0][0]), t];
+  if (kind === 'diameter') return [pt('e0', g.arrows[1][0]), pt('e1', g.arrows[0][0]), t];       // both ends as drawn: the chord follows a text dragged outside
+  const [x0, y0] = g.line;
+  return [pt('o0', params.a), pt('o1', params.b), pt('l0', [x0, y0]), pt('l1', [x0 + g.u[0] * g.len, y0 + g.u[1] * g.len]), t];
+}
 
 export const num = (v) => { const n = parseFloat(v); return Number.isFinite(n) ? n : 0; };
 export const at = (r, code, which = 0) => { let n = -1; for (let k = 0; k < r.c.length; k++) if (r.c[k] === code && ++n === which) return k; return -1; };

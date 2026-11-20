@@ -19711,6 +19711,79 @@ try {
     await undo(); near((await dim()).tp, [50, 40], 'and one Undo');
     await closeTabs(/./);
   });
+  await step('TODO 345b1: a selected dimension is solid (no dashes) and has grips (linear 5, diameter 3, radius 3); its text grip and an origin grip drag, one Undo each, Esc puts them back; a linked one keeps following; save and reopen keep the edits', async () => {
+    const raw = newDoc(4);
+    addEntities(raw, dxfPoly([[20, 60], [220, 60], [220, 120], [20, 120]], { closed: true }), dxfCircle(100, 190, 20), dxfCircle(250, 190, 20));
+    Object.assign(raw, addDimension(raw, buildDim('aligned', { a: [20, 60], b: [220, 60], offset: -30, textH: 3 }, 1, 'PD_DIM_1', 2)));       // its line at y = 30, under the rectangle
+    Object.assign(raw, addDimension(raw, buildDim('diameter', { a: [80, 190], b: [120, 190], textH: 3 }, 1, 'PD_DIM_D1', 2)));
+    Object.assign(raw, addDimension(raw, buildDim('radius', { c: [250, 190], r: 20, p: [290, 190], textH: 3 }, 1, 'PD_DIM_R1', 2)));
+    await openGrips(writeDxf(raw), 'dims345b1.dxf');
+    const dim = async (name) => (await dimBlocks())[name].params;
+    const near = (a, b, msg) => assert.ok(a && Math.abs(a[0] - b[0]) < 1 && Math.abs(a[1] - b[1]) < 1, msg + ': ' + JSON.stringify([a, b]));
+    const undo = async () => { await page.keyboard.press('Escape'); await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z'); await frames(); };
+    const drag = async (from, to, esc = false, shot = '') => {
+      const a = await at(...from), b = await at(...to);
+      await page.mouse.move(a.x, a.y); await page.mouse.down();
+      await page.mouse.move((a.x + b.x) / 2, (a.y + b.y) / 2, { steps: 4 }); await page.mouse.move(b.x, b.y, { steps: 4 });
+      if (esc) await page.keyboard.press('Escape');
+      if (shot) await shotBoth(shot);
+      await page.mouse.up(); await frames();
+    };
+    const textAt = async (kind, name) => dimTextMiddle(dimGeom(kind, await dim(name), 1, 2).text);
+    const pick = async (kind, name) => { await page.keyboard.press('Escape'); const m = await textAt(kind, name); await click(...m); await waitSel('1 selected'); return m; };
+    const solid = (x0, x1, y) => page.evaluate(([x0, x1, y]) => {        // the share of canvas pixels along a horizontal run that are accent blue (the dimension itself is teal)
+      const svg = document.querySelector('.canvas > svg'), H = +document.querySelector('rect.sheet').getAttribute('height'), c = document.querySelector('[data-testid=drawing]'), r = c.getBoundingClientRect(), g = c.getContext('2d');
+      const px = (x) => { const a = new DOMPoint(x, H - y).matrixTransform(svg.getScreenCTM()); return [Math.floor((a.x - r.x) * c.width / r.width), Math.floor((a.y - r.y) * c.height / r.height)]; };
+      const [ax, ay] = px(x0), [bx] = px(x1); let n = 0, hit = 0;
+      for (let x = ax; x <= bx; x++) { const d = g.getImageData(x, ay, 1, 1).data; n++; if (d[2] - d[1] > 60) hit++; }
+      return hit / n;
+    }, [x0, x1, y]);
+    // B1: not selected, no blue on the line; selected, the whole line is blue (no dashes) and the five grips show
+    await frames(); assert.equal(await solid(40, 90, 30), 0, 'unselected: no accent on the dimension line');
+    await pick('aligned', 'PD_DIM_1'); await gripWhen(5); await frames();
+    assert.ok(await solid(40, 90, 30) > 0.95 && await solid(150, 200, 30) > 0.95, 'selected: the dimension line is one solid accent stroke: ' + await solid(40, 90, 30));
+    await shotBoth('dim-selected-grips');
+    // text grip: the 345a drag, along the line; the origin grip moves that point; the linked rectangle still drives it afterwards
+    await drag(await textAt('aligned', 'PD_DIM_1'), [160, 32.7]);
+    await said(/Dimension text moved 4\d\.\d+ mm/);
+    let p = await dim('PD_DIM_1'); assert.ok(Math.abs(p.shift - 40) < 1, 'the text grip moved the text 40 along the line: ' + p.shift);
+    await page.keyboard.press('Escape'); await click(120, 120); await waitSel('1 selected');
+    await typeCmd('move'); await typeCmd('0,0'); await typeCmd('10,0');
+    p = await dim('PD_DIM_1'); near(p.a, [30, 60], 'the linked dimension follows the rectangle after its text grip was used'); near(p.b, [230, 60], 'both ends'); assert.ok(Math.abs(p.shift - 40) < 1, 'and keeps its text shift: ' + p.shift);
+    await pick('aligned', 'PD_DIM_1'); await gripWhen(5);
+    await drag([30, 60], [30, 90]);        // the first origin grip up 30: the line turns about its middle, the value is the new length
+    await said(/Dimension point moved: it measures 202\.\d\d/);
+    p = await dim('PD_DIM_1'); near(p.a, [30, 90], 'the origin grip moved that measured point'); near(p.b, [230, 60], 'the other stays');
+    assert.ok((await dimBlocks()).PD_DIM_1 && Math.abs(p.offset - -30) > 1, 'the dimension line stayed through its middle, so its offset from the new points changed: ' + p.offset);
+    await undo(); p = await dim('PD_DIM_1'); near(p.a, [30, 60], 'one Undo puts the point back');
+    await pick('aligned', 'PD_DIM_1'); await gripWhen(5);
+    await drag([230, 60], [230, 100], true);        // Esc in the middle of the drag: nothing changes
+    await said(/Move cancelled/); p = await dim('PD_DIM_1'); near(p.b, [230, 60], 'Esc: the point stays');
+    await undo(); p = await dim('PD_DIM_1'); near(p.a, [20, 60], 'the Undo after Esc took back the move of the rectangle, not a phantom step'); await page.keyboard.press('Control+y');
+    await pick('aligned', 'PD_DIM_1'); await gripWhen(5);
+    await drag([30, 60], [30, 90]); p = await dim('PD_DIM_1'); near(p.a, [30, 90], 'again');
+    // the line end grips move the offset
+    await pick('aligned', 'PD_DIM_1'); await gripWhen(5);
+    const off0 = (await dim('PD_DIM_1')).offset, geom = dimGeom('aligned', await dim('PD_DIM_1'), 1, 2), end = [geom.line[0], geom.line[1]];
+    await drag(end, [end[0], end[1] - 20]);
+    assert.ok(Math.abs((await dim('PD_DIM_1')).offset - off0) > 10, 'a dimension line end grip moves the line: ' + off0 + ' -> ' + (await dim('PD_DIM_1')).offset);
+    await undo();
+    // diameter and radius: three grips each; the text grip drags it out of the circle (344a), the others are drawn
+    await pick('diameter', 'PD_DIM_D1'); await gripWhen(3);
+    await drag(await textAt('diameter', 'PD_DIM_D1'), [135, 220]);
+    near((await dim('PD_DIM_D1')).tp, [35, 30], 'the diameter text grip drags the text out of the circle');
+    await undo(); assert.equal((await dim('PD_DIM_D1')).tp, undefined, 'one Undo');
+    await pick('radius', 'PD_DIM_R1'); await gripWhen(3);
+    await shotBoth('dim-selected-grips-radius');
+    await drag(await textAt('radius', 'PD_DIM_R1'), [255, 225]);
+    assert.ok((await dim('PD_DIM_R1')).tp, 'the radius text grip drags the text'); await undo();
+    // save and reopen keep the text shift and the moved point
+    await pick('aligned', 'PD_DIM_1');
+    const text = (await downloaded(() => page.keyboard.press('Control+s'))).text;
+    await openGrips(text, 'dims345b1-again.dxf');
+    p = await dim('PD_DIM_1'); near(p.a, [30, 90], 'reopened: the moved point'); assert.ok(Math.abs(p.shift - 40) < 1, 'reopened: the text shift ' + p.shift);
+    await closeTabs(/./);
+  });
 
   // ---- TODO 155l1: DIM, the Automatic dimension: hover ghost, line / arc / circle picks, repeats until Enter ----
   const tealInk = () => t('drawing').evaluate((c) => {            // pixels in the dimension colour's hue (teal), also when faint

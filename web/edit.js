@@ -1788,6 +1788,16 @@ export function dimOffsetAt(a, b, p, axis = null) {
   const len = Math.hypot(dx, dy);
   return len > 1e-12 ? (-(p[0] - a[0]) * dy + (p[1] - a[1]) * dx) / len : 0;
 }
+/**
+ * TODO 345b1: the params of an aligned or linear dimension with its measured point `which` ('a' | 'b') moved to q, as AutoCAD's stretch of an extension line origin: the dimension line stays
+ * through where its middle was, so the value changes. null when the points would be equal (it would draw nothing).
+ */
+export function dimMovePoint(kind, params, which, q, factor, dp = 2) {
+  const g = dimGeom(kind, params, factor, dp), next = { ...params, [which]: q };
+  if (!g || !dimGeom(kind, next, factor, dp)) return null;
+  const mid = [g.line[0] + g.u[0] * g.len / 2, g.line[1] + g.u[1] * g.len / 2];
+  return { ...next, offset: dimOffsetAt(next.a, next.b, mid, params.axis) };
+}
 /** A dimension with its first free block name, offset 0 and default text height, or `look` (what Measure's Keep makes). */
 export function makeDimension(a, b, factor, blocks = {}, dp = 2, look = {}) {
   const kind = look.axis ? 'linear' : 'aligned';
