@@ -1727,7 +1727,9 @@ export function readDim(name, block) {
   const axis = { H: 'h', V: 'v' }[tag] || block.dimAxis;
   if (p && axis) p.axis = axis;
   const txt = ents.find((e) => e.type === 'TEXT'), g0 = p && txt && tag !== 'D' && dimGeometry({ ...p, override: fieldOf(txt.r, 1) }, 1);     // the same dimension with its text where the fit rule puts it
-  if (g0) {         // the text is somewhere else along the line: moved by hand
+  const ln0 = ents.find((e) => e.type === 'LINE'), dl = ln0 && [g(ln0, 11) - g(ln0, 10), g(ln0, 21) - g(ln0, 20)];
+  const along = !p || !p.axis || (p.axis === 'h' ? Math.abs(dl[1]) : Math.abs(dl[0])) <= 1e-6 * Math.hypot(dl[0], dl[1]);      // a rotated linear dimension keeps its tag but its line is off the axis
+  if (g0 && along) {         // the text is somewhere else along the line: moved by hand
     const s = (g(txt, 10) - g0.line[0]) * g0.u[0] + (g(txt, 20) - g0.line[1]) * g0.u[1];
     if (Math.abs(s - g0.tx) > 1e-4 * g0.th && Math.abs(s - g0.len / 2) > 1e-4 * g0.th) p.shift = s - g0.len / 2;
   }

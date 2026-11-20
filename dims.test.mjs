@@ -283,6 +283,11 @@ test('TODO 345a text side drag: shift moves the text along the line, past an ext
     const lp = { a: [0, 0], b: [60, 80], axis, offset: 5, textH: 2.5, shift: axis === 'h' ? 40 : -30 }, got2 = read(E.buildDim('linear', lp, 1, 'PD_DIM_' + axis.toUpperCase() + '1')).params;
     near(got2.shift, lp.shift, 'linear ' + axis);
   }
+  const xf = (dim, f) => { const b = reopen(dim); for (const e of b.entities) for (const [cx, cy] of [[10, 20], [11, 21], [12, 22], [13, 23]]) { const i = e.r.c.indexOf(cx), j = e.r.c.indexOf(cy); if (i < 0 || j < 0) continue; const [x, y] = f(+e.r.v[i], +e.r.v[j]); e.r.v[i] = x; e.r.v[j] = y; } return b; };
+  const lin = E.buildDim('linear', { a: [0, 0], b: [60, 80], axis: 'h', offset: 5, textH: 2.5 }, 1, 'PD_DIM_H1');      // text in its fit-rule place
+  const c30 = Math.cos(Math.PI / 6), s30 = Math.sin(Math.PI / 6);
+  for (const [name, f] of Object.entries({ 'rotate 30': (x, y) => [x * c30 - y * s30, x * s30 + y * c30], 'rotate 90': (x, y) => [-y, x], 'rotate 180': (x, y) => [-x, -y], 'mirror X': (x, y) => [x, -y], 'mirror Y': (x, y) => [-x, y], 'scale 2': (x, y) => [2 * x, 2 * y] }))
+    assert.equal(E.readDim(lin.name, xf(lin, f)).params.shift, undefined, 'a transformed linear dimension with its text in place reads no shift: ' + name);
   const t = base.text;       // dimTextHit: the box of the text, padded
   assert.ok(E.dimTextHit(t, [t.x, t.y + 1])); assert.ok(!E.dimTextHit(t, [t.x, t.y + 6])); assert.ok(E.dimTextHit(t, [t.x, t.y + 6], 5)); assert.ok(!E.dimTextHit(t, [t.x + 30, t.y]));
 });
