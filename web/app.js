@@ -11178,8 +11178,8 @@ function gripDoc() {
 const gripOn = (d) => !!d && !state.drawingRotate && !state.match && !state.colourTool && gripDoc() === d && state.tool === 'select' && !state.setlen && !!d.sel && d.sel !== d.txoSel && d.sel.size > 0 && (d.sel.size <= GR.MAX_SELECTED || !!wholeDrawingGroup(d.raw.groups, d.sel)) && !textEditing();
 /** 164a: the drawing's attribute display mode (0 none, 1 normal, 2 all): the block attribute grips follow it. */
 const attMode = (d) => { const v = Number(d.raw.header?.$ATTMODE ?? 1); return Number.isFinite(v) ? v : 1; };
-/** Does a dimension of d show grips: a drawing tab (not a layout, Compare or a PDF sheet: TODO 345b2)? */
-const dimGripsOk = (d) => curDoc() === d && !d.vlay && !d.lay && !d.pdf;
+/** Does a dimension of d show grips: a drawing tab, a PDF sheet or Compare's linked drawing (a layout's objects have their own edit, TODO 345b2)? */
+const dimGripsOk = (d) => !d.vlay && !d.lay;
 /** Every grip of the selection: [{ e, id, kind, x, y }] (drawing units); kept while the selection and the drawing stay the same. */
 function gripList(d) {
   const ents = d.raw.entities;

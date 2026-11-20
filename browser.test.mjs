@@ -19844,6 +19844,38 @@ try {
     await undo(); near((await line()).slice(2), [120, 60], 'one Undo puts both back'); near((await dim('PD_DIM_1')).b, [120, 60], 'both');
     await closeTabs(/./);
   });
+  await step('TODO 345b2: on a PDF sheet, a selected dimension is solid with its three grips (light and dark), a chord-end grip turns it, one Undo, Esc puts it back', async () => {
+    await closeTabs(/./);
+    const sheet = new Page(300, 240); sheet.moveTo(0, 0); sheet.lineTo(300, 0); sheet.moveTo(0, 240); sheet.lineTo(300, 240); sheet.stroke();
+    await t('picker').setInputFiles({ name: 'dim345b2-sheet.pdf', mimeType: 'application/pdf', buffer: Buffer.from(writePdf([sheet, sheet])) });
+    await t('bal-sheets').waitFor();
+    await page.locator('[data-testid=canvas]').getByRole('button', { name: 'Fit', exact: true }).click();
+    const dim = async () => Object.values(await dimBlocks())[0]?.params;
+    const ends = async () => { const p = await dim(); return [p.a, p.b].sort((m, n) => m[1] - n[1]); };       // the chord's ends, lower first
+    const near = (a, b, msg) => assert.ok(a && Math.abs(a[0] - b[0]) < 1.5 && Math.abs(a[1] - b[1]) < 1.5, msg + ': ' + JSON.stringify([a, b]));
+    const drag = async (from, to, esc = false) => {
+      const a = await at(...from), b = await at(...to);
+      await page.mouse.move(a.x, a.y); await page.mouse.down();
+      await page.mouse.move((a.x + b.x) / 2, (a.y + b.y) / 2, { steps: 4 }); await page.mouse.move(b.x, b.y, { steps: 4 });
+      if (esc) await page.keyboard.press('Escape');
+      await page.mouse.up(); await frames();
+    };
+    await typeCmd('c'); await typeCmd('150,120'); await typeCmd('40'); await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
+    await typeCmd('ddi'); await click(190, 120); await click(160, 126);
+    await said(/Dimension placed: Ø80\.00 mm/);
+    await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click();
+    const text = dimTextMiddle(dimGeom('diameter', await dim(), 1, 2).text);
+    await click(...text); await waitSel('1 selected'); await gripWhen(3); await frames();
+    await shotBoth('dim-grips-pdf-sheet');
+    const [lo, hi] = await ends(), grip = hi[0] > lo[0] ? hi : lo;       // the end on the right
+    await drag(grip, [150, 170]);
+    let [a, b] = await ends(); near(a, [150, 80], 'the chord turned up: lower end'); near(b, [150, 160], 'upper end');
+    await page.keyboard.press('Escape'); await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z'); await frames();
+    [a, b] = await ends(); near(a, lo, 'one Undo: lower end'); near(b, hi, 'upper end');
+    await click(...text); await waitSel('1 selected'); await gripWhen(3);
+    await drag(grip, [150, 170], true); [a, b] = await ends(); near(a, lo, 'Esc mid-drag: lower end stays'); near(b, hi, 'upper end stays');
+    await closeTabs(/./);
+  });
 
   // ---- TODO 155l1: DIM, the Automatic dimension: hover ghost, line / arc / circle picks, repeats until Enter ----
   const tealInk = () => t('drawing').evaluate((c) => {            // pixels in the dimension colour's hue (teal), also when faint
@@ -33523,6 +33555,30 @@ try {
     assert.ok(s && Math.abs(s[0] - 60) < 1.5 && Math.abs(s[1] - 50) < 1.5, 'Compare: the radius text is where the last click was, from the centre: ' + s);
     await typeCmd('compare'); await key97c('Control+z');
     assert.equal(await tpOf(), undefined, 'one Undo takes the dimension back');
+    await closeTabs(/./);
+  });
+  await step('TODO 345b2: in Compare, the selected radius dimension has its three grips, the arc-point grip turns it in the linked drawing, one Undo, Esc puts it back', async () => {
+    const raw = newDoc(4);
+    Object.assign(raw, addDimension(raw, buildDim('radius', { c: [100, 100], r: 20, p: [140, 100], textH: 3 }, 1, 'PD_DIM_R1', 2)));
+    await open97c(raw, 'dim345b2-compare.dxf');
+    const tab = () => page.locator('.dtab').filter({ has: page.locator('.tname', { hasText: /^dim345b2-compare(?:-edited)*\.dxf$/ }) }).click();
+    const pOf = async () => { await tab(); return Object.values(await dimBlocks())[0]?.params.p; };
+    const pickDim = async () => { await typeCmd('compare'); await key97c('Control+a'); await waitSel('1 selected'); await gripWhen(3); };
+    const near = (a, b, msg) => assert.ok(a && Math.abs(a[0] - b[0]) < 1.5 && Math.abs(a[1] - b[1]) < 1.5, msg + ': ' + JSON.stringify([a, b]));
+    const drag = async (x0, y0, x1, y1, esc = false) => {
+      const from = await at(x0, y0), to = await at(x1, y1);
+      await page.mouse.move(from.x, from.y); await page.mouse.down();
+      await page.mouse.move((from.x + to.x) / 2, (from.y + to.y) / 2, { steps: 4 }); await page.mouse.move(to.x, to.y, { steps: 4 });
+      if (esc) await page.keyboard.press('Escape');
+      await page.mouse.up(); await frames();
+    };
+    await pickDim();
+    await drag(120, 100, 100, 140);
+    near(await pOf(), [100, 140], 'Compare: the radius turned a quarter in the linked drawing');
+    await pickDim(); await drag(100, 120, 140, 100, true);
+    near(await pOf(), [100, 140], 'Compare: Esc leaves it where it was');
+    await typeCmd('compare'); await key97c('Control+z');
+    near(await pOf(), [140, 100], 'one Undo turns it back (and no phantom one for the Esc)');
     await closeTabs(/./);
   });
 
