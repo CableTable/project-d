@@ -340,7 +340,7 @@ export function arcValueAt(T, p) {
   const [c, s] = arcCS(T);
   return T.ask === 'a' ? norm360(angleOf(c, p) - angleOf(c, s)) : dist(s, p);
 }
-const arcEnd = (T, e) => { const [c, s] = arcCS(T); return flipped(T, arcSCE(s, c, e), c, s); };
+const arcEnd = (T, e) => { const [c, s] = arcCS(T), a = arcSCE(s, c, e); return T.flip && !a.why ? { ...a, a0: a.a1, a1: a.a0 } : a; };       // Ctrl: clockwise from the start to the pick, same centre
 const ARC_ASK_WHY = { a: 'Requires valid numeric angle or second point.', d: 'Requires valid numeric angle or second point.', l: 'Requires numeric distance or second point.', r: 'Requires numeric distance or second point.' };
 const OPT_REFUSED = '2D point or option keyword required.';
 const ASK_NAME = { a: 'Angle', l: 'chord Length', d: 'Direction', r: 'Radius' };
@@ -721,7 +721,7 @@ export function toolPrompt(T, layer = '0') {
   if (T.am) {
     const name = { sc: 'Start, Centre', cs: 'Centre, Start', se: 'Start, End' }[T.am], ctrl = '(hold Ctrl to switch direction)';
     if (T.ask) return { status: st(`${name}, ${ASK_NAME[T.ask]} · layer ${layer}`), prompt: ASK_PROMPT[T.ask] + ` ${ctrl}:` };
-    if (T.am === 'se') return n === 2 ? { status: st(`${name} · layer ${layer}`), prompt: `Specify centre point of arc ${ctrl} or [Angle/Direction/Radius]:` } : { status: st(`${name} · 1 point · layer ${layer}`), prompt: 'Specify end point of arc (x,y):' };
+    if (T.am === 'se') return n === 2 ? { status: st(`${name} · layer ${layer}`), prompt: `Type an option ${ctrl} [Angle/Direction/Radius]:` } : { status: st(`${name} · 1 point · layer ${layer}`), prompt: 'Specify end point of arc (x,y):' };
     if (n === 2) return { status: st(`${name} · layer ${layer}`), prompt: `Specify end point of arc ${ctrl} or [Angle/chord Length]:` };
     return { status: st(`${name} · ${n} point${n === 1 ? '' : 's'} · layer ${layer}`), prompt: `Specify ${T.am === 'cs' && n === 1 ? 'start' : 'centre'} point of arc (x,y):` };
   }

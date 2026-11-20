@@ -442,7 +442,7 @@ test('Arc (347b): typed E at the second prompt, then A / D / R (negative = the o
   // the prompts
   let T = DR.createTool('arc'); click(T, [10, 0]);
   type(T, 'e'); assert.equal(T.am, 'se'); assert.equal(DR.toolPrompt(T).prompt, 'Specify end point of arc (x,y):');
-  click(T, [0, 10]); assert.equal(DR.toolPrompt(T).prompt, 'Specify centre point of arc (hold Ctrl to switch direction) or [Angle/Direction/Radius]:');
+  click(T, [0, 10]); assert.equal(DR.toolPrompt(T).prompt, 'Type an option (hold Ctrl to switch direction) [Angle/Direction/Radius]:');
   type(T, 'A'); assert.equal(DR.toolPrompt(T).prompt, 'Specify included angle (hold Ctrl to switch direction):');
   type(T, 'u'); type(T, 'D'); assert.equal(DR.toolPrompt(T).prompt, 'Specify tangent direction for the start point of arc (hold Ctrl to switch direction):');
   type(T, 'u'); type(T, 'r'); assert.equal(DR.toolPrompt(T).prompt, 'Specify radius of arc (hold Ctrl to switch direction):');
@@ -479,12 +479,14 @@ test('Arc (347b): typed E at the second prompt, then A / D / R (negative = the o
   is(ctrl(se('r'), '10'), [10, 10], 10, 180, 270);
   is(ctrl(se('r'), '-10'), [0, 0], 10, 90, 0);
   T = DR.createTool('arc'); click(T, [10, 0]); type(T, 'c'); click(T, [0, 0]);
-  is(arc(DR.toolClick(T, [0, 10], null, true)), [0, 0], 10, 270, 0);                                 // S-C-E clockwise from the start (= the negative angle)
+  is(arc(DR.toolClick(T, [0, 10], null, true)), [0, 0], 10, 90, 0);                                  // S-C-E with Ctrl: clockwise from the start (10,0) to the pick (0,10)
   assert.equal(T.flip, true); DR.toolHover(T, [0, 10], false); assert.equal(T.flip, false); DR.toolHover(T, [0, 10]); assert.equal(T.flip, false, 'no flag leaves it alone');
   T = DR.createTool('arc'); click(T, [10, 0]); type(T, 'c'); click(T, [0, 0]); type(T, 'l'); DR.toolHover(T, [10, 5], true); is(ctrl(T, '10'), [0, 0], 10, 300, 0);
-  T = DR.createTool('arc'); type(T, 'c'); click(T, [0, 0], [10, 0]); DR.toolHover(T, [0, 10]); T.flip = true; is(DR.toolPreview(T).shapes[0], [0, 0], 10, 270, 0);       // C-S-E preview
+  T = DR.createTool('arc'); type(T, 'c'); click(T, [0, 0], [10, 0]); DR.toolHover(T, [0, 10]); T.flip = true; is(DR.toolPreview(T).shapes[0], [0, 0], 10, 90, 0);       // C-S-E preview
   T.flip = false; is(DR.toolPreview(T).shapes[0], [0, 0], 10, 0, 90);
   T = DR.createTool('arc'); click(T, [10, 0], [7.0710678, 7.0710678]); is(arc(DR.toolClick(T, [0, 10], null, true)), [0, 0], 10, 0, 90);        // the 3-point arc has no direction: Ctrl changes nothing
+  // the mirror on S-C-L: the 90-degree chord arc turned = the clockwise 90-degree arc (arcSCA with -90)
+  const ml = DR.arcMirror(DR.arcSCL([10, 0], [0, 0], 10 * Math.SQRT2), [0, 0], [10, 0]); is(ml, [0, 0], 10, 270, 0);
   // the mirror itself
   const m = DR.arcMirror({ c: [0, 0], r: 10, a0: 0, a1: 90 }, [10, 0], [0, 10]); nearPt(m.c, [10, 10]); near(m.a0, 180); near(m.a1, 270);
 });

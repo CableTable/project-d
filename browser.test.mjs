@@ -35103,6 +35103,11 @@ try {
     await page.locator('.dtab').filter({ has: page.locator('.tname', { hasText: /^circle346-c(?:-edited)*\.dxf$/ }) }).click();
     return (await savedDoc()).entities.filter((e) => e.type === 'ARC');
   })() : [];
+  const count347 = (kind, n0) => kind === 'Layouts' ? nParts().then((n) => n - n0) : arcsOf347(kind).then((a) => a.length);
+  const undone347 = async (kind, n0, want, label) => {                                         // Ctrl+Z lands a moment later: wait for the count, then assert it
+    for (let k = 0; k < 50 && await count347(kind, n0) !== want; k++) await page.waitForTimeout(100);
+    assert.equal(await count347(kind, n0), want, label);
+  };
   const arcAt347 = (e, [cx, cy, r, a0, a1], label) => [[10, cx], [20, cy], [40, r], [50, a0], [51, a1]].forEach(([code, v]) => assert.ok(Math.abs(fieldOf(e, code) - v) < 0.5, `${label}: code ${code} is ${fieldOf(e, code)}, wanted ${v}`));
   await step('TODO 347a: typed C at the ARC start / second prompt, then the end point, A or L (negative A and L give the other arc), a chord over the diameter refused at the same prompt, U backs one step, one Undo per arc: Drawings, Layouts, Compare', async () => {
     for (const [kind, setup] of circleTabs346) {
@@ -35140,8 +35145,7 @@ try {
         [[100, 100, 50, 0, 90], [150, 100, 50, 270, 0], [30, 250, 50, 270, 210], [100, 50, 50, 180, 90], [200, 200, 50, 0, 90], [100, 250, 50, 0, 60]].forEach((want, i) => arcAt347(arcs[i], want, `${kind} arc ${i + 1}`));
       }
       await key97c('Control+z');
-      if (kind === 'Layouts') assert.equal(await nParts(), n0 + 5, kind + ': one Undo per arc');
-      else assert.equal((await arcsOf347(kind)).length, 5, kind + ': one Undo per arc');
+      await undone347(kind, n0, 5, kind + ': one Undo per arc');
       await closeTabs(/./);
     }
     assert.deepEqual(errors, []);
@@ -35185,7 +35189,7 @@ try {
 
   // ---- TODO 347b: Arc, typed E (Start, End, Angle / Direction / Radius) and the Ctrl flip; Drawings, Layouts and Compare ----
   const second347 = 'Specify second point on the arc [Center/End]:', seEnd347 = 'Specify end point of arc (x,y):', radius347 = 'Specify radius of arc (hold Ctrl to switch direction):';
-  const sePrompt347 = 'Specify centre point of arc (hold Ctrl to switch direction) or [Angle/Direction/Radius]:', dir347 = 'Specify tangent direction for the start point of arc (hold Ctrl to switch direction):';
+  const sePrompt347 = 'Type an option (hold Ctrl to switch direction) [Angle/Direction/Radius]:', dir347 = 'Specify tangent direction for the start point of arc (hold Ctrl to switch direction):';
   const wait347 = async (re, label) => {                                                     // the history line and the prompt change a moment after typeCmd: wait, never read straight away
     try { await page.waitForFunction((s) => new RegExp(s).test(document.querySelector('[data-testid=cmd-hist]').textContent + ' | ' + document.querySelector('[data-testid=cmd-prompt]').textContent), re.source, { timeout: 5000 }); }
     catch { throw new Error(`${label}: expected ${re}, got "${await said346()}"`); }
@@ -35254,8 +35258,7 @@ try {
         want.forEach((w, i) => arcNear347(arcs[i], w, `${kind} arc ${i + 1}`));
       }
       await key97c('Control+z');
-      if (kind === 'Layouts') assert.equal(await nParts(), n0 + 5, kind + ': one Undo per arc');
-      else assert.equal((await arcsOf347(kind)).length, 5, kind + ': one Undo per arc');
+      await undone347(kind, n0, 5, kind + ': one Undo per arc');
       await closeTabs(/./);
     }
     assert.deepEqual(errors, []);
@@ -35282,16 +35285,20 @@ try {
       await waitD347(/^M200 /, kind + ': Start, Centre, End anticlockwise'); await page.keyboard.down('Control'); await waitD347(/^M(?!200 )\d/, kind + ': Ctrl turns it clockwise');
       await click346(170, 90); await page.keyboard.up('Control');
       await wait347(/Arc made on layer/, kind + ': Ctrl-click at the end prompt');
-      const want = [[81.667, 90, 41.667, 180, 253.74], [170, 60, 30, 270, 0]];                 // the mirror image of the anticlockwise arcs (28.33, 50, 41.67, 0, 73.74) and (170, 60, 30, 0, 90)
-      if (kind === 'Layouts') { assert.equal(await nParts(), n0 + 2, kind); await layoutArcs347(want, kind, 2); }
+      await prompt346(start347, kind);
+      await typeCmd('200,60'); await typeCmd('c'); await typeCmd('170,60'); await typeCmd('a'); await prompt346(angle347, kind + ': S-C-A');
+      await page.mouse.move(q.x + 5, q.y + 5); await page.mouse.move(q.x, q.y); await frames();
+      await page.keyboard.down('Control'); await click346(170, 90); await page.keyboard.up('Control');          // Ctrl with A: the mirror (= the negative angle)
+      await wait347(/Arc made on layer/, kind + ': Ctrl-click at the A prompt of Start, Centre');
+      const want = [[81.667, 90, 41.667, 180, 253.74], [170, 60, 30, 90, 0], [170, 60, 30, 270, 0]];                  // S-E-A: the mirror image of the anticlockwise arc (28.33, 50, 41.67, 0, 73.74); S-C-E: clockwise from the start (200,60) to the pick (170,90), not the mirror
+      if (kind === 'Layouts') { assert.equal(await nParts(), n0 + 3, kind); await layoutArcs347(want, kind, 2); }
       else {
         await stop346();
-        const arcs = await arcsOf347(kind); assert.equal(arcs.length, 2, kind);
+        const arcs = await arcsOf347(kind); assert.equal(arcs.length, 3, kind);
         want.forEach((w, i) => arcNear347(arcs[i], w, `${kind} Ctrl arc ${i + 1}`, 2));
       }
       await key97c('Control+z');
-      if (kind === 'Layouts') assert.equal(await nParts(), n0 + 1, kind + ': one Undo per arc');
-      else assert.equal((await arcsOf347(kind)).length, 1, kind + ': one Undo per arc');
+      await undone347(kind, n0, 2, kind + ': one Undo per arc');
       await closeTabs(/./);
     }
     assert.deepEqual(errors, []);
