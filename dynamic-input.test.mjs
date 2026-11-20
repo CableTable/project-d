@@ -198,6 +198,15 @@ for (const kind of ['rect', 'rrect']) test(`TODO 69c: ${kind} first corner, sign
   assert.equal(inputMode(createTool('circle')), 'xy', 'Circle joined in TODO 69f');
 });
 
+test('TODO 347b: Arc Start, End: one box each for A and D (Angle) and R (signed Radius) measured from the start, none at the centre prompt', () => {
+  const T = createTool('arc'); T.pts = [[10, 0], [0, 10]]; T.am = 'se';
+  assert.equal(inputMode(T), null, 'the centre prompt takes A, D or R in the command bar');
+  assert.deepEqual(anchorOf(T), [10, 0], 'the start, not the end point');
+  for (const [ask, mode] of [['a', 'angle'], ['d', 'angle'], ['r', 'arcradius']]) { T.ask = ask; assert.equal(inputMode(T), mode, ask); }
+  const R = toolPointInput(Object.assign(createInput(false, 'arcradius'), { values: ['-10', ''] }), { ...T, hover: [10, 10] }, 'mm');
+  assert.equal(R.value, -10); assert.equal(R.errors[0], ''); assert.equal(R.labels[0], 'Radius');
+});
+
 test('TODO 69d: Measure types its first point only, then shows a read-only length', () => {
   const T = { kind: 'measure', pts: [], hover: [30, 40] };
   assert.equal(inputMode(T), 'xy'); assert.equal(firstPoint(T), true); assert.equal(readOnlyLength(T), false);

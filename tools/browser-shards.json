@@ -727,5 +727,8 @@
   "TODO 346b: Tan, Tan, Tan from the flyout and Draw > Circle > (no typed keyword), Tan, Tan, Radius from the submenu; the button remembers both: Drawings, Layouts, Compare": 7,
   "TODO 346b: screenshots, light and dark (the Circle flyout open on a Tan, Tan, Tan button, a Tan, Tan, Radius circle being sized)": 2,
   "TODO 347a: typed C at the ARC start / second prompt, then the end point, A or L (negative A and L give the other arc), a chord over the diameter refused at the same prompt, U backs one step, one Undo per arc: Drawings, Layouts, Compare": 9.5,
-  "TODO 347a: the ARC A / chord Length prompts take Angle / Length in the dynamic input box (negative too, a long chord refused), the preview follows the typed value; screenshots, light and dark": 2.5
+  "TODO 347a: the ARC A / chord Length prompts take Angle / Length in the dynamic input box (negative too, a long chord refused), the preview follows the typed value; screenshots, light and dark": 2.5,
+  "TODO 347b: typed E at the ARC second prompt: Start, End, Angle / Direction / Radius (negative A and R the other arc), a centre pick and short radius / bad direction refused at the prompt with the points kept, U backs one step, Esc ends the command, one Undo per arc: Drawings, Layouts, Compare": 8,
+  "TODO 347b: Ctrl held turns the ARC the other way: the preview follows the key (down and up, no mouse move) and the pointer, a Ctrl-click commits the turned arc (Start, End, Angle by the pointer; Start, Centre, End); Drawings, Layouts, Compare": 5,
+  "TODO 347b: screenshots, light and dark (a Ctrl-turned Start, End, Angle preview)": 2.5
 }

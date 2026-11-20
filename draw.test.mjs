@@ -398,13 +398,13 @@ test('Arc (347a): typed C at the first / second prompt, then the end point, A or
   // Start, Centre, End (C at the second prompt, case-free)
   let T = DR.createTool('arc');
   assert.match(DR.toolPrompt(T).prompt, /\[Center\]/); assert.ok(DR.toolWords(T).has('c') && !DR.toolWords(T).has('l'));
-  click(T, [10, 0]); assert.match(DR.toolPrompt(T).prompt, /^Specify second point on the arc \[Center\]/);
+  click(T, [10, 0]); assert.match(DR.toolPrompt(T).prompt, /^Specify second point on the arc \[Center\/End\]/);
   type(T, 'C'); assert.equal(T.am, 'sc'); assert.match(DR.toolPrompt(T).prompt, /^Specify centre point of arc/);
-  click(T, [0, 0]); assert.match(DR.toolPrompt(T).prompt, /^Specify end point of arc \[Angle\/chord Length\]/);
+  click(T, [0, 0]); assert.match(DR.toolPrompt(T).prompt, /^Specify end point of arc \(hold Ctrl to switch direction\) or \[Angle\/chord Length\]:$/);
   let a = arc(click(T, [0, 10])); nearPt(a.c, [0, 0]); near(a.a0, 0); near(a.a1, 90);
   assert.equal(T.am, null, 'the next arc starts at the 3-point prompts');
   // Start, Centre, Angle: typed "A" then the number; negative = clockwise
-  click(T, [10, 0]); type(T, 'c'); click(T, [0, 0]); type(T, 'A'); assert.equal(T.ask, 'a'); assert.equal(DR.toolPrompt(T).prompt, 'Specify included angle:');
+  click(T, [10, 0]); type(T, 'c'); click(T, [0, 0]); type(T, 'A'); assert.equal(T.ask, 'a'); assert.equal(DR.toolPrompt(T).prompt, 'Specify included angle (hold Ctrl to switch direction):');
   a = arc(type(T, '-90')); near(a.a0, 270); near(a.a1, 0);
   // "L" with the number after it, negative = major arc; a chord over the diameter is refused and the prompt stays
   click(T, [10, 0]); type(T, 'c'); click(T, [0, 0]);
@@ -417,10 +417,10 @@ test('Arc (347a): typed C at the first / second prompt, then the end point, A or
   a = arc(click(T, [0, 20])); nearPt(a.c, [0, 0]); near(a.r, 10); near(a.a0, 0); near(a.a1, 90);
   type(T, 'c'); click(T, [0, 0]); click(T, [10, 0]); type(T, 'a 90'); assert.equal(T.pts.length, 0, 'C-S-A made the arc');
   type(T, 'c'); click(T, [0, 0]); click(T, [10, 0]); a = arc(type(T, 'l 10')); near(a.a1, 60);
-  // anything else is not an option; the words E, A and L are refused before C (E is 347b)
+  // anything else is not an option; the words E, A and L are refused at the first prompt (E is an option only at the second, 347b)
   T = DR.createTool('arc');
   for (const w of ['e', 'a', 'l', 'foo']) assert.equal(type(T, w).msg, '2D point or option keyword required.', w);
-  click(T, [10, 0]); assert.equal(type(T, 'e').msg, '2D point or option keyword required.'); assert.equal(type(T, 'foo').msg, '2D point or option keyword required.'); assert.equal(T.pts.length, 1);
+  click(T, [10, 0]); for (const w of ['a', 'l', 'd', 'r', 'foo']) assert.equal(type(T, w).msg, '2D point or option keyword required.', w); assert.equal(T.pts.length, 1);
   // U backs one step in every mode: the A prompt → the end point → the centre → the second-point prompt (C is an option again)
   type(T, 'c'); click(T, [0, 0]); type(T, 'a'); type(T, 'u'); assert.equal(T.ask, null); assert.equal(T.pts.length, 2);
   type(T, 'u'); assert.equal(T.pts.length, 1); assert.equal(T.am, 'sc'); type(T, 'u'); assert.equal(T.am, null); assert.equal(T.pts.length, 1);
@@ -432,6 +432,61 @@ test('Arc (347a): typed C at the first / second prompt, then the end point, A or
   T = DR.createTool('arc'); click(T, [10, 0]); type(T, 'c'); click(T, [0, 0]); type(T, 'a'); DR.toolHover(T, [0, 10]);
   near(DR.toolPreview(T).shapes[0].a1, 90); near(DR.toolPreview({ ...T, value: -90 }).shapes[0].a0, 270);
   near(DR.arcValueAt(T, [0, 10]), 90);
+});
+
+test('Arc (347b): typed E at the second prompt, then A / D / R (negative = the other arc), Ctrl turns the arc the other way; refusals stay at the prompt; U backs one step', () => {
+  const type = (T, s) => DR.toolType(T, s);
+  const arc = (r) => { assert.equal(r.msg, null); assert.equal(r.made[0].t, 'arc'); return r.made[0]; };
+  const is = (a, c, r, a0, a1) => { nearPt(a.c, c); near(a.r, r); near(a.a0, a0); near(a.a1, a1); };
+  const se = (...words) => { const T = DR.createTool('arc'); click(T, [10, 0]); type(T, 'E'); click(T, [0, 10]); for (const w of words) type(T, w); return T; };
+  // the prompts
+  let T = DR.createTool('arc'); click(T, [10, 0]);
+  type(T, 'e'); assert.equal(T.am, 'se'); assert.equal(DR.toolPrompt(T).prompt, 'Specify end point of arc (x,y):');
+  click(T, [0, 10]); assert.equal(DR.toolPrompt(T).prompt, 'Specify centre point of arc (hold Ctrl to switch direction) or [Angle/Direction/Radius]:');
+  type(T, 'A'); assert.equal(DR.toolPrompt(T).prompt, 'Specify included angle (hold Ctrl to switch direction):');
+  type(T, 'u'); type(T, 'D'); assert.equal(DR.toolPrompt(T).prompt, 'Specify tangent direction for the start point of arc (hold Ctrl to switch direction):');
+  type(T, 'u'); type(T, 'r'); assert.equal(DR.toolPrompt(T).prompt, 'Specify radius of arc (hold Ctrl to switch direction):');
+  // S-E-A, S-E-D, S-E-R: the arcs AutoCAD gave (acad-347.txt), the value typed after the letter or at its own prompt
+  is(arc(type(se(), 'a 90')), [0, 0], 10, 0, 90);
+  is(arc(type(se('A'), '-90')), [10, 10], 10, 180, 270);
+  is(arc(type(se(), 'D 90')), [0, 0], 10, 0, 90);
+  is(arc(type(se('d'), '90')), [0, 0], 10, 0, 90);
+  is(arc(type(se(), 'R 10')), [0, 0], 10, 0, 90);
+  is(arc(type(se('r'), '-10')), [10, 10], 10, 270, 180);
+  // refusals keep the points and the prompt; a retyped value then makes the arc
+  T = se('r'); assert.equal(type(T, '5').msg, 'Radius too small for these points'); assert.equal(T.ask, 'r'); assert.equal(T.pts.length, 2); assert.equal(type(T, 'foo').msg, 'Requires numeric distance or second point.');
+  is(arc(type(T, '10')), [0, 0], 10, 0, 90);
+  T = se('d'); assert.match(type(T, '135').msg, /straight line/); assert.equal(T.ask, 'd'); assert.equal(T.pts.length, 2); assert.equal(type(T, 'foo').msg, 'Requires valid numeric angle or second point.');
+  T = se('a'); assert.match(type(T, '0').msg, /between 0 and 360/); assert.equal(T.pts.length, 2); assert.equal(T.ask, 'a'); assert.match(type(T, '360').msg, /between 0 and 360/);
+  T = se(); assert.match(DR.toolClick(T, [5, 5]).msg, /^Type A, D or R/); assert.equal(T.pts.length, 2, 'a centre pick at the S-E prompt keeps the points'); assert.equal(T.am, 'se');
+  assert.equal(type(T, 'l').msg, '2D point or option keyword required.'); assert.equal(type(T, 'c').msg, '2D point or option keyword required.'); assert.equal(T.pts.length, 2);
+  T = DR.createTool('arc'); click(T, [10, 0]); type(T, 'e'); assert.equal(type(T, '10,0').msg, 'That is the same point: pick another'); assert.equal(T.pts.length, 1);
+  // U backs one step: the A prompt → the end-point prompt → the second-point prompt (C and E are options again) → the first point
+  T = se('a'); type(T, 'u'); assert.equal(T.ask, null); assert.equal(T.pts.length, 2); type(T, 'u'); assert.equal(T.pts.length, 1); assert.equal(T.am, 'se');
+  type(T, 'u'); assert.equal(T.am, null); assert.equal(T.pts.length, 1); type(T, 'u'); assert.equal(T.pts.length, 0);
+  // Esc leaves the command's points and the E
+  T = se('a'); assert.equal(DR.toolFinish(T).msg, 'Cancelled'); assert.equal(T.am, null); assert.equal(T.ask, null); assert.equal(T.pts.length, 0);
+  // the pointer: A is twice the turn from the chord to the start tangent, D the direction from the start, R the distance from the start; the preview follows
+  T = se('a'); DR.toolHover(T, [10, 10]); near(DR.arcValueAt(T, [10, 10]), 90); is(DR.toolPreview(T).shapes[0], [0, 0], 10, 0, 90); assert.deepEqual(DR.toolPreview(T).guides, [[[10, 0], [0, 10]]]);
+  near(DR.arcValueAt(T, [10, -10]), -270);                                                           // a pointer below the start turns the other way round
+  T = se('d'); near(DR.arcValueAt(T, [10, 10]), 90); T = se('r'); near(DR.arcValueAt(T, [10, 10]), 10);
+  assert.equal(DR.toolPreview(se()).shapes.length, 0, 'before A / D / R only the chord guide shows');
+  is(arc(DR.toolClick(se('d'), [10, 10])), [0, 0], 10, 0, 90);                                       // a click at the D prompt: the pointer gives the direction
+  // Ctrl turns the arc the other way (toolClick / toolHover carry it): the mirror image in the chord / in the centre-start line; D runs the tangent backwards
+  const ctrl = (T, v) => { DR.toolHover(T, [0, 0], true); return arc(type(T, v)); };
+  is(ctrl(se('a'), '90'), [10, 10], 10, 180, 270);                                                   // = the negative angle
+  is(ctrl(se('d'), '90'), [0, 0], 10, 90, 0);                                                        // the tangent points down: clockwise round the same centre
+  is(ctrl(se('r'), '10'), [10, 10], 10, 180, 270);
+  is(ctrl(se('r'), '-10'), [0, 0], 10, 90, 0);
+  T = DR.createTool('arc'); click(T, [10, 0]); type(T, 'c'); click(T, [0, 0]);
+  is(arc(DR.toolClick(T, [0, 10], null, true)), [0, 0], 10, 270, 0);                                 // S-C-E clockwise from the start (= the negative angle)
+  assert.equal(T.flip, true); DR.toolHover(T, [0, 10], false); assert.equal(T.flip, false); DR.toolHover(T, [0, 10]); assert.equal(T.flip, false, 'no flag leaves it alone');
+  T = DR.createTool('arc'); click(T, [10, 0]); type(T, 'c'); click(T, [0, 0]); type(T, 'l'); DR.toolHover(T, [10, 5], true); is(ctrl(T, '10'), [0, 0], 10, 300, 0);
+  T = DR.createTool('arc'); type(T, 'c'); click(T, [0, 0], [10, 0]); DR.toolHover(T, [0, 10]); T.flip = true; is(DR.toolPreview(T).shapes[0], [0, 0], 10, 270, 0);       // C-S-E preview
+  T.flip = false; is(DR.toolPreview(T).shapes[0], [0, 0], 10, 0, 90);
+  T = DR.createTool('arc'); click(T, [10, 0], [7.0710678, 7.0710678]); is(arc(DR.toolClick(T, [0, 10], null, true)), [0, 0], 10, 0, 90);        // the 3-point arc has no direction: Ctrl changes nothing
+  // the mirror itself
+  const m = DR.arcMirror({ c: [0, 0], r: 10, a0: 0, a1: 90 }, [10, 0], [0, 10]); nearPt(m.c, [10, 10]); near(m.a0, 180); near(m.a1, 270);
 });
 
 test('Esc: a circle in progress is cancelled; a line keeps what it has', () => {

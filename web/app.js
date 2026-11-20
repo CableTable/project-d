@@ -5743,7 +5743,7 @@ function attachCanvasEvents() {
     if (state.drawingRotate?.drag) drawingRotateMove(e);
     if (lrub) { if (!lrub.moved && Math.hypot(e.clientX - lrub.x, e.clientY - lrub.y) > 4) lrub.moved = true; if (lrub.moved) showRubber(lrub, e); }
     const d = pointTarget();
-    if (drawLive()) drawHoverAt(state.drawDoc, e.clientX, e.clientY, e.shiftKey);
+    if (drawLive()) drawHoverAt(state.drawDoc, e.clientX, e.clientY, e.shiftKey, e.ctrlKey);
     if (d && modLive()) modHover(d, e.clientX, e.clientY, e.shiftKey);
     else if (layModLive() && state.mod.stage !== 'pick') modHover(curDoc(), e.clientX, e.clientY, e.shiftKey);
     if (lmod && !lmod.moved && Math.hypot(e.clientX - lmod.x, e.clientY - lmod.y) > 4) lmod.moved = true;
@@ -8288,9 +8288,9 @@ function drawPick(d, cx, cy, shift, hover) {
   if (straight && q.length === 2) q = Ed.orthoLock(base, q);                // a snap beats ORTHO
   return [q[0] * f, q[1] * f, q[2] || null];
 }
-function drawHoverAt(d, cx, cy, shift) {
+function drawHoverAt(d, cx, cy, shift, ctrl) {
   const q = drawPick(d, cx, cy, shift, true);
-  state.drawHover = q; DR.toolHover(state.draw, [q[0], q[1]]);
+  state.drawHover = q; DR.toolHover(state.draw, [q[0], q[1]], ctrl);
   paintOverlay();
 }
 function drawClick(e) {
@@ -8300,9 +8300,9 @@ function drawClick(e) {
   const q = drawPick(d, e.clientX, e.clientY, e.shiftKey);
   trackStop();                                                      // a click ends the hover (and the lock it showed)
   state.drawHover = q; state.msg = null;
-  if (cursorDynamic() && DI.hasTyped(cursorInput())) { DR.toolHover(state.draw, q.slice(0, 2)); cursorCommit(); return; }
+  if (cursorDynamic() && DI.hasTyped(cursorInput())) { DR.toolHover(state.draw, q.slice(0, 2), e.ctrlKey); cursorCommit(); return; }
   state.draw.cursorInput = null;
-  drawApply(DR.toolClick(state.draw, [q[0], q[1]], DR.tangentMode(state.draw) ? tangentObjectAt(d, e.clientX, e.clientY) : null));
+  drawApply(DR.toolClick(state.draw, [q[0], q[1]], DR.tangentMode(state.draw) ? tangentObjectAt(d, e.clientX, e.clientY) : null, e.ctrlKey));
 }
 /** The line, circle or arc under a click (mm) for a Circle's tangent pick, on a drawing, a Compare source or a layout; null when the click is on none (or on a spline or ellipse). */
 function tangentObjectAt(d, cx, cy) {
@@ -13413,6 +13413,9 @@ async function init() {
     editKey(e);
   });
   document.addEventListener('keyup', (e) => { if (e.key === 'Control' && ctrlTap) { ctrlTap = false; gripOptionCycle(); } });
+  const arcFlip = (on) => { const T = state.draw; if (drawLive() && T.kind === 'arc' && T.flip !== on) { T.flip = on; paintOverlay(); } };       // 347b: Ctrl held turns the Arc the other way: the preview follows the key, not only the pointer
+  for (const type of ['keydown', 'keyup']) document.addEventListener(type, (e) => { if (e.key === 'Control') arcFlip(type === 'keydown'); });
+  window.addEventListener('blur', () => arcFlip(false));
   document.addEventListener('keydown', snapTab, true);
   document.addEventListener('keydown', cursorKey, true);
   renderWorkArea();

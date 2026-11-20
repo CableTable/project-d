@@ -25,14 +25,14 @@ const rectangle = (T) => T.kind === 'rect' || T.kind === 'rrect';
 // Circle types its centre then one Radius; Ellipse its centre, Length + Angle of axis 1, then one Length (the other half-axis); Arc its first point, then Length + Angle from the previous point twice.
 const STAGES = { measure: ['xy'], setlen: ['xy', 'polar'], dimension: ['xy', 'polar', 'xy'],
   circle: ['xy', 'radius'], ellipse: ['xy', 'polar', 'length'], arc: ['xy', 'polar', 'polar'] };
-export const isSingle = (mode) => ['angle', 'factor', 'radius', 'length', 'distance', 'chord'].includes(mode);
-const ARC_ASK = { a: 'angle', l: 'chord' };                                  // Arc's A / chord Length prompts: one number, negative allowed (the other arc)
-export const inputMode = (T) => T.point ? T.valueMode || (firstPoint(T) ? 'xy' : 'polar') : STAGES[T.kind] ? T.kind === 'arc' && T.ask ? ARC_ASK[T.ask] : T.kind === 'circle' && (T.mode === 'ttr' || T.mode === 'ttt') ? null : (T.kind === 'circle' && (T.mode === '2p' || T.mode === '3p') ? ['xy', 'polar', 'polar'] : STAGES[T.kind])[T.pts.length] ?? null : T.stage !== 'radius' && ['line', 'polyline', 'rect', 'rrect'].includes(T.kind)
+export const isSingle = (mode) => ['angle', 'factor', 'radius', 'length', 'distance', 'chord', 'arcradius'].includes(mode);
+const ARC_ASK = { a: 'angle', d: 'angle', l: 'chord', r: 'arcradius' };      // Arc's A / D / chord Length / R prompts: one number, negative allowed (the other arc); 'arcradius' is a signed radius
+export const inputMode = (T) => T.point ? T.valueMode || (firstPoint(T) ? 'xy' : 'polar') : STAGES[T.kind] ? T.kind === 'arc' && T.ask ? ARC_ASK[T.ask] : T.kind === 'arc' && T.am === 'se' && T.pts.length === 2 ? null : T.kind === 'circle' && (T.mode === 'ttr' || T.mode === 'ttt') ? null : (T.kind === 'circle' && (T.mode === '2p' || T.mode === '3p') ? ['xy', 'polar', 'polar'] : STAGES[T.kind])[T.pts.length] ?? null : T.stage !== 'radius' && ['line', 'polyline', 'rect', 'rrect'].includes(T.kind)
   ? !T.pts.length ? 'xy' : rectangle(T) ? 'size' : 'polar' : null;
 export const readOnlyLength = (T) => T.kind === 'measure' && T.pts.length === 1;
 
 /** Rectangles anchor at the first corner, an ellipse's last half-axis at its centre, chains at their latest vertex, a dimension line's place at nothing (absolute X / Y). */
-export const anchorOf = (T) => rectangle(T) || (T.kind === 'ellipse' && T.pts.length === 2) ? T.pts[0] : T.kind === 'dimension' && T.pts.length === 2 ? undefined : T.pts.at(-1);
+export const anchorOf = (T) => rectangle(T) || (T.kind === 'ellipse' && T.pts.length === 2) || (T.kind === 'arc' && T.am === 'se') ? T.pts[0] : T.kind === 'dimension' && T.pts.length === 2 ? undefined : T.pts.at(-1);
 export const firstPoint = (T) => !anchorOf(T);
 
 /** A modify prompt's preceding points, or null for object picks, options and fences. Align destinations start at their source. */
@@ -117,7 +117,7 @@ export function pointInput(s, last, mouse, lengthLabel = 'Length', unit = 'mm') 
   return { text, point, live, labels, errors, why: errors.find(Boolean) || (point ? '' : 'Point coordinates must be finite') };
 }
 
-const ONE = { angle: 'Angle', factor: 'Factor', radius: 'Radius', length: 'Length', distance: 'Distance', chord: 'Length' };
+const ONE = { angle: 'Angle', factor: 'Factor', radius: 'Radius', length: 'Length', distance: 'Distance', chord: 'Length', arcradius: 'Radius' };
 /** The one number of Rotate (degrees from the pivot), Scale (a factor), Circle (radius, or diameter after D) or an ellipse's last half-axis (mm); untyped, it is the mouse's value. `unit` is mm per drawing unit: a factor is a ratio of drawing-unit distances. A length also gives `point`, along the mouse's way, so the tool's own preview follows it. */
 function valueInput(s, base, mouse, unit, dia, drawingUnit) {
   const mode = s.mode, label = mode === 'radius' && dia ? 'Diameter' : ONE[mode], typed = s.values[0];
@@ -125,7 +125,7 @@ function valueInput(s, base, mouse, unit, dia, drawingUnit) {
   const length = !['angle', 'factor'].includes(mode);
   const bad = notFinite(typed, length ? drawingUnit : null) ? `${label} must be a finite number` : '';
   const value = typed ? length ? parseLength(typed, drawingUnit) : +typed : live[0];
-  const error = bad || (!['angle', 'distance', 'chord'].includes(mode) && !(value > 0) && (typed || mode === 'factor') ? `${label} must be more than 0` : '');
+  const error = bad || (!['angle', 'distance', 'chord', 'arcradius'].includes(mode) && !(value > 0) && (typed || mode === 'factor') ? `${label} must be more than 0` : '');
   const point = (mode === 'radius' || mode === 'length') && !error ? alongTo(base, mouse, value) : null;
   return { value: error ? null : value, point, live, labels: [label], errors: [error, ''], text: String(value) + (length && drawingUnit !== 'mm' ? 'mm' : ''), why: error };
 }

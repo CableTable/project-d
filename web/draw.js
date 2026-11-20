@@ -225,6 +225,11 @@ export function arcSER(s, e, rad) {
   const h = Math.sqrt(Math.max(0, r * r - d * d / 4)) * Math.sign(rad);
   return arcOf([(s[0] + e[0]) / 2 - (e[1] - s[1]) / d * h, (s[1] + e[1]) / 2 + (e[0] - s[0]) / d * h], r, s, e);
 }
+/** Ctrl held (347b): the arc turned the other way, i.e. mirrored in the line u → v (the centre-to-start line of the centre modes, the chord of Start, End, Angle / Radius). */
+export function arcMirror(a, u, v) {
+  const d = dist(u, v), ux = (v[0] - u[0]) / d, uy = (v[1] - u[1]) / d, t = (a.c[0] - u[0]) * ux + (a.c[1] - u[1]) * uy, phi = Math.atan2(uy, ux) * DEG;
+  return { ...a, c: [2 * (u[0] + t * ux) - a.c[0], 2 * (u[1] + t * uy) - a.c[1]], a0: norm360(2 * phi - a.a1), a1: norm360(2 * phi - a.a0) };
+}
 
 const BULGE = Math.tan(Math.PI / 8);
 /**
@@ -310,33 +315,53 @@ export function createTool(kind, cfg = {}) {
   if (!KINDS.includes(kind)) throw new Error('unknown tool ' + kind);
   const radius = cfg.radius > 0 ? cfg.radius : 5;
   const mode = kind === 'circle' && CIRCLE_MODES.some((m) => m[0] === cfg.mode) ? cfg.mode : 'cr';
-  const T = { kind, pts: [], objs: [], rbase: null, trail: [], last: null, hover: null, dia: mode === 'cd', mode, radius, stage: kind === 'rrect' ? 'radius' : 'pts', back: null, msg: null, am: null, ask: null };
+  const T = { kind, pts: [], objs: [], rbase: null, trail: [], last: null, hover: null, dia: mode === 'cd', mode, radius, stage: kind === 'rrect' ? 'radius' : 'pts', back: null, msg: null, am: null, ask: null, flip: false };
   return T;
 }
 
-// Arc, typed centre modes (347a): T.am = 'sc' (Start, Centre, …: pts [start, centre]) or 'cs' (Centre, Start, …: pts [centre, start]) once C is typed; T.ask = 'a' | 'l' once A / chord Length is typed at the end prompt.
+// Arc, typed modes (347a, 347b): T.am = 'sc' (Start, Centre, …: pts [start, centre]) or 'cs' (Centre, Start, …: pts [centre, start]) once C is typed, 'se' (Start, End, …: pts [start, end]) once E is typed;
+// T.ask = 'a' | 'l' (centre modes) or 'a' | 'd' | 'r' ('se') once that option is typed at the last prompt; T.flip = Ctrl is held (the arc turns the other way, set by toolClick / toolHover).
 const arcCS = (T) => T.am === 'sc' ? [T.pts[1], T.pts[0]] : [T.pts[0], T.pts[1]];            // [centre, start]
-/** The arc of the A / L prompt for a value (degrees / mm) or the pointer: the pointer gives the angle from the start round the centre (anticlockwise), or the chord from the start. */
-const arcAsked = (T, v) => { const [c, s] = arcCS(T); return T.ask === 'a' ? arcSCA(s, c, v) : arcSCL(s, c, v); };
-/** The A / L value a point stands for (the pointer, for the live preview and a click). */
-export function arcValueAt(T, p) { const [c, s] = arcCS(T); return T.ask === 'a' ? norm360(angleOf(c, p) - angleOf(c, s)) : dist(s, p); }
-const arcEnd = (T, e) => { const [c, s] = arcCS(T); return arcSCE(s, c, e); };
-const ARC_ASK_WHY = { a: 'Requires valid numeric angle or second point.', l: 'Requires numeric distance or second point.' };
+const flipped = (T, a, u, v) => T.flip && !a.why ? arcMirror(a, u, v) : a;
+const norm180 = (t) => { t = norm360(t); return t > 180 ? t - 360 : t; };
+const ASK_ANGLE = { a: 1, d: 1 };                                    // the asks that take degrees (the others a length)
+/** The arc of the A / L (centre modes) or A / D / R (Start, End) prompt for a value (degrees / mm) or the pointer. */
+const arcAsked = (T, v) => {
+  if (T.am === 'se') {
+    const [s, e] = T.pts;
+    return T.ask === 'd' ? arcSED(s, e, v + (T.flip ? 180 : 0)) : flipped(T, T.ask === 'a' ? arcSEA(s, e, v) : arcSER(s, e, v), s, e);       // Ctrl on D: the tangent runs the other way
+  }
+  const [c, s] = arcCS(T);
+  return flipped(T, T.ask === 'a' ? arcSCA(s, c, v) : arcSCL(s, c, v), c, s);
+};
+/** The value a point stands for (the pointer, for the live preview and a click): Start, Centre: the angle from the start round the centre (anticlockwise), or the chord from the start; Start, End: the direction of the start tangent, the angle that makes (twice its turn from the chord) or the distance from the start. */
+export function arcValueAt(T, p) {
+  if (T.am === 'se') { const [s, e] = T.pts, dir = angleOf(s, p); return T.ask === 'd' ? dir : T.ask === 'a' ? 2 * norm180(angleOf(s, e) - dir) : dist(s, p); }
+  const [c, s] = arcCS(T);
+  return T.ask === 'a' ? norm360(angleOf(c, p) - angleOf(c, s)) : dist(s, p);
+}
+const arcEnd = (T, e) => { const [c, s] = arcCS(T); return flipped(T, arcSCE(s, c, e), c, s); };
+const ARC_ASK_WHY = { a: 'Requires valid numeric angle or second point.', d: 'Requires valid numeric angle or second point.', l: 'Requires numeric distance or second point.', r: 'Requires numeric distance or second point.' };
 const OPT_REFUSED = '2D point or option keyword required.';
+const ASK_NAME = { a: 'Angle', l: 'chord Length', d: 'Direction', r: 'Radius' };
+const ASK_PROMPT = { a: 'Specify included angle', l: 'Specify length of chord', d: 'Specify tangent direction for the start point of arc', r: 'Specify radius of arc' };
+const SE_CENTRE ='Type A, D or R: the arc is set by an angle, a direction or a radius here';
 const arcMade = (T, a) => {
   if (a.why) return say(a.why);                                       // stays at the prompt with the points kept
   reset(T);
   return done([{ t: 'arc', c: a.c, r: a.r, a0: a.a0, a1: a.a1 }]);
 };
-/** A typed A / L at the Arc's end prompt (the value may follow it: "A -90"), C at the first two prompts; anything else is not an option. */
+/** A typed A / L (centre modes) or A / D / R (Start, End) at the Arc's last prompt (the value may follow it: "A -90"), C at the first two prompts, E at the second; anything else is not an option. */
 function arcWord(T, w, arg, unit) {
   const n = T.pts.length, opt = (...names) => names.some((x) => x.startsWith(w));
   if (T.ask) return say(ARC_ASK_WHY[T.ask]);                          // a word where a number is needed
   if (!T.am && n < 2 && opt('center', 'centre')) { T.am = n ? 'sc' : 'cs'; return say(null); }
-  if (T.am && n === 2 && (opt('angle') || opt('length'))) {
-    T.ask = opt('angle') ? 'a' : 'l';
+  if (!T.am && n === 1 && opt('end')) { T.am = 'se'; return say(null); }
+  const ask = T.am === 'se' ? n === 2 && ['angle', 'direction', 'radius'].find((x) => opt(x)) : T.am && n === 2 && ['angle', 'length'].find((x) => opt(x));
+  if (ask) {
+    T.ask = ask[0];
     if (!arg) return say(null);
-    const v = T.ask === 'a' ? +arg : parseLength(arg, unit);
+    const v = ASK_ANGLE[T.ask] ? +arg : parseLength(arg, unit);
     return Number.isFinite(v) ? arcMade(T, arcAsked(T, v)) : say(ARC_ASK_WHY[T.ask]);
   }
   return say(OPT_REFUSED);
@@ -442,6 +467,7 @@ function placePoint(T, p, obj) {
       T.pts.push(p);
       return say(null);
     }
+    if (T.am === 'se') return say(SE_CENTRE);                           // the points are kept, the prompt stays
     if (T.am) return arcMade(T, arcEnd(T, p));
     const a = arcThrough3(T.pts[0], T.pts[1], p);
     if (!a) return say('The three points lie in a line: pick the end point off it');
@@ -466,15 +492,15 @@ function ellipseOf(T, half2) {
   return done([{ t: 'ellipse', ...e }]);
 }
 
-/** A click (already snapped to a point of the drawing, or free); obj: the line, circle or arc under it for a tangent pick (see tangentClick), null when there is none. */
-export function toolClick(T, p, obj = null) {
+/** A click (already snapped to a point of the drawing, or free); obj: the line, circle or arc under it for a tangent pick (see tangentClick), null when there is none; flip: Ctrl is held (the Arc turns the other way). */
+export function toolClick(T, p, obj = null, flip = false) {
   if (T.stage === 'radius') T.stage = 'pts';                          // clicking the first corner keeps the remembered radius
-  T.hover = [p[0], p[1]];
+  T.hover = [p[0], p[1]]; T.flip = !!flip;
   return addPoint(T, p, obj);
 }
 
-/** The pointer moved (a snapped point): the rubber band follows. */
-export function toolHover(T, p) { T.hover = p ? [p[0], p[1]] : null; }
+/** The pointer moved (a snapped point): the rubber band follows. flip: Ctrl is held; left alone when not given (a Ctrl key press sets T.flip itself). */
+export function toolHover(T, p, flip) { T.hover = p ? [p[0], p[1]] : null; if (flip !== undefined) T.flip = !!flip; }
 
 /** Enter / Esc / right-click. A polyline ends and keeps what it has; a line ends (its segments are already made); the rest cancel the shape in progress. */
 export function toolFinish(T) {
@@ -502,7 +528,7 @@ function undoPoint(T) {
   if (!T.pts.length) return say('Nothing to undo');
   if (T.kind === 'line' && T.trail.length) return { made: null, msg: null, undoSeg: true };         // the app undoes the segment's step
   if (T.rbase) { T.rbase = null; return say(null); }                  // Tan, Tan, Radius: the radius' first point
-  if (T.am === 'sc' && T.pts.length === 1) { T.am = null; return say(null); }      // Arc: back from the centre prompt to the second point prompt, where C is an option
+  if ((T.am === 'sc' || T.am === 'se') && T.pts.length === 1) { T.am = null; return say(null); }      // Arc: back from the centre / end prompt to the second point prompt, where C and E are options
   T.pts.pop();
   T.objs.length = Math.min(T.objs.length, T.pts.length);
   T.last = T.pts.at(-1) || null;
@@ -547,7 +573,7 @@ export function toolType(T, text, unit = 'mm') {
     }
     return say(`"${w}" is not an option here`);
   }
-  if (T.ask) { const v = T.ask === 'a' ? +String(text).trim() : inp.v; return inp.kind === 'len' && Number.isFinite(v) ? arcMade(T, arcAsked(T, v)) : say(ARC_ASK_WHY[T.ask]); }      // Arc's A / L prompt: a number (negative too); an angle is never a length in the drawing's unit
+  if (T.ask) { const v = ASK_ANGLE[T.ask] ? +String(text).trim() : inp.v; return inp.kind === 'len' && Number.isFinite(v) ? arcMade(T, arcAsked(T, v)) : say(ARC_ASK_WHY[T.ask]); }      // Arc's A / L prompt: a number (negative too); an angle is never a length in the drawing's unit
   // a point or a length
   if (!T.pts.length) {
     const p = typedPoint(inp, T.last);
@@ -640,10 +666,10 @@ export function toolPreview(T) {
   if (k === 'arc') {
     if (P.length === 1 && T.am === 'cs') { out.guides.push([P[0], H]); out.readout = `R ${n2(dist(P[0], H))}`; return out; }
     if (P.length === 1) { out.shapes.push({ t: 'line', a: P[0], b: H }); return out; }
-    if (T.am) {                                                       // the centre modes: the end point, or the typed (else the pointer's) angle / chord
-      const a = T.ask ? arcAsked(T, T.value ?? arcValueAt(T, H)) : arcEnd(T, H);
+    if (T.am) {                                                       // the typed modes: the end point, or the typed (else the pointer's) angle / chord / direction / radius
+      const a = T.ask ? arcAsked(T, T.value ?? arcValueAt(T, H)) : T.am === 'se' ? { why: true } : arcEnd(T, H);
       if (!a.why) { out.shapes.push({ t: 'arc', c: a.c, r: a.r, a0: a.a0, a1: a.a1 }); out.readout = `R ${n2(a.r)} · ${n2(sweepOf(a.a0, a.a1))}°`; }
-      out.guides.push(arcCS(T));
+      out.guides.push(T.am === 'se' ? [P[0], P[1]] : arcCS(T));
       return out;
     }
     const a = arcThrough3(P[0], P[1], H);
@@ -693,13 +719,14 @@ export function toolPrompt(T, layer = '0') {
   }
   // arc
   if (T.am) {
-    const name = T.am === 'sc' ? 'Start, Centre' : 'Centre, Start';
-    if (T.ask) return { status: st(`${name}, ${T.ask === 'a' ? 'Angle' : 'chord Length'} · layer ${layer}`), prompt: T.ask === 'a' ? 'Specify included angle:' : 'Specify length of chord:' };
-    if (n === 2) return { status: st(`${name} · layer ${layer}`), prompt: 'Specify end point of arc [Angle/chord Length]:' };
+    const name = { sc: 'Start, Centre', cs: 'Centre, Start', se: 'Start, End' }[T.am], ctrl = '(hold Ctrl to switch direction)';
+    if (T.ask) return { status: st(`${name}, ${ASK_NAME[T.ask]} · layer ${layer}`), prompt: ASK_PROMPT[T.ask] + ` ${ctrl}:` };
+    if (T.am === 'se') return n === 2 ? { status: st(`${name} · layer ${layer}`), prompt: `Specify centre point of arc ${ctrl} or [Angle/Direction/Radius]:` } : { status: st(`${name} · 1 point · layer ${layer}`), prompt: 'Specify end point of arc (x,y):' };
+    if (n === 2) return { status: st(`${name} · layer ${layer}`), prompt: `Specify end point of arc ${ctrl} or [Angle/chord Length]:` };
     return { status: st(`${name} · ${n} point${n === 1 ? '' : 's'} · layer ${layer}`), prompt: `Specify ${T.am === 'cs' && n === 1 ? 'start' : 'centre'} point of arc (x,y):` };
   }
   if (!n) return { status: st(`3 points · layer ${layer}`), prompt: 'Specify start point (x,y) [Center]:' };
-  if (n === 1) return { status: st('start ' + n2(T.pts[0][0]) + ', ' + n2(T.pts[0][1])), prompt: 'Specify second point on the arc [Center]:' };
+  if (n === 1) return { status: st('start ' + n2(T.pts[0][0]) + ', ' + n2(T.pts[0][1])), prompt: 'Specify second point on the arc [Center/End]:' };
   return { status: st('start and second point set'), prompt: 'Specify end point:' };
 }
 
