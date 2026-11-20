@@ -7515,7 +7515,7 @@ try {
     const other = newDoc(1); addEntities(other, [dxfPoly([[10, 20], [70, 20], [70, 80], [10, 80]].map(([x, y]) => [x / 25.4, y / 25.4]), true)]);
     const open = async (name, doc) => {
       await q('picker').setInputFiles({ name, mimeType: 'text/plain', buffer: Buffer.from(writeDxf(doc)) });
-      await p.waitForFunction((name) => document.querySelector('.dtab.on .tname').textContent === name, name);
+      await p.waitForFunction((name) => document.querySelector('.dtab.on .tname')?.textContent === name, name);
     };
     const command = async (word) => {
       if (!await q('cmd-input').isVisible()) await q('cmd-echo').click();
@@ -7585,7 +7585,7 @@ try {
     const other = newDoc(4); addEntities(other, [dxfPoly([[10, 20], [70, 20], [70, 80], [10, 80]], true)]);
     const open = async (name, doc) => {
       await q('picker').setInputFiles({ name, mimeType: 'text/plain', buffer: Buffer.from(writeDxf(doc)) });
-      await p.waitForFunction((name) => document.querySelector('.dtab.on .tname').textContent === name, name);
+      await p.waitForFunction((name) => document.querySelector('.dtab.on .tname')?.textContent === name, name);
     };
     const tab = (name) => p.locator('.dtab').filter({ has: p.locator('.tname', { hasText: name }) });
     const command = async (word) => {
@@ -7745,7 +7745,7 @@ try {
     };
     const open = async (name) => {
       await q('picker').setInputFiles({ name, mimeType: 'text/plain', buffer: Buffer.from(writeDxf(make())) });
-      await p.waitForFunction((name) => document.querySelector('.dtab.on .tname').textContent === name, name);
+      await p.waitForFunction((name) => document.querySelector('.dtab.on .tname')?.textContent === name, name);
     };
     const tab = (name) => p.locator('.dtab').filter({ has: p.locator('.tname', { hasText: name.replace(/\.dxf$/, '') }) });
     const point = (x, y) => p.evaluate(([x, y]) => {
@@ -7923,7 +7923,7 @@ try {
     const make = () => { const raw = newDoc(4); addEntities(raw, dxfPoly([[10, 20], [70, 20], [70, 80], [10, 80]], { closed: true })); return raw; };
     const open = async (name) => {
       await q('picker').setInputFiles({ name, mimeType: 'text/plain', buffer: Buffer.from(writeDxf(make())) });
-      await p.waitForFunction((name) => document.querySelector('.dtab.on .tname').textContent === name, name);
+      await p.waitForFunction((name) => document.querySelector('.dtab.on .tname')?.textContent === name, name);
     };
     const tab = (name) => p.locator('.dtab').filter({ has: p.locator('.tname', { hasText: name.replace(/\.dxf$/, '') }) });
     const point = (x, y) => p.evaluate(([x, y]) => {
