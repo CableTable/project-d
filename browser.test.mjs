@@ -27558,11 +27558,12 @@ try {
     assert.equal(await red(325, 475), true, 'the loose filled square is red'); assert.equal(await red(120, 420), false, 'the big square is not');
 
     // refusals: a placed part, a locked object, one object: a status-line reason, nothing changes, no Undo step
-    await click(100, 475); await page.locator('[data-group=parts] .part-hit:not(.ob)').first().click({ force: true, modifiers: ['Shift'] }); await readout(/^2 parts/);
+    const park = () => page.mouse.move(2, 2);       // a pointer resting 300 ms on a selected line's grip opens its Grip options list (163a), which eats the next click: leave the grip at once
+    await click(100, 475); await park(); await page.locator('[data-group=parts] .part-hit:not(.ob)').first().click({ force: true, modifiers: ['Shift'] }); await readout(/^2 parts/);
     await key('Control+l'); await said(/^Combine works on loose layout outlines; open the part as a drawing to combine there/);
-    await page.keyboard.press('Escape'); await click(450, 200); await click(450, 100, { shift: true }); await readout(/^2 parts/);
+    await page.keyboard.press('Escape'); await click(450, 200); await park(); await click(450, 100, { shift: true }); await readout(/^2 parts/);
     await key('Control+l'); await said(/^Combine: a locked or hidden object is in the pick/);
-    await page.keyboard.press('Escape'); await click(100, 475); await one();
+    await page.keyboard.press('Escape'); await click(100, 475); await park(); await one();
     await key('Control+l'); await said(/^Combine: select at least 2 outlines first/);
     assert.equal(await nParts(), n0); assert.equal((await labels()).length, l0, 'no Undo step for a refusal');
 
