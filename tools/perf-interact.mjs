@@ -248,8 +248,9 @@ export async function interactEdit(page, buffer, name = 'edit.dxf') {
     return { x: b.x + x * k, y: b.y + (Number(el.getAttribute('height')) - y) * k, k };
   }, pt);
   const selCount = async () => Number((await page.locator('[data-testid=sel-count]').textContent()).match(/\d+/)?.[0] || 0);
-  const dragBy = async (from, dx, dy, steps = 20) => {
-    await page.mouse.move(from.x, from.y); await page.mouse.down();
+  const dragBy = async (from, dx, dy, steps = 20, hovered = false) => {
+    if (!hovered) await page.mouse.move(from.x, from.y);
+    await page.mouse.down();
     for (let i = 1; i <= steps; i++) { await page.mouse.move(from.x + dx * i / steps, from.y + dy * i / steps); await frame(); }
     await page.mouse.up();
   };
@@ -303,7 +304,10 @@ export async function interactEdit(page, buffer, name = 'edit.dxf') {
       await page.mouse.click(at.x, at.y); await frame();
       assert.equal(await selCount(), 1, 'the click must select the LINE before its grip is dragged');
       const end = await screenOf(mm(lineIt, x1l, y1l));
-      await run('LINE grip drag', () => dragBy(end, 30, 20));
+      // every pointer move over the selected LINE repaints the picture when it is not kept (a base that paints in under KEEP_MS, TODO 340 hover marker): arrive on the grip once, here, so the drag's own count is press + release; the click's late paints settle too
+      await page.mouse.move(end.x, end.y); await frame();
+      for (let last = -1, still = 0; still < 4; await page.waitForTimeout(150)) { const n = await page.evaluate(() => document.querySelector('[data-testid=drawing]').dataset.paints); still = n === last ? still + 1 : 0; last = n; }
+      await run('LINE grip drag', () => dragBy(end, 30, 20, 20, true));
       assert.ok(!await redoReady(), 'the grip drag must be a new edit (it clears the redo)');
       await page.keyboard.press('Control+z'); await frame();
       await page.keyboard.press('Escape'); await fitView(page, frame);
