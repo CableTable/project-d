@@ -35415,10 +35415,19 @@ try {
       await prompt346(end347c, kind + ': flyout Continue'); assert.equal(await storedArc347(), 'ct');
       await typeCmd('200,250'); assert.match(await said346(), /Arc made on layer/, kind);
       await stop346();
-      if (kind === 'Layouts') assert.equal(await nParts(), n0 + 6, kind + ': two lines, three arcs and a circle');
+      await typeCmd('l'); await typeCmd('100,300'); await typeCmd('150,300'); await stop346();                  // a line heading east, then a Continue that turns right (clockwise)
+      await typeCmd('arc'); await key97c('Enter'); await prompt346(end347c, kind);
+      await key97c('Escape'); assert.notEqual(await prompt(), end347c, kind + ': Esc leaves the end-point prompt');
+      await stop346();
+      await typeCmd('arc'); await key97c('Enter'); await typeCmd('200,250'); assert.match(await said346(), /Arc made on layer/, kind);
+      await key97c('Enter'); await prompt346(end347c, kind + ': after a clockwise arc, Enter continues from where it ended');
+      await typeCmd('150,200'); assert.match(await said346(), /Arc made on layer/, kind);                    // heading south from (200,250): the same circle on, so a start at the wrong end would refuse or bend the wrong way
+      await stop346();
+      await key97c('Control+z');                                                                                 // one Undo takes back the last arc only
+      if (kind === 'Layouts') assert.equal(await nParts(), n0 + 8, kind + ': three lines, four arcs and a circle');
       else {
-        const arcs = await arcsOf347(kind); assert.equal(arcs.length, 3, kind);
-        [[140, 90, 30, 270, 0], [140, 90, 30, 0, 90], [150, 250, 50, 270, 0]].forEach((want, i) => arcAt347(arcs[i], want, `${kind} arc ${i + 1}`));
+        const arcs = await arcsOf347(kind); assert.equal(arcs.length, 4, kind);
+        [[140, 90, 30, 270, 0], [140, 90, 30, 0, 90], [150, 250, 50, 270, 0], [150, 250, 50, 0, 90]].forEach((want, i) => arcAt347(arcs[i], want, `${kind} arc ${i + 1}`));
       }
       await arcBack347(); await closeTabs(/./);
     }

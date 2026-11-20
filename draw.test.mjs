@@ -652,6 +652,8 @@ test('Arc Continue (347c): tangent from the end of a line, an arc or a polyline\
   dirOf({ t: 'line', a: [0, 0], b: [10, 0] }, [10, 0], 0);
   dirOf({ t: 'line', a: [10, 10], b: [0, 0] }, [0, 0], 225);
   dirOf({ t: 'arc', c: [0, 0], r: 10, a0: 0, a1: 90 }, [0, 10], 180);                       // anticlockwise: at its end it heads a quarter turn on
+  const cw = DR.arcSED([10, 0], [20, -10], 0);                                                  // a right turn: stored reversed, flagged cw
+  dirOf({ t: 'arc', ...cw }, [20, -10], 270);                                                    // continues from the picked end, heading on (south), not back from the start
   dirOf({ t: 'poly', pts: [[0, 0, 0], [10, 0, 0], [10, 10, 0]], closed: false }, [10, 10], 90);
   dirOf({ t: 'poly', pts: [[0, 0, 0], [10, 0, Math.tan(Math.PI / 8)], [10, 10, 0]], closed: false }, [10, 10], 135);      // a quarter-circle last segment: the tangent has turned 45° from the chord
   dirOf({ t: 'poly', pts: [[0, 0, 0], [10, 0, 0], [10, 10, 0], [0, 10, 0]], closed: true }, [0, 0], 270);                  // closed: the segment back to the first point

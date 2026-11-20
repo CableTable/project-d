@@ -207,7 +207,7 @@ export function arcSEA(s, e, ang) {
   if (!(Math.abs(ang) > 1e-9 && Math.abs(ang) < 360 - 1e-9)) return { why: ARC_DEG };
   const half = Math.abs(ang) / 2 / DEG, r = d / 2 / Math.sin(half), h = r * Math.cos(half) * Math.sign(ang);      // h: the centre's distance to the left of s → e (to the right when the arc is clockwise)
   const c = [(s[0] + e[0]) / 2 - (e[1] - s[1]) / d * h, (s[1] + e[1]) / 2 + (e[0] - s[0]) / d * h];
-  return ang > 0 ? arcOf(c, r, s, e) : arcOf(c, r, e, s);
+  return ang > 0 ? arcOf(c, r, s, e) : { ...arcOf(c, r, e, s), cw: true };
 }
 /** Start, End, Direction (degrees): the arc leaves the start along that direction. A direction pointing at the end is a straight line and refused. */
 export function arcSED(s, e, dir) {
@@ -215,7 +215,7 @@ export function arcSED(s, e, dir) {
   const n = [-Math.sin(dir / DEG), Math.cos(dir / DEG)], side = n[0] * (e[0] - s[0]) + n[1] * (e[1] - s[1]);
   if (Math.abs(side) < 1e-9 * dist(s, e)) return { why: 'The direction points at the end point: that is a straight line' };
   const k = dist(s, e) ** 2 / (2 * side), c = [s[0] + n[0] * k, s[1] + n[1] * k];
-  return k > 0 ? arcOf(c, k, s, e) : arcOf(c, -k, e, s);
+  return k > 0 ? arcOf(c, k, s, e) : { ...arcOf(c, -k, e, s), cw: true };
 }
 /** Start, End, Radius (negative = the major arc). A radius smaller than half the distance between the points is refused. */
 export function arcSER(s, e, rad) {
@@ -232,7 +232,10 @@ export function arcSER(s, e, rad) {
 export function arcContinue(sh) {
   if (!sh) return null;
   if (sh.t === 'line') return dist(sh.a, sh.b) < 1e-9 ? null : { s: sh.b, dir: angleOf(sh.a, sh.b) };
-  if (sh.t === 'arc') return { s: [sh.c[0] + sh.r * Math.cos(sh.a1 / DEG), sh.c[1] + sh.r * Math.sin(sh.a1 / DEG)], dir: norm360(sh.a1 + 90) };       // drawn anticlockwise, so the tangent at its end is a quarter turn on
+  if (sh.t === 'arc') {
+    const a = sh.cw ? sh.a0 : sh.a1;                                  // the end the user picked: a clockwise arc is stored reversed
+    return { s: [sh.c[0] + sh.r * Math.cos(a / DEG), sh.c[1] + sh.r * Math.sin(a / DEG)], dir: norm360(a + (sh.cw ? -90 : 90)) };
+  }
   if (sh.t !== 'poly' || sh.pts.length < 2) return null;
   const n = sh.pts.length, p = sh.closed ? sh.pts[n - 1] : sh.pts[n - 2], q = sh.closed ? sh.pts[0] : sh.pts[n - 1], bulge = p[2] || 0;      // a closed one ends with the segment back to its first point (its bulge is the last point's)
   if (dist(p, q) < 1e-9) return null;
@@ -241,7 +244,7 @@ export function arcContinue(sh) {
 /** Ctrl held (347b): the arc turned the other way, i.e. mirrored in the line u → v (the centre-to-start line of the centre modes, the chord of Start, End, Angle / Radius). */
 export function arcMirror(a, u, v) {
   const d = dist(u, v), ux = (v[0] - u[0]) / d, uy = (v[1] - u[1]) / d, t = (a.c[0] - u[0]) * ux + (a.c[1] - u[1]) * uy, phi = Math.atan2(uy, ux) * DEG;
-  return { ...a, c: [2 * (u[0] + t * ux) - a.c[0], 2 * (u[1] + t * uy) - a.c[1]], a0: norm360(2 * phi - a.a1), a1: norm360(2 * phi - a.a0) };
+  return { ...a, c: [2 * (u[0] + t * ux) - a.c[0], 2 * (u[1] + t * uy) - a.c[1]], a0: norm360(2 * phi - a.a1), a1: norm360(2 * phi - a.a0), cw: !a.cw };
 }
 
 const BULGE = Math.tan(Math.PI / 8);
@@ -365,7 +368,7 @@ export function arcValueAt(T, p) {
   const [c, s] = arcCS(T);
   return T.ask === 'a' ? norm360(angleOf(c, p) - angleOf(c, s)) : dist(s, p);
 }
-const arcEnd = (T, e) => { const [c, s] = arcCS(T), a = arcSCE(s, c, e); return T.flip && !a.why ? { ...a, a0: a.a1, a1: a.a0 } : a; };       // Ctrl: clockwise from the start to the pick, same centre
+const arcEnd = (T, e) => { const [c, s] = arcCS(T), a = arcSCE(s, c, e); return T.flip && !a.why ? { ...a, a0: a.a1, a1: a.a0, cw: true } : a; };       // Ctrl: clockwise from the start to the pick, same centre
 const ARC_ASK_WHY = { a: 'Requires valid numeric angle or second point.', d: 'Requires valid numeric angle or second point.', l: 'Requires numeric distance or second point.', r: 'Requires numeric distance or second point.' };
 const OPT_REFUSED = '2D point or option keyword required.';
 const ASK_NAME = { a: 'Angle', l: 'chord Length', d: 'Direction', r: 'Radius' };
@@ -374,7 +377,7 @@ const SE_CENTRE ='Type A, D or R: the arc is set by an angle, a direction or a r
 const arcMade = (T, a) => {
   if (a.why) return say(a.why);                                       // stays at the prompt with the points kept
   reset(T);
-  return done([{ t: 'arc', c: a.c, r: a.r, a0: a.a0, a1: a.a1 }]);
+  return done([{ t: 'arc', c: a.c, r: a.r, a0: a.a0, a1: a.a1, ...(a.cw && { cw: true }) }]);      // cw: drawn clockwise, stored reversed; Continue starts at a0
 };
 /** A typed A / L (centre modes) or A / D / R (Start, End) at the Arc's last prompt (the value may follow it: "A -90"), C at the first two prompts, E at the second; anything else is not an option. */
 function arcWord(T, w, arg, unit) {
