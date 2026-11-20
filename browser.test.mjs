@@ -15057,13 +15057,6 @@ try {
       const after = (await savedDoc()).entities.map((en) => [fieldOf(en, 10), fieldOf(en, 20)]);
       assert.deepEqual(after[0], off, 'Drawings: an Alt press-and-drag cycles and moves nothing: the insert stays exactly where the first drag put it');
       assert.deepEqual(after, before, 'Drawings: an Alt press-and-drag moves no entity at all, the line at b included');
-      // TODO 339b R2-1: Alt held at the press grabs the raw press point, not an own snap point: the dragged insert keeps the 5 px offset
-      await closeTabs(/own-340/); await openGrips(writeDxf(raw), 'own-340.dxf'); await click(a[0] + 12, a[1]); await waitSel('1 selected');
-      await page.keyboard.down('Alt'); await page.mouse.move(pa.x + 5, pa.y); await page.mouse.down();
-      await page.mouse.move(to.x + 9, to.y, { steps: 6 }); await page.mouse.up(); await page.keyboard.up('Alt');       // 4 px past the exact spot
-      const rawGrab = (await savedDoc()).entities.map((en) => [fieldOf(en, 10), fieldOf(en, 20)]);
-      const miss = [0, 1].map((i) => Math.abs(a[i] + rawGrab[0][i] - b[i]));
-      assert.ok(Math.max(...miss) > 1e-3, 'Drawings: Alt at the press grabs the raw press point (the end lands 4 px off the other point, not snapped onto it): ' + miss);
       await closeTabs(/own-340/);
       // a press on a selected circle's centre (not on the circle) still drags it from the centre (R2-2)
       // 201 selected objects switch the grips off (MAX_SELECTED 200), so the press cannot go through gripDown: only the own-point path (ownSnap) can grab

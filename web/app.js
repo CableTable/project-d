@@ -5654,7 +5654,7 @@ function attachCanvasEvents() {
         if ((state.tool === 'select' || state.tool === 'contour') && !state.setlen) drag.dim = dimGrab(d, drag.p);
         if (state.tool === 'select' && !state.setlen && !state.match && !drag.dim && d.sel?.size && (d.sel.has(hitAt(d, drag.p)) || !e.altKey && ownSnap(d, drag.p, d.sel))) {       // a shown own-point marker (a circle's centre) grabs even when the press misses the object
           const sel = new Set(d.sel);
-          drag.move = state.entityDrag = { d, sel, raw: d.raw.entities, from: e.altKey ? drag.p : dragGrabPoint(d, drag.p, sel), copy: e.ctrlKey || e.metaKey };
+          drag.move = state.entityDrag = { d, sel, raw: d.raw.entities, from: dragGrabPoint(d, drag.p, sel), copy: e.ctrlKey || e.metaKey };
         }
         capture(c, e);
       }
@@ -13198,7 +13198,7 @@ function cmpDown(e) {
   let moved = false, manual = false, free = false, last = null;       // free: Alt was pressed in this drag, so this drop snaps to no object (guides stay)
   const move = (ev) => {
     if (!moved && Math.hypot(ev.clientX - e.clientX, ev.clientY - e.clientY) <= 4) return;
-    if (!last) { grab = e.altKey ? null : cmpSnap(item, m0, p0); g = grab ? [grab.x, grab.y] : p0; }
+    if (!last) { grab = cmpSnap(item, m0, p0); g = grab ? [grab.x, grab.y] : p0; }
     last = ev; free ||= ev.altKey;
     manual = cmpManual(c) || manual;
     const p = sheetAt(ev.clientX, ev.clientY);
