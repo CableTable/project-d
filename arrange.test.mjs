@@ -69,6 +69,20 @@ test('TODO 281: centre the selection as one block on the whole sheet', () => {
   }
 });
 
+test('TODO 349: centre to page horizontally / vertically moves one axis, as one block', () => {
+  const sheet = [0, 0, 1000, 700], two = [[10, 20, 110, 60], [200, 300, 260, 340]];
+  for (const [how, axis, other] of [['pageX', 'dx', 'dy'], ['pageY', 'dy', 'dx']]) {
+    for (const boxes of [[[10, 20, 110, 60]], two]) {
+      const deltas = A.alignDeltas(boxes, how, 'sheet', sheet), u = A.unionBox(boxes), a = how === 'pageX' ? 0 : 1;
+      assert.ok(deltas.every((d) => d[other] === 0 && !Object.is(d[other], -0)), 'other axis unchanged');
+      assert.ok(deltas.every((d) => d[axis] === deltas[0][axis]), 'gap kept');
+      near(u[a] + deltas[0][axis] + (u[a + 2] - u[a]) / 2, a ? 350 : 500);
+    }
+    const centred = two.map((b) => b.map((v, i) => v + (how === 'pageX' ? (i % 2 ? 0 : 365) : (i % 2 ? 170 : 0))));
+    assert.deepEqual(A.alignDeltas(centred, how, 'sheet', sheet), two.map(() => ({ dx: 0, dy: 0 })), 'already centred = zero deltas');
+  }
+});
+
 test('align relative to the selection: left, centre, right', () => {
   assert.deepEqual(A.alignDeltas(B, 'left').map((d) => d.dx), [0, -390, -650]);
   assert.deepEqual(A.alignDeltas(B, 'right').map((d) => d.dx), [510, 310, 0]);

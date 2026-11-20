@@ -71,6 +71,8 @@ const TABLE = [
   ['align', 'Edit', 'Move, turn and scale objects so source points meet destination points', ['al'], 'draw'],
   ['center', 'Edit', 'Centre on first selected object on both axes', ['centre'], ''],
   ['centreonpage', 'Layout', 'Centre the selection as one block on the whole sheet', ['cp'], ''],
+  ['centrepagehorizontally', 'Layout', 'Centre the selection as one block on the sheet, left to right only', ['cph'], ''],
+  ['centrepagevertically', 'Layout', 'Centre the selection as one block on the sheet, bottom to top only', ['cpv'], ''],
   ['nest', 'Layout', 'Auto-nest mixed parts', ['n'], ''],
   ['step', 'Layout', 'Step and repeat the chosen part', ['sr'], 'layout'],
   ['group', 'Layout', 'Group the selected objects or parts', ['g'], '', 'Ctrl+G'],

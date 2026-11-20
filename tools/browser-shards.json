@@ -715,5 +715,6 @@
   "TODO 97k: Compare Intersect changes only the selected visible source, one Undo restores": 6.89,
   "TODO 97k: Layouts Trim refuses a placed part without an edit or Undo step": 5.84,
   "TODO 97k: every tab has identical Shaping buttons and Modify items; Compare and Layouts ribbons light and dark": 9.21,
-  "TODO 325: Objects tab: layer change while hidden does not render; open is fast": 3.5
+  "TODO 325: Objects tab: layer change while hidden does not render; open is fast": 3.5,
+  "TODO 349: Centre to page horizontally / vertically": 4
 }

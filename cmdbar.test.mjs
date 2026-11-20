@@ -49,6 +49,14 @@ test('TODO 281: cp resolves in every tab and leaves P as Polyline', () => {
   }
 });
 
+test('TODO 349: cph and cpv resolve in every tab, cp still centres on both axes', () => {
+  for (const tab of ['draw', 'layout', 'compare']) {
+    assert.equal(CB.resolve('cph', tab)?.name, 'centrepagehorizontally');
+    assert.equal(CB.resolve('cpv', tab)?.name, 'centrepagevertically');
+    assert.equal(CB.resolve('cp', tab).name, 'centreonpage');
+  }
+});
+
 test('every name and alias is lower case, and no command repeats a word on the same tab', () => {
   for (const tab of ['draw', 'layout']) {
     const seen = new Map();

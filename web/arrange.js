@@ -54,7 +54,7 @@ function frameOf(boxes, rel, sheet, first, point, last) {
 }
 
 /**
- * How far each box moves to line up: how is left, centre, right (along X), top, middle or bottom (along Y), or page (one block, both axes).
+ * How far each box moves to line up: how is left, centre, right (along X), top, middle or bottom (along Y), or page (one block, both axes; pageX / pageY: one axis only).
  * rel: 'selection', 'sheet' ([0, 0, W, H]), 'first' (index `first`), 'last' (index `last`, default the last box), or 'point' ([x, y]).
  * → [{ dx, dy }] per box (no -0).
  */
@@ -62,9 +62,9 @@ export function alignDeltas(boxes, how, rel = 'selection', sheet = null, first =
   const f = frameOf(boxes, rel, sheet, first, point, last);
   if (!f) return [];
   const fx = (f[0] + f[2]) / 2, fy = (f[1] + f[3]) / 2;
-  if (how === 'page') {
+  if (how === 'page' || how === 'pageX' || how === 'pageY') {
     const b = unionBox(boxes);
-    return boxes.map(() => ({ dx: (fx - (b[0] + b[2]) / 2) || 0, dy: (fy - (b[1] + b[3]) / 2) || 0 }));
+    return boxes.map(() => ({ dx: how === 'pageY' ? 0 : (fx - (b[0] + b[2]) / 2) || 0, dy: how === 'pageX' ? 0 : (fy - (b[1] + b[3]) / 2) || 0 }));
   }
   return boxes.map((b) => {
     let dx = 0, dy = 0;

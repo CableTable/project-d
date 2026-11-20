@@ -33935,6 +33935,53 @@ try {
     }
     await closeTabs(/./); await menuItem('View', 'Theme: light'); assert.deepEqual(errors, []);
   });
+  await step('TODO 349: Centre to page horizontally / vertically', async () => {
+    await menuItem('View', 'Theme: light');
+    const lay = newLayout('Centre to page 349'), raw = newDoc(4);
+    addEntities(raw, dxfPoly([[0, 0], [100, 0], [100, 60], [0, 60]], true));
+    lay.s = { ...lay.s, sheetW: 1000, sheetH: 700 };
+    lay.parts.plate = makePart('plate', 'Plate', raw);
+    lay.placed = [{ partId: 'plate', x: 100, y: 200, rot: 0 }, { partId: 'plate', x: 350, y: 320, rot: 0 }];
+    await open97c(layoutRaw(lay), 'centre349.dxf'); await key97c('Control+a');
+    await t('ptab-drawing').click();
+    const boxes = async () => { const l = layoutFromRaw(await savedDoc()); return l.placed.map((p) => placedBox(l.parts[p.partId], p)); };
+    const before = await boxes(), labels = await histLabels();
+    await typeCmd('cph');
+    const h1 = await boxes();
+    approx((Math.min(...h1.map((b) => b[0])) + Math.max(...h1.map((b) => b[2]))) / 2, 500, .001, 'cph centres X on the sheet');
+    for (let i = 0; i < 2; i++) { approx(h1[i][1], before[i][1], .001, 'cph keeps Y'); approx(h1[i][0] - h1[0][0], before[i][0] - before[0][0], .001, 'cph keeps the gap'); }
+    assert.deepEqual((await histLabels()).slice(labels.length), ['Centre to page horizontally']);
+    await typeCmd('cph'); assert.equal(await said(/^Already centred \(nothing moved\)$/), 'Already centred (nothing moved)');
+    await key97c('Control+z'); assert.deepEqual(await boxes(), before, 'one Undo restores');
+    await typeCmd('cpv');
+    const v1 = await boxes();
+    approx((Math.min(...v1.map((b) => b[1])) + Math.max(...v1.map((b) => b[3]))) / 2, 350, .001, 'cpv centres Y on the sheet');
+    for (let i = 0; i < 2; i++) { approx(v1[i][0], before[i][0], .001, 'cpv keeps X'); approx(v1[i][1] - v1[0][1], before[i][1] - before[0][1], .001, 'cpv keeps the gap'); }
+    assert.deepEqual((await histLabels()).slice(labels.length), ['Centre to page vertically']);
+    await key97c('Control+z');
+    await t('centre-page-h').click(); assert.deepEqual((await histLabels()).slice(labels.length), ['Centre to page horizontally']); await key97c('Control+z');
+    await t('centre-page-v').click(); assert.deepEqual((await histLabels()).slice(labels.length), ['Centre to page vertically']); await key97c('Control+z');
+    await menuItem('Arrange', 'Centre to page horizontally'); assert.deepEqual((await histLabels()).slice(labels.length), ['Centre to page horizontally']); await key97c('Control+z');
+    await menuItem('Arrange', 'Centre to page vertically'); assert.deepEqual((await histLabels()).slice(labels.length), ['Centre to page vertically']); await key97c('Control+z');
+    for (const theme of ['light', 'dark']) {
+      await menuItem('View', 'Theme: ' + theme); await t('centre-page-v').scrollIntoViewIfNeeded(); await frames();
+      const path = `${shotDir}/todo349-arrange-${theme}.png`;
+      await page.screenshot({ path }); assert.ok(readFileSync(path).length > 1000);
+    }
+    await menuItem('View', 'Theme: light');
+    await closeTabs(/./);
+    const drawing = doc97i2(); drawing.entities.pop();
+    await open97c(drawing, 'centre349-drawing.dxf'); await key97c('Control+a'); await t('ptab-drawing').click();
+    for (const id of ['centre-page-h', 'centre-page-v']) { assert.equal(await t(id).isDisabled(), true); assert.equal(await t(id).getAttribute('title'), 'a drawing has no page'); }
+    await page.locator('[data-menu=Arrange]').click();
+    for (const name of ['Centre to page horizontally', 'Centre to page vertically']) {
+      const item = page.getByRole('menuitem', { name, exact: true });
+      assert.equal(await item.isDisabled(), true); assert.equal(await item.getAttribute('title'), 'a drawing has no page');
+    }
+    await key97c('Escape');
+    await typeCmd('cph'); assert.equal(await said(/^a drawing has no page$/), 'a drawing has no page');
+    await closeTabs(/./); assert.deepEqual(errors, []);
+  });
   await step('TODO 265: center on first in drawing, layout and Compare, groups, one Undo and guards', async () => {
     const need = 'Center: select two or more objects; the first selected stays put';
     for (const tab of ['drawing', 'layout', 'Compare', 'group']) {

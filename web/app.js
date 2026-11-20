@@ -578,7 +578,9 @@ function buildMenus() {
   menus.Modify = () => [...modifyItems, [(state.shapingKeepOriginals ? '✓ ' : '  ') + 'Shaping: Keep originals', toggleShapingKeep, null, null, 'Keep the originals and add selected results on top; Create boundary always keeps originals', false, state.shapingKeepOriginals]];
   menus.Help = [['About Project D…', showAbout]];
   menus.Format = [['Dimension style…', showDimStyle]];
-  menus.Arrange = () => [['Centre on page', () => runCommand(CB.resolve('cp')), 'CP', () => !!curLay(), curLay() ? 'Centre the selection as one block on the whole sheet' : 'a drawing has no page']];
+  menus.Arrange = () => [['Centre on page', () => runCommand(CB.resolve('cp')), 'CP', () => !!curLay(), curLay() ? 'Centre the selection as one block on the whole sheet' : 'a drawing has no page'],
+    ['Centre to page horizontally', () => runCommand(CB.resolve('cph')), 'CPH', () => !!curLay(), curLay() ? 'Centre the selection as one block on the whole sheet, left to right only' : 'a drawing has no page'],
+    ['Centre to page vertically', () => runCommand(CB.resolve('cpv')), 'CPV', () => !!curLay(), curLay() ? 'Centre the selection as one block on the whole sheet, bottom to top only' : 'a drawing has no page']];
   menus.Tools = [['Preflight…', showPreflight, 'Drawing checks'], ['Shortcuts…', showShortcuts, 'Aliases + keys'], ['Options…', showOptions]];
   menus.Layout = [['New layout', newLayoutTab], ['Add to layout', addToLayout], ['Parts library', () => showLibrary()], ['Extract part…', () => extractPart()],
     ['Duplicate', duplicate, 'Ctrl+D', () => !!selectedPlaced() || !!editable()?.sel.size], ['Mirror X', () => mirrorSel('x'), null, () => !!selectedPlaced()], ['Mirror Y', () => mirrorSel('y'), null, () => !!selectedPlaced()],
@@ -2094,6 +2096,7 @@ function buildPlacedPanel() {
   const ibtn = (kind, how, label) => h('button', { class: 'ib', type: 'button', 'data-testid': `${kind}-${how}`, 'aria-label': label, title: label, onclick: () => arrange(kind, how) }, icon(ICONS[how], { size: 18, cap: 'round', join: 'round' }));
   ui.relSel = select([['selection', 'Selection'], ['sheet', 'Sheet'], ['first', 'First selected'], ['last', 'Last selected'], ['point', 'Point...'], ['rectangle', 'Rectangle']], state.arrangeRel, setArrangeRel, { 'data-testid': 'arrange-rel', 'aria-label': 'Relative to' });
   ui.centreOnPage = h('button', { class: 'btn sm', type: 'button', 'data-testid': 'centre-on-page', 'aria-label': 'Centre on page', onclick: () => runCommand(CB.resolve('cp')) }, 'Centre on page');
+  ui.centreAxis = [['centre-page-h', 'cph', 'Centre to page horizontally'], ['centre-page-v', 'cpv', 'Centre to page vertically']].map(([id, alias, label]) => h('button', { class: 'btn sm', type: 'button', 'data-testid': id, 'aria-label': label, onclick: () => runCommand(CB.resolve(alias)) }, label));
   const gb = (id, text, ic, fn, title) => { const b = h('button', { class: 'btn sm', type: 'button', 'data-testid': id, title, onclick: fn }, icon(ICONS[ic], { size: 16, cap: 'round', join: 'round' }), text); ui[id] = b; return b; };
   ui.pivotRows = [labelled('Pivot', ui.pivotSel, 'field'), labelled('Pivot X (mm)', px, 'field'), labelled('Pivot Y (mm)', py, 'field')];
   ui.rotHelp = h('span', { class: 'lbl' }, 'Click the part again to turn it by hand; drag ◎ to move the pivot.');
@@ -2104,7 +2107,7 @@ function buildPlacedPanel() {
       h('div', { class: 'row arrow' }, h('span', { class: 'lbl rowname' }, 'Distribute'), ibtn('distribute', 'horizontal', 'Distribute horizontally'), ibtn('distribute', 'vertical', 'Distribute vertically'), h('span', { class: 'lbl' }, 'equal gaps')),
       h('div', { class: 'row arrow' }, h('span', { class: 'lbl rowname' }, 'Edges'), ...A.ALIGN_HOW.map((how) => ibtn('distribute', how, 'Distribute ' + how + ' edges'))),
       h('label', { class: 'lbl row' }, h('span', { class: 'rowname' }, 'Relative to'), ui.relSel),
-      h('div', { class: 'btnrow' }, ui.centreOnPage)),
+      ...[ui.centreOnPage, ...ui.centreAxis].map((b) => h('div', { class: 'btnrow' }, b))),
     sec('Group and lock', 'sec-group',
       h('div', { class: 'btnrow wrap' }, gb('grp-group', 'Group', 'group', groupSel, 'Group the selected parts (Ctrl+G)'), gb('grp-ungroup', 'Ungroup', 'ungroup', ungroupSel, 'Ungroup (Ctrl+Shift+G)'),
         gb('grp-lock', 'Lock', 'lock', () => lockSel(true), 'Lock: it cannot be moved, turned, mirrored or deleted'), gb('grp-unlock', 'Unlock', 'unlock', () => lockSel(false), 'Unlock')),
@@ -2782,12 +2785,13 @@ const ARRANGE_PROMPT = 'Align or distribute [Left / Centre on first / Right / To
 /** Align or distribute the selected objects using the Relative to frame. */
 function arrange(kind, how, point = null, rectangle = null) {
   const lay = curLay(), d = !lay && editable(), center = kind === 'center', page = kind === 'page';
+  const pageName = how === 'X' ? 'Centre to page horizontally' : how === 'Y' ? 'Centre to page vertically' : 'Centre on page'; // how: the one axis cph / cpv centre
   if (page && !lay) { note('a drawing has no page'); return; }
   if (d && moveLocked(d, d.sel, 'align')) return;
   const items = lay ? selItems().map((x) => ({ ...x, g: x.p.g, box: boxOf(x) })) : d ? [...d.sel].map((i) => ({ i, g: groupOf(d.raw.groups, i), box: OB.boxOf(d.fl, [i])?.map((v) => v * d.factor) })).filter((x) => x.box) : [];
   const needCenter = 'Center: select two or more objects; the first selected stays put';
   const pointAlign = kind === 'align' && state.arrangeRel === 'point';
-  if (items.length < (page || pointAlign ? 1 : 2)) { note(page ? 'Centre on page: select one or more objects first' : center ? needCenter : lay ? 'Arrange: select two or more parts first (Shift-click, or drag a box round them)' : 'Arrange: select two or more objects first (Shift-click, or drag a box round them)'); return; }
+  if (items.length < (page || pointAlign ? 1 : 2)) { note(page ? pageName + ': select one or more objects first' : center ? needCenter : lay ? 'Arrange: select two or more parts first (Shift-click, or drag a box round them)' : 'Arrange: select two or more objects first (Shift-click, or drag a box round them)'); return; }
   if (lay && items.some((x) => x.p.lock)) { note(LOCKED); return; }
   const rel = page ? 'sheet' : center ? 'first' : !lay && state.arrangeRel === 'sheet' ? 'selection' : state.arrangeRel, sheet = lay ? [0, 0, lay.s.sheetW, lay.s.sheetH] : null;
   const objs = A.objectsOf(items);
@@ -2800,7 +2804,7 @@ function arrange(kind, how, point = null, rectangle = null) {
   } else if (kind === 'align' || page) {
     if (objs.length < 2 && rel !== 'sheet' && rel !== 'point') { note(lay ? 'Align: that is one object (a group). Pick Relative to: Sheet, or select another part' : 'Align: that is one object (a group). Select another object'); return; }
     if (pointAlign && !point) { setTool('select'); state.arrangePoint = { d: d || curDoc(), how }; renderCommand(); return; }
-    deltas = A.alignDeltas(boxes, page ? 'page' : how, rel, sheet, 0, point, A.lastObjectOf(objs));
+    deltas = A.alignDeltas(boxes, page ? 'page' + (how || '') : how, rel, sheet, 0, point, A.lastObjectOf(objs));
   } else {
     const area = rel === 'rectangle' || rel === 'sheet';
     if (objs.length < (area ? 2 : 3)) { note(`Distribute needs ${area ? 'two' : 'three'} or more objects (a group counts as one)`); return; }
@@ -2809,8 +2813,8 @@ function arrange(kind, how, point = null, rectangle = null) {
     deltas = r.deltas; extra = edges ? '' : `, gaps of ${fmt(r.gap)} mm`;
   }
   const per = A.spreadToItems(objs, deltas, items.length);
-  const label = page ? 'Centre on page' : center ? 'Centre on first' : (kind === 'align' ? 'Align ' : 'Distribute ') + how;
-  const message = (name) => page ? `${name} centred on the sheet` : center ? `${objs.length} objects centred on the first selected` : kind === 'align' ? `${name} aligned ${how} to ${relName}` : edges ? `Distributed ${how} edges (${relName})` : `${name} distributed ${how}ly with equal gaps${extra} (${relName})`;
+  const label = page ? pageName : center ? 'Centre on first' : (kind === 'align' ? 'Align ' : 'Distribute ') + how;
+  const message = (name) => page ? `${name} centred ${{ X: 'horizontally ', Y: 'vertically ' }[how] || ''}on the sheet` : center ? `${objs.length} objects centred on the first selected` : kind === 'align' ? `${name} aligned ${how} to ${relName}` : edges ? `Distributed ${how} edges (${relName})` : `${name} distributed ${how}ly with equal gaps${extra} (${relName})`;
   const unchanged = 'Already ' + (center || page ? 'centred' : kind === 'align' ? 'aligned' : 'evenly spaced') + ' (nothing moved)' + (kind === 'distribute' && rel === 'point' ? '; Point uses Selection for Distribute' : '');
   if (d) {
     try {
@@ -4710,6 +4714,8 @@ const DIM_OF = { dimauto: 'auto', dimlinear: 'linear', dimradius: 'radius', dimd
 const DO = {
   center: () => { if (!activeCmd()) arrange('center'); },
   centreonpage: () => { if (!activeCmd()) arrange('page'); },
+  centrepagehorizontally: () => { if (!activeCmd()) arrange('page', 'X'); },
+  centrepagevertically: () => { if (!activeCmd()) arrange('page', 'Y'); },
   units: chooseUnits,
   eattedit: () => {
     if (cmpDoc() && !cmpEdit()) return;
@@ -11911,6 +11917,7 @@ function renderPropsPanel(d) {
   ui.placedSecs[1].hidden = state.panel === 'library' || (lay ? selIdxs().length : d?.sel.size || 0) < 1;
   ui.centreOnPage.disabled = !lay;
   ui.centreOnPage.title = lay ? 'Centre the selection as one block on the whole sheet (CP)' : 'a drawing has no page';
+  ui.centreAxis.forEach((b, i) => { b.disabled = !lay; b.title = lay ? `Centre the selection as one block on the sheet, ${i ? 'bottom to top' : 'left to right'} only (${i ? 'CPV' : 'CPH'})` : 'a drawing has no page'; });
   setSelect(ui.relSel, [['selection', 'Selection'], ...(lay ? [['sheet', 'Sheet']] : []), ['first', 'First selected'], ['last', 'Last selected'], ['point', 'Point...'], ['rectangle', 'Rectangle']], !lay && state.arrangeRel === 'sheet' ? 'selection' : state.arrangeRel);
   ui.propSec.hidden = !show;
   if (show && (!d || d !== selectionEditDoc)) renderPropsValues(d, lay);
