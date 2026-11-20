@@ -14841,7 +14841,8 @@ try {
     const svg = document.querySelector('[data-testid=overlay]'), h = +document.querySelector('rect.sheet').getAttribute('height');
     const p = new DOMPoint(x, h - y).matrixTransform(svg.getScreenCTM()); return { x: p.x, y: p.y };
   }, [x, y]);
-  const pivotAt338 = async (scope) => { const r = await rectOf(page.locator(`${scope} [data-pivot]`)); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; };
+  const pivotAt338 = async (scope) => { let r; for (let i = 0; i < 100; i++) { r = await rectOf(page.locator(`${scope} [data-pivot]`)); if (r.width > 0) break; await frames(); }       // a SNAP click repaints the overlay: until it is laid out the ◎ reads as a 0 x 0 box at (0, 0), and a press there missed it
+    return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; };
   const arrowAt338 = (scope) => page.locator(`${scope} [data-rot]`).first().evaluate((el) => { const q = el.getPointAtLength(el.getTotalLength() / 2), p = new DOMPoint(q.x, q.y).matrixTransform(el.getScreenCTM()); return { x: p.x, y: p.y }; });
   /** Presses the ◎, drags it to `to` (client px), runs `during` with the button still down, lets go. `alt`: Alt is down from the press on. */
   const pivotDrag338 = async (scope, to, { alt = false, during = null } = {}) => {
