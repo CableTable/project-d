@@ -10144,7 +10144,7 @@ try {
     const el = document.querySelector(`[data-group=tools] [data-rot="${idx}"]`), m = el.getScreenCTM(), q = el.getPointAtLength(el.getTotalLength() / 2);
     return { x: m.a * q.x + m.c * q.y + m.e, y: m.b * q.x + m.d * q.y + m.f };
   }, i);
-  const pivotPx = async () => { const r = await rectOf(page.locator('[data-group=tools] [data-pivot]')); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; };
+  const pivotPx = () => page.evaluate(() => { const r = document.querySelector('[data-group=tools] [data-pivot]').getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; });   // one evaluate: a redraw cannot detach the dot between find and read
   const markPixels = () => t('drawing').evaluate((c) => {                // pixels in the mark colour (#b4440e, or #f0894a on dark)
     const x = c.getContext('2d'), d = x.getImageData(0, 0, c.width, c.height).data;
     let n = 0;
@@ -13427,8 +13427,7 @@ try {
       await said(/^Angle </);            // the second click turns the Rotate mode on
       await shotBoth('todo335-arrows');
       const turnBy = async (d, keys = []) => {
-        let pv = await pivotPx();
-        while (!pv.x && !pv.y) { await page.waitForTimeout(50); pv = await pivotPx(); }       // the tools layer was redrawn mid-read: a detached dot reads 0,0, which put the drag's centre at the page corner
+        const pv = await pivotPx();
         const a = await arrowPoint(0), r = Math.hypot(a.x - pv.x, a.y - pv.y), a0 = Math.atan2(a.y - pv.y, a.x - pv.x);
         const to = (f) => ({ x: pv.x + r * Math.cos(a0 - f * d * Math.PI / 180), y: pv.y + r * Math.sin(a0 - f * d * Math.PI / 180) });
         for (const k of keys) await page.keyboard.down(k);
