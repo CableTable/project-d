@@ -35417,7 +35417,7 @@ try {
       await stop346();
       await typeCmd('l'); await typeCmd('100,300'); await typeCmd('150,300'); await stop346();                  // a line heading east, then a Continue that turns right (clockwise)
       await typeCmd('arc'); await key97c('Enter'); await prompt346(end347c, kind);
-      await key97c('Escape'); assert.notEqual(await prompt(), end347c, kind + ': Esc leaves the end-point prompt');
+      await key97c('Escape'); await said(/^(?!Specify end point of arc \(x,y\):$)/); assert.ok(!(await prompt()).includes(end347c), kind + ': Esc leaves the end-point prompt');
       await stop346();
       await typeCmd('arc'); await key97c('Enter'); await typeCmd('200,250'); assert.match(await said346(), /Arc made on layer/, kind);
       await key97c('Enter'); await prompt346(end347c, kind + ': after a clockwise arc, Enter continues from where it ended');
