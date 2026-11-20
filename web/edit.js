@@ -1567,7 +1567,8 @@ export function dimTextHit(t, p, pad = 0) {
  * A radius dimension, from { c, r (the circle), p (the pointer), textH, arrow, units }: a line from the centre through p to a short landing
  * with the text beyond it on the side p is on, and an arrowhead on the circle pointing out. Same shape as dimGeometry, or null.
  */
-export function radiusGeometry({ c, r, p, textH, arrow, units = 'mm', override }, factor, dp = 2) {
+export function radiusGeometry({ c, r, p, tp, textH, arrow, units = 'mm', override }, factor, dp = 2) {
+  if (tp && Math.hypot(tp[0], tp[1]) > 1e-9) return circleTextGeometry('radius', { c, r, tp, textH, arrow, units, override }, factor, dp);
   const f = factor || 1, d = Math.hypot(p[0] - c[0], p[1] - c[1]);
   if (!(r > 1e-9) || !(d > 1e-9)) return null;
   const ux = (p[0] - c[0]) / d, uy = (p[1] - c[1]) / d, th = textH > 0 ? textH : defaultTextH(r, f), ar = Math.min(arrow > 0 ? arrow : 1.1 * th, r * 0.4);
@@ -1575,6 +1576,28 @@ export function radiusGeometry({ c, r, p, textH, arrow, units = 'mm', override }
   const measured = dimLabel(r * f, dp, units, 'R'), label = dimensionText(measured, override), line = [c[0], c[1], q[0], q[1]], more = [[q[0], q[1], end[0], end[1]]];
   return { line, ext: [], more, lines: [line, ...more], arrows: [arrowHead(tip, ux, uy, ar, ar * 0.18)], mm: r * f, label, measured, th,
     text: { x: end[0] + side * (0.4 * th + 0.3 * th * label.length), y: q[1] - 0.5 * th, h: th, rot: 0, label, va: 1 } };
+}
+/** { c, r } of the circle a radius ({ c, r }) or diameter ({ a, b }) dimension is on. */
+export const circleOfDim = (kind, p) => kind === 'radius' ? { c: p.c, r: p.r } : { c: [(p.a[0] + p.b[0]) / 2, (p.a[1] + p.b[1]) / 2], r: Math.hypot(p.b[0] - p.a[0], p.b[1] - p.a[1]) / 2 };
+/** The middle of a dimension's text (dimGeometry's `text`): the anchor itself when centred (va 2), else half a text height up from it. */
+export const dimTextMiddle = (t) => t.va === 2 ? [t.x, t.y] : [t.x - Math.sin(t.rot * DEG) * t.h / 2, t.y + Math.cos(t.rot * DEG) * t.h / 2];
+/**
+ * A radius or diameter dimension with its text dragged to `tp` (the text's middle, from the circle's centre c; TODO 344), as AutoCAD draws it: text farther out than r:
+ * the dimension line through the centre (a radius: from it) to the circle on the text's side, then one straight leader on to the text (no landing);
+ * a radius with the text inside: the line broken round the text, one arrowhead on the circle. { c, r, tp, textH, arrow, units, override } → the shape of dimGeometry, or null.
+ */
+function circleTextGeometry(kind, { c, r, tp, textH, arrow, units = 'mm', override }, factor, dp = 2) {
+  const f = factor || 1, dd = Math.hypot(tp[0], tp[1]), dia = kind === 'diameter';
+  if (!(r > 1e-9) || !(dd > 1e-9)) return null;
+  const u = [tp[0] / dd, tp[1] / dd], th = textH > 0 ? textH : defaultTextH(dia ? 2 * r : r, f), ar = Math.min(arrow > 0 ? arrow : 1.1 * th, r * (dia ? 0.8 : 0.4)), half = ar * 0.18;
+  const at = (s) => [c[0] + u[0] * s, c[1] + u[1] * s], tip = at(r), m = [c[0] + tp[0], c[1] + tp[1]];
+  const measured = dimLabel((dia ? 2 : 1) * r * f, dp, units, dia ? 'Ø' : 'R'), label = dimensionText(measured, override);
+  const wide = Math.min((0.3 * th * label.length + 0.4 * th) / Math.max(Math.abs(u[0]), 1e-9), 0.7 * th / Math.max(Math.abs(u[1]), 1e-9));      // from the text's middle back along the line to the edge of its box
+  let line = [...(dia ? at(-r) : c), ...tip], more = [];
+  const extras = dd > r ? (dd - wide > r + 1e-9 ? [[...tip, ...at(dd - wide)]] : []) : [];
+  if (!dia && dd <= r && dd - wide > 0 && dd + wide < r) { line = [c[0], c[1], ...at(dd - wide)]; more = [[...at(dd + wide), ...tip]]; }
+  return { line, ext: [], more, extras, lines: [line, ...more, ...extras], arrows: [arrowHead(tip, u[0], u[1], ar, half), ...(dia ? [arrowHead(at(-r), -u[0], -u[1], ar, half)] : [])],
+    mm: (dia ? 2 : 1) * r * f, label, measured, th, text: { x: m[0], y: m[1], h: th, rot: 0, label, va: 2 } };
 }
 /**
  * An angle dimension, from { v (the vertex), r (the arc's radius), a0, a1 (degrees: the arc runs anticlockwise from a0 to a1), textH, arrow }:
@@ -1642,7 +1665,11 @@ export function segmentOf(ent, p) {
 export function dimGeom(kind, params, factor, dp = 2) {
   if (kind === 'radius') return radiusGeometry(params, factor, dp);
   if (kind === 'angle') return angleGeometry(params, factor, dp);
-  return dimGeometry(kind === 'diameter' ? { ...params, offset: 0, axis: null, prefix: 'Ø', fit: false } : params, factor, dp);     // a diameter keeps its look until TODO 344
+  if (kind === 'diameter' && params.tp && params.a && params.b) {         // the text dragged outside the circle (inside it keeps the look below)
+    const { c, r } = circleOfDim(kind, params);
+    if (Math.hypot(params.tp[0], params.tp[1]) > r * (1 + 1e-9)) return circleTextGeometry(kind, { ...params, c, r }, factor, dp);
+  }
+  return dimGeometry(kind === 'diameter' ? { ...params, offset: 0, axis: null, prefix: 'Ø', fit: false } : params, factor, dp);
 }
 /**
  * A dimension (see dimGeom) as a block called `name`: its lines (the dimension line first, then the extension lines), the arc of an angle,
@@ -1720,13 +1747,21 @@ export function readDim(name, block) {
   const tag = dimTag(name), ents = block.entities || [], g = (e, c) => +fieldOf(e.r, c);
   if (tag === 'R' || tag === 'A') {
     const ln = ents.find((e) => e.type === 'LINE'), sd = ents.find((e) => e.type === 'SOLID'), ar = ents.find((e) => e.type === 'ARC'), look = lookOf(ents);
-    if (tag === 'R' && ln && sd) { const c = [g(ln, 10), g(ln, 20)]; return { kind: 'radius', params: { ...look, c, r: Math.hypot(g(sd, 10) - c[0], g(sd, 20) - c[1]), p: [g(ln, 11), g(ln, 21)] } }; }
+    if (tag === 'R' && ln && sd) {
+      const c = [g(ln, 10), g(ln, 20)], tx = ents.find((e) => e.type === 'TEXT'), params = { ...look, c, r: Math.hypot(g(sd, 10) - c[0], g(sd, 20) - c[1]), p: [g(ln, 11), g(ln, 21)] };
+      if (tx && look.pos === 'centre') params.tp = [g(tx, 10) - c[0], g(tx, 20) - c[1]];         // a text of its own place is centred; the old landing's is above its line
+      return { kind: 'radius', params };
+    }
     return tag === 'A' && ar ? { kind: 'angle', params: { ...look, v: [g(ar, 10), g(ar, 20)], r: g(ar, 40), a0: g(ar, 50), a1: g(ar, 51) } } : null;
   }
   const p = dimParams(block);
   const axis = { H: 'h', V: 'v' }[tag] || block.dimAxis;
   if (p && axis) p.axis = axis;
   const txt = ents.find((e) => e.type === 'TEXT'), g0 = p && txt && tag !== 'D' && dimGeometry({ ...p, override: fieldOf(txt.r, 1) }, 1);     // the same dimension with its text where the fit rule puts it
+  if (p && txt && tag === 'D') {          // a text dragged outside the circle: its middle from the centre (inside, it is where the look puts it)
+    const { c, r } = circleOfDim('diameter', p), tp = [g(txt, 10) - c[0], g(txt, 20) - c[1]];
+    if (Math.hypot(tp[0], tp[1]) > r * (1 + 1e-6) + 1e-9 && p.pos === 'centre') p.tp = tp;          // (a text above its line is the old look: a tiny circle's text can be farther out than r)
+  }
   const ln0 = ents.find((e) => e.type === 'LINE'), dl = ln0 && [g(ln0, 11) - g(ln0, 10), g(ln0, 21) - g(ln0, 20)];
   const along = !p || !p.axis || (p.axis === 'h' ? Math.abs(dl[1]) : Math.abs(dl[0])) <= 1e-6 * Math.hypot(dl[0], dl[1]);      // a rotated linear dimension keeps its tag but its line is off the axis
   if (g0 && along) {         // the text is somewhere else along the line: moved by hand

@@ -292,4 +292,46 @@ test('TODO 345a text side drag: shift moves the text along the line, past an ext
   assert.ok(E.dimTextHit(t, [t.x, t.y + 1])); assert.ok(!E.dimTextHit(t, [t.x, t.y + 6])); assert.ok(E.dimTextHit(t, [t.x, t.y + 6], 5)); assert.ok(!E.dimTextHit(t, [t.x + 30, t.y]));
 });
 
+test('TODO 344a diameter with its text outside the circle (acad-344 fact 2): the line through the centre, one straight leader to the text, no landing', () => {
+  const ends = E.diameterEnds([100, 50], 10, [110, 50]), tp = [20, 5], u = [tp[0] / Math.hypot(...tp), tp[1] / Math.hypot(...tp)];
+  const g = E.dimGeom('diameter', { ...ends, textH: 2.5, tp }, 1);
+  assert.equal(g.label, 'Ø20.00'); assert.equal(g.arrows.length, 2);
+  near(g.line[0], 100 - 10 * u[0]); near(g.line[1], 50 - 10 * u[1]); near(g.line[2], 100 + 10 * u[0]); near(g.line[3], 50 + 10 * u[1], 'the line runs through the centre, along the way the text is');
+  assert.equal(g.lines.length, 2, 'the line and one leader: no landing'); const leader = g.lines[1];
+  near(leader[0], g.line[2]); near(leader[1], g.line[3], 'the leader starts on the circle');
+  const dir = [leader[2] - leader[0], leader[3] - leader[1]], len = Math.hypot(...dir);
+  near(dir[0] / len, u[0]); near(dir[1] / len, u[1], 'and goes straight on (the same slope as the dimension line)');
+  assert.ok(Math.hypot(leader[2] - 100, leader[3] - 50) > 10 && Math.hypot(leader[2] - 100, leader[3] - 50) < Math.hypot(...tp), 'to the text, not past its middle');
+  near(g.text.x, 120); near(g.text.y, 55, 'the text is centred on the text point');
+  const inside = E.dimGeom('diameter', { ...ends, textH: 2.5, tp: [3, 1] }, 1), plain = E.dimGeom('diameter', { ...ends, textH: 2.5 }, 1);
+  assert.deepEqual(inside.lines, plain.lines, 'a text point inside the circle keeps today\'s full chord'); assert.equal(inside.arrows.length, 2); near(inside.text.x, plain.text.x);
+  const dim = E.buildDim('diameter', { ...ends, textH: 2.5, tp }, 1, 'PD_DIM_D1'), got = read(dim);
+  assert.equal(got.kind, 'diameter'); near(got.params.tp[0], 20); near(got.params.tp[1], 5, 'the text point reads back'); near(got.params.a[0], 100 - 10 * u[0], 'the ends too');
+  assert.equal(dim.block.entities.filter((e) => e.type === 'LINE').length, 1, 'the leader is not a LINE: the first LINE stays the dimension line');
+  const again = E.buildDim('diameter', got.params, 1, 'PD_DIM_D1'); near(read(again).params.tp[0], 20, 'a rebuild keeps it');
+  assert.equal(read(E.buildDim('diameter', { ...ends, textH: 2.5 }, 1, 'PD_DIM_D1')).params.tp, undefined, 'a diameter never dragged has no text point');
+  assert.equal(read(E.buildDim('diameter', { ...ends, textH: 2.5, tp: [3, 1] }, 1, 'PD_DIM_D1')).params.tp, undefined, 'and one dragged back inside is the old look again');
+  const circ = E.circleOfDim('diameter', ends); near(circ.r, 10); near(circ.c[0], 100);
+});
+
+test('TODO 344a radius with its text outside (acad-344 fact 4) has no landing, inside the text is on the radius line with one arrow (fact 3)', () => {
+  const base = { c: [100, 50], r: 10, p: [120, 50], textH: 2.5 }, tp = [20, 5], u = [tp[0] / Math.hypot(...tp), tp[1] / Math.hypot(...tp)];
+  const g = E.radiusGeometry({ ...base, tp }, 1);
+  assert.equal(g.label, 'R10.00'); assert.equal(g.arrows.length, 1); assert.equal(g.lines.length, 2, 'the line and one leader');
+  near(g.line[0], 100); near(g.line[1], 50); near(g.line[2], 100 + 10 * u[0]); near(g.line[3], 50 + 10 * u[1], 'from the centre to the circle on the text\'s side');
+  const leader = g.lines[1], dir = [leader[2] - leader[0], leader[3] - leader[1]], len = Math.hypot(...dir);
+  near(leader[0], g.line[2]); near(dir[0] / len, u[0]); near(dir[1] / len, u[1], 'the leader goes straight on, not along the horizontal');
+  near(g.text.x, 120); near(g.text.y, 55);
+  const old = E.radiusGeometry(base, 1); assert.equal(old.more[0][3], old.more[0][1], 'without a text point the horizontal landing is still there');
+  const ins = E.radiusGeometry({ ...base, tp: [5, 0] , textH: 1}, 1);
+  assert.equal(ins.arrows.length, 1); near(ins.arrows[0][0][0], 110, 'one arrowhead, tip on the circle');
+  assert.equal(ins.lines.length, 2, 'the line is broken round the text (text 5 from the centre, short enough to fit)'); near(ins.text.x, 105); near(ins.text.y, 50, 'the text is on the radius line');
+  const dim = E.buildDim('radius', { ...base, tp }, 1, 'PD_DIM_R1'), got = read(dim);
+  near(got.params.tp[0], 20); near(got.params.tp[1], 5, 'the text point reads back'); near(got.params.r, 10); near(got.params.c[0], 100);
+  const inner = read(E.buildDim('radius', { ...base, tp: [5, 0], textH: 1 }, 1, 'PD_DIM_R1')).params;
+  near(inner.tp[0], 5, 'tp'); near(inner.c[0], 100, 'c'); near(inner.r, 10, 'r');
+  assert.equal(read(E.buildDim('radius', base, 1, 'PD_DIM_R1')).params.tp, undefined, 'the old look reads back with no text point');
+  assert.equal(E.radiusGeometry({ ...base, tp: [0, 0], p: [120, 50] }, 1).lines.length, 2, 'a text point at the centre falls back to the old look');
+});
+
 console.log(n + ' dims tests passed');

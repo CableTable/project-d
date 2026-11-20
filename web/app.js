@@ -3369,7 +3369,9 @@ function placedDown(e, cycled = false) {
 function layDimTextGrab(i, here) {
   const d = curDoc(), lay = d?.lay, p = lay && placedNow[i], part = p && lay.parts[p.partId], sel = selIdxs();
   if (!part || sel.length !== 1 || sel[0] !== i || p.lock || state.mode !== 'select' || !isDimPart(part) || !isSettled(part, p)) return null;
-  const dim = Ed.dimOfEntity(part.raw, 0), sh = dim && (dim.kind === 'aligned' || dim.kind === 'linear') && Ed.dimGeom(dim.kind, dim.params, 1, dim.dp);
+  const dim = Ed.dimOfEntity(part.raw, 0);
+  if (dim && (dim.kind === 'radius' || dim.kind === 'diameter')) { const g = circleTextGrab({ ...dim, e: 0 }, here, 1, 7 / view.scale); return g && { kind: 'dimtext', moved: false, part, placed: lay.placed[p.i], g }; }
+  const sh = dim && (dim.kind === 'aligned' || dim.kind === 'linear') && Ed.dimGeom(dim.kind, dim.params, 1, dim.dp);
   if (!sh || !Ed.dimTextHit(sh.text, here, 7 / view.scale)) return null;
   return { kind: 'dimtext', moved: false, part, placed: lay.placed[p.i], g: { ...dim, e: 0, start: here, offset: dim.params.offset, shift: dim.params.shift, text: true, u: sh.u, tx0: sh.tx, len: sh.len, moved: false, cancelled: false } };
 }
@@ -3377,8 +3379,8 @@ function layDimTextEnd(p) {
   const d = curDoc(), lay = d?.lay, g = p.g;
   state.dimDrag = null;
   if (lay && !p.moved) { state.mode = 'rotate'; state.pivot = centrePivot(); state.rotCopy = false; state.lref = null; update(); return; }       // a click on the text of the selected dimension: its turn arrows, as a click on its line
-  if (!lay || g.cancelled || (Math.abs(g.offset - g.params.offset) < 0.001 && Math.abs(g.shift - (g.tx0 - g.len / 2)) < 0.001)) { paintOverlay(); return; }
-  const built = Ed.buildDim(g.kind, { ...g.params, offset: g.offset, shift: g.shift }, 1, g.name, g.dp), snap = laySnap(lay);
+  if (!lay || g.cancelled || (g.circ ? !circleTextMoved(g, 1) : Math.abs(g.offset - g.params.offset) < 0.001 && Math.abs(g.shift - (g.tx0 - g.len / 2)) < 0.001)) { paintOverlay(); return; }
+  const built = Ed.buildDim(g.kind, g.circ ? circleTextParams(g) : { ...g.params, offset: g.offset, shift: g.shift }, 1, g.name, g.dp), snap = laySnap(lay);
   if (!built || !LD.replaceDim(lay, p.placed, p.part.raw.entities[0], { ...p.part.raw.blocks, [g.name]: built.block }, () => 'o' + uid(), new Set(Object.values(lay.parts).map((q) => q.name)))) { paintOverlay(); return; }
   pushLay(d, snap, '', 'Move dimension'); touch(); update();
   note('Dimension text moved. Ctrl+Z takes it back');
@@ -7432,7 +7434,7 @@ function previewDim(d) {
   if (!d || !dimTarget()) return null;
   if (state.ldr) return ldrPreview(d);
   const G = state.dimDrag;
-  if (G && G.moved) return Ed.dimGeom(G.kind, { ...G.params, offset: G.offset, shift: G.shift }, d.factor, G.dp);
+  if (G && G.moved) return Ed.dimGeom(G.kind, G.circ ? circleTextParams(G) : { ...G.params, offset: G.offset, shift: G.shift }, d.factor, G.dp);
   const D = state.dim, look = dimNew(d), auto = D && state.dimType === 'auto', ghost = auto && !D.obj && !D.pts.length && D.ghost && D.cursor;       // Automatic, before the pick: a faint ghost of what a click on the hovered object makes
   const hot = auto && D.hot && D.cursor && !D.lines.length;                                                          // ... and a second line under the pointer: a faint angle to it, the line marked
   const m = ghost ? AD.autoDraft(D.ghost, AD.ghostAt(D.ghost, D.cursor, 3 * look.textH)) : hot ? { kind: 'angle', params: Ed.angleBetween(D.obj.l, D.hot, D.cursor) } : dimDraft(D && (D.pts.length === 2 && typedAt() || D.cursor));
@@ -7566,12 +7568,33 @@ function dimSel(d) {
 /** A press on the one selected aligned or linear dimension starts moving it (otherwise null: the press selects or draws a box). */
 function dimGrab(d, p) {
   const sd = dimSel(d);
-  if (!sd || (sd.kind !== 'aligned' && sd.kind !== 'linear')) return null;
+  if (!sd) return null;
+  if (sd.kind === 'radius' || sd.kind === 'diameter') return circleTextGrab(sd, p, d.factor, pickTol(d));
+  if (sd.kind !== 'aligned' && sd.kind !== 'linear') return null;
   const sh = Ed.dimGeom(sd.kind, sd.params, d.factor, sd.dp), onText = !!sh && Ed.dimTextHit(sh.text, p, pickTol(d));      // a press on the text moves it along the line (and across it: the offset)
   if (!onText && Ed.hitEntity(edIndex(d), p[0], p[1], pickTol(d)) !== sd.e) return null;
   return { ...sd, start: p, offset: sd.params.offset, shift: sd.params.shift, text: onText, u: sh && sh.u, tx0: sh && sh.tx, len: sh && sh.len, moved: false, cancelled: false };
 }
+/** A press on the text of a selected radius or diameter dimension (sd: dimSel / Ed.dimOfEntity) drags the text round its circle, in or out (TODO 344); else null. */
+function circleTextGrab(sd, p, factor, tol) {
+  const sh = Ed.dimGeom(sd.kind, sd.params, factor, sd.dp);
+  if (!sh || !Ed.dimTextHit(sh.text, p, tol)) return null;
+  const { c } = Ed.circleOfDim(sd.kind, sd.params), m = Ed.dimTextMiddle(sh.text), tp0 = [m[0] - c[0], m[1] - c[1]];
+  return { ...sd, start: p, circ: true, tp0, tp: tp0, text: true, moved: false, cancelled: false };
+}
+/** The params of a radius or diameter dimension after its text was dragged to g.tp: a diameter's text back inside the circle is its old look again (no tp). */
+function circleTextParams(g) {
+  const { r } = Ed.circleOfDim(g.kind, g.params), out = Math.hypot(g.tp[0], g.tp[1]) > r;
+  return g.kind === 'diameter' && !out ? { ...g.params, tp: undefined, pos: g.params.tp ? 'above' : g.params.pos } : { ...g.params, tp: g.tp };
+}
+/** Did the drag change the dimension: the text moved 0.001 mm or more, and not just inside a diameter's circle (where it stays put). */
+const circleTextMoved = (g, factor) => Math.hypot(g.tp[0] - g.tp0[0], g.tp[1] - g.tp0[1]) * factor >= 0.001 && !(!g.params.tp && !circleTextParams(g).tp);
 function dimDragTo(d, g, p) {
+  if (g.circ) {
+    g.tp = [g.tp0[0] + p[0] - g.start[0], g.tp0[1] + p[1] - g.start[1]]; g.moved = true; state.dimDrag = g;
+    paintOverlay();
+    return;
+  }
   const a = g.params.a, b = g.params.b, ax = g.params.axis;
   g.offset = g.params.offset + Ed.dimOffsetAt(a, b, p, ax) - Ed.dimOffsetAt(a, b, g.start, ax);
   if (g.text) g.shift = g.tx0 - g.len / 2 + (p[0] - g.start[0]) * g.u[0] + (p[1] - g.start[1]) * g.u[1];
@@ -7580,6 +7603,12 @@ function dimDragTo(d, g, p) {
 }
 function dimDragEnd(d, g) {
   state.dimDrag = null;
+  if (g.circ) {
+    if (g.cancelled || !circleTextMoved(g, d.factor) || !commit(d, Ed.replaceDimension(d.raw, Ed.buildDim(g.kind, circleTextParams(g), d.factor, g.name, g.dp)), 'Move dimension')) { paintOverlay(); return; }
+    setSel(d, new Set([g.e]));
+    note('Dimension text moved. Ctrl+Z undoes it');
+    return;
+  }
   const off = Math.abs(g.offset - g.params.offset) * d.factor, sh = g.text ? Math.abs(g.shift - (g.tx0 - g.len / 2)) * d.factor : 0;
   if (g.cancelled || (off < 0.001 && sh < 0.001)) { paintOverlay(); return; }
   if (!commit(d, Ed.replaceDimension(d.raw, Ed.buildDim(g.kind, { ...g.params, offset: g.offset, shift: g.shift }, d.factor, g.name, g.dp)), 'Move dimension')) { paintOverlay(); return; }
