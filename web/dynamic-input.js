@@ -1,5 +1,5 @@
 // Cursor typing stays separate from the tools; point parsing and geometry stay shared.
-import { angleOf, dist, parseInput, typedPoint } from './draw.js';
+import { angleOf, arcValueAt, dist, parseInput, typedPoint } from './draw.js';
 import { parse as parseLength } from './units.js';
 
 export const createInput = (first, mode = first ? 'xy' : 'polar') => ({ mode, prefix: '', values: ['', ''], locked: [false, false], active: 0 });
@@ -25,8 +25,9 @@ const rectangle = (T) => T.kind === 'rect' || T.kind === 'rrect';
 // Circle types its centre then one Radius; Ellipse its centre, Length + Angle of axis 1, then one Length (the other half-axis); Arc its first point, then Length + Angle from the previous point twice.
 const STAGES = { measure: ['xy'], setlen: ['xy', 'polar'], dimension: ['xy', 'polar', 'xy'],
   circle: ['xy', 'radius'], ellipse: ['xy', 'polar', 'length'], arc: ['xy', 'polar', 'polar'] };
-export const isSingle = (mode) => ['angle', 'factor', 'radius', 'length', 'distance'].includes(mode);
-export const inputMode = (T) => T.point ? T.valueMode || (firstPoint(T) ? 'xy' : 'polar') : STAGES[T.kind] ? T.kind === 'circle' && (T.mode === 'ttr' || T.mode === 'ttt') ? null : (T.kind === 'circle' && (T.mode === '2p' || T.mode === '3p') ? ['xy', 'polar', 'polar'] : STAGES[T.kind])[T.pts.length] ?? null : T.stage !== 'radius' && ['line', 'polyline', 'rect', 'rrect'].includes(T.kind)
+export const isSingle = (mode) => ['angle', 'factor', 'radius', 'length', 'distance', 'chord'].includes(mode);
+const ARC_ASK = { a: 'angle', l: 'chord' };                                  // Arc's A / chord Length prompts: one number, negative allowed (the other arc)
+export const inputMode = (T) => T.point ? T.valueMode || (firstPoint(T) ? 'xy' : 'polar') : STAGES[T.kind] ? T.kind === 'arc' && T.ask ? ARC_ASK[T.ask] : T.kind === 'circle' && (T.mode === 'ttr' || T.mode === 'ttt') ? null : (T.kind === 'circle' && (T.mode === '2p' || T.mode === '3p') ? ['xy', 'polar', 'polar'] : STAGES[T.kind])[T.pts.length] ?? null : T.stage !== 'radius' && ['line', 'polyline', 'rect', 'rrect'].includes(T.kind)
   ? !T.pts.length ? 'xy' : rectangle(T) ? 'size' : 'polar' : null;
 export const readOnlyLength = (T) => T.kind === 'measure' && T.pts.length === 1;
 
@@ -50,7 +51,11 @@ export function modifyPoints(m, previous) {
 }
 export function toolPointInput(s, T, drawingUnit = 'mm') {
   const last = anchorOf(T);
-  if (isSingle(s.mode)) return valueInput(s, last, T.hover || last, s.mode === 'factor' ? T.f || 1 : 1, T.dia, drawingUnit);
+  if (isSingle(s.mode)) {
+    const r = valueInput(s, last, T.hover || last, s.mode === 'factor' ? T.f || 1 : 1, T.dia, drawingUnit);
+    if (T.kind === 'arc' && T.hover) r.live[0] = arcValueAt(T, T.hover);                    // the pointer's angle round the centre / chord from the start, not from the last point
+    return r;
+  }
   const result = pointInput(s, last, T.hover || last || [0, 0], T.kind === 'dimension' ? 'Distance' : 'Length', drawingUnit);
   if (s.mode === 'polar' && ['ellipse', 'arc'].includes(T.kind) && s.values[0] && !(parseLength(s.values[0], drawingUnit) > 0) && !result.errors[0]) {   // no axis or chord of 0 or less
     result.errors[0] = result.why = 'Length must be more than 0'; result.point = null;
@@ -112,7 +117,7 @@ export function pointInput(s, last, mouse, lengthLabel = 'Length', unit = 'mm') 
   return { text, point, live, labels, errors, why: errors.find(Boolean) || (point ? '' : 'Point coordinates must be finite') };
 }
 
-const ONE = { angle: 'Angle', factor: 'Factor', radius: 'Radius', length: 'Length', distance: 'Distance' };
+const ONE = { angle: 'Angle', factor: 'Factor', radius: 'Radius', length: 'Length', distance: 'Distance', chord: 'Length' };
 /** The one number of Rotate (degrees from the pivot), Scale (a factor), Circle (radius, or diameter after D) or an ellipse's last half-axis (mm); untyped, it is the mouse's value. `unit` is mm per drawing unit: a factor is a ratio of drawing-unit distances. A length also gives `point`, along the mouse's way, so the tool's own preview follows it. */
 function valueInput(s, base, mouse, unit, dia, drawingUnit) {
   const mode = s.mode, label = mode === 'radius' && dia ? 'Diameter' : ONE[mode], typed = s.values[0];
@@ -120,7 +125,7 @@ function valueInput(s, base, mouse, unit, dia, drawingUnit) {
   const length = !['angle', 'factor'].includes(mode);
   const bad = notFinite(typed, length ? drawingUnit : null) ? `${label} must be a finite number` : '';
   const value = typed ? length ? parseLength(typed, drawingUnit) : +typed : live[0];
-  const error = bad || (!['angle', 'distance'].includes(mode) && !(value > 0) && (typed || mode === 'factor') ? `${label} must be more than 0` : '');
+  const error = bad || (!['angle', 'distance', 'chord'].includes(mode) && !(value > 0) && (typed || mode === 'factor') ? `${label} must be more than 0` : '');
   const point = (mode === 'radius' || mode === 'length') && !error ? alongTo(base, mouse, value) : null;
   return { value: error ? null : value, point, live, labels: [label], errors: [error, ''], text: String(value) + (length && drawingUnit !== 'mm' ? 'mm' : ''), why: error };
 }

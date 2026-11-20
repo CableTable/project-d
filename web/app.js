@@ -8403,7 +8403,8 @@ function drawOvl(paint = false) {
   if (tab?.cmp?.show && !tab.cmp.moving && tab.cmp.res && !tab.cmp.stale) cmpGlow(tab.cmp, out);
   if (d && drawLive()) {
     const T = state.draw, dynamic = cursorDynamic() && T.hover ? cursorPoint() : null;
-    const pv = DR.toolPreview(dynamic?.point && DI.hasTyped(cursorInput()) ? { ...T, hover: dynamic.point } : T);
+    const typedPv = dynamic && DI.hasTyped(cursorInput()) && (dynamic.point || T.ask && dynamic.value != null);       // Arc's A / L prompts have a typed value, no point
+    const pv = DR.toolPreview(typedPv ? { ...T, hover: dynamic.point || T.hover, value: dynamic.value } : T);
     for (const g of pv.guides) {
       out.push(s('path', { class: 'dr-guide', transform: drawingTransform(d), d: DR.svgPath({ t: 'line', a: g[0], b: g[1] }, H) }));
       if (dynamic && T.kind === 'circle') circleGuide = out.at(-1);        // dropped below once the Radius box's own guide is placed

@@ -198,6 +198,35 @@ test('arcThrough3: centre, radius and the ends of the anticlockwise arc', () => 
   assert.equal(DR.arcThrough3([0, 0], [0, 0], [2, 2]), null, 'two the same');
 });
 
+test('TODO 347a: the nine Arc modes give the arcs AutoCAD gave (acad-347.txt), negative A / L / R the other arc, refusals say why', () => {
+  const is = (a, c, r, a0, a1) => { nearPt(a.c, c); near(a.r, r); near(a.a0, a0); near(a.a1, a1); };
+  is(DR.arcSCE([10, 0], [0, 0], [0, 10]), [0, 0], 10, 0, 90);                                  // S-C-E
+  is(DR.arcSCE([10, 0], [0, 0], [0, -10]), [0, 0], 10, 0, 270);                                // the arc runs anticlockwise: the end point is a direction
+  is(DR.arcSCE([10, 0], [0, 0], [0, 20]), [0, 0], 10, 0, 90);                                  // a pick beyond the circle only sets the direction
+  is(DR.arcSCA([10, 0], [0, 0], 90), [0, 0], 10, 0, 90);                                       // S-C-A
+  is(DR.arcSCA([10, 0], [0, 0], -90), [0, 0], 10, 270, 0);                                     // negative = clockwise from the start
+  is(DR.arcSCL([10, 0], [0, 0], 10), [0, 0], 10, 0, 60);                                       // S-C-L: a chord of 10 on R10 is 60°
+  is(DR.arcSCL([10, 0], [0, 0], -10), [0, 0], 10, 0, 300);                                     // negative = the major arc
+  is(DR.arcSCL([10, 0], [0, 0], 20), [0, 0], 10, 0, 180);                                      // the diameter is the longest chord
+  assert.equal(DR.arcSCL([10, 0], [0, 0], 25).why, 'Chord longer than the diameter');
+  assert.equal(DR.arcSCL([10, 0], [0, 0], 20.5).why, 'Chord longer than the diameter');
+  assert.equal(DR.arcSCL([10, 0], [0, 0], -25).why, 'Chord longer than the diameter');
+  is(DR.arcCSE([0, 0], [10, 0], [0, 10]), [0, 0], 10, 0, 90);                                  // C-S-E
+  is(DR.arcCSE([0, 0], [10, 0], [0, 20]), [0, 0], 10, 0, 90);                                  // the end point is a direction only
+  is(DR.arcCSA([0, 0], [10, 0], 90), [0, 0], 10, 0, 90);                                       // C-S-A
+  is(DR.arcCSL([0, 0], [10, 0], 10), [0, 0], 10, 0, 60);                                       // C-S-L
+  is(DR.arcSEA([10, 0], [0, 10], 90), [0, 0], 10, 0, 90);                                      // S-E-A
+  is(DR.arcSEA([10, 0], [0, 10], -90), [10, 10], 10, 180, 270);                                // the other side
+  is(DR.arcSED([10, 0], [0, 10], 90), [0, 0], 10, 0, 90);                                      // S-E-D: the start tangent points up
+  is(DR.arcSER([10, 0], [0, 10], 10), [0, 0], 10, 0, 90);                                      // S-E-R
+  is(DR.arcSER([10, 0], [0, 10], -10), [10, 10], 10, 270, 180);                                // negative = the major arc, 270° swept
+  near(DR.sweepOf(270, 180), 270);
+  assert.equal(DR.arcSER([10, 0], [0, 10], 5).why, 'Radius too small for these points');
+  assert.ok(DR.arcSED([10, 0], [0, 10], 90 + 135).c, 'a tangent turning the other way gives a clockwise arc about the right-hand centre');
+  assert.ok(DR.arcSED([10, 0], [0, 10], 135).why, 'a direction pointing at the end is a straight line');
+  assert.ok(DR.arcSCA([10, 0], [10, 0], 90).why && DR.arcSCA([10, 0], [0, 0], 0).why && DR.arcSCA([10, 0], [0, 0], 360).why && DR.arcSCE([10, 0], [0, 0], [20, 0]).why, 'degenerate input is refused with a reason');
+});
+
 test('rectPts: corners in any order; rounded corners are bulges of a quarter circle', () => {
   assert.deepEqual(DR.rectPts([10, 20], [0, 5]), [[0, 5], [10, 5], [10, 20], [0, 20]]);
   const r = DR.rectPts([0, 0], [100, 60], 10);
@@ -361,6 +390,48 @@ test('Arc: three points, start → second → end', () => {
   click(T, [0, 0], [5, 5]);
   assert.match(click(T, [10, 10]).msg, /in a line/);
   assert.equal(T.pts.length, 2, 'still waiting for the end point');
+});
+
+test('Arc (347a): typed C at the first / second prompt, then the end point, A or L; refusals stay at the prompt; U backs one step', () => {
+  const type = (T, s) => DR.toolType(T, s);
+  const arc = (r) => { assert.equal(r.msg, null); assert.equal(r.made[0].t, 'arc'); return r.made[0]; };
+  // Start, Centre, End (C at the second prompt, case-free)
+  let T = DR.createTool('arc');
+  assert.match(DR.toolPrompt(T).prompt, /\[Center\]/); assert.ok(DR.toolWords(T).has('c') && !DR.toolWords(T).has('l'));
+  click(T, [10, 0]); assert.match(DR.toolPrompt(T).prompt, /^Specify second point on the arc \[Center\]/);
+  type(T, 'C'); assert.equal(T.am, 'sc'); assert.match(DR.toolPrompt(T).prompt, /^Specify centre point of arc/); assert.ok(DR.toolWords(T).has('l'));
+  click(T, [0, 0]); assert.match(DR.toolPrompt(T).prompt, /^Specify end point of arc \[Angle\/chord Length\]/);
+  let a = arc(click(T, [0, 10])); nearPt(a.c, [0, 0]); near(a.a0, 0); near(a.a1, 90);
+  assert.equal(T.am, null, 'the next arc starts at the 3-point prompts');
+  // Start, Centre, Angle: typed "A" then the number; negative = clockwise
+  click(T, [10, 0]); type(T, 'c'); click(T, [0, 0]); type(T, 'A'); assert.equal(T.ask, 'a'); assert.equal(DR.toolPrompt(T).prompt, 'Specify included angle:');
+  a = arc(type(T, '-90')); near(a.a0, 270); near(a.a1, 0);
+  // "L" with the number after it, negative = major arc; a chord over the diameter is refused and the prompt stays
+  click(T, [10, 0]); type(T, 'c'); click(T, [0, 0]);
+  assert.equal(type(T, 'l 25').msg, 'Chord longer than the diameter'); assert.equal(T.ask, 'l'); assert.equal(T.pts.length, 2);
+  assert.equal(type(T, '-10').msg, null); assert.equal(T.pts.length, 0, 'the major arc was made');
+  click(T, [10, 0]); type(T, 'c'); click(T, [0, 0]); a = arc(type(T, 'l -10')); near(a.a0, 0); near(a.a1, 300);
+  // Centre, Start, End (C at the first prompt): the end is a direction only
+  T = DR.createTool('arc'); type(T, 'C'); assert.equal(T.am, 'cs'); assert.match(DR.toolPrompt(T).prompt, /^Specify centre point of arc/);
+  click(T, [0, 0]); assert.match(DR.toolPrompt(T).prompt, /^Specify start point of arc/); click(T, [10, 0]);
+  a = arc(click(T, [0, 20])); nearPt(a.c, [0, 0]); near(a.r, 10); near(a.a0, 0); near(a.a1, 90);
+  type(T, 'c'); click(T, [0, 0]); click(T, [10, 0]); type(T, 'a 90'); assert.equal(T.pts.length, 0, 'C-S-A made the arc');
+  type(T, 'c'); click(T, [0, 0]); click(T, [10, 0]); a = arc(type(T, 'l 10')); near(a.a1, 60);
+  // anything else is not an option; the words E, A and L are refused before C (E is 347b)
+  T = DR.createTool('arc');
+  for (const w of ['e', 'a', 'l', 'foo']) assert.equal(type(T, w).msg, '2D point or option keyword required.', w);
+  click(T, [10, 0]); assert.equal(type(T, 'e').msg, '2D point or option keyword required.'); assert.equal(type(T, 'foo').msg, '2D point or option keyword required.'); assert.equal(T.pts.length, 1);
+  // U backs one step in every mode: the A prompt → the end point → the centre → the second-point prompt (C is an option again)
+  type(T, 'c'); click(T, [0, 0]); type(T, 'a'); type(T, 'u'); assert.equal(T.ask, null); assert.equal(T.pts.length, 2);
+  type(T, 'u'); assert.equal(T.pts.length, 1); assert.equal(T.am, 'sc'); type(T, 'u'); assert.equal(T.am, null); assert.equal(T.pts.length, 1);
+  type(T, 'u'); assert.equal(T.pts.length, 0);
+  type(T, 'c'); click(T, [0, 0]); click(T, [10, 0]); type(T, 'u'); assert.equal(T.pts.length, 1); type(T, 'u'); type(T, 'u'); assert.equal(T.am, null);
+  // Esc leaves the typed C
+  type(T, 'c'); assert.equal(DR.toolFinish(T).msg, 'Cancelled'); assert.equal(T.am, null);
+  // the preview follows the pointer, then a typed value
+  T = DR.createTool('arc'); click(T, [10, 0]); type(T, 'c'); click(T, [0, 0]); type(T, 'a'); DR.toolHover(T, [0, 10]);
+  near(DR.toolPreview(T).shapes[0].a1, 90); near(DR.toolPreview({ ...T, value: -90 }).shapes[0].a0, 270);
+  near(DR.arcValueAt(T, [0, 10]), 90);
 });
 
 test('Esc: a circle in progress is cancelled; a line keeps what it has', () => {
