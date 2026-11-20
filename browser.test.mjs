@@ -27056,6 +27056,7 @@ try {
     const name = 'combine218b.dxf';
     await t('picker').setInputFiles({ name, mimeType: 'text/plain', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
     await waitTab(page, name);
+    await page.waitForFunction(() => document.querySelector('[data-testid=cmd-fade]').classList.contains('idle'));       // an earlier step's command rows still catch clicks at the sheet's bottom edge until they fade
     await page.locator('[data-tool=select]').click();
     const key = async (k) => { await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press(k); };
     const readout = async (re) => { try { await page.waitForFunction((s) => new RegExp(s).test(document.querySelector('[data-testid=sel-readout]')?.textContent || ''), re.source, { timeout: 5000 }); } catch (e) { throw new Error('readout ' + re + ' != ' + (await page.locator('[data-testid=sel-readout]').allTextContents())); } };
