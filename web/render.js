@@ -57,7 +57,7 @@ function trace(c, ops, origin, pxPerUnit) {
  * Paints into `canvas` (already sized to w*dpr by h*dpr). Returns how many items the main drawing painted.
  * o: { strip (a layout slot's items are culled to the view: the strip of a pan end, TODO 324a), keep (do not clear first: paint another drawing on top), fl, off, factor, sheetH, ox, oy, scale (px per sheet mm), w, h (css px), dpr, dark,
  *       tint (one css colour to draw everything in: a part off the sheet), previewBounds (optional callback with the flattened preview's CSS-pixel box),
- *       bg (the background picture: bitmap, w, h, mm, x, y, visible), hl (items drawn again in `accent`: the selection), marks ([x, y] points in drawing units: Set length's picks), dim (a dimension being placed or moved: edit.js dimGeometry), accent (css colour), gaps ([x, y] drawing units: a ring each), markCol (css colour of the rings) }
+ *       bg (the background picture: bitmap, w, h, mm, x, y, visible), hl (items drawn again in `accent`: the selection; an item with solid: true is not dashed), marks ([x, y] points in drawing units: Set length's picks), dim (a dimension being placed or moved: edit.js dimGeometry), accent (css colour), gaps ([x, y] drawing units: a ring each), markCol (css colour of the rings) }
  */
 export function paintDrawing(canvas, o) { return drain(paintDrawingSteps(canvas, o)); }
 
@@ -218,7 +218,7 @@ function highlight(c, items, mats, T, k, dpr, accent, wireframe) {
   c.strokeStyle = accent;
   const runs = highlightRuns(items, mats, T, wireframe);
   for (const r of runs) {
-    const M = mats[r.m], V = mmul(T, M), kk = k * mscale(M) || k, dashed = r.path && !runs.big;
+    const M = mats[r.m], V = mmul(T, M), kk = k * mscale(M) || k, dashed = r.path && !runs.big && !r.solid;       // solid: an item marked by the caller (a selected dimension, TODO 345b1) is not dashed
     c.setTransform(...V.slice(0, 4), ...mapply(V, ...r.origin));
     c.lineWidth = (runs.big ? 1 : 2.6) * dpr / kk;
     c.lineCap = r.cap; c.lineJoin = r.join; c.miterLimit = 10;
@@ -241,10 +241,10 @@ function highlightRuns(items, mats, T, wireframe) {
   const runs = [], open = new Map(), px = []; let r = null, paths = 0;
   for (const it of items) {
     if (px[it.m] === undefined) px[it.m] = maxScale(mmul(T, mats[it.m]));
-    const path = !!(it.k === 'p' || it.k === 'i' || (wireframe && it.ops)), nextCap = it.cap || 'butt', nextJoin = it.join || 'miter', styleKey = it.m * 18 + (path ? 1 : 0) + 2 * CAPS.indexOf(nextCap) + 6 * JOINS.indexOf(nextJoin);       // a number: a string key per item cost 80 ms at 150k
+    const path = !!(it.k === 'p' || it.k === 'i' || (wireframe && it.ops)), nextCap = it.cap || 'butt', nextJoin = it.join || 'miter', styleKey = it.m * 36 + (it.solid ? 18 : 0) + (path ? 1 : 0) + 2 * CAPS.indexOf(nextCap) + 6 * JOINS.indexOf(nextJoin);       // a number: a string key per item cost 80 ms at 150k
     r = open.get(styleKey);
     if (!r || (path && it.ops[0] > 2) || ++r.n > HL_RUN) {      // (ops starting with a line or a close: none today, kept apart)
-      runs.push(r = { m: it.m, origin: [it.b[0], it.b[1]], path, cap: nextCap, join: nextJoin, n: 1, p: new Path2D() });
+      runs.push(r = { m: it.m, origin: [it.b[0], it.b[1]], path, solid: !!it.solid, cap: nextCap, join: nextJoin, n: 1, p: new Path2D() });
       open.set(styleKey, r);
     }
     const pxPerUnit = px[it.m];

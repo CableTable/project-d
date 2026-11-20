@@ -1,5 +1,5 @@
 // layout.js — pure step-and-repeat maths for a sheet (no DOM). All sizes in mm.
-// The sheet origin is the top-left corner; y grows downward.
+// These maths measure from the sheet's top-left corner, y down; the layout origin (placed parts, what he sees) is the bottom-left, y up (app.js turns between them).
 
 export const PRESETS = [
   { id: 'screen', label: 'Screen sheet 1000 × 700', w: 1000, h: 700 },

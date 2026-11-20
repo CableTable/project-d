@@ -83,6 +83,10 @@ function followCircle(dim, params, m, nm, paper, ctx) {
     const ux = (b[0] - a[0]) / (2 * R), uy = (b[1] - a[1]) / (2 * R);
     params.a = local(nm, [t.c[0] - ux * t.r, t.c[1] - uy * t.r]); params.b = local(nm, [t.c[0] + ux * t.r, t.c[1] + uy * t.r]);
   }
+  if (dim.params.tp) {      // TODO 344b: the text's place from the centre goes with the circle and scales by k (AutoCAD leaves it; ours keeps the same spot on the part)
+    const w = mapply([m[0], m[1], m[2], m[3], 0, 0], ...dim.params.tp);
+    params.tp = local([nm[0], nm[1], nm[2], nm[3], 0, 0], [w[0] * k, w[1] * k]);
+  }
   return true;
 }
 

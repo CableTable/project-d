@@ -71,6 +71,8 @@ const TABLE = [
   ['align', 'Edit', 'Move, turn and scale objects so source points meet destination points', ['al'], 'draw'],
   ['center', 'Edit', 'Centre on first selected object on both axes', ['centre'], ''],
   ['centreonpage', 'Layout', 'Centre the selection as one block on the whole sheet', ['cp'], ''],
+  ['centrepagehorizontally', 'Layout', 'Centre the selection as one block on the sheet, left to right only', ['cph'], ''],
+  ['centrepagevertically', 'Layout', 'Centre the selection as one block on the sheet, bottom to top only', ['cpv'], ''],
   ['nest', 'Layout', 'Auto-nest mixed parts', ['n'], ''],
   ['step', 'Layout', 'Step and repeat the chosen part', ['sr'], 'layout'],
   ['group', 'Layout', 'Group the selected objects or parts', ['g'], '', 'Ctrl+G'],
@@ -155,7 +157,7 @@ export function suggest(text, tab = '', limit = 6, commands = COMMANDS) {
 
 /** The options in a prompt's [Brackets]: the last bracket with single words ("Esc" is not one). Capitals, including internal ones, give the key. → [{ word, key, rest, prefix? }] */
 export function parseOptions(prompt) {
-  const groups = [...String(prompt || '').matchAll(/\[([^\]]+)\]/g)].map((m) => m[1].split('/').map((x) => x.trim()));
+  const groups = [...String(prompt || '').matchAll(/\[([^\]]+)\]/g)].map((m) => m[1].split('/').map((x) => x.trim().replace(/\s*\([^)]*\)$/, '')));       // "Ttr (tan tan radius)" is the option Ttr
   for (let i = groups.length - 1; i >= 0; i--) {
     const words = groups[i].filter((w) => /^[A-Za-z0-9]+$/.test(w) && w !== 'Esc');
     if (!words.length || words.length !== groups[i].filter((w) => w !== 'Esc').length) continue;

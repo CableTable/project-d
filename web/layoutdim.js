@@ -35,7 +35,7 @@ export function bakeBlock(block, part, p) {
   const dir = (deg) => { const t = deg * DEG, x = M[0] * Math.cos(t) + M[2] * Math.sin(t), y = M[1] * Math.cos(t) + M[3] * Math.sin(t); return Math.atan2(y, x) / DEG; };
   let ents = block.entities.map((e) => {
     const edit = {}, has = (c) => e.r.c.includes(c);
-    for (const [cx, cy] of [[10, 20], [11, 21], [12, 22], [13, 23]]) if (has(cx) && has(cy)) { const q = mapply(M, field(e.r, cx), field(e.r, cy)); edit[cx] = q[0]; edit[cy] = q[1]; }
+    for (const [cx, cy] of [[10, 20], [11, 21], [12, 22], [13, 23]]) if (e.type !== 'LWPOLYLINE' && has(cx) && has(cy)) { const q = mapply(M, field(e.r, cx), field(e.r, cy)); edit[cx] = q[0]; edit[cy] = q[1]; }
     if (e.type === 'ARC') {
       let s = dir(field(e.r, 50)), t = dir(field(e.r, 51));
       if (flip) [s, t] = [t, s];
@@ -53,6 +53,7 @@ export function bakeBlock(block, part, p) {
       if (has(50) || a > 1e-9 && a < 360 - 1e-9) edit[50] = a;
     }
     const c = e.r.c.slice(), v = e.r.v.slice();
+    if (e.type === 'LWPOLYLINE') for (let i = 0; i < c.length - 1; i++) if (c[i] === 10 && c[i + 1] === 20) { const q = mapply(M, +v[i], +v[i + 1]); v[i] = text(q[0]); v[i + 1] = text(q[1]); }     // every vertex (the arrow stubs and the line under a side-dragged text)
     for (const [code, val] of Object.entries(edit)) { let i = c.indexOf(+code); if (i < 0) { i = c.length; c.push(+code); } v[i] = text(val); }
     return { ...e, r: { ...e.r, c, v } };
   });

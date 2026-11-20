@@ -276,6 +276,24 @@ test('diameter dimension follows its circle: Move and Scale keep its direction',
   point(s.a, [7, -4]); point(s.b, [13, 4]);
 });
 
+test('TODO 344b: a radius / diameter text outside its circle keeps its place from the centre on Move and scales by k on Scale; one Undo restores', () => {
+  for (const [kind, params, tp] of [['radius', { c: [50, 40], r: 10, p: [70, 40] }, [30, 15]], ['diameter', { a: [40, 40], b: [60, 40], offset: 0 }, [0, -25]]]) {
+    const raw = drawing(W.circle(50, 40, 10), { ...params, tp }, kind), before = structuredClone(raw);
+    point(model(raw).params.tp, tp);
+    const moved = followDimensions(raw, E.moveEntities(raw, new Set([0]), 5, 7));
+    point(model(moved).params.tp, tp);
+    const scaled = followDimensions(raw, E.scaleAbout(raw, 2, 0, 0, 0, new Set([0])));
+    point(model(scaled).params.tp, [tp[0] * 2, tp[1] * 2]);
+    const half = followDimensions(raw, E.scaleAbout(raw, 0.5, 50, 40, 0, new Set([0])));
+    point(model(half).params.tp, [tp[0] / 2, tp[1] / 2]);
+    const turned = followDimensions(raw, rotateEntities(raw, new Set([0]), [0, 0], 90));
+    point(E.circleOfDim(kind, model(turned).params).c, [-40, 50]); point(model(turned).params.tp, tp);       // a Rotate carries the circle's dimension; the text keeps its place from the centre
+    assert.deepEqual(raw, before);
+    const h = E.createHistory(); h.push(raw, 'Scale selection');
+    assert.deepEqual(h.undo(scaled), before, kind + ': one Undo restores the circle and its dimension');
+  }
+});
+
 test('angle dimension follows its two lines: Move of one, a tilt, and a Move of both', () => {
   const raw = drawing(W.line(0, 0, 100, 0), { v: [0, 0], r: 20, a0: 0, a1: 90 }, 'angle');
   W.addEntities(raw, W.line(0, 0, 0, 100));

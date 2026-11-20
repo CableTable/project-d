@@ -26,6 +26,9 @@ fn grant_balloon_sidecar(app: tauri::AppHandle, path: std::path::PathBuf) -> Res
     if !path.is_absolute() || path.is_dir() || !scope.is_allowed(&path) {
         return Err("The source file is outside the allowed scope".into());
     }
+    // First: the balloon / units grants below return early on an error, Ctrl+S still needs its backup.
+    let backup = balloons::backup_path(&path).ok_or("The source has no file name")?;
+    scope.allow_file(backup).map_err(|error| error.to_string())?;
     let sidecar = balloons::sidecar_path(&path).ok_or("The source has no file name")?;
     let mut units = path.as_os_str().to_os_string();
     units.push(".pdunits.json");
@@ -36,7 +39,7 @@ fn grant_balloon_sidecar(app: tauri::AppHandle, path: std::path::PathBuf) -> Res
 
 /// A name is safe when it is one plain file name: `a..b-img1.png` is real, `../x.png`, `d/x.png` and `C:x.png` are not.
 fn picture_name_ok(name: &str) -> bool {
-    !name.is_empty() && std::path::Path::new(name).file_name().is_some_and(|f| f == name)
+    !name.is_empty() && !name.contains(':') && std::path::Path::new(name).file_name().is_some_and(|f| f == name)
 }
 
 /// Save and Export write `<dxf name>-imgN.png` beside the DXF: allow exactly those files.
@@ -112,7 +115,7 @@ mod tests {
         for good in ["a-img1.png", "a..b-img1.png", "my drawing-img12.png"] {
             assert!(picture_name_ok(good), "{good}");
         }
-        for bad in ["", ".", "..", "../a-img1.png", "d/a-img1.png", "d\\a-img1.png", "C:a-img1.png", "C:\\a-img1.png", "a-img1.png/"] {
+        for bad in ["", ".", "..", "../a-img1.png", "d/a-img1.png", "d\\a-img1.png", "C:a-img1.png", "C:\\a-img1.png", "a-img1.png/", "ab:c.png"] {
             assert!(!picture_name_ok(bad), "{bad}");
         }
     }

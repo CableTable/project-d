@@ -12,7 +12,7 @@ import { openShortcuts } from './shortcutdlg.js';
 import { idbStore, localStore } from './idbstore.js';
 import { WORK_AREAS, workAreaDark } from './workarea.js';
 import { FOLDS, ribbonTabs, nextFold, doubleFold } from './ribbon.js';
-import { PRESETS, presetFor, stepRepeat, gridCellNote, GRIP_KEYS } from './layout.js';
+import { PRESETS, presetFor, stepRepeat, gridCellNote, GRIP_KEYS, gripOf } from './layout.js';
 import { unitFactor, convertedNote, startHidden, entityCount, layerCounts, patchedCounts, drawingBoxMm, fitRect, cursorMm, fitsSheet, spaceOf, boxOnSheet, itemVisible, addRecent, removeRecent, closePrompt, BIG_FILE, bigFileAsk, backupPath, dupName } from './doc.js';
 import * as Ed from './edit.js';
 import { follow as followGroups, remap as remapGroups, splice as spliceGroups, swap as swapGroups, copy as copyGroups, group as groupDrawing, ungroup as ungroupDrawing, groupOf, selectionOf, wholeGroup as wholeDrawingGroup } from './groups.js';
@@ -69,9 +69,11 @@ import { openQuickSelect } from './qselectdlg.js';
 import * as FI from './fill.js';
 import { extendEntity, extendRegion, previewEdit, curveShape, isBoundary, extendable } from './extend.js';
 import { placedMat, placedBox, placement1, GRID_KEYS, gridLayout, bakeGrid, slotOf, relayGrid } from './apply.js';
-import { layoutSnap, placedSnap, layoutCandidates, layoutReference, partIndex, toPart } from './layoutsnap.js';
+import { layoutSnap, placedSnap, layoutCandidates, layoutReference, layoutTangentObject, partIndex, toPart, gripperLines, partEdgeSnap } from './layoutsnap.js';
+import { nearestObject } from './tangent.js';
 import * as LD from './layoutdoc.js';
-import { isDimPart } from './layoutdim.js';
+import { labelGaps } from './pdf-source.js';
+import { isDimPart, isSettled } from './layoutdim.js';
 import { dropPart } from './dropin.js';
 import { copySnapshot, copyPlacedSnapshot, drawingFromPlaced, pasteSnapshot, partFromSnapshot } from './clipboard.js';
 import * as PL from './place.js';
@@ -207,6 +209,33 @@ const DIM_TYPES = [
   ['angle', 'Angle', 'DAN', '<path d="M3 16h14M3 16L13 5M9 16a6 6 0 0 0-1.4-3.8"/>', 'DIMANGULAR'],
 ];
 const dimTypeRow = (type) => DIM_TYPES.find((x) => x[0] === type) || DIM_TYPES[0];
+// the Circle button's flyout (TODO 346a): the modes of draw.js CIRCLE_MODES, each with its icon (20 px box)
+const DOT = (x, y) => `<circle cx="${x}" cy="${y}" r="2" fill="currentColor" stroke="none"/>`;
+const CIRCLE_ICONS = {
+  cr: `<circle cx="10" cy="10" r="7"/><path d="M10 10l5-5"/>${DOT(10, 10)}`,
+  cd: '<circle cx="10" cy="10" r="7"/><path d="M3 10h14"/>',
+  '2p': `<circle cx="10" cy="10" r="7"/>${DOT(3, 10)}${DOT(17, 10)}`,
+  '3p': `<circle cx="10" cy="10" r="7"/>${DOT(10, 3)}${DOT(16, 13.5)}${DOT(4, 13.5)}`,
+  ttr: '<path d="M1 3h18M1 17h18"/><circle cx="10" cy="10" r="7"/>',                 // a circle touching two lines
+  ttt: '<path d="M10 2L18 17H2z"/><circle cx="10" cy="12.2" r="4.8"/>',               // a triangle and its inscribed circle
+};
+const circleRows = () => DR.CIRCLE_MODES.map(([mode, name, key]) => [name, () => setCircleMode(mode), key, null, CIRCLE_ICONS[mode]]);
+// the Arc button's flyout (TODO 347c): the modes of draw.js ARC_MODES; every icon is the same arc, start at the left, end at the right, centre between them, with the dots and lines of what the mode is given
+const ARC_BASE = '<path d="M3 14A7 7 0 0 1 17 14"/>';
+const ARC_ICONS = {
+  '3p': `${ARC_BASE}${DOT(3, 14)}${DOT(10, 7)}${DOT(17, 14)}`,
+  sce: `${ARC_BASE}${DOT(3, 14)}${DOT(10, 14)}${DOT(17, 14)}`,
+  sca: `${ARC_BASE}<path d="M3 14h7l4.9-4.9"/>${DOT(3, 14)}${DOT(10, 14)}`,
+  scl: `${ARC_BASE}<path d="M3 14h14"/>${DOT(3, 14)}${DOT(10, 14)}`,
+  sea: `${ARC_BASE}<path d="M3 14l7-7 7 7"/>${DOT(3, 14)}${DOT(17, 14)}`,
+  sed: `${ARC_BASE}<path d="M3 14V5M3 5l-2 3M3 5l2 3"/>${DOT(3, 14)}${DOT(17, 14)}`,
+  ser: `${ARC_BASE}<path d="M10 14l-5-4.9"/>${DOT(3, 14)}${DOT(17, 14)}`,
+  cse: `${ARC_BASE}${DOT(10, 14)}${DOT(3, 14)}${DOT(17, 14)}`,
+  csa: `${ARC_BASE}<path d="M10 14L3 14M10 14l4.9-4.9"/>${DOT(10, 14)}${DOT(3, 14)}`,
+  csl: `${ARC_BASE}<path d="M3 14h14"/>${DOT(10, 14)}${DOT(3, 14)}`,
+  ct: '<path d="M1 16h6"/><path d="M7 16A8 8 0 0 0 15 8"/>',
+};
+const arcRows = () => DR.ARC_MODES.map(([mode, name, key]) => [name, () => setArcMode(mode), key, null, ARC_ICONS[mode]]);
 
 const EYE = '<path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>';
 const EYE_OFF = '<path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/><path d="M4 4l16 16"/>';
@@ -264,6 +293,8 @@ const state = {
   dp: 2,                           // decimal places in dimensions (status bar), remembered on this PC
   meas: null,                      // Measure in progress: { pts: [[x, y] drawing units], hover }
   dimStyles: { presets: {}, cur: 'Standard' },   // the dimension style presets (dims.js; Format → Dimension style…), remembered on this PC (pd-dimstyles); dsOpen: that dialog is open
+  circleMode: 'cr',                // the Circle button's mode (draw.js CIRCLE_MODES; remembered on this PC as pd-circlemode)
+  arcMode: '3p',                   // the Arc button's mode (draw.js ARC_MODES; remembered on this PC as pd-arcmode)
   dimType: 'aligned',              // the Dimension button's type: aligned, linear, radius, diameter or angle (remembered on this PC)
   dim: null,                       // the Dimension tool in progress: { pts: [[x, y] drawing units], hover, cursor, obj (the circle or arc picked: { c, r }), lines (the lines picked) }
   ldr: null,                       // the Leader tool in progress: { pts: [[x, y] drawing units, up to 3], hover, cursor }
@@ -308,7 +339,7 @@ for (const k of LD.SETTING_KEYS) {
 }
 /** A tab with nothing in it yet; its name is the first free "Drawing N". */
 function emptyDoc() {
-  const names = new Set(state.docs.map((d) => d.name));
+  const names = new Set(state.docs.filter((d) => !d.parked).map((d) => d.name));   // a parked doc is about to be replaced: its name is free
   let n = 1;
   while (names.has('Drawing ' + n)) n++;
   let dirty = false;
@@ -509,7 +540,7 @@ function showStartScreen(on) {
   ui.startRecent.append(h('h2', null, 'Recent files'));
   if (!items[0][4]) { ui.startRecent.append(h('p', null, 'No recent files yet')); return; }
   for (const [, action, , , path] of items) {
-    const open = async () => { await action(); showStartScreen(false); };
+    const open = async () => { await action(); showStartScreen(!!curDoc().parked); };
     ui.startRecent.append(h('button', { type: 'button', class: 'start-recent', title: path, 'data-testid': 'start-recent',
       onclick: open, oncontextmenu: (e) => {
         e.preventDefault();
@@ -522,11 +553,11 @@ function showStartScreen(on) {
 }
 function buildStartScreen() {
   const action = (id, label, run) => h('button', { class: 'btn', type: 'button', 'data-testid': 'start-' + id,
-    onclick: async () => { await run(); showStartScreen(false); } }, label);
+    onclick: async () => { await run(); showStartScreen(!!curDoc().parked); } }, label);
   ui.startRecent = h('section', { class: 'start-recents', 'aria-label': 'Recent files' });
   ui.startScreen = h('section', { class: 'start-screen', hidden: true, 'data-testid': 'start-screen', 'aria-label': 'Start screen' },
     h('h1', null, 'Start'), h('div', { class: 'start-content' },
-      h('div', { class: 'start-actions' }, action('new', 'New drawing', () => { if (!curDoc().empty) addTab(emptyDoc()); }), action('layout', 'New layout', newLayoutTab),
+      h('div', { class: 'start-actions' }, action('new', 'New drawing', () => { if (!curDoc().empty || curDoc().parked) addTab(emptyDoc()); }), action('layout', 'New layout', newLayoutTab),
         action('open', 'Open…', openFile), action('compare', 'Compare drawings…', cmpStart)), ui.startRecent));
   // The overlay's pointer events belong to its controls, not the drawing underneath.
   for (const name of ['pointerdown', 'pointermove', 'pointerup', 'click', 'dblclick', 'wheel', 'contextmenu']) ui.startScreen.addEventListener(name, (e) => e.stopPropagation());
@@ -564,7 +595,7 @@ function buildMenus() {
     },
   };
   menus.Draw = [['Line', 'line', 'L'], ['Polyline', 'polyline', 'P'], ['Rectangle', 'rect', 'R'], ['Rounded rectangle', 'rrect', 'RR'], ['Circle', 'circle', 'C'],
-    ['Ellipse', 'ellipse', 'EL'], ['Arc', 'arc', 'A'], ['Text', 'text', 'T'], ['Divide', 'divide', 'DIV'], ['Measure points', 'measurepoints', 'ME']].map(([text, id, key]) => [text, () => setTool(id), key]);       // every draw tool works on a layout too (156b2)
+    ['Ellipse', 'ellipse', 'EL'], ['Arc', 'arc', 'A'], ['Text', 'text', 'T'], ['Divide', 'divide', 'DIV'], ['Measure points', 'measurepoints', 'ME']].map(([text, id, key]) => [text, () => setTool(id), key, null, null, false, undefined, id === 'circle' ? circleRows : id === 'arc' ? arcRows : null]);       // every draw tool works on a layout too (156b2); Circle and Arc open their modes as a submenu (346a, 347c)
   menus.Modify = [['Move', 'move', 'MV'], ['Copy', 'copy', 'CO'], ['Stretch', 'stretch', 'STR'], ['Array', 'array', 'AR'], ['Rotate', 'rotate', 'RO'], ['Align', 'align', 'AL'], ['Scale', 'scale', 'SC'], ['Fillet', 'fillet', 'F'], ['Offset', 'offset', 'O'], ['Trim', 'trim', 'TR'], ['Extend', 'extend', 'EX'], ['Mirror', 'mirror', 'MI'], ['Reverse', 'reverse', null]].map(([text, id, key]) => [text, () => id === 'rotate' ? DO.rotate() : setTool(id), key, () => !curLay() || LAY_MODS.includes(id) || id === 'rotate' && !!selectedPlaced()]);
   menus.Modify.push(['Text to outlines', () => textToOutlines(), 'TXO']);
   menus.Modify.push(['Burst', burstSelected]);
@@ -577,7 +608,9 @@ function buildMenus() {
   menus.Modify = () => [...modifyItems, [(state.shapingKeepOriginals ? '✓ ' : '  ') + 'Shaping: Keep originals', toggleShapingKeep, null, null, 'Keep the originals and add selected results on top; Create boundary always keeps originals', false, state.shapingKeepOriginals]];
   menus.Help = [['About Project D…', showAbout]];
   menus.Format = [['Dimension style…', showDimStyle]];
-  menus.Arrange = () => [['Centre on page', () => runCommand(CB.resolve('cp')), 'CP', () => !!curLay(), curLay() ? 'Centre the selection as one block on the whole sheet' : 'a drawing has no page']];
+  menus.Arrange = () => [['Centre on page', () => runCommand(CB.resolve('cp')), 'CP', () => !!curLay(), curLay() ? 'Centre the selection as one block on the whole sheet' : 'a drawing has no page'],
+    ['Centre to page horizontally', () => runCommand(CB.resolve('cph')), 'CPH', () => !!curLay(), curLay() ? 'Centre the selection as one block on the whole sheet, left to right only' : 'a drawing has no page'],
+    ['Centre to page vertically', () => runCommand(CB.resolve('cpv')), 'CPV', () => !!curLay(), curLay() ? 'Centre the selection as one block on the whole sheet, bottom to top only' : 'a drawing has no page']];
   menus.Tools = [['Preflight…', showPreflight, 'Drawing checks'], ['Shortcuts…', showShortcuts, 'Aliases + keys'], ['Options…', showOptions]];
   menus.Layout = [['New layout', newLayoutTab], ['Add to layout', addToLayout], ['Parts library', () => showLibrary()], ['Extract part…', () => extractPart()],
     ['Duplicate', duplicate, 'Ctrl+D', () => !!selectedPlaced() || !!editable()?.sel.size], ['Mirror X', () => mirrorSel('x'), null, () => !!selectedPlaced()], ['Mirror Y', () => mirrorSel('y'), null, () => !!selectedPlaced()],
@@ -595,11 +628,11 @@ function buildMenus() {
       close();
       if (was || unbuilt) return;
       const items = typeof menus[name] === 'function' ? menus[name]() : menus[name];
-      drop.replaceChildren(...items.flatMap(([text, fn, hint, enabled, title, sep, checked]) => {
+      drop.replaceChildren(...items.flatMap(([text, fn, hint, enabled, title, sep, checked, sub]) => {
         const bound = CB.COMMANDS.find((c) => c.key === hint && hint);
         if (bound) hint = ownBindings[bound.name].key;
-        const item = h('button', { type: 'button', role: checked == null ? 'menuitem' : 'menuitemcheckbox', 'aria-checked': checked == null ? null : String(checked), title: title || null, disabled: enabled ? !enabled() : false, 'aria-keyshortcuts': hint || null }, text, hint ? h('span', { class: 'hint', 'aria-hidden': 'true' }, hint) : null);
-        item.addEventListener('click', () => { close(); fn(); });
+        const item = h('button', { type: 'button', role: checked == null ? 'menuitem' : 'menuitemcheckbox', 'aria-checked': checked == null ? null : String(checked), 'aria-haspopup': sub ? 'menu' : null, title: title || null, disabled: enabled ? !enabled() : false, 'aria-keyshortcuts': hint || null }, text, hint || sub ? h('span', { class: 'hint', 'aria-hidden': 'true' }, (hint || '') + (hint && sub ? '  ' : '') + (sub ? '▸' : '')) : null);
+        item.addEventListener('click', () => { const r = item.getBoundingClientRect(); close(); if (sub) popMenu(r.right, r.top, sub()); else fn(); });       // an item with a submenu opens it beside the dropdown (popMenu)
         return sep ? [h('div', { class: 'msep', role: 'separator' }), item] : [item];
       }));
       drop.style.left = b.offsetLeft + 'px';
@@ -758,12 +791,19 @@ function ribbonButton(label, svg, action, { small = false, enabled = () => true,
 }
 function ribbonTool(id, small = false) {
   const t = TOOLS.find((t) => t.id === id);
-  const b = ribbonButton(id === 'divide' ? 'Divide / Measure points' : t.label, t.svg, () => id === 'nest' ? openNestDialog() : id === 'step' ? DO.step() : id === 'rotate' ? (curLay() && !selectedPlaced() ? note('Rotate: select a part first (Align is in the dropdown)') : DO.rotate()) : setTool(id),
+  const b = ribbonButton(id === 'divide' ? 'Divide / Measure points' : t.label, t.svg, () => id === 'nest' ? openNestDialog() : id === 'step' ? DO.step() : id === 'rotate' ? (curLay() && !selectedPlaced() ? note('Rotate: select a part first (Align is in the dropdown)') : DO.rotate()) : startButtonTool(id),
     { small, enabled: () => id === 'step' || id === 'nest' ? !!curLay() : id === 'measure' ? !!measureTarget() : id === 'dimension' ? !!dimTarget() : DR.KINDS.includes(id) || id === 'text' ? !!curDoc() : !!editable() || (id === 'contour' && !!curLay()) || (id === 'rotate' && !!curLay()) || (LAY_MODS.includes(id) && !!curLay()), pressed: () => state.tool === id, command: id, description: t.description });
   if (id === 'dimension') {
     b.append(h('span', { class: 'flyout', title: 'Dimension types', 'aria-label': 'Dimension types' }, '▾'));
     b.setAttribute('aria-haspopup', 'menu');
     dimButton(b);
+  }
+  if (id === 'circle' || id === 'arc') {
+    const arc = id === 'arc', mode = arc ? state.arcMode : state.circleMode, Name = t.label;
+    if (mode !== (arc ? '3p' : 'cr')) b.querySelector('svg').replaceWith(icon((arc ? ARC_ICONS : CIRCLE_ICONS)[mode], { size: 30, box: 20, width: 1.5, cap: 'round', join: 'round' }));
+    b.append(h('span', { class: 'flyout', title: Name + ' modes', 'aria-label': Name + ' modes', 'data-testid': id + '-ribbon-flyout' }, '▾'));
+    b.setAttribute('aria-haspopup', 'menu');
+    modeButton(b, id, true);
   }
   if (id === 'break' || id === 'divide') {
     const label = id === 'divide' ? 'Divide / Measure points' : 'Break options';
@@ -1020,6 +1060,7 @@ function updateTabFades() {
 function renderTabs() {
   ui.tabs.replaceChildren(
     ...state.docs.map((d, i) => {
+      if (d.parked) return null;            // the Start screen is all there is: no tab until a drawing is made or opened
       const x = h('span', { class: 'x', 'aria-label': 'Close ' + d.name, role: 'button' }, '×');
       x.addEventListener('click', (e) => { e.stopPropagation(); closeTab(d); });
       const b = h('button', { class: 'dtab' + (i === state.doc ? ' on' : ''), type: 'button', 'data-kind': d.lay ? 'layout' : d.cmp ? 'compare' : d.pdf?.pages > 1 ? 'pdf' : 'drawing' },
@@ -1035,7 +1076,7 @@ function renderTabs() {
         menu.querySelector('button').focus();
       });
       return b;
-    }));
+    }).filter(Boolean));
   const on = ui.tabs.querySelector('.dtab.on');
   if (on && on.scrollIntoView) on.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   updateTabFades();
@@ -1157,10 +1198,9 @@ async function closeTab(d) {
   PS.pageStates(d).forEach(dropCopy);
   state.docs.splice(i, 1);
   const lastClosed = !state.docs.length;
-  if (lastClosed) state.docs.push(emptyDoc());
+  if (lastClosed) state.docs.push(Object.assign(emptyDoc(), { parked: true }));   // Start screen only: the empty doc stays, its tab is not drawn
   state.doc = Math.min(state.doc > i ? state.doc - 1 : state.doc, state.docs.length - 1);
   showDoc();
-  if (lastClosed) showStartScreen(true);
 }
 
 async function saveDirtyPages(d) {
@@ -1211,7 +1251,7 @@ function cycleTab(step) {
 
 /** The active tab changed: its drawing, layers and status, and Fit if the view is still fitted. */
 function showDoc() {
-  showStartScreen(false);
+  showStartScreen(!!curDoc().parked);
   const changed = shownDoc !== curDoc();
   if (changed) {
     // Callers have already changed state.doc; the global view still belongs to shownDoc.
@@ -1270,7 +1310,7 @@ function addTab(d, replaceEmpty = true) {
   if (d.path) rememberRecent(d.path);
   if (d.raw) { d.hist = Ed.createHistory(); d.sel = new Set(); d.hl = []; d.ed = null; warm(d); }
   const cur = curDoc();
-  if (replaceEmpty && cur && cur.empty && !cur.dirty && !d.empty) state.docs[state.doc] = d;      // an untouched empty tab is used up
+  if (cur?.parked || replaceEmpty && cur && cur.empty && !cur.dirty && !d.empty) state.docs[state.doc] = d;      // the parked doc (Start screen only) and an untouched empty tab are used up
   else { state.docs.push(d); state.doc = state.docs.length - 1; }
   quickNext = 'big';
   showDoc();
@@ -1643,9 +1683,10 @@ function buildRail() {
     if (t.sep) return h('div', { class: 'sep', 'aria-hidden': 'true' });
     const off = !BUILT.has(t.id);                                  // not built yet: greyed, with its name in the tooltip, and a click only says so
     const b = h('button', { class: 'tool' + (off ? ' off' : ''), type: 'button', 'aria-label': t.label, title: off ? t.label + ' · Not built yet' : commandTooltip(t.label, t.id, t.description), 'aria-disabled': off ? 'true' : null, 'data-tool': t.id }, icon(t.svg, { cap: t.cap, join: t.join }));
-    b.addEventListener('click', () => { if (off) note(t.label + ': not built yet'); else if (t.id === 'nest') openNestDialog(); else if (t.id === 'step' && curLay()) DO.step(); else if (!b.dataset.held) setTool(t.id); delete b.dataset.held; });
+    b.addEventListener('click', () => { if (off) note(t.label + ': not built yet'); else if (t.id === 'nest') openNestDialog(); else if (t.id === 'step' && curLay()) DO.step(); else if (!b.dataset.held) startButtonTool(t.id); delete b.dataset.held; });
     ui.toolBtns[t.id] = b;
     if (t.id === 'dimension') dimButton(b);
+    if (t.id === 'circle' || t.id === 'arc') { modeButton(b, t.id); paintModeButton(t.id); }
     return b;
   });
   return h('nav', { class: 'rail', 'aria-label': 'Tools' }, items);
@@ -1657,7 +1698,7 @@ function railContour() {
 }
 function paintRailTooltips() {
   for (const t of TOOLS) if (BUILT.has(t.id) && ui.toolBtns[t.id]) ui.toolBtns[t.id].title = commandTooltip(t.label, t.id, t.description);
-  paintDimButton();
+  paintDimButton(); paintModeButton('circle'); paintModeButton('arc');
 }
 /** The Dimension button: shows the type last used, with a corner triangle (or press and hold) that opens the flyout of types. */
 function dimButton(b) {
@@ -1677,6 +1718,52 @@ function paintDimButton() {
   b.replaceChildren(state.dimType === 'aligned' ? icon(t.svg, { cap: t.cap }) : icon(svg, { box: 20, cap: 'round', join: 'round' }), h('span', { class: 'flyout', 'data-testid': 'dim-flyout', title: 'Dimension types' }, icon('<path d="M7 0v7H0z" fill="currentColor" stroke="none"/>', { size: 7, box: 7 })));
   b.title = state.dimType === 'aligned' ? commandTooltip(t.label, 'dimension') : commandTooltip(`Dimension · ${name}`, Object.keys(DIM_OF).find((n) => DIM_OF[n] === state.dimType));
   b.setAttribute('aria-label', 'Dimension');
+}
+/** The Circle and Arc buttons, on the rail and in the ribbon: its corner triangle, a press and hold or a right-click opens the modes; the button shows and starts the last one. */
+function modeButton(b, id, inRibbon) {
+  const open = () => {
+    const r = b.getBoundingClientRect();
+    popMenu(inRibbon ? r.left : r.right + 4, inRibbon ? r.bottom : r.top, id === 'arc' ? arcRows() : circleRows());
+  };
+  let hold = 0;
+  b.addEventListener('pointerdown', (e) => { if (e.button === 0) hold = setTimeout(() => { hold = 0; b.dataset.held = '1'; open(); }, 450); });
+  for (const ev of ['pointerup', 'pointerleave', 'pointercancel']) b.addEventListener(ev, () => { clearTimeout(hold); hold = 0; });
+  b.addEventListener('click', (e) => { if (e.target.closest('.flyout')) { e.stopPropagation(); open(); } }, true);
+  b.addEventListener('contextmenu', (e) => { e.preventDefault(); open(); });
+}
+function paintModeButton(id) {
+  const arc = id === 'arc', b = ui.toolBtns[id], t = TOOLS.find((x) => x.id === id), mode = arc ? state.arcMode : state.circleMode, base = arc ? '3p' : 'cr';
+  const name = (arc ? DR.ARC_MODES : DR.CIRCLE_MODES).find((m) => m[0] === mode)[1];
+  b.replaceChildren(mode === base ? icon(t.svg, { cap: t.cap, join: t.join }) : icon((arc ? ARC_ICONS : CIRCLE_ICONS)[mode], { box: 20, cap: 'round', join: 'round' }), h('span', { class: 'flyout', 'data-testid': id + '-flyout', title: t.label + ' modes' }, icon('<path d="M7 0v7H0z" fill="currentColor" stroke="none"/>', { size: 7, box: 7 })));
+  b.title = mode === base ? commandTooltip(t.label, id) : commandTooltip(`${t.label} · ${name}`, id);
+  b.setAttribute('aria-label', t.label);
+}
+let circleStart = 'cr', arcStart = '3p';                            // the mode setTool('circle' / 'arc') creates the tool with: only the button, the flyout and the menu start a mode; the typed C is always Centre, Radius and the typed A 3-Point
+function startCircle(mode) { circleStart = mode; try { setTool('circle'); } finally { circleStart = 'cr'; } }
+function startArc(mode) {
+  arcStart = mode;
+  try { setTool('arc'); } finally { arcStart = '3p'; }
+  if (mode === 'ct' && state.draw?.kind === 'arc') drawTyped('');       // Continue is Enter at the first prompt
+}
+/** The rail and ribbon buttons of Circle and Arc start the mode they show; any other tool just starts. */
+function startButtonTool(id) { if (id === 'circle') startCircle(state.circleMode); else if (id === 'arc') startArc(state.arcMode); else setTool(id); }
+/** A mode picked in the flyout or the Draw menu: remembered, and the Circle tool starts with it. */
+function setCircleMode(mode) {
+  state.circleMode = mode;
+  try { localStorage.setItem('pd-circlemode', mode); } catch { /* ignore */ }
+  paintModeButton('circle');
+  startCircle(mode);
+  if (ui.ribbonBody) ui.ribbonBody.dataset.contents = '';           // the ribbon's Circle button is drawn again with the mode's icon
+  renderRibbon();
+}
+/** A mode picked in the Arc flyout or the Draw > Arc menu (347c): remembered, and the Arc tool starts with it. */
+function setArcMode(mode) {
+  state.arcMode = mode;
+  try { localStorage.setItem('pd-arcmode', mode); } catch { /* ignore */ }
+  paintModeButton('arc');
+  startArc(mode);
+  if (ui.ribbonBody) ui.ribbonBody.dataset.contents = '';
+  renderRibbon();
 }
 /** A type picked in the flyout, or typed (DLI, DRA, DDI, DAN): remembered, and the Dimension tool starts with it. */
 function setDimType(type) {
@@ -1718,10 +1805,10 @@ function setTool(id) {
   if (id === 'pan') state.msg = 'Drag to pan';
   state.meas = id === 'measure' ? { pts: [], hover: null } : null;
   if (ui.textHint) ui.textHint.hidden = id !== 'text';
-  state.draw = DR.KINDS.includes(id) ? DR.createTool(id, state.drawCfg) : null; state.drawDoc = state.draw ? editable() || curLay() && curDoc() : null; state.drawHover = null;
+  state.draw = DR.KINDS.includes(id) ? DR.createTool(id, { ...state.drawCfg, mode: id === 'arc' ? arcStart : circleStart }) : null; state.drawDoc = state.draw ? editable() || curLay() && curDoc() : null; state.drawHover = null;
   state.mod = MOD_KINDS.includes(id) ? newMod(id) : null; state.modDoc = state.mod ? editable() || curDoc() : null;
   if (state.mod) modStart(id);
-  state.dim = id === 'dimension' ? newDim() : null; state.dimRun = []; state.dimDrag = null; state.ldr = id === 'leader' ? newLdr() : null; state.bal = id === 'balloon' ? { tip: null, hover: null } : null; state.balDrag = null;
+  state.dim = id === 'dimension' ? newDim() : null; state.dimRun = []; state.dimDrag = state.dimHot = null; state.ldr = id === 'leader' ? newLdr() : null; state.bal = id === 'balloon' ? { tip: null, hover: null } : null; state.balDrag = null;
   if (id === 'dimension') state.msg = dimPrompt();
   if (id === 'balloon') state.msg = balPrompt();
   if (id === 'leader') state.msg = ldrPrompt();
@@ -2093,6 +2180,7 @@ function buildPlacedPanel() {
   const ibtn = (kind, how, label) => h('button', { class: 'ib', type: 'button', 'data-testid': `${kind}-${how}`, 'aria-label': label, title: label, onclick: () => arrange(kind, how) }, icon(ICONS[how], { size: 18, cap: 'round', join: 'round' }));
   ui.relSel = select([['selection', 'Selection'], ['sheet', 'Sheet'], ['first', 'First selected'], ['last', 'Last selected'], ['point', 'Point...'], ['rectangle', 'Rectangle']], state.arrangeRel, setArrangeRel, { 'data-testid': 'arrange-rel', 'aria-label': 'Relative to' });
   ui.centreOnPage = h('button', { class: 'btn sm', type: 'button', 'data-testid': 'centre-on-page', 'aria-label': 'Centre on page', onclick: () => runCommand(CB.resolve('cp')) }, 'Centre on page');
+  ui.centreAxis = [['centre-page-h', 'cph', 'Centre to page horizontally'], ['centre-page-v', 'cpv', 'Centre to page vertically']].map(([id, alias, label]) => h('button', { class: 'btn sm', type: 'button', 'data-testid': id, 'aria-label': label, onclick: () => runCommand(CB.resolve(alias)) }, label));
   const gb = (id, text, ic, fn, title) => { const b = h('button', { class: 'btn sm', type: 'button', 'data-testid': id, title, onclick: fn }, icon(ICONS[ic], { size: 16, cap: 'round', join: 'round' }), text); ui[id] = b; return b; };
   ui.pivotRows = [labelled('Pivot', ui.pivotSel, 'field'), labelled('Pivot X (mm)', px, 'field'), labelled('Pivot Y (mm)', py, 'field')];
   ui.rotHelp = h('span', { class: 'lbl' }, 'Click the part again to turn it by hand; drag ◎ to move the pivot.');
@@ -2103,7 +2191,7 @@ function buildPlacedPanel() {
       h('div', { class: 'row arrow' }, h('span', { class: 'lbl rowname' }, 'Distribute'), ibtn('distribute', 'horizontal', 'Distribute horizontally'), ibtn('distribute', 'vertical', 'Distribute vertically'), h('span', { class: 'lbl' }, 'equal gaps')),
       h('div', { class: 'row arrow' }, h('span', { class: 'lbl rowname' }, 'Edges'), ...A.ALIGN_HOW.map((how) => ibtn('distribute', how, 'Distribute ' + how + ' edges'))),
       h('label', { class: 'lbl row' }, h('span', { class: 'rowname' }, 'Relative to'), ui.relSel),
-      h('div', { class: 'btnrow' }, ui.centreOnPage)),
+      ...[ui.centreOnPage, ...ui.centreAxis].map((b) => h('div', { class: 'btnrow' }, b))),
     sec('Group and lock', 'sec-group',
       h('div', { class: 'btnrow wrap' }, gb('grp-group', 'Group', 'group', groupSel, 'Group the selected parts (Ctrl+G)'), gb('grp-ungroup', 'Ungroup', 'ungroup', ungroupSel, 'Ungroup (Ctrl+Shift+G)'),
         gb('grp-lock', 'Lock', 'lock', () => lockSel(true), 'Lock: it cannot be moved, turned, mirrored or deleted'), gb('grp-unlock', 'Unlock', 'unlock', () => lockSel(false), 'Unlock')),
@@ -2781,12 +2869,13 @@ const ARRANGE_PROMPT = 'Align or distribute [Left / Centre on first / Right / To
 /** Align or distribute the selected objects using the Relative to frame. */
 function arrange(kind, how, point = null, rectangle = null) {
   const lay = curLay(), d = !lay && editable(), center = kind === 'center', page = kind === 'page';
+  const pageName = how === 'X' ? 'Centre to page horizontally' : how === 'Y' ? 'Centre to page vertically' : 'Centre on page'; // how: the one axis cph / cpv centre
   if (page && !lay) { note('a drawing has no page'); return; }
   if (d && moveLocked(d, d.sel, 'align')) return;
   const items = lay ? selItems().map((x) => ({ ...x, g: x.p.g, box: boxOf(x) })) : d ? [...d.sel].map((i) => ({ i, g: groupOf(d.raw.groups, i), box: OB.boxOf(d.fl, [i])?.map((v) => v * d.factor) })).filter((x) => x.box) : [];
   const needCenter = 'Center: select two or more objects; the first selected stays put';
   const pointAlign = kind === 'align' && state.arrangeRel === 'point';
-  if (items.length < (page || pointAlign ? 1 : 2)) { note(page ? 'Centre on page: select one or more objects first' : center ? needCenter : lay ? 'Arrange: select two or more parts first (Shift-click, or drag a box round them)' : 'Arrange: select two or more objects first (Shift-click, or drag a box round them)'); return; }
+  if (items.length < (page || pointAlign ? 1 : 2)) { note(page ? pageName + ': select one or more objects first' : center ? needCenter : lay ? 'Arrange: select two or more parts first (Shift-click, or drag a box round them)' : 'Arrange: select two or more objects first (Shift-click, or drag a box round them)'); return; }
   if (lay && items.some((x) => x.p.lock)) { note(LOCKED); return; }
   const rel = page ? 'sheet' : center ? 'first' : !lay && state.arrangeRel === 'sheet' ? 'selection' : state.arrangeRel, sheet = lay ? [0, 0, lay.s.sheetW, lay.s.sheetH] : null;
   const objs = A.objectsOf(items);
@@ -2799,7 +2888,7 @@ function arrange(kind, how, point = null, rectangle = null) {
   } else if (kind === 'align' || page) {
     if (objs.length < 2 && rel !== 'sheet' && rel !== 'point') { note(lay ? 'Align: that is one object (a group). Pick Relative to: Sheet, or select another part' : 'Align: that is one object (a group). Select another object'); return; }
     if (pointAlign && !point) { setTool('select'); state.arrangePoint = { d: d || curDoc(), how }; renderCommand(); return; }
-    deltas = A.alignDeltas(boxes, page ? 'page' : how, rel, sheet, 0, point, A.lastObjectOf(objs));
+    deltas = A.alignDeltas(boxes, page ? 'page' + (how || '') : how, rel, sheet, 0, point, A.lastObjectOf(objs));
   } else {
     const area = rel === 'rectangle' || rel === 'sheet';
     if (objs.length < (area ? 2 : 3)) { note(`Distribute needs ${area ? 'two' : 'three'} or more objects (a group counts as one)`); return; }
@@ -2808,8 +2897,8 @@ function arrange(kind, how, point = null, rectangle = null) {
     deltas = r.deltas; extra = edges ? '' : `, gaps of ${fmt(r.gap)} mm`;
   }
   const per = A.spreadToItems(objs, deltas, items.length);
-  const label = page ? 'Centre on page' : center ? 'Centre on first' : (kind === 'align' ? 'Align ' : 'Distribute ') + how;
-  const message = (name) => page ? `${name} centred on the sheet` : center ? `${objs.length} objects centred on the first selected` : kind === 'align' ? `${name} aligned ${how} to ${relName}` : edges ? `Distributed ${how} edges (${relName})` : `${name} distributed ${how}ly with equal gaps${extra} (${relName})`;
+  const label = page ? pageName : center ? 'Centre on first' : (kind === 'align' ? 'Align ' : 'Distribute ') + how;
+  const message = (name) => page ? `${name} centred ${{ X: 'horizontally ', Y: 'vertically ' }[how] || ''}on the sheet` : center ? `${objs.length} objects centred on the first selected` : kind === 'align' ? `${name} aligned ${how} to ${relName}` : edges ? `Distributed ${how} edges (${relName})` : `${name} distributed ${how}ly with equal gaps${extra} (${relName})`;
   const unchanged = 'Already ' + (center || page ? 'centred' : kind === 'align' ? 'aligned' : 'evenly spaced') + ' (nothing moved)' + (kind === 'distribute' && rel === 'point' ? '; Point uses Selection for Distribute' : '');
   if (d) {
     try {
@@ -3247,6 +3336,10 @@ function placedDown(e, cycled = false) {
     return true;
   }
   if (s && pivEl) { pdrag = { kind: 'pivot' }; return true; }
+  if (hit && !cycled && !e.shiftKey && !state.mod) {
+    const dt = layDimTextGrab(Number(hit.dataset.i), here);
+    if (dt) { pdrag = { ...dt, cx: e.clientX, cy: e.clientY }; return true; }
+  }
   if (hit) {
     const i = Number(hit.dataset.i), cur = selIdxs(), inSel = cur.includes(i);
     if (state.mod?.kind === 'stretch' && state.mod.stage === 'pick') {
@@ -3272,10 +3365,41 @@ function placedDown(e, cycled = false) {
   if (state.mode === 'rotate') { state.mode = 'select'; update(); }
   return false;
 }
+/** A press on the text of the one selected, settled aligned or linear dimension of a layout: the text is dragged along its line (dimGrab on a drawing). → the drag or null. */
+function layDimTextGrab(i, here) {
+  const s = layDimSel(), lay = curDoc()?.lay;
+  if (!s || s.i !== i) return null;
+  const { p, part } = s, dim = Ed.dimOfEntity(part.raw, 0);
+  if (dim && (dim.kind === 'radius' || dim.kind === 'diameter')) { const g = circleTextGrab({ ...dim, e: 0 }, here, 1, 7 / view.scale); return g && { kind: 'dimtext', moved: false, part, placed: lay.placed[p.i], g }; }
+  const sh = dim && (dim.kind === 'aligned' || dim.kind === 'linear') && Ed.dimGeom(dim.kind, dim.params, 1, dim.dp);
+  if (!sh || !Ed.dimTextHit(sh.text, here, 7 / view.scale)) return null;
+  return { kind: 'dimtext', moved: false, part, placed: lay.placed[p.i], g: { ...dim, e: 0, start: here, offset: dim.params.offset, shift: dim.params.shift, text: true, u: sh.u, tx0: sh.tx, len: sh.len, moved: false, cancelled: false } };
+}
+/** The one selected, settled, unlocked dimension of a layout in Select: { i (its index in placedNow), p, part }, else null (345a: its text drags; TODO 345b3: its grips). */
+function layDimSel() {
+  const lay = curDoc()?.lay, sel = selIdxs(), p = lay && sel.length === 1 && placedNow[sel[0]], part = p && lay.parts[p.partId];
+  return part && !p.lock && state.mode === 'select' && isDimPart(part) && isSettled(part, p) ? { i: sel[0], p, part } : null;
+}
+function layDimTextEnd(p) {
+  const d = curDoc(), lay = d?.lay, g = p.g, r = dimDragDone(g, 1);
+  state.dimDrag = null;
+  if (lay && !p.moved && g.grip) { state.dimHot = { d: gripDoc(), g, p }; note('Dimension grip: click the new place · Esc cancels'); paintOverlay(); return; }       // a click on one of its grips: hot, the next click puts it down (dimHotAt, TODO 351)
+  if (lay && !p.moved) { state.mode = 'rotate'; state.pivot = centrePivot(); state.rotCopy = false; state.lref = null; update(); return; }       // a click on the text of the selected dimension: its turn arrows, as a click on its line
+  if (!lay || g.cancelled || !r.changed) { paintOverlay(); return; }
+  const built = Ed.buildDim(g.kind, r.params, 1, g.name, g.dp), snap = laySnap(lay);
+  if (!built || !LD.replaceDim(lay, p.placed, p.part.raw.entities[0], { ...p.part.raw.blocks, [g.name]: built.block }, () => 'o' + uid(), new Set(Object.values(lay.parts).map((q) => q.name)))) { paintOverlay(); return; }
+  pushLay(d, snap, '', g.origin ? 'Stretch dimension' : 'Move dimension'); touch(); update();
+  note(dimDragNote(g, r, built, 1));
+}
 function placedMove(e) {
   const p = pdrag, lay = curLay(), s = selectedPlaced();
   if (!p || !lay || !s) return;
   const here = sheetAt(e.clientX, e.clientY);
+  if (p.kind === 'dimtext') {
+    if (!p.moved && Math.hypot(e.clientX - p.cx, e.clientY - p.cy) <= 4) return;
+    p.moved = true; dimDragTo(s.d, p.g, here);
+    return;
+  }
   if (p.kind === 'pivot') {
     const q = pivotSnap(s.d, here, e.altKey), round = q[2] ? PL.r6 : r2;
     state.pivot = { kind: 'custom', x: round(q[0]), y: round(q[1]) };
@@ -3331,6 +3455,7 @@ function placedUp() {
   const p = pdrag;
   pdrag = null;
   if (!p) return;
+  if (p.kind === 'dimtext') { layDimTextEnd(p); return; }
   flushUpdate();
   if (p.kind === 'pivot') { snapCycle = null; update(); return; }       // the Tab choice ends with the drag
   if (!p.moved) {
@@ -3375,6 +3500,7 @@ function cancelPlacedDrag() {
   const p = pdrag;
   pdrag = null;
   flushUpdate();
+  if (p && p.kind === 'dimtext') { state.dimDrag = null; note('Move cancelled'); paintOverlay(); return; }
   if (p && p.moved && p.g && p.g.snap) { layRestore(p.g.d, p.g.snap, p.g.dirty); note('Cancelled'); } else update();
 }
 
@@ -3671,7 +3797,7 @@ function exportSource(selectionOnly = false, cut = true) {
     const lay = shownLayout(d);
     if (!LD.placedAll(lay).length) return null;
     const { gripTop, gripRight, gripBottom, gripLeft } = lay.s, hasSelection = !!selectedPlaced();
-    const sheet = (l) => ({ name: d.name, path, fl: flatten(LD.layoutRaw(l)), factor: 1, off: new Set(), sheetW: d.lay.s.sheetW, sheetH: d.lay.s.sheetH, grippers: { gripTop, gripRight, gripBottom, gripLeft }, hide: ['Sheet', 'Marks'], hasSelection });
+    const sheet = (l) => ({ name: d.name, path, fl: flatten(LD.layoutRaw(l)), factor: 1, off: new Set(), sheetW: d.lay.s.sheetW, sheetH: d.lay.s.sheetH, grippers: { gripTop, gripRight, gripBottom, gripLeft }, gaps: labelGaps(LD.gridOf(l), l.s.sheetH), hide: ['Sheet', 'Marks'], hasSelection });
     if (!selectionOnly) return sheet(lay);
     const picked = selIdxs().map((i) => placedNow[i]).filter((p) => !(d.hiddenParts && d.hiddenParts.has(p.partId)));       // the selected parts only (a grid copy is placed loose, in the same place); hidden ones stay out
     if (!picked.length) return null;
@@ -3921,6 +4047,10 @@ async function save(forceAs) {
       if (state.docs.some((o) => o !== d && [o.path, o.openPath].some((p) => p && pathKey(p) === key))) { note(`Pick another name: ${path.split(/[\\/]/).pop()} is open in another tab`); return; }
       name = path.split(/[\\/]/).pop();
       if (/\.dxf$/i.test(path) && [d.path, d.openPath].some((p) => p && pathKey(p) === key)) {
+        if (t.core) {                                                  // the open-time grant may have failed silently: the backup name needs its own grant
+          try { await t.core.invoke('grant_balloon_sidecar', { path }); }
+          catch (err) { console.warn('Backup file scope:', err); }       // the write below then reports "Backup failed"
+        }
         try {
           if (await t.fs.exists(path)) await t.fs.writeFile(backupPath(path), await t.fs.readFile(path));
           else backupNote = '. No backup: the original was not found';
@@ -4705,6 +4835,8 @@ const DIM_OF = { dimauto: 'auto', dimlinear: 'linear', dimradius: 'radius', dimd
 const DO = {
   center: () => { if (!activeCmd()) arrange('center'); },
   centreonpage: () => { if (!activeCmd()) arrange('page'); },
+  centrepagehorizontally: () => { if (!activeCmd()) arrange('page', 'X'); },
+  centrepagevertically: () => { if (!activeCmd()) arrange('page', 'Y'); },
   units: chooseUnits,
   eattedit: () => {
     if (cmpDoc() && !cmpEdit()) return;
@@ -5116,7 +5248,7 @@ function drawTools() {
   const cor = PL.corners(sel.part, sel.p).map(Y);
   if (pdrag && pdrag.ghost) out.push(s('polygon', { class: 'ghost', points: poly(PL.corners(sel.part, pdrag.ghost).map(Y)) }));
   if (pdrag && pdrag.ghosts) for (const gh of pdrag.ghosts) out.push(s('polygon', { class: 'ghost', points: poly(PL.corners(gh.part, gh.pl).map(Y)) }));
-  out.push(s('polygon', { class: 'sel-box', points: poly(cor), 'data-mode': state.mode }));
+  if (!gripDoc()?.layDim) out.push(s('polygon', { class: 'sel-box', points: poly(cor), 'data-mode': state.mode }));       // a dimension with grips is drawn solid instead (TODO 345b3)
   if (state.mode === 'rotate') {
     const mid = PL.centreOf(sel.part, sel.p), c = Y(mid), pv = Y(pivotPoint(sel.part, sel.p));
     out.push(...rotationControls(cor, c, pv, k, pdrag?.label?.text));
@@ -5264,13 +5396,15 @@ function paintOverlay(gesture = false) {
           if (!to.has(p.partId)) to.set(p.partId, []);
           to.get(p.partId).push(p);
         }
+        const hiDim = gripDoc()?.layDim?.p;       // the selected dimension is drawn solid in the selection colour, as on a drawing tab (TODO 345b3)
         for (const [id, part] of Object.entries(d.lay.parts)) {
           const fl = state.text.ed?.dim?.raw === part.raw ? state.text.ed.dim.fl : part.fl;
           const slotsOf = (list) => list.map((p) => placedMat(part, p, state.sheetH));
           for (const [list, to] of [[byPart.get(id) || [], calls], [liftedBy.get(id) || [], lifted]]) {
-            const on = list.filter((p) => !p.off && !p.grip), outside = list.filter((p) => p.off || p.grip);          // a part off the sheet or in a gripper is drawn in the mark colour
+            const on = list.filter((p) => !p.off && !p.grip && p !== hiDim), outside = list.filter((p) => p.off || p.grip);          // a part off the sheet or in a gripper is drawn in the mark colour
             if (on.length) to.push({ fl, off: part.off, factor: part.factor || 1, slots: slotsOf(on) });
             if (outside.length) to.push({ fl, off: part.off, factor: part.factor || 1, slots: slotsOf(outside), tint: cssVar('--mark', '#c2410c') });
+            if (list.includes(hiDim) && !hiDim.off && !hiDim.grip) to.push({ fl, off: part.off, factor: 1, slots: slotsOf([hiDim]), tint: cssVar('--selection', '#4f46e5') });
           }
         }
       }
@@ -5349,7 +5483,7 @@ function paintOverlay(gesture = false) {
     }
     // Zoom end (TODO 324b): the scaled picture stays while the sharp base is painted in bands
     if (settled && full && nk && !dkey && !quick && c.dataset.nokeep !== '1' && snapUsable(snap, want)
-      && zoomChunks(c, d, base, want, calls, d.lay ? layKey : d.cmp ? (v) => cmpKeepKey(d, v, cw, chh) : (v) => paintKey(d, v, cw, chh), nk, snap.big)) {
+      && zoomChunks(c, d, base, want, calls, d.lay ? layKey : d.cmp ? (v) => cmpKeepKey(d, v, cw, chh) : (v) => paintKey(d, v, cw, chh), nk, snap.big && !d.lay && !d.cmp)) {       // snap.big may be the quick frame of a plain tab left on screen: a layout / Compare view is not painted by paintEditable
       drawSnap();
       c.dataset.paints = (+c.dataset.paints || 0) + 1;
       ui.cmdUI.place();
@@ -5467,7 +5601,7 @@ function layOverlay(c, d, base, marks, lifted) {
     drawContour(c.getContext('2d'), state.layCt, T, dpr, contourColour(d).replace('var(--text)', base.dark ? '#ededef' : '#18181b'), contourStyle().dash);
     canvasPreviewBounds = unionBox(canvasPreviewBounds, overlayBox({ contour: state.layCt }, T, dpr));
   }
-  const dimG = state.dim ? previewDim(d) : null;                                          // a dimension being placed (sheet mm)
+  const dimG = state.dim || state.dimDrag?.moved ? previewDim(d) : null;                  // a dimension being placed or dragged (a grip run, TODO 351) (sheet mm)
   if (marks || dimG) {
     const k = base.scale * dpr, T = [k, 0, 0, -k, -base.ox * k, (base.sheetH - base.oy) * k];
     if (dimG) { drawDimPreview(c.getContext('2d'), dimG, T, dpr, cssVar('--dim', '#0f766e')); canvasPreviewBounds = unionBox(canvasPreviewBounds, overlayBox({ dim: dimG }, T, dpr)); }
@@ -5634,11 +5768,18 @@ function attachCanvasEvents() {
       if (sheetDown(e)) { capture(c, e); return; }
       if (drawingRotateDown(e)) { capture(c, e); return; }
       if (balDown(e)) { capture(c, e); return; }
+      if (dimHotAt(e, true)) return;       // the second click of click, then click on a dimension grip (345b2)
       const gd = editable(), gg = gd && gripOn(gd) && gripAt(gd, e.clientX, e.clientY);
       if (gg?.group) {
         const p = [gg.x, gg.y];
         drag = { x: e.clientX, y: e.clientY, p, moved: false, shift: e.shiftKey };
         drag.move = state.entityDrag = { d: gd, sel: new Set(gg.group.members), raw: gd.raw.entities, from: p, copy: e.ctrlKey || e.metaKey };
+        capture(c, e); return;
+      }
+      if (gg?.kind === 'dim' && !state.grip) {         // a grip of a selected dimension (345b1): the drag is the dimension's own (dimGrab), not a grip run
+        const p = toDrawing(gd, e.clientX, e.clientY), g = dimGrab(gd, p, gg);
+        if (g) drag = { x: e.clientX, y: e.clientY, p, moved: false, shift: e.shiftKey, dim: g };
+        else note('That dimension grip cannot be dragged');
         capture(c, e); return;
       }
       if (gripDown(e)) { capture(c, e); return; }
@@ -5683,7 +5824,7 @@ function attachCanvasEvents() {
     if (state.drawingRotate?.drag) drawingRotateMove(e);
     if (lrub) { if (!lrub.moved && Math.hypot(e.clientX - lrub.x, e.clientY - lrub.y) > 4) lrub.moved = true; if (lrub.moved) showRubber(lrub, e); }
     const d = pointTarget();
-    if (drawLive()) drawHoverAt(state.drawDoc, e.clientX, e.clientY, e.shiftKey);
+    if (drawLive()) drawHoverAt(state.drawDoc, e.clientX, e.clientY, e.shiftKey, e.ctrlKey);
     if (d && modLive()) modHover(d, e.clientX, e.clientY, e.shiftKey);
     else if (layModLive() && state.mod.stage !== 'pick') modHover(curDoc(), e.clientX, e.clientY, e.shiftKey);
     if (lmod && !lmod.moved && Math.hypot(e.clientX - lmod.x, e.clientY - lmod.y) > 4) lmod.moved = true;
@@ -5695,7 +5836,8 @@ function attachCanvasEvents() {
     if (state.balDrag) balMove(e);
     const picking = (modLive() && state.mod.kind !== 'join' && state.mod.kind !== 'close' && state.mod.kind !== 'reverse' && !(['move', 'copy', 'stretch', 'array', 'rotate', 'scale', 'mirror', 'align'].includes(state.mod.kind) && state.mod.stage === 'pick')) || state.setlen || state.tool === 'measure' || state.tool === 'dimension' || state.tool === 'leader' || state.tool === 'balloon';
     if (drag && !picking && !drag.moved && Math.hypot(e.clientX - drag.x, e.clientY - drag.y) > 4) drag.moved = true;
-    if (drag && drag.moved && drag.dim) { if (!drag.dim.cancelled) dimDragTo(d, drag.dim, toDrawing(d, e.clientX, e.clientY)); }
+    if (dimHotAt(e, false)) { /* a hot dimension grip follows the pointer */ }
+    else if (drag && drag.moved && drag.dim) { if (!drag.dim.cancelled) dimDragTo(d, drag.dim, toDrawing(d, e.clientX, e.clientY)); }
     else if (drag?.moved && drag.move) {
       if (state.entityDrag === drag.move) moveSelectionTo(drag.move, e);
     }
@@ -5751,6 +5893,7 @@ function attachCanvasEvents() {
       else if (modLive()) modUp(d, was, p, e.shiftKey, e.clientX < was.x);
       else if (state.match && editable() === d) { if (!was.moved) matchClick(d, was.p); }
       else if (was.dim && was.moved) dimDragEnd(d, was.dim);
+      else if (was.dim?.grip && !was.moved) { state.dimHot = { d, g: was.dim }; note('Dimension grip: click the new place · Esc cancels'); paintOverlay(); }       // click, then click (345b2)
       else if (was.move && was.moved) {
         if (state.entityDrag === was.move) {
           const ready = moveSelectionTo(was.move, e);
@@ -5774,7 +5917,7 @@ function attachCanvasEvents() {
   });
   c.addEventListener('click', (e) => { const gh = e.target.closest && e.target.closest('[data-gap]'); if (gh && !state.setlen && state.tool !== 'measure') pickGap(gh.dataset.gap); });
   c.addEventListener('mousedown', (e) => { if (curLay() && e.button === 0 && e.detail === 2) { textDblClick(e); if (state.text.ed?.dim) e.preventDefault(); } });       // layout selection rebuilds its SVG before dblclick can fire
-  c.addEventListener('dblclick', (e) => { if (!balDbl(e)) textDblClick(e); });
+  c.addEventListener('dblclick', (e) => { if (state.dimHot) { state.dimHot.g.cancelled = true; state.dimHot = state.dimDrag = null; paintOverlay(); } if (!balDbl(e)) textDblClick(e); });       // the double-click on a dimension's text edits it: its first click did not leave a hot grip (345b2)
   c.addEventListener('mousedown', (e) => { if (e.button === 0 && state.tool === 'text' && !e.target.closest('.texted, .zoombox, .contourpanel')) e.preventDefault(); });      // the click places a text: it must not take the focus from the box it opens
   c.addEventListener('pointercancel', () => { if (state.drawingRotate) state.drawingRotate.drag = null; if (state.grip && !state.grip.hot) gripCancel(); state.entityDrag = null; state.balDrag = null; if (state.text.drag) textDragEnd(true); if (gdrag) cancelGuideDrag(); if (pdrag) cancelPlacedDrag(); drag = null; lrub = null; lmod = null; state.dimDrag = null; hideRubber(); paintOverlay(); end(); });
   c.addEventListener('auxclick', (e) => e.preventDefault());
@@ -5839,7 +5982,7 @@ function renderCommand() {
     ui.prompt.textContent = t.kind === 'fill' ? 'Click inside a closed outline (Esc ends):' : t.source ? 'Click each target (Esc ends):' : 'Click a source object (Esc ends):'; return;
   }
   if (readout) { ui.hist.textContent = 'Command: READOUT' + (state.msg ? '   ' + state.msg : ''); ui.prompt.textContent = 'Hover for the colour, click copies its hex (Esc ends):'; return; }
-  if (lay && state.sheetDrag && (state.sheetDrag.moved || state.sheetDrag.hot)) { const sg = state.sheetDrag; ui.hist.textContent = `Command: STRETCH   Sheet W ${sg.newW} × H ${sg.newH} mm (whole mm)`; ui.prompt.textContent = state.msg ? state.msg : 'Specify the new edge (click, Esc cancels):'; return; }
+  if (lay && state.sheetDrag && (state.sheetDrag.moved || state.sheetDrag.hot)) { const sg = state.sheetDrag; ui.hist.textContent = `Command: STRETCH   Sheet W ${sheetMmText(sg.newW)} × H ${sheetMmText(sg.newH)} mm (${sg.snapped ? 'snapped to part' : 'whole mm'})`; ui.prompt.textContent = state.msg ? state.msg : 'Specify the new edge (click, Esc cancels):'; return; }
   if (lay && sheetSelOn()) { ui.hist.textContent = `Command: SELECT   Sheet ${state.sheetW} × ${state.sheetH} mm selected. Drag a side handle to resize, Esc deselects`; ui.prompt.textContent = state.msg ? state.msg : 'Drag a side handle, or type Width and Height in the Sheet section:'; return; }
   if (state.match && state.match.d.raw.entities[state.match.src]) { ui.hist.textContent = 'Command: MATCHPROP   Source: ' + matchWords(state.match.d.raw.entities[state.match.src]) + (state.msg ? '   ' + state.msg : ''); ui.prompt.textContent = 'Select destination object (Esc ends):'; return; }
   if (state.grip && (ed || lay)) {
@@ -6674,7 +6817,7 @@ const snapPoint = (d, p, skip = -1, extra = [], from = null) => {
     return p.slice(0, 2);
   }
   const ed = !d.lay && !d.cmp && edIndex(d), tol = pickTol(d), types = state.snapTypes;
-  let sn = d.cmp ? state.snap && d.cmp.items.filter((it) => it.visible).reduce((best, it) => preferSnap(best, cmpSnap(it, it.offset, p), ...p, tol, types), null) : d.lay ? state.snap && layoutSnap(d.lay.parts, snapPlaced(), state.sheetW, state.sheetH, ...p, tol, types, from)
+  let sn = d.cmp ? state.snap && d.cmp.items.filter((it) => it.visible).reduce((best, it) => preferSnap(best, cmpSnap(it, it.offset, p), ...p, tol, types), null) : d.lay ? state.snap && layoutSnap(d.lay.parts, snapPlaced(), state.sheetW, state.sheetH, ...p, tol, types, from, state)
     : Ed.snapPick(ed, ...p, tol, state.snap, skip, types, extra, from);
   if (state.snap && d.lay) for (const x of extra) sn = preferSnap(sn, x, ...p, tol, types);       // the tool's own points (a polyline's first point and vertices)
   if (state.snap && ed) {
@@ -6706,7 +6849,7 @@ const snapPoint = (d, p, skip = -1, extra = [], from = null) => {
 function snapObjectCandidates(q, candidates = true) {
   const { d, ed, p, skip, from } = q, tol = pickTol(d), types = state.snapTypes;
   if (d.cmp) return null;
-  if (d.lay) return layoutCandidates(d.lay.parts, snapPlaced(), state.sheetW, state.sheetH, ...p, tol, types, from, candidates);
+  if (d.lay) return layoutCandidates(d.lay.parts, snapPlaced(), state.sheetW, state.sheetH, ...p, tol, types, from, candidates, state);
   const e = Ed.snapObject(ed, ...p, tol, skip, types);
   return e < 0 ? null : { object: ed, e, candidates: candidates ? Ed.snapCandidates(ed, e, ...p, tol, types, from) : [] };
 }
@@ -6732,6 +6875,12 @@ function pickPoint(d, p, pts, shift, hover = false) {
   return tq ? [tq[0], tq[1]] : straight && q.length === 2 ? Ed.orthoLock(base, q) : q;
 }
 
+/** The selection's items with those of a selected kept dimension marked solid (render.js: no dashes, TODO 345b1); hl itself when no dimension is selected. */
+function solidDims(d, sel, hl) {
+  const dims = new Set();
+  for (const e of sel) { const x = d.raw.entities[e]; if (x && x.type === 'INSERT' && Ed.DIM_BLOCK.test(x.r.v[x.r.c.indexOf(2)])) dims.add(e); }
+  return dims.size ? hl.map((it) => dims.has(it.e) ? { ...it, solid: true } : it) : hl;
+}
 let selectionEditDoc = null, selectionEditFrame = 0;
 const DEFER_SELECTION_EDIT = 2000; // above this many selected items the ribbon / Properties refresh waits two frames (329b)
 function setSel(d, sel, stretchSelection = null, prefiltered = false) {
@@ -6745,8 +6894,8 @@ function setSel(d, sel, stretchSelection = null, prefiltered = false) {
   if (ed) {
     const hl = [];
     for (const e of sel) if (ed.byEnt[e]) for (const i of ed.byEnt[e]) hl.push(ed.items[i]);
-    d.hl = hl;
-  } else d.hl = Ed.itemsOfEntities(d.fl, sel, cmpEditingItem(d)?.off || d.off, hidIdx(d));
+    d.hl = solidDims(d, sel, hl);
+  } else d.hl = solidDims(d, sel, Ed.itemsOfEntities(d.fl, sel, cmpEditingItem(d)?.off || d.off, hidIdx(d)));
   if (!d.ed) warm(d);
   paintOverlay();
   cancelAnimationFrame(selectionEditFrame); selectionEditDoc = null;
@@ -7299,16 +7448,14 @@ function dimDraft(at) {
     return D.obj && AD.autoDraft(D.obj, at, D.as);
   }
   if (!D.obj || !at) return null;
-  if (type === 'radius') return { kind: 'radius', params: { c: D.obj.c, r: D.obj.r, p: at } };
-  const ends = Ed.diameterEnds(D.obj.c, D.obj.r, at);
-  return ends && { kind: 'diameter', params: { ...ends, offset: 0 } };
+  return Ed.circleDraft(type, D.obj.c, D.obj.r, at);
 }
 /** The dimension being placed or moved as a drawing (edit.js dimGeom), or null. */
 function previewDim(d) {
   if (!d || !dimTarget()) return null;
   if (state.ldr) return ldrPreview(d);
   const G = state.dimDrag;
-  if (G && G.moved) return Ed.dimGeom(G.kind, { ...G.params, offset: G.offset }, d.factor, G.dp);
+  if (G && G.moved) return Ed.dimGeom(G.kind, G.circ ? circleTextParams(G) : { ...G.params, offset: G.offset, shift: G.shift, ...(G.origin && { a: G.pa, b: G.pb }) }, d.factor, G.dp);
   const D = state.dim, look = dimNew(d), auto = D && state.dimType === 'auto', ghost = auto && !D.obj && !D.pts.length && D.ghost && D.cursor;       // Automatic, before the pick: a faint ghost of what a click on the hovered object makes
   const hot = auto && D.hot && D.cursor && !D.lines.length;                                                          // ... and a second line under the pointer: a faint angle to it, the line marked
   const m = ghost ? AD.autoDraft(D.ghost, AD.ghostAt(D.ghost, D.cursor, 3 * look.textH)) : hot ? { kind: 'angle', params: Ed.angleBetween(D.obj.l, D.hot, D.cursor) } : dimDraft(D && (D.pts.length === 2 && typedAt() || D.cursor));
@@ -7440,23 +7587,110 @@ function dimSel(d) {
   return o && { e, ...o };
 }
 /** A press on the one selected aligned or linear dimension starts moving it (otherwise null: the press selects or draws a box). */
-function dimGrab(d, p) {
-  const sd = dimSel(d);
-  if (!sd || (sd.kind !== 'aligned' && sd.kind !== 'linear') || Ed.hitEntity(edIndex(d), p[0], p[1], pickTol(d)) !== sd.e) return null;
-  return { ...sd, start: p, offset: sd.params.offset, moved: false, cancelled: false };
+function dimGrab(d, p, grip = null) {
+  const o = grip && Ed.dimOfEntity(d.raw, grip.e), sd = grip ? o && { e: grip.e, ...o } : dimSel(d);       // grip: a grip of the dimension (gripList kind 'dim', TODO 345b1) instead of a press on its text or line
+  if (!sd) return null;
+  if (sd.kind === 'radius' || sd.kind === 'diameter') {
+    const g = circleTextGrab(sd, p, d.factor, pickTol(d), grip && d.sel);
+    return g && grip && grip.id !== 't' ? { ...g, grip: grip.id, edit: grip.id, from: [grip.x, grip.y], cp: sd.params } : g;       // the other grips of a circle's dimension turn it round its centre / move the radius (TODO 345b2)
+  }
+  if (sd.kind !== 'aligned' && sd.kind !== 'linear') return null;
+  const sh = Ed.dimGeom(sd.kind, sd.params, d.factor, sd.dp), onText = grip ? grip.id === 't' : !!sh && Ed.dimTextHit(sh.text, p, pickTol(d));      // a press on the text moves it along the line (and across it: the offset)
+  if (!grip && !onText && Ed.hitEntity(edIndex(d), p[0], p[1], pickTol(d)) !== sd.e) return null;
+  const origin = grip && { o0: 'a', o1: 'b' }[grip.id];       // an origin grip moves that measured point; the dimension line stays where it is (through its middle)
+  return { ...sd, start: p, offset: sd.params.offset, shift: sd.params.shift, text: onText, u: sh && sh.u, tx0: sh && sh.tx, len: sh && sh.len, moved: false, cancelled: false,
+    ...(grip && { grip: grip.id, sel: new Set(d.sel) }), ...(origin && { origin, pa: sd.params.a, pb: sd.params.b }) };
 }
+/** TODO 345b2: a clicked (not dragged) dimension grip is hot: the dimension follows the pointer (e) and the next click (put) puts it down, as every other grip. → true while one is hot. TODO 351: on a layout h.p is the placed-dimension drag (placedMove's): h.d is the grips' little drawing, the pointer and the snaps work in the layout, the put-down is layDimTextEnd (one Undo). */
+function dimHotAt(e, put) {
+  const h = state.dimHot;
+  if (!h) return false;
+  const d = gripDoc(), ld = h.p && curDoc();
+  if (h.d !== d || !gripOn(d) || h.p && h.p.placed !== d.vlay.lay.placed[d.layDim.p.i]) { state.dimHot = state.dimDrag = null; paintOverlay(); return false; }
+  dimDragTo(ld || d, h.g, toDrawing(ld || d, e.clientX, e.clientY));
+  if (put) { state.dimHot = null; if (ld) layDimTextEnd({ ...h.p, moved: true }); else dimDragEnd(d, h.g); }
+  return true;
+}
+/** The point a dimension grip drag is at: snapped, on the 0.01 mm grid when free. */
+function dimGripPoint(d, p, g) {
+  let q = snapPoint(d, p, g.e);
+  const f = d.lay ? 1 : d.factor;       // a layout is in sheet mm (TODO 345b3)
+  if (q.length === 2) q = [Math.round(q[0] * f * 100) / 100 / f, Math.round(q[1] * f * 100) / 100 / f];
+  return q.slice(0, 2);
+}
+/**
+ * TODO 345b2: raw after a plain grip run of g (grip at g.base, put down at g.to): a selected aligned / linear dimension with a measured point on that grip that did not follow it
+ * (followDimensions moves the linked ones) goes to the grip's new place too, as AutoCAD moves every selected grip at the same spot. One edit.
+ */
+function dimsOnGrip(d, g, raw) {
+  if (g.opt || !g.to) return raw;
+  for (const e of g.sel) {
+    const sd = e !== g.e && Ed.dimOfEntity(raw, e);
+    for (const which of sd && (sd.kind === 'aligned' || sd.kind === 'linear') ? ['a', 'b'] : []) {
+      if (Math.hypot(sd.params[which][0] - g.base[0], sd.params[which][1] - g.base[1]) > 1e-6) continue;
+      const n = Ed.dimMovePoint(sd.kind, sd.params, which, g.to.slice(0, 2), d.factor, sd.dp), built = n && Ed.buildDim(sd.kind, n, d.factor, sd.name, sd.dp);
+      if (built) raw = { ...raw, ...Ed.replaceDimension(raw, built) };
+    }
+  }
+  return raw;
+}
+/** A press on the text of a selected radius or diameter dimension (sd: dimSel / Ed.dimOfEntity) drags the text round its circle, in or out (TODO 344); else null (sel: the drawing's selection when the press is on the dimension's text grip, wherever the text is). */
+function circleTextGrab(sd, p, factor, tol, sel = null) {
+  const sh = Ed.dimGeom(sd.kind, sd.params, factor, sd.dp);
+  if (!sh || !sel && !Ed.dimTextHit(sh.text, p, tol)) return null;
+  const { c } = Ed.circleOfDim(sd.kind, sd.params), m = Ed.dimTextMiddle(sh.text), tp0 = [m[0] - c[0], m[1] - c[1]];
+  return { ...sd, start: p, circ: true, tp0, tp: tp0, text: true, moved: false, cancelled: false, ...(sel && { grip: 't', sel: new Set(sel) }) };
+}
+/** The params of a radius or diameter dimension after its text was dragged to g.tp: a diameter's text back inside the circle is its old look again (no tp). */
+function circleTextParams(g) {
+  if (g.edit) return g.cp;       // a turned / moved circle dimension (345b2): dimGripEdit's params
+  const { r } = Ed.circleOfDim(g.kind, g.params), out = Math.hypot(g.tp[0], g.tp[1]) > r;
+  return g.kind === 'diameter' && !out ? { ...g.params, tp: undefined, pos: g.params.tp ? 'above' : g.params.pos } : { ...g.params, tp: g.tp };
+}
+/** Did the drag change the dimension: the text moved 0.001 mm or more, and not just inside a diameter's circle (where it stays put). */
+const circleTextMoved = (g, factor) => g.edit ? JSON.stringify(g.cp) !== JSON.stringify(g.params) : Math.hypot(g.tp[0] - g.tp0[0], g.tp[1] - g.tp0[1]) * factor >= 0.001 && !(!g.params.tp && !circleTextParams(g).tp);
 function dimDragTo(d, g, p) {
+  if (g.circ) {
+    if (g.edit) { const q = dimGripPoint(d, p, g), n = Ed.dimGripEdit(g.kind, g.params, g.edit, g.from, q); if (n) { g.cp = n; g.to = q; } }       // no change when q is the centre: the last good place stays
+    else g.tp = [g.tp0[0] + p[0] - g.start[0], g.tp0[1] + p[1] - g.start[1]];
+    g.moved = true; state.dimDrag = g;
+    paintOverlay();
+    return;
+  }
   const a = g.params.a, b = g.params.b, ax = g.params.axis;
+  if (g.origin) {         // a measured point goes to the pointer (snapped); the line stays through where its middle was, so the value changes (as AutoCAD's stretch of an extension line origin)
+    const q = dimGripPoint(d, p, g), n = Ed.dimMovePoint(g.kind, g.params, g.origin, q, d.lay ? 1 : d.factor, g.dp);
+    if (n) { g.pa = n.a; g.pb = n.b; g.offset = n.offset; g.to = q; }       // two equal points draw nothing: the last good place stays
+    g.moved = true; state.dimDrag = g;
+    paintOverlay();
+    return;
+  }
   g.offset = g.params.offset + Ed.dimOffsetAt(a, b, p, ax) - Ed.dimOffsetAt(a, b, g.start, ax);
+  if (g.text) g.shift = g.tx0 - g.len / 2 + (p[0] - g.start[0]) * g.u[0] + (p[1] - g.start[1]) * g.u[1];
   g.moved = true; state.dimDrag = g;
   paintOverlay();
 }
+/** What a dimension drag g (dimGrab) leaves, f mm a drawing unit: { params, sh, pt (mm the text / the measured points moved), changed (0.001 mm or more) }. Shared by the drawing tabs and a layout (TODO 345b3). */
+function dimDragDone(g, f) {
+  if (g.circ) return { params: circleTextParams(g), changed: circleTextMoved(g, f) };
+  const off = Math.abs(g.offset - g.params.offset) * f, sh = g.text ? Math.abs(g.shift - (g.tx0 - g.len / 2)) * f : 0;
+  const pt = g.origin ? Math.hypot(g.pa[0] - g.params.a[0], g.pa[1] - g.params.a[1], g.pb[0] - g.params.b[0], g.pb[1] - g.params.b[1]) * f : 0;
+  return { params: { ...g.params, offset: g.offset, shift: g.shift, ...(g.origin && { a: g.pa, b: g.pb }) }, sh, pt, changed: !(off < 0.001 && sh < 0.001 && pt < 0.001) };
+}
+/** The message after the dimension drag g (r: dimDragDone) made `built`. */
+function dimDragNote(g, r, built, f) {
+  if (g.circ) return g.edit === 'c' ? 'Radius dimension moved. Ctrl+Z undoes it' : g.edit ? 'Dimension turned round its centre. Ctrl+Z undoes it' : 'Dimension text moved. Ctrl+Z undoes it';
+  if (r.pt >= 0.001) return `Dimension point moved: it measures ${built.label} now. Ctrl+Z undoes it`;
+  return r.sh >= 0.001 ? `Dimension text moved ${fmtSize(Math.abs(g.shift) * f)} mm from the middle of its line. Ctrl+Z undoes it` : `Dimension moved: its line is ${fmtSize(Math.abs(g.offset) * f)} mm from the points. Ctrl+Z undoes it`;
+}
 function dimDragEnd(d, g) {
   state.dimDrag = null;
-  if (g.cancelled || Math.abs(g.offset - g.params.offset) * d.factor < 0.001) { paintOverlay(); return; }
-  if (!commit(d, Ed.replaceDimension(d.raw, Ed.buildDim(g.kind, { ...g.params, offset: g.offset }, d.factor, g.name, g.dp)), 'Move dimension')) { paintOverlay(); return; }
-  setSel(d, new Set([g.e]));
-  note(`Dimension moved: its line is ${fmtSize(Math.abs(g.offset) * d.factor)} mm from the points. Ctrl+Z undoes it`);
+  const r = dimDragDone(g, d.factor);
+  if (g.cancelled || !r.changed) { paintOverlay(); return; }
+  const built = Ed.buildDim(g.kind, r.params, d.factor, g.name, g.dp);
+  if (!commit(d, Ed.replaceDimension(d.raw, built), g.origin ? 'Stretch dimension' : 'Move dimension')) { paintOverlay(); return; }
+  setSel(d, g.sel || new Set([g.e]));
+  note(dimDragNote(g, r, built, d.factor));
 }
 /** The text height typed in the right panel: the selected dimension is rebuilt (arrowheads and extension lines follow). */
 function dimHeightTyped() {
@@ -8228,9 +8462,9 @@ function drawPick(d, cx, cy, shift, hover) {
   if (straight && q.length === 2) q = Ed.orthoLock(base, q);                // a snap beats ORTHO
   return [q[0] * f, q[1] * f, q[2] || null];
 }
-function drawHoverAt(d, cx, cy, shift) {
+function drawHoverAt(d, cx, cy, shift, ctrl) {
   const q = drawPick(d, cx, cy, shift, true);
-  state.drawHover = q; DR.toolHover(state.draw, [q[0], q[1]]);
+  state.drawHover = q; DR.toolHover(state.draw, [q[0], q[1]], ctrl);
   paintOverlay();
 }
 function drawClick(e) {
@@ -8240,9 +8474,16 @@ function drawClick(e) {
   const q = drawPick(d, e.clientX, e.clientY, e.shiftKey);
   trackStop();                                                      // a click ends the hover (and the lock it showed)
   state.drawHover = q; state.msg = null;
-  if (cursorDynamic() && DI.hasTyped(cursorInput())) { DR.toolHover(state.draw, q.slice(0, 2)); cursorCommit(); return; }
+  if (cursorDynamic() && DI.hasTyped(cursorInput())) { DR.toolHover(state.draw, q.slice(0, 2), e.ctrlKey); cursorCommit(); return; }
   state.draw.cursorInput = null;
-  drawApply(DR.toolClick(state.draw, [q[0], q[1]]));
+  drawApply(DR.toolClick(state.draw, [q[0], q[1]], DR.tangentMode(state.draw) ? tangentObjectAt(d, e.clientX, e.clientY) : null, e.ctrlKey));
+}
+/** The line, circle or arc under a click (mm) for a Circle's tangent pick, on a drawing, a Compare source or a layout; null when the click is on none (or on a spline or ellipse). */
+function tangentObjectAt(d, cx, cy) {
+  const p = toDrawing(d, cx, cy);
+  if (d.lay) return layoutTangentObject(d.lay.parts, snapPlaced(), ...p, pickTol(d))?.o || null;
+  const ed = edIndex(d), f = d.factor;
+  return nearestObject(ed.ix, (i) => ed.vis[i] === 1, p[0], p[1], pickTol(d), (q) => [q[0] * f, q[1] * f], f)?.o || null;
 }
 /** What a tool action gave: shapes become ONE labelled undo step; otherwise its message and the new prompt. */
 function drawApply(r) {
@@ -8252,10 +8493,12 @@ function drawApply(r) {
   if (r.made) trackClear();                                         // the tool action is over: the acquired points go
   if (T.kind === 'rrect' && T.radius !== state.drawCfg.radius) { state.drawCfg.radius = T.radius; try { localStorage.setItem('pd-rradius', String(T.radius)); } catch { /* ignore */ } }
   if (r.made && r.made.length) { drawCommit(d, T.kind, r.made); return; }
+  if (r.end) { setTool('select'); note(r.msg); return; }              // "Circle does not exist.": nothing drawn, the command ends
   state.msg = r.msg || null; renderCommand(); paintOverlay();
 }
 /** Enter / Esc / right-click: the tool ends what it has (a line or polyline keeps it) and the acquired points go. */
-function drawFinish() { state.draw.cursorInput = null; trackClear(); drawApply(DR.toolFinish(state.draw)); }
+function drawFinish() { state.draw.cursorInput = null; trackClear(); state.draw.cont = lastDrawn.get(state.drawDoc) || null; drawApply(DR.toolFinish(state.draw)); }
+const lastDrawn = new WeakMap();                                    // tab document → the last shape drawn in it (mm): where the Arc's Continue starts (347c)
 /** Shift+right-click while a tool asks for a point (TODO 72): Enter, Cancel, Close and Undo last point where they apply, then the snap types. → false when no such tool is on */
 function toolMenu(e) {
   const T = drawLive() ? state.draw : null;
@@ -8291,6 +8534,7 @@ function layDrawCommit(d, kind, shapes, attrs) {
   note(`${DR.LABELS[kind]} made on layer ${attrs.layer}` + (shapes.length > 1 ? ` (${shapes.length} lines)` : '') + '. Ctrl+Z takes it back');
 }
 function drawCommit(d, kind, shapes) {
+  lastDrawn.set(d, shapes[shapes.length - 1]);
   const layer = curLayerName(d);
   const attrs = currentColour === 'bylayer' ? { layer } : PR.withColour({ layer }, currentColour);
   if (d.lay) { view.fitted = false; layDrawCommit(d, kind, shapes, attrs); return; }
@@ -8305,7 +8549,7 @@ function drawTyped(raw) {
   const T = state.draw, word = raw.trim().toLowerCase();
   T.cursorInput = null;
   if (word && !DR.toolBusy(T) && !DR.toolWords(T).has(word)) { const cmd = CB.resolve(word, 'draw', ownCommands); if (cmd && (TOOL_OF[cmd.name] || cmd.name) !== T.kind) { runCommand(cmd); return true; } }       // a command typed between two shapes
-  state.msg = null;
+  state.msg = null; T.cont = lastDrawn.get(state.drawDoc) || null;
   drawApply(DR.toolType(T, raw, drawingUnit()));
   return true;
 }
@@ -8335,7 +8579,8 @@ function drawOvl(paint = false) {
   if (tab?.cmp?.show && !tab.cmp.moving && tab.cmp.res && !tab.cmp.stale) cmpGlow(tab.cmp, out);
   if (d && drawLive()) {
     const T = state.draw, dynamic = cursorDynamic() && T.hover ? cursorPoint() : null;
-    const pv = DR.toolPreview(dynamic?.point && DI.hasTyped(cursorInput()) ? { ...T, hover: dynamic.point } : T);
+    const typedPv = dynamic && DI.hasTyped(cursorInput()) && (dynamic.point || T.ask && dynamic.value != null);       // Arc's A / L prompts have a typed value, no point
+    const pv = DR.toolPreview(typedPv ? { ...T, hover: dynamic.point || T.hover, value: dynamic.value } : T);
     for (const g of pv.guides) {
       out.push(s('path', { class: 'dr-guide', transform: drawingTransform(d), d: DR.svgPath({ t: 'line', a: g[0], b: g[1] }, H) }));
       if (dynamic && T.kind === 'circle') circleGuide = out.at(-1);        // dropped below once the Radius box's own guide is placed
@@ -10946,18 +11191,30 @@ function trackOvl(d, out, k) {
 function gripDoc() {
   const d = curDoc();
   if (!d || !d.lay) return editable();
-  if (state.mode === 'rotate' || pdrag) return null;       // a part drag changes the placement on every move: no object doc to rebuild then
+  if (state.mode === 'rotate' || pdrag && pdrag.kind !== 'dimtext') return null;       // a part drag changes the placement on every move: no object doc to rebuild then (a dimension drag keeps its grips, the dragged one hot)
   const v = layObjSelDoc(d);
-  return v.sel.size ? v : null;
+  return v.sel.size ? v : layDimDoc(d);
+}
+const dimViews = new WeakMap();
+/** TODO 345b3: a layout's selected dimension (layDimSel) as a little drawing (sheet mm, the dimension is entity 0) for the shared dimension grips; null when there is none. */
+function layDimDoc(d) {
+  const s = layDimSel();
+  if (!s) return null;
+  let v = dimViews.get(d);
+  if (v?.raw !== s.part.raw) dimViews.set(d, v = { raw: s.part.raw, factor: 1, sel: new Set([0]), vlay: d, hid: null, locked: null });       // kept while the dimension stays the same: gripList's cache follows `sel`
+  v.layDim = s;
+  return v;
 }
 /** Do grips show? On a drawing tab (or a layout's objects) with the Select tool, something selected (not too many things). A single text shows them with its handles: the grip takes the click (gripDown runs first). */
 const gripOn = (d) => !!d && !state.drawingRotate && !state.match && !state.colourTool && gripDoc() === d && state.tool === 'select' && !state.setlen && !!d.sel && d.sel !== d.txoSel && d.sel.size > 0 && (d.sel.size <= GR.MAX_SELECTED || !!wholeDrawingGroup(d.raw.groups, d.sel)) && !textEditing();
 /** 164a: the drawing's attribute display mode (0 none, 1 normal, 2 all): the block attribute grips follow it. */
 const attMode = (d) => { const v = Number(d.raw.header?.$ATTMODE ?? 1); return Number.isFinite(v) ? v : 1; };
+/** Does a dimension of d show grips: a drawing tab, a PDF sheet, Compare's linked drawing or a layout's selected dimension (layDimDoc, TODO 345b3)? Not a layout's objects-as-a-drawing (it has no dimensions). */
+const dimGripsOk = (d) => !d.lay && (!d.vlay || !!d.layDim);
 /** Every grip of the selection: [{ e, id, kind, x, y }] (drawing units); kept while the selection and the drawing stay the same. */
 function gripList(d) {
   const ents = d.raw.entities;
-  if (d.gripCache && d.gripCache.sel === d.sel && d.gripCache.ents === ents && d.gripCache.groups === d.raw.groups) return d.gripCache.list;
+  if (d.gripCache && d.gripCache.sel === d.sel && d.gripCache.ents === ents && d.gripCache.blocks === d.raw.blocks && d.gripCache.groups === d.raw.groups) return d.gripCache.list;       // blocks: an edited dimension keeps its entity list
   const list = [], grouped = new Set();
   for (const g of d.raw.groups || []) {
     if (g.selectable === false || !g.members.every((i) => d.sel.has(i))) continue;
@@ -10969,19 +11226,22 @@ function gripList(d) {
     if (grouped.has(e)) continue;
     const ent = ents[e], lp = ent && ldrPseudo(d, e);
     if (lp) { for (const g of GR.gripsOf(lp)) list.push({ e, ...g }); continue; }       // a leader: a grip at each point
-    if (!ent || ent.layer === Ed.DIM_LAYER || (d.lockedEnts && d.lockedEnts.has(ent))) continue;      // lockedEnts: a layout's locked objects
+    if (!ent || (d.lockedEnts && d.lockedEnts.has(ent))) continue;      // lockedEnts: a layout's locked objects
+    if (ent.layer === Ed.DIM_LAYER) {       // a kept dimension (345b1): grips in a drawing tab, a PDF sheet, Compare and a layout's selected dimension (dimGripsOk; 345b2, 345b3)
+      const sd = dimGripsOk(d) && !lockedEnt(d, e) && Ed.dimOfEntity(d.raw, e);       // a locked dimension (its layer locked) has none
+      if (sd) for (const g of GR.dimGripsOf(sd.kind, sd.params, d.factor, sd.dp)) list.push({ e, ...g });
+      continue;
+    }
     for (const g of GR.gripsOf(ent, attMode(d))) list.push({ e, ...g });
   }
   const shown = GR.capGrips(list);
-  d.gripCache = { sel: d.sel, ents, groups: d.raw.groups, list: shown };
+  d.gripCache = { sel: d.sel, ents, blocks: d.raw.blocks, groups: d.raw.groups, list: shown };
   return shown;
 }
 const sheetPx = (d, p) => { const [sx, sy] = toSheetPt(d, p), r = ui.canvas.getBoundingClientRect(); return [(sx - view.ox) * view.scale + r.left, (sy - view.oy) * view.scale + r.top]; };
 /** The grip under a pointer position (8 px), or null. */
 function gripAt(d, cx, cy) {
-  let best = null, bd = 8.5;
-  for (const g of gripList(d)) { const [px, py] = sheetPx(d, [g.x, g.y]), dd = Math.hypot(cx - px, cy - py); if (dd <= bd) { bd = dd; best = g; } }
-  return best;
+  return GR.pickGrip(gripList(d).map((g) => { const [px, py] = sheetPx(d, [g.x, g.y]); return [g, Math.hypot(cx - px, cy - py)]; }));       // a tie with a dimension's grip goes to the other object; the dimension's origin goes with it (dimsOnGrip)
 }
 /** The point under the pointer for a grip: the snaps (the 0.01 mm grid when free), and Shift / ORTHO along X or Y from where the rubber band starts. */
 function gripPick(g, cx, cy, shift, hover) {
@@ -11155,7 +11415,7 @@ function gripHoverAt(e) {
   if (id === state.gripHover) return;
   state.gripHover = id; drawOvl();
   clearTimeout(gripOptTimer);
-  if (hit && !hit.group && !ui.ctx) gripOptTimer = setTimeout(() => gripOptionsOpen(hit), 300);       // 163a: the grip's options list after 300 ms of rest
+  if (hit && !hit.group && hit.kind !== 'dim' && !ui.ctx) gripOptTimer = setTimeout(() => gripOptionsOpen(hit), 300);       // 163a: the grip's options list after 300 ms of rest
 }
 /** The hot grips (Shift-click) of d's selection as a Map 'e:id' → grip, or null when there are none or the selection / drawing changed since. */
 function hotsOf(d) {
@@ -11171,6 +11431,12 @@ function gripDown(e) {
   if (!gripOn(d)) return false;
   const hit = gripAt(d, e.clientX, e.clientY);
   if (!hit) return false;
+  if (hit.kind === 'dim' && d.layDim) {       // a layout dimension's grip (TODO 345b3): the layout's own dimension drag (placedMove / layDimTextEnd), as dimGrab on a drawing tab
+    const g = dimGrab(d, sheetAt(e.clientX, e.clientY), hit);
+    if (g) pdrag = { kind: 'dimtext', moved: false, part: d.layDim.part, placed: d.vlay.lay.placed[d.layDim.p.i], g, cx: e.clientX, cy: e.clientY };
+    else note('That dimension grip cannot be dragged');
+    return true;
+  }
   gripStart(d, hit, e);
   return true;
 }
@@ -11252,7 +11518,7 @@ function gripCommit() {
   view.fitted = false;
   if (d.vlay) { if (!layGripCommit(d, g.nexts ? [...g.nexts].map(([i, n]) => [g.ents.get(i), n]) : [[g.ent, g.next]], label, g.sel)) { note('That would leave nothing of the shape, so it stays as it was'); paintOverlay(); return; } paintOverlay(); }
   else {
-    if (!commit(d, g.nexts ? gripHotsRaw(g) : g.next.type === 'LEADER' ? LR.replace(d.raw, g.next.name, g.next.model) : followDimensions(d.raw, { entities: d.raw.entities.map((x, i) => (i === g.e ? g.next : x)), blocks: d.raw.blocks }, d.factor), label, g.sel)) { paintOverlay(); return; }       // too nested: commit showed why
+    if (!commit(d, g.nexts ? gripHotsRaw(g) : g.next.type === 'LEADER' ? LR.replace(d.raw, g.next.name, g.next.model) : dimsOnGrip(d, g, followDimensions(d.raw, { entities: d.raw.entities.map((x, i) => (i === g.e ? g.next : x)), blocks: d.raw.blocks }, d.factor)), label, g.sel)) { paintOverlay(); return; }       // too nested: commit showed why
     setSel(d, g.sel);
   }
   const unlinked = (g.nexts ? [...g.nexts].map(([i, n]) => [g.ents.get(i), n]) : [[g.ent, g.next]]).some(([o, n]) => o.type === 'HATCH' && GR.get(o.r, 71) === 1 && GR.get(n.r, 71) === 0);     // 164b1: AutoCAD says so when a Stretch ends the association
@@ -11435,7 +11701,8 @@ function gripOvl(d, out, k, grips) {
   const hots = hotsOf(d);
   for (const x of list) {
     const move = x.group && state.entityDrag?.d === d && x.group.members.every((i) => state.entityDrag.sel.has(i)) ? state.entityDrag : null;
-    grips.push(square([x.x + (move?.dx || 0), x.y + (move?.dy || 0)], !!move || !!hots && hots.has(x.e + ':' + x.id), x.e + ':' + x.id, x.tri));
+    const dragged = x.kind === 'dim' && state.dimDrag?.moved && state.dimDrag.e === x.e && state.dimDrag.grip === x.id;       // the dimension grip being dragged is hot (red)
+    grips.push(square([x.x + (move?.dx || 0), x.y + (move?.dy || 0)], !!move || dragged || !!hots && hots.has(x.e + ':' + x.id), x.e + ':' + x.id, x.tri));
     if (x.kind === 'centre') { const [sx, sy] = toSheetPt(d, [x.x, x.y]), px = (sx - view.ox) / k, py = (sy - view.oy) / k; grips.push(s('path', { class: 'gr-cross', d: `M${px - 12} ${py}h24M${px} ${py - 12}v24` })); }
   }
   return null;
@@ -11549,7 +11816,7 @@ function editKey(e) {
     else if (state.tool === 'text' && state.text.askHeight && !textEditing()) { state.text.askHeight = false; renderCommand(); paintOverlay(); }
     else if (state.tool === 'text' && d && !textEditing()) { if (d.sel.size) setSel(d, new Set()); else setTool('select'); }
     else if (drawLive()) { if (DR.toolBusy(state.draw) || state.draw.stage === 'radius') { state.msg = null; drawFinish(); } else setTool('select'); }
-    else if (state.dimDrag) { state.dimDrag.cancelled = true; state.dimDrag = null; note('Move cancelled'); paintOverlay(); }
+    else if (state.dimDrag || state.dimHot) { (state.dimDrag || state.dimHot.g).cancelled = true; state.dimDrag = state.dimHot = null; note('Move cancelled'); paintOverlay(); }
     else if (state.dim && state.dim.askText) { state.dim.askText = false; note(dimPrompt()); }
     else if (state.dim && dimBusy(state.dim)) { dimClear(state.dim); note('Dimension cancelled. ' + dimPrompt()); paintOverlay(); }
     else if (state.ldr && state.ldr.pts.length) { state.ldr.pts = []; state.ldr.hover = null; note('Leader cancelled. ' + ldrPrompt()); paintOverlay(); }
@@ -11689,6 +11956,18 @@ function sheetEdgeNear(e) {
   const [x, y] = sheetAt(e.clientX, e.clientY), W = state.sheetW, H = state.sheetH, tol = 6 / view.scale;
   return x >= -tol && x <= W + tol && y >= -tol && y <= H + tol && (Math.abs(x) <= tol || Math.abs(x - W) <= tol || Math.abs(y) <= tol || Math.abs(y - H) <= tol);
 }
+/** The side whose dashed gripper line (TODO 348) is within 6 px of the pointer, nearest first, or null; a side with gripper 0 has none. */
+function gripLineNear(e) {
+  const [x, y] = sheetAt(e.clientX, e.clientY);
+  let best = null, bd = 6 / view.scale;
+  for (const [a, b, side] of gripperLines(state.sheetW, state.sheetH, state)) {
+    const d = Math.hypot(x - Math.max(a[0], Math.min(b[0], x)), y - Math.max(a[1], Math.min(b[1], y)));
+    if (d <= bd) { best = side; bd = d; }
+  }
+  return best;
+}
+/** A sheet size in mm as shown: whole mm as today, a snapped size (TODO 348) to 0.01 mm. */
+const sheetMmText = (v) => (Number.isInteger(v) ? String(v) : v.toFixed(2));
 /** A press on the layout canvas: a sheet handle starts (or, when one is waiting for its second click, ends) a resize; the sheet's edge selects the sheet. True when it took the press. */
 function sheetDown(e) {
   const lay = curLay();
@@ -11702,6 +11981,13 @@ function sheetDown(e) {
     return true;
   }
   if (t && t.closest('.ruler, [data-guide], [data-i], [data-rot], [data-pivot], [data-gap]')) { if (sheetSelOn()) selectSheet(false); return false; }
+  const gs = gripLineNear(e);                                          // TODO 348: a press on a gripper line drags it at once; it wins over the sheet edge
+  if (gs) {
+    state.sheetSel = lay;
+    state.sheetDrag = { side: gs, off: gripOf(state, gs), p0: sheetAt(e.clientX, e.clientY), cx: e.clientX, cy: e.clientY, W: state.sheetW, H: state.sheetH, newW: state.sheetW, newH: state.sheetH, hot: false, moved: false };
+    drawTools(); drawSheetSel(); renderCommand();
+    return true;
+  }
   if (sheetEdgeNear(e)) { selectSheet(true); return true; }
   if (sheetSelOn()) selectSheet(false);
   return false;
@@ -11711,9 +11997,15 @@ function sheetMove(e, force = false) {
   if (!g) return;
   if (!g.moved && !g.hot && !force) { if (Math.hypot(e.clientX - g.cx, e.clientY - g.cy) <= 4) return; g.moved = true; }
   if (!g.moved && !g.hot) return;
-  const p = sheetAt(e.clientX, e.clientY), cl = (v) => Math.max(SHEET_MIN, Math.min(SHEET_MAX, Math.round(v)));      // the side goes where the pointer is
-  g.newW = g.side === 'right' ? cl(p[0]) : g.side === 'left' ? cl(g.W - p[0]) : g.W;
-  g.newH = g.side === 'top' ? cl(p[1]) : g.side === 'bottom' ? cl(g.H - p[1]) : g.H;
+  // the dragged line (the side, or its gripper line: the side then lies its gripper's mm outside it) goes where the pointer is, or onto the
+  // nearest outer edge of a part within 6 px (TODO 348; Alt skips): snapped to 0.01 mm, else whole mm
+  const lay = curLay(), x = g.side === 'left' || g.side === 'right', off = g.off || 0, p = sheetAt(e.clientX, e.clientY);
+  const edge = !e.altKey && lay ? partEdgeSnap(lay.parts, snapPlaced(), x ? 'x' : 'y', p[x ? 0 : 1], 6 / view.scale) : null;
+  const v = edge ?? p[x ? 0 : 1], lo = off ? Math.ceil(SHEET_MIN + gripOf(state, x ? 'left' : 'top') + gripOf(state, x ? 'right' : 'bottom')) : SHEET_MIN;
+  g.snapped = edge != null;
+  const cl = (s) => Math.max(lo, Math.min(SHEET_MAX, g.snapped ? Math.round(s * 100) / 100 : Math.round(s)));
+  g.newW = g.side === 'right' ? cl(v + off) : g.side === 'left' ? cl(g.W - v + off) : g.W;
+  g.newH = g.side === 'top' ? cl(v + off) : g.side === 'bottom' ? cl(g.H - v + off) : g.H;
   drawSheetSel(); renderCommand();
 }
 function sheetUp() {
@@ -11732,25 +12024,26 @@ function sheetCommit() {
   if (g.newW === g.W && g.newH === g.H) { drawSheetSel(); renderCommand(); note('Sheet size unchanged'); return; }
   resizeSheet(g.side, g.newW, g.newH);
 }
-/** Gives the open layout this sheet size (whole mm) as one undo step; side says which side moved (left / bottom keep the parts where they are on the screen). */
+/** Gives the open layout this sheet size (whole mm, or 0.01 mm when snapped to a part) as one undo step; side says which side moved. Every side keeps the parts where they are on the screen (no re-fit, TODO 348). */
 function resizeSheet(side, newW, newH) {
   const d = curDoc(), lay = d && d.lay;
   if (!lay) return;
-  const oldW = lay.s.sheetW, oldH = lay.s.sheetH, dx = side === 'left' ? newW - oldW : 0, dy = side === 'bottom' ? newH - oldH : 0;
-  pushLay(d, laySnap(lay), '', `Sheet ${newW} × ${newH} mm`);
+  const oldW = lay.s.sheetW, oldH = lay.s.sheetH, dx = side === 'left' ? PL.r6(newW - oldW) : 0, dy = side === 'bottom' ? PL.r6(newH - oldH) : 0, size = `${sheetMmText(newW)} × ${sheetMmText(newH)}`;
+  pushLay(d, laySnap(lay), '', `Sheet ${size} mm`);
   lay.s.sheetW = newW; lay.s.sheetH = newH;
   if (dx || dy) {
     lay.placed = lay.placed.map((p) => ({ ...p, x: PL.r6(p.x + dx), y: PL.r6(p.y + dy) }));
     lay.s.guides = lay.s.guides.map((g) => (g.axis === 'x' ? { ...g, mm: PL.r6(g.mm + dx) } : { ...g, mm: PL.r6(g.mm + dy) }));
   }
   touch();
-  const fitted = view.fitted;
-  if (!fitted) { if (side === 'top') view.oy += newH - oldH; if (side === 'left') view.ox += dx; }
+  if (side === 'top') view.oy += newH - oldH;
+  if (side === 'left') view.ox += dx;
+  view.fitted = false;
   syncFields();
-  if (!fitted) applyView();
-  update(fitted);
+  applyView();
+  update();
   const off = placedNow.filter((p) => p.off).length;
-  note(`Sheet ${newW} × ${newH} mm. The parts stayed where they were` + (off ? `; ${off} now ${off === 1 ? 'is' : 'are'} off the sheet (drawn in orange)` : '') + '. Ctrl+Z takes it back');
+  note(`Sheet ${size} mm. The parts stayed where they were` + (off ? `; ${off} now ${off === 1 ? 'is' : 'are'} off the sheet (drawn in orange)` : '') + '. Ctrl+Z takes it back');
 }
 /** The sheet's own marks when it is selected: the outline, four handles, where 0,0 is, and (while one is dragged) the new outline, the added strip and the size. */
 function drawSheetSel() {
@@ -11779,9 +12072,9 @@ function drawSheetSel() {
   if (dr) {
     const hp = at[dr.side], pw = 170 * k, ph = 24 * k;
     const px = dr.side === 'right' ? hp[0] - pw - 22 * k : dr.side === 'left' ? hp[0] + 22 * k : hp[0] - pw / 2, py = dr.side === 'top' ? hp[1] + 22 * k : dr.side === 'bottom' ? hp[1] - ph - 22 * k : hp[1] - ph / 2;
-    out.push(s('text', { class: 'ssel-whole', x: px, y: py - 8 * k, 'font-size': 12 * k }, 'Whole mm only'),
+    out.push(s('text', { class: 'ssel-whole', x: px, y: py - 8 * k, 'font-size': 12 * k }, dr.snapped ? 'Snapped to part' : 'Whole mm only'),
       s('rect', { class: 'ssel-pill', x: px, y: py, width: pw, height: ph, rx: 4 * k }),
-      s('text', { class: 'ssel-pilltext', 'data-testid': 'sheet-readout', x: px + pw / 2, y: py + 16.5 * k, 'text-anchor': 'middle', 'font-size': 13 * k }, `W ${dr.newW} × H ${dr.newH} mm`));
+      s('text', { class: 'ssel-pilltext', 'data-testid': 'sheet-readout', x: px + pw / 2, y: py + 16.5 * k, 'text-anchor': 'middle', 'font-size': 13 * k }, `W ${sheetMmText(dr.newW)} × H ${sheetMmText(dr.newH)} mm`));
   }
   g.replaceChildren(...out);
 }
@@ -11906,6 +12199,7 @@ function renderPropsPanel(d) {
   ui.placedSecs[1].hidden = state.panel === 'library' || (lay ? selIdxs().length : d?.sel.size || 0) < 1;
   ui.centreOnPage.disabled = !lay;
   ui.centreOnPage.title = lay ? 'Centre the selection as one block on the whole sheet (CP)' : 'a drawing has no page';
+  ui.centreAxis.forEach((b, i) => { b.disabled = !lay; b.title = lay ? `Centre the selection as one block on the sheet, ${i ? 'bottom to top' : 'left to right'} only (${i ? 'CPV' : 'CPH'})` : 'a drawing has no page'; });
   setSelect(ui.relSel, [['selection', 'Selection'], ...(lay ? [['sheet', 'Sheet']] : []), ['first', 'First selected'], ['last', 'Last selected'], ['point', 'Point...'], ['rectangle', 'Rectangle']], !lay && state.arrangeRel === 'sheet' ? 'selection' : state.arrangeRel);
   ui.propSec.hidden = !show;
   if (show && (!d || d !== selectionEditDoc)) renderPropsValues(d, lay);
@@ -13189,7 +13483,7 @@ function cmpDown(e) {
   const d = cmpDoc(), c = d && d.cmp, item = c && cmpSelected(c), ref = c && CMP.reference(c.items);
   if (!c || !item?.visible || !item.box) return false;
   const source = editable(), p = source && toDrawing(source, e.clientX, e.clientY);
-  if (source && (e.target.closest('[data-rot], [data-pivot]') || gripOn(source) && gripAt(source, e.clientX, e.clientY))) return false;
+  if (source && (e.target.closest('[data-rot], [data-pivot]') || gripOn(source) && gripAt(source, e.clientX, e.clientY) || dimGrab(source, p)?.text)) return false;       // a press on the selected dimension's text moves it in its drawing (TODO 345a); on its line the snapshot moves, as before
   const target = ref === item ? c.items.find((x) => x !== item && x.checked && x.visible) : ref?.visible ? ref : null;
   const p0 = sheetAt(e.clientX, e.clientY), m0 = [...item.offset], mode0 = c.mode;
   let grab, g;                        // looked up at the first move, so a click builds no snap index (150 000 entities: 350 ms, TODO 327)
@@ -13281,6 +13575,8 @@ async function init() {
   state.text.cfg = loadTextCfg();
   state.dimStyles = loadDimStyles();
   try { const v = localStorage.getItem('pd-dimtype'); if (DIM_TYPES.some((x) => x[0] === v)) state.dimType = v; } catch { /* ignore */ }
+  try { const v = localStorage.getItem('pd-circlemode'); if (DR.CIRCLE_MODES.some((x) => x[0] === v)) state.circleMode = v; } catch { /* ignore */ }
+  try { const v = localStorage.getItem('pd-arcmode'); if (DR.ARC_MODES.some((x) => x[0] === v)) state.arcMode = v; } catch { /* ignore */ }
   try { if (localStorage.getItem(COPY_MODE_SAVED) === 'Single') copyMode = 'Single'; } catch { /* default Multiple */ }
   const cmdLog = buildCommand();                           // before the canvas: the bar, the fade and the history sit on it
   try { const v = Number(localStorage.getItem('pd-baldock-height')); if (Number.isFinite(v) && v >= 90) state.balDock.h = Math.min(v, window.innerHeight * 0.6); } catch { /* ignore */ }
@@ -13316,6 +13612,9 @@ async function init() {
     editKey(e);
   });
   document.addEventListener('keyup', (e) => { if (e.key === 'Control' && ctrlTap) { ctrlTap = false; gripOptionCycle(); } });
+  const arcFlip = (on) => { const T = state.draw; if (drawLive() && T.kind === 'arc' && T.flip !== on) { T.flip = on; paintOverlay(); } };       // 347b: Ctrl held turns the Arc the other way: the preview follows the key, not only the pointer
+  for (const type of ['keydown', 'keyup']) document.addEventListener(type, (e) => { if (e.key === 'Control') arcFlip(type === 'keydown'); });
+  window.addEventListener('blur', () => arcFlip(false));
   document.addEventListener('keydown', snapTab, true);
   document.addEventListener('keydown', cursorKey, true);
   renderWorkArea();
@@ -13334,7 +13633,7 @@ async function init() {
   update(true);
   setTool('select');
   if (shortcutError) note(shortcutError);
-  attachLaunchFiles().then((noFiles) => { if (noFiles && startMode() === 'start' && state.docs.length === 1 && curDoc().empty) showStartScreen(true); });
+  attachLaunchFiles().then((noFiles) => { if (noFiles && startMode() === 'start' && state.docs.length === 1 && curDoc().empty) { curDoc().parked = true; showDoc(); } });
   libInit();
   const every = Number(new URLSearchParams(location.search).get('autosave'));
   setInterval(autosaveNow, every >= 100 ? every : 120000);

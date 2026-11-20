@@ -165,7 +165,7 @@ test('a centred text breaks the dimension line; the look (text height, arrow, ga
   near(up.gap, 0.8, 'gap', 1e-6); assert.equal(up.pos, 'above'); assert.equal(up.units, 'mm');
   const nolines = read(E.buildDim('aligned', { a: [0, 0], b: [200, 0], offset: 0, pos: 'centre' }, 1, 'PD_DIM_1')).params;
   near(nolines.b[0], 200, 'a centred dimension without extension lines still reads its ends'); near(nolines.offset, 0);
-  assert.equal(E.dimGeometry({ a: [0, 0], b: [3, 0], pos: 'centre', textH: 3 }, 1).lines.length, 1, 'too short to break');
+  assert.equal(E.dimGeometry({ a: [0, 0], b: [3, 0], pos: 'centre', textH: 3 }, 1).more.length, 0, 'too short to break');
 });
 
 test('withHeight keeps the arrow and the gap in proportion', () => {
@@ -244,6 +244,107 @@ test('TODO 222c: feet and decimal feet-inches use style precision, carry inches,
   assert.equal(txt(E.scaleAbout(raw, 2, 0, 0, 0).blocks.PD_DIM_1), "7.00'");
   const feetIn = E.buildDim('radius', { c: [0, 0], r: 1606.55, p: [1800, 0], units: 'ft-in' }, 1, 'PD_DIM_R1', 2);
   assert.equal(txt(E.scaleAbout({ entities: [feetIn.insert], blocks: { PD_DIM_R1: reopen(feetIn) }, layers: {} }, 2, 0, 0, 0).blocks.PD_DIM_R1), `R10'-6.5"`);
+});
+
+test('TODO 345a best fit (AutoCAD DIMATFIT 3, acad-344 facts 8-9): gaps 2, 4 and 6 at text height 2.5 and arrows 2.5', () => {
+  const geo = (len, extra = {}) => E.dimGeometry({ a: [0, 0], b: [len, 0], textH: 2.5, arrow: 2.5, ...extra }, 1, 0);
+  assert.equal(E.dimFit(2, 1.5, 2.5, 1), 'none'); assert.equal(E.dimFit(4, 1.5, 2.5, 1), 'text'); assert.equal(E.dimFit(6, 1.5, 2.5, 1), 'text'); assert.equal(E.dimFit(9, 1.5, 2.5, 1), 'both');
+  const tip = (g, i) => g.arrows[i][0][0], tail = (g, i) => (g.arrows[i][1][0] + g.arrows[i][2][0]) / 2;
+  const g2 = geo(2);        // nothing fits: arrows outside (tips at 0 and 2), stubs one arrow long from -2.5 to -5, the text outside to the right, the line going on under it
+  near(tip(g2, 0), 2); near(tail(g2, 0), 4.5, 'right arrow outside, pointing in'); near(tip(g2, 1), 0); near(tail(g2, 1), -2.5);
+  near(g2.extras[1][0], -2.5, 'left stub starts at the arrow tail'); near(g2.extras[1][2], -5, 'and is one arrow size long');
+  assert.ok(g2.text.x > 2 + 2.5, 'text beyond the right arrow'); assert.ok(g2.extras[0][2] > g2.text.x, 'the line runs under the text');
+  for (const len of [4, 6]) {         // the text fits between the extension lines, the arrows do not: text centred, arrows outside, a stub of 2.5 each side
+    const g = geo(len);
+    near(g.text.x, len / 2); near(tip(g, 0), len); near(tail(g, 0), len + 2.5); near(tip(g, 1), 0);
+    assert.equal(g.extras.length, 2); for (const s of g.extras) near(Math.abs(s[2] - s[0]), 2.5);
+  }
+  const g30 = geo(30);      // both fit: as before, nothing outside
+  assert.equal(g30.extras.length, 0); near(tail(g30, 0), 30 - 2.5); near(g30.text.x, 15);
+  const flip = E.dimGeometry({ a: [2, 0], b: [0, 0], textH: 2.5, arrow: 2.5 }, 1, 0);       // drawn right to left: the text still goes to the right of the line
+  assert.ok(flip.text.x > 2 + 2.5, 'right of the line, whichever way it was drawn');
+  assert.equal(E.dimGeom('diameter', { a: [0, 0], b: [2, 0], textH: 2.5, arrow: 2.5 }, 1, 0).extras.length, 0, 'a diameter keeps its look (TODO 344)');
+});
+
+test('TODO 345a text side drag: shift moves the text along the line, past an extension line the line goes on under it; it reads back and a rebuild keeps it', () => {
+  const p = { a: [0, 0], b: [100, 0], offset: 10, textH: 2.5 };
+  const base = E.dimGeometry(p, 1), moved = E.dimGeometry({ ...p, shift: 70 }, 1);
+  near(base.text.x, 50); near(moved.text.x, 120, 'the text 70 from the middle');
+  assert.ok(moved.extras[0][2] > 120, 'the dimension line extends under the text'); near(moved.extras[0][0], 100); near(moved.line[2], 100, 'the first LINE still ends at the extension line');
+  const left = E.dimGeometry({ ...p, shift: -70 }, 1); near(left.text.x, -20); assert.ok(left.extras.some((s) => Math.min(s[0], s[2]) < -20));
+  const dim = E.buildDim('aligned', { ...p, shift: 70 }, 1, 'PD_DIM_1'), got = read(dim).params;
+  near(got.shift, 70, 'shift'); near(got.offset, 10); near(got.b[0], 100); near(got.a[0], 0);
+  const again = E.buildDim('aligned', { ...got, offset: 25 }, 1, 'PD_DIM_1'), after = E.dimGeometry({ ...got, offset: 25 }, 1);
+  near(read(again).params.shift, 70, 'a rebuild (the line dragged) keeps the text where it is along the line'); near(after.text.x, 120);
+  assert.equal(read(E.buildDim('aligned', p, 1, 'PD_DIM_1')).params.shift, undefined, 'a dimension with its text where it was has no shift');
+  const short = { a: [0, 0], b: [2, 0], textH: 2.5, arrow: 2.5, offset: 0 }, auto = read(E.buildDim('aligned', short, 1, 'PD_DIM_1')).params;
+  assert.equal(auto.shift, undefined, 'the text the fit rule put outside is not a shift');
+  for (const axis of ['h', 'v']) {      // linear, and a vertical one: along the line is y
+    const lp = { a: [0, 0], b: [60, 80], axis, offset: 5, textH: 2.5, shift: axis === 'h' ? 40 : -30 }, got2 = read(E.buildDim('linear', lp, 1, 'PD_DIM_' + axis.toUpperCase() + '1')).params;
+    near(got2.shift, lp.shift, 'linear ' + axis);
+  }
+  const xf = (dim, f) => { const b = reopen(dim); for (const e of b.entities) for (const [cx, cy] of [[10, 20], [11, 21], [12, 22], [13, 23]]) { const i = e.r.c.indexOf(cx), j = e.r.c.indexOf(cy); if (i < 0 || j < 0) continue; const [x, y] = f(+e.r.v[i], +e.r.v[j]); e.r.v[i] = x; e.r.v[j] = y; } return b; };
+  const lin = E.buildDim('linear', { a: [0, 0], b: [60, 80], axis: 'h', offset: 5, textH: 2.5 }, 1, 'PD_DIM_H1');      // text in its fit-rule place
+  const c30 = Math.cos(Math.PI / 6), s30 = Math.sin(Math.PI / 6);
+  for (const [name, f] of Object.entries({ 'rotate 30': (x, y) => [x * c30 - y * s30, x * s30 + y * c30], 'rotate 90': (x, y) => [-y, x], 'rotate 180': (x, y) => [-x, -y], 'mirror X': (x, y) => [x, -y], 'mirror Y': (x, y) => [-x, y], 'scale 2': (x, y) => [2 * x, 2 * y] }))
+    assert.equal(E.readDim(lin.name, xf(lin, f)).params.shift, undefined, 'a transformed linear dimension with its text in place reads no shift: ' + name);
+  const t = base.text;       // dimTextHit: the box of the text, padded
+  assert.ok(E.dimTextHit(t, [t.x, t.y + 1])); assert.ok(!E.dimTextHit(t, [t.x, t.y + 6])); assert.ok(E.dimTextHit(t, [t.x, t.y + 6], 5)); assert.ok(!E.dimTextHit(t, [t.x + 30, t.y]));
+});
+
+test('TODO 344a diameter with its text outside the circle (acad-344 fact 2): the line through the centre, one straight leader to the text, no landing', () => {
+  const ends = E.diameterEnds([100, 50], 10, [110, 50]), tp = [20, 5], u = [tp[0] / Math.hypot(...tp), tp[1] / Math.hypot(...tp)];
+  const g = E.dimGeom('diameter', { ...ends, textH: 2.5, tp }, 1);
+  assert.equal(g.label, 'Ø20.00'); assert.equal(g.arrows.length, 2);
+  near(g.line[0], 100 - 10 * u[0]); near(g.line[1], 50 - 10 * u[1]); near(g.line[2], 100 + 10 * u[0]); near(g.line[3], 50 + 10 * u[1], 'the line runs through the centre, along the way the text is');
+  assert.equal(g.lines.length, 2, 'the line and one leader: no landing'); const leader = g.lines[1];
+  near(leader[0], g.line[2]); near(leader[1], g.line[3], 'the leader starts on the circle');
+  const dir = [leader[2] - leader[0], leader[3] - leader[1]], len = Math.hypot(...dir);
+  near(dir[0] / len, u[0]); near(dir[1] / len, u[1], 'and goes straight on (the same slope as the dimension line)');
+  assert.ok(Math.hypot(leader[2] - 100, leader[3] - 50) > 10 && Math.hypot(leader[2] - 100, leader[3] - 50) < Math.hypot(...tp), 'to the text, not past its middle');
+  near(g.text.x, 120); near(g.text.y, 55, 'the text is centred on the text point');
+  const inside = E.dimGeom('diameter', { ...ends, textH: 2.5, tp: [3, 1] }, 1), plain = E.dimGeom('diameter', { ...ends, textH: 2.5 }, 1);
+  assert.deepEqual(inside.lines, plain.lines, 'a text point inside the circle keeps today\'s full chord'); assert.equal(inside.arrows.length, 2); near(inside.text.x, plain.text.x);
+  const dim = E.buildDim('diameter', { ...ends, textH: 2.5, tp }, 1, 'PD_DIM_D1'), got = read(dim);
+  assert.equal(got.kind, 'diameter'); near(got.params.tp[0], 20); near(got.params.tp[1], 5, 'the text point reads back'); near(got.params.a[0], 100 - 10 * u[0], 'the ends too');
+  assert.equal(dim.block.entities.filter((e) => e.type === 'LINE').length, 1, 'the leader is not a LINE: the first LINE stays the dimension line');
+  const again = E.buildDim('diameter', got.params, 1, 'PD_DIM_D1'); near(read(again).params.tp[0], 20, 'a rebuild keeps it');
+  assert.equal(read(E.buildDim('diameter', { ...ends, textH: 2.5 }, 1, 'PD_DIM_D1')).params.tp, undefined, 'a diameter never dragged has no text point');
+  assert.equal(read(E.buildDim('diameter', { ...ends, textH: 2.5, tp: [3, 1] }, 1, 'PD_DIM_D1')).params.tp, undefined, 'and one dragged back inside is the old look again');
+  const circ = E.circleOfDim('diameter', ends); near(circ.r, 10); near(circ.c[0], 100);
+});
+
+test('TODO 344a radius with its text outside (acad-344 fact 4) has no landing, inside the text is on the radius line with one arrow (fact 3)', () => {
+  const base = { c: [100, 50], r: 10, p: [120, 50], textH: 2.5 }, tp = [20, 5], u = [tp[0] / Math.hypot(...tp), tp[1] / Math.hypot(...tp)];
+  const g = E.radiusGeometry({ ...base, tp }, 1);
+  assert.equal(g.label, 'R10.00'); assert.equal(g.arrows.length, 1); assert.equal(g.lines.length, 2, 'the line and one leader');
+  near(g.line[0], 100); near(g.line[1], 50); near(g.line[2], 100 + 10 * u[0]); near(g.line[3], 50 + 10 * u[1], 'from the centre to the circle on the text\'s side');
+  const leader = g.lines[1], dir = [leader[2] - leader[0], leader[3] - leader[1]], len = Math.hypot(...dir);
+  near(leader[0], g.line[2]); near(dir[0] / len, u[0]); near(dir[1] / len, u[1], 'the leader goes straight on, not along the horizontal');
+  near(g.text.x, 120); near(g.text.y, 55);
+  const old = E.radiusGeometry(base, 1); assert.equal(old.more[0][3], old.more[0][1], 'without a text point the horizontal landing is still there');
+  const ins = E.radiusGeometry({ ...base, tp: [5, 0] , textH: 1}, 1);
+  assert.equal(ins.arrows.length, 1); near(ins.arrows[0][0][0], 110, 'one arrowhead, tip on the circle');
+  assert.equal(ins.lines.length, 2, 'the line is broken round the text (text 5 from the centre, short enough to fit)'); near(ins.text.x, 105); near(ins.text.y, 50, 'the text is on the radius line');
+  const dim = E.buildDim('radius', { ...base, tp }, 1, 'PD_DIM_R1'), got = read(dim);
+  near(got.params.tp[0], 20); near(got.params.tp[1], 5, 'the text point reads back'); near(got.params.r, 10); near(got.params.c[0], 100);
+  const inner = read(E.buildDim('radius', { ...base, tp: [5, 0], textH: 1 }, 1, 'PD_DIM_R1')).params;
+  near(inner.tp[0], 5, 'tp'); near(inner.c[0], 100, 'c'); near(inner.r, 10, 'r');
+  assert.equal(read(E.buildDim('radius', base, 1, 'PD_DIM_R1')).params.tp, undefined, 'the old look reads back with no text point');
+  assert.equal(E.radiusGeometry({ ...base, tp: [0, 0], p: [120, 50] }, 1).lines.length, 2, 'a text point at the centre falls back to the old look');
+});
+
+test('TODO 344b circleDraft: the last click places the text; outside the circle it is the outside look, inside the inside look', () => {
+  const c = [100, 50], out = E.circleDraft('diameter', c, 10, [120, 55]), inn = E.circleDraft('diameter', c, 10, [103, 51]);
+  near(out.params.tp[0], 20); near(out.params.tp[1], 5, 'a click outside is the text point');
+  assert.equal(inn.params.tp, undefined, 'a click inside a diameter is today\'s look'); near(inn.params.a[1], 50 - 10 * 1 / Math.hypot(3, 1), 'its line goes the way the pointer is');
+  assert.equal(E.dimGeom('diameter', { ...out.params, textH: 2.5 }, 1).lines.length, 2, 'outside: the line and one leader');
+  const rout = E.circleDraft('radius', c, 10, [120, 55]), rin = E.circleDraft('radius', c, 10, [105, 50]);
+  near(rout.params.tp[0], 20); near(rin.params.tp[0], 5, 'a radius keeps the text where the click was, in or out');
+  assert.equal(E.dimGeom('radius', { ...rout.params, textH: 2.5 }, 1).lines.length, 2, 'a radius outside has no landing: the line and one leader');
+  assert.equal(E.dimGeom('radius', { ...rin.params, textH: 1 }, 1).arrows.length, 1, 'inside: one arrow on the circle');
+  assert.equal(E.circleDraft('radius', c, 10, c), null); assert.equal(E.circleDraft('diameter', c, 10, c), null, 'a click on the centre is no dimension');
+  near(read(E.buildDim('radius', { ...rout.params, textH: 2.5 }, 1, 'PD_DIM_R1')).params.tp[1], 5, 'it saves and reads back');
 });
 
 console.log(n + ' dims tests passed');

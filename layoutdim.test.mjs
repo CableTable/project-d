@@ -71,6 +71,17 @@ test('Move: the placement is baked into the block (a translate), name and label 
   assert.equal(LD.settleDims(lay, newId), false, 'settled: nothing more to do');
 });
 
+test('Move maps every vertex of an LWPOLYLINE (arrow stubs, the line under a dragged text)', () => {
+  const lay = layoutWith(), p = addDim(lay, 'd1', [0, 0], [4, 0], 5, 'PD_DIM_1');       // 4 mm: arrows outside, stubs
+  const polys = (part) => part.raw.blocks.PD_DIM_1.entities.filter((e) => e.type === 'LWPOLYLINE');
+  const xs = (part) => polys(part).map((e) => e.r.c.flatMap((c, i) => c === 10 ? [+e.r.v[i]] : []));
+  const was = xs(lay.parts['d1']);
+  assert.ok(was.length && was.every((v) => v.length === 2), 'the stubs have two vertices each');
+  p.x += 100; LD.settleDims(lay, newId);
+  const now = xs(lay.parts[p.partId]);
+  now.forEach((v, i) => v.forEach((x, k) => near(x, was[i][k] + 100)));
+});
+
 test('Scale re-labels; Rotate 90 swaps a Linear dimension H / V and turns the text; Mirror keeps the label', () => {
   const lay = layoutWith(), p = addDim(lay, 'd1', [0, 0], [100, 0], 10, 'PD_DIM_H1', 'linear', 'h');
   p.sc = 2;

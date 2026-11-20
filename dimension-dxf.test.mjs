@@ -106,3 +106,37 @@ test('shared dimension inserts get separate world-coordinate blocks; non-uniform
   assert.deepEqual(E.dimOfEntity(back, 1).params.a, [110, 70]);
   assert.deepEqual(E.dimOfEntity(back, 0).params.a, [10, 20]);
 });
+
+test('TODO 345a: a text dragged along the dimension line is group 11 with bit 128 of group 70, and reads back from it', () => {
+  const field = (e, c) => +e.r.v[e.r.c.indexOf(c)];
+  const make = (shift) => { const raw = W.newDoc(4); Object.assign(raw, E.addDimension(raw, E.buildDim('aligned', { ...kinds.aligned, textH: 2.5, override: 'W <>', shift }, 1, 'PD_DIM_1'))); return raw; };
+  const plain = nativeDimensionOverrides(make(undefined)).entities[0], moved = nativeDimensionOverrides(make(80)).entities[0];
+  assert.ok(field(moved, 70) & 128, 'user-positioned text flag'); assert.ok(field(plain, 70) & 128, 'already set today');
+  assert.ok(Math.abs(field(moved, 11) - field(plain, 11) - 80) < 1e-6, 'group 11 is 80 further along the line (+x)'); assert.ok(Math.abs(field(moved, 21) - field(plain, 21)) < 1e-6);
+  const text = W.writeDxf(nativeDimensionOverrides(make(80)));
+  const back = readDxf(text), got = E.dimOfEntity(back, 0);
+  assert.ok(Math.abs(got.params.shift - 80) < 1e-4, 'the block text reads back as a shift, ' + got.params.shift); assert.equal(got.params.override, 'W <>');
+  assert.equal(E.dimOfEntity(readDxf(W.writeDxf(nativeDimensionOverrides(make(undefined)))), 0).params.shift, undefined, 'no moved text: no shift');
+  // group 11 wins: a file whose group 11 sits elsewhere than the block's text puts the text there
+  const at = text.indexOf('AcDbDimension'), edited = text.slice(0, at) + text.slice(at).replace(/\r?\n 11\r?\n([-\d.e+]+)\r?\n 21\r?\n/, (m, x) => m.replace(x, String(+x - 30)));
+  assert.ok(edited !== text, 'group 11 of the DIMENSION edited');
+  const again = E.dimOfEntity(readDxf(edited), 0);
+  assert.ok(Math.abs(again.params.shift - 50) < 1e-4, 'text moved 30 back along the line: ' + again.params.shift);
+});
+
+test('TODO 344a: a diameter / radius text dragged outside the circle is group 11 with bit 128 of group 70, reads back from it, and a foreign group 11 moves it', () => {
+  const field = (e, c) => +e.r.v[e.r.c.indexOf(c)], tp = [20, 5];
+  const make = (kind, params) => { const raw = W.newDoc(4); Object.assign(raw, E.addDimension(raw, E.buildDim(kind, { ...params, textH: 2.5, override: 'Big <>' }, 1, E.freeName({}, kind)))); return raw; };
+  for (const [kind, base, centre] of [['diameter', { a: [90, 50], b: [110, 50] }, [100, 50]], ['radius', { c: [100, 50], r: 10, p: [120, 50] }, [100, 50]]]) {
+    const raw = make(kind, { ...base, tp }), e = nativeDimensionOverrides(raw).entities[0];
+    assert.equal(e.type, 'DIMENSION'); assert.ok(field(e, 70) & 128, kind + ': user-positioned text flag');
+    assert.ok(Math.abs(field(e, 11) - (centre[0] + tp[0])) < 1e-6 && Math.abs(field(e, 21) - (centre[1] + tp[1])) < 1e-6, kind + ': group 11 is the text point ' + [field(e, 11), field(e, 21)]);
+    const text = W.writeDxf(nativeDimensionOverrides(raw)), got = E.dimOfEntity(readDxf(text), 0);
+    assert.equal(got.kind, kind); assert.equal(got.params.override, 'Big <>');
+    assert.ok(Math.abs(got.params.tp[0] - tp[0]) < 1e-4 && Math.abs(got.params.tp[1] - tp[1]) < 1e-4, kind + ': the text point reads back ' + got.params.tp);
+    const at = text.indexOf('AcDbDimension'), edited = text.slice(0, at) + text.slice(at).replace(/\r?\n 11\r?\n([-\d.e+]+)\r?\n 21\r?\n/, (m, x) => m.replace(x, String(+x - 30)));
+    assert.ok(edited !== text, 'group 11 edited');
+    const moved = E.dimOfEntity(readDxf(edited), 0).params.tp;
+    assert.ok(Math.abs(moved[0] - (tp[0] - 30)) < 1e-4, kind + ': group 11 30 further left puts the text there: ' + moved);
+  }
+});

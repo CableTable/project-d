@@ -2,6 +2,7 @@
 import { dimOfEntity, readDim, dimGeom, freeName } from './edit.js';
 import { bakeBlock, turnedTag } from './layoutdim.js';
 import { entity } from './dxf-write.js';
+import { textMiddle } from './dimension-text.js';
 import { unitFactor } from './doc.js';
 import { UNITS } from './drawing.js';
 
@@ -32,9 +33,7 @@ export function nativeDimensionOverrides(raw) {
     delete block.dimAxis;
     blocks[name] = block; converted.add(dim.name);
     const { params: p } = readDim(name, block), factor = unitFactor(UNITS[+raw.header.$INSUNITS]), g = dimGeom(kind, p, factor, dim.dp);
-    const tx = block.entities.find((child) => child.type === 'TEXT'), angle = +field(tx, 50) * DEG;
-    const rise = ({ 1: .5, 3: -.5 }[+field(tx, 73)] || 0) * +field(tx, 40);
-    const middle = [+field(tx, 10) - Math.sin(angle) * rise, +field(tx, 20) + Math.cos(angle) * rise];
+    const middle = textMiddle(block.entities.find((child) => child.type === 'TEXT'));       // a text dragged along the dimension line is in the block: group 11 carries it
     const type = { aligned: 1, linear: 0, radius: 4, diameter: 3, angle: 5 }[kind];
     let points;
     if (kind === 'angle') {

@@ -985,4 +985,38 @@ test('164b2 hatch readout of a boundary grip: the vertex position, as a polyline
   assert.equal(GR.readoutOf(h, 'v0_1', GR.dragGrip(h, 'v0_1', [120, 10]).ent), 'X 120.00 · Y 10.00');
 });
 
+test('345b1 dimension grips: linear / aligned five, diameter three, radius three, an angle none', () => {
+  const near = (g, id, x, y) => { const k = g.find((q) => q.id === id); assert.ok(k && k.kind === 'dim' && Math.abs(k.x - x) < 1e-6 && Math.abs(k.y - y) < 1e-6, id + ' at ' + JSON.stringify(k) + ' not ' + [x, y]); };
+  const lin = GR.dimGripsOf('aligned', { a: [0, 0], b: [100, 0], offset: 30, textH: 3 }, 1);       // the line 30 above (to the left of a→b)
+  assert.deepEqual(lin.map((g) => g.id), ['o0', 'o1', 'l0', 'l1', 't']);
+  near(lin, 'o0', 0, 0); near(lin, 'o1', 100, 0); near(lin, 'l0', 0, 30); near(lin, 'l1', 100, 30);
+  const tx = lin.find((g) => g.id === 't'); assert.ok(Math.abs(tx.x - 50) < 1e-6 && tx.y > 30 && tx.y < 34, 'the text grip is the text middle, above the line: ' + tx.y);
+  const lh = GR.dimGripsOf('linear', { a: [0, 0], b: [100, 40], offset: 50, axis: 'h', textH: 3 }, 1);       // linear: the line runs along X, through y = 0 + 50 sideways of the first point
+  assert.equal(lh.length, 5); near(lh, 'o0', 0, 0); near(lh, 'o1', 100, 40);
+  const l0 = lh.find((g) => g.id === 'l0'), l1 = lh.find((g) => g.id === 'l1'); assert.ok(Math.abs(l1.y - l0.y) < 1e-9 && Math.abs(l1.x - l0.x - 100) < 1e-6, 'a horizontal line of the length: ' + JSON.stringify([l0, l1]));
+  const dia = GR.dimGripsOf('diameter', { a: [80, 100], b: [120, 100], textH: 3 }, 1);
+  assert.deepEqual(dia.map((g) => g.id), ['e0', 'e1', 't']); near(dia, 'e0', 80, 100); near(dia, 'e1', 120, 100);
+  const dt = dia.find((g) => g.id === 't'); assert.ok(Math.abs(dt.x - 100) < 1e-6 && dt.y > 100 && dt.y < 105, 'the text above its chord: ' + dt.y);
+  const out = GR.dimGripsOf('diameter', { a: [80, 100], b: [120, 100], textH: 3, tp: [0, 35] }, 1);       // the text dragged above the circle: the chord turns to point at it
+  near(out, 'e0', 100, 80); near(out, 'e1', 100, 120); near(out, 't', 100, 135);
+  const rad = GR.dimGripsOf('radius', { c: [250, 100], r: 20, p: [290, 100], textH: 3 }, 1);
+  assert.deepEqual(rad.map((g) => g.id), ['c', 'p', 't']); near(rad, 'c', 250, 100); near(rad, 'p', 270, 100);
+  assert.ok(rad.find((g) => g.id === 't').x > 290, 'the radius text is out past the landing');
+  const rtp = GR.dimGripsOf('radius', { c: [250, 100], r: 20, p: [290, 100], textH: 3, tp: [0, 30] }, 1);
+  near(rtp, 'p', 250, 120); near(rtp, 't', 250, 130);
+  assert.deepEqual(GR.dimGripsOf('angle', { v: [0, 0], r: 10, a0: 0, a1: 90 }, 1), []);
+  assert.deepEqual(GR.dimGripsOf('aligned', { a: [5, 5], b: [5, 5], offset: 0 }, 1), [], 'two equal points draw nothing');
+});
+
+test('345b3 pickGrip: the full 8.5 px hit, the nearer of two plain grips, the half-pixel tie only against a dimension grip', () => {
+  const A = { id: 'a', kind: 'end' }, B = { id: 'b', kind: 'end' }, D = { id: 'o0', kind: 'dim' };
+  assert.equal(GR.pickGrip([[A, 8.2]]), A, 'one grip at 8.2 px is hit');
+  assert.equal(GR.pickGrip([[A, 8.6]]), null, 'past 8.5 px: none');
+  assert.equal(GR.pickGrip([[A, 3], [B, 2.6]]), B, 'two plain grips: the nearer wins');
+  assert.equal(GR.pickGrip([[B, 2.6], [A, 3]]), B, 'either order');
+  assert.equal(GR.pickGrip([[D, 2.8], [A, 3]]), A, 'a dimension grip ties with the other object: the other wins');
+  assert.equal(GR.pickGrip([[A, 3], [D, 2.8]]), A, 'either order');
+  assert.equal(GR.pickGrip([[A, 3], [D, 1]]), D, 'a clearly nearer dimension grip wins');
+});
+
 console.log(n + ' grips tests passed');

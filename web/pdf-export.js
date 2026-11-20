@@ -48,7 +48,7 @@ export function marginsOf(o) {
 export const DEFAULT_OPTIONS = {
   page: 'sheet', tilePaper: 'A3', checkPaper: 'A4', customPaper: 'A3', scale: 0.5,
   mirror: true, negative: false, black: true, separate: true, crop: false, reg: false, strip: true,
-  sheetSizeGripper: false,
+  sheetSizeGripper: false, labelGap: false,
   titleBlock: { enabled: true },
 };
 
@@ -410,15 +410,38 @@ function drawGrippers(page, src, M, marks) {
   page.restore();
 }
 
+/** One dimension's strokes, page mm (the caller sets the pen and strokes): the line from a to b along x (or along y when up) at cross-coordinate c, a slash at each end, and an extension line at each end from e0 to e1. */
+function dimension(page, up, a, b, c, e0, e1) {
+  const seg = (u0, v0, u1, v1) => { page.moveTo(...(up ? [v0, u0] : [u0, v0])); page.lineTo(...(up ? [v1, u1] : [u1, v1])); };
+  for (const u of [a, b]) { seg(u, e0, u, e1); seg(u - 0.7, c - 0.7, u + 0.7, c + 0.7); }
+  seg(a, c, b, c);
+}
+
+/** The label gaps (src.gaps, sheet mm): one dimension each, 2.5 mm lettering above the line (left of it when vertical); a gap under 3 mm on the page, or too short for its text, has the text beside the line instead. Drawn inside the sheet clip. */
+function drawGaps(page, src, M) {
+  const size = 2.5;
+  page.save(); page.strokeColor(BLACK); page.fillColor(BLACK); page.lineWidth(0.15); page.dash([]);
+  const dims = src.gaps.map((g) => {
+    const up = g.dir === 'y', [x1, y1] = mapply(M, up ? g.at : g.from, up ? g.from : g.at), [x2, y2] = mapply(M, up ? g.at : g.to, up ? g.to : g.at);
+    const a = up ? y1 : x1, b = up ? y2 : x2, c = up ? x1 : y1, label = trimNum(g.size), w = textWidthEm(label) * size;
+    dimension(page, up, a, b, c, c - 1.5, c + 1.5);
+    return { up, a, b, c, label, beside: Math.abs(b - a) < 3 || w > Math.abs(b - a) - 0.6, w };
+  });
+  page.stroke();
+  for (const { up, a, b, c, label, beside, w } of dims) {
+    const lo = Math.min(a, b), hi = Math.max(a, b);
+    if (!up) textAt(page, [1, 0, 0, 1, 0, 0], label, beside ? hi + 1.2 : (a + b) / 2, beside ? c - size * CAPH / 2 : c + 1, size, beside ? 0 : 1);
+    else page.text([0, size, -size, 0, beside ? c + size * CAPH / 2 : c - 1, beside ? hi + 1.2 : (lo + hi - w) / 2], label);
+  }
+  page.restore();
+}
+
 /** Overall sheet dimensions live outside the artwork clip, within the reserved check margin. */
 function drawSheetSize(page, src, M) {
   const [x, y] = mapply(M, 0, 0), [right, top] = mapply(M, src.sheetW, src.sheetH), size = 2.5;
-  const line = (a, b, c, d) => { page.moveTo(a, b); page.lineTo(c, d); };
   page.save(); page.strokeColor(BLACK); page.fillColor(BLACK); page.lineWidth(0.15); page.dash([]);
-  for (const xx of [x, right]) { line(xx, top + 0.5, xx, top + 6); line(xx - 0.7, top + 3.3, xx + 0.7, top + 4.7); }
-  line(x, top + 4, right, top + 4);
-  for (const yy of [y, top]) { line(x - 0.5, yy, x - 6, yy); line(x - 4.7, yy - 0.7, x - 3.3, yy + 0.7); }
-  line(x - 4, y, x - 4, top); page.stroke();
+  dimension(page, false, x, right, top + 4, top + 0.5, top + 6);
+  dimension(page, true, y, top, x - 4, x - 0.5, x - 6); page.stroke();
   textAt(page, [1, 0, 0, 1, 0, 0], `${trimNum(src.sheetW)} mm`, (x + right) / 2, top + 5.2, size, 1);
   const label = `${trimNum(src.sheetH)} mm`;
   page.text([0, size, -size, 0, x - 5.2, (y + top - textWidthEm(label) * size) / 2], label);
@@ -443,7 +466,7 @@ function drawPage(src, o, plan, p, artBox) {
   const ws = mscale(M0);
   const minW = check ? 0.1 : 0.08;
   const marks = artBox ? markGeometry({ count: 1, x0: artBox[0], y0: H - artBox[3], gridW: artBox[2] - artBox[0], gridH: artBox[3] - artBox[1] }, { crop: o.crop, reg: o.reg }) : { crop: [], reg: [] };
-  const sheetNotes = check && !src.part && o.sheetSizeGripper;
+  const sheetNotes = check && !src.part && o.sheetSizeGripper, gapNotes = check && !src.part && o.labelGap && src.gaps?.length;
 
   if (neg) { page.fillColor(BLACK); page.rect(0, 0, p.w, p.h); page.fill(); }
   if (tile) { page.save(); page.rect(mg.left, mg.bottom, tile.tw, tile.th); page.clip(); }
@@ -491,6 +514,7 @@ function drawPage(src, o, plan, p, artBox) {
     for (const m of marks.reg) { circle(page, M0, m.cx, H - m.cy, m.r); m.cross.forEach(seg); }
     page.stroke();
   }
+  if (gapNotes) drawGaps(page, src, M0);
   if (tile || check) page.restore();
   if (sheetNotes) drawSheetSize(page, src, M0);
 
