@@ -439,4 +439,40 @@ test('toEntity: points are mm, the file holds drawing units (factor = mm per uni
   near(+c.r.v[c.r.c.indexOf(40)], 0.5);
 });
 
+test('Circle 2P / 3P (346a): typed options at the centre prompt, the circle, *Invalid* refusals, typed C is Centre, Radius', () => {
+  assert.deepEqual(DR.parseInput('2P'), { kind: 'word', w: '2p' });
+  assert.deepEqual(DR.parseInput('3'), { kind: 'len', v: 3 });                 // 2 and 3 alone stay numbers
+  const T = DR.createTool('circle');
+  assert.match(DR.toolPrompt(T).prompt, /^Specify centre \(x,y\) \[3P\/2P\/Diameter\]:$/);
+  assert.equal(DR.toolType(T, 'foo').msg, 'Point or option keyword required.');
+  assert.equal(DR.toolType(DR.createTool('rect'), 'foo').msg, '"foo" is not an option here', 'other tools keep their message');
+  DR.toolType(T, '2P');
+  assert.equal(T.mode, '2p');
+  assert.equal(DR.toolPrompt(T).prompt, "Specify first end point of circle's diameter (x,y):");
+  DR.toolClick(T, [0, 0]);
+  assert.equal(DR.toolPrompt(T).prompt, "Specify second end point of circle's diameter (x,y):");
+  assert.equal(DR.toolClick(T, [0, 0]).msg, '*Invalid*');
+  assert.equal(T.pts.length, 1, 'the equal point is refused, the prompt repeats');
+  const two = DR.toolClick(T, [10, 0]).made[0];
+  assert.equal(two.t, 'circle'); nearPt(two.c, [5, 0]); near(two.r, 5);
+  assert.equal(T.mode, '2p', 'the tool stays in its mode for the next circle');
+  DR.toolType(T, 'c');
+  assert.equal(T.mode, 'cr', 'typed C is Centre, Radius');
+  DR.toolType(T, '3p');
+  assert.match(DR.toolPrompt(T).prompt, /^Specify first point on circle/);
+  DR.toolClick(T, [0, 0]); DR.toolClick(T, [10, 0]);
+  assert.equal(DR.toolClick(T, [20, 0]).msg, '*Invalid*', 'collinear');
+  assert.equal(DR.toolClick(T, [10, 0]).msg, '*Invalid*', 'a repeated point');
+  assert.equal(T.pts.length, 2);
+  const three = DR.toolClick(T, [10, 10]).made[0];
+  nearPt(three.c, [5, 5]); near(three.r, Math.hypot(5, 5));
+  const pv = DR.createTool('circle', { mode: '3p' }); DR.toolClick(pv, [0, 0]); DR.toolClick(pv, [10, 0]); DR.toolHover(pv, [10, 10]);
+  assert.equal(DR.toolPreview(pv).shapes[0].t, 'circle', 'a live circle follows the pointer');
+  const cd = DR.createTool('circle', { mode: 'cd' });
+  assert.equal(DR.toolPrompt((DR.toolClick(cd, [0, 0]), cd)).prompt, 'Diameter [Radius]:');
+  assert.equal(DR.toolClick(cd, [10, 0]).made[0].r, 5, 'Centre, Diameter');
+  assert.equal(cd.dia, true, 'and the next circle asks for a diameter too');
+  assert.equal(DR.createTool('circle', { mode: 'bogus' }).mode, 'cr');
+});
+
 console.log(n + ' draw tests passed');

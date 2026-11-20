@@ -120,7 +120,7 @@ export function parseInput(text, unit = 'mm') {
   }
   const v = parseLength(t, unit);
   if (v !== null) return { kind: 'len', v };
-  if (/^[a-z]+$/i.test(t) || /^[a-z]+\s+/i.test(t) && parseLength(t.replace(/^[a-z]+\s+/i, ''), unit) !== null) return { kind: 'word', w: t.toLowerCase() };
+  if (/^[23]p$/i.test(t) || /^[a-z]+$/i.test(t) || /^[a-z]+\s+/i.test(t)&& parseLength(t.replace(/^[a-z]+\s+/i, ''), unit) !== null) return { kind: 'word', w: t.toLowerCase() };
   return { kind: 'bad' };
 }
 
@@ -237,11 +237,16 @@ export function svgPath(sh, H) {
 
 // ---------------------------------------------------------------- the tools
 
-/** A new tool. cfg: { radius } is the rounded rectangle's corner radius (kept between uses by the app). */
+/** The Circle tool's modes (the flyout and the Draw menu list these; 346b adds Ttr and Tan-Tan-Tan): [mode, name, typed way in]. */
+export const CIRCLE_MODES = [['cr', 'Centre, Radius', 'C'], ['cd', 'Centre, Diameter', 'C D'], ['2p', '2-Point', 'C 2P'], ['3p', '3-Point', 'C 3P']];
+const byPoints = (T) => T.kind === 'circle' && (T.mode === '2p' || T.mode === '3p');
+
+/** A new tool. cfg: { radius } is the rounded rectangle's corner radius (kept between uses by the app); { mode } the Circle's mode (CIRCLE_MODES, default Centre, Radius). */
 export function createTool(kind, cfg = {}) {
   if (!KINDS.includes(kind)) throw new Error('unknown tool ' + kind);
   const radius = cfg.radius > 0 ? cfg.radius : 5;
-  const T = { kind, pts: [], trail: [], last: null, hover: null, dia: false, radius, stage: kind === 'rrect' ? 'radius' : 'pts', back: null, msg: null };
+  const mode = kind === 'circle' && CIRCLE_MODES.some((m) => m[0] === cfg.mode) ? cfg.mode : 'cr';
+  const T = { kind, pts: [], trail: [], last: null, hover: null, dia: mode === 'cd', mode, radius, stage: kind === 'rrect' ? 'radius' : 'pts', back: null, msg: null };
   return T;
 }
 
@@ -256,7 +261,7 @@ export function toolRef(T) {
 /** How many points are placed (0 = nothing in progress). */
 export const toolBusy = (T) => T.pts.length > 0;
 
-function reset(T) { T.pts = []; T.trail = []; T.hover = null; T.dia = false; }
+function reset(T) { T.pts = []; T.trail = []; T.hover = null; T.dia = T.mode === 'cd'; }
 
 /** The polyline of what is picked, null when it has fewer than 2 points (a Line commits each segment as it is picked: see addPoint). */
 function chain(T, closed) {
@@ -291,6 +296,15 @@ function placePoint(T, p) {
     if (!n) { T.pts = [p]; return say(null); }
     if (Math.abs(p[0] - T.pts[0][0]) < 1e-9 || Math.abs(p[1] - T.pts[0][1]) < 1e-9) return say('The corners are in a line: pick the opposite corner');
     const made = [{ t: 'poly', pts: rectPts(T.pts[0], p, k === 'rrect' ? T.radius : 0), closed: true }];
+    reset(T);
+    return done(made);
+  }
+  if (byPoints(T)) {                                                  // 2P: the ends of a diameter; 3P: three points on the circle. A repeated point or a straight line is refused
+    if (T.pts.some((q) => dist(q, p) < 1e-9)) return say('*Invalid*');
+    if (n < (T.mode === '2p' ? 1 : 2)) { T.pts.push(p); return say(null); }
+    const c = T.mode === '2p' ? { c: [(T.pts[0][0] + p[0]) / 2, (T.pts[0][1] + p[1]) / 2], r: dist(T.pts[0], p) / 2 } : arcThrough3(T.pts[0], T.pts[1], p);
+    if (!c) return say('*Invalid*');
+    const made = [{ t: 'circle', c: c.c, r: c.r }];
     reset(T);
     return done(made);
   }
@@ -400,6 +414,9 @@ export function toolType(T, text, unit = 'mm') {
       return finishChain(T, true);
     }
     if (w === 'u' || w === 'undo') return undoPoint(T);
+    if (k === 'circle' && !T.pts.length && (w === '2p' || w === '3p')) { T.mode = w; return say(null); }        // CIRCLE's centre prompt: AutoCAD's 2P / 3P options
+    if (k === 'circle' && !T.pts.length && (w === 'c' || w === 'circle')) { T.mode = 'cr'; T.dia = false; return say(null); }      // typed C is always Centre, Radius
+    if (byPoints(T) || k === 'circle' && !T.pts.length && !['d', 'diameter', 'r', 'radius'].includes(w)) return say('Point or option keyword required.');
     if (k === 'circle' && (w === 'd' || w === 'diameter')) { T.dia = true; if (arg != null && +arg > 0 && T.pts.length) return circleOf(T, +arg / 2); return say(null); }
     if (k === 'circle' && (w === 'r' || w === 'radius')) { T.dia = false; if (arg != null && +arg > 0 && T.pts.length) return circleOf(T, +arg); return say(null); }
     if (k === 'rrect' && (w === 'r' || w === 'radius')) {
@@ -411,7 +428,7 @@ export function toolType(T, text, unit = 'mm') {
   // a point or a length
   if (!T.pts.length) {
     const p = typedPoint(inp, T.last);
-    if (!p) return say(k === 'circle' || k === 'ellipse' ? 'Type the centre as x,y' : 'Type the first point as x,y (or click it)');
+    if (!p) return say(k === 'circle' && !byPoints(T) || k === 'ellipse' ? 'Type the centre as x,y' : 'Type the first point as x,y (or click it)');
     return addPoint(T, p);
   }
   if (k === 'rect' || k === 'rrect') {                                // the second corner: W,H (also @W,H), or #x,y for an absolute corner
@@ -419,7 +436,7 @@ export function toolType(T, text, unit = 'mm') {
     if (p) return addPoint(T, p);
     return say('Type the size as W,H (or @W,H)');
   }
-  if (k === 'circle') {
+  if (k === 'circle' && !byPoints(T)) {
     if (inp.kind === 'len') return inp.v > 0 ? circleOf(T, T.dia ? inp.v / 2 : inp.v) : say('The radius must be above 0');
     const p = typedPoint(inp, T.pts[0]);
     return p ? addPoint(T, p) : say('Type a radius');
@@ -453,6 +470,20 @@ export function toolPreview(T) {
   if (k === 'rect' || k === 'rrect') {
     if (Math.abs(H[0] - P[0][0]) > 1e-9 && Math.abs(H[1] - P[0][1]) > 1e-9) out.shapes.push({ t: 'poly', pts: rectPts(P[0], H, k === 'rrect' ? T.radius : 0), closed: true });
     out.readout = `W ${n2(Math.abs(H[0] - P[0][0]))} × H ${n2(Math.abs(H[1] - P[0][1]))}` + (k === 'rrect' ? ` · R ${n2(T.radius)}` : '');
+    return out;
+  }
+  if (byPoints(T)) {
+    if (T.mode === '2p') {
+      const d = dist(P[0], H);
+      if (d > 1e-9) out.shapes.push({ t: 'circle', c: [(P[0][0] + H[0]) / 2, (P[0][1] + H[1]) / 2], r: d / 2 });
+      out.guides.push([P[0], H]); out.readout = `Ø ${n2(d)}`;
+      return out;
+    }
+    if (P.length === 1) { out.guides.push([P[0], H]); out.readout = `${n2(dist(P[0], H))} mm`; return out; }
+    const a = arcThrough3(P[0], P[1], H);
+    if (a) { out.shapes.push({ t: 'circle', c: a.c, r: a.r }); out.readout = `R ${n2(a.r)}`; }
+    else out.shapes.push({ t: 'poly', pts: [P[0], P[1], H].map((p) => [p[0], p[1]]), closed: false });
+    out.guides.push([P[0], P[1]]);
     return out;
   }
   if (k === 'circle') {
@@ -499,8 +530,12 @@ export function toolPrompt(T, layer = '0') {
     if (!n) return { status: st(`layer ${layer}` + (k === 'rrect' ? ` · R ${n2(T.radius)}` : '')), prompt: 'Specify first corner' + (k === 'rrect' ? ' [Radius]' : '') + ':' };
     return { status: st(`first corner ${n2(T.pts[0][0])}, ${n2(T.pts[0][1])}`), prompt: 'Other corner, or size W,H (also @W,H)' + (k === 'rrect' ? ' [Radius]' : '') + ':' };
   }
+  if (byPoints(T)) {
+    const two = T.mode === '2p', ord = ['first', 'second', 'third'][n];
+    return { status: st(`${two ? '2-Point' : '3-Point'} · ${n} point${n === 1 ? '' : 's'} · layer ${layer}`), prompt: two ? `Specify ${ord} end point of circle's diameter (x,y):` : `Specify ${ord} point on circle (x,y):` };
+  }
   if (k === 'circle') {
-    if (!n) return { status: st(`layer ${layer}`), prompt: 'Specify centre (x,y):' };
+    if (!n) return { status: st(`layer ${layer}`), prompt: 'Specify centre (x,y) [3P/2P/Diameter]:' };
     return { status: st(`centre ${n2(T.pts[0][0])}, ${n2(T.pts[0][1])}`), prompt: T.dia ? 'Diameter [Radius]:' : 'Radius [Diameter]:' };
   }
   if (k === 'ellipse') {
@@ -520,7 +555,7 @@ export function toolWords(T) {
   const k = T.kind;
   if (T.stage === 'radius') return new Set();
   if (k === 'line' || k === 'polyline') return new Set(['c', 'close', 'u', 'undo']);
-  if (k === 'circle') return new Set(['d', 'diameter', 'r', 'radius', 'u', 'undo']);
+  if (k === 'circle') return new Set(['d', 'diameter', 'r', 'radius', 'u', 'undo', '2p', '3p']);
   if (k === 'rrect') return new Set(['r', 'radius', 'u', 'undo']);
   return new Set(['u', 'undo']);
 }
