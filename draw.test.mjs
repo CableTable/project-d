@@ -647,4 +647,60 @@ test('Circle Tan, Tan, Radius and Tan, Tan, Tan (346b): typed T / TTR, object pi
   assert.deepEqual([par.made, par.msg, par.end], [null, 'Circle does not exist.', true]);
 });
 
+test('Arc Continue (347c): tangent from the end of a line, an arc or a polyline\'s last segment; nothing or a circle gives no arc', () => {
+  const dirOf = (sh, s, dir) => { const c = DR.arcContinue(sh); nearPt(c.s, s); near(c.dir, dir); };
+  dirOf({ t: 'line', a: [0, 0], b: [10, 0] }, [10, 0], 0);
+  dirOf({ t: 'line', a: [10, 10], b: [0, 0] }, [0, 0], 225);
+  dirOf({ t: 'arc', c: [0, 0], r: 10, a0: 0, a1: 90 }, [0, 10], 180);                       // anticlockwise: at its end it heads a quarter turn on
+  dirOf({ t: 'poly', pts: [[0, 0, 0], [10, 0, 0], [10, 10, 0]], closed: false }, [10, 10], 90);
+  dirOf({ t: 'poly', pts: [[0, 0, 0], [10, 0, Math.tan(Math.PI / 8)], [10, 10, 0]], closed: false }, [10, 10], 135);      // a quarter-circle last segment: the tangent has turned 45° from the chord
+  dirOf({ t: 'poly', pts: [[0, 0, 0], [10, 0, 0], [10, 10, 0], [0, 10, 0]], closed: true }, [0, 0], 270);                  // closed: the segment back to the first point
+  for (const sh of [null, { t: 'circle', c: [0, 0], r: 5 }, { t: 'ellipse', c: [0, 0], m: [5, 0], ratio: 0.5 }, { t: 'line', a: [1, 1], b: [1, 1] }]) assert.equal(DR.arcContinue(sh), null);
+  // the tool: Enter at the first prompt starts at the end, asks only the end point (no Ctrl flip), and makes the tangent arc
+  const go = (cont) => { const T = DR.createTool('arc'); T.cont = cont; return [T, DR.toolFinish(T)]; };
+  let [T, r] = go({ t: 'line', a: [0, 0], b: [10, 0] });
+  assert.equal(r.msg, null); assert.equal(T.am, 'ct'); assert.deepEqual(T.pts, [[10, 0]]); assert.equal(DR.toolPrompt(T).prompt, 'Specify end point of arc (x,y):');
+  DR.toolHover(T, [20, 10]); const pv = DR.toolPreview(T).shapes[0]; nearPt(pv.c, [10, 10]); near(pv.a0, 270);
+  r = DR.toolClick(T, [20, 10], null, true);                                                 // Ctrl held: ignored, the tangent fixes the direction
+  nearPt(r.made[0].c, [10, 10]); near(r.made[0].r, 10); near(r.made[0].a0, 270); near(r.made[0].a1, 0);
+  assert.equal(T.am, null, 'the arc is made, the tool asks for a new start point');
+  [T, r] = go({ t: 'arc', c: [0, 0], r: 10, a0: 0, a1: 90 });                                // after an arc: the same circle goes on
+  r = DR.toolClick(T, [-10, 0]); nearPt(r.made[0].c, [0, 0]); near(r.made[0].r, 10); near(r.made[0].a0, 90); near(r.made[0].a1, 180);
+  [T, r] = go({ t: 'line', a: [0, 0], b: [10, 0] }); r = DR.toolClick(T, [20, 0]);          // an end point straight ahead is a straight line: refused, the prompt stays
+  assert.match(r.msg, /straight line/); assert.equal(T.am, 'ct'); assert.equal(T.pts.length, 1);
+  DR.toolType(T, 'u'); assert.equal(T.am, null); assert.equal(T.pts.length, 0, 'U goes back to the first prompt');
+  // nothing / a circle last: the message, and the first prompt stays
+  for (const cont of [null, { t: 'circle', c: [0, 0], r: 5 }]) {
+    [T, r] = go(cont);
+    assert.equal(r.msg, 'No line or arc to continue.'); assert.equal(T.am, null); assert.equal(T.pts.length, 0); assert.match(DR.toolPrompt(T).prompt, /^Specify start point/);
+  }
+});
+
+test('Arc modes (347c): ARC_MODES in AutoCAD\'s order; a mode the button starts waits for what it needs, typed options leave it', () => {
+  assert.deepEqual(DR.ARC_MODES.map((m) => m[1]), ['3-Point', 'Start, Centre, End', 'Start, Centre, Angle', 'Start, Centre, Length', 'Start, End, Angle', 'Start, End, Direction', 'Start, End, Radius', 'Centre, Start, End', 'Centre, Start, Angle', 'Centre, Start, Length', 'Continue']);
+  assert.equal(DR.createTool('arc').mode, '3p'); assert.equal(DR.createTool('arc', { mode: 'cr' }).mode, '3p'); assert.equal(DR.createTool('line').mode, 'cr');
+  const arc = (r) => { assert.equal(r.msg, null); return r.made[0]; };
+  const is = (a, c, rad, a0, a1) => { nearPt(a.c, c); near(a.r, rad); near(a.a0, a0); near(a.a1, a1); };
+  const mk = (mode) => DR.createTool('arc', { mode });
+  let T = mk('sce'); click(T, [10, 0]); assert.equal(T.am, 'sc'); assert.equal(DR.toolPrompt(T).prompt, 'Specify centre point of arc (x,y):');
+  click(T, [0, 0]); assert.match(DR.toolPrompt(T).prompt, /^Specify end point of arc/); is(arc(DR.toolClick(T, [0, 10])), [0, 0], 10, 0, 90);
+  assert.equal(T.am, null, 'the mode goes on with a fresh start point'); click(T, [10, 0]); assert.equal(T.am, 'sc');
+  T = mk('sca'); click(T, [10, 0], [0, 0]); assert.equal(T.ask, 'a'); is(arc(DR.toolType(T, '90')), [0, 0], 10, 0, 90);
+  T = mk('scl'); click(T, [10, 0], [0, 0]); assert.equal(T.ask, 'l'); is(arc(DR.toolType(T, '14.142135623730951')), [0, 0], 10, 0, 90);
+  T = mk('sea'); click(T, [10, 0]); assert.equal(T.am, 'se'); click(T, [0, 10]); assert.equal(T.ask, 'a'); is(arc(DR.toolType(T, '90')), [0, 0], 10, 0, 90);
+  T = mk('sed'); click(T, [10, 0], [0, 10]); assert.equal(T.ask, 'd'); is(arc(DR.toolType(T, '90')), [0, 0], 10, 0, 90);
+  T = mk('ser'); click(T, [10, 0], [0, 10]); assert.equal(T.ask, 'r'); is(arc(DR.toolType(T, '10')), [0, 0], 10, 0, 90);
+  T = mk('cse'); assert.equal(T.am, 'cs'); assert.equal(DR.toolBusy(T), false, 'nothing is placed yet: Esc leaves the tool'); assert.equal(DR.toolPrompt(T).prompt, 'Specify centre point of arc (x,y):');
+  click(T, [0, 0]); assert.equal(DR.toolPrompt(T).prompt, 'Specify start point of arc (x,y):'); click(T, [10, 0]); is(arc(DR.toolClick(T, [0, 10])), [0, 0], 10, 0, 90);
+  assert.equal(T.am, 'cs'); assert.equal(T.pts.length, 0);
+  T = mk('csa'); click(T, [0, 0], [10, 0]); assert.equal(T.ask, 'a'); is(arc(DR.toolType(T, '90')), [0, 0], 10, 0, 90);
+  T = mk('csl'); click(T, [0, 0], [10, 0]); assert.equal(T.ask, 'l'); is(arc(DR.toolType(T, '14.142135623730951')), [0, 0], 10, 0, 90);
+  // U goes back a point at a time and keeps the mode; Enter / Esc with a point placed cancels it
+  T = mk('sca'); click(T, [10, 0], [0, 0]); DR.toolType(T, 'u'); assert.deepEqual([T.pts.length, T.am, T.ask], [1, 'sc', null]); DR.toolType(T, 'u'); assert.deepEqual([T.pts.length, T.am, T.ask], [0, null, null]);
+  assert.equal(DR.toolType(T, 'u').msg, 'Nothing to undo'); click(T, [10, 0]); assert.equal(DR.toolFinish(T).msg, 'Cancelled'); assert.equal(T.pts.length, 0); assert.equal(T.mode, 'sca');
+  T = mk('cse'); assert.equal(DR.toolType(T, 'u').msg, 'Nothing to undo'); assert.equal(T.am, 'cs');
+  // a typed option at the first prompt is the old typed flow: the mode is gone
+  T = mk('sce'); DR.toolType(T, 'c'); assert.deepEqual([T.am, T.mode], ['cs', '3p']); click(T, [0, 0], [10, 0]); is(arc(DR.toolClick(T, [0, 10])), [0, 0], 10, 0, 90); assert.equal(T.am, null);
+});
+
 console.log(n + ' draw tests passed');

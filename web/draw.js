@@ -225,6 +225,19 @@ export function arcSER(s, e, rad) {
   const h = Math.sqrt(Math.max(0, r * r - d * d / 4)) * Math.sign(rad);
   return arcOf([(s[0] + e[0]) / 2 - (e[1] - s[1]) / d * h, (s[1] + e[1]) / 2 + (e[0] - s[0]) / d * h], r, s, e);
 }
+/**
+ * Arc, Continue (347c): where an arc continues from the last shape drawn (a line, an arc, or a polyline's last segment): { s: its end, dir: the tangent there in degrees },
+ * the new arc leaves s along dir (arcSED). null for anything else (a circle, an ellipse, nothing).
+ */
+export function arcContinue(sh) {
+  if (!sh) return null;
+  if (sh.t === 'line') return dist(sh.a, sh.b) < 1e-9 ? null : { s: sh.b, dir: angleOf(sh.a, sh.b) };
+  if (sh.t === 'arc') return { s: [sh.c[0] + sh.r * Math.cos(sh.a1 / DEG), sh.c[1] + sh.r * Math.sin(sh.a1 / DEG)], dir: norm360(sh.a1 + 90) };       // drawn anticlockwise, so the tangent at its end is a quarter turn on
+  if (sh.t !== 'poly' || sh.pts.length < 2) return null;
+  const n = sh.pts.length, p = sh.closed ? sh.pts[n - 1] : sh.pts[n - 2], q = sh.closed ? sh.pts[0] : sh.pts[n - 1], bulge = p[2] || 0;      // a closed one ends with the segment back to its first point (its bulge is the last point's)
+  if (dist(p, q) < 1e-9) return null;
+  return { s: [q[0], q[1]], dir: norm360(angleOf(p, q) + 2 * Math.atan(bulge) * DEG) };      // a bulge of tan(θ/4) turns the chord by θ/2 at the end
+}
 /** Ctrl held (347b): the arc turned the other way, i.e. mirrored in the line u → v (the centre-to-start line of the centre modes, the chord of Start, End, Angle / Radius). */
 export function arcMirror(a, u, v) {
   const d = dist(u, v), ux = (v[0] - u[0]) / d, uy = (v[1] - u[1]) / d, t = (a.c[0] - u[0]) * ux + (a.c[1] - u[1]) * uy, phi = Math.atan2(uy, ux) * DEG;
@@ -304,18 +317,30 @@ export function svgPath(sh, H) {
 
 /** The Circle tool's modes (the flyout and the Draw menu list these): [mode, name, typed way in]. Tan, Tan, Tan has no typed way in (AutoCAD has none). */
 export const CIRCLE_MODES = [['cr', 'Centre, Radius', 'C'], ['cd', 'Centre, Diameter', 'C D'], ['2p', '2-Point', 'C 2P'], ['3p', '3-Point', 'C 3P'], ['ttr', 'Tan, Tan, Radius', 'C T'], ['ttt', 'Tan, Tan, Tan', null]];
+/** The Arc tool's modes in AutoCAD's order (TODO 347c; the flyout and the Draw menu list these): [mode, name, typed way in]. Only 3-Point is typed straight (A); the others are options typed after it. */
+export const ARC_MODES = [['3p', '3-Point', 'A'], ['sce', 'Start, Centre, End', null], ['sca', 'Start, Centre, Angle', null], ['scl', 'Start, Centre, Length', null], ['sea', 'Start, End, Angle', null], ['sed', 'Start, End, Direction', null],
+  ['ser', 'Start, End, Radius', null], ['cse', 'Centre, Start, End', null], ['csa', 'Centre, Start, Angle', null], ['csl', 'Centre, Start, Length', null], ['ct', 'Continue', null]];
+// what a mode has typed for the user: [T.am once the first point (Centre, Start: none) is placed, T.ask once both points are]
+const ARC_PRESET = { sce: ['sc'], sca: ['sc', 'a'], scl: ['sc', 'l'], sea: ['se', 'a'], sed: ['se', 'd'], ser: ['se', 'r'], cse: ['cs'], csa: ['cs', 'a'], csl: ['cs', 'l'] };
+function arcPreset(T) {
+  const p = T.kind === 'arc' && ARC_PRESET[T.mode];
+  if (!p) return;
+  T.am = p[0] === 'cs' || T.pts.length ? p[0] : null;
+  T.ask = p[1] && T.pts.length > 1 ? p[1] : null;
+}
 const byPoints = (T) => T.kind === 'circle' && (T.mode === '2p' || T.mode === '3p');
 /** Tan, Tan, Radius and Tan, Tan, Tan: the picks are objects (the app finds the object under each click and gives it to toolClick), not points. */
 export const tangentMode = (T) => T.kind === 'circle' && (T.mode === 'ttr' || T.mode === 'ttt');
 const TAN = 'Requires a TAN object-snap and selection of Circle, Arc, or Line.';
 const radiusStage = (T) => T.mode === 'ttr' && T.pts.length === 2;        // Tan, Tan, Radius: both objects are picked, the radius is next
 
-/** A new tool. cfg: { radius } is the rounded rectangle's corner radius (kept between uses by the app); { mode } the Circle's mode (CIRCLE_MODES, default Centre, Radius). */
+/** A new tool. cfg: { radius } is the rounded rectangle's corner radius (kept between uses by the app); { mode } the Circle's or Arc's mode (CIRCLE_MODES, default Centre, Radius; ARC_MODES, default 3-Point). T.cont (set by the app): the last shape drawn, for the Arc's Continue. */
 export function createTool(kind, cfg = {}) {
   if (!KINDS.includes(kind)) throw new Error('unknown tool ' + kind);
   const radius = cfg.radius > 0 ? cfg.radius : 5;
-  const mode = kind === 'circle' && CIRCLE_MODES.some((m) => m[0] === cfg.mode) ? cfg.mode : 'cr';
-  const T = { kind, pts: [], objs: [], rbase: null, trail: [], last: null, hover: null, dia: mode === 'cd', mode, radius, stage: kind === 'rrect' ? 'radius' : 'pts', back: null, msg: null, am: null, ask: null, flip: false };
+  const modes = kind === 'arc' ? ARC_MODES : kind === 'circle' ? CIRCLE_MODES : [], mode = modes.some((m) => m[0] === cfg.mode) ? cfg.mode : kind === 'arc' ? '3p' : 'cr';
+  const T = { kind, pts: [], objs: [], rbase: null, trail: [], last: null, hover: null, dia: mode === 'cd', mode, radius, stage: kind === 'rrect' ? 'radius' : 'pts', back: null, msg: null, am: null, ask: null, flip: false, cont: null, dir: 0 };
+  arcPreset(T);
   return T;
 }
 
@@ -355,8 +380,8 @@ const arcMade = (T, a) => {
 function arcWord(T, w, arg, unit) {
   const n = T.pts.length, opt = (...names) => names.some((x) => x.startsWith(w));
   if (T.ask) return say(ARC_ASK_WHY[T.ask]);                          // a word where a number is needed
-  if (!T.am && n < 2 && opt('center', 'centre')) { T.am = n ? 'sc' : 'cs'; return say(null); }
-  if (!T.am && n === 1 && opt('end')) { T.am = 'se'; return say(null); }
+  if (!T.am && n < 2 && opt('center', 'centre')) { T.am = n ? 'sc' : 'cs'; T.mode = '3p'; return say(null); }       // a typed option leaves the mode the button started
+  if (!T.am && n === 1 && opt('end')) { T.am = 'se'; T.mode = '3p'; return say(null); }
   const ask = T.am === 'se' ? n === 2 && ['angle', 'direction', 'radius'].find((x) => opt(x)) : T.am && n === 2 && ['angle', 'length'].find((x) => opt(x));
   if (ask) {
     T.ask = ask[0];
@@ -376,9 +401,9 @@ export function toolRef(T) {
   return T.pts.length ? T.pts[T.pts.length - 1] : null;
 }
 /** How many points are placed (0 = nothing in progress). */
-export const toolBusy = (T) => T.pts.length > 0 || !!T.am;                       // a typed C in Arc is a command in progress before any point
+export const toolBusy = (T) => T.pts.length > 0 || !!T.am && !(T.kind === 'arc' && ARC_PRESET[T.mode]);       // a typed C in Arc is a command in progress before any point (a Centre, Start mode from the button waits for its first point like the others)
 
-function reset(T) { T.pts = []; T.objs = []; T.rbase = null; T.trail = []; T.hover = null; T.dia = T.mode === 'cd'; T.am = null; T.ask = null; }
+function reset(T) { T.pts = []; T.objs = []; T.rbase = null; T.trail = []; T.hover = null; T.dia = T.mode === 'cd'; T.am = null; T.ask = null; arcPreset(T); }
 
 /** The polyline of what is picked, null when it has fewer than 2 points (a Line commits each segment as it is picked: see addPoint). */
 function chain(T, closed) {
@@ -462,9 +487,11 @@ function placePoint(T, p, obj) {
   }
   if (k === 'arc') {
     if (T.ask) return arcMade(T, arcAsked(T, arcValueAt(T, p)));        // a click at the A / L prompt: the pointer gives the value
+    if (T.am === 'ct') return arcMade(T, arcSED(T.pts[0], p, T.dir));    // Continue: the start and the tangent are known, the end point is all it asks
     if (n < 2) {
       if (n && dist(T.pts[n - 1], p) < 1e-9) return say('That is the same point: pick another');
       T.pts.push(p);
+      arcPreset(T);
       return say(null);
     }
     if (T.am === 'se') return say(SE_CENTRE);                           // the points are kept, the prompt stays
@@ -508,6 +535,12 @@ export function toolFinish(T) {
   if (T.kind === 'line') { reset(T); return say(null); }
   if (T.kind === 'polyline') return T.pts.length ? finishChain(T, false) : say(null);
   if (T.pts.length || T.am) { reset(T); return say('Cancelled'); }
+  if (T.kind === 'arc' && !T.am) {                                    // Enter at the first prompt: Continue from the last line or arc (T.cont, set by the app), no Ctrl flip
+    const c = arcContinue(T.cont);
+    if (!c) return say('No line or arc to continue.');
+    T.am = 'ct'; T.pts = [c.s]; T.dir = c.dir;
+    return say(null);
+  }
   return say(null);
 }
 
@@ -523,11 +556,13 @@ export function toolUndoSeg(T) {
 
 /** Back to the point before (Undo / U): a polyline loses its last point, the others their last pick. */
 function undoPoint(T) {
+  if (ARC_PRESET[T.mode] && T.kind === 'arc' && T.pts.length) { T.pts.pop(); T.last = T.pts.at(-1) || null; arcPreset(T); return say(null); }       // a mode the button started goes back one point at a time
   if (T.ask) { T.ask = null; return say(null); }                     // Arc: back from the A / L prompt to the end point
-  if (!T.pts.length && T.am) { T.am = null; return say(null); }       // Arc: back from a typed C at the first prompt
+  if (!T.pts.length && T.am && !ARC_PRESET[T.mode]) { T.am = null; return say(null); }       // Arc: back from a typed C at the first prompt
   if (!T.pts.length) return say('Nothing to undo');
   if (T.kind === 'line' && T.trail.length) return { made: null, msg: null, undoSeg: true };         // the app undoes the segment's step
   if (T.rbase) { T.rbase = null; return say(null); }                  // Tan, Tan, Radius: the radius' first point
+  if (T.am === 'ct') { reset(T); return say(null); }                  // Arc: back from Continue's end point to the first prompt
   if ((T.am === 'sc' || T.am === 'se') && T.pts.length === 1) { T.am = null; return say(null); }      // Arc: back from the centre / end prompt to the second point prompt, where C and E are options
   T.pts.pop();
   T.objs.length = Math.min(T.objs.length, T.pts.length);
@@ -664,6 +699,11 @@ export function toolPreview(T) {
     return out;
   }
   if (k === 'arc') {
+    if (T.am === 'ct') {
+      const a = arcSED(P[0], H, T.dir);
+      if (!a.why) { out.shapes.push({ t: 'arc', c: a.c, r: a.r, a0: a.a0, a1: a.a1 }); out.readout = `R ${n2(a.r)} · ${n2(sweepOf(a.a0, a.a1))}°`; }
+      return out;
+    }
     if (P.length === 1 && T.am === 'cs') { out.guides.push([P[0], H]); out.readout = `R ${n2(dist(P[0], H))}`; return out; }
     if (P.length === 1) { out.shapes.push({ t: 'line', a: P[0], b: H }); return out; }
     if (T.am) {                                                       // the typed modes: the end point, or the typed (else the pointer's) angle / chord / direction / radius
@@ -718,6 +758,7 @@ export function toolPrompt(T, layer = '0') {
     return { status: st(`axis 1 ${n2(dist(T.pts[0], T.pts[1]))} mm`), prompt: 'Other half-axis (a point, or its length):' };
   }
   // arc
+  if (T.am === 'ct') return { status: st(`Continue · layer ${layer}`), prompt: 'Specify end point of arc (x,y):' };
   if (T.am) {
     const name = { sc: 'Start, Centre', cs: 'Centre, Start', se: 'Start, End' }[T.am], ctrl = '(hold Ctrl to switch direction)';
     if (T.ask) return { status: st(`${name}, ${ASK_NAME[T.ask]} · layer ${layer}`), prompt: ASK_PROMPT[T.ask] + ` ${ctrl}:` };

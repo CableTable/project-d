@@ -35318,6 +35318,127 @@ try {
     assert.deepEqual(errors, []);
   });
 
+  // ---- TODO 347c: Arc Continue (Enter at the first prompt), the Arc flyout (rail, ribbon, Draw > Arc >), the remembered mode (pd-arcmode); Drawings, Layouts and Compare ----
+  const modes347c = ['3-Point A', 'Start, Centre, End', 'Start, Centre, Angle', 'Start, Centre, Length', 'Start, End, Angle', 'Start, End, Direction', 'Start, End, Radius', 'Centre, Start, End', 'Centre, Start, Angle', 'Centre, Start, Length', 'Continue'];
+  const storedArc347 = () => page.evaluate(() => localStorage.getItem('pd-arcmode'));
+  const pickArc347 = (name) => page.locator('.ctxmenu .mi', { hasText: name }).click();
+  const arcBack347 = async () => { await t('arc-flyout').click(); await pickArc347('3-Point'); await stop346(); };       // the default again, for the other steps
+  const end347c = 'Specify end point of arc (x,y):', homeArc347 = async () => { await page.locator('[data-ribbon-tab=Home]').click(); return page.locator('.ribbon-body [data-panel=Draw]').getByRole('button', { name: 'Arc', exact: true }); };
+  await step('TODO 347c: the Arc button shows and starts the last mode (pd-arcmode); the flyout opens from its triangle, a hold or a right-click, from the ribbon and from Draw > Arc >, with the 11 modes; typed ARC and Space always start 3-Point: Drawings, Layouts, Compare', async () => {
+    for (const [kind, setup] of circleTabs346) {
+      await setup();
+      await t('arc-flyout').click();
+      assert.deepEqual(await flyoutItems(), modes347c, kind);
+      await pickArc347('Centre, Start, End');
+      await prompt346(centre347, kind + ': the pick starts the mode, Centre first');
+      assert.equal(await storedArc347(), 'cse', kind);
+      assert.match(await page.locator('[data-tool=arc]').getAttribute('title'), /Centre, Start, End/, kind + ': the button shows the mode');
+      await stop346();
+      await page.locator('[data-tool=arc]').click();
+      await prompt346(centre347, kind + ': the button starts the last mode');
+      await stop346();
+      await typeCmd('arc'); await prompt346(start347, kind + ': typed ARC is 3-Point');
+      await stop346(); await key97c(' '); await prompt346(start347, kind + ': Space repeats ARC as 3-Point');
+      await stop346();
+      await t('arc-flyout').click(); await pickArc347('Start, Centre, Angle');
+      assert.equal(await page.locator('[data-tool=arc] > svg circle').count(), 2, kind + ': its icon is the Start, Centre, Angle one (two dots)');
+      await prompt346(start347, kind + ': Start, Centre, Angle starts at the start prompt'); await typeCmd('200,100'); await prompt346(centre347, kind + ': Start, Centre, Angle: centre'); await typeCmd('150,100');
+      await prompt346(angle347, kind + ': Start, Centre, Angle asks the angle straight after the centre'); await typeCmd('90');
+      assert.match(await said346(), /Arc made on layer/, kind);
+      await stop346();
+      const box = await page.locator('[data-tool=arc]').boundingBox();                  // press and hold 450 ms
+      await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2); await page.mouse.down(); await page.waitForTimeout(650);
+      assert.deepEqual(await flyoutItems(), modes347c, kind + ': hold');
+      await page.mouse.up(); await pickArc347('Start, End, Direction');
+      await prompt346(start347, kind + ': Start, End, Direction starts at the start prompt'); await typeCmd('100,100'); await prompt346('Specify end point of arc (x,y):', kind + ': Start, End, Direction: end'); await typeCmd('150,150');
+      await prompt346(dir347, kind + ': Start, End, Direction asks the direction'); await typeCmd('0');
+      assert.match(await said346(), /Arc made on layer/, kind);
+      await stop346();
+      await page.locator('[data-tool=arc]').click({ button: 'right' });                  // right-click
+      assert.deepEqual(await flyoutItems(), modes347c, kind + ': right-click');
+      await page.keyboard.press('Escape');
+      let b = await homeArc347();                                                        // the ribbon button and its flyout
+      await b.waitFor();
+      await t('arc-ribbon-flyout').click();
+      assert.deepEqual(await flyoutItems(), modes347c, kind + ': ribbon');
+      await pickArc347('Start, End, Radius'); await prompt346(start347, kind + ': ribbon pick');
+      await stop346();
+      assert.equal(await (await homeArc347()).locator('svg circle').count(), 2, kind + ': the ribbon icon shows the mode too');
+      await (await homeArc347()).click(); await prompt346(start347, kind + ': the ribbon button starts the last mode'); await typeCmd('100,100'); await typeCmd('150,150');
+      await prompt346('Specify radius of arc (hold Ctrl to switch direction):', kind + ': Start, End, Radius'); await typeCmd('100');
+      assert.match(await said346(), /Arc made on layer/, kind);
+      await stop346();
+      await menuItem('Draw', 'Arc');                                                    // Draw > Arc > submenu
+      assert.deepEqual(await flyoutItems(), modes347c, kind + ': Draw menu');
+      await pickArc347('Centre, Start, Length');
+      await prompt346(centre347, kind + ': submenu pick'); assert.equal(await storedArc347(), 'csl');
+      await stop346();
+      await t('arc-flyout').click(); await pickArc347('3-Point');                     // back to the default for the other steps
+      assert.equal(await storedArc347(), '3p'); await prompt346(start347, kind);
+      await stop346(); await closeTabs(/./);
+    }
+    assert.deepEqual(errors, []);
+  });
+
+  await step('TODO 347c: the remembered Arc mode survives a reload (pd-arcmode): the button shows it and starts it', async () => {
+    await closeTabs(/./);
+    await open97c(doc97f2(dxfLine(10, 10, 300, 10)), 'arc347c-reload.dxf');
+    await t('arc-flyout').click(); await pickArc347('Start, End, Angle'); await stop346();
+    await page.reload(); await page.waitForSelector('[data-testid=count]', { state: 'attached' });
+    await open97c(doc97f2(dxfLine(10, 10, 300, 10)), 'arc347c-reload2.dxf');
+    assert.match(await page.locator('[data-tool=arc]').getAttribute('title'), /Start, End, Angle/, 'the button shows the mode after the reload');
+    await page.locator('[data-tool=arc]').click(); await prompt346(start347, 'after the reload'); await typeCmd('100,100'); await prompt346('Specify end point of arc (x,y):', 'after the reload');
+    await typeCmd('150,150'); await prompt346(angle347, 'Start, End, Angle asks the angle'); await stop346();
+    await arcBack347(); await closeTabs(/./);
+    assert.deepEqual(errors, []);
+  });
+
+  await step('TODO 347c: Enter at the ARC first prompt continues from the last line or arc, tangent to it, asking only the end point (a Ctrl click makes no turn); a circle or nothing last says "No line or arc to continue." and the prompt stays; the flyout\'s Continue: Drawings, Layouts, Compare', async () => {
+    for (const [kind, setup] of circleTabs346) {
+      await setup();
+      const n0 = kind === 'Layouts' ? await nParts() : 0;
+      await typeCmd('arc'); await key97c('Enter');
+      assert.match(await said346(), /No line or arc to continue\./, kind + ': nothing drawn yet'); await prompt346(start347, kind + ': the prompt stays');
+      await stop346();
+      await typeCmd('l'); await typeCmd('100,60'); await typeCmd('140,60'); await stop346();                  // a line, then Enter at the ARC prompt
+      await typeCmd('arc'); await key97c('Enter'); await prompt346(end347c, kind + ': Continue asks only the end point');
+      await page.keyboard.down('Control'); await click346(170, 90); await page.keyboard.up('Control');          // Ctrl does not turn it: the tangent fixes the direction
+      assert.match(await said346(), /Arc made on layer/, kind);
+      await key97c('Enter'); await prompt346(end347c, kind + ': after an arc, Enter continues from the arc');
+      await typeCmd('140,120'); assert.match(await said346(), /Arc made on layer/, kind);
+      await typeCmd('circle'); await typeCmd('50,50'); await typeCmd('20'); assert.match(await said346(), /Circle made on layer/, kind);
+      await typeCmd('arc'); await key97c('Enter');
+      assert.match(await said346(), /No line or arc to continue\./, kind + ': a circle last'); await prompt346(start347, kind + ': the prompt stays');
+      await stop346();
+      await typeCmd('l'); await typeCmd('100,200'); await typeCmd('150,200'); await stop346();
+      await t('arc-flyout').click(); await pickArc347('Continue');                                              // the flyout's Continue is Enter at once
+      await prompt346(end347c, kind + ': flyout Continue'); assert.equal(await storedArc347(), 'ct');
+      await typeCmd('200,250'); assert.match(await said346(), /Arc made on layer/, kind);
+      await stop346();
+      if (kind === 'Layouts') assert.equal(await nParts(), n0 + 6, kind + ': two lines, three arcs and a circle');
+      else {
+        const arcs = await arcsOf347(kind); assert.equal(arcs.length, 3, kind);
+        [[140, 90, 30, 270, 0], [140, 90, 30, 0, 90], [150, 250, 50, 270, 0]].forEach((want, i) => arcAt347(arcs[i], want, `${kind} arc ${i + 1}`));
+      }
+      await arcBack347(); await closeTabs(/./);
+    }
+    assert.deepEqual(errors, []);
+  });
+
+  await step('TODO 347c: screenshots, light and dark (the Arc flyout open on a Start, Centre, End button)', async () => {
+    await open97c(doc97f2(dxfLine(10, 10, 300, 10)), 'arc347c-shot.dxf');
+    await t('arc-flyout').click(); await pickArc347('Start, Centre, End'); await stop346();
+    for (const theme of ['light', 'dark']) {
+      await menuItem('View', 'Theme: ' + theme); await frames();
+      await t('arc-flyout').click(); await page.mouse.move(5, 5);
+      const path = `${shotDir}/s347c-arcflyout-${theme}.png`;
+      await page.screenshot({ path }); assert.ok(readFileSync(path).length > 1000);
+      await page.keyboard.press('Escape');
+    }
+    await menuItem('View', 'Theme: light');
+    await arcBack347(); await closeTabs(/./);
+  });
+
   const picked = pickSteps(steps, only, selectStep, until);
   for (const entry of picked) await runStep(page, entry, shotDir);
 } catch (e) {

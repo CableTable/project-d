@@ -220,6 +220,22 @@ const CIRCLE_ICONS = {
   ttt: '<path d="M10 2L18 17H2z"/><circle cx="10" cy="12.2" r="4.8"/>',               // a triangle and its inscribed circle
 };
 const circleRows = () => DR.CIRCLE_MODES.map(([mode, name, key]) => [name, () => setCircleMode(mode), key, null, CIRCLE_ICONS[mode]]);
+// the Arc button's flyout (TODO 347c): the modes of draw.js ARC_MODES; every icon is the same arc, start at the left, end at the right, centre between them, with the dots and lines of what the mode is given
+const ARC_BASE = '<path d="M3 14A7 7 0 0 1 17 14"/>';
+const ARC_ICONS = {
+  '3p': `${ARC_BASE}${DOT(3, 14)}${DOT(10, 7)}${DOT(17, 14)}`,
+  sce: `${ARC_BASE}${DOT(3, 14)}${DOT(10, 14)}${DOT(17, 14)}`,
+  sca: `${ARC_BASE}<path d="M3 14h7l4.9-4.9"/>${DOT(3, 14)}${DOT(10, 14)}`,
+  scl: `${ARC_BASE}<path d="M3 14h14"/>${DOT(3, 14)}${DOT(10, 14)}`,
+  sea: `${ARC_BASE}<path d="M3 14l7-7 7 7"/>${DOT(3, 14)}${DOT(17, 14)}`,
+  sed: `${ARC_BASE}<path d="M3 14V5M3 5l-2 3M3 5l2 3"/>${DOT(3, 14)}${DOT(17, 14)}`,
+  ser: `${ARC_BASE}<path d="M10 14l-5-4.9"/>${DOT(3, 14)}${DOT(17, 14)}`,
+  cse: `${ARC_BASE}${DOT(10, 14)}${DOT(3, 14)}${DOT(17, 14)}`,
+  csa: `${ARC_BASE}<path d="M10 14L3 14M10 14l4.9-4.9"/>${DOT(10, 14)}${DOT(3, 14)}`,
+  csl: `${ARC_BASE}<path d="M3 14h14"/>${DOT(10, 14)}${DOT(3, 14)}`,
+  ct: '<path d="M1 16h6"/><path d="M7 16A8 8 0 0 0 15 8"/>',
+};
+const arcRows = () => DR.ARC_MODES.map(([mode, name, key]) => [name, () => setArcMode(mode), key, null, ARC_ICONS[mode]]);
 
 const EYE = '<path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>';
 const EYE_OFF = '<path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/><path d="M4 4l16 16"/>';
@@ -278,6 +294,7 @@ const state = {
   meas: null,                      // Measure in progress: { pts: [[x, y] drawing units], hover }
   dimStyles: { presets: {}, cur: 'Standard' },   // the dimension style presets (dims.js; Format → Dimension style…), remembered on this PC (pd-dimstyles); dsOpen: that dialog is open
   circleMode: 'cr',                // the Circle button's mode (draw.js CIRCLE_MODES; remembered on this PC as pd-circlemode)
+  arcMode: '3p',                   // the Arc button's mode (draw.js ARC_MODES; remembered on this PC as pd-arcmode)
   dimType: 'aligned',              // the Dimension button's type: aligned, linear, radius, diameter or angle (remembered on this PC)
   dim: null,                       // the Dimension tool in progress: { pts: [[x, y] drawing units], hover, cursor, obj (the circle or arc picked: { c, r }), lines (the lines picked) }
   ldr: null,                       // the Leader tool in progress: { pts: [[x, y] drawing units, up to 3], hover, cursor }
@@ -578,7 +595,7 @@ function buildMenus() {
     },
   };
   menus.Draw = [['Line', 'line', 'L'], ['Polyline', 'polyline', 'P'], ['Rectangle', 'rect', 'R'], ['Rounded rectangle', 'rrect', 'RR'], ['Circle', 'circle', 'C'],
-    ['Ellipse', 'ellipse', 'EL'], ['Arc', 'arc', 'A'], ['Text', 'text', 'T'], ['Divide', 'divide', 'DIV'], ['Measure points', 'measurepoints', 'ME']].map(([text, id, key]) => [text, () => setTool(id), key, null, null, false, undefined, id === 'circle' ? circleRows : null]);       // every draw tool works on a layout too (156b2); Circle opens its modes as a submenu (346a)
+    ['Ellipse', 'ellipse', 'EL'], ['Arc', 'arc', 'A'], ['Text', 'text', 'T'], ['Divide', 'divide', 'DIV'], ['Measure points', 'measurepoints', 'ME']].map(([text, id, key]) => [text, () => setTool(id), key, null, null, false, undefined, id === 'circle' ? circleRows : id === 'arc' ? arcRows : null]);       // every draw tool works on a layout too (156b2); Circle and Arc open their modes as a submenu (346a, 347c)
   menus.Modify = [['Move', 'move', 'MV'], ['Copy', 'copy', 'CO'], ['Stretch', 'stretch', 'STR'], ['Array', 'array', 'AR'], ['Rotate', 'rotate', 'RO'], ['Align', 'align', 'AL'], ['Scale', 'scale', 'SC'], ['Fillet', 'fillet', 'F'], ['Offset', 'offset', 'O'], ['Trim', 'trim', 'TR'], ['Extend', 'extend', 'EX'], ['Mirror', 'mirror', 'MI'], ['Reverse', 'reverse', null]].map(([text, id, key]) => [text, () => id === 'rotate' ? DO.rotate() : setTool(id), key, () => !curLay() || LAY_MODS.includes(id) || id === 'rotate' && !!selectedPlaced()]);
   menus.Modify.push(['Text to outlines', () => textToOutlines(), 'TXO']);
   menus.Modify.push(['Burst', burstSelected]);
@@ -774,18 +791,19 @@ function ribbonButton(label, svg, action, { small = false, enabled = () => true,
 }
 function ribbonTool(id, small = false) {
   const t = TOOLS.find((t) => t.id === id);
-  const b = ribbonButton(id === 'divide' ? 'Divide / Measure points' : t.label, t.svg, () => id === 'nest' ? openNestDialog() : id === 'step' ? DO.step() : id === 'rotate' ? (curLay() && !selectedPlaced() ? note('Rotate: select a part first (Align is in the dropdown)') : DO.rotate()) : id === 'circle' ? startCircle(state.circleMode) : setTool(id),
+  const b = ribbonButton(id === 'divide' ? 'Divide / Measure points' : t.label, t.svg, () => id === 'nest' ? openNestDialog() : id === 'step' ? DO.step() : id === 'rotate' ? (curLay() && !selectedPlaced() ? note('Rotate: select a part first (Align is in the dropdown)') : DO.rotate()) : startButtonTool(id),
     { small, enabled: () => id === 'step' || id === 'nest' ? !!curLay() : id === 'measure' ? !!measureTarget() : id === 'dimension' ? !!dimTarget() : DR.KINDS.includes(id) || id === 'text' ? !!curDoc() : !!editable() || (id === 'contour' && !!curLay()) || (id === 'rotate' && !!curLay()) || (LAY_MODS.includes(id) && !!curLay()), pressed: () => state.tool === id, command: id, description: t.description });
   if (id === 'dimension') {
     b.append(h('span', { class: 'flyout', title: 'Dimension types', 'aria-label': 'Dimension types' }, '▾'));
     b.setAttribute('aria-haspopup', 'menu');
     dimButton(b);
   }
-  if (id === 'circle') {
-    if (state.circleMode !== 'cr') b.querySelector('svg').replaceWith(icon(CIRCLE_ICONS[state.circleMode], { size: 30, box: 20, width: 1.5, cap: 'round', join: 'round' }));
-    b.append(h('span', { class: 'flyout', title: 'Circle modes', 'aria-label': 'Circle modes', 'data-testid': 'circle-ribbon-flyout' }, '▾'));
+  if (id === 'circle' || id === 'arc') {
+    const arc = id === 'arc', mode = arc ? state.arcMode : state.circleMode, Name = t.label;
+    if (mode !== (arc ? '3p' : 'cr')) b.querySelector('svg').replaceWith(icon((arc ? ARC_ICONS : CIRCLE_ICONS)[mode], { size: 30, box: 20, width: 1.5, cap: 'round', join: 'round' }));
+    b.append(h('span', { class: 'flyout', title: Name + ' modes', 'aria-label': Name + ' modes', 'data-testid': id + '-ribbon-flyout' }, '▾'));
     b.setAttribute('aria-haspopup', 'menu');
-    circleButton(b, true);
+    modeButton(b, id, true);
   }
   if (id === 'break' || id === 'divide') {
     const label = id === 'divide' ? 'Divide / Measure points' : 'Break options';
@@ -1665,10 +1683,10 @@ function buildRail() {
     if (t.sep) return h('div', { class: 'sep', 'aria-hidden': 'true' });
     const off = !BUILT.has(t.id);                                  // not built yet: greyed, with its name in the tooltip, and a click only says so
     const b = h('button', { class: 'tool' + (off ? ' off' : ''), type: 'button', 'aria-label': t.label, title: off ? t.label + ' · Not built yet' : commandTooltip(t.label, t.id, t.description), 'aria-disabled': off ? 'true' : null, 'data-tool': t.id }, icon(t.svg, { cap: t.cap, join: t.join }));
-    b.addEventListener('click', () => { if (off) note(t.label + ': not built yet'); else if (t.id === 'nest') openNestDialog(); else if (t.id === 'step' && curLay()) DO.step(); else if (!b.dataset.held) { if (t.id === 'circle') startCircle(state.circleMode); else setTool(t.id); } delete b.dataset.held; });
+    b.addEventListener('click', () => { if (off) note(t.label + ': not built yet'); else if (t.id === 'nest') openNestDialog(); else if (t.id === 'step' && curLay()) DO.step(); else if (!b.dataset.held) startButtonTool(t.id); delete b.dataset.held; });
     ui.toolBtns[t.id] = b;
     if (t.id === 'dimension') dimButton(b);
-    if (t.id === 'circle') { circleButton(b); paintCircleButton(); }
+    if (t.id === 'circle' || t.id === 'arc') { modeButton(b, t.id); paintModeButton(t.id); }
     return b;
   });
   return h('nav', { class: 'rail', 'aria-label': 'Tools' }, items);
@@ -1680,7 +1698,7 @@ function railContour() {
 }
 function paintRailTooltips() {
   for (const t of TOOLS) if (BUILT.has(t.id) && ui.toolBtns[t.id]) ui.toolBtns[t.id].title = commandTooltip(t.label, t.id, t.description);
-  paintDimButton(); paintCircleButton();
+  paintDimButton(); paintModeButton('circle'); paintModeButton('arc');
 }
 /** The Dimension button: shows the type last used, with a corner triangle (or press and hold) that opens the flyout of types. */
 function dimButton(b) {
@@ -1701,11 +1719,11 @@ function paintDimButton() {
   b.title = state.dimType === 'aligned' ? commandTooltip(t.label, 'dimension') : commandTooltip(`Dimension · ${name}`, Object.keys(DIM_OF).find((n) => DIM_OF[n] === state.dimType));
   b.setAttribute('aria-label', 'Dimension');
 }
-/** The Circle button, on the rail and in the ribbon: its corner triangle, a press and hold or a right-click opens the modes; the button shows and starts the last one. */
-function circleButton(b, inRibbon) {
+/** The Circle and Arc buttons, on the rail and in the ribbon: its corner triangle, a press and hold or a right-click opens the modes; the button shows and starts the last one. */
+function modeButton(b, id, inRibbon) {
   const open = () => {
     const r = b.getBoundingClientRect();
-    popMenu(inRibbon ? r.left : r.right + 4, inRibbon ? r.bottom : r.top, circleRows());
+    popMenu(inRibbon ? r.left : r.right + 4, inRibbon ? r.bottom : r.top, id === 'arc' ? arcRows() : circleRows());
   };
   let hold = 0;
   b.addEventListener('pointerdown', (e) => { if (e.button === 0) hold = setTimeout(() => { hold = 0; b.dataset.held = '1'; open(); }, 450); });
@@ -1713,21 +1731,38 @@ function circleButton(b, inRibbon) {
   b.addEventListener('click', (e) => { if (e.target.closest('.flyout')) { e.stopPropagation(); open(); } }, true);
   b.addEventListener('contextmenu', (e) => { e.preventDefault(); open(); });
 }
-function paintCircleButton() {
-  const b = ui.toolBtns.circle, t = TOOLS.find((x) => x.id === 'circle'), mode = state.circleMode, name = DR.CIRCLE_MODES.find((m) => m[0] === mode)[1];
-  b.replaceChildren(mode === 'cr' ? icon(t.svg, { cap: t.cap, join: t.join }) : icon(CIRCLE_ICONS[mode], { box: 20, cap: 'round', join: 'round' }), h('span', { class: 'flyout', 'data-testid': 'circle-flyout', title: 'Circle modes' }, icon('<path d="M7 0v7H0z" fill="currentColor" stroke="none"/>', { size: 7, box: 7 })));
-  b.title = mode === 'cr' ? commandTooltip(t.label, 'circle') : commandTooltip(`Circle · ${name}`, 'circle');
-  b.setAttribute('aria-label', 'Circle');
+function paintModeButton(id) {
+  const arc = id === 'arc', b = ui.toolBtns[id], t = TOOLS.find((x) => x.id === id), mode = arc ? state.arcMode : state.circleMode, base = arc ? '3p' : 'cr';
+  const name = (arc ? DR.ARC_MODES : DR.CIRCLE_MODES).find((m) => m[0] === mode)[1];
+  b.replaceChildren(mode === base ? icon(t.svg, { cap: t.cap, join: t.join }) : icon((arc ? ARC_ICONS : CIRCLE_ICONS)[mode], { box: 20, cap: 'round', join: 'round' }), h('span', { class: 'flyout', 'data-testid': id + '-flyout', title: t.label + ' modes' }, icon('<path d="M7 0v7H0z" fill="currentColor" stroke="none"/>', { size: 7, box: 7 })));
+  b.title = mode === base ? commandTooltip(t.label, id) : commandTooltip(`${t.label} · ${name}`, id);
+  b.setAttribute('aria-label', t.label);
 }
-let circleStart = 'cr';                                             // the mode setTool('circle') creates the tool with: only the button, the flyout and the menu start a mode; the typed C is always Centre, Radius
+let circleStart = 'cr', arcStart = '3p';                            // the mode setTool('circle' / 'arc') creates the tool with: only the button, the flyout and the menu start a mode; the typed C is always Centre, Radius and the typed A 3-Point
 function startCircle(mode) { circleStart = mode; try { setTool('circle'); } finally { circleStart = 'cr'; } }
+function startArc(mode) {
+  arcStart = mode;
+  try { setTool('arc'); } finally { arcStart = '3p'; }
+  if (mode === 'ct' && state.draw?.kind === 'arc') drawTyped('');       // Continue is Enter at the first prompt
+}
+/** The rail and ribbon buttons of Circle and Arc start the mode they show; any other tool just starts. */
+function startButtonTool(id) { if (id === 'circle') startCircle(state.circleMode); else if (id === 'arc') startArc(state.arcMode); else setTool(id); }
 /** A mode picked in the flyout or the Draw menu: remembered, and the Circle tool starts with it. */
 function setCircleMode(mode) {
   state.circleMode = mode;
   try { localStorage.setItem('pd-circlemode', mode); } catch { /* ignore */ }
-  paintCircleButton();
+  paintModeButton('circle');
   startCircle(mode);
   if (ui.ribbonBody) ui.ribbonBody.dataset.contents = '';           // the ribbon's Circle button is drawn again with the mode's icon
+  renderRibbon();
+}
+/** A mode picked in the Arc flyout or the Draw > Arc menu (347c): remembered, and the Arc tool starts with it. */
+function setArcMode(mode) {
+  state.arcMode = mode;
+  try { localStorage.setItem('pd-arcmode', mode); } catch { /* ignore */ }
+  paintModeButton('arc');
+  startArc(mode);
+  if (ui.ribbonBody) ui.ribbonBody.dataset.contents = '';
   renderRibbon();
 }
 /** A type picked in the flyout, or typed (DLI, DRA, DDI, DAN): remembered, and the Dimension tool starts with it. */
@@ -1770,7 +1805,7 @@ function setTool(id) {
   if (id === 'pan') state.msg = 'Drag to pan';
   state.meas = id === 'measure' ? { pts: [], hover: null } : null;
   if (ui.textHint) ui.textHint.hidden = id !== 'text';
-  state.draw = DR.KINDS.includes(id) ? DR.createTool(id, { ...state.drawCfg, mode: circleStart }) : null; state.drawDoc = state.draw ? editable() || curLay() && curDoc() : null; state.drawHover = null;
+  state.draw = DR.KINDS.includes(id) ? DR.createTool(id, { ...state.drawCfg, mode: id === 'arc' ? arcStart : circleStart }) : null; state.drawDoc = state.draw ? editable() || curLay() && curDoc() : null; state.drawHover = null;
   state.mod = MOD_KINDS.includes(id) ? newMod(id) : null; state.modDoc = state.mod ? editable() || curDoc() : null;
   if (state.mod) modStart(id);
   state.dim = id === 'dimension' ? newDim() : null; state.dimRun = []; state.dimDrag = null; state.ldr = id === 'leader' ? newLdr() : null; state.bal = id === 'balloon' ? { tip: null, hover: null } : null; state.balDrag = null;
@@ -8323,7 +8358,8 @@ function drawApply(r) {
   state.msg = r.msg || null; renderCommand(); paintOverlay();
 }
 /** Enter / Esc / right-click: the tool ends what it has (a line or polyline keeps it) and the acquired points go. */
-function drawFinish() { state.draw.cursorInput = null; trackClear(); drawApply(DR.toolFinish(state.draw)); }
+function drawFinish() { state.draw.cursorInput = null; trackClear(); state.draw.cont = lastDrawn.get(state.drawDoc) || null; drawApply(DR.toolFinish(state.draw)); }
+const lastDrawn = new WeakMap();                                    // tab document → the last shape drawn in it (mm): where the Arc's Continue starts (347c)
 /** Shift+right-click while a tool asks for a point (TODO 72): Enter, Cancel, Close and Undo last point where they apply, then the snap types. → false when no such tool is on */
 function toolMenu(e) {
   const T = drawLive() ? state.draw : null;
@@ -8359,6 +8395,7 @@ function layDrawCommit(d, kind, shapes, attrs) {
   note(`${DR.LABELS[kind]} made on layer ${attrs.layer}` + (shapes.length > 1 ? ` (${shapes.length} lines)` : '') + '. Ctrl+Z takes it back');
 }
 function drawCommit(d, kind, shapes) {
+  lastDrawn.set(d, shapes[shapes.length - 1]);
   const layer = curLayerName(d);
   const attrs = currentColour === 'bylayer' ? { layer } : PR.withColour({ layer }, currentColour);
   if (d.lay) { view.fitted = false; layDrawCommit(d, kind, shapes, attrs); return; }
@@ -8373,7 +8410,7 @@ function drawTyped(raw) {
   const T = state.draw, word = raw.trim().toLowerCase();
   T.cursorInput = null;
   if (word && !DR.toolBusy(T) && !DR.toolWords(T).has(word)) { const cmd = CB.resolve(word, 'draw', ownCommands); if (cmd && (TOOL_OF[cmd.name] || cmd.name) !== T.kind) { runCommand(cmd); return true; } }       // a command typed between two shapes
-  state.msg = null;
+  state.msg = null; T.cont = lastDrawn.get(state.drawDoc) || null;
   drawApply(DR.toolType(T, raw, drawingUnit()));
   return true;
 }
@@ -13378,6 +13415,7 @@ async function init() {
   state.dimStyles = loadDimStyles();
   try { const v = localStorage.getItem('pd-dimtype'); if (DIM_TYPES.some((x) => x[0] === v)) state.dimType = v; } catch { /* ignore */ }
   try { const v = localStorage.getItem('pd-circlemode'); if (DR.CIRCLE_MODES.some((x) => x[0] === v)) state.circleMode = v; } catch { /* ignore */ }
+  try { const v = localStorage.getItem('pd-arcmode'); if (DR.ARC_MODES.some((x) => x[0] === v)) state.arcMode = v; } catch { /* ignore */ }
   try { if (localStorage.getItem(COPY_MODE_SAVED) === 'Single') copyMode = 'Single'; } catch { /* default Multiple */ }
   const cmdLog = buildCommand();                           // before the canvas: the bar, the fade and the history sit on it
   try { const v = Number(localStorage.getItem('pd-baldock-height')); if (Number.isFinite(v) && v >= 90) state.balDock.h = Math.min(v, window.innerHeight * 0.6); } catch { /* ignore */ }

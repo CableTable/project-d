@@ -730,5 +730,9 @@
   "TODO 347a: the ARC A / chord Length prompts take Angle / Length in the dynamic input box (negative too, a long chord refused), the preview follows the typed value; screenshots, light and dark": 2.5,
   "TODO 347b: typed E at the ARC second prompt: Start, End, Angle / Direction / Radius (negative A and R the other arc), a centre pick and short radius / bad direction refused at the prompt with the points kept, U backs one step, Esc ends the command, one Undo per arc: Drawings, Layouts, Compare": 8,
   "TODO 347b: Ctrl held turns the ARC the other way: the preview follows the key (down and up, no mouse move) and the pointer, a Ctrl-click commits the turned arc (Start, End, Angle by the pointer; Start, Centre, End); Drawings, Layouts, Compare": 5,
-  "TODO 347b: screenshots, light and dark (a Ctrl-turned Start, End, Angle preview)": 2.5
+  "TODO 347b: screenshots, light and dark (a Ctrl-turned Start, End, Angle preview)": 2.5,
+  "TODO 347c: the Arc button shows and starts the last mode (pd-arcmode); the flyout opens from its triangle, a hold or a right-click, from the ribbon and from Draw > Arc >, with the 11 modes; typed ARC and Space always start 3-Point: Drawings, Layouts, Compare": 6,
+  "TODO 347c: the remembered Arc mode survives a reload (pd-arcmode): the button shows it and starts it": 2.5,
+  "TODO 347c: Enter at the ARC first prompt continues from the last line or arc, tangent to it, asking only the end point (a Ctrl click makes no turn); a circle or nothing last says \"No line or arc to continue.\" and the prompt stays; the flyout's Continue: Drawings, Layouts, Compare": 5,
+  "TODO 347c: screenshots, light and dark (the Arc flyout open on a Start, Centre, End button)": 2
 }
