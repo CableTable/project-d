@@ -73,7 +73,7 @@ import { layoutSnap, placedSnap, layoutCandidates, layoutReference, layoutTangen
 import { nearestObject } from './tangent.js';
 import * as LD from './layoutdoc.js';
 import { labelGaps } from './pdf-source.js';
-import { isDimPart } from './layoutdim.js';
+import { isDimPart, isSettled } from './layoutdim.js';
 import { dropPart } from './dropin.js';
 import { copySnapshot, copyPlacedSnapshot, drawingFromPlaced, pasteSnapshot, partFromSnapshot } from './clipboard.js';
 import * as PL from './place.js';
@@ -3336,6 +3336,10 @@ function placedDown(e, cycled = false) {
     return true;
   }
   if (s && pivEl) { pdrag = { kind: 'pivot' }; return true; }
+  if (hit && !cycled && !e.shiftKey && !state.mod) {
+    const dt = layDimTextGrab(Number(hit.dataset.i), here);
+    if (dt) { pdrag = { ...dt, cx: e.clientX, cy: e.clientY }; return true; }
+  }
   if (hit) {
     const i = Number(hit.dataset.i), cur = selIdxs(), inSel = cur.includes(i);
     if (state.mod?.kind === 'stretch' && state.mod.stage === 'pick') {
@@ -3361,10 +3365,33 @@ function placedDown(e, cycled = false) {
   if (state.mode === 'rotate') { state.mode = 'select'; update(); }
   return false;
 }
+/** A press on the text of the one selected, settled aligned or linear dimension of a layout: the text is dragged along its line (dimGrab on a drawing). → the drag or null. */
+function layDimTextGrab(i, here) {
+  const d = curDoc(), lay = d?.lay, p = lay && placedNow[i], part = p && lay.parts[p.partId], sel = selIdxs();
+  if (!part || sel.length !== 1 || sel[0] !== i || p.lock || state.mode !== 'select' || !isDimPart(part) || !isSettled(part, p)) return null;
+  const dim = Ed.dimOfEntity(part.raw, 0), sh = dim && (dim.kind === 'aligned' || dim.kind === 'linear') && Ed.dimGeom(dim.kind, dim.params, 1, dim.dp);
+  if (!sh || !Ed.dimTextHit(sh.text, here, 7 / view.scale)) return null;
+  return { kind: 'dimtext', moved: false, part, placed: lay.placed[p.i], g: { ...dim, e: 0, start: here, offset: dim.params.offset, shift: dim.params.shift, text: true, u: sh.u, tx0: sh.tx, len: sh.len, moved: false, cancelled: false } };
+}
+function layDimTextEnd(p) {
+  const d = curDoc(), lay = d?.lay, g = p.g;
+  state.dimDrag = null;
+  if (lay && !p.moved) { state.mode = 'rotate'; state.pivot = centrePivot(); state.rotCopy = false; state.lref = null; update(); return; }       // a click on the text of the selected dimension: its turn arrows, as a click on its line
+  if (!lay || g.cancelled || (Math.abs(g.offset - g.params.offset) < 0.001 && Math.abs(g.shift - (g.tx0 - g.len / 2)) < 0.001)) { paintOverlay(); return; }
+  const built = Ed.buildDim(g.kind, { ...g.params, offset: g.offset, shift: g.shift }, 1, g.name, g.dp), snap = laySnap(lay);
+  if (!built || !LD.replaceDim(lay, p.placed, p.part.raw.entities[0], { ...p.part.raw.blocks, [g.name]: built.block }, () => 'o' + uid(), new Set(Object.values(lay.parts).map((q) => q.name)))) { paintOverlay(); return; }
+  pushLay(d, snap, '', 'Move dimension'); touch(); update();
+  note('Dimension text moved. Ctrl+Z takes it back');
+}
 function placedMove(e) {
   const p = pdrag, lay = curLay(), s = selectedPlaced();
   if (!p || !lay || !s) return;
   const here = sheetAt(e.clientX, e.clientY);
+  if (p.kind === 'dimtext') {
+    if (!p.moved && Math.hypot(e.clientX - p.cx, e.clientY - p.cy) <= 4) return;
+    p.moved = true; dimDragTo(s.d, p.g, here);
+    return;
+  }
   if (p.kind === 'pivot') {
     const q = pivotSnap(s.d, here, e.altKey), round = q[2] ? PL.r6 : r2;
     state.pivot = { kind: 'custom', x: round(q[0]), y: round(q[1]) };
@@ -3420,6 +3447,7 @@ function placedUp() {
   const p = pdrag;
   pdrag = null;
   if (!p) return;
+  if (p.kind === 'dimtext') { layDimTextEnd(p); return; }
   flushUpdate();
   if (p.kind === 'pivot') { snapCycle = null; update(); return; }       // the Tab choice ends with the drag
   if (!p.moved) {
@@ -3464,6 +3492,7 @@ function cancelPlacedDrag() {
   const p = pdrag;
   pdrag = null;
   flushUpdate();
+  if (p && p.kind === 'dimtext') { state.dimDrag = null; note('Move cancelled'); paintOverlay(); return; }
   if (p && p.moved && p.g && p.g.snap) { layRestore(p.g.d, p.g.snap, p.g.dirty); note('Cancelled'); } else update();
 }
 
