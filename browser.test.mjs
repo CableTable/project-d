@@ -10781,7 +10781,7 @@ try {
     const heads = await page.locator('[data-docker=drawing] section.placedsec:not([hidden]) h2.sec').allTextContents();      // 282b Q6 (board A2): Rotate, Mirror, Nudge sit in Transform
     assert.deepEqual(heads.slice(0, 7), ['Selected parts', 'Arrange', 'Rotate', 'Mirror', 'Nudge', 'Duplicate', 'Group and lock']);
     assert.deepEqual(await page.locator('[data-testid=sec-arrange] .section-body button').evaluateAll((bs) => bs.map((b) => b.getAttribute('aria-label'))),
-      ['Align left', 'Align centre', 'Align right', 'Align top', 'Align middle', 'Align bottom', 'Distribute horizontally', 'Distribute vertically', 'Distribute left edges', 'Distribute centre edges', 'Distribute right edges', 'Distribute top edges', 'Distribute middle edges', 'Distribute bottom edges', 'Centre on page']);
+      ['Align left', 'Align centre', 'Align right', 'Align top', 'Align middle', 'Align bottom', 'Distribute horizontally', 'Distribute vertically', 'Distribute left edges', 'Distribute centre edges', 'Distribute right edges', 'Distribute top edges', 'Distribute middle edges', 'Distribute bottom edges', 'Centre on page', 'Centre to page horizontally', 'Centre to page vertically']);
     assert.deepEqual(await t('arrange-rel').locator('option').allTextContents(), ['Selection', 'Sheet', 'First selected', 'Last selected', 'Point...', 'Rectangle']);
     assert.equal(await t('arrange-rel').inputValue(), 'selection');
     // the bar and the panel say what is selected
@@ -34198,7 +34198,7 @@ try {
     await open97c(doc97i2(), 'arrange97i2.dxf'); await key97c('Control+a');
     assert.equal(await t('sec-arrange').isVisible(), true);
     assert.deepEqual(await t('sec-arrange').locator('.section-body button').evaluateAll((bs) => bs.map((b) => b.getAttribute('aria-label'))),
-      ['Align left', 'Align centre', 'Align right', 'Align top', 'Align middle', 'Align bottom', 'Distribute horizontally', 'Distribute vertically', 'Distribute left edges', 'Distribute centre edges', 'Distribute right edges', 'Distribute top edges', 'Distribute middle edges', 'Distribute bottom edges', 'Centre on page']);
+      ['Align left', 'Align centre', 'Align right', 'Align top', 'Align middle', 'Align bottom', 'Distribute horizontally', 'Distribute vertically', 'Distribute left edges', 'Distribute centre edges', 'Distribute right edges', 'Distribute top edges', 'Distribute middle edges', 'Distribute bottom edges', 'Centre on page', 'Centre to page horizontally', 'Centre to page vertically']);
     await t('arrange-rel').selectOption('selection');
     mkdirSync('shots-97i2', { recursive: true });
     for (const theme of ['light', 'dark']) {
