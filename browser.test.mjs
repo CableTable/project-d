@@ -18627,6 +18627,113 @@ try {
     await closeTabs(/./);
   });
 
+  // ---- TODO 348: the dashed gripper line drags the sheet edge and band together; the dragged line snaps to part edges; the gripper line is an object snap ----
+  const gripField = (side) => panelControl(page, page.locator(`[data-key=grip${side}]`));
+  const setGrips = async (grips) => { for (const [side, mm] of Object.entries(grips)) { await layoutTab(); await gripField(side).fill(String(mm)); await gripField(side).press('Enter'); } };
+  const sheetLineDrag = async (from, to, opts = {}) => {
+    const a = await at(...from), b = await at(...to);
+    await page.mouse.move(a.x, a.y); await page.mouse.down();
+    if (opts.alt) await page.keyboard.down('Alt');                          // held after the press: Alt at the press is Alt-click selection cycling
+    try {
+      await page.mouse.move((a.x + b.x) / 2, (a.y + b.y) / 2, { steps: 3 });
+      await page.mouse.move(b.x, b.y, { steps: 3 });
+    } finally { if (opts.alt) await page.keyboard.up('Alt'); }
+    if (!opts.hold) await page.mouse.up();
+  };
+  const partsOnScreen = () => page.locator('[data-group=parts] [data-i]').evaluateAll((gs) => gs.map((g) => { const r = g.getBoundingClientRect(); return [r.x, r.y, r.width, r.height]; }));
+  const sameOnScreen = (now, was, m) => now.forEach((r, i) => r.forEach((v, k) => assert.ok(Math.abs(v - was[i][k]) <= 1, `${m}: part ${i} moved on the screen: ${JSON.stringify(now)} vs ${JSON.stringify(was)}`)));
+  await step('TODO 348: the top gripper line drags at once and snaps to a part\'s top edge (0.01 mm, "Snapped to part"); Alt skips (whole mm); Esc cancels; one Undo; parts stay on the screen', async () => {
+    await threeParts();
+    await partTab(); await t('py').fill('360.37'); await t('py').press('Enter');      // Plate A's top edge at 420.37
+    await setGrips({ Top: 20 });
+    assert.equal(await page.locator('[data-testid=sheet-handle]').count(), 0, 'the sheet is not selected first');
+    const screen0 = await partsOnScreen(), labels0 = (await histLabels()).length;
+    await sheetLineDrag([300, 680], [300, 420.6], { hold: true });
+    await page.waitForFunction(() => document.querySelector('[data-testid=sheet-readout]'));
+    assert.equal(await t('sheet-readout').textContent(), 'W 1000 × H 440.37 mm', 'the line sits on the part edge, the sheet edge its 20 mm gripper above');
+    assert.equal(await page.locator('.ssel-whole').textContent(), 'Snapped to part');
+    assert.match(await t('cmd-hist').textContent(), /^Command: STRETCH {3}Sheet W 1000 × H 440\.37 mm \(snapped to part\)/);
+    await page.mouse.up();
+    await sizeChanged('sheetH', 700);
+    assert.deepEqual(await sheetSize(), ['1000', '440.37']);
+    assert.equal(await gripField('Top').inputValue(), '20', 'the gripper keeps its mm');
+    sameOnScreen(await partsOnScreen(), screen0, 'top');
+    assert.match(await prompt(), /^Sheet 1000 × 440\.37 mm\. The parts stayed where they were/);
+    assert.equal((await histLabels()).length, labels0 + 1, 'one undo step');
+    assert.equal((await histLabels()).at(-1), 'Sheet 1000 × 440.37 mm');
+    await page.keyboard.press('Control+z');
+    await page.waitForFunction(() => document.querySelector('[data-key=sheetH]').value === '700');
+    // Alt: no snap, whole mm; then Esc cancels
+    await page.keyboard.press('Escape');
+    await sheetLineDrag([300, 680], [300, 420.6], { hold: true, alt: true });
+    await page.waitForFunction(() => document.querySelector('[data-testid=sheet-readout]'));
+    const ro = await t('sheet-readout').textContent(), mh = /^W 1000 × H (\d+) mm$/.exec(ro);
+    assert.ok(mh, 'Alt: whole mm: ' + ro); near1(Number(mh[1]), 441, 'Alt height');
+    assert.equal(await page.locator('.ssel-whole').textContent(), 'Whole mm only');
+    await page.keyboard.press('Escape'); await page.mouse.up();
+    await page.waitForFunction(() => !document.querySelector('[data-testid=sheet-readout]'));
+    assert.deepEqual(await sheetSize(), ['1000', '700']);
+    assert.match(await prompt(), /Sheet resize cancelled/);
+    await shotBoth('s348-snap', async () => { await sheetLineDrag([300, 680], [300, 420.6], { hold: true }); await wait(150); }, async () => { await page.keyboard.press('Escape'); await page.mouse.up(); });
+    await page.keyboard.press('Escape');
+  });
+
+  await step('TODO 348: every side\'s gripper line moves its sheet edge, the parts stay where they are on the screen; a gripper-0 side drags by its handle and snaps to a part edge', async () => {
+    await threeParts();
+    await partTab(); await t('px').fill('700.25'); await t('px').press('Enter');      // Plate A's right edge at 800.25
+    const [x0, y0] = (await placedXY()).map(Number);
+    await setGrips({ Top: 20, Right: 20, Bottom: 20, Left: 20 });
+    await page.keyboard.press('Escape');
+    let screen = await partsOnScreen();
+    await sheetLineDrag([300, 680], [300, 690]);                                   // top line 10 up: H 710
+    await sizeChanged('sheetH', 700); near1((await sizeNum())[1], 710, 'top');
+    sameOnScreen(await partsOnScreen(), screen, 'top');
+    await sheetLineDrag([980, 600], [990, 600]);                                   // right line 10 out: W 1010
+    await sizeChanged('sheetW', 1000); near1((await sizeNum())[0], 1010, 'right');
+    sameOnScreen(await partsOnScreen(), screen, 'right');
+    const [W1, H1] = await sizeNum();
+    await sheetLineDrag([300, 20], [300, 10]);                                     // bottom line 10 down: H + 10, the parts' y + 10
+    await sizeChanged('sheetH', H1); const H2 = (await sizeNum())[1]; near1(H2, H1 + 10, 'bottom');
+    sameOnScreen(await partsOnScreen(), screen, 'bottom');
+    await sheetLineDrag([20, 600], [10, 600]);                                     // left line 10 out: W + 10, the parts' x + 10
+    await sizeChanged('sheetW', W1); const W2 = (await sizeNum())[0]; near1(W2, W1 + 10, 'left');
+    sameOnScreen(await partsOnScreen(), screen, 'left');
+    assert.deepEqual((await placedXY()).map(Number), [x0 + W2 - W1, y0 + H2 - H1], 'left and bottom move the sheet positions by the change');
+    assert.deepEqual(await Promise.all(['Top', 'Right', 'Bottom', 'Left'].map((s) => gripField(s).inputValue())), ['20', '20', '20', '20'], 'the grippers keep their mm');
+    for (let i = 0; i < 4; i++) await page.keyboard.press('Control+z');
+    await page.waitForFunction(() => document.querySelector('[data-key=sheetW]').value === '1000' && document.querySelector('[data-key=sheetH]').value === '700');
+    // a side with gripper 0: its handle drags as before, and snaps to Plate A's right edge
+    await setGrips({ Right: 0 });
+    if (!(await page.locator('[data-testid=sheet-handle]').count())) { await layoutTab(); await t('sheet-select').click(); }
+    screen = await partsOnScreen();
+    await dragSide('right', 800.6, 350, { hold: true });
+    await page.waitForFunction(() => document.querySelector('[data-testid=sheet-readout]'));
+    assert.equal(await t('sheet-readout').textContent(), 'W 800.25 × H 700 mm');
+    assert.equal(await page.locator('.ssel-whole').textContent(), 'Snapped to part');
+    await page.mouse.up();
+    await sizeChanged('sheetW', 1000);
+    assert.deepEqual(await sheetSize(), ['800.25', '700']);
+    sameOnScreen(await partsOnScreen(), screen, 'right handle');
+    await page.keyboard.press('Control+z');
+    await page.keyboard.press('Escape');
+  });
+
+  await step('TODO 348: Measure snaps to the gripper line (its middle), not on a side with gripper 0', async () => {
+    await threeParts();
+    await setGrips({ Top: 20 });
+    await page.keyboard.press('Escape');
+    const measureFrom = async (a, b) => {
+      if (!await t('cmd-input').isVisible()) await t('cmd-echo').click();
+      await t('cmd-input').fill('measure'); await t('cmd-input').press('Enter');
+      for (const pt of [a, b]) { const q = await at(...pt); await page.mouse.move(q.x, q.y, { steps: 2 }); await page.mouse.click(q.x, q.y); }
+      const r = (await prompt()).trim();
+      await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
+      return r;
+    };
+    assert.match(await measureFrom([500.8, 680.9], [500.8, 699.4]), /^Distance 20 mm {3}ΔX 0 {3}ΔY 20 /, 'the gripper line\'s middle to the sheet top\'s middle');
+    assert.doesNotMatch(await measureFrom([500.8, 20.9], [500.8, 0.6]), /^Distance 20 mm/, 'bottom gripper 0: no line to snap to');
+  });
+
   // ---- Compare drawings (TODO 41; mock-up R5d, Option B) ----
   const plateDxf = (name, r2) => {
     const d = newDoc(4); addEntities(d, [dxfPoly([[0, 0], [300, 0], [300, 180], [0, 180]], { closed: true }), dxfCircle(80, 90, 30), dxfCircle(220, 90, r2)]);

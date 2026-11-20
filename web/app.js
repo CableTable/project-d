@@ -12,7 +12,7 @@ import { openShortcuts } from './shortcutdlg.js';
 import { idbStore, localStore } from './idbstore.js';
 import { WORK_AREAS, workAreaDark } from './workarea.js';
 import { FOLDS, ribbonTabs, nextFold, doubleFold } from './ribbon.js';
-import { PRESETS, presetFor, stepRepeat, gridCellNote, GRIP_KEYS } from './layout.js';
+import { PRESETS, presetFor, stepRepeat, gridCellNote, GRIP_KEYS, gripOf } from './layout.js';
 import { unitFactor, convertedNote, startHidden, entityCount, layerCounts, patchedCounts, drawingBoxMm, fitRect, cursorMm, fitsSheet, spaceOf, boxOnSheet, itemVisible, addRecent, removeRecent, closePrompt, BIG_FILE, bigFileAsk, backupPath, dupName } from './doc.js';
 import * as Ed from './edit.js';
 import { follow as followGroups, remap as remapGroups, splice as spliceGroups, swap as swapGroups, copy as copyGroups, group as groupDrawing, ungroup as ungroupDrawing, groupOf, selectionOf, wholeGroup as wholeDrawingGroup } from './groups.js';
@@ -69,7 +69,7 @@ import { openQuickSelect } from './qselectdlg.js';
 import * as FI from './fill.js';
 import { extendEntity, extendRegion, previewEdit, curveShape, isBoundary, extendable } from './extend.js';
 import { placedMat, placedBox, placement1, GRID_KEYS, gridLayout, bakeGrid, slotOf, relayGrid } from './apply.js';
-import { layoutSnap, placedSnap, layoutCandidates, layoutReference, layoutTangentObject, partIndex, toPart } from './layoutsnap.js';
+import { layoutSnap, placedSnap, layoutCandidates, layoutReference, layoutTangentObject, partIndex, toPart, gripperLines, partEdgeSnap } from './layoutsnap.js';
 import { nearestObject } from './tangent.js';
 import * as LD from './layoutdoc.js';
 import { labelGaps } from './pdf-source.js';
@@ -5899,7 +5899,7 @@ function renderCommand() {
     ui.prompt.textContent = t.kind === 'fill' ? 'Click inside a closed outline (Esc ends):' : t.source ? 'Click each target (Esc ends):' : 'Click a source object (Esc ends):'; return;
   }
   if (readout) { ui.hist.textContent = 'Command: READOUT' + (state.msg ? '   ' + state.msg : ''); ui.prompt.textContent = 'Hover for the colour, click copies its hex (Esc ends):'; return; }
-  if (lay && state.sheetDrag && (state.sheetDrag.moved || state.sheetDrag.hot)) { const sg = state.sheetDrag; ui.hist.textContent = `Command: STRETCH   Sheet W ${sg.newW} × H ${sg.newH} mm (whole mm)`; ui.prompt.textContent = state.msg ? state.msg : 'Specify the new edge (click, Esc cancels):'; return; }
+  if (lay && state.sheetDrag && (state.sheetDrag.moved || state.sheetDrag.hot)) { const sg = state.sheetDrag; ui.hist.textContent = `Command: STRETCH   Sheet W ${sheetMmText(sg.newW)} × H ${sheetMmText(sg.newH)} mm (${sg.snapped ? 'snapped to part' : 'whole mm'})`; ui.prompt.textContent = state.msg ? state.msg : 'Specify the new edge (click, Esc cancels):'; return; }
   if (lay && sheetSelOn()) { ui.hist.textContent = `Command: SELECT   Sheet ${state.sheetW} × ${state.sheetH} mm selected. Drag a side handle to resize, Esc deselects`; ui.prompt.textContent = state.msg ? state.msg : 'Drag a side handle, or type Width and Height in the Sheet section:'; return; }
   if (state.match && state.match.d.raw.entities[state.match.src]) { ui.hist.textContent = 'Command: MATCHPROP   Source: ' + matchWords(state.match.d.raw.entities[state.match.src]) + (state.msg ? '   ' + state.msg : ''); ui.prompt.textContent = 'Select destination object (Esc ends):'; return; }
   if (state.grip && (ed || lay)) {
@@ -6734,7 +6734,7 @@ const snapPoint = (d, p, skip = -1, extra = [], from = null) => {
     return p.slice(0, 2);
   }
   const ed = !d.lay && !d.cmp && edIndex(d), tol = pickTol(d), types = state.snapTypes;
-  let sn = d.cmp ? state.snap && d.cmp.items.filter((it) => it.visible).reduce((best, it) => preferSnap(best, cmpSnap(it, it.offset, p), ...p, tol, types), null) : d.lay ? state.snap && layoutSnap(d.lay.parts, snapPlaced(), state.sheetW, state.sheetH, ...p, tol, types, from)
+  let sn = d.cmp ? state.snap && d.cmp.items.filter((it) => it.visible).reduce((best, it) => preferSnap(best, cmpSnap(it, it.offset, p), ...p, tol, types), null) : d.lay ? state.snap && layoutSnap(d.lay.parts, snapPlaced(), state.sheetW, state.sheetH, ...p, tol, types, from, state)
     : Ed.snapPick(ed, ...p, tol, state.snap, skip, types, extra, from);
   if (state.snap && d.lay) for (const x of extra) sn = preferSnap(sn, x, ...p, tol, types);       // the tool's own points (a polyline's first point and vertices)
   if (state.snap && ed) {
@@ -6766,7 +6766,7 @@ const snapPoint = (d, p, skip = -1, extra = [], from = null) => {
 function snapObjectCandidates(q, candidates = true) {
   const { d, ed, p, skip, from } = q, tol = pickTol(d), types = state.snapTypes;
   if (d.cmp) return null;
-  if (d.lay) return layoutCandidates(d.lay.parts, snapPlaced(), state.sheetW, state.sheetH, ...p, tol, types, from, candidates);
+  if (d.lay) return layoutCandidates(d.lay.parts, snapPlaced(), state.sheetW, state.sheetH, ...p, tol, types, from, candidates, state);
   const e = Ed.snapObject(ed, ...p, tol, skip, types);
   return e < 0 ? null : { object: ed, e, candidates: candidates ? Ed.snapCandidates(ed, e, ...p, tol, types, from) : [] };
 }
@@ -11757,6 +11757,18 @@ function sheetEdgeNear(e) {
   const [x, y] = sheetAt(e.clientX, e.clientY), W = state.sheetW, H = state.sheetH, tol = 6 / view.scale;
   return x >= -tol && x <= W + tol && y >= -tol && y <= H + tol && (Math.abs(x) <= tol || Math.abs(x - W) <= tol || Math.abs(y) <= tol || Math.abs(y - H) <= tol);
 }
+/** The side whose dashed gripper line (TODO 348) is within 6 px of the pointer, nearest first, or null; a side with gripper 0 has none. */
+function gripLineNear(e) {
+  const [x, y] = sheetAt(e.clientX, e.clientY);
+  let best = null, bd = 6 / view.scale;
+  for (const [a, b, side] of gripperLines(state.sheetW, state.sheetH, state)) {
+    const d = Math.hypot(x - Math.max(a[0], Math.min(b[0], x)), y - Math.max(a[1], Math.min(b[1], y)));
+    if (d <= bd) { best = side; bd = d; }
+  }
+  return best;
+}
+/** A sheet size in mm as shown: whole mm as today, a snapped size (TODO 348) to 0.01 mm. */
+const sheetMmText = (v) => (Number.isInteger(v) ? String(v) : v.toFixed(2));
 /** A press on the layout canvas: a sheet handle starts (or, when one is waiting for its second click, ends) a resize; the sheet's edge selects the sheet. True when it took the press. */
 function sheetDown(e) {
   const lay = curLay();
@@ -11770,6 +11782,13 @@ function sheetDown(e) {
     return true;
   }
   if (t && t.closest('.ruler, [data-guide], [data-i], [data-rot], [data-pivot], [data-gap]')) { if (sheetSelOn()) selectSheet(false); return false; }
+  const gs = gripLineNear(e);                                          // TODO 348: a press on a gripper line drags it at once; it wins over the sheet edge
+  if (gs) {
+    state.sheetSel = lay;
+    state.sheetDrag = { side: gs, off: gripOf(state, gs), p0: sheetAt(e.clientX, e.clientY), cx: e.clientX, cy: e.clientY, W: state.sheetW, H: state.sheetH, newW: state.sheetW, newH: state.sheetH, hot: false, moved: false };
+    drawTools(); drawSheetSel(); renderCommand();
+    return true;
+  }
   if (sheetEdgeNear(e)) { selectSheet(true); return true; }
   if (sheetSelOn()) selectSheet(false);
   return false;
@@ -11779,9 +11798,15 @@ function sheetMove(e, force = false) {
   if (!g) return;
   if (!g.moved && !g.hot && !force) { if (Math.hypot(e.clientX - g.cx, e.clientY - g.cy) <= 4) return; g.moved = true; }
   if (!g.moved && !g.hot) return;
-  const p = sheetAt(e.clientX, e.clientY), cl = (v) => Math.max(SHEET_MIN, Math.min(SHEET_MAX, Math.round(v)));      // the side goes where the pointer is
-  g.newW = g.side === 'right' ? cl(p[0]) : g.side === 'left' ? cl(g.W - p[0]) : g.W;
-  g.newH = g.side === 'top' ? cl(p[1]) : g.side === 'bottom' ? cl(g.H - p[1]) : g.H;
+  // the dragged line (the side, or its gripper line: the side then lies its gripper's mm outside it) goes where the pointer is, or onto the
+  // nearest outer edge of a part within 6 px (TODO 348; Alt skips): snapped to 0.01 mm, else whole mm
+  const lay = curLay(), x = g.side === 'left' || g.side === 'right', off = g.off || 0, p = sheetAt(e.clientX, e.clientY);
+  const edge = !e.altKey && lay ? partEdgeSnap(lay.parts, snapPlaced(), x ? 'x' : 'y', p[x ? 0 : 1], 6 / view.scale) : null;
+  const v = edge ?? p[x ? 0 : 1], lo = off ? Math.ceil(SHEET_MIN + gripOf(state, x ? 'left' : 'top') + gripOf(state, x ? 'right' : 'bottom')) : SHEET_MIN;
+  g.snapped = edge != null;
+  const cl = (s) => Math.max(lo, Math.min(SHEET_MAX, g.snapped ? Math.round(s * 100) / 100 : Math.round(s)));
+  g.newW = g.side === 'right' ? cl(v + off) : g.side === 'left' ? cl(g.W - v + off) : g.W;
+  g.newH = g.side === 'top' ? cl(v + off) : g.side === 'bottom' ? cl(g.H - v + off) : g.H;
   drawSheetSel(); renderCommand();
 }
 function sheetUp() {
@@ -11800,25 +11825,26 @@ function sheetCommit() {
   if (g.newW === g.W && g.newH === g.H) { drawSheetSel(); renderCommand(); note('Sheet size unchanged'); return; }
   resizeSheet(g.side, g.newW, g.newH);
 }
-/** Gives the open layout this sheet size (whole mm) as one undo step; side says which side moved (left / bottom keep the parts where they are on the screen). */
+/** Gives the open layout this sheet size (whole mm, or 0.01 mm when snapped to a part) as one undo step; side says which side moved. Every side keeps the parts where they are on the screen (no re-fit, TODO 348). */
 function resizeSheet(side, newW, newH) {
   const d = curDoc(), lay = d && d.lay;
   if (!lay) return;
-  const oldW = lay.s.sheetW, oldH = lay.s.sheetH, dx = side === 'left' ? newW - oldW : 0, dy = side === 'bottom' ? newH - oldH : 0;
-  pushLay(d, laySnap(lay), '', `Sheet ${newW} × ${newH} mm`);
+  const oldW = lay.s.sheetW, oldH = lay.s.sheetH, dx = side === 'left' ? PL.r6(newW - oldW) : 0, dy = side === 'bottom' ? PL.r6(newH - oldH) : 0, size = `${sheetMmText(newW)} × ${sheetMmText(newH)}`;
+  pushLay(d, laySnap(lay), '', `Sheet ${size} mm`);
   lay.s.sheetW = newW; lay.s.sheetH = newH;
   if (dx || dy) {
     lay.placed = lay.placed.map((p) => ({ ...p, x: PL.r6(p.x + dx), y: PL.r6(p.y + dy) }));
     lay.s.guides = lay.s.guides.map((g) => (g.axis === 'x' ? { ...g, mm: PL.r6(g.mm + dx) } : { ...g, mm: PL.r6(g.mm + dy) }));
   }
   touch();
-  const fitted = view.fitted;
-  if (!fitted) { if (side === 'top') view.oy += newH - oldH; if (side === 'left') view.ox += dx; }
+  if (side === 'top') view.oy += newH - oldH;
+  if (side === 'left') view.ox += dx;
+  view.fitted = false;
   syncFields();
-  if (!fitted) applyView();
-  update(fitted);
+  applyView();
+  update();
   const off = placedNow.filter((p) => p.off).length;
-  note(`Sheet ${newW} × ${newH} mm. The parts stayed where they were` + (off ? `; ${off} now ${off === 1 ? 'is' : 'are'} off the sheet (drawn in orange)` : '') + '. Ctrl+Z takes it back');
+  note(`Sheet ${size} mm. The parts stayed where they were` + (off ? `; ${off} now ${off === 1 ? 'is' : 'are'} off the sheet (drawn in orange)` : '') + '. Ctrl+Z takes it back');
 }
 /** The sheet's own marks when it is selected: the outline, four handles, where 0,0 is, and (while one is dragged) the new outline, the added strip and the size. */
 function drawSheetSel() {
@@ -11847,9 +11873,9 @@ function drawSheetSel() {
   if (dr) {
     const hp = at[dr.side], pw = 170 * k, ph = 24 * k;
     const px = dr.side === 'right' ? hp[0] - pw - 22 * k : dr.side === 'left' ? hp[0] + 22 * k : hp[0] - pw / 2, py = dr.side === 'top' ? hp[1] + 22 * k : dr.side === 'bottom' ? hp[1] - ph - 22 * k : hp[1] - ph / 2;
-    out.push(s('text', { class: 'ssel-whole', x: px, y: py - 8 * k, 'font-size': 12 * k }, 'Whole mm only'),
+    out.push(s('text', { class: 'ssel-whole', x: px, y: py - 8 * k, 'font-size': 12 * k }, dr.snapped ? 'Snapped to part' : 'Whole mm only'),
       s('rect', { class: 'ssel-pill', x: px, y: py, width: pw, height: ph, rx: 4 * k }),
-      s('text', { class: 'ssel-pilltext', 'data-testid': 'sheet-readout', x: px + pw / 2, y: py + 16.5 * k, 'text-anchor': 'middle', 'font-size': 13 * k }, `W ${dr.newW} × H ${dr.newH} mm`));
+      s('text', { class: 'ssel-pilltext', 'data-testid': 'sheet-readout', x: px + pw / 2, y: py + 16.5 * k, 'text-anchor': 'middle', 'font-size': 13 * k }, `W ${sheetMmText(dr.newW)} × H ${sheetMmText(dr.newH)} mm`));
   }
   g.replaceChildren(...out);
 }
