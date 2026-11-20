@@ -725,5 +725,7 @@
   "TODO 346a: screenshots, light and dark (the Circle flyout open on a 3-Point button)": 1.5,
   "TODO 346b: typed T at the CIRCLE centre prompt starts Tan, Tan, Radius: two object picks, then the radius; the error lines; one Undo per circle: Drawings, Layouts, Compare": 5.5,
   "TODO 346b: Tan, Tan, Tan from the flyout and Draw > Circle > (no typed keyword), Tan, Tan, Radius from the submenu; the button remembers both: Drawings, Layouts, Compare": 7,
-  "TODO 346b: screenshots, light and dark (the Circle flyout open on a Tan, Tan, Tan button, a Tan, Tan, Radius circle being sized)": 2
+  "TODO 346b: screenshots, light and dark (the Circle flyout open on a Tan, Tan, Tan button, a Tan, Tan, Radius circle being sized)": 2,
+  "TODO 347a: typed C at the ARC start / second prompt, then the end point, A or L (negative A and L give the other arc), a chord over the diameter refused at the same prompt, U backs one step, one Undo per arc: Drawings, Layouts, Compare": 9.5,
+  "TODO 347a: the ARC A / chord Length prompts take Angle / Length in the dynamic input box (negative too, a long chord refused), the preview follows the typed value; screenshots, light and dark": 2.5
 }

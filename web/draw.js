@@ -351,7 +351,7 @@ export function toolRef(T) {
   return T.pts.length ? T.pts[T.pts.length - 1] : null;
 }
 /** How many points are placed (0 = nothing in progress). */
-export const toolBusy = (T) => T.pts.length > 0;
+export const toolBusy = (T) => T.pts.length > 0 || !!T.am;                       // a typed C in Arc is a command in progress before any point
 
 function reset(T) { T.pts = []; T.objs = []; T.rbase = null; T.trail = []; T.hover = null; T.dia = T.mode === 'cd'; T.am = null; T.ask = null; }
 
@@ -711,7 +711,7 @@ export function toolWords(T) {
   if (k === 'line' || k === 'polyline') return new Set(['c', 'close', 'u', 'undo']);
   if (k === 'circle') return new Set(['d', 'diameter', 'r', 'radius', 'u', 'undo', '2p', '3p', 't', 'ttr']);
   if (k === 'rrect') return new Set(['r', 'radius', 'u', 'undo']);
-  if (k === 'arc') return new Set(['u', 'undo', 'c', 'center', 'centre', ...(T.am ? ['a', 'angle', 'l', 'length'] : [])]);       // Arc's options: a typed C is not the Circle command (A and L only once C is typed: they stay the Arc and Line commands before)
+  if (k === 'arc') return new Set(['u', 'undo', 'c', 'center', 'centre']);       // a typed C at the Arc's first prompt is its option, not the Circle command (A and L are only options once a C is typed: the tool is busy then)
   return new Set(['u', 'undo']);
 }
 

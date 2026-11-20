@@ -35096,6 +35096,92 @@ try {
     await stop346(); await closeTabs(/./);
   });
 
+  // ---- TODO 347a: Arc, typed centre modes (Start-Centre-End/Angle/Length, Centre-Start-End/Angle/Length); the maths is unit-tested for all nine modes ----
+  const start347 = 'Specify start point (x,y) [Center]:', centre347 = 'Specify centre point of arc (x,y):', end347 = 'Specify end point of arc [Angle/chord Length]:', chord347 = 'Specify length of chord:';
+  const arcsOf347 = async (kind) => kind === 'Drawings' ? (await savedDoc()).entities.filter((e) => e.type === 'ARC') : kind === 'Compare' ? (async () => {
+    await page.locator('.dtab').filter({ has: page.locator('.tname', { hasText: /^circle346-c(?:-edited)*\.dxf$/ }) }).click();
+    return (await savedDoc()).entities.filter((e) => e.type === 'ARC');
+  })() : [];
+  const arcAt347 = (e, [cx, cy, r, a0, a1], label) => [[10, cx], [20, cy], [40, r], [50, a0], [51, a1]].forEach(([code, v]) => assert.ok(Math.abs(fieldOf(e, code) - v) < 0.5, `${label}: code ${code} is ${fieldOf(e, code)}, wanted ${v}`));
+  await step('TODO 347a: typed C at the ARC start / second prompt, then the end point, A or L (negative A and L give the other arc), a chord over the diameter refused at the same prompt, U backs one step, one Undo per arc: Drawings, Layouts, Compare', async () => {
+    for (const [kind, setup] of circleTabs346) {
+      await setup();
+      const n0 = kind === 'Layouts' ? await nParts() : 0;
+      await typeCmd('arc'); await prompt346(start347, kind);
+      await typeCmd('foo'); assert.match(await said346(), /2D point or option keyword required\./, kind);
+      await typeCmd('C'); await prompt346(centre347, kind + ': C at the first prompt');                     // Centre, Start, End
+      await typeCmd('100,100'); await prompt346('Specify start point of arc (x,y):', kind);
+      await typeCmd('150,100'); await prompt346(end347, kind);
+      await typeCmd('100,160'); assert.match(await said346(), /Arc made on layer/, kind);                  // the end point is a direction only
+      await prompt346(start347, kind + ': the next arc starts at the 3-point prompt');
+      await typeCmd('200,100'); await typeCmd('c'); await prompt346(centre347, kind + ': C at the second prompt');   // Start, Centre, Angle
+      await typeCmd('150,100'); await prompt346(end347, kind);
+      await typeCmd('A'); await prompt346('Specify included angle:', kind);
+      await typeCmd('foo'); assert.match(await said346(), /Requires valid numeric angle or second point\./, kind);
+      await typeCmd('-90'); assert.match(await said346(), /Arc made on layer/, kind);
+      await typeCmd('30,200'); await typeCmd('c'); await typeCmd('30,250'); await typeCmd('l');             // Start, Centre, chord Length
+      await prompt346(chord347, kind);
+      await typeCmd('120'); assert.match(await said346(), /Chord longer than the diameter/, kind); await prompt346(chord347, kind + ': the refusal stays at the prompt');
+      await typeCmd('-50'); assert.match(await said346(), /Arc made on layer/, kind);                       // negative = the major arc
+      await typeCmd('50,50'); await typeCmd('c'); await prompt346(centre347, kind);                         // U backs one step: the centre prompt, then the second-point prompt
+      await typeCmd('u'); await prompt346('Specify second point on the arc [Center]:', kind + ': U');
+      await typeCmd('c'); await typeCmd('100,50'); await prompt346(end347, kind);
+      await click346(100, 100); assert.match(await said346(), /Arc made on layer/, kind);                   // Start, Centre, End by a click
+      await typeCmd('c'); await typeCmd('200,200'); await typeCmd('250,200'); await typeCmd('a 90');        // Centre, Start, Angle, the value after the letter
+      assert.match(await said346(), /Arc made on layer/, kind);
+      await typeCmd('c'); await typeCmd('100,250'); await typeCmd('150,250'); await typeCmd('l 50');       // Centre, Start, chord Length
+      assert.match(await said346(), /Arc made on layer/, kind);
+      await typeCmd('c'); await prompt346(centre347, kind); await key97c('Escape'); await prompt346(start347, kind + ': Esc leaves the typed C and keeps the command');
+      await stop346();
+      if (kind === 'Layouts') assert.equal(await nParts(), n0 + 6, kind + ': six arcs');
+      else {
+        const arcs = await arcsOf347(kind); assert.equal(arcs.length, 6, kind);
+        [[100, 100, 50, 0, 90], [150, 100, 50, 270, 0], [30, 250, 50, 270, 210], [100, 50, 50, 180, 90], [200, 200, 50, 0, 90], [100, 250, 50, 0, 60]].forEach((want, i) => arcAt347(arcs[i], want, `${kind} arc ${i + 1}`));
+      }
+      await key97c('Control+z');
+      if (kind === 'Layouts') assert.equal(await nParts(), n0 + 5, kind + ': one Undo per arc');
+      else assert.equal((await arcsOf347(kind)).length, 5, kind + ': one Undo per arc');
+      await closeTabs(/./);
+    }
+    assert.deepEqual(errors, []);
+  });
+
+  await step('TODO 347a: the ARC A / chord Length prompts take Angle / Length in the dynamic input box (negative too, a long chord refused), the preview follows the typed value; screenshots, light and dark', async () => {
+    const setup = async () => {
+      await open70([dxfLine(0, 0, 100, 100)]);
+      if (!(await chipOn('tog-dyn'))) await t('tog-dyn').click();
+      for (const id of ['tog-snap', 'tog-polar', 'tog-otrack', 'tog-ortho']) if (await chipOn(id)) await t(id).click();
+    };
+    const move = async (x, y) => { const p = await at346(x, y); await page.mouse.move(p.x + 4, p.y + 4); await page.mouse.move(p.x, p.y); await frames(); };
+    const label = (id) => t(id).getAttribute('aria-label');
+    const sc = async (ask) => { await typeCmd('arc'); await typeCmd('80,20'); await typeCmd('c'); await typeCmd('50,20'); await typeCmd(ask); await move(50, 60); };
+    await setup();
+    await sc('a');
+    await prompt346('Specify included angle:', 'dynamic');
+    assert.equal(await label('cursor-angle'), 'Angle'); assert.equal(await t('cursor-angle').isVisible(), true); assert.equal(await t('cursor-length').isVisible(), false);
+    await page.waitForFunction(() => Math.abs(parseFloat(document.querySelector('[data-testid=cursor-angle]').value) - 90) < 3);       // untyped, the Angle reads the pointer round the centre
+    await page.keyboard.type('-90'); await frames();
+    await page.waitForFunction(() => document.querySelector('[data-testid=cursor-angle]').value === '-90');
+    assert.equal(await page.locator('[data-testid=draw-preview]').count(), 1, 'the preview arc follows the typed angle');
+    const shown = await page.locator('[data-testid=draw-preview]').getAttribute('d');
+    await page.keyboard.press('Enter');
+    let e = (await savedDoc()).entities.filter((x) => x.type === 'ARC').at(-1);
+    arcAt347(e, [50, 20, 30, 270, 0], 'typed angle -90'); assert.match(shown, /^M[\d. ]+A30 30 0 0 0 /, 'the preview is the 90° arc, drawn anticlockwise');
+    await stop346(); await setup();
+    await sc('l');
+    assert.equal(await label('cursor-length'), 'Length'); assert.equal(await t('cursor-angle').isVisible(), false);
+    await page.keyboard.type('70'); await page.keyboard.press('Enter');
+    assert.match(await said346(), /Chord longer than the diameter/); await prompt346(chord347, 'dynamic: stays at the prompt');
+    await page.keyboard.press('Backspace'); await page.keyboard.press('Backspace'); await page.keyboard.type('-30'); await page.keyboard.press('Enter');
+    e = (await savedDoc()).entities.filter((x) => x.type === 'ARC').at(-1);
+    arcAt347(e, [50, 20, 30, 0, 300], 'typed chord -30');
+    await stop346(); await setup();
+    const shot = async () => { await page.keyboard.press('Escape'); await page.keyboard.press('Escape'); await page.keyboard.press('Escape'); await sc('a'); await page.keyboard.type('-90'); await frames(); };
+    await shotBoth('arc347a-angle', shot, async () => { for (let i = 0; i < 3; i++) await page.keyboard.press('Escape'); });
+    await stop346(); await closeTabs(/./);
+    assert.deepEqual(errors, []);
+  });
+
   const picked = pickSteps(steps, only, selectStep, until);
   for (const entry of picked) await runStep(page, entry, shotDir);
 } catch (e) {

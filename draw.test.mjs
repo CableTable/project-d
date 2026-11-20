@@ -399,7 +399,7 @@ test('Arc (347a): typed C at the first / second prompt, then the end point, A or
   let T = DR.createTool('arc');
   assert.match(DR.toolPrompt(T).prompt, /\[Center\]/); assert.ok(DR.toolWords(T).has('c') && !DR.toolWords(T).has('l'));
   click(T, [10, 0]); assert.match(DR.toolPrompt(T).prompt, /^Specify second point on the arc \[Center\]/);
-  type(T, 'C'); assert.equal(T.am, 'sc'); assert.match(DR.toolPrompt(T).prompt, /^Specify centre point of arc/); assert.ok(DR.toolWords(T).has('l'));
+  type(T, 'C'); assert.equal(T.am, 'sc'); assert.match(DR.toolPrompt(T).prompt, /^Specify centre point of arc/);
   click(T, [0, 0]); assert.match(DR.toolPrompt(T).prompt, /^Specify end point of arc \[Angle\/chord Length\]/);
   let a = arc(click(T, [0, 10])); nearPt(a.c, [0, 0]); near(a.a0, 0); near(a.a1, 90);
   assert.equal(T.am, null, 'the next arc starts at the 3-point prompts');
@@ -412,7 +412,7 @@ test('Arc (347a): typed C at the first / second prompt, then the end point, A or
   assert.equal(type(T, '-10').msg, null); assert.equal(T.pts.length, 0, 'the major arc was made');
   click(T, [10, 0]); type(T, 'c'); click(T, [0, 0]); a = arc(type(T, 'l -10')); near(a.a0, 0); near(a.a1, 300);
   // Centre, Start, End (C at the first prompt): the end is a direction only
-  T = DR.createTool('arc'); type(T, 'C'); assert.equal(T.am, 'cs'); assert.match(DR.toolPrompt(T).prompt, /^Specify centre point of arc/);
+  T = DR.createTool('arc'); assert.equal(DR.toolBusy(T), false); type(T, 'C'); assert.equal(T.am, 'cs'); assert.equal(DR.toolBusy(T), true, 'a typed C is a command in progress'); assert.match(DR.toolPrompt(T).prompt, /^Specify centre point of arc/);
   click(T, [0, 0]); assert.match(DR.toolPrompt(T).prompt, /^Specify start point of arc/); click(T, [10, 0]);
   a = arc(click(T, [0, 20])); nearPt(a.c, [0, 0]); near(a.r, 10); near(a.a0, 0); near(a.a1, 90);
   type(T, 'c'); click(T, [0, 0]); click(T, [10, 0]); type(T, 'a 90'); assert.equal(T.pts.length, 0, 'C-S-A made the arc');
