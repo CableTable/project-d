@@ -3922,6 +3922,10 @@ async function save(forceAs) {
       if (state.docs.some((o) => o !== d && [o.path, o.openPath].some((p) => p && pathKey(p) === key))) { note(`Pick another name: ${path.split(/[\\/]/).pop()} is open in another tab`); return; }
       name = path.split(/[\\/]/).pop();
       if (/\.dxf$/i.test(path) && [d.path, d.openPath].some((p) => p && pathKey(p) === key)) {
+        if (t.core) {                                                  // the open-time grant may have failed silently: the backup name needs its own grant
+          try { await t.core.invoke('grant_balloon_sidecar', { path }); }
+          catch (err) { console.warn('Backup file scope:', err); }       // the write below then reports "Backup failed"
+        }
         try {
           if (await t.fs.exists(path)) await t.fs.writeFile(backupPath(path), await t.fs.readFile(path));
           else backupNote = '. No backup: the original was not found';

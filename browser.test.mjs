@@ -23909,6 +23909,7 @@ try {
     await closeTabs(/./);
     await page.evaluate(async (bytes) => {
       const { sidecarPath } = await import('./balloons.js');
+      const { backupPath } = await import('./doc.js');
       const log = window.__sidecarLog = { dialogs: [], wrote: [], checked: [], grants: [] };
       const allowed = new Set(), files = new Map();
       const grant = (path) => { allowed.add(path); return path; };
@@ -23919,7 +23920,7 @@ try {
           if (command !== 'grant_balloon_sidecar') throw new Error('unexpected command: ' + command);
           check(path);
           await new Promise((resolve) => setTimeout(resolve, 10));
-          allowed.add(sidecarPath(path)); allowed.add(path + '.pdunits.json'); log.grants.push(path);       // like the Rust grant: both sidecars
+          allowed.add(sidecarPath(path)); allowed.add(path + '.pdunits.json'); allowed.add(backupPath(path)); log.grants.push(path);       // like the Rust grant: both sidecars and the Backup_of_ copy
         } },
         dialog: {
           open: async () => grant('C:/jobs/plate.dxf'),
@@ -23930,7 +23931,7 @@ try {
           readFile: async (p) => { check(p); return new Uint8Array(bytes); },
           exists: async (p) => { check(p); if (!/\.pdunits\.json$/.test(p)) log.checked.push(p); return files.has(p); },
           readTextFile: async (p) => { check(p); return files.get(p); },
-          writeFile: async (p, bytes) => { check(p.replace(/Backup_of_([^/]+)$/, '$1')); files.set(p, new TextDecoder().decode(bytes)); }, // grill-308 F2: drive scope permits the sibling backup
+          writeFile: async (p, bytes) => { check(p); files.set(p, new TextDecoder().decode(bytes)); }, // TODO 350: a Backup_of_ path is allowed only after grant_balloon_sidecar for its file (the real scope is per exact file)
           writeTextFile: async (p, text) => {
             check(p);
             if (/\.json$/.test(p) && window.__balloonWriteFails) throw new Error('disk is read-only');
@@ -23989,7 +23990,12 @@ try {
       const files = window.__files308 = { [path]: drawing, 'C:/work/lossy.dxf': lossy, 'C:/work/layout.dxf': layout };
       const log = window.__log308 = { dialogs: [], writes: [] };
       window.__open308 = path; window.__next308 = null; window.__fail308 = '';
+      const allowed = window.__allowed308 = new Set();                   // TODO 350: the real fs scope allows each exact file, a Backup_of_ copy only after its grant
       window.__TAURI__ = {
+        core: { invoke: async (command, { path }) => {
+          if (command !== 'grant_balloon_sidecar') throw new Error('unexpected command: ' + command);
+          allowed.add(path.replace(/[^/\\]+$/, (n) => 'Backup_of_' + n));
+        } },
         dialog: { open: async () => window.__open308, ask: async () => true,
           save: async (o) => { log.dialogs.push(o.defaultPath); return window.__next308; } },
         fs: {
@@ -23999,6 +24005,7 @@ try {
             return Uint8Array.from(files[p]);
           },
           writeFile: async (p, bytes) => {
+            if (!allowed.has(p)) throw new Error('forbidden path: ' + p);
             if (window.__fail308 === 'backup') throw new Error('backup disk full');
             files[p] = [...bytes]; log.writes.push(p);
           },
@@ -24011,6 +24018,7 @@ try {
       await page.evaluate((p) => { window.__open308 = p; }, p);
       await menuItem('File', 'Open…');
       await said(new RegExp('^Opened ' + p.split('/').pop().replace('.', '\\.')));
+      await page.evaluate(() => window.__allowed308.clear());           // TODO 350: the open-time grant may have failed: Ctrl+S must grant the backup itself
     };
     try {
       await open(path);
@@ -24065,7 +24073,7 @@ try {
       throw new Error(err.message + ' | prompt: ' + await prompt() + ' | log: ' + JSON.stringify(await page.evaluate(() => window.__log308)));
     } finally {
       await closeTabs(/./);
-      await page.evaluate(() => { delete window.__TAURI__; delete window.__files308; delete window.__log308; delete window.__open308; delete window.__next308; delete window.__fail308; localStorage.removeItem('pd-recent'); });
+      await page.evaluate(() => { delete window.__TAURI__; delete window.__files308; delete window.__log308; delete window.__open308; delete window.__next308; delete window.__fail308; delete window.__allowed308; localStorage.removeItem('pd-recent'); });
     }
   });
 

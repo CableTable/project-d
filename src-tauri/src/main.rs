@@ -26,6 +26,9 @@ fn grant_balloon_sidecar(app: tauri::AppHandle, path: std::path::PathBuf) -> Res
     if !path.is_absolute() || path.is_dir() || !scope.is_allowed(&path) {
         return Err("The source file is outside the allowed scope".into());
     }
+    // First: the balloon / units grants below return early on an error, Ctrl+S still needs its backup.
+    let backup = balloons::backup_path(&path).ok_or("The source has no file name")?;
+    scope.allow_file(backup).map_err(|error| error.to_string())?;
     let sidecar = balloons::sidecar_path(&path).ok_or("The source has no file name")?;
     let mut units = path.as_os_str().to_os_string();
     units.push(".pdunits.json");
