@@ -48,6 +48,15 @@ export const gripSide = (n = GRIP_SIZE) => 2 * n + 1;
 export const MAX_GRIPS = 5000;    // shortcut: hide all grips above 5000 handles; use a virtualized overlay if denser editing is needed
 /** The grips to show: all of them, or none when there are too many handles. */
 export const capGrips = (list) => (list.length > MAX_GRIPS ? [] : list);
+/** The grip a press picks from [grip, distance in px] pairs: the nearest within 8.5 px. Only against a dimension's grip a tie (within half a pixel: the points differ by rounding) goes to the other object's grip (345b1: its origin sits on the end it measures; TODO 345b3). */
+export function pickGrip(hits) {
+  let best = null, bd = 8.5;
+  for (const [g, dd] of hits) {
+    const tie = !best || (best.kind === 'dim') === (g.kind === 'dim') ? 0 : g.kind === 'dim' ? -0.5 : 0.5;
+    if (dd < bd + tie) { bd = dd; best = g; }
+  }
+  return best;
+}
 const DEG = Math.PI / 180;
 const TYPES = new Set(['LINE', 'ARC', 'CIRCLE', 'LWPOLYLINE']);
 

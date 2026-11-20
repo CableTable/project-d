@@ -1008,4 +1008,15 @@ test('345b1 dimension grips: linear / aligned five, diameter three, radius three
   assert.deepEqual(GR.dimGripsOf('aligned', { a: [5, 5], b: [5, 5], offset: 0 }, 1), [], 'two equal points draw nothing');
 });
 
+test('345b3 pickGrip: the full 8.5 px hit, the nearer of two plain grips, the half-pixel tie only against a dimension grip', () => {
+  const A = { id: 'a', kind: 'end' }, B = { id: 'b', kind: 'end' }, D = { id: 'o0', kind: 'dim' };
+  assert.equal(GR.pickGrip([[A, 8.2]]), A, 'one grip at 8.2 px is hit');
+  assert.equal(GR.pickGrip([[A, 8.6]]), null, 'past 8.5 px: none');
+  assert.equal(GR.pickGrip([[A, 3], [B, 2.6]]), B, 'two plain grips: the nearer wins');
+  assert.equal(GR.pickGrip([[B, 2.6], [A, 3]]), B, 'either order');
+  assert.equal(GR.pickGrip([[D, 2.8], [A, 3]]), A, 'a dimension grip ties with the other object: the other wins');
+  assert.equal(GR.pickGrip([[A, 3], [D, 2.8]]), A, 'either order');
+  assert.equal(GR.pickGrip([[A, 3], [D, 1]]), D, 'a clearly nearer dimension grip wins');
+});
+
 console.log(n + ' grips tests passed');

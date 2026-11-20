@@ -3367,23 +3367,28 @@ function placedDown(e, cycled = false) {
 }
 /** A press on the text of the one selected, settled aligned or linear dimension of a layout: the text is dragged along its line (dimGrab on a drawing). → the drag or null. */
 function layDimTextGrab(i, here) {
-  const d = curDoc(), lay = d?.lay, p = lay && placedNow[i], part = p && lay.parts[p.partId], sel = selIdxs();
-  if (!part || sel.length !== 1 || sel[0] !== i || p.lock || state.mode !== 'select' || !isDimPart(part) || !isSettled(part, p)) return null;
-  const dim = Ed.dimOfEntity(part.raw, 0);
+  const s = layDimSel(), lay = curDoc()?.lay;
+  if (!s || s.i !== i) return null;
+  const { p, part } = s, dim = Ed.dimOfEntity(part.raw, 0);
   if (dim && (dim.kind === 'radius' || dim.kind === 'diameter')) { const g = circleTextGrab({ ...dim, e: 0 }, here, 1, 7 / view.scale); return g && { kind: 'dimtext', moved: false, part, placed: lay.placed[p.i], g }; }
   const sh = dim && (dim.kind === 'aligned' || dim.kind === 'linear') && Ed.dimGeom(dim.kind, dim.params, 1, dim.dp);
   if (!sh || !Ed.dimTextHit(sh.text, here, 7 / view.scale)) return null;
   return { kind: 'dimtext', moved: false, part, placed: lay.placed[p.i], g: { ...dim, e: 0, start: here, offset: dim.params.offset, shift: dim.params.shift, text: true, u: sh.u, tx0: sh.tx, len: sh.len, moved: false, cancelled: false } };
 }
+/** The one selected, settled, unlocked dimension of a layout in Select: { i (its index in placedNow), p, part }, else null (345a: its text drags; TODO 345b3: its grips). */
+function layDimSel() {
+  const lay = curDoc()?.lay, sel = selIdxs(), p = lay && sel.length === 1 && placedNow[sel[0]], part = p && lay.parts[p.partId];
+  return part && !p.lock && state.mode === 'select' && isDimPart(part) && isSettled(part, p) ? { i: sel[0], p, part } : null;
+}
 function layDimTextEnd(p) {
-  const d = curDoc(), lay = d?.lay, g = p.g;
+  const d = curDoc(), lay = d?.lay, g = p.g, r = dimDragDone(g, 1);
   state.dimDrag = null;
   if (lay && !p.moved) { state.mode = 'rotate'; state.pivot = centrePivot(); state.rotCopy = false; state.lref = null; update(); return; }       // a click on the text of the selected dimension: its turn arrows, as a click on its line
-  if (!lay || g.cancelled || (g.circ ? !circleTextMoved(g, 1) : Math.abs(g.offset - g.params.offset) < 0.001 && Math.abs(g.shift - (g.tx0 - g.len / 2)) < 0.001)) { paintOverlay(); return; }
-  const built = Ed.buildDim(g.kind, g.circ ? circleTextParams(g) : { ...g.params, offset: g.offset, shift: g.shift }, 1, g.name, g.dp), snap = laySnap(lay);
+  if (!lay || g.cancelled || !r.changed) { paintOverlay(); return; }
+  const built = Ed.buildDim(g.kind, r.params, 1, g.name, g.dp), snap = laySnap(lay);
   if (!built || !LD.replaceDim(lay, p.placed, p.part.raw.entities[0], { ...p.part.raw.blocks, [g.name]: built.block }, () => 'o' + uid(), new Set(Object.values(lay.parts).map((q) => q.name)))) { paintOverlay(); return; }
-  pushLay(d, snap, '', 'Move dimension'); touch(); update();
-  note('Dimension text moved. Ctrl+Z takes it back');
+  pushLay(d, snap, '', g.origin ? 'Stretch dimension' : 'Move dimension'); touch(); update();
+  note(dimDragNote(g, r, built, 1));
 }
 function placedMove(e) {
   const p = pdrag, lay = curLay(), s = selectedPlaced();
@@ -5242,7 +5247,7 @@ function drawTools() {
   const cor = PL.corners(sel.part, sel.p).map(Y);
   if (pdrag && pdrag.ghost) out.push(s('polygon', { class: 'ghost', points: poly(PL.corners(sel.part, pdrag.ghost).map(Y)) }));
   if (pdrag && pdrag.ghosts) for (const gh of pdrag.ghosts) out.push(s('polygon', { class: 'ghost', points: poly(PL.corners(gh.part, gh.pl).map(Y)) }));
-  out.push(s('polygon', { class: 'sel-box', points: poly(cor), 'data-mode': state.mode }));
+  if (!gripDoc()?.layDim) out.push(s('polygon', { class: 'sel-box', points: poly(cor), 'data-mode': state.mode }));       // a dimension with grips is drawn solid instead (TODO 345b3)
   if (state.mode === 'rotate') {
     const mid = PL.centreOf(sel.part, sel.p), c = Y(mid), pv = Y(pivotPoint(sel.part, sel.p));
     out.push(...rotationControls(cor, c, pv, k, pdrag?.label?.text));
@@ -5390,13 +5395,15 @@ function paintOverlay(gesture = false) {
           if (!to.has(p.partId)) to.set(p.partId, []);
           to.get(p.partId).push(p);
         }
+        const hiDim = gripDoc()?.layDim?.p;       // the selected dimension is drawn solid in the selection colour, as on a drawing tab (TODO 345b3)
         for (const [id, part] of Object.entries(d.lay.parts)) {
           const fl = state.text.ed?.dim?.raw === part.raw ? state.text.ed.dim.fl : part.fl;
           const slotsOf = (list) => list.map((p) => placedMat(part, p, state.sheetH));
           for (const [list, to] of [[byPart.get(id) || [], calls], [liftedBy.get(id) || [], lifted]]) {
-            const on = list.filter((p) => !p.off && !p.grip), outside = list.filter((p) => p.off || p.grip);          // a part off the sheet or in a gripper is drawn in the mark colour
+            const on = list.filter((p) => !p.off && !p.grip && p !== hiDim), outside = list.filter((p) => p.off || p.grip);          // a part off the sheet or in a gripper is drawn in the mark colour
             if (on.length) to.push({ fl, off: part.off, factor: part.factor || 1, slots: slotsOf(on) });
             if (outside.length) to.push({ fl, off: part.off, factor: part.factor || 1, slots: slotsOf(outside), tint: cssVar('--mark', '#c2410c') });
+            if (list.includes(hiDim) && !hiDim.off && !hiDim.grip) to.push({ fl, off: part.off, factor: 1, slots: slotsOf([hiDim]), tint: cssVar('--selection', '#4f46e5') });
           }
         }
       }
@@ -7605,7 +7612,8 @@ function dimHotAt(e, put) {
 /** The point a dimension grip drag is at: snapped, on the 0.01 mm grid when free. */
 function dimGripPoint(d, p, g) {
   let q = snapPoint(d, p, g.e);
-  if (q.length === 2) q = [Math.round(q[0] * d.factor * 100) / 100 / d.factor, Math.round(q[1] * d.factor * 100) / 100 / d.factor];
+  const f = d.lay ? 1 : d.factor;       // a layout is in sheet mm (TODO 345b3)
+  if (q.length === 2) q = [Math.round(q[0] * f * 100) / 100 / f, Math.round(q[1] * f * 100) / 100 / f];
   return q.slice(0, 2);
 }
 /**
@@ -7649,7 +7657,7 @@ function dimDragTo(d, g, p) {
   }
   const a = g.params.a, b = g.params.b, ax = g.params.axis;
   if (g.origin) {         // a measured point goes to the pointer (snapped); the line stays through where its middle was, so the value changes (as AutoCAD's stretch of an extension line origin)
-    const q = dimGripPoint(d, p, g), n = Ed.dimMovePoint(g.kind, g.params, g.origin, q, d.factor, g.dp);
+    const q = dimGripPoint(d, p, g), n = Ed.dimMovePoint(g.kind, g.params, g.origin, q, d.lay ? 1 : d.factor, g.dp);
     if (n) { g.pa = n.a; g.pb = n.b; g.offset = n.offset; g.to = q; }       // two equal points draw nothing: the last good place stays
     g.moved = true; state.dimDrag = g;
     paintOverlay();
@@ -7660,22 +7668,27 @@ function dimDragTo(d, g, p) {
   g.moved = true; state.dimDrag = g;
   paintOverlay();
 }
+/** What a dimension drag g (dimGrab) leaves, f mm a drawing unit: { params, sh, pt (mm the text / the measured points moved), changed (0.001 mm or more) }. Shared by the drawing tabs and a layout (TODO 345b3). */
+function dimDragDone(g, f) {
+  if (g.circ) return { params: circleTextParams(g), changed: circleTextMoved(g, f) };
+  const off = Math.abs(g.offset - g.params.offset) * f, sh = g.text ? Math.abs(g.shift - (g.tx0 - g.len / 2)) * f : 0;
+  const pt = g.origin ? Math.hypot(g.pa[0] - g.params.a[0], g.pa[1] - g.params.a[1], g.pb[0] - g.params.b[0], g.pb[1] - g.params.b[1]) * f : 0;
+  return { params: { ...g.params, offset: g.offset, shift: g.shift, ...(g.origin && { a: g.pa, b: g.pb }) }, sh, pt, changed: !(off < 0.001 && sh < 0.001 && pt < 0.001) };
+}
+/** The message after the dimension drag g (r: dimDragDone) made `built`. */
+function dimDragNote(g, r, built, f) {
+  if (g.circ) return g.edit === 'c' ? 'Radius dimension moved. Ctrl+Z undoes it' : g.edit ? 'Dimension turned round its centre. Ctrl+Z undoes it' : 'Dimension text moved. Ctrl+Z undoes it';
+  if (r.pt >= 0.001) return `Dimension point moved: it measures ${built.label} now. Ctrl+Z undoes it`;
+  return r.sh >= 0.001 ? `Dimension text moved ${fmtSize(Math.abs(g.shift) * f)} mm from the middle of its line. Ctrl+Z undoes it` : `Dimension moved: its line is ${fmtSize(Math.abs(g.offset) * f)} mm from the points. Ctrl+Z undoes it`;
+}
 function dimDragEnd(d, g) {
   state.dimDrag = null;
-  if (g.circ) {
-    if (g.cancelled || !circleTextMoved(g, d.factor) || !commit(d, Ed.replaceDimension(d.raw, Ed.buildDim(g.kind, circleTextParams(g), d.factor, g.name, g.dp)), 'Move dimension')) { paintOverlay(); return; }
-    setSel(d, g.sel || new Set([g.e]));
-    note(g.edit === 'c' ? 'Radius dimension moved. Ctrl+Z undoes it' : g.edit ? 'Dimension turned round its centre. Ctrl+Z undoes it' : 'Dimension text moved. Ctrl+Z undoes it');
-    return;
-  }
-  const off = Math.abs(g.offset - g.params.offset) * d.factor, sh = g.text ? Math.abs(g.shift - (g.tx0 - g.len / 2)) * d.factor : 0;
-  const pt = g.origin ? Math.hypot(g.pa[0] - g.params.a[0], g.pa[1] - g.params.a[1], g.pb[0] - g.params.b[0], g.pb[1] - g.params.b[1]) * d.factor : 0;
-  if (g.cancelled || (off < 0.001 && sh < 0.001 && pt < 0.001)) { paintOverlay(); return; }
-  const built = Ed.buildDim(g.kind, { ...g.params, offset: g.offset, shift: g.shift, ...(g.origin && { a: g.pa, b: g.pb }) }, d.factor, g.name, g.dp);
+  const r = dimDragDone(g, d.factor);
+  if (g.cancelled || !r.changed) { paintOverlay(); return; }
+  const built = Ed.buildDim(g.kind, r.params, d.factor, g.name, g.dp);
   if (!commit(d, Ed.replaceDimension(d.raw, built), g.origin ? 'Stretch dimension' : 'Move dimension')) { paintOverlay(); return; }
   setSel(d, g.sel || new Set([g.e]));
-  if (pt >= 0.001) { note(`Dimension point moved: it measures ${built.label} now. Ctrl+Z undoes it`); return; }
-  note(sh >= 0.001 ? `Dimension text moved ${fmtSize(Math.abs(g.shift) * d.factor)} mm from the middle of its line. Ctrl+Z undoes it` : `Dimension moved: its line is ${fmtSize(Math.abs(g.offset) * d.factor)} mm from the points. Ctrl+Z undoes it`);
+  note(dimDragNote(g, r, built, d.factor));
 }
 /** The text height typed in the right panel: the selected dimension is rebuilt (arrowheads and extension lines follow). */
 function dimHeightTyped() {
@@ -11176,16 +11189,26 @@ function trackOvl(d, out, k) {
 function gripDoc() {
   const d = curDoc();
   if (!d || !d.lay) return editable();
-  if (state.mode === 'rotate' || pdrag) return null;       // a part drag changes the placement on every move: no object doc to rebuild then
+  if (state.mode === 'rotate' || pdrag && pdrag.kind !== 'dimtext') return null;       // a part drag changes the placement on every move: no object doc to rebuild then (a dimension drag keeps its grips, the dragged one hot)
   const v = layObjSelDoc(d);
-  return v.sel.size ? v : null;
+  return v.sel.size ? v : layDimDoc(d);
+}
+const dimViews = new WeakMap();
+/** TODO 345b3: a layout's selected dimension (layDimSel) as a little drawing (sheet mm, the dimension is entity 0) for the shared dimension grips; null when there is none. */
+function layDimDoc(d) {
+  const s = layDimSel();
+  if (!s) return null;
+  let v = dimViews.get(d);
+  if (v?.raw !== s.part.raw) dimViews.set(d, v = { raw: s.part.raw, factor: 1, sel: new Set([0]), vlay: d, hid: null, locked: null });       // kept while the dimension stays the same: gripList's cache follows `sel`
+  v.layDim = s;
+  return v;
 }
 /** Do grips show? On a drawing tab (or a layout's objects) with the Select tool, something selected (not too many things). A single text shows them with its handles: the grip takes the click (gripDown runs first). */
 const gripOn = (d) => !!d && !state.drawingRotate && !state.match && !state.colourTool && gripDoc() === d && state.tool === 'select' && !state.setlen && !!d.sel && d.sel !== d.txoSel && d.sel.size > 0 && (d.sel.size <= GR.MAX_SELECTED || !!wholeDrawingGroup(d.raw.groups, d.sel)) && !textEditing();
 /** 164a: the drawing's attribute display mode (0 none, 1 normal, 2 all): the block attribute grips follow it. */
 const attMode = (d) => { const v = Number(d.raw.header?.$ATTMODE ?? 1); return Number.isFinite(v) ? v : 1; };
-/** Does a dimension of d show grips: a drawing tab, a PDF sheet or Compare's linked drawing (a layout's objects have their own edit, TODO 345b2)? */
-const dimGripsOk = (d) => !d.vlay && !d.lay;
+/** Does a dimension of d show grips: a drawing tab, a PDF sheet, Compare's linked drawing or a layout's selected dimension (layDimDoc, TODO 345b3)? Not a layout's objects-as-a-drawing (it has no dimensions). */
+const dimGripsOk = (d) => !d.lay && (!d.vlay || !!d.layDim);
 /** Every grip of the selection: [{ e, id, kind, x, y }] (drawing units); kept while the selection and the drawing stay the same. */
 function gripList(d) {
   const ents = d.raw.entities;
@@ -11216,9 +11239,7 @@ function gripList(d) {
 const sheetPx = (d, p) => { const [sx, sy] = toSheetPt(d, p), r = ui.canvas.getBoundingClientRect(); return [(sx - view.ox) * view.scale + r.left, (sy - view.oy) * view.scale + r.top]; };
 /** The grip under a pointer position (8 px), or null. */
 function gripAt(d, cx, cy) {
-  let best = null, bd = 8.5;
-  for (const g of gripList(d)) { const [px, py] = sheetPx(d, [g.x, g.y]), dd = Math.hypot(cx - px, cy - py); if (dd < bd - 0.5 || (dd <= bd + 0.5 && best?.kind === 'dim' && g.kind !== 'dim')) { bd = dd; best = g; } }       // a tie (within half a pixel: the points differ by rounding) with a dimension's grip (its origin on the line's end it measures) goes to the other object; the dimension's origin goes with it (dimsOnGrip)
-  return best;
+  return GR.pickGrip(gripList(d).map((g) => { const [px, py] = sheetPx(d, [g.x, g.y]); return [g, Math.hypot(cx - px, cy - py)]; }));       // a tie with a dimension's grip goes to the other object; the dimension's origin goes with it (dimsOnGrip)
 }
 /** The point under the pointer for a grip: the snaps (the 0.01 mm grid when free), and Shift / ORTHO along X or Y from where the rubber band starts. */
 function gripPick(g, cx, cy, shift, hover) {
@@ -11408,6 +11429,12 @@ function gripDown(e) {
   if (!gripOn(d)) return false;
   const hit = gripAt(d, e.clientX, e.clientY);
   if (!hit) return false;
+  if (hit.kind === 'dim' && d.layDim) {       // a layout dimension's grip (TODO 345b3): the layout's own dimension drag (placedMove / layDimTextEnd), as dimGrab on a drawing tab
+    const g = dimGrab(d, sheetAt(e.clientX, e.clientY), hit);
+    if (g) pdrag = { kind: 'dimtext', moved: false, part: d.layDim.part, placed: d.vlay.lay.placed[d.layDim.p.i], g, cx: e.clientX, cy: e.clientY };
+    else note('That dimension grip cannot be dragged');
+    return true;
+  }
   gripStart(d, hit, e);
   return true;
 }

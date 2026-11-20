@@ -26235,6 +26235,65 @@ try {
     p = await shiftNow();
     assert.ok(Math.abs(p.shift - 50) < 1.5 && Math.abs(p.a[1] - 190) < 1e-3, 'moved with the line, the text still 50 along: ' + JSON.stringify([p.shift, p.a]));
   });
+  await step('TODO 345b3: on a layout, a selected dimension is solid with its grips (linear 5, radius 3); an origin grip and the radius centre grip drag (one Undo, Esc puts it back); save and reopen keep the edit; a locked one has none', async () => {
+    await freshLayoutWithPlate();
+    const save = async () => (await downloaded(() => page.keyboard.press('Control+s'))).text;
+    const params = async (kind, text) => Object.values(Object.fromEntries(Object.entries(readDxf(text || await save()).blocks).filter(([k]) => /^PD_DIM_/.test(k)).map(([k, b]) => [k, readDim(k, b)]))).find((d) => d.kind === kind).params;
+    const undo = async () => { await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z'); await frames(); };
+    const near = (a, b, msg) => assert.ok(a && Math.abs(a[0] - b[0]) < 1.5 && Math.abs(a[1] - b[1]) < 1.5, msg + ': ' + JSON.stringify([a, b]));
+    const drag = async (from, to, esc = false) => {
+      const a = await at(...from), b = await at(...to);
+      await page.mouse.move(a.x, a.y); await page.mouse.down();
+      await page.mouse.move((a.x + b.x) / 2, (a.y + b.y) / 2, { steps: 4 }); await page.mouse.move(b.x, b.y, { steps: 4 });
+      if (esc) await page.keyboard.press('Escape');
+      await page.mouse.up(); await frames();
+    };
+    const solid = (x0, x1, y) => page.evaluate(([x0, x1, y]) => {        // the share of canvas pixels along a horizontal run (a pixel row either side too) that are selection blue (a dimension is teal)
+      const svg = document.querySelector('.canvas > svg'), H = +document.querySelector('rect.sheet').getAttribute('height'), c = document.querySelector('[data-testid=drawing]'), r = c.getBoundingClientRect(), g = c.getContext('2d');
+      const px = (x) => { const a = new DOMPoint(x, H - y).matrixTransform(svg.getScreenCTM()); return [Math.floor((a.x - r.x) * c.width / r.width), Math.floor((a.y - r.y) * c.height / r.height)]; };
+      const [ax, ay] = px(x0), [bx] = px(x1); let n = 0, hit = 0;
+      for (let x = ax; x <= bx; x++) { n++; if ([-1, 0, 1].some((k) => { const d = g.getImageData(x, ay + k, 1, 1).data; return d[2] - d[1] > 60; })) hit++; }
+      return hit / n;
+    }, [x0, x1, y]);
+    await typeCmd('line'); await typeCmd('100,150'); await typeCmd('300,150'); await typeCmd('');
+    await page.keyboard.press('Escape');
+    await typeCmd('dli'); await typeCmd('100,150'); await typeCmd('300,150'); await typeCmd('200,190');
+    await said(/Dimension placed: 200\.00 mm/); await page.keyboard.press('Escape');
+    await typeCmd('circle'); await typeCmd('450,300'); await typeCmd('40'); await page.keyboard.press('Escape');
+    await typeCmd('dra'); await click(410, 300); await click(520, 340);
+    await said(/Dimension placed: R40\.00/); await page.keyboard.press('Escape');
+    await page.locator('[data-tool=select]').click(); await frames();
+    assert.equal(await solid(120, 180, 190), 0, 'unselected: no selection colour on the dimension line');
+    const pickLinear = async () => { await page.keyboard.press('Escape'); await click(200, 192.5); await frames(); await gripWhen(5); };
+    await pickLinear();
+    assert.ok(await solid(120, 180, 190) > 0.95, 'selected: the dimension line is one solid selection-colour stroke: ' + await solid(120, 180, 190));
+    assert.equal(await page.locator('.sel-box').count(), 0, 'no dashed part box round it');
+    await shotBoth('layout-dim-selected-grips');
+    // the second origin grip goes 50 right: the dimension measures 250
+    await drag([300, 150], [350, 150]);
+    await said(/Dimension point moved: it measures 2(49|50)\.\d\d/);       // a pixel is ~0.3 mm at this zoom
+    let p = await params('linear'); near(p.b, [350, 150], 'the origin grip moved that measured point'); near(p.a, [100, 150], 'the other stays');
+    await undo(); p = await params('linear'); near(p.b, [300, 150], 'one Undo puts it back');
+    await pickLinear(); await drag([300, 150], [380, 150], true);
+    await said(/Move cancelled/); p = await params('linear'); near(p.b, [300, 150], 'Esc mid-drag: the point stays');
+    await pickLinear(); await drag([300, 150], [350, 150]); await said(/it measures 2(49|50)\.\d\d/);
+    // radius: three grips; the centre grip moves it
+    const rm = dimTextMiddle(dimGeom('radius', await params('radius'), 1, 2).text);
+    await page.keyboard.press('Escape'); await click(...rm); await frames(); await gripWhen(3);
+    await shotBoth('layout-dim-selected-grips-radius');
+    await drag([450, 300], [470, 320]);
+    p = await params('radius'); near(p.c, [470, 320], 'the centre grip moved the radius dimension'); assert.ok(Math.abs(p.r - 40) < 1e-3, 'the same radius: ' + p.r);
+    await undo(); p = await params('radius'); near(p.c, [450, 300], 'one Undo');
+    // save and reopen keep the moved point; the reopened dimension has its grips
+    const text = await save();
+    await closeTabs(/./);
+    await t('picker').setInputFiles({ name: 'dims345b3-lay.dxf', mimeType: 'text/plain', buffer: Buffer.from(text, 'latin1') });
+    await waitTab(page, 'dims345b3-lay.dxf');
+    near((await params('linear')).b, [350, 150], 'reopened: the moved point');
+    await page.locator('[data-tool=select]').click(); await pickLinear();
+    // a locked dimension shows no grips
+    await t('bar-lock').click(); await gripWhen(0);
+  });
   await step('TODO 344a: on a layout, a radius and a diameter text drag out of the circle and back in (one Undo, Esc puts it back), saved with the text point', async () => {
     await freshLayoutWithPlate();
     const save = async () => (await downloaded(() => page.keyboard.press('Control+s'))).text;
