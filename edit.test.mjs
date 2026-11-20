@@ -1536,3 +1536,20 @@ test('TODO 345b1: dimMovePoint moves one measured point, the dimension line stay
   assert.ok(Math.abs(back.params.b[1] - 50) < 1e-6 && Math.abs(back.params.offset - n.offset) < 1e-6, 'the moved point and the line come back: ' + JSON.stringify(back.params));
   assert.equal(built.label, '111.80', 'the label is the new length');
 });
+
+test('TODO 345b2: dimGripEdit turns a diameter / radius round the centre (value stays), the centre grip moves the radius, a save and reopen keeps it', () => {
+  const close = (p, x, y, why) => assert.ok(Math.abs(p[0] - x) < 1e-9 && Math.abs(p[1] - y) < 1e-9, why + ': ' + JSON.stringify(p));
+  const dia = { a: [80, 100], b: [120, 100], textH: 3 };                               // circle (100, 100) r 20
+  const t = E.dimGripEdit('diameter', dia, 'e1', [120, 100], [100, 150]);              // the right end dragged up past the circle: the chord points up
+  close(t.a, 100, 80, 'a'); close(t.b, 100, 120, 'b'); assert.equal(E.dimGeom('diameter', t, 1).mm, 40, 'the value stays the diameter');
+  const tt = E.dimGripEdit('diameter', { ...dia, tp: [30, 0] }, 'e0', [80, 100], [100, 60]);       // the text (right of the circle) turns with the chord: e0 went from the left to below
+  close(tt.tp, 0, 30, 'the text keeps its place relative to the chord'); assert.equal(E.dimGripEdit('diameter', dia, 'e1', [120, 100], [100, 100]), null, 'the centre: nothing to point at');
+  const rad = { c: [250, 100], r: 20, p: [290, 100], textH: 3 };
+  const rp = E.dimGripEdit('radius', rad, 'p', [270, 100], [250, 40]);                 // the arc point dragged below the circle
+  close(rp.p, 250, 60, 'the pointer turned (its distance stays)'); assert.equal(rp.r, 20); assert.deepEqual(rp.c, [250, 100]);
+  const rt = E.dimGripEdit('radius', { ...rad, tp: [0, 30] }, 'p', [250, 120], [300, 100]); close(rt.tp, 30, 0, 'the text point turns too');
+  const rc = E.dimGripEdit('radius', rad, 'c', [250, 100], [260, 110]);                // the centre grip: the dimension moves, the value stays
+  assert.deepEqual([rc.c, rc.p, rc.r], [[260, 110], [300, 110], 20]); assert.equal(E.dimGripEdit('diameter', dia, 'c', [100, 100], [0, 0]), null, 'a diameter has no centre grip');
+  const name = E.freeName({}, 'radius'), built = E.buildDim('radius', rp, 1, name, 2), back = E.readDim(name, built.block);
+  assert.equal(back.kind, 'radius'); assert.equal(built.label, 'R20.00', 'the label is the same radius: ' + built.label);
+});

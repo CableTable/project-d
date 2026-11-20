@@ -1798,6 +1798,21 @@ export function dimMovePoint(kind, params, which, q, factor, dp = 2) {
   const mid = [g.line[0] + g.u[0] * g.len / 2, g.line[1] + g.u[1] * g.len / 2];
   return { ...next, offset: dimOffsetAt(next.a, next.b, mid, params.axis) };
 }
+/**
+ * TODO 345b2: the params of a radius or diameter dimension after its grip `id` ('c' the radius' centre, 'p' its arc point, 'e0' / 'e1' a diameter's chord end) was dragged from `from` to q:
+ * the centre grip moves the centre (the value stays); the others turn the dimension round the centre to where q points (value, text place relative to the centre stay). null when q is the centre.
+ */
+export function dimGripEdit(kind, params, id, from, q) {
+  const { c } = circleOfDim(kind, params);
+  if (id === 'c') return kind === 'radius' ? { ...params, c: q, p: [params.p[0] + q[0] - c[0], params.p[1] + q[1] - c[1]] } : null;
+  if (!(Math.hypot(q[0] - c[0], q[1] - c[1]) > 1e-9)) return null;
+  const turnBy = Math.atan2(q[1] - c[1], q[0] - c[0]) - Math.atan2(from[1] - c[1], from[0] - c[0]), co = Math.cos(turnBy), si = Math.sin(turnBy);
+  const rot = (v) => [v[0] * co - v[1] * si, v[0] * si + v[1] * co], turn = (p) => { const v = rot([p[0] - c[0], p[1] - c[1]]); return [c[0] + v[0], c[1] + v[1]]; };
+  const next = { ...params };
+  if (kind === 'radius') next.p = turn(params.p); else { next.a = turn(params.a); next.b = turn(params.b); }
+  if (params.tp) next.tp = rot(params.tp);
+  return next;
+}
 /** A dimension with its first free block name, offset 0 and default text height, or `look` (what Measure's Keep makes). */
 export function makeDimension(a, b, factor, blocks = {}, dp = 2, look = {}) {
   const kind = look.axis ? 'linear' : 'aligned';

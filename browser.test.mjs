@@ -19740,8 +19740,9 @@ try {
     }, [x0, x1, y]);
     // B1: not selected, no blue on the line; selected, the whole line is blue (no dashes) and the five grips show
     await frames(); assert.equal(await solid(40, 90, 30), 0, 'unselected: no accent on the dimension line');
-    await pick('aligned', 'PD_DIM_1'); await gripWhen(5); await frames();
+    await pick('aligned', 'PD_DIM_1'); await frames();       // the solid look is checked before the grip wait: it needs no grips to be painted
     assert.ok(await solid(40, 90, 30) > 0.95 && await solid(150, 200, 30) > 0.95, 'selected: the dimension line is one solid accent stroke: ' + await solid(40, 90, 30));
+    await gripWhen(5);
     await shotBoth('dim-selected-grips');
     // text grip: the 345a drag, along the line; the origin grip moves that point; the linked rectangle still drives it afterwards
     await drag(await textAt('aligned', 'PD_DIM_1'), [160, 32.7]);
@@ -19782,6 +19783,65 @@ try {
     const text = (await downloaded(() => page.keyboard.press('Control+s'))).text;
     await openGrips(text, 'dims345b1-again.dxf');
     p = await dim('PD_DIM_1'); near(p.a, [30, 90], 'reopened: the moved point'); assert.ok(Math.abs(p.shift - 40) < 1, 'reopened: the text shift ' + p.shift);
+    // a dimension on a locked layer shows no grips (345b1 Low 1)
+    await pick('aligned', 'PD_DIM_1'); await gripWhen(5);
+    await t('ptab-objects').click(); await page.locator('.or.layer[data-layer=Dimensions] [data-act=lock]').click(); await t('ptab-drawing').click();
+    await gripWhen(0);
+    await closeTabs(/./);
+  });
+  await step('TODO 345b2: diameter and radius grips turn / move the dimension (one Undo, Esc puts it back), click then click on a dimension grip does the drag\'s edit, a grip shared with another selected object moves both', async () => {
+    const raw = newDoc(4);
+    addEntities(raw, dxfCircle(100, 190, 20), dxfCircle(250, 190, 20), dxfLine(20, 60, 120, 60));
+    Object.assign(raw, addDimension(raw, buildDim('diameter', { a: [80, 190], b: [120, 190], textH: 3 }, 1, 'PD_DIM_D1', 2)));
+    Object.assign(raw, addDimension(raw, buildDim('radius', { c: [250, 190], r: 20, p: [290, 190], textH: 3 }, 1, 'PD_DIM_R1', 2)));
+    Object.assign(raw, addDimension(raw, buildDim('aligned', { a: [20, 60], b: [120, 60], offset: -20, textH: 3 }, 1, 'PD_DIM_1', 2)));
+    await openGrips(writeDxf(raw), 'dims345b2.dxf');
+    const dim = async (name) => (await dimBlocks())[name].params;
+    const near = (a, b, msg) => assert.ok(a && Math.abs(a[0] - b[0]) < 1 && Math.abs(a[1] - b[1]) < 1, msg + ': ' + JSON.stringify([a, b]));
+    const undo = async () => { await page.keyboard.press('Escape'); await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z'); await frames(); };
+    const drag = async (from, to, esc = false) => {
+      const a = await at(...from), b = await at(...to);
+      await page.mouse.move(a.x, a.y); await page.mouse.down();
+      await page.mouse.move((a.x + b.x) / 2, (a.y + b.y) / 2, { steps: 4 }); await page.mouse.move(b.x, b.y, { steps: 4 });
+      if (esc) await page.keyboard.press('Escape');
+      await page.mouse.up(); await frames();
+    };
+    const textAt = async (kind, name) => dimTextMiddle(dimGeom(kind, await dim(name), 1, 2).text);
+    const pick = async (kind, name) => { await page.keyboard.press('Escape'); await click(...await textAt(kind, name)); await waitSel('1 selected'); };
+    const mm = async (kind, name) => dimGeom(kind, await dim(name), 1, 2).mm;
+    // diameter: a chord-end grip turns the dimension round the centre, the value stays
+    await pick('diameter', 'PD_DIM_D1'); await gripWhen(3);
+    await drag([120, 190], [100, 230]); await said(/Dimension turned round its centre/);
+    let p = await dim('PD_DIM_D1'); near(p.a, [100, 170], 'the diameter turned a quarter: a'); near(p.b, [100, 210], 'b'); assert.ok(Math.abs(await mm('diameter', 'PD_DIM_D1') - 40) < 1e-6, 'the value is still the diameter');
+    await undo(); p = await dim('PD_DIM_D1'); near(p.a, [80, 190], 'one Undo turns it back');
+    await pick('diameter', 'PD_DIM_D1'); await gripWhen(3);
+    await drag([80, 190], [60, 150], true); await said(/Move cancelled/); p = await dim('PD_DIM_D1'); near(p.a, [80, 190], 'Esc mid-drag puts it back');
+    // radius: the arc-point grip turns it, the centre grip moves it, click then click does the same, Esc after the first click cancels
+    await pick('radius', 'PD_DIM_R1'); await gripWhen(3);
+    await drag([270, 190], [250, 230]);
+    p = await dim('PD_DIM_R1'); near(p.p, [250, 230], 'the radius turned a quarter'); assert.ok(Math.abs(p.r - 20) < 1e-3, 'the same radius: ' + p.r); near(p.c, [250, 190], 'about the same centre');
+    await undo(); p = await dim('PD_DIM_R1'); near(p.p, [290, 190], 'one Undo');
+    await pick('radius', 'PD_DIM_R1'); await gripWhen(3);
+    await drag([250, 190], [260, 200]);
+    p = await dim('PD_DIM_R1'); near(p.c, [260, 200], 'the centre grip moved the radius dimension'); assert.ok(Math.abs(p.r - 20) < 1e-3, 'the same radius: ' + p.r);
+    await undo(); p = await dim('PD_DIM_R1'); near(p.c, [250, 190], 'one Undo');
+    await pick('radius', 'PD_DIM_R1'); await gripWhen(3);
+    const g1 = await at(270, 190), g2 = await at(250, 230);
+    await page.mouse.click(g1.x, g1.y); await frames();                         // click the grip ...
+    await page.mouse.move(g2.x, g2.y, { steps: 5 }); await frames();
+    await page.mouse.click(g2.x, g2.y); await frames(); await said(/Dimension turned round its centre/);       // ... then click the new place
+    p = await dim('PD_DIM_R1'); near(p.p, [250, 230], 'click then click turned the radius');
+    await undo(); p = await dim('PD_DIM_R1'); near(p.p, [290, 190], 'one Undo for the two clicks');
+    await pick('radius', 'PD_DIM_R1'); await gripWhen(3);
+    await page.mouse.click(g1.x, g1.y); await page.mouse.move(g2.x, g2.y, { steps: 5 }); await page.keyboard.press('Escape'); await frames();
+    await said(/Move cancelled/); await page.mouse.click(g2.x, g2.y); await frames();
+    p = await dim('PD_DIM_R1'); near(p.p, [290, 190], 'Esc after the first click: the second click does nothing to the dimension');
+    // a grip shared with another selected object: the line's end and the dimension's origin move together
+    await page.keyboard.press('Escape'); await click(70, 60); await click(70, 40, { shift: true }); await waitSel('2 selected'); await gripWhen(8);       // the line's three and the dimension's five
+    await drag([120, 60], [150, 80]);
+    const line = async () => lineEnds((await savedDoc()).entities.find((e) => e.type === 'LINE'));
+    near((await line()).slice(2), [150, 80], 'the line end moved'); near((await dim('PD_DIM_1')).b, [150, 80], 'and the dimension origin with it');
+    await undo(); near((await line()).slice(2), [120, 60], 'one Undo puts both back'); near((await dim('PD_DIM_1')).b, [120, 60], 'both');
     await closeTabs(/./);
   });
 

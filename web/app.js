@@ -1808,7 +1808,7 @@ function setTool(id) {
   state.draw = DR.KINDS.includes(id) ? DR.createTool(id, { ...state.drawCfg, mode: id === 'arc' ? arcStart : circleStart }) : null; state.drawDoc = state.draw ? editable() || curLay() && curDoc() : null; state.drawHover = null;
   state.mod = MOD_KINDS.includes(id) ? newMod(id) : null; state.modDoc = state.mod ? editable() || curDoc() : null;
   if (state.mod) modStart(id);
-  state.dim = id === 'dimension' ? newDim() : null; state.dimRun = []; state.dimDrag = null; state.ldr = id === 'leader' ? newLdr() : null; state.bal = id === 'balloon' ? { tip: null, hover: null } : null; state.balDrag = null;
+  state.dim = id === 'dimension' ? newDim() : null; state.dimRun = []; state.dimDrag = state.dimHot = null; state.ldr = id === 'leader' ? newLdr() : null; state.bal = id === 'balloon' ? { tip: null, hover: null } : null; state.balDrag = null;
   if (id === 'dimension') state.msg = dimPrompt();
   if (id === 'balloon') state.msg = balPrompt();
   if (id === 'leader') state.msg = ldrPrompt();
@@ -5760,6 +5760,7 @@ function attachCanvasEvents() {
       if (sheetDown(e)) { capture(c, e); return; }
       if (drawingRotateDown(e)) { capture(c, e); return; }
       if (balDown(e)) { capture(c, e); return; }
+      if (dimHotAt(e, true)) return;       // the second click of click, then click on a dimension grip (345b2)
       const gd = editable(), gg = gd && gripOn(gd) && gripAt(gd, e.clientX, e.clientY);
       if (gg?.group) {
         const p = [gg.x, gg.y];
@@ -5770,7 +5771,7 @@ function attachCanvasEvents() {
       if (gg?.kind === 'dim' && !state.grip) {         // a grip of a selected dimension (345b1): the drag is the dimension's own (dimGrab), not a grip run
         const p = toDrawing(gd, e.clientX, e.clientY), g = dimGrab(gd, p, gg);
         if (g) drag = { x: e.clientX, y: e.clientY, p, moved: false, shift: e.shiftKey, dim: g };
-        else note('Drag the text of a diameter or radius dimension; its other grips are not editable yet');
+        else note('That dimension grip cannot be dragged');
         capture(c, e); return;
       }
       if (gripDown(e)) { capture(c, e); return; }
@@ -5827,7 +5828,8 @@ function attachCanvasEvents() {
     if (state.balDrag) balMove(e);
     const picking = (modLive() && state.mod.kind !== 'join' && state.mod.kind !== 'close' && state.mod.kind !== 'reverse' && !(['move', 'copy', 'stretch', 'array', 'rotate', 'scale', 'mirror', 'align'].includes(state.mod.kind) && state.mod.stage === 'pick')) || state.setlen || state.tool === 'measure' || state.tool === 'dimension' || state.tool === 'leader' || state.tool === 'balloon';
     if (drag && !picking && !drag.moved && Math.hypot(e.clientX - drag.x, e.clientY - drag.y) > 4) drag.moved = true;
-    if (drag && drag.moved && drag.dim) { if (!drag.dim.cancelled) dimDragTo(d, drag.dim, toDrawing(d, e.clientX, e.clientY)); }
+    if (dimHotAt(e, false)) { /* a hot dimension grip follows the pointer */ }
+    else if (drag && drag.moved && drag.dim) { if (!drag.dim.cancelled) dimDragTo(d, drag.dim, toDrawing(d, e.clientX, e.clientY)); }
     else if (drag?.moved && drag.move) {
       if (state.entityDrag === drag.move) moveSelectionTo(drag.move, e);
     }
@@ -5883,6 +5885,7 @@ function attachCanvasEvents() {
       else if (modLive()) modUp(d, was, p, e.shiftKey, e.clientX < was.x);
       else if (state.match && editable() === d) { if (!was.moved) matchClick(d, was.p); }
       else if (was.dim && was.moved) dimDragEnd(d, was.dim);
+      else if (was.dim?.grip && !was.moved) { state.dimHot = { d, g: was.dim }; note('Dimension grip: click the new place · Esc cancels'); paintOverlay(); }       // click, then click (345b2)
       else if (was.move && was.moved) {
         if (state.entityDrag === was.move) {
           const ready = moveSelectionTo(was.move, e);
@@ -7579,13 +7582,41 @@ function dimSel(d) {
 function dimGrab(d, p, grip = null) {
   const o = grip && Ed.dimOfEntity(d.raw, grip.e), sd = grip ? o && { e: grip.e, ...o } : dimSel(d);       // grip: a grip of the dimension (gripList kind 'dim', TODO 345b1) instead of a press on its text or line
   if (!sd) return null;
-  if (sd.kind === 'radius' || sd.kind === 'diameter') return grip && grip.id !== 't' ? null : circleTextGrab(sd, p, d.factor, pickTol(d), grip && d.sel);       // the other grips of a circle's dimension: TODO 345b2
+  if (sd.kind === 'radius' || sd.kind === 'diameter') {
+    const g = circleTextGrab(sd, p, d.factor, pickTol(d), grip && d.sel);
+    return g && grip && grip.id !== 't' ? { ...g, grip: grip.id, edit: grip.id, from: [grip.x, grip.y], cp: sd.params, mates: matesOf(d, grip) } : g;       // the other grips of a circle's dimension turn it round its centre / move the radius (TODO 345b2)
+  }
   if (sd.kind !== 'aligned' && sd.kind !== 'linear') return null;
   const sh = Ed.dimGeom(sd.kind, sd.params, d.factor, sd.dp), onText = grip ? grip.id === 't' : !!sh && Ed.dimTextHit(sh.text, p, pickTol(d));      // a press on the text moves it along the line (and across it: the offset)
   if (!grip && !onText && Ed.hitEntity(edIndex(d), p[0], p[1], pickTol(d)) !== sd.e) return null;
   const origin = grip && { o0: 'a', o1: 'b' }[grip.id];       // an origin grip moves that measured point; the dimension line stays where it is (through its middle)
   return { ...sd, start: p, offset: sd.params.offset, shift: sd.params.shift, text: onText, u: sh && sh.u, tx0: sh && sh.tx, len: sh && sh.len, moved: false, cancelled: false,
-    ...(grip && { grip: grip.id, sel: new Set(d.sel) }), ...(origin && { origin, pa: sd.params.a, pb: sd.params.b }) };
+    ...(grip && { grip: grip.id, sel: new Set(d.sel), from: [grip.x, grip.y], mates: matesOf(d, grip) }), ...(origin && { origin, pa: sd.params.a, pb: sd.params.b }) };
+}
+/** TODO 345b2: a clicked (not dragged) dimension grip is hot: the dimension follows the pointer (e) and the next click (put) puts it down, as every other grip. → true while one is hot. */
+function dimHotAt(e, put) {
+  const h = state.dimHot, d = editable();
+  if (!h) return false;
+  if (h.d !== d || !gripOn(d)) { state.dimHot = state.dimDrag = null; paintOverlay(); return false; }
+  dimDragTo(d, h.g, toDrawing(d, e.clientX, e.clientY));
+  if (put) { state.dimHot = null; dimDragEnd(d, h.g); }
+  return true;
+}
+/** TODO 345b2: the other selected objects' grips sitting where a dimension's point grip (a measured point, a radius' centre) does: they move with it, as AutoCAD's coincident grips. */
+const matesOf = (d, grip) => ['o0', 'o1', 'c'].includes(grip.id) ? gripList(d).filter((x) => x.kind !== 'dim' && !x.group && Math.hypot(x.x - grip.x, x.y - grip.y) < 1e-6) : [];
+/** The point a dimension grip drag is at: snapped, on the 0.01 mm grid when free. */
+function dimGripPoint(d, p, g) {
+  let q = snapPoint(d, p, g.e);
+  if (q.length === 2) q = [Math.round(q[0] * d.factor * 100) / 100 / d.factor, Math.round(q[1] * d.factor * 100) / 100 / d.factor];
+  return q.slice(0, 2);
+}
+/** d's drawing with the dimension `built` in; the mates (matesOf) of a grip drag g move by the same vector, dimensions linked to them following; one edit. */
+function dimRaw(d, g, built) {
+  const raw = Ed.replaceDimension(d.raw, built);
+  if (!g.mates?.length || !g.to) return raw;
+  const v = [g.to[0] - g.from[0], g.to[1] - g.from[1]], ents = raw.entities.slice();
+  for (const m of g.mates) { const r = GR.dragGrip(ents[m.e], m.id, [m.x + v[0], m.y + v[1]]); if (r) ents[m.e] = r.ent; }
+  return Ed.replaceDimension(followDimensions(d.raw, { entities: ents, blocks: raw.blocks }, d.factor), built);
 }
 /** A press on the text of a selected radius or diameter dimension (sd: dimSel / Ed.dimOfEntity) drags the text round its circle, in or out (TODO 344); else null (sel: the drawing's selection when the press is on the dimension's text grip, wherever the text is). */
 function circleTextGrab(sd, p, factor, tol, sel = null) {
@@ -7596,23 +7627,24 @@ function circleTextGrab(sd, p, factor, tol, sel = null) {
 }
 /** The params of a radius or diameter dimension after its text was dragged to g.tp: a diameter's text back inside the circle is its old look again (no tp). */
 function circleTextParams(g) {
+  if (g.edit) return g.cp;       // a turned / moved circle dimension (345b2): dimGripEdit's params
   const { r } = Ed.circleOfDim(g.kind, g.params), out = Math.hypot(g.tp[0], g.tp[1]) > r;
   return g.kind === 'diameter' && !out ? { ...g.params, tp: undefined, pos: g.params.tp ? 'above' : g.params.pos } : { ...g.params, tp: g.tp };
 }
 /** Did the drag change the dimension: the text moved 0.001 mm or more, and not just inside a diameter's circle (where it stays put). */
-const circleTextMoved = (g, factor) => Math.hypot(g.tp[0] - g.tp0[0], g.tp[1] - g.tp0[1]) * factor >= 0.001 && !(!g.params.tp && !circleTextParams(g).tp);
+const circleTextMoved = (g, factor) => g.edit ? JSON.stringify(g.cp) !== JSON.stringify(g.params) : Math.hypot(g.tp[0] - g.tp0[0], g.tp[1] - g.tp0[1]) * factor >= 0.001 && !(!g.params.tp && !circleTextParams(g).tp);
 function dimDragTo(d, g, p) {
   if (g.circ) {
-    g.tp = [g.tp0[0] + p[0] - g.start[0], g.tp0[1] + p[1] - g.start[1]]; g.moved = true; state.dimDrag = g;
+    if (g.edit) { const q = dimGripPoint(d, p, g), n = Ed.dimGripEdit(g.kind, g.params, g.edit, g.from, q); if (n) { g.cp = n; g.to = q; } }       // no change when q is the centre: the last good place stays
+    else g.tp = [g.tp0[0] + p[0] - g.start[0], g.tp0[1] + p[1] - g.start[1]];
+    g.moved = true; state.dimDrag = g;
     paintOverlay();
     return;
   }
   const a = g.params.a, b = g.params.b, ax = g.params.axis;
   if (g.origin) {         // a measured point goes to the pointer (snapped); the line stays through where its middle was, so the value changes (as AutoCAD's stretch of an extension line origin)
-    let q = snapPoint(d, p, g.e);
-    if (q.length === 2) q = [Math.round(q[0] * d.factor * 100) / 100 / d.factor, Math.round(q[1] * d.factor * 100) / 100 / d.factor];
-    const n = Ed.dimMovePoint(g.kind, g.params, g.origin, q.slice(0, 2), d.factor, g.dp);
-    if (n) { g.pa = n.a; g.pb = n.b; g.offset = n.offset; }       // two equal points draw nothing: the last good place stays
+    const q = dimGripPoint(d, p, g), n = Ed.dimMovePoint(g.kind, g.params, g.origin, q, d.factor, g.dp);
+    if (n) { g.pa = n.a; g.pb = n.b; g.offset = n.offset; g.to = q; }       // two equal points draw nothing: the last good place stays
     g.moved = true; state.dimDrag = g;
     paintOverlay();
     return;
@@ -7625,16 +7657,16 @@ function dimDragTo(d, g, p) {
 function dimDragEnd(d, g) {
   state.dimDrag = null;
   if (g.circ) {
-    if (g.cancelled || !circleTextMoved(g, d.factor) || !commit(d, Ed.replaceDimension(d.raw, Ed.buildDim(g.kind, circleTextParams(g), d.factor, g.name, g.dp)), 'Move dimension')) { paintOverlay(); return; }
+    if (g.cancelled || !circleTextMoved(g, d.factor) || !commit(d, dimRaw(d, g, Ed.buildDim(g.kind, circleTextParams(g), d.factor, g.name, g.dp)), 'Move dimension')) { paintOverlay(); return; }
     setSel(d, g.sel || new Set([g.e]));
-    note('Dimension text moved. Ctrl+Z undoes it');
+    note(g.edit === 'c' ? 'Radius dimension moved. Ctrl+Z undoes it' : g.edit ? 'Dimension turned round its centre. Ctrl+Z undoes it' : 'Dimension text moved. Ctrl+Z undoes it');
     return;
   }
   const off = Math.abs(g.offset - g.params.offset) * d.factor, sh = g.text ? Math.abs(g.shift - (g.tx0 - g.len / 2)) * d.factor : 0;
   const pt = g.origin ? Math.hypot(g.pa[0] - g.params.a[0], g.pa[1] - g.params.a[1], g.pb[0] - g.params.b[0], g.pb[1] - g.params.b[1]) * d.factor : 0;
   if (g.cancelled || (off < 0.001 && sh < 0.001 && pt < 0.001)) { paintOverlay(); return; }
   const built = Ed.buildDim(g.kind, { ...g.params, offset: g.offset, shift: g.shift, ...(g.origin && { a: g.pa, b: g.pb }) }, d.factor, g.name, g.dp);
-  if (!commit(d, Ed.replaceDimension(d.raw, built), g.origin ? 'Stretch dimension' : 'Move dimension')) { paintOverlay(); return; }
+  if (!commit(d, dimRaw(d, g, built), g.origin ? 'Stretch dimension' : 'Move dimension')) { paintOverlay(); return; }
   setSel(d, g.sel || new Set([g.e]));
   if (pt >= 0.001) { note(`Dimension point moved: it measures ${built.label} now. Ctrl+Z undoes it`); return; }
   note(sh >= 0.001 ? `Dimension text moved ${fmtSize(Math.abs(g.shift) * d.factor)} mm from the middle of its line. Ctrl+Z undoes it` : `Dimension moved: its line is ${fmtSize(Math.abs(g.offset) * d.factor)} mm from the points. Ctrl+Z undoes it`);
@@ -11179,7 +11211,7 @@ const sheetPx = (d, p) => { const [sx, sy] = toSheetPt(d, p), r = ui.canvas.getB
 /** The grip under a pointer position (8 px), or null. */
 function gripAt(d, cx, cy) {
   let best = null, bd = 8.5;
-  for (const g of gripList(d)) { const [px, py] = sheetPx(d, [g.x, g.y]), dd = Math.hypot(cx - px, cy - py); if (dd < bd || (dd <= bd && g.kind !== 'dim')) { bd = dd; best = g; } }       // a tie with a dimension's grip (its origin on the line's end it measures) goes to the other object
+  for (const g of gripList(d)) { const [px, py] = sheetPx(d, [g.x, g.y]), dd = Math.hypot(cx - px, cy - py); if (dd < bd || (dd <= bd && g.kind === 'dim')) { bd = dd; best = g; } }       // a tie goes to a dimension's grip: its origin on the line's end it measures moves both (dimGrab mates, 345b2)
   return best;
 }
 /** The point under the pointer for a grip: the snaps (the 0.01 mm grid when free), and Shift / ORTHO along X or Y from where the rubber band starts. */
@@ -11749,7 +11781,7 @@ function editKey(e) {
     else if (state.tool === 'text' && state.text.askHeight && !textEditing()) { state.text.askHeight = false; renderCommand(); paintOverlay(); }
     else if (state.tool === 'text' && d && !textEditing()) { if (d.sel.size) setSel(d, new Set()); else setTool('select'); }
     else if (drawLive()) { if (DR.toolBusy(state.draw) || state.draw.stage === 'radius') { state.msg = null; drawFinish(); } else setTool('select'); }
-    else if (state.dimDrag) { state.dimDrag.cancelled = true; state.dimDrag = null; note('Move cancelled'); paintOverlay(); }
+    else if (state.dimDrag || state.dimHot) { (state.dimDrag || state.dimHot.g).cancelled = true; state.dimDrag = state.dimHot = null; note('Move cancelled'); paintOverlay(); }
     else if (state.dim && state.dim.askText) { state.dim.askText = false; note(dimPrompt()); }
     else if (state.dim && dimBusy(state.dim)) { dimClear(state.dim); note('Dimension cancelled. ' + dimPrompt()); paintOverlay(); }
     else if (state.ldr && state.ldr.pts.length) { state.ldr.pts = []; state.ldr.hover = null; note('Leader cancelled. ' + ldrPrompt()); paintOverlay(); }
