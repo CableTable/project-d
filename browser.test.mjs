@@ -18642,6 +18642,7 @@ try {
   };
   const partsOnScreen = () => page.locator('[data-group=parts] [data-i]').evaluateAll((gs) => gs.map((g) => { const r = g.getBoundingClientRect(); return [r.x, r.y, r.width, r.height]; }));
   const sameOnScreen = (now, was, m) => now.forEach((r, i) => r.forEach((v, k) => assert.ok(Math.abs(v - was[i][k]) <= 1, `${m}: part ${i} moved on the screen: ${JSON.stringify(now)} vs ${JSON.stringify(was)}`)));
+  const shows = (sel, want, prop = 'textContent') => page.waitForFunction(([s, w, re, p]) => { const v = document.querySelector(s)?.[p]; return re ? new RegExp(w).test(v) : v === w; }, [sel, want.source ?? want, want instanceof RegExp, prop]);
   await step('TODO 348: the top gripper line drags at once and snaps to a part\'s top edge (0.01 mm, "Snapped to part"); Alt skips (whole mm); Esc cancels; one Undo; parts stay on the screen', async () => {
     await threeParts();
     await partTab(); await t('py').fill('360.37'); await t('py').press('Enter');      // Plate A's top edge at 420.37
@@ -18649,16 +18650,15 @@ try {
     assert.equal(await page.locator('[data-testid=sheet-handle]').count(), 0, 'the sheet is not selected first');
     const screen0 = await partsOnScreen(), labels0 = (await histLabels()).length;
     await sheetLineDrag([300, 680], [300, 420.6], { hold: true });
-    await page.waitForFunction(() => document.querySelector('[data-testid=sheet-readout]'));
-    assert.equal(await t('sheet-readout').textContent(), 'W 1000 × H 440.37 mm', 'the line sits on the part edge, the sheet edge its 20 mm gripper above');
-    assert.equal(await page.locator('.ssel-whole').textContent(), 'Snapped to part');
-    assert.match(await t('cmd-hist').textContent(), /^Command: STRETCH {3}Sheet W 1000 × H 440\.37 mm \(snapped to part\)/);
+    await shows('[data-testid=sheet-readout]', 'W 1000 × H 440.37 mm');      // the line sits on the part edge, the sheet edge its 20 mm gripper above
+    await shows('.ssel-whole', 'Snapped to part');
+    await shows('[data-testid=cmd-hist]', /^Command: STRETCH {3}Sheet W 1000 × H 440\.37 mm \(snapped to part\)/);
     await page.mouse.up();
     await sizeChanged('sheetH', 700);
     assert.deepEqual(await sheetSize(), ['1000', '440.37']);
-    assert.equal(await gripField('Top').inputValue(), '20', 'the gripper keeps its mm');
+    await shows('[data-key=gripTop]', '20', 'value');                        // the gripper keeps its mm
     sameOnScreen(await partsOnScreen(), screen0, 'top');
-    assert.match(await prompt(), /^Sheet 1000 × 440\.37 mm\. The parts stayed where they were/);
+    await said(/^Sheet 1000 × 440\.37 mm\. The parts stayed where they were/);
     assert.equal((await histLabels()).length, labels0 + 1, 'one undo step');
     assert.equal((await histLabels()).at(-1), 'Sheet 1000 × 440.37 mm');
     await page.keyboard.press('Control+z');
@@ -18669,11 +18669,11 @@ try {
     await page.waitForFunction(() => document.querySelector('[data-testid=sheet-readout]'));
     const ro = await t('sheet-readout').textContent(), mh = /^W 1000 × H (\d+) mm$/.exec(ro);
     assert.ok(mh, 'Alt: whole mm: ' + ro); near1(Number(mh[1]), 441, 'Alt height');
-    assert.equal(await page.locator('.ssel-whole').textContent(), 'Whole mm only');
+    await shows('.ssel-whole', 'Whole mm only');
     await page.keyboard.press('Escape'); await page.mouse.up();
     await page.waitForFunction(() => !document.querySelector('[data-testid=sheet-readout]'));
     assert.deepEqual(await sheetSize(), ['1000', '700']);
-    assert.match(await prompt(), /Sheet resize cancelled/);
+    await said(/Sheet resize cancelled/);
     await shotBoth('s348-snap', async () => { await sheetLineDrag([300, 680], [300, 420.6], { hold: true }); await wait(150); }, async () => { await page.keyboard.press('Escape'); await page.mouse.up(); });
     await page.keyboard.press('Escape');
   });
@@ -18699,7 +18699,7 @@ try {
     await sizeChanged('sheetW', W1); const W2 = (await sizeNum())[0]; near1(W2, W1 + 10, 'left');
     sameOnScreen(await partsOnScreen(), screen, 'left');
     assert.deepEqual((await placedXY()).map(Number), [x0 + W2 - W1, y0 + H2 - H1], 'left and bottom move the sheet positions by the change');
-    assert.deepEqual(await Promise.all(['Top', 'Right', 'Bottom', 'Left'].map((s) => gripField(s).inputValue())), ['20', '20', '20', '20'], 'the grippers keep their mm');
+    for (const s of ['Top', 'Right', 'Bottom', 'Left']) await shows(`[data-key=grip${s}]`, '20', 'value');  // the grippers keep their mm
     for (let i = 0; i < 4; i++) await page.keyboard.press('Control+z');
     await page.waitForFunction(() => document.querySelector('[data-key=sheetW]').value === '1000' && document.querySelector('[data-key=sheetH]').value === '700');
     // a side with gripper 0: its handle drags as before, and snaps to Plate A's right edge
@@ -18707,9 +18707,8 @@ try {
     if (!(await page.locator('[data-testid=sheet-handle]').count())) { await layoutTab(); await t('sheet-select').click(); }
     screen = await partsOnScreen();
     await dragSide('right', 800.6, 350, { hold: true });
-    await page.waitForFunction(() => document.querySelector('[data-testid=sheet-readout]'));
-    assert.equal(await t('sheet-readout').textContent(), 'W 800.25 × H 700 mm');
-    assert.equal(await page.locator('.ssel-whole').textContent(), 'Snapped to part');
+    await shows('[data-testid=sheet-readout]', 'W 800.25 × H 700 mm');
+    await shows('.ssel-whole', 'Snapped to part');
     await page.mouse.up();
     await sizeChanged('sheetW', 1000);
     assert.deepEqual(await sheetSize(), ['800.25', '700']);
