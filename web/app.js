@@ -5350,7 +5350,7 @@ function paintOverlay(gesture = false) {
     }
     // Zoom end (TODO 324b): the scaled picture stays while the sharp base is painted in bands
     if (settled && full && nk && !dkey && !quick && c.dataset.nokeep !== '1' && snapUsable(snap, want)
-      && zoomChunks(c, d, base, want, calls, d.lay ? layKey : d.cmp ? (v) => cmpKeepKey(d, v, cw, chh) : (v) => paintKey(d, v, cw, chh), nk, snap.big)) {
+      && zoomChunks(c, d, base, want, calls, d.lay ? layKey : d.cmp ? (v) => cmpKeepKey(d, v, cw, chh) : (v) => paintKey(d, v, cw, chh), nk, snap.big && !d.lay && !d.cmp)) {       // snap.big may be the quick frame of a plain tab left on screen: a layout / Compare view is not painted by paintEditable
       drawSnap();
       c.dataset.paints = (+c.dataset.paints || 0) + 1;
       ui.cmdUI.place();
