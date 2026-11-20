@@ -19371,9 +19371,9 @@ try {
     await openGrips(dimDoc(), 'dims.dxf');
     const only1Long = async () => Object.values(await dimBlocks()).find((b) => Math.abs(b.params.b[0] - b.params.a[0]) > 100).params;
     await typeCmd('dli'); await click(20, 20); await click(220, 20); await click(120, 50);
-    assert.match(await prompt(), /Dimension placed: 200\.00 mm/);
+    await said(/Dimension placed: 200\.00 mm/);
     await typeCmd('dli'); await click(20, 20); await click(23, 20); await click(21.5, 70);
-    assert.match(await prompt(), /Dimension placed: [23]\.\d\d mm/);
+    await said(/Dimension placed: [23]\.\d\d mm/);
     const blocks = Object.values(await dimBlocks());
     assert.equal(blocks.length, 2); assert.ok(blocks.every((b) => b.params.shift === undefined), 'nothing dragged: no text shift saved');
     // the short one (3 mm: neither fits): zoom in and shoot it, light and dark
@@ -19395,10 +19395,10 @@ try {
       await page.mouse.up();
     };
     await drag(120, 52.5, 160, 52.5);
-    assert.match(await prompt(), /Dimension text moved 40\.\d+ mm/);
+    await said(/Dimension text moved 40\.\d+ mm/);
     let p = await only1Long();
     assert.ok(Math.abs(p.shift - 40) < 1, 'text 40 mm along the line: ' + p.shift); assert.ok(Math.abs(p.offset - long.params.offset) < 0.7, 'the line stays where it was');
-    assert.equal(await t('sel-count').textContent(), '1 selected', 'still selected');
+    await waitSel('1 selected');                                                  // still selected
     await drag(160, 52.5, 250, 52.5);
     p = await only1Long();
     assert.ok(Math.abs(p.shift - 130) < 1, 'text past the second extension line: ' + p.shift);
@@ -19417,14 +19417,14 @@ try {
     // Esc in the middle of a drag leaves it where it was, with no history entry
     await click(250, 52.5); await waitSel('1 selected');                         // Undo clears the selection
     await drag(250, 52.5, 150, 52.5, true);
-    assert.match(await prompt(), /Move cancelled/);
+    await said(/Move cancelled/);
     p = await only1Long();
     assert.ok(Math.abs(p.shift - 130) < 1, 'Esc: text back: ' + p.shift);
     await page.keyboard.press('Control+z');
     p = await only1Long();
     assert.ok(Math.abs(p.shift - 40) < 1, 'the Undo after Esc took back the earlier drag, not a phantom one: ' + p.shift);
   });
-  await step('dimension types: the button\'s corner triangle opens the flyout (Aligned D,Linear DLI, Radius DRA, Diameter DDI, Angle DAN); picking Linear puts the button on it and asks for the first extension line origin', async () => {
+  await step('dimension types: the button\'s corner triangle opens the flyout (Aligned D, Linear DLI, Radius DRA, Diameter DDI, Angle DAN); picking Linear puts the button on it and asks for the first extension line origin', async () => {
     await openGrips(dimDoc(), 'dims.dxf');
     await typeCmd('d'); await page.keyboard.press('Escape');
     assert.equal(await page.locator('[data-tool=dimension]').getAttribute('title'), 'Dimension (D)');
@@ -25888,7 +25888,7 @@ try {
     await typeCmd('line'); await typeCmd('100,150'); await typeCmd('300,150'); await typeCmd('');
     await page.keyboard.press('Escape');
     await typeCmd('dli'); await typeCmd('100,150'); await typeCmd('300,150'); await typeCmd('200,190');
-    assert.match(await prompt(), /Dimension placed: 200\.00 mm/);
+    await said(/Dimension placed: 200\.00 mm/);
     await page.keyboard.press('Escape');
     assert.equal((await shiftNow()).shift, undefined, 'nothing dragged: no text shift');
     await page.locator('[data-tool=select]').click();
