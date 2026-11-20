@@ -309,7 +309,7 @@ for (const k of LD.SETTING_KEYS) {
 }
 /** A tab with nothing in it yet; its name is the first free "Drawing N". */
 function emptyDoc() {
-  const names = new Set(state.docs.map((d) => d.name));
+  const names = new Set(state.docs.filter((d) => !d.parked).map((d) => d.name));   // a parked doc is about to be replaced: its name is free
   let n = 1;
   while (names.has('Drawing ' + n)) n++;
   let dirty = false;
@@ -510,7 +510,7 @@ function showStartScreen(on) {
   ui.startRecent.append(h('h2', null, 'Recent files'));
   if (!items[0][4]) { ui.startRecent.append(h('p', null, 'No recent files yet')); return; }
   for (const [, action, , , path] of items) {
-    const open = async () => { await action(); showStartScreen(false); };
+    const open = async () => { await action(); showStartScreen(!!curDoc().parked); };
     ui.startRecent.append(h('button', { type: 'button', class: 'start-recent', title: path, 'data-testid': 'start-recent',
       onclick: open, oncontextmenu: (e) => {
         e.preventDefault();
@@ -523,11 +523,11 @@ function showStartScreen(on) {
 }
 function buildStartScreen() {
   const action = (id, label, run) => h('button', { class: 'btn', type: 'button', 'data-testid': 'start-' + id,
-    onclick: async () => { await run(); showStartScreen(false); } }, label);
+    onclick: async () => { await run(); showStartScreen(!!curDoc().parked); } }, label);
   ui.startRecent = h('section', { class: 'start-recents', 'aria-label': 'Recent files' });
   ui.startScreen = h('section', { class: 'start-screen', hidden: true, 'data-testid': 'start-screen', 'aria-label': 'Start screen' },
     h('h1', null, 'Start'), h('div', { class: 'start-content' },
-      h('div', { class: 'start-actions' }, action('new', 'New drawing', () => { if (!curDoc().empty) addTab(emptyDoc()); }), action('layout', 'New layout', newLayoutTab),
+      h('div', { class: 'start-actions' }, action('new', 'New drawing', () => { if (!curDoc().empty || curDoc().parked) addTab(emptyDoc()); }), action('layout', 'New layout', newLayoutTab),
         action('open', 'Open…', openFile), action('compare', 'Compare drawings…', cmpStart)), ui.startRecent));
   // The overlay's pointer events belong to its controls, not the drawing underneath.
   for (const name of ['pointerdown', 'pointermove', 'pointerup', 'click', 'dblclick', 'wheel', 'contextmenu']) ui.startScreen.addEventListener(name, (e) => e.stopPropagation());
@@ -1021,6 +1021,7 @@ function updateTabFades() {
 function renderTabs() {
   ui.tabs.replaceChildren(
     ...state.docs.map((d, i) => {
+      if (d.parked) return null;            // the Start screen is all there is: no tab until a drawing is made or opened
       const x = h('span', { class: 'x', 'aria-label': 'Close ' + d.name, role: 'button' }, '×');
       x.addEventListener('click', (e) => { e.stopPropagation(); closeTab(d); });
       const b = h('button', { class: 'dtab' + (i === state.doc ? ' on' : ''), type: 'button', 'data-kind': d.lay ? 'layout' : d.cmp ? 'compare' : d.pdf?.pages > 1 ? 'pdf' : 'drawing' },
@@ -1036,7 +1037,7 @@ function renderTabs() {
         menu.querySelector('button').focus();
       });
       return b;
-    }));
+    }).filter(Boolean));
   const on = ui.tabs.querySelector('.dtab.on');
   if (on && on.scrollIntoView) on.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   updateTabFades();
@@ -1158,10 +1159,9 @@ async function closeTab(d) {
   PS.pageStates(d).forEach(dropCopy);
   state.docs.splice(i, 1);
   const lastClosed = !state.docs.length;
-  if (lastClosed) state.docs.push(emptyDoc());
+  if (lastClosed) state.docs.push(Object.assign(emptyDoc(), { parked: true }));   // Start screen only: the empty doc stays, its tab is not drawn
   state.doc = Math.min(state.doc > i ? state.doc - 1 : state.doc, state.docs.length - 1);
   showDoc();
-  if (lastClosed) showStartScreen(true);
 }
 
 async function saveDirtyPages(d) {
@@ -1212,7 +1212,7 @@ function cycleTab(step) {
 
 /** The active tab changed: its drawing, layers and status, and Fit if the view is still fitted. */
 function showDoc() {
-  showStartScreen(false);
+  showStartScreen(!!curDoc().parked);
   const changed = shownDoc !== curDoc();
   if (changed) {
     // Callers have already changed state.doc; the global view still belongs to shownDoc.
@@ -1271,7 +1271,7 @@ function addTab(d, replaceEmpty = true) {
   if (d.path) rememberRecent(d.path);
   if (d.raw) { d.hist = Ed.createHistory(); d.sel = new Set(); d.hl = []; d.ed = null; warm(d); }
   const cur = curDoc();
-  if (replaceEmpty && cur && cur.empty && !cur.dirty && !d.empty) state.docs[state.doc] = d;      // an untouched empty tab is used up
+  if (cur?.parked || replaceEmpty && cur && cur.empty && !cur.dirty && !d.empty) state.docs[state.doc] = d;      // the parked doc (Start screen only) and an untouched empty tab are used up
   else { state.docs.push(d); state.doc = state.docs.length - 1; }
   quickNext = 'big';
   showDoc();
@@ -13335,7 +13335,7 @@ async function init() {
   update(true);
   setTool('select');
   if (shortcutError) note(shortcutError);
-  attachLaunchFiles().then((noFiles) => { if (noFiles && startMode() === 'start' && state.docs.length === 1 && curDoc().empty) showStartScreen(true); });
+  attachLaunchFiles().then((noFiles) => { if (noFiles && startMode() === 'start' && state.docs.length === 1 && curDoc().empty) { curDoc().parked = true; showDoc(); } });
   libInit();
   const every = Number(new URLSearchParams(location.search).get('autosave'));
   setInterval(autosaveNow, every >= 100 ? every : 120000);

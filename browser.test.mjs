@@ -228,7 +228,7 @@ try {
         await p.evaluate(() => window.releaseStartLaunch());
       };
       await reload(); await q('start-screen').waitFor();
-      assert.equal(await p.locator('.tabs .tname').textContent(), 'Drawing 1');
+      assert.equal(await p.locator('.tabs .dtab').count(), 0, 'TODO 343: the Start screen shows no Drawing 1 tab');
       assert.equal(await q('start-tab').getAttribute('aria-pressed'), 'true');
       assert.equal(await q('start-tab').textContent(), 'Start');
       assert.equal(await q('start-screen').getByText('No recent files yet', { exact: true }).count(), 1);
@@ -236,6 +236,7 @@ try {
       await q('start-new').click();
       assert.equal(await q('start-screen').isVisible(), false);
       assert.equal(await p.locator('.tabs .dtab').count(), 1, 'New drawing uses the empty drawing');
+      assert.equal(await p.locator('.tabs .tname').textContent(), 'Drawing 1');
       await q('start-tab').click(); await p.locator('.tabs .dtab').click();
       assert.equal(await q('start-screen').isVisible(), false, 'drawing tab leaves Start');
       const paths = ['C:\\new\\<plate>.dxf', 'E:/older/outline.dxf'];
@@ -287,6 +288,7 @@ try {
       assert.equal(await p.evaluate(() => localStorage.getItem('pd-start-mode')), 'start');
       await reload(); await q('start-screen').waitFor();
       await q('start-new').click(); await p.locator('.tabs .x').click(); await q('start-screen').waitFor();
+      assert.equal(await p.locator('.tabs .dtab').count(), 0, 'TODO 343: × on the last tab leaves the Start screen and no tab');
       await p.evaluate(() => sessionStorage.setItem('start-launch', JSON.stringify([['E:/launched.dxf', null]])));
       await reload();
       await p.waitForFunction(() => document.querySelector('.tabs .tname')?.textContent === 'launched.dxf');
@@ -433,6 +435,46 @@ try {
         return text === 'Entities 0' && text;
       })).jsonValue(), 'Entities 0', 'Undo still works after leaving Start');
       console.log('307b: Open/Remove/Copy success+failure, immediate Recent refresh, disabled tools, typed refusal/open/compare, Options/tabs; light/dark menu screenshots verified');
+    } finally { await context.close(); }
+  });
+  await step('TODO 343: no default Drawing 1 tab: Start mode boots on Start only; × on the last tab parks the empty doc; + / New drawing / New layout use it; a real untouched Drawing 1 keeps its tab', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    try {
+      const p = await context.newPage(), q = (id) => p.getByTestId(id);
+      p.on('pageerror', (e) => errors.push(String(e)));
+      p.on('dialog', (d) => d.accept());
+      const names = () => p.locator('.tabs .tname').allTextContents();
+      const mode = async (value) => { await p.evaluate((v) => localStorage.setItem('pd-start-mode', v), value); await p.reload(); await q('new-tab').waitFor(); };
+      await p.goto(URL_ + '?autosave=86400000'); await q('new-tab').waitFor();
+      await mode('start'); await q('start-screen').waitFor();
+      assert.deepEqual(await names(), [], 'Start-screen mode boots with no Drawing 1 tab');
+      await q('new-tab').click();
+      assert.equal(await q('start-screen').isVisible(), false, '+ hides Start');
+      assert.deepEqual(await names(), ['Drawing 1'], '+ on Start: one doc, Drawing 1');
+      await p.locator('.tabs .x').click(); await q('start-screen').waitFor();
+      assert.deepEqual(await names(), [], '× on the last tab: Start only');
+      for (const theme of ['light', 'dark']) {
+        await p.emulateMedia({ colorScheme: theme });
+        const path = `${shotDir}/todo343-start-after-close-${theme}.png`;
+        await p.screenshot({ path }); assert.ok(readFileSync(path).length > 1000);
+      }
+      await q('start-layout').click();
+      assert.deepEqual(await names(), ['Layout 1'], 'New layout replaces the parked doc');
+      await p.locator('.tabs .x').click(); await q('start-screen').waitFor();
+      assert.deepEqual(await names(), []);
+      await q('start-new').click();
+      assert.deepEqual(await names(), ['Drawing 1'], 'New drawing: one doc, Drawing 1');
+      await q('start-tab').click();
+      assert.deepEqual(await names(), ['Drawing 1'], 'the Start tab over a real untouched Drawing 1 keeps its tab');
+      await mode('blank');
+      assert.equal(await q('start-screen').isVisible(), false);
+      assert.deepEqual(await names(), ['Drawing 1'], 'Blank drawing mode: startup unchanged');
+      await p.locator('.tabs .x').click(); await q('start-screen').waitFor();
+      assert.deepEqual(await names(), [], 'Blank drawing mode: × on the last tab shows Start only');
+      await p.keyboard.press('Control+Tab');
+      assert.equal(await q('start-screen').isVisible(), true, 'Ctrl+Tab keeps Start over the parked doc');
+      await q('new-tab').click();
+      assert.deepEqual(await names(), ['Drawing 1']);
     } finally { await context.close(); }
   });
   await step('TODO 268: tab right-click Duplicate copies drawing, Compare and layout tabs', async () => {
@@ -3955,7 +3997,8 @@ try {
       await p.evaluate(() => { window.__paths = ['E:/sheet-two.dxf']; });
       await p.locator('.dtab.on .x').click(); await q('close-dialog').waitFor();
       assert.match(await q('close-dialog').textContent(), /Sheets 1 and 2 have unsaved edits/);
-      await q('close-save').click(); await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'Drawing 1');
+      await q('close-save').click(); await q('start-screen').waitFor();
+      assert.equal(await p.locator('.tabs .dtab').count(), 0, 'closing the last tab leaves Start only');
       assert.deepEqual(await p.evaluate(() => window.__saveSheets), ['Sheet 1 / 3', 'Sheet 2 / 3', 'Sheet 2 / 3'], 'close Save writes sheet 1 to its saved path without asking where');
       const writes = await p.evaluate(() => window.__writes);
       assert.deepEqual(writes.map((w) => w.path), ['E:/sheet-one.dxf', 'E:/sheet-one.dxf', 'E:/sheet-two.dxf']);
@@ -4102,7 +4145,9 @@ try {
       p.once('dialog', (d) => d.accept()); await p.keyboard.press('Control+w');
       await p.waitForFunction((n) => document.querySelectorAll('.tabs .dtab:not([aria-label])').length === n, count - 1);
       for (let i = 0; i < count - 1; i++) await p.keyboard.press('Control+w');
-      assert.equal(await tabs.count(), 1); assert.equal(await active(), 'Drawing 1', 'last close creates fresh drawing');
+      assert.equal(await tabs.count(), 0); assert.equal(await p.locator('[data-testid=start-screen]').isVisible(), true, 'last close shows Start only');
+      await p.locator('[data-testid=start-new]').click();
+      assert.equal(await tabs.count(), 1); assert.equal(await active(), 'Drawing 1', 'New drawing gives Drawing 1');
       assert.equal(await p.locator('.dtab.on .dot').count(), 0);
       await p.locator('[data-testid=new-tab]').click();
       await p.locator('[data-testid=new-tab]').click();
@@ -4591,8 +4636,12 @@ try {
     await page.locator('[data-menu=View]').click(); await page.getByRole('menuitemcheckbox', { name: new RegExp('Theme: light\\b') }).click();
   });
 
-  await step('× on the only tab leaves a fresh "Drawing 1"; + adds "Drawing 2"; × closes any tab', async () => {
+  await step('× on the only tab leaves the Start screen and no tab (TODO 343); + gives "Drawing 1", then "Drawing 2"; × closes any tab', async () => {
     await page.locator('.tabs .dtab .x').first().click();
+    assert.deepEqual(await tabNames(), []);
+    assert.equal(await t('start-screen').isVisible(), true);
+    await t('new-tab').click();
+    assert.equal(await t('start-screen').isVisible(), false, '+ hides Start');
     assert.deepEqual(await tabNames(), ['Drawing 1']);
     await t('new-tab').click();
     assert.deepEqual(await tabNames(), ['Drawing 1', 'Drawing 2']);
@@ -4602,6 +4651,9 @@ try {
     assert.deepEqual(await tabNames(), ['Drawing 2', 'Drawing 1']);
     await page.locator('.tabs .dtab', { hasText: 'Drawing 2' }).locator('.x').click();
     await page.locator('.tabs .dtab .x').first().click();
+    assert.deepEqual(await tabNames(), []);
+    assert.equal(await t('start-screen').isVisible(), true);
+    await t('start-new').click();
     assert.deepEqual(await tabNames(), ['Drawing 1']);
   });
 
@@ -5023,8 +5075,12 @@ try {
   const blank = async () => { await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))); return inkedWhen((n) => n === 0); };
   const tabs = () => page.locator('.tabs .dtab:not([aria-label])').allTextContents();
 
-  await step('closing the tabs leaves a fresh empty Drawing 1 with nothing drawn', async () => {
+  await step('closing the tabs leaves the Start screen and no tab; New drawing gives a fresh empty Drawing 1 with nothing drawn', async () => {
     await closeTabs(/./);
+    await page.locator('.tabs .dtab .x').first().click();
+    assert.deepEqual(await tabNames(), []);
+    assert.equal(await t('start-screen').isVisible(), true);
+    await t('start-new').click();
     assert.deepEqual(await tabNames(), ['Drawing 1']);
     assert.equal(await t('count').textContent(), '0');
     assert.equal(await blank(), 0);
@@ -24383,7 +24439,8 @@ try {
           assert.equal(await p.evaluate(() => window.__destroyed), 1, 'window closes after reading finishes');
         } else {
           await p.locator('.dtab.on .x').click();
-          assert.equal(await p.locator('.dtab.on .tname').textContent(), 'Drawing 1', 'tab closes after reading finishes');
+          await p.getByTestId('start-screen').waitFor();
+          assert.equal(await p.locator('.tabs .dtab').count(), 0, 'tab closes after reading finishes');
         }
       } finally { release?.(); await context.close(); }
     }
