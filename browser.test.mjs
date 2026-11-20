@@ -26294,6 +26294,53 @@ try {
     // a locked dimension shows no grips
     await t('bar-lock').click(); await gripWhen(0);
   });
+  await step('TODO 351: on a layout, click then click on a dimension grip does the drag\'s edit (linear origin, radius centre, diameter chord end: one Undo, Esc after the first click changes nothing)', async () => {
+    await freshLayoutWithPlate();
+    const save = async () => (await downloaded(() => page.keyboard.press('Control+s'))).text;
+    const params = async (kind) => Object.values(Object.fromEntries(Object.entries(readDxf(await save()).blocks).filter(([k]) => /^PD_DIM_/.test(k)).map(([k, b]) => [k, readDim(k, b)]))).find((d) => d.kind === kind).params;
+    const undo = async () => { await page.keyboard.press('Escape'); await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z'); await frames(); };
+    const near = (a, b, msg) => assert.ok(a && Math.abs(a[0] - b[0]) < 1.5 && Math.abs(a[1] - b[1]) < 1.5, msg + ': ' + JSON.stringify([a, b]));
+    const grip = async (from) => { const a = await at(...from); await page.mouse.click(a.x, a.y); await frames(); await said(/Dimension grip: click the new place/); };       // the first click: the grip is hot
+    const moveTo = async (to) => { const b = await at(...to); await page.mouse.move(b.x, b.y, { steps: 5 }); await frames(); };
+    const put = async (to) => { await moveTo(to); const b = await at(...to); await page.mouse.click(b.x, b.y); await frames(); };       // the second click
+    const pick = async (kind) => { await page.keyboard.press('Escape'); await click(...dimTextMiddle(dimGeom(kind, await params(kind), 1, 2).text)); await frames(); };
+    await typeCmd('line'); await typeCmd('100,150'); await typeCmd('300,150'); await typeCmd('');
+    await page.keyboard.press('Escape');
+    await typeCmd('dli'); await typeCmd('100,150'); await typeCmd('300,150'); await typeCmd('200,190');
+    await said(/Dimension placed: 200\.00 mm/); await page.keyboard.press('Escape');
+    await typeCmd('circle'); await typeCmd('450,300'); await typeCmd('40'); await page.keyboard.press('Escape');
+    await typeCmd('dra'); await click(410, 300); await click(520, 340);
+    await said(/Dimension placed: R40\.00/); await page.keyboard.press('Escape');
+    await typeCmd('circle'); await typeCmd('200,300'); await typeCmd('40'); await page.keyboard.press('Escape');
+    await typeCmd('ddi'); await click(240, 300); await click(200, 350);
+    await said(/Dimension placed: Ø80\.00/); await page.keyboard.press('Escape');
+    await page.locator('[data-tool=select]').click(); await frames();
+    // linear: the second origin grip, click, then click 50 right: it measures 250; Undo is one step
+    await page.keyboard.press('Escape'); await click(200, 192.5); await frames(); await gripWhen(5);
+    await grip([300, 150]);
+    await moveTo([350, 150]);
+    await shotBoth('layout-dim-grip-hot');
+    await put([350, 150]); await said(/Dimension point moved: it measures 2(49|50)\.\d\d/);
+    let p = await params('linear'); near(p.b, [350, 150], 'click then click moved that measured point'); near(p.a, [100, 150], 'the other stays');
+    await undo(); p = await params('linear'); near(p.b, [300, 150], 'one Undo for the two clicks');
+    // Esc after the first click: nothing changes, and the next click does not put anything down
+    await page.keyboard.press('Escape'); await click(200, 192.5); await frames(); await gripWhen(5);
+    await grip([300, 150]); await moveTo([380, 150]); await page.keyboard.press('Escape'); await frames();
+    await said(/Move cancelled/); await click(380, 150); await frames();
+    p = await params('linear'); near(p.b, [300, 150], 'Esc after the first click: the point stays');
+    // radius: the centre grip
+    await pick('radius'); await gripWhen(3);
+    await grip([450, 300]); await put([470, 320]); await said(/Radius dimension moved/);
+    p = await params('radius'); near(p.c, [470, 320], 'click then click moved the radius dimension'); assert.ok(Math.abs(p.r - 40) < 1e-3, 'the same radius: ' + p.r);
+    await undo(); p = await params('radius'); near(p.c, [450, 300], 'one Undo');
+    // diameter: a chord-end grip turns it round the centre, the value stays
+    await pick('diameter'); await gripWhen(3);
+    p = await params('diameter');
+    const c = [(p.a[0] + p.b[0]) / 2, (p.a[1] + p.b[1]) / 2], b0 = p.b;
+    await grip(b0); await put([c[0], c[1] + 60]); await said(/Dimension turned round its centre/);
+    p = await params('diameter'); near(p.b, [c[0], c[1] + 40], 'click then click turned the diameter a quarter');
+    await undo(); p = await params('diameter'); near(p.b, b0, 'one Undo');
+  });
   await step('TODO 344a: on a layout, a radius and a diameter text drag out of the circle and back in (one Undo, Esc puts it back), saved with the text point', async () => {
     await freshLayoutWithPlate();
     const save = async () => (await downloaded(() => page.keyboard.press('Control+s'))).text;

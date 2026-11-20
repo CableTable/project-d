@@ -488,6 +488,7 @@
   "TODO 156b2b: on a layout, Text makes a text object (one Undo, saved as a plain TEXT, reopened as an object); Text to outlines works on it, a placed part is refused": 9.85,
   "TODO 345a: on a layout, a dimension text drags along its line (one Undo, Esc puts it back) and a Move of the part carries the text with it": 3.5,
   "TODO 345b3: on a layout, a selected dimension is solid with its grips (linear 5, radius 3); an origin grip and the radius centre grip drag (one Undo, Esc puts it back); save and reopen keep the edit; a locked one has none": 5,
+  "TODO 351: on a layout, click then click on a dimension grip does the drag's edit (linear origin, radius centre, diameter chord end: one Undo, Esc after the first click changes nothing)": 6,
   "TODO 344a: on a layout, a radius and a diameter text drag out of the circle and back in (one Undo, Esc puts it back), saved with the text point": 6,
   "TODO 344b: on a layout, DRA and DDI with the last click outside the circle put the text there (a click inside keeps the inside look); a Move of the circle carries it, one Undo restores both": 8,
   "TODO 156b2c1: on a layout, Dimension (linear, aligned) makes a dimension object (one Undo, Esc cancels); saved with its block, reopened as an object; Move of the shape it measures carries it along": 17.5,

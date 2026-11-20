@@ -20,7 +20,7 @@
 // Where the app drives grips (app.js; grep the name):
 //   gripDoc (Drawings, Layouts): the doc grips work on: a drawing tab, or a layout's selected objects as a drawing (layObjSelDoc); else null.
 //   gripOn (Drawings, Layouts): do grips show (Select tool, 1..MAX_SELECTED selected, no text edit); gripDoc() must be that doc.
-//   gripList (Drawings, Layouts): every grip of the selection via gripsOf (a leader via ldrPseudo), cached; skips locked objects; a kept dimension (drawing tab only) gets dimGripsOf's, dragged through dimGrab (TODO 345b1).
+//   gripList (Drawings, Layouts): every grip of the selection via gripsOf (a leader via ldrPseudo), cached; skips locked objects; a kept dimension (a drawing tab, PDF sheet, Compare, a layout's selected one) gets dimGripsOf's, dragged or click-then-click through dimGrab / dimHotAt (TODO 345b1, 351).
 //   dimGripsOf(kind, params, factor, dp) → the grips of a kept dimension: linear / aligned 'o0' 'o1' 'l0' 'l1' 't'; diameter 'e0' 'e1' 't'; radius 'c' 'p' 't' (kind 'dim')
 //   gripAt (Drawings, Layouts): hit-test the nearest grip under the pointer.
 //   gripDown (Drawings, Layouts): start a grip run, or put down a hot grip.

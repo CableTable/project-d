@@ -3383,6 +3383,7 @@ function layDimSel() {
 function layDimTextEnd(p) {
   const d = curDoc(), lay = d?.lay, g = p.g, r = dimDragDone(g, 1);
   state.dimDrag = null;
+  if (lay && !p.moved && g.grip) { state.dimHot = { d: gripDoc(), g, p }; note('Dimension grip: click the new place · Esc cancels'); paintOverlay(); return; }       // a click on one of its grips: hot, the next click puts it down (dimHotAt, TODO 351)
   if (lay && !p.moved) { state.mode = 'rotate'; state.pivot = centrePivot(); state.rotCopy = false; state.lref = null; update(); return; }       // a click on the text of the selected dimension: its turn arrows, as a click on its line
   if (!lay || g.cancelled || !r.changed) { paintOverlay(); return; }
   const built = Ed.buildDim(g.kind, r.params, 1, g.name, g.dp), snap = laySnap(lay);
@@ -5600,7 +5601,7 @@ function layOverlay(c, d, base, marks, lifted) {
     drawContour(c.getContext('2d'), state.layCt, T, dpr, contourColour(d).replace('var(--text)', base.dark ? '#ededef' : '#18181b'), contourStyle().dash);
     canvasPreviewBounds = unionBox(canvasPreviewBounds, overlayBox({ contour: state.layCt }, T, dpr));
   }
-  const dimG = state.dim ? previewDim(d) : null;                                          // a dimension being placed (sheet mm)
+  const dimG = state.dim || state.dimDrag?.moved ? previewDim(d) : null;                  // a dimension being placed or dragged (a grip run, TODO 351) (sheet mm)
   if (marks || dimG) {
     const k = base.scale * dpr, T = [k, 0, 0, -k, -base.ox * k, (base.sheetH - base.oy) * k];
     if (dimG) { drawDimPreview(c.getContext('2d'), dimG, T, dpr, cssVar('--dim', '#0f766e')); canvasPreviewBounds = unionBox(canvasPreviewBounds, overlayBox({ dim: dimG }, T, dpr)); }
@@ -7600,13 +7601,14 @@ function dimGrab(d, p, grip = null) {
   return { ...sd, start: p, offset: sd.params.offset, shift: sd.params.shift, text: onText, u: sh && sh.u, tx0: sh && sh.tx, len: sh && sh.len, moved: false, cancelled: false,
     ...(grip && { grip: grip.id, sel: new Set(d.sel) }), ...(origin && { origin, pa: sd.params.a, pb: sd.params.b }) };
 }
-/** TODO 345b2: a clicked (not dragged) dimension grip is hot: the dimension follows the pointer (e) and the next click (put) puts it down, as every other grip. → true while one is hot. */
+/** TODO 345b2: a clicked (not dragged) dimension grip is hot: the dimension follows the pointer (e) and the next click (put) puts it down, as every other grip. → true while one is hot. TODO 351: on a layout h.p is the placed-dimension drag (placedMove's): h.d is the grips' little drawing, the pointer and the snaps work in the layout, the put-down is layDimTextEnd (one Undo). */
 function dimHotAt(e, put) {
-  const h = state.dimHot, d = editable();
+  const h = state.dimHot;
   if (!h) return false;
-  if (h.d !== d || !gripOn(d)) { state.dimHot = state.dimDrag = null; paintOverlay(); return false; }
-  dimDragTo(d, h.g, toDrawing(d, e.clientX, e.clientY));
-  if (put) { state.dimHot = null; dimDragEnd(d, h.g); }
+  const d = gripDoc(), ld = h.p && curDoc();
+  if (h.d !== d || !gripOn(d) || h.p && h.p.placed !== d.vlay.lay.placed[d.layDim.p.i]) { state.dimHot = state.dimDrag = null; paintOverlay(); return false; }
+  dimDragTo(ld || d, h.g, toDrawing(ld || d, e.clientX, e.clientY));
+  if (put) { state.dimHot = null; if (ld) layDimTextEnd({ ...h.p, moved: true }); else dimDragEnd(d, h.g); }
   return true;
 }
 /** The point a dimension grip drag is at: snapped, on the 0.01 mm grid when free. */
@@ -11225,7 +11227,7 @@ function gripList(d) {
     const ent = ents[e], lp = ent && ldrPseudo(d, e);
     if (lp) { for (const g of GR.gripsOf(lp)) list.push({ e, ...g }); continue; }       // a leader: a grip at each point
     if (!ent || (d.lockedEnts && d.lockedEnts.has(ent))) continue;      // lockedEnts: a layout's locked objects
-    if (ent.layer === Ed.DIM_LAYER) {       // a kept dimension (345b1): grips in a drawing tab only, the other tabs are 345b2
+    if (ent.layer === Ed.DIM_LAYER) {       // a kept dimension (345b1): grips in a drawing tab, a PDF sheet, Compare and a layout's selected dimension (dimGripsOk; 345b2, 345b3)
       const sd = dimGripsOk(d) && !lockedEnt(d, e) && Ed.dimOfEntity(d.raw, e);       // a locked dimension (its layer locked) has none
       if (sd) for (const g of GR.dimGripsOf(sd.kind, sd.params, d.factor, sd.dp)) list.push({ e, ...g });
       continue;
