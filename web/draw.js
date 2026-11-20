@@ -120,7 +120,7 @@ export function parseInput(text, unit = 'mm') {
   }
   const v = parseLength(t, unit);
   if (v !== null) return { kind: 'len', v };
-  if (/^[23]p$/i.test(t) || /^[a-z]+$/i.test(t) || /^[a-z]+\s+/i.test(t)&& parseLength(t.replace(/^[a-z]+\s+/i, ''), unit) !== null) return { kind: 'word', w: t.toLowerCase() };
+  if (/^[23]p$/i.test(t) || /^[a-z]+$/i.test(t) || /^[a-z]+\s+/i.test(t) && parseLength(t.replace(/^[a-z]+\s+/i, ''), unit) !== null) return { kind: 'word', w: t.toLowerCase() };
   return { kind: 'bad' };
 }
 

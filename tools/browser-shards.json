@@ -716,5 +716,8 @@
   "TODO 97k: Layouts Trim refuses a placed part without an edit or Undo step": 5.84,
   "TODO 97k: every tab has identical Shaping buttons and Modify items; Compare and Layouts ribbons light and dark": 9.21,
   "TODO 325: Objects tab: layer change while hidden does not render; open is fast": 3.5,
-  "TODO 349: Centre to page horizontally / vertically": 4
+  "TODO 349: Centre to page horizontally / vertically": 4,
+  "TODO 346a: typed 2P and 3P at the CIRCLE centre prompt (a bare 2 / 3 is a number, an unknown word is refused), *Invalid* picks refused, typed C is Centre, Radius, one Undo per circle: Drawings, Layouts, Compare": 5.5,
+  "TODO 346a: the Circle button shows and starts the last mode (remembered as pd-circlemode); the flyout opens from its triangle, a hold or a right-click, and from the ribbon and Draw > Circle >; typed C stays Centre, Radius: Drawings, Layouts, Compare": 7,
+  "TODO 346a: screenshots, light and dark (the Circle flyout open on a 3-Point button)": 1.5
 }

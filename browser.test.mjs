@@ -34750,6 +34750,7 @@ try {
     ['Compare', async () => { await open97c(doc97f2(dxfLine(10, 10, 300, 10)), 'circle346-c.dxf'); await typeCmd('compare'); }],
   ];
   const centre346 = 'Specify centre (x,y) [3P/2P/Diameter]:', first2p346 = "Specify first end point of circle's diameter (x,y):", first3p346 = 'Specify first point on circle (x,y):';
+  const prompt346 = async (text, label = '') => { try { await said(new RegExp('^' + text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$')); } catch { throw new Error(`${label}: expected the prompt "${text}", got "${await prompt()}"`); } };
   const said346 = async () => (await t('cmd-hist').textContent()) + ' | ' + await prompt();
   const stop346 = async () => { await key97c('Escape'); await key97c('Escape'); await page.locator('[data-tool=select]').click(); };
   const sourceCircles346 = async (name) => {
@@ -34761,20 +34762,20 @@ try {
       await setup();
       const n0 = kind === 'Layouts' ? await nParts() : 0;
       await typeCmd('c');
-      assert.equal(await prompt(), centre346, kind);
+      await prompt346(centre346, kind);
       await typeCmd('foo'); assert.match(await said346(), /Point or option keyword required\./, kind);
       await typeCmd('3'); assert.match(await said346(), /Type the centre as x,y/, kind + ': a bare 3 is a number');
       await typeCmd('2P');
-      assert.equal(await prompt(), first2p346, kind);
+      await prompt346(first2p346, kind);
       await typeCmd('100,100'); await typeCmd('100,100');
-      assert.match(await said346(), /\*Invalid\*/, kind + ': two equal points'); assert.match(await prompt(), /Specify second end point of circle's diameter/);
+      assert.match(await said346(), /\*Invalid\*/, kind + ': two equal points'); await said(/Specify second end point of circle's diameter/);
       await typeCmd('180,100');
       assert.match(await said346(), /Circle made on layer/, kind);
-      await typeCmd('c'); assert.equal(await prompt(), centre346, kind + ': typed C is Centre, Radius');
+      await typeCmd('c'); await prompt346(centre346, kind + ': typed C is Centre, Radius');
       await typeCmd('3p');
-      assert.equal(await prompt(), first3p346, kind);
-      await typeCmd('100,200'); await typeCmd('140,200'); assert.match(await prompt(), /Specify third point on circle/);
-      await typeCmd('180,200'); assert.match(await said346(), /\*Invalid\*/, kind + ': collinear 3P'); assert.match(await prompt(), /Specify third point on circle/);
+      await prompt346(first3p346, kind);
+      await typeCmd('100,200'); await typeCmd('140,200'); await said(/Specify third point on circle/);
+      await typeCmd('180,200'); assert.match(await said346(), /\*Invalid\*/, kind + ': collinear 3P'); await said(/Specify third point on circle/);
       await typeCmd('140,240'); assert.match(await said346(), /Circle made on layer/, kind);
       if (kind === 'Layouts') assert.equal(await nParts(), n0 + 2, kind);
       await key97c('Control+z');
@@ -34805,48 +34806,48 @@ try {
       await t('circle-flyout').click();
       assert.deepEqual(await flyoutItems(), items, kind);
       await pick('3-Point');
-      assert.equal(await prompt(), first3p346, kind + ': the pick starts the mode');
+      await prompt346(first3p346, kind + ': the pick starts the mode');
       assert.equal(await stored(), '3p', kind);
       assert.match(await page.locator('[data-tool=circle]').getAttribute('title'), /3-Point/, kind + ': the button shows the mode');
       assert.equal(await page.locator('[data-tool=circle] > svg circle').count(), 4, kind + ': its icon is the 3-point one (a circle and three dots)');
       await stop346();
       await page.locator('[data-tool=circle]').click();
-      assert.equal(await prompt(), first3p346, kind + ': the button starts the last mode');
-      await typeCmd('c'); assert.equal(await prompt(), centre346, kind + ': typed C is Centre, Radius');
+      await prompt346(first3p346, kind + ': the button starts the last mode');
+      await typeCmd('c'); await prompt346(centre346, kind + ': typed C is Centre, Radius');
       await stop346();
       await key97c(' ');
-      assert.equal(await prompt(), centre346, kind + ': Space repeats Circle at the centre prompt');
+      await prompt346(centre346, kind + ': Space repeats Circle at the centre prompt');
       await stop346();
       const box = await page.locator('[data-tool=circle]').boundingBox();                // press and hold 450 ms
       await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2); await page.mouse.down(); await page.waitForTimeout(650);
       assert.deepEqual(await flyoutItems(), items, kind + ': hold');
       await page.mouse.up(); await pick('2-Point');
-      assert.equal(await prompt(), first2p346, kind);
+      await prompt346(first2p346, kind);
       await stop346();
       await page.locator('[data-tool=circle]').click({ button: 'right' });             // right-click
       assert.deepEqual(await flyoutItems(), items, kind + ': right-click');
       await pick('Centre, Diameter');
-      assert.equal(await prompt(), centre346, kind); await typeCmd('100,100');
-      assert.equal(await prompt(), 'Diameter [Radius]:', kind + ': Centre, Diameter'); await typeCmd('50');
+      await prompt346(centre346, kind); await typeCmd('100,100');
+      await prompt346('Diameter [Radius]:', kind + ': Centre, Diameter'); await typeCmd('50');
       assert.match(await said346(), /Circle made on layer/, kind);
       await stop346();
       const group = await home();                                                       // the ribbon button and its flyout
       await group.getByRole('button', { name: 'Circle', exact: true }).waitFor();
       await t('circle-ribbon-flyout').click();
       assert.deepEqual(await flyoutItems(), items, kind + ': ribbon');
-      await pick('3-Point'); assert.equal(await prompt(), first3p346, kind + ': ribbon pick');
+      await pick('3-Point'); await prompt346(first3p346, kind + ': ribbon pick');
       await stop346();
       assert.equal(await (await home()).getByRole('button', { name: 'Circle', exact: true }).locator('svg circle').count(), 4, kind + ': the ribbon icon shows the mode too');
       await (await home()).getByRole('button', { name: 'Circle', exact: true }).click();
-      assert.equal(await prompt(), first3p346, kind + ': the ribbon button starts the last mode');
+      await prompt346(first3p346, kind + ': the ribbon button starts the last mode');
       await stop346();
       await menuItem('Draw', 'Circle');                                                 // Draw > Circle > submenu
       assert.deepEqual(await flyoutItems(), items, kind + ': Draw menu');
       await pick('2-Point');
-      assert.equal(await prompt(), first2p346, kind + ': submenu pick'); assert.equal(await stored(), '2p');
+      await prompt346(first2p346, kind + ': submenu pick'); assert.equal(await stored(), '2p');
       await stop346();
       await t('circle-flyout').click(); await pick('Centre, Radius');                   // back to the default for the other steps
-      assert.equal(await stored(), 'cr'); assert.equal(await prompt(), centre346, kind);
+      assert.equal(await stored(), 'cr'); await prompt346(centre346, kind);
       await stop346();
       await closeTabs(/./);
     }
