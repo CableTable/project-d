@@ -643,6 +643,7 @@
   "TODO 97b: whole-group Move / Copy / Rotate / Mirror / Scale / Erase / nudge, one Undo each, flat grouping, clipboard and Explode membership": 11.63,
   "TODO 97b: Compare edits its drawing group with keys and centre grip; layout Ctrl+G still groups parts": 8.87,
   "TODO 337: a selected layout part and a drawing group box keep one thin dashed screen line at 1x and 8x zoom": 10,
+  "TODO 352: a selected rotated layout part is a dashed outline of its own lines, no box line, at 1x and 8x; two selected = two outlines, no group box; orange in the gripper": 2.26,
   "TODO 97c: Break two picks, F, @, group properties, Esc, one Undo and source edit": 7.2,
   "TODO 97c: circle CCW side, Break at point line, closed refusal, unsupported type, snaps and Esc": 7.03,
   "TODO 97c: Layout and Compare command and ribbon parity with one Undo": 9.86,
