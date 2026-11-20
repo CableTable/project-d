@@ -27331,7 +27331,7 @@ try {
       await page.evaluate((x) => { document.documentElement.dataset.theme = x; }, th);
       for (const menu of ['File', 'Edit', 'View', 'Draw', 'Modify', 'Format', 'Layout', 'Tools']) {
         await page.locator(`[data-menu=${menu}]`).click();
-        const items = await page.locator('.dropdown [role^=menuitem]').evaluateAll((els) => els.map((e) => ({ label: e.firstChild.textContent.trim().replace(/^[✓\s]+/, ''), hint: e.querySelector('.hint')?.textContent })));
+        const items = await page.locator('.dropdown [role^=menuitem]').evaluateAll((els) => els.map((e) => ({ label: e.firstChild.textContent.trim().replace(/^[✓\s]+/, ''), hint: e.querySelector('.hint')?.textContent.replace(/\s*▸$/, '') })));   // a submenu parent (346a Circle) ends its hint with ▸
         for (const { label, hint } of items) {
           if (!hint || ['Drawing checks', 'Aliases + keys', 'Ctrl+D'].includes(hint)) continue;
           const cmd = COMMANDS.find((c) => c.name === (names[label] || label.toLowerCase()));
