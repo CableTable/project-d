@@ -22262,6 +22262,7 @@ try {
       assert.deepEqual(await t('cmd-bar').boundingBox(), box, 'moving into the input keeps the box still and usable');
       assert.deepEqual(await t('mod-preview').boundingBox(), preview, 'hovering the box does not move the preview');
       const next = await at(39.7, 80.3); await page.mouse.move(next.x, next.y); await frames();
+      await t('mod-preview').waitFor(); await t('cmd-bar').waitFor();
       const moved = await t('cmd-bar').boundingBox();
       assert.equal(overlap(moved, await t('mod-preview').boundingBox()), 0, 'clear while the cursor moves');
       assert.ok(moved.y + moved.height < next.y, 'keeps its clear corner');
@@ -22271,12 +22272,12 @@ try {
     const cursor = await at(39.8, 80.2); await page.mouse.move(cursor.x, cursor.y); await frames();
     await t('mod-preview').waitFor();       // CI (Linux) painted the preview later than the move + 2 frames
     await typeCmd('nu');
-    await t('mod-preview').waitFor();
+    await t('mod-preview').waitFor(); await t('nudge-box').waitFor();   // the box opens after Enter, not with it (flaky null box in shard 2)
     assert.equal(overlap(await t('nudge-box').boundingBox(), await t('mod-preview').boundingBox()), 0, 'nudge uses the same preview avoidance');
     const nudge = await t('nudge-box').boundingBox(); await t('nudge-input').hover(); await frames();
     assert.deepEqual(await t('nudge-box').boundingBox(), nudge, 'nudge stays still while using its input');
     await t('nudge-input').fill('0'); await t('nudge-input').press('Enter');
-    await t('mod-preview').waitFor();
+    await t('mod-preview').waitFor(); await t('nudge-box').waitFor(); await frames();
     assert.equal(overlap(await t('nudge-box').boundingBox(), await t('mod-preview').boundingBox()), 0, 'nudge error text is reclamped without covering the preview');
     await t('nudge-input').press('Escape');
     await page.keyboard.press('Escape'); await closeTabs(/preview-clear/);
