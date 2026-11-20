@@ -36,7 +36,7 @@ fn grant_balloon_sidecar(app: tauri::AppHandle, path: std::path::PathBuf) -> Res
 
 /// A name is safe when it is one plain file name: `a..b-img1.png` is real, `../x.png`, `d/x.png` and `C:x.png` are not.
 fn picture_name_ok(name: &str) -> bool {
-    !name.is_empty() && std::path::Path::new(name).file_name().is_some_and(|f| f == name)
+    !name.is_empty() && !name.contains(':') && std::path::Path::new(name).file_name().is_some_and(|f| f == name)
 }
 
 /// Save and Export write `<dxf name>-imgN.png` beside the DXF: allow exactly those files.
@@ -112,7 +112,7 @@ mod tests {
         for good in ["a-img1.png", "a..b-img1.png", "my drawing-img12.png"] {
             assert!(picture_name_ok(good), "{good}");
         }
-        for bad in ["", ".", "..", "../a-img1.png", "d/a-img1.png", "d\\a-img1.png", "C:a-img1.png", "C:\\a-img1.png", "a-img1.png/"] {
+        for bad in ["", ".", "..", "../a-img1.png", "d/a-img1.png", "d\\a-img1.png", "C:a-img1.png", "C:\\a-img1.png", "a-img1.png/", "ab:c.png"] {
             assert!(!picture_name_ok(bad), "{bad}");
         }
     }

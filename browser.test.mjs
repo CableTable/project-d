@@ -8805,30 +8805,28 @@ try {
         };
       });
       await q('picker').setInputFiles(picturesPdf()); await prompt('Opened pictures.pdf');
-      await menu('Save As…'); await prompt('Saved a..b.dxf');
-      const text = () => q('cmd-prompt').textContent();
-      assert.match(await text(), /2 picture\(s\) not saved/);
+      const noteOf = async (re) => (await p.waitForFunction((src) => { const t = document.querySelector('[data-testid=cmd-prompt]').textContent; return new RegExp(src).test(t) ? t : false; }, re.source)).jsonValue();
+      await menu('Save As…'); assert.match(await noteOf(/^Saved a\.\.b\.dxf.*2 picture\(s\) not saved/), /2 picture\(s\) not saved/);
       const s = await p.evaluate(() => window.__pics341);
       assert.deepEqual(s.grants, [{ path: 'C:/jobs/a..b.dxf', names: ['a..b-img1.png', 'a..b-img2.png'] }], 'the grant gets plain names');
       assert.deepEqual(s.log, ['grant', 'C:/jobs/a..b.dxf', 'C:/jobs/a..b-img1.png', 'C:/jobs/a..b-img2.png'], 'grant, then the DXF, then each picture');
       assert.equal(await p.locator('.dtab.on .dot').count(), 0, 'refused pictures do not mark the tab dirty');
       // second Save: in place, no dialog, same order and note
       await p.evaluate(() => { window.__pics341.log.length = 0; window.__pics341.grants.length = 0; window.__pics341.dialogs = 0; });
+      await p.evaluate(() => { document.querySelector('[data-testid=cmd-prompt]').textContent = ''; }); // the first Save's note must not satisfy the wait
       await menu('Save');
       await p.waitForFunction(() => window.__pics341.log.length === 4);
       assert.deepEqual(await p.evaluate(() => window.__pics341.log), ['grant', 'C:/jobs/a..b.dxf', 'C:/jobs/a..b-img1.png', 'C:/jobs/a..b-img2.png']);
       assert.equal(await p.evaluate(() => window.__pics341.dialogs), 0, 'in-place Save asks for nothing');
-      assert.match(await text(), /^Saved a\.\.b\.dxf.*2 picture\(s\) not saved/);
+      assert.match(await noteOf(/^Saved a\.\.b\.dxf.*2 picture\(s\) not saved/), /^Saved a\.\.b\.dxf.*2 picture\(s\) not saved/);
       // Export: the grant covers it too, and the note carries the count
       await p.evaluate(() => { window.__pics341.log.length = 0; window.__pics341.grants.length = 0; window.__pics341.next = 'C:/jobs/out.dxf'; });
-      await menu('Export DXF…'); await q('export-dxf-go').click(); await prompt('Exported out.dxf');
-      assert.match(await text(), /2 picture\(s\) not saved/);
+      await menu('Export DXF…'); await q('export-dxf-go').click(); assert.match(await noteOf(/^Exported out\.dxf.*2 picture\(s\) not saved/), /2 picture\(s\) not saved/);
       assert.deepEqual(await p.evaluate(() => window.__pics341.grants), [{ path: 'C:/jobs/out.dxf', names: ['out-img1.png', 'out-img2.png'] }]);
       // a grant that throws carries on: the DXF is still written
       await p.evaluate(() => { window.__TAURI__.core.invoke = async () => { throw new Error('refused'); }; window.__pics341.log.length = 0; window.__pics341.next = 'C:/jobs/b.dxf'; });
-      await menu('Save As…'); await prompt('Saved b.dxf');
+      await menu('Save As…'); assert.match(await noteOf(/^Saved b\.dxf.*2 picture\(s\) not saved/), /2 picture\(s\) not saved/);
       assert.ok((await p.evaluate(() => window.__pics341.log)).includes('C:/jobs/b.dxf'));
-      assert.match(await text(), /2 picture\(s\) not saved/);
     } finally { await context.close(); }
   });
 
@@ -10539,6 +10537,8 @@ try {
     for (let i = 0; i < 40 && orange <= 30; i++) { await page.waitForTimeout(50); orange = await markPixels(); }
     assert.ok(orange > 30, 'a part in the gripper is drawn in the mark colour: ' + orange);
     await shotBoth('step-gripper-mark-342');
+    await partTab(); await t('py').fill('625'); await t('py').press('Enter');       // still in the gripper: the note is repeated for the new move, never doubled within it
+    assert.equal((await said(/Wedge moved to X -?\d+\.\d\d Y 625\.00/)).match(/in the gripper/g).length, 1, 'a second action while the part is still in the gripper carries the gripper note once, not twice');
     await partTab(); await t('py').fill('300'); await t('py').press('Enter');
     assert.doesNotMatch(await said(/Wedge moved to X -?\d+\.\d\d Y 300\.00/), /gripper/, 'said once: a part back out of the gripper has no note');
     await closeTabs(/./);
@@ -15051,10 +15051,19 @@ try {
       const far = [b[0], b[1] + 40], pe = await at(...b), tf = await at(...far);
       await page.keyboard.down('Alt'); await page.mouse.click(pe.x, pe.y); await page.keyboard.up('Alt');
       await said(/\d of 2 objects here/);       // Alt+click on two overlapping objects cycles them (71c)
+      const before = (await savedDoc()).entities.map((en) => [fieldOf(en, 10), fieldOf(en, 20)]);
       await page.keyboard.down('Alt'); await page.mouse.move(pe.x, pe.y); await page.mouse.down();
       await page.mouse.move(tf.x, tf.y, { steps: 6 }); await page.mouse.up(); await page.keyboard.up('Alt');
       const after = (await savedDoc()).entities.map((en) => [fieldOf(en, 10), fieldOf(en, 20)]);
       assert.deepEqual(after[0], off, 'Drawings: an Alt press-and-drag cycles and moves nothing: the insert stays exactly where the first drag put it');
+      assert.deepEqual(after, before, 'Drawings: an Alt press-and-drag moves no entity at all, the line at b included');
+      // TODO 339b R2-1: Alt held at the press grabs the raw press point, not an own snap point: the dragged insert keeps the 5 px offset
+      await closeTabs(/own-340/); await openGrips(writeDxf(raw), 'own-340.dxf'); await click(a[0] + 12, a[1]); await waitSel('1 selected');
+      await page.keyboard.down('Alt'); await page.mouse.move(pa.x + 5, pa.y); await page.mouse.down();
+      await page.mouse.move(to.x + 9, to.y, { steps: 6 }); await page.mouse.up(); await page.keyboard.up('Alt');       // 4 px past the exact spot
+      const rawGrab = (await savedDoc()).entities.map((en) => [fieldOf(en, 10), fieldOf(en, 20)]);
+      const miss = [0, 1].map((i) => Math.abs(a[i] + rawGrab[0][i] - b[i]));
+      assert.ok(Math.max(...miss) > 1e-3, 'Drawings: Alt at the press grabs the raw press point (the end lands 4 px off the other point, not snapped onto it): ' + miss);
       await closeTabs(/own-340/);
       // a press on a selected circle's centre (not on the circle) still drags it from the centre (R2-2)
       // 201 selected objects switch the grips off (MAX_SELECTED 200), so the press cannot go through gripDown: only the own-point path (ownSnap) can grab
@@ -29187,7 +29196,7 @@ try {
     } finally { await ctx.close(); }
   });
 
-  await step('TODO 258 / 259: drawing tab of 150k entities: Measure moves and a select click do no full paint and no index rebuild, a Stretch finish at most one of each; pixels equal a full paint', async () => {
+  await step('TODO 258 / 259: drawing tab of 150k entities: Measure moves and a select click do no full paint and no index rebuild, a Stretch finish at most one full paint, one index and one quick frame (322c); pixels equal a full paint', async () => {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
     try {
       const p = await ctx.newPage(), drawing = p.getByTestId('drawing'), errors = [];

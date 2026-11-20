@@ -306,7 +306,11 @@ export async function interactEdit(page, buffer, name = 'edit.dxf') {
       const end = await screenOf(mm(lineIt, x1l, y1l));
       // every pointer move over the selected LINE repaints the picture when it is not kept (a base that paints in under KEEP_MS, TODO 340 hover marker): arrive on the grip once, here, so the drag's own count is press + release; the click's late paints settle too
       await page.mouse.move(end.x, end.y); await frame();
-      for (let last = -1, still = 0; still < 4; await page.waitForTimeout(150)) { const n = await page.evaluate(() => document.querySelector('[data-testid=drawing]').dataset.paints); still = n === last ? still + 1 : 0; last = n; }
+      let tries = 0;
+      for (let last = -1, still = 0; still < 4; await page.waitForTimeout(150)) {
+        if (++tries > 20) throw new Error('LINE grip drag: the paint count kept changing for 20 tries (3 s), so the drag cannot be counted');
+        const n = await page.evaluate(() => document.querySelector('[data-testid=drawing]').dataset.paints); still = n === last ? still + 1 : 0; last = n;
+      }
       await run('LINE grip drag', () => dragBy(end, 30, 20, 20, true));
       assert.ok(!await redoReady(), 'the grip drag must be a new edit (it clears the redo)');
       await page.keyboard.press('Control+z'); await frame();
