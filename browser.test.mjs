@@ -19367,7 +19367,64 @@ try {
   // The dimension / leader rows sit in the Drawing scale fold, closed on a fresh page; isVisible does not open it, an earlier step that did (Picture PDF's ×25.4) is not always in the shard.
   const drawingFoldOpen = async () => { await t('ptab-drawing').click(); const b = t('drawing-panel').locator('.section-toggle'); if (await b.getAttribute('aria-expanded') === 'false') await b.click(); };
   const flyoutItems = () => page.locator('.ctxmenu .mi').evaluateAll((a) => a.map((b) => [...b.children].map((c) => c.textContent).join(' ')));
-  await step('dimension types: the button\'s corner triangle opens the flyout (Aligned D, Linear DLI, Radius DRA, Diameter DDI, Angle DAN); picking Linear puts the button on it and asks for the first extension line origin', async () => {
+  await step('TODO 345a: a dimension too short for its arrows puts them outside, and its text drags along the line (past an extension line too), across it, one Undo, Esc puts it back', async () => {
+    await openGrips(dimDoc(), 'dims.dxf');
+    const only1Long = async () => Object.values(await dimBlocks()).find((b) => Math.abs(b.params.b[0] - b.params.a[0]) > 100).params;
+    await typeCmd('dli'); await click(20, 20); await click(220, 20); await click(120, 50);
+    assert.match(await prompt(), /Dimension placed: 200\.00 mm/);
+    await typeCmd('dli'); await click(20, 20); await click(23, 20); await click(21.5, 70);
+    assert.match(await prompt(), /Dimension placed: [23]\.\d\d mm/);
+    const blocks = Object.values(await dimBlocks());
+    assert.equal(blocks.length, 2); assert.ok(blocks.every((b) => b.params.shift === undefined), 'nothing dragged: no text shift saved');
+    // the short one (3 mm: neither fits): zoom in and shoot it, light and dark
+    await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click();
+    const near = await at(24, 70); await page.mouse.move(near.x, near.y); await page.mouse.wheel(0, -700); await page.waitForTimeout(300);
+    await page.mouse.move(0, 0);
+    await shotBoth('short-dim-outside');
+    await page.mouse.move(near.x, near.y); await page.mouse.wheel(0, 700); await page.waitForTimeout(300);
+    // the long one: select it by its text, drag the text 40 mm along the line, then 130 mm further: past the second extension line
+    await page.locator('[data-tool=select]').click();
+    const long = { params: await only1Long() };
+    await click(120, 52.5); await waitSel('1 selected');
+    const drag = async (x0, y0, x1, y1, esc = false) => {
+      const from = await at(x0, y0), to = await at(x1, y1);
+      await page.mouse.move(from.x, from.y); await page.mouse.down();
+      await page.mouse.move((from.x + to.x) / 2, (from.y + to.y) / 2, { steps: 4 }); await page.mouse.move(to.x, to.y, { steps: 4 });
+      if (esc) { await page.keyboard.press('Escape'); }
+      else await page.screenshot({ path: shotDir + '/s12-dim-text-drag-light.png' });
+      await page.mouse.up();
+    };
+    await drag(120, 52.5, 160, 52.5);
+    assert.match(await prompt(), /Dimension text moved 40\.\d+ mm/);
+    let p = await only1Long();
+    assert.ok(Math.abs(p.shift - 40) < 1, 'text 40 mm along the line: ' + p.shift); assert.ok(Math.abs(p.offset - long.params.offset) < 0.7, 'the line stays where it was');
+    assert.equal(await t('sel-count').textContent(), '1 selected', 'still selected');
+    await drag(160, 52.5, 250, 52.5);
+    p = await only1Long();
+    assert.ok(Math.abs(p.shift - 130) < 1, 'text past the second extension line: ' + p.shift);
+    await page.screenshot({ path: shotDir + '/s12-dim-text-side-light.png' });
+    await menuItem('View', 'Theme: dark'); await page.waitForTimeout(200);
+    await page.screenshot({ path: shotDir + '/s12-dim-text-side-dark.png' });
+    await menuItem('View', 'Theme: light');
+    // across the line: the offset changes, the text keeps its place along it
+    await drag(250, 52.5, 250, 62.5);
+    p = await only1Long();
+    assert.ok(Math.abs(p.offset - long.params.offset - 10) < 1 && Math.abs(p.shift - 130) < 1, 'across: line 10 further, text still 130 along: ' + JSON.stringify([p.offset, p.shift]));
+    // one Undo takes one drag back
+    await page.keyboard.press('Control+z');
+    p = await only1Long();
+    assert.ok(Math.abs(p.offset - long.params.offset) < 0.7 && Math.abs(p.shift - 130) < 1, 'one Undo: the across drag only: ' + JSON.stringify([p.offset, p.shift]));
+    // Esc in the middle of a drag leaves it where it was, with no history entry
+    await click(250, 52.5); await waitSel('1 selected');                         // Undo clears the selection
+    await drag(250, 52.5, 150, 52.5, true);
+    assert.match(await prompt(), /Move cancelled/);
+    p = await only1Long();
+    assert.ok(Math.abs(p.shift - 130) < 1, 'Esc: text back: ' + p.shift);
+    await page.keyboard.press('Control+z');
+    p = await only1Long();
+    assert.ok(Math.abs(p.shift - 40) < 1, 'the Undo after Esc took back the earlier drag, not a phantom one: ' + p.shift);
+  });
+  await step('dimension types: the button\'s corner triangle opens the flyout (Aligned D,Linear DLI, Radius DRA, Diameter DDI, Angle DAN); picking Linear puts the button on it and asks for the first extension line origin', async () => {
     await openGrips(dimDoc(), 'dims.dxf');
     await typeCmd('d'); await page.keyboard.press('Escape');
     assert.equal(await page.locator('[data-tool=dimension]').getAttribute('title'), 'Dimension (D)');
@@ -25823,6 +25880,45 @@ try {
     await page.locator('[data-tool=select]').click();
   });
 
+  await step('TODO 345a: on a layout, a dimension text drags along its line (one Undo, Esc puts it back) and a Move of the part carries the text with it', async () => {
+    await freshLayoutWithPlate();
+    const save = async () => (await downloaded(() => page.keyboard.press('Control+s'))).text;
+    const shiftNow = async () => Object.values(Object.fromEntries(Object.entries(readDxf(await save()).blocks).filter(([k]) => /^PD_DIM_/.test(k)).map(([k, b]) => [k, readDim(k, b)])))[0].params;
+    const undo = async () => { await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z'); };
+    await typeCmd('line'); await typeCmd('100,150'); await typeCmd('300,150'); await typeCmd('');
+    await page.keyboard.press('Escape');
+    await typeCmd('dli'); await typeCmd('100,150'); await typeCmd('300,150'); await typeCmd('200,190');
+    assert.match(await prompt(), /Dimension placed: 200\.00 mm/);
+    await page.keyboard.press('Escape');
+    assert.equal((await shiftNow()).shift, undefined, 'nothing dragged: no text shift');
+    await page.locator('[data-tool=select]').click();
+    await click(200, 192.5); await frames();
+    const drag = async (x0, y0, x1, y1, esc = false) => {
+      const from = await at(x0, y0), to = await at(x1, y1);
+      await page.mouse.move(from.x, from.y); await page.mouse.down();
+      await page.mouse.move((from.x + to.x) / 2, (from.y + to.y) / 2, { steps: 4 }); await page.mouse.move(to.x, to.y, { steps: 4 });
+      if (esc) await page.keyboard.press('Escape');
+      await page.mouse.up();
+    };
+    await drag(200, 192.5, 250, 192.5);
+    let p = await shiftNow();
+    assert.ok(Math.abs(p.shift - 50) < 1.5, 'on the layout the text is 50 mm along the line: ' + p.shift);
+    await drag(250, 192.5, 350, 192.5);
+    p = await shiftNow();
+    assert.ok(Math.abs(p.shift - 150) < 1.5, 'past the second extension line: ' + p.shift);
+    await page.screenshot({ path: shotDir + '/s12-dim-text-side-layout-light.png' });
+    await undo();
+    p = await shiftNow();
+    assert.ok(Math.abs(p.shift - 50) < 1.5, 'one Undo takes one drag back: ' + p.shift);
+    await drag(250, 192.5, 150, 192.5, true);
+    p = await shiftNow();
+    assert.ok(Math.abs(p.shift - 50) < 1.5, 'Esc in the middle of a drag leaves the text where it was: ' + p.shift);
+    // Move of the line it measures: the dimension, its text with it, follows (the text keeps its place along the dimension line)
+    await page.keyboard.press('Escape'); await click(200, 150);
+    await typeCmd('move'); await typeCmd('0,0'); await typeCmd('0,40');
+    p = await shiftNow();
+    assert.ok(Math.abs(p.shift - 50) < 1.5 && Math.abs(p.a[1] - 190) < 1e-3, 'moved with the line, the text still 50 along: ' + JSON.stringify([p.shift, p.a]));
+  });
   await step('TODO 156b2c1: on a layout, Dimension (linear, aligned) makes a dimension object (one Undo, Esc cancels); saved with its block, reopened as an object; Move of the shape it measures carries it along', async () => {
     await freshLayoutWithPlate();
     const n0 = await nParts();
@@ -33010,6 +33106,34 @@ try {
     await page.locator('.dtab').filter({ has: page.locator('.tname', { hasText: /^compare97f1(?:-edited)*\.dxf$/ }) }).click();
     assert.deepEqual(lineEnds97c(await savedDoc()).slice(0, 2), [[100, 100, 190, 100], [200, 110, 200, 200]]);
     await key97c('Control+z'); assert.deepEqual((await savedDoc()).entities, before); await closeTabs(/./);
+  });
+
+  await step('TODO 345a: in Compare, a dimension text drags along its line in the linked drawing, one Undo, Esc puts it back', async () => {
+    const raw = newDoc(4); Object.assign(raw, addDimension(raw, buildDim('linear', { a: [100, 100], b: [300, 100], offset: 40, axis: 'h', textH: 3 }, 1, 'PD_DIM_H1', 2)));
+    await open97c(raw, 'dim345a-compare.dxf');
+    const tab = () => page.locator('.dtab').filter({ has: page.locator('.tname', { hasText: /^dim345a-compare(?:-edited)*\.dxf$/ }) }).click();
+    const shiftNow = async () => { await tab(); return (await dimBlocks()); };
+    const shiftOf = async () => Object.values(await shiftNow())[0].params.shift;
+    assert.equal(await shiftOf(), undefined);
+    const pickDim = async () => { await typeCmd('compare'); await key97c('Control+a'); await waitSel('1 selected'); };      // the dimension is all the drawing has
+    await pickDim();
+    const drag = async (x0, y0, x1, y1, esc = false) => {
+      const from = await at(x0, y0), to = await at(x1, y1);
+      await page.mouse.move(from.x, from.y); await page.mouse.down();
+      await page.mouse.move((from.x + to.x) / 2, (from.y + to.y) / 2, { steps: 4 }); await page.mouse.move(to.x, to.y, { steps: 4 });
+      if (esc) await page.keyboard.press('Escape');
+      await page.mouse.up(); await frames();
+    };
+    await drag(200, 142, 260, 142);
+    let s = await shiftOf();
+    assert.ok(Math.abs(s - 60) < 1.5, 'Compare: the linked drawing has the text 60 mm along its line: ' + s);
+    await pickDim();
+    await drag(260, 142, 150, 142, true);
+    s = await shiftOf();
+    assert.ok(Math.abs(s - 60) < 1.5, 'Compare: Esc leaves the text where it was: ' + s);
+    await key97c('Control+z');
+    assert.equal(await shiftOf(), undefined, 'one Undo takes the drag back (and no phantom one for the Esc)');
+    await closeTabs(/./);
   });
 
   await step('TODO 97f1: light and dark Fillet dropdown and Chamfer mid-command screenshots', async () => {
