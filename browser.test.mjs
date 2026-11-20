@@ -32108,22 +32108,23 @@ try {
       const cs = getComputedStyle(el), f = cs.vectorEffect === 'non-scaling-stroke' ? 1 : Math.hypot(el.getScreenCTM().a, el.getScreenCTM().b);
       return { width: parseFloat(cs.strokeWidth) * f, dash: cs.strokeDasharray.split(/[ ,]+/).map((d) => parseFloat(d) * f) };
     });
+    const drawn = async (sel) => { let r = await look(sel); for (let i = 0; i < 50 && !Number.isFinite(r.width); i++) { await frames(); r = await look(sel); } return r; };   // a box read mid-repaint has an empty computed stroke (NaN): wait for it to be drawn
     const zoomed = async (sel, gap) => {
-      const before = await look(sel), w0 = await sheetW(), m = await canvasMid();
+      const before = await drawn(sel), w0 = await sheetW(), m = await canvasMid();
       await page.mouse.move(m.x, m.y);
       for (let i = 0; i < 40 && await sheetW() < 8 * w0; i++) { await page.mouse.wheel(0, -300); await frames(); }
       assert.ok(await sheetW() >= 8 * w0, 'zoomed in 8x');
-      assert.deepEqual(await look(sel), before, `${sel} keeps its on-screen width and dash at 8x`);
+      assert.deepEqual(await drawn(sel), before, `${sel} keeps its on-screen width and dash at 8x`);
       assert.ok(before.width <= 2 && before.dash.length === 2 && before.dash[0] === 6 && before.dash[1] === gap, `${sel} is thin and dashed 6 ${gap} on screen: ${JSON.stringify(before)}`);
     };
     await freshLayoutWithPlate();
     await page.waitForFunction(() => document.querySelectorAll('[data-group=tools] .sel-box').length === 1);
-    const partBox = '[data-group=tools] .sel-box', plain = await look(partBox);
+    const partBox = '[data-group=tools] .sel-box', rotatePartBox = partBox + '[data-mode=rotate]', plain = await drawn(partBox);
     await zoomed(partBox, 6);
     for (const theme of ['light', 'dark']) { await menuItem('View', 'Theme: ' + theme); await page.screenshot({ path: `${shotDir}/337-part-8x-${theme}.png` }); }
     await menuItem('View', 'Theme: light');
     await typeCmd('rotate'); await page.waitForFunction(() => document.querySelector('[data-group=tools] .sel-box[data-mode=rotate]'));
-    assert.deepEqual(await look(partBox), plain, 'the Layouts part box in Rotate mode (8x) looks as the plain one at 1x');
+    assert.deepEqual(await drawn(rotatePartBox), plain, 'the Layouts part box in Rotate mode (8x) looks as the plain one at 1x');
     await closeTabs(/./);
     // the Drawings Rotate box keeps its own look: 2.5 px solid, whatever the zoom
     const rawRot = newDoc(4); addEntities(rawRot, dxfLine(20, 30, 120, 30));
@@ -32131,10 +32132,10 @@ try {
     let p0 = await at(45, 30); await page.mouse.click(p0.x, p0.y); await gripWhen(3);
     p0 = await at(45, 30); await page.mouse.click(p0.x, p0.y); await gripWhen(0);
     await page.waitForFunction(() => document.querySelector('.ovl .drawing-rotate-box'));
-    const rotBox = '.ovl .drawing-rotate-box', rot1 = await look(rotBox);
+    const rotBox = '.ovl .drawing-rotate-box', rot1 = await drawn(rotBox);
     assert.equal(rot1.width, 2.5, 'the Drawings Rotate box keeps its 2.5 px line'); assert.ok(rot1.dash.every(Number.isNaN), 'and no dash: ' + JSON.stringify(rot1));
     await page.mouse.move((await canvasMid()).x, (await canvasMid()).y); await page.mouse.wheel(0, -900); await frames();
-    assert.deepEqual(await look(rotBox), rot1, 'the Drawings Rotate box stays 2.5 px solid after a zoom');
+    assert.deepEqual(await drawn(rotBox), rot1, 'the Drawings Rotate box stays 2.5 px solid after a zoom');
     await closeTabs(/./);
     await open97b(lines97b(), 'zoom337.dxf');
     await key97b('Control+a'); await key97b('Control+g'); await waitSel('Group of 2');
