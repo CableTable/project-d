@@ -49,6 +49,7 @@ const URL_ = `http://localhost:${PORT}/`;
 const server = spawn(process.execPath, ['serve.mjs', String(PORT)], { stdio: ['ignore', 'pipe', 'inherit'], env: { ...process.env, PORT: String(PORT) } });
 let browser, page;
 const said = async (re) => (await page.waitForFunction((s) => { const x = document.querySelector('[data-testid=cmd-prompt]').textContent; return new RegExp(s).test(x) && x; }, re.source)).jsonValue();
+const waitTab = (p, name) => p.waitForFunction((n) => document.querySelector('.dtab.on .tname')?.textContent === n, name); // ?.: a fresh page boots on Start with no tab (TODO 343)
 const stop = () => { try { server.kill(); } catch { /* already gone */ } };
 process.on('exit', stop);
 
@@ -258,7 +259,7 @@ try {
       assert.equal(await p.locator('.tabs .dtab').count(), 1, 'recent uses untouched empty tab');
       await q('start-tab').click(); await rows.nth(1).click();
       await p.waitForFunction(() => document.querySelectorAll('.tabs .dtab').length === 2);
-      assert.equal(await p.locator('.tabs .dtab.on .tname').textContent(), 'outline.dxf', 'recent opens a new tab beside a drawing');
+      assert.equal(await p.locator('.tabs .dtab.on .tname')?.textContent(), 'outline.dxf', 'recent opens a new tab beside a drawing');
       assert.deepEqual(await p.evaluate(() => window.startReads), paths);
       await q('start-tab').click(); await q('start-layout').click();
       await p.waitForFunction(() => document.querySelector('.tabs .dtab.on')?.dataset.kind === 'layout');
@@ -388,14 +389,14 @@ try {
       await rows.click({ button: 'right' }); await menu.getByRole('menuitem', { name: 'Open', exact: true }).click();
       await q('start-screen').waitFor({ state: 'hidden' });
       assert.deepEqual(await p.evaluate(() => window.startReads), [paths[1]]);
-      assert.equal(await p.locator('.tabs .dtab.on .tname').textContent(), 'outline.dxf');
+      assert.equal(await p.locator('.tabs .dtab.on .tname')?.textContent(), 'outline.dxf');
       assert.equal(await p.locator('[data-menu=Modify]').isEnabled(), true);
       assert.equal(await p.locator('[data-tool=line]').isEnabled(), true);
       await q('start-tab').click(); await greyed();
       await type('open'); await q('start-screen').waitFor({ state: 'hidden' });
-      assert.equal(await p.locator('.tabs .dtab.on .tname').textContent(), 'typed-open.dxf');
+      assert.equal(await p.locator('.tabs .dtab.on .tname')?.textContent(), 'typed-open.dxf');
       await q('start-tab').click(); await type('compare'); await q('start-screen').waitFor({ state: 'hidden' });
-      assert.equal(await p.locator('.tabs .dtab.on .tname').textContent(), 'Compare');
+      assert.equal(await p.locator('.tabs .dtab.on .tname')?.textContent(), 'Compare');
       await q('start-tab').click(); await p.locator('[data-menu=Tools]').click();
       await p.getByRole('menuitem', { name: 'Options…', exact: true }).click();
       await p.getByRole('dialog', { name: 'Options', exact: true }).waitFor(); await p.keyboard.press('Escape');
@@ -404,7 +405,7 @@ try {
       assert.equal(await q('start-screen').isVisible(), false);
       await q('start-tab').click(); await p.keyboard.press('Control+Tab');
       await q('start-screen').waitFor({ state: 'hidden' });
-      assert.equal(await p.locator('.tabs .dtab.on .tname').textContent(), 'typed-open.dxf', 'Ctrl+Tab works from Start');
+      assert.equal(await p.locator('.tabs .dtab.on .tname')?.textContent(), 'typed-open.dxf', 'Ctrl+Tab works from Start');
       await q('start-tab').click(); await q('new-tab').click();
       assert.equal(await q('start-screen').isVisible(), false);
       assert.equal(await p.locator('[data-tool=line]').isEnabled(), true);
@@ -653,10 +654,10 @@ try {
       const text = writeDxf(raw);
       await p.evaluate((s) => window.t304.open(s), text);
       await q('picker').setInputFiles({ name: '304-b.dxf', mimeType: 'application/dxf', buffer: Buffer.from(text) });
-      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === '304-b.dxf');
+      await waitTab(p, '304-b.dxf');
       const fittedB = await read();
       await q('picker').setInputFiles('fixtures/three-sheets.pdf'); await q('bal-sheets').waitFor();
-      const pdfName = await p.locator('.dtab.on .tname').textContent();
+      const pdfName = await p.locator('.dtab.on .tname')?.textContent();
       await tab(/^304-a\.dxf$/);
       const a = await panZoom();
       await tab(/^304-b\.dxf$/);
@@ -675,7 +676,7 @@ try {
       // Opening another tab must save the leaving tab before requesting a fresh Fit.
       await tab(/^304-a\.dxf$/); const keptA = await read();
       await command('newlayout'); await p.keyboard.press('Escape');
-      const layoutName = await p.locator('.dtab.on .tname').textContent(), fitLayout = await read();
+      const layoutName = await p.locator('.dtab.on .tname')?.textContent(), fitLayout = await read();
       assert.equal(fitLayout.fitted, true, 'a never-viewed layout fits');
       const layoutView = (await panZoom()).zoomed;
       await tab(/^304-a\.dxf$/); same(await read(), keptA, 'new layout preserves A');
@@ -1078,7 +1079,7 @@ try {
       await command('open'); await p.waitForFunction(() => document.querySelector('[data-testid=drawing-unit]').textContent === 'ft');
       await pick('ft-in'); await p.evaluate(() => { window.unitWriteFail = true; }); await saveCommand();
       assert.equal(await q('cmd-prompt').textContent(), 'Saved; unit not saved: unit disk full');
-      assert.equal(await p.locator('.dtab.on .tname').textContent(), 'native-feet.dxf', 'grill-308 F6: Save keeps the opened name despite a sidecar failure');
+      assert.equal(await p.locator('.dtab.on .tname')?.textContent(), 'native-feet.dxf', 'grill-308 F6: Save keeps the opened name despite a sidecar failure');
       assert.equal(await p.locator('.dtab.on .dot').count(), 1, 'the failed unit remains unsaved');
       const nativeSide = 'E:/units/native-feet.dxf.pdunits.json';
       assert.equal(await p.evaluate((path) => Object.hasOwn(window.unitFiles, path), nativeSide), false);
@@ -1149,7 +1150,7 @@ try {
       assert.equal(await field.inputValue(), '2');
       await p.keyboard.press('Escape');
       await q('picker').setInputFiles('fixtures/sample.dxf'); // Objects search needs a loaded drawing.
-      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'sample.dxf');
+      await waitTab(p, 'sample.dxf');
       await p.locator('[data-tab=objects]').click();
       const search = q('obj-search');
       await search.fill('Layer');
@@ -1502,7 +1503,7 @@ try {
         dxfPoly([[10, 15], [15, 35], [60, 35]]), dxfCircle(70, 30, 3),
         dxfLine(26, 27, 34, 27, { layer: 'Locked' }), dxfLine(26, 33, 34, 33, { layer: 'Hidden' }), dxfCircle(30, 30, 45));
       await q('picker').setInputFiles({ name: 'selection-71a.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(doc)) });
-      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'selection-71a.dxf');
+      await waitTab(p, 'selection-71a.dxf');
       await q('ptab-objects').click();
       await p.locator('.or.layer[data-layer=Locked] [data-act=lock]').click();
       await p.locator('.or.layer[data-layer=Hidden] [data-act=vis]').click();
@@ -1587,7 +1588,7 @@ try {
         const open = async (name, x) => {
           const doc = newDoc(4); addEntities(doc, dxfLine(20, 20, 60, 20), dxfLine(x, 20, x, 50), dxfCircle(80, 40, 8));
           await q('picker').setInputFiles({ name, mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(doc)) });
-          await p.waitForFunction((n) => document.querySelector('.dtab.on .tname').textContent === n, name);
+          await waitTab(p, name);
         };
         await open('dots-133a.dxf', 20); await open('dots-133b.dxf', 30);
         const xh = p.getByTestId('crosshair'), dh = p.getByTestId('dotcross-h'), dv = p.getByTestId('dotcross-v');
@@ -1636,7 +1637,7 @@ try {
       const doc = newDoc(4);
       addEntities(doc, dxfLine(20, 20, 60, 20), dxfLine(20, 20, 20, 50), dxfCircle(80, 40, 8));
       await q('picker').setInputFiles({ name: 'look-155.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(doc)) });
-      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'look-155.dxf');
+      await waitTab(p, 'look-155.dxf');
       await p.locator('[data-tool=select]').click();
       const atPoint = async (x, y) => {
         const b = await p.locator('rect.sheet').boundingBox(), w = Number(await panelControl(p, p.locator('[data-key=sheetW]')).inputValue()), h = Number(await panelControl(p, p.locator('[data-key=sheetH]')).inputValue());
@@ -1741,7 +1742,7 @@ try {
       const doc = newDoc(4);
       addEntities(doc, dxfLine(20, 20, 60, 20));
       await q('picker').setInputFiles({ name: 'look-157.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(doc)) });
-      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'look-157.dxf');
+      await waitTab(p, 'look-157.dxf');
       await p.locator('[data-tool=select]').click();
       const sheet = await p.locator('rect.sheet').boundingBox(), w = Number(await panelControl(p, p.locator('[data-key=sheetW]')).inputValue()), h = Number(await panelControl(p, p.locator('[data-key=sheetH]')).inputValue());
       await p.mouse.click(sheet.x + 40 * sheet.width / w, sheet.y + (h - 20) * sheet.width / w);
@@ -1794,7 +1795,7 @@ try {
         { partId: 'plate', x: 50, y: 270, rot: 0, g: 'pair' }, { partId: 'plate', x: 200, y: 270, rot: 0, g: 'pair' },
       ];
       await q('picker').setInputFiles({ name: 'selection-71b.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
-      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'selection-71b.dxf');
+      await waitTab(p, 'selection-71b.dxf');
       await q('ptab-objects').click(); await p.locator('.or.layer[data-part=hidden] [data-act=vis]').click();
       await q('ptab-drawing').click(); await p.locator('[data-tool=select]').click();
       const atPoint = async (x, y) => {
@@ -1871,7 +1872,7 @@ try {
         dxfLine(50, 100, 250, 100, { layer: 'Locked' }), dxfLine(50, 100, 250, 100, { layer: 'Hidden' }),
         dxfLine(50, 170, 250, 170));
       await q('picker').setInputFiles({ name: 'selection-71c.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(doc)) });
-      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'selection-71c.dxf');
+      await waitTab(p, 'selection-71c.dxf');
       await q('ptab-objects').click();
       await p.locator('.or.layer[data-layer=Locked] [data-act=lock]').click();
       await p.locator('.or.layer[data-layer=Hidden] [data-act=vis]').click();
@@ -1990,7 +1991,7 @@ try {
         { partId: 'plate', x: 100, y: 100, rot: 0, lock: true }, { partId: 'hidden', x: 100, y: 100, rot: 0 },
       ];
       await q('picker').setInputFiles({ name: 'layout-cycle-71c.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
-      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'layout-cycle-71c.dxf');
+      await waitTab(p, 'layout-cycle-71c.dxf');
       await q('ptab-objects').click(); await p.locator('.or.layer[data-part=hidden] [data-act=vis]').click();
       await p.locator('.or.layer[data-part=plate] .onm').click();
       await p.locator('[data-tool=select]').click();
@@ -2070,7 +2071,7 @@ try {
       assert.equal(await p.locator('.dtab').count(), tabs, 'the file did not open');
       await p.getByTestId('picker').setInputFiles('fixtures/outline.dxf');           // the app still responds: a second file opens in a tab
       await p.getByTestId('drawing-panel').waitFor({ state: 'visible' });
-      assert.equal(await p.locator('.tabs .dtab.on .tname').textContent(), 'outline.dxf');
+      assert.equal(await p.locator('.tabs .dtab.on .tname')?.textContent(), 'outline.dxf');
       await p.screenshot({ path: `${shotDir}/todo184-after-error-light.png` });
       await p.evaluate(() => { document.documentElement.dataset.theme = 'dark'; });
       await p.screenshot({ path: `${shotDir}/todo184-after-error-dark.png` });
@@ -2140,7 +2141,7 @@ try {
       await p.goto(URL_); await p.waitForSelector('[data-testid=count]', { state: 'attached' });
       const doc = newDoc(); addEntities(doc, dxfLine(0, 0, 100, 50, { aci: 30 }));
       await q('picker').setInputFiles({ name: 'custom-colour.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(doc)) });
-      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'custom-colour.dxf');
+      await waitTab(p, 'custom-colour.dxf');
       await p.locator('.coords').click(); await p.keyboard.press('Control+a');
       const ribbonColour = p.getByRole('combobox', { name: 'Ribbon colour', exact: true });
       for (const select of [q('prop-colour'), ribbonColour]) assert.equal(await select.locator('option:checked').textContent(), 'Colour 30');
@@ -2211,7 +2212,7 @@ try {
         await p.mouse.move(box.x + box.width / 2 - 30, box.y + box.height / 2, { steps: 8 }); await p.mouse.up();
         assert.ok(await strip.evaluate((el) => el.scrollLeft > 0), 'drag scrolls sideways');
         await expectFades(true, true);
-        assert.equal(await p.locator('.tabs .dtab.on .tname').textContent(), 'Drawing 1', 'drag does not switch tabs');
+        assert.equal(await p.locator('.tabs .dtab.on .tname')?.textContent(), 'Drawing 1', 'drag does not switch tabs');
       }
       await p.setViewportSize({ width: 3000, height: 1000 });
       await expectFades(false, false);
@@ -2678,7 +2679,7 @@ try {
     await p.addInitScript(() => { window.EyeDropper = undefined; });
     const open = async (text, name) => {
       await q('picker').setInputFiles({ name, mimeType: 'application/dxf', buffer: Buffer.from(text) });
-      await p.waitForFunction((n) => document.querySelector('.dtab.on .tname').textContent === n, name);
+      await waitTab(p, name);
       await p.locator('.coords').click(); await p.keyboard.press('Control+a');
     };
     // Blink's LocalFrame::ShouldThrottleDownload passes 10 downloads, then silently drops the 11th unless more than 1 s
@@ -2765,7 +2766,7 @@ try {
       await q('prop-swatch').click(); await q('colour-dialog').waitFor();
       for (const key of ['Control+w', 'Control+Tab']) {
         await p.keyboard.press(key);
-        assert.equal(await p.locator('.dtab.on .tname').textContent(), 'picker.dxf', 'tab shortcuts wait while the picker is open');
+        assert.equal(await p.locator('.dtab.on .tname')?.textContent(), 'picker.dxf', 'tab shortcuts wait while the picker is open');
         assert.equal(await q('colour-dialog').isVisible(), true);
       }
       assert.equal(await q('colour-screen').isVisible(), false, 'unavailable EyeDropper is hidden');
@@ -2899,7 +2900,7 @@ try {
       await command('ortho'); await p.keyboard.press('Escape'); assert.doesNotMatch(await q('cmd-prompt').textContent(), /Enter mode/);
       const doc = newDoc(4); addEntities(doc, dxfLine(20, 30, 140, 30), dxfCircle(100, 100, 20));
       await q('picker').setInputFiles({ name: 'snaps-155k.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(doc)) });
-      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'snaps-155k.dxf');
+      await waitTab(p, 'snaps-155k.dxf');
       {
         const r = await sheet(); await p.mouse.move(...px(r, 170, 160));
         await p.evaluate(() => document.activeElement.blur());
@@ -3001,7 +3002,7 @@ try {
       const labels = async (want) => { await frame(); assert.deepEqual(await p.evaluate(() => window.__snapLabels), want, `preview check ${++check}`); };
       const open = async (name, raw) => {
         await q('picker').setInputFiles({ name, mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(raw)) });
-        await p.waitForFunction((name) => document.querySelector('.dtab.on .tname').textContent === name, name);
+        await waitTab(p, name);
         await p.locator('[data-tool=select]').click();
       };
       const at = async (x, y) => {
@@ -3096,7 +3097,7 @@ try {
       const doc = newDoc(4);
       addEntities(doc, entity('SPLINE', [[70, 0], [71, 2], ...[0, 0, 0, 1, 1, 1].map((t) => [40, t]), [10, 20], [20, 80], [10, 70], [20, -20], [10, 120], [20, 80]]));
       await q('picker').setInputFiles({ name: 'extreme-264.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(doc)) });
-      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'extreme-264.dxf');
+      await waitTab(p, 'extreme-264.dxf');
       for (const theme of ['light', 'dark']) {
         await p.locator('[data-menu=View]').click();
         await p.getByRole('menuitemcheckbox', { name: new RegExp('Theme: ' + theme + '\\b') }).click();
@@ -3172,7 +3173,7 @@ try {
 
       const doc = newDoc(4); addEntities(doc, dxfLine(20, 30, 120, 30), dxfLine(20, 80, 120, 80));
       await q('picker').setInputFiles({ name: 'snap-types.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(doc)) });
-      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'snap-types.dxf');
+      await waitTab(p, 'snap-types.dxf');
       const pick = async (label) => {
         await p.locator('[data-tool=line]').click();
         const r = await p.locator('rect.sheet').evaluate((el) => { const r = el.getBoundingClientRect(); return { x: r.x, y: r.y, scale: r.width / el.width.baseVal.value, h: el.height.baseVal.value }; });
@@ -3219,7 +3220,7 @@ try {
       const doc = newDoc(4);
       addEntities(doc, dxfLine(20, 50, 140, 50), dxfLine(65, 20, 65, 120), dxfCircle(220, 70, 30));
       await q('picker').setInputFiles({ name: 'snap-crossings.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(doc)) });
-      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'snap-crossings.dxf');
+      await waitTab(p, 'snap-crossings.dxf');
       const hover = async (label, wx, wy) => {
         await p.locator('[data-tool=line]').click();
         const r = await p.locator('rect.sheet').evaluate((el) => { const r = el.getBoundingClientRect(); return { x: r.x, y: r.y, scale: r.width / el.width.baseVal.value, h: el.height.baseVal.value }; });
@@ -3269,7 +3270,7 @@ try {
       const doc = newDoc(4);
       addEntities(doc, dxfLine(20, 30, 140, 30));
       await q('picker').setInputFiles({ name: 'snap-perp.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(doc)) });
-      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'snap-perp.dxf');
+      await waitTab(p, 'snap-perp.dxf');
       const sheet = () => p.locator('rect.sheet').evaluate((el) => { const r = el.getBoundingClientRect(); return { x: r.x, y: r.y, scale: r.width / el.width.baseVal.value, h: el.height.baseVal.value }; });
       const px = (r, wx, wy, dx = 0) => [r.x + wx * r.scale + dx, r.y + (r.h - wy) * r.scale];
       const hover = async (label, wx, wy, dx) => {
@@ -3545,7 +3546,7 @@ try {
     };
     const open = async (name, raw) => {
       await q('picker').setInputFiles({ name, mimeType: 'text/plain', buffer: Buffer.from(writeDxf(raw)) });
-      await p.waitForFunction((name) => document.querySelector('.dtab.on .tname').textContent === name, name);
+      await waitTab(p, name);
     };
     const expected = {
       Drawing: { drawing: ['Properties', 'Select', 'Guides', 'Drawing scale', 'Outlines in this drawing', 'Tiny gaps', 'Duplicates'], objects: [], library: ['Parts'], step: null },
@@ -3642,7 +3643,7 @@ try {
     try {
       await p.goto(URL_); await q('count').waitFor({ state: 'attached' });
       await q('picker').setInputFiles('fixtures/outline.dxf');
-      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'outline.dxf');
+      await waitTab(p, 'outline.dxf');
       for (const [name, labels] of [['Draw', ['Line', 'Polyline', 'Rectangle', 'Rounded rectangle', 'Circle', 'Ellipse', 'Arc', 'Text', 'Dimension', 'Leader', 'Balloon', 'Measure', 'Select', 'Pan']],
         ['Modify', ['Move', 'Offset', 'Trim', 'Mirror', 'Explode', 'Break Apart', 'Contour', 'Text to outlines', 'Weld', 'Intersect', 'Simplify', 'Front minus back', 'Back minus front', 'Create boundary']],
         ['Annotate', ['Text', 'Dimension', 'Leader', 'Balloon', 'Measure']]]) {
@@ -3729,7 +3730,7 @@ try {
       assert.match(await p.locator('.rail [data-tool=line]').getAttribute('class'), /on/);
       await p.keyboard.press('Escape');
       await q('picker').setInputFiles('fixtures/outline.dxf');
-      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'outline.dxf');
+      await waitTab(p, 'outline.dxf');
       await rb.getByRole('button', { name: 'Move', exact: true }).click();
       assert.equal(await p.locator('.rail [data-tool=move]').getAttribute('class'), 'tool on');
       await p.keyboard.press('Escape');
@@ -3783,7 +3784,7 @@ try {
       await p.locator('.tabs .dtab').filter({ hasText: 'Layout' }).first().click();
       assert.equal(await tab('Home').getAttribute('aria-selected'), 'true', 'unavailable tab falls back to Home');
       await q('picker').setInputFiles('fixtures/outline.dxf');
-      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'outline.dxf');
+      await waitTab(p, 'outline.dxf');
       await p.keyboard.press('Control+a');
       await rb.getByLabel('Ribbon line width').selectOption('0.25');
       await p.keyboard.press('Control+1');
@@ -3803,7 +3804,7 @@ try {
       const hostile = '<img src=x onerror=alert(1)>', raw = newDoc(4);
       addLayer(raw, hostile); addEntities(raw, [dxfLine(0, 0, 10, 10, { layer: hostile })]);
       await q('picker').setInputFiles({ name: 'layer-text.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(raw)) });
-      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'layer-text.dxf');
+      await waitTab(p, 'layer-text.dxf');
       await tab('Home').click();
       await rb.getByLabel('Current layer', { exact: true }).selectOption(hostile);
       assert.equal(await rb.getByLabel('Current layer', { exact: true }).inputValue(), hostile);
@@ -3848,7 +3849,7 @@ try {
     });
     try {
       await p.goto(URL_); await q('picker').setInputFiles('fixtures/table.dxf');
-      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'table.dxf');
+      await waitTab(p, 'table.dxf');
       const singleNote = '1 table saved as a block (AutoCAD sees it as a block, not a table)';
       const single = await saved(singleNote);
       assert.equal(single.name, 'table.dxf', 'grill-308 F6: Save keeps the opened name');
@@ -3858,7 +3859,7 @@ try {
       const fixture = readFileSync('fixtures/table.dxf', 'utf8').replace(/\r/g, '');
       const lossyPart = fixture.replace('0\nENDBLK\n', '0\nIMAGE\n8\n0\n0\nENDBLK\n');
       await q('picker').setInputFiles({ name: 'plate.dxf', mimeType: 'application/dxf', buffer: Buffer.from(lossyPart) });
-      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'plate.dxf');
+      await waitTab(p, 'plate.dxf');
       await p.keyboard.press('Control+a');
       await p.keyboard.press('Control+c');
       await q('bar-extract').click();
@@ -3902,7 +3903,7 @@ try {
       const table = fixture.slice(fixture.indexOf('0\nACAD_TABLE\n'), end).replace('10\n100\n', '10\n150\n');
       const extra = table + '0\nIMAGE\n8\n0\n0\nIMAGE\n8\n0\n0\nWIPEOUT\n8\n0\n';
       await q('picker').setInputFiles({ name: 'tables-and-skips.dxf', mimeType: 'application/dxf', buffer: Buffer.from(fixture.slice(0, end) + extra + fixture.slice(end)) });
-      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'tables-and-skips.dxf');
+      await waitTab(p, 'tables-and-skips.dxf');
       const combined = '2 tables saved as blocks (AutoCAD sees them as blocks, not tables); 3 objects not saved: IMAGE x2, WIPEOUT x1';
       const both = await saved(combined), back = readDxf(both.text);
       assert.equal(both.name, 'tables-and-skips-copy.dxf');
@@ -3914,7 +3915,7 @@ try {
         await p.screenshot({ path: `${shotDir}/todo141-save-${theme}.png` });
       }
       await q('picker').setInputFiles({ name: 'tables-reopened.dxf', mimeType: 'application/dxf', buffer: Buffer.from(both.text) });
-      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'tables-reopened.dxf');
+      await waitTab(p, 'tables-reopened.dxf');
       assert.ok(await tableInk() > 100, 'reopened table lines are drawn');
       for (const theme of ['light', 'dark']) {
         await p.emulateMedia({ colorScheme: theme }); await p.waitForTimeout(150);
@@ -3992,7 +3993,7 @@ try {
       await p.waitForFunction(() => window.__saveSheets.length === 2);
       assert.deepEqual(await p.evaluate(() => window.__saveSheets), ['Sheet 1 / 3', 'Sheet 2 / 3']);
       assert.deepEqual(await p.evaluate(() => window.__defaults), ['three-sheets-sheet1.dxf', 'three-sheets-sheet2.dxf']);
-      assert.equal(await p.locator('.dtab.on .tname').textContent(), 'three-sheets-sheet2.dxf', 'cancelled second save keeps the tab');
+      assert.equal(await p.locator('.dtab.on .tname')?.textContent(), 'three-sheets-sheet2.dxf', 'cancelled second save keeps the tab');
       await sheet(1); await circle(7); await sheet(3);
       await p.evaluate(() => { window.__paths = ['E:/sheet-two.dxf']; });
       await p.locator('.dtab.on .x').click(); await q('close-dialog').waitFor();
@@ -4087,7 +4088,7 @@ try {
     const p = await context.newPage();
     p.on('pageerror', (e) => errors.push(String(e)));
     const tabs = p.locator('.tabs .dtab:not([aria-label])');
-    const active = () => p.locator('.dtab.on .tname').textContent();
+    const active = () => p.locator('.dtab.on .tname')?.textContent();
     const openShortcuts = async () => {
       await p.locator('[data-menu=Tools]').click(); await p.getByRole('menuitem', { name: 'Shortcuts…' }).click();
     };
@@ -4130,7 +4131,7 @@ try {
       await dialog.getByRole('button', { name: 'Reset all', exact: true }).click();
       await dialog.getByRole('button', { name: 'Save', exact: true }).click(); await dialog.waitFor({ state: 'detached' });
       await p.locator('[data-testid=picker]').setInputFiles('fixtures/outline.dxf');
-      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'outline.dxf');
+      await waitTab(p, 'outline.dxf');
       await p.keyboard.press('Escape'); await p.keyboard.press('Control+a'); await p.keyboard.press('Delete');
       await p.locator('.dtab.on .dot').waitFor();
       const count = await tabs.count();
@@ -4369,7 +4370,7 @@ try {
         const openIt = async () => { await p.locator('[data-menu=File]').click(); await p.getByRole('menuitem', { name: 'Open…', exact: true }).click(); };
         await openIt();
         await p.waitForFunction(() => /^Opened plate\.dwg: \d+ entities.*Converted from DWG by LibreDWG$/.test(document.querySelector('[data-testid=cmd-prompt]').textContent));
-        assert.equal(await p.locator('.dtab.on .tname').textContent(), 'plate.dwg');
+        assert.equal(await p.locator('.dtab.on .tname')?.textContent(), 'plate.dwg');
         assert.deepEqual(await p.evaluate(() => window.__dwg.calls), ['C:/jobs/plate.dwg']);
         await p.screenshot({ path: `${dir}/dwg2-status-${theme}-${width}.png` });
         if (theme !== 'light' || width !== 1440) continue;
@@ -4432,7 +4433,7 @@ try {
     try {
       await p.evaluate(() => { const dt = new DataTransfer(); dt.items.add(new File([new Uint8Array([65, 67, 49, 48])], 'dropped.dwg')); window.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true })); });
       await said(/^Opened dropped\.dwg: \d+ entities.*Converted from DWG by LibreDWG$/);
-      assert.equal(await p.locator('.dtab.on .tname').textContent(), 'dropped.dwg');
+      assert.equal(await p.locator('.dtab.on .tname')?.textContent(), 'dropped.dwg');
       assert.deepEqual(await p.evaluate(() => window.__dwg.calls), ['dwg_bytes_to_dxf dropped.dwg 4']);
       assert.equal(await p.evaluate(() => localStorage.getItem('pd-recent')), null, 'a drop has no path, so Recent keeps nothing');
       await p.keyboard.press('Control+s');
@@ -4676,7 +4677,7 @@ try {
       }
       const before = await tabNames(), keptName = before.at(-1);
       await t('picker').setInputFiles('fixtures/overlay.dxf');
-      await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'overlay.dxf');
+      await waitTab(page, 'overlay.dxf');
       assert.deepEqual(await tabNames(), [...before, 'overlay.dxf'], kind + ': the tab stays');
       await page.locator('.tabs .dtab', { hasText: keptName }).click();
       assert.equal(await t('entities').textContent(), kind.startsWith('draw') ? 'Entities 1' : 'Entities 0');
@@ -4684,7 +4685,7 @@ try {
     }
     await t('new-tab').click();
     await t('picker').setInputFiles('fixtures/overlay.dxf');
-    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'overlay.dxf');
+    await waitTab(page, 'overlay.dxf');
     assert.deepEqual(await tabNames(), ['Drawing 1', 'overlay.dxf'], 'the untouched Drawing 2 is replaced');
     await closeTabs(/./);
   });
@@ -4730,7 +4731,7 @@ try {
 
   await step('a DXF opens on a drawing tab (no sheet); Add to layout makes a layout tab and the part fills Step and repeat', async () => {
     await t('picker').setInputFiles('fixtures/overlay.dxf');
-    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'overlay.dxf');
+    await waitTab(page, 'overlay.dxf');
     assert.deepEqual(await tabNames(), ['overlay.dxf']);
     await t('ptab-drawing').click();
     assert.equal(await t('drawing-panel').isVisible(), true);
@@ -5264,7 +5265,7 @@ try {
     lay.parts.p = makePart('p', 'Plate', raw);
     lay.placed = [{ partId: 'p', x: 200, y: 200, rot: 0 }];
     await t('picker').setInputFiles({ name: 'mirror-pdf.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
-    await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'mirror-pdf.dxf');
+    await waitTab(page, 'mirror-pdf.dxf');
   };
   const openPdf = async () => { await t('pdf-open').click(); await dialog.waitFor(); await page.waitForFunction(() => { const c = document.querySelector('[data-testid=pdf-preview]'); return c && c.width > 100; }); };
   afterStep = async () => {
@@ -5328,7 +5329,7 @@ try {
         addEntities(raw, dxfText(10, 10, 3, 'PRINT216'), dxfCircle(40, 30, 10, { layer: 'Second' }));
         const lay = newLayout('Print216'); lay.parts.p = makePart('p', 'Print216', raw); lay.placed = [{ partId: 'p', x: 100, y: 100, rot: 0 }];
         await q('picker').setInputFiles({ name: tab + '216.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(tab === 'Layouts' ? layoutRaw(lay) : raw)) });
-        await p.waitForFunction((name) => document.querySelector('.dtab.on .tname').textContent === name, tab + '216.dxf');
+        await waitTab(p, tab + '216.dxf');
         if (tab === 'Compare') { await p.locator('[data-menu=File]').click(); await p.getByRole('menuitem', { name: 'Compare drawings…', exact: true }).click(); }
         if (tab === 'Layouts') await p.evaluate(() => { delete window.__TAURI__; }); // browser and app share the print path
         await stubPdfPrint(p, 'held');
@@ -5371,7 +5372,7 @@ try {
       await p.goto(URL_);
       const raw = newDoc(4); addEntities(raw, dxfCircle(20, 20, 10));
       await q('picker').setInputFiles({ name: 'fallback216.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(raw)) });
-      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'fallback216.dxf');
+      await waitTab(p, 'fallback216.dxf');
       for (const [mode, app] of [['throws', true], ['timeout', true], ['throws', false]]) {
         await p.evaluate((app) => {
           window.__fallback216 = { asked: 0, wrote: [], opened: [] };
@@ -5722,7 +5723,7 @@ try {
     try {
       await p.goto(URL_);
       await q('picker').setInputFiles({ name: 'labels-263.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
-      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'labels-263.dxf');
+      await waitTab(p, 'labels-263.dxf');
       await p.evaluate(() => {
         const fillRect = CanvasRenderingContext2D.prototype.fillRect, fillText = CanvasRenderingContext2D.prototype.fillText;
         CanvasRenderingContext2D.prototype.fillRect = function (x, y, w, h) {
@@ -5794,7 +5795,7 @@ try {
     try {
       await p.goto(URL_);
       await q('picker').setInputFiles({ name: 'check-print.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
-      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'check-print.dxf');
+      await waitTab(p, 'check-print.dxf');
       await p.evaluate(() => {
         window.__pdfTexts = [];
         const fillText = CanvasRenderingContext2D.prototype.fillText;
@@ -5842,7 +5843,7 @@ try {
       assert.ok((await previewTexts()).includes('Gripper 25 mm'), 'source edit reaches a later export');
       await q('pdf-close').click();
       await q('picker').setInputFiles({ name: 'part-check.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(raw)) });
-      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'part-check.dxf');
+      await waitTab(p, 'part-check.dxf');
       await open(); await q('pdf-page-check').check();
       assert.equal(await q('pdf-sheet-size-gripper').count(), 0, 'hidden for Part PDFs');
     } finally { await ctx.close(); }
@@ -5864,7 +5865,7 @@ try {
     try {
       await p.goto(URL_);
       await q('picker').setInputFiles({ name: 'label-gaps.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
-      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'label-gaps.dxf');
+      await waitTab(p, 'label-gaps.dxf');
       await p.evaluate(() => {
         window.__pdfTexts = [];
         const fillText = CanvasRenderingContext2D.prototype.fillText;
@@ -5912,7 +5913,7 @@ try {
       const pdf = readFileSync(await (await pending).path(), 'latin1');
       assert.ok(pdf.includes('(12)') && pdf.includes('(5)'), 'saved PDF has the gap labels');
       await q('picker').setInputFiles({ name: 'part-gap.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(raw)) });
-      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'part-gap.dxf');
+      await waitTab(p, 'part-gap.dxf');
       await open();
       assert.equal(await q('pdf-label-gap').count(), 0, 'hidden for Part PDFs');
     } finally { await ctx.close(); }
@@ -5943,7 +5944,7 @@ try {
     try {
       await p.goto(URL_);
       await q('picker').setInputFiles({ name: 'selection214.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(raw)) });
-      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'selection214.dxf');
+      await waitTab(p, 'selection214.dxf');
       await q('ptab-objects').click();
       const layer = p.locator('.or.layer[data-layer="0"]');
       if (await layer.getAttribute('aria-expanded') === 'false') await layer.click();
@@ -6018,12 +6019,12 @@ try {
       await texts('pdf-preview', false); await q('pdf-close').click();
       const lay = newLayout('Selection hidden'); lay.parts.p = makePart('p', 'Plate', raw); lay.placed = [{ partId: 'p', x: 100, y: 100, rot: 0 }];
       await q('picker').setInputFiles({ name: 'selection-layout214.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
-      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'selection-layout214.dxf');
+      await waitTab(p, 'selection-layout214.dxf');
       await open(); assert.equal(await q('pdf-selection-only').count(), 1, 'a layout tab has the tick too (TODO 214b)');
       await q('pdf-close').click();
       const line = newDoc(4); addEntities(line, dxfLine(20, 20, 100, 20));
       await q('picker').setInputFiles({ name: 'line214d.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(line)) });
-      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'line214d.dxf');
+      await waitTab(p, 'line214d.dxf');
       await p.locator('.coords').click(); await p.keyboard.press('Control+a');
       await open(); await q('pdf-selection-only').check(); await q('pdf-page-sheet').check(); await q('pdf-mirror').uncheck();
       await p.waitForFunction(() => document.querySelector('[data-testid=pdf-sheet-size]').textContent === '80 × 0 + 10 mm border');
@@ -6066,7 +6067,7 @@ try {
       lay.parts.a = makePart('a', 'Plate A', rawA); lay.parts.b = makePart('b', 'Plate B', rawB);
       lay.placed = [{ partId: 'a', x: 100, y: 100, rot: 0 }, { partId: 'b', x: 300, y: 200, rot: 0 }];
       await q('picker').setInputFiles({ name: 'selection-layout214b.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
-      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'selection-layout214b.dxf');
+      await waitTab(p, 'selection-layout214b.dxf');
       await p.evaluate(() => {
         window.__pdfTexts = {};
         const clearRect = CanvasRenderingContext2D.prototype.clearRect;
@@ -6176,7 +6177,7 @@ try {
         const raw = newDoc(4); addLayer(raw, 'Hidden');
         addEntities(raw, dxfPoly([[0, 0], [40, 0], [40, 20], [0, 20]], { closed: true }), dxfText(5, 5, 3, label), dxfText(500, 500, 3, 'HIDDEN214C', { layer: 'Hidden' }));
         await q('picker').setInputFiles({ name, mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(raw)) });
-        await p.waitForFunction((name) => document.querySelector('.dtab.on .tname').textContent === name, name);
+        await waitTab(p, name);
       }
       await p.locator('.dtab', { hasText: 'first214c.dxf' }).click(); await compare();
       await q('ptab-drawing').click(); await q('cmp-lineup-manual').click();
@@ -6349,13 +6350,13 @@ try {
         const raw = newDoc(4);
         addEntities(raw, dxfPoly([[0, 0], [180, 0], [180, 100], [0, 100]], { closed: true }), dxfText(5, 5, 3, name));
         await q('picker').setInputFiles({ name, mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(raw)) });
-        await p.waitForFunction((name) => document.querySelector('.dtab.on .tname').textContent === name, name);
+        await waitTab(p, name);
       }
       const lay = newLayout('Margins layout');
       const part = newDoc(4); addEntities(part, dxfPoly([[0, 0], [60, 0], [60, 40], [0, 40]], { closed: true }));
       lay.parts.a = makePart('a', 'Plate', part); lay.placed = [{ partId: 'a', x: 100, y: 100, rot: 0 }];
       await q('picker').setInputFiles({ name: 'lay217.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
-      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'lay217.dxf');
+      await waitTab(p, 'lay217.dxf');
       await rowOn('layout');
       await p.locator('.dtab', { hasText: 'a217.dxf' }).click();
       await rowOn('drawing');
@@ -6394,14 +6395,14 @@ try {
       assert.deepEqual(await fields(['12', '12', '12', '15']), ['12', '12', '12', '15'], 'unlinked again');
       await q('pdf-close').click(); await p.reload();
       await q('picker').setInputFiles({ name: 'lay217.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
-      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'lay217.dxf');
+      await waitTab(p, 'lay217.dxf');
       await open(); await q('pdf-page-check').check();
       assert.equal(await q('pdf-margin-preset').inputValue(), 'standard', 'drawing/layout bucket stays separate from Part');
       await q('pdf-close').click();
       for (const name of ['a217.dxf', 'b217.dxf']) {
         const raw = newDoc(4); addEntities(raw, dxfPoly([[0, 0], [180, 0], [180, 100], [0, 100]], { closed: true }));
         await q('picker').setInputFiles({ name, mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(raw)) });
-        await p.waitForFunction((name) => document.querySelector('.dtab.on .tname').textContent === name, name);
+        await waitTab(p, name);
       }
       await open(); await q('pdf-page-check').check();
       assert.equal(await q('pdf-margin-preset').inputValue(), 'custom', 'preset survives reload');
@@ -6441,13 +6442,13 @@ try {
     const load = async () => {
       const raw = newDoc(4); addEntities(raw, dxfPoly([[0, 0], [2000, 0], [2000, 1000], [0, 1000]], { closed: true }));
       await q('picker').setInputFiles({ name: 'c215.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(raw)) });
-      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'c215.dxf');
+      await waitTab(p, 'c215.dxf');
     };
     const loadLayout = async () => {
       const lay = newLayout('Scale 215'), part = newDoc(4); addEntities(part, dxfPoly([[0, 0], [600, 0], [600, 400], [0, 400]], { closed: true }));
       lay.parts.a = makePart('a', 'Plate', part); lay.placed = [{ partId: 'a', x: 100, y: 100, rot: 0 }];
       await q('picker').setInputFiles({ name: 'lay215.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
-      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'lay215.dxf');
+      await waitTab(p, 'lay215.dxf');
     };
     const info = (text) => p.waitForFunction((t) => document.querySelector('[data-testid=pdf-custom-info]').textContent === t, text);
     const tilesOn = async (paper, s) => {                             // what the dialog must say for this sheet at scale s on this paper
@@ -6595,7 +6596,7 @@ try {
     lay.placed = [{ partId: 'p', x: 200, y: 200, rot: 0 }];
     const openTab = async (name, text) => {
       await q('picker').setInputFiles({ name, mimeType: 'application/dxf', buffer: Buffer.from(text) });
-      await p.waitForFunction((n) => document.querySelector('.dtab.on .tname').textContent === n, name);
+      await waitTab(p, name);
     };
     const open = async () => { await q('pdf-open').click(); await q('pdf-dialog').waitFor(); await p.waitForFunction(() => { const c = document.querySelector('[data-testid=pdf-preview]'); return c && c.width > 100; }); };
     const inked = (id) => p.waitForFunction((id) => { const c = document.querySelector(`[data-testid=${id}]`), d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let n = 0; for (let i = 0; i < d.length; i += 4) if (d[i] < 200 && d[i + 3] > 200) n++; return n > 200; }, id);      // thin lines are grey: anything darker than the paper
@@ -6724,7 +6725,7 @@ try {
     try {
       await p.goto(URL_);
       await q('picker').setInputFiles({ name: 'big-print.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(raw)) });
-      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'big-print.dxf');
+      await waitTab(p, 'big-print.dxf');
       await q('pdf-open').click(); await q('pdf-dialog').waitFor();
       let b = await dlg(), left = await p.locator('.pd-left').boundingBox(), pb = await p.locator('.pd-prev').boundingBox();
       assert.deepEqual([b.width, b.height], [1200, 860], 'box at 1600 x 1000');
@@ -6774,7 +6775,7 @@ try {
     try {
       await p.goto(URL_);
       await q('picker').setInputFiles({ name: 'c215b.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(raw)) });
-      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'c215b.dxf');
+      await waitTab(p, 'c215b.dxf');
       await q('pdf-open').click(); await q('pdf-dialog').waitFor();
       await p.waitForFunction(() => { const c = document.querySelector('[data-testid=pdf-preview]'); return c && c.width > 100; });
       await q('pdf-page-custom').check();
@@ -6953,7 +6954,7 @@ try {
         points.forEach((a, i) => { const b = points[(i + 1) % points.length]; addEntities(doc, dxfLine(a[0], a[1], b[0], b[1])); });
       }
       await q('picker').setInputFiles({ name: 'select-155c.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(doc)) });
-      await p.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'select-155c.dxf');
+      await waitTab(p, 'select-155c.dxf');
       await p.locator('[data-tool=select]').click();
       const point = async (x, y) => {
         const b = await p.locator('rect.sheet').boundingBox(), w = Number(await panelControl(p, p.locator('[data-key=sheetW]')).inputValue()), hh = Number(await panelControl(p, p.locator('[data-key=sheetH]')).inputValue());
@@ -7026,7 +7027,7 @@ try {
       points.forEach((a, i) => { const b = points[(i + 1) % points.length]; addEntities(doc, dxfLine(a[0], a[1], b[0], b[1])); });
       addEntities(doc, [dxfLine(260, 100, 300, 100), dxfLine(300, 100, 300, 140)]);
       await q('picker').setInputFiles({ name: '155c-fixes.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(doc)) });
-      await p.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === '155c-fixes.dxf');
+      await waitTab(p, '155c-fixes.dxf');
       await p.locator('[data-tool=select]').click();
       const pick = async (x, y, button = 'left') => {
         const b = await p.locator('rect.sheet').boundingBox(), w = Number(await panelControl(p, p.locator('[data-key=sheetW]')).inputValue()), hh = Number(await panelControl(p, p.locator('[data-key=sheetH]')).inputValue());
@@ -7368,7 +7369,7 @@ try {
   const drawingTab = () => page.locator('.tabs .dtab', { hasText: /^outline\.dxf/ }).first();
   await step('view: a DXF opens on its own drawing tab: only Drawing scale, Outlines and Layers; no sheet, grippers or step and repeat; no Part | Layout switch', async () => {
     await t('picker').setInputFiles('fixtures/outline.dxf');
-    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'outline.dxf');
+    await waitTab(page, 'outline.dxf');
     await t('ptab-drawing').click();
     await inkedWhen((n) => n > 150);
     assert.equal(await t('mode-part').count(), 0); assert.equal(await t('mode-layout').count(), 0);
@@ -7610,7 +7611,7 @@ try {
         };
       });
       await p.locator('[data-menu=File]').click(); await p.getByRole('menuitem', { name: 'Save As…', exact: true }).click();
-      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'renamed-156d1-fixes.dxf');
+      await waitTab(p, 'renamed-156d1-fixes.dxf');
       assert.deepEqual(await vals(), [25]);
       await p.locator('.dtab.on .x').click(); await q('open').click(); await q('guide-pos').waitFor();
       assert.deepEqual(await vals(), [25], 'Save As remembers guides at the new path');
@@ -7653,7 +7654,7 @@ try {
     addEntities(second, [dxfPoly([[110, 120], [170, 120], [170, 180], [110, 180]].map((pt) => pt.map((v) => v / 25.4)), true)]);
     const open = async (name, raw) => {
       await q('picker').setInputFiles({ name, mimeType: 'text/plain', buffer: Buffer.from(writeDxf(raw)) });
-      await p.waitForFunction((name) => document.querySelector('.dtab.on .tname').textContent === name, name);
+      await waitTab(p, name);
     };
     const command = async (word) => {
       if (!await q('cmd-input').isVisible()) await q('cmd-echo').click();
@@ -7975,7 +7976,7 @@ try {
     addEntities(second, [...first.entities, dxfCircle(30, 40, 4)]);
     const open = async (name, raw) => {
       await q('picker').setInputFiles({ name, mimeType: 'text/plain', buffer: Buffer.from(writeDxf(raw)) });
-      await p.waitForFunction((name) => document.querySelector('.dtab.on .tname').textContent === name, name);
+      await waitTab(p, name);
     };
     const tab = (name) => p.locator('.dtab').filter({ has: p.locator('.tname', { hasText: name }) });
     const command = async (word) => {
@@ -8394,7 +8395,7 @@ try {
   });
 
   await step('TODO 64: Open keeps a fresh tab and its imported background after picking a tool without drawing', async () => {
-    const originalName = await page.locator('.tabs .dtab.on .tname').textContent();
+    const originalName = await page.locator('.tabs .dtab.on .tname')?.textContent();
     await t('new-tab').click();
     await page.locator('[data-tool=line]').click();
     await page.keyboard.press('Escape');
@@ -8404,7 +8405,7 @@ try {
     const before = await tabNames(), keptName = before.at(-1);
     assert.equal(await page.locator('.tabs .dtab.on .dot').count(), 1, 'import marks the tab changed');
     await t('picker').setInputFiles('fixtures/overlay.dxf');
-    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'overlay.dxf');
+    await waitTab(page, 'overlay.dxf');
     assert.deepEqual(await tabNames(), [...before, 'overlay.dxf'], 'the background tab stays');
     await page.locator('.tabs .dtab', { hasText: keptName }).click();
     assert.equal(await t('bg-name').textContent(), 'bg.png');
@@ -8429,7 +8430,7 @@ try {
       const picker = p.getByTestId('picker');
       assert.ok((await picker.getAttribute('accept')).split(',').includes('.ai'));
       await picker.setInputFiles('fixtures/colours.ai');
-      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'colours.dxf');
+      await waitTab(p, 'colours.dxf');
       await p.getByTestId('ptab-objects').click();                      // the layer rows are drawn when this tab opens
       assert.deepEqual(await p.locator('.layer .nm').allTextContents(), ['#FF0000', '#00FF00', '#0000FF']);
       const [download] = await Promise.all([p.waitForEvent('download'), p.keyboard.press('Control+s')]);
@@ -8453,7 +8454,7 @@ try {
         const dt = new DataTransfer(); dt.items.add(new File([new Uint8Array(bytes)], 'dropped.ai'));
         window.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true }));
       }, bytes);
-      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'dropped.dxf');
+      await waitTab(p, 'dropped.dxf');
       await p.getByTestId('ptab-objects').click();
       assert.deepEqual(await p.locator('.layer .nm').allTextContents(), ['#FF0000', '#00FF00', '#0000FF']);
       // A PDF is told by its first four bytes, never inside a .dxf: a .dxf holding PDF bytes is read as a DXF (and refused), a .ai with the signature later has no PDF part.
@@ -8471,11 +8472,11 @@ try {
           fs: { readFile: async () => new Uint8Array([0, ...bytes, 0]).subarray(1, bytes.length + 1) } };
       }, bytes);
       await p.getByTestId('open').click();
-      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'native.dxf');
+      await waitTab(p, 'native.dxf');
       assert.ok((await p.evaluate(() => window.__aiFilters))[0].extensions.includes('ai'));
       const white = new Page(80, 50); white.strokeColor([1, 1, 1]); white.rect(10, 10, 60, 30); white.stroke();
       await picker.setInputFiles({ name: 'white.ai', mimeType: 'application/pdf', buffer: Buffer.from(writePdf([white])) });
-      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'white.dxf');
+      await waitTab(p, 'white.dxf');
       // The stroke keeps its own white in the file; the canvas draws white as the sheet's ink on light (render.js ink: #1b1d22), pure white on dark.
       // Wait for the theme, then for the stroke in that theme's colour: the pixels left from the other theme are not the answer.
       for (const [theme, rgb] of [['light', [0x1b, 0x1d, 0x22]], ['dark', [255, 255, 255]]]) {
@@ -8510,13 +8511,13 @@ try {
         await p.screenshot({ path: shotDir + '/309-dialog-' + theme + '.png' });
       }
       await p.keyboard.press('Enter');
-      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'vector.dxf');
+      await waitTab(p, 'vector.dxf');
       assert.equal(await p.locator('.dtab.on').getAttribute('data-kind'), 'drawing');
       assert.equal(await q('bg-name').textContent(), '');
       await q('picker').setInputFiles('fixtures/vector.pdf');
       await q('pdfopen-background').click();
       await p.waitForFunction(() => document.querySelector('[data-testid=bg-name]').textContent === 'vector.pdf');
-      assert.equal(await p.locator('.dtab.on .tname').textContent(), 'vector.pdf');
+      assert.equal(await p.locator('.dtab.on .tname')?.textContent(), 'vector.pdf');
       assert.equal(await p.locator('.dtab').count(), before + 1); // first open replaces the untouched blank tab
       await q('picker').setInputFiles('fixtures/vector.pdf');
       await q('pdfopen-dialog').waitFor(); await p.keyboard.press('Escape');
@@ -8559,7 +8560,7 @@ try {
       }
       // A later picker call is a fresh batch, even on the same page.
       await q('picker').setInputFiles('fixtures/vector.pdf'); await q('pdfopen-editable').click();
-      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'vector.dxf');
+      await waitTab(p, 'vector.dxf');
       assert.equal(await p.evaluate(() => window.__pdfopenCount), 2);
     } finally { await context.close(); }
   });
@@ -8672,7 +8673,7 @@ try {
       const big = await p.evaluate(() => window.__big309);
       assert.equal(big.length, 1); assert.match(big[0][0], /big.pdf/); assert.equal(big[0][1], false, 'bigOk asks before the PDF choice');
       await q('pdfopen-editable').click();
-      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'big.dxf');
+      await waitTab(p, 'big.dxf');
       await q('open').click();
       await p.waitForFunction(() => document.querySelector('[data-testid=cmd-prompt]').textContent.startsWith('big.pdf is already open'));
       assert.equal(await q('pdfopen-dialog').count(), 0);
@@ -8820,7 +8821,7 @@ try {
       const exp = readDxf(Buffer.from(exported['C:/jobs/final-export.dxf']).toString('utf8'));
       assert.equal(exp.header.$INSUNITS, '1');
       assert.equal(exp.entities.find((e) => e.type === 'IMAGE').r.file, 'final-export-img1.png');
-      assert.equal(await p.locator('.dtab.on .tname').textContent(), 'renamed.dxf', 'Export keeps the source name');
+      assert.equal(await p.locator('.dtab.on .tname')?.textContent(), 'renamed.dxf', 'Export keeps the source name');
       await p.evaluate(() => { window.__pics305.fail = true; window.__pics305.next = 'C:/jobs/failed.dxf'; });
       await menu('Save As…'); await prompt('Saved failed.dxf');          // TODO 341: the DXF is written first; refused pictures are counted
       await p.waitForFunction(() => /2 picture\(s\) not saved/.test(document.querySelector('[data-testid=cmd-prompt]').textContent));
@@ -9016,7 +9017,7 @@ try {
         };
         const open = async (name, raw) => {
           await q('picker').setInputFiles({ name, mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(raw)) });
-          await p.waitForFunction((name) => document.querySelector('.dtab.on .tname').textContent === name, name);
+          await waitTab(p, name);
         };
         const tab = (name) => p.locator('.dtab').filter({ has: p.locator('.tname', { hasText: name }) });
         const save = async () => {
@@ -9085,7 +9086,7 @@ try {
       await p.goto(URL_ + '?autosave=86400000');
       const raw = newDoc(4); addEntities(raw, dxfLine(50, 50, 290, 80));
       await q('picker').setInputFiles({ name: 'measure-194.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(raw), 'latin1') });
-      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'measure-194.dxf');
+      await waitTab(p, 'measure-194.dxf');
       await q('decimals').selectOption('2');
       await command('measure'); await command('50,50'); await p.keyboard.press('Escape');
       assert.equal((await save()).entities.length, 1, 'Esc mid-measure adds nothing');
@@ -9425,7 +9426,7 @@ try {
     lay.parts['fixture-dial'] = makePart('fixture-dial', 'Dial', { ...raw, entities: [raw.entities[8]] }, 1, 'outline');
     lay.placed.push({ partId: 'fixture-plate', x: 0, y: 0, rot: 0 }, { partId: 'fixture-dial', x: 120, y: 0, rot: 0 });
     await t('picker').setInputFiles({ name: 'library-fixture.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
-    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'library-fixture.dxf');
+    await waitTab(page, 'library-fixture.dxf');
     await closeTabs(/./);
   };
   const nameDlg = page.locator('[data-testid=name-dialog]');
@@ -9442,7 +9443,7 @@ try {
     await closeTabs(/./);
     assert.deepEqual(await tabNames(), ['Drawing 1']);
     await t('picker').setInputFiles('fixtures/outline.dxf');
-    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'outline.dxf');
+    await waitTab(page, 'outline.dxf');
     await inkedWhen((n) => n > 150);
     await page.locator('[data-tool=select]').click();
     await page.waitForFunction(() => document.querySelectorAll('[data-testid=outlines] .orow').length > 0);
@@ -9776,7 +9777,7 @@ try {
   await step('review: status bar: GRID toggles the display; the layer shown is the selection\'s; no fixed Scale 1:1', async () => {
     await closeTabs(/./);
     await t('picker').setInputFiles('fixtures/outline.dxf');
-    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'outline.dxf');
+    await waitTab(page, 'outline.dxf');
     await page.waitForFunction(() => document.querySelector('[data-testid=entities]').textContent.trim() === 'Entities 15');
     for (const id of ['tog-grid']) {
       assert.equal(await t(id).getAttribute('aria-disabled'), null, id);
@@ -9853,7 +9854,7 @@ try {
   await step('review: Edit menu has Undo, Redo, Copy, Paste, Delete; shortcut hints; Modify and Help menus are enabled', async () => {
     await closeTabs(/./);
     await t('picker').setInputFiles('fixtures/outline.dxf');
-    await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'outline.dxf');
+    await waitTab(page, 'outline.dxf');
     await page.locator('[data-tool=select]').click();
     await page.locator('[data-menu=File]').click();
     const hint = (name) => page.getByRole('menuitem', { name, exact: true }).locator('.hint').textContent();
@@ -10580,7 +10581,7 @@ try {
     Object.assign(made.s, { sheetW: 1000, sheetH: 700, gripTop: 30, gripBottom: 0, gripLeft: 0, gripRight: 0 });
     made.placed = [{ partId: 'wedge', x: 0, y: 300, rot: 5 }];
     await t('picker').setInputFiles({ name: 'gripper342.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(layoutRaw(made))) });
-    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'gripper342.dxf');
+    await waitTab(page, 'gripper342.dxf');
     await page.locator('[data-tool=select]').click(); await t('ptab-drawing').click();
     await page.locator('[data-group=parts] .part-hit').first().click({ force: true });
     assert.ok((await pos())[0] < -5, 'the box of the turned part reaches left of the sheet');
@@ -10626,7 +10627,7 @@ try {
     made.parts.grid = makePart('grid', 'Grid part', small, 1);
     Object.assign(made.s, { sheetW: 1000, sheetH: 700, gridPart: 'grid', rows: 2, cols: 2, fit: false, gripTop: 0, gripBottom: 0, gripLeft: 0, gripRight: 0 });
     await t('picker').setInputFiles({ name: 'applied-grid.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(layoutRaw(made))) });
-    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'applied-grid.dxf');
+    await waitTab(page, 'applied-grid.dxf');
     await page.locator('[data-tool=select]').click(); await t('ptab-drawing').click();
     const field = (k) => panelControl(page, page.locator(`[data-key=${k}]`));
     const rows = field('rows'), cols = field('cols'), gapX = field('gapX');
@@ -11273,7 +11274,7 @@ try {
     assert.equal(await page.evaluate(() => localStorage.getItem('pd-rulers')), '1');
     // drawing tabs have them too
     await t('picker').setInputFiles('fixtures/outline.dxf');
-    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'outline.dxf');
+    await waitTab(page, 'outline.dxf');
     assert.equal(await t('ruler-top').isVisible(), true, 'rulers on a drawing tab');
     assert.ok((await t('ruler-left').locator('text').allTextContents()).length > 2);
     assert.equal(await t('guides-panel').isVisible(), true, 'guides also belong to drawing tabs');
@@ -11537,7 +11538,7 @@ try {
     addEntities(doc, dxfCircle(100, 100, 20), dxfLine(200, 100, 250, 100), dxfLine(250, 100, 250, 150),
       dxfLine(250, 150, 200, 150), dxfLine(200, 150, 200, 100));
     await t('picker').setInputFiles({ name: 'partial289.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(doc)) });
-    await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'partial289.dxf');
+    await waitTab(page, 'partial289.dxf');
     await click(225, 100); await waitSel('1 selected');
     await page.locator('[data-tool=contour]').click();
     assert.equal(await t('contour-apply').isDisabled(), true, 'a partial outline alone is still refused');
@@ -11563,7 +11564,7 @@ try {
     addEntities(doc, dxfLine(100, 100, 200, 100));
     const open = async (name, raw = doc) => {
       await t('picker').setInputFiles({ name, mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(raw)) });
-      await page.waitForFunction((name) => document.querySelector('.dtab.on .tname').textContent === name, name);
+      await waitTab(page, name);
     };
     const configure = async () => {
       await page.keyboard.press('Escape'); await page.keyboard.press('Control+a');
@@ -11601,7 +11602,7 @@ try {
     const remembered = await ctx.newPage();
     await remembered.goto(URL_);
     await panelControl(remembered, remembered.getByTestId('picker')).setInputFiles({ name: 'remember289.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(doc)) });
-    await remembered.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'remember289.dxf');
+    await waitTab(remembered, 'remember289.dxf');
     await remembered.locator('[data-tool=contour]').click();
     assert.equal(await remembered.getByTestId('contour-square').getAttribute('aria-pressed'), 'true', 'end loaded on a new page');
     await remembered.close();
@@ -11679,7 +11680,7 @@ try {
     const pts = [[140, 200], [100, 200], [100, 100], [200, 100], [200, 200], [160, 200]], doc = newDoc(4);
     addEntities(doc, ...pts.slice(1).map((p, i) => dxfLine(pts[i][0], pts[i][1], p[0], p[1])));
     await t('picker').setInputFiles({ name: 'c289b.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(doc)) });
-    await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'c289b.dxf');
+    await waitTab(page, 'c289b.dxf');
     await page.keyboard.press('Escape'); await page.keyboard.press('Control+a');
     await page.locator('[data-tool=contour]').click();
     await t('contour-dist').fill('20'); await t('contour-dist').press('Enter');
@@ -11708,7 +11709,7 @@ try {
     const doc = newDoc(4);
     addEntities(doc, dxfPoly([[0, 0], [.011, 0], [100, 0], [100, 60], [0, 60]], { closed: true }));
     await t('picker').setInputFiles({ name: 'inline200.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(doc), 'latin1') });
-    await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'inline200.dxf');
+    await waitTab(page, 'inline200.dxf');
     await page.keyboard.press('Escape'); await page.keyboard.press('Control+a');
     await page.locator('[data-tool=contour]').click();
     await ctPanel('contour-inside').click();
@@ -11738,7 +11739,7 @@ try {
     for (let i = 0; i < N; i++) rows.push('10', (1000 * Math.cos(2 * Math.PI * i / N)).toFixed(4), '20', (1000 * Math.sin(2 * Math.PI * i / N)).toFixed(4));
     rows.push('0', 'ENDSEC', '0', 'EOF');
     await t('picker').setInputFiles({ name: 'ring253c2.dxf', mimeType: 'application/dxf', buffer: Buffer.from(rows.join('\n'), 'latin1') });
-    await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'ring253c2.dxf', null, { timeout: 60000 });
+    await page.waitForFunction(() => document.querySelector('.dtab.on .tname')?.textContent === 'ring253c2.dxf', null, { timeout: 60000 });
     await page.keyboard.press('Escape'); await page.keyboard.press('Control+a');
     await page.locator('[data-tool=contour]').click();
     await t('contour-steps').fill('1'); await t('contour-steps').press('Enter');
@@ -11755,7 +11756,7 @@ try {
     addEntities(doc, dxfPoly([[-100, 0], [-100 + .001, 0], [-50, 40], [50, 40], [100, 0], [50, -40], [-50, -40]], { closed: true }));
     const open = async (name, raw) => {
       await t('picker').setInputFiles({ name, mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(raw), 'latin1') });
-      await page.waitForFunction((nm) => document.querySelector('.dtab.on .tname').textContent === nm, name);
+      await waitTab(page, name);
       await page.keyboard.press('Escape'); await page.keyboard.press('Control+a');
       await page.locator('[data-tool=contour]').click();
       await said(/^Option \[Inside/);
@@ -11810,7 +11811,7 @@ try {
     await page.evaluate(() => localStorage.removeItem('pd-contour'));
     await closeTabs(/./);
     await t('picker').setInputFiles({ name: 'shapes.dxf', mimeType: 'text/plain', buffer: Buffer.from(shapesDoc(), 'latin1') });
-    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'shapes.dxf');
+    await waitTab(page, 'shapes.dxf');
     await page.waitForFunction(() => document.querySelector('[data-testid=gap-count]') && document.querySelector('[data-testid=gap-count]').textContent !== '…');
     // the rail: Contour sits after Offset
     const order = await page.locator('nav.rail .tool').evaluateAll((bs) => bs.map((b) => b.getAttribute('aria-label')));
@@ -11881,7 +11882,7 @@ try {
     await p2.goto(URL_); await p2.waitForSelector('[data-testid=count]', { state: 'attached' });
     assert.deepEqual(await p2.evaluate(() => JSON.parse(localStorage.getItem('pd-contour'))), { dir: 'outside', dist: 10, steps: 3, corners: 'rounded', ends: 'round', colour: 'bylayer', lt: 'BYLAYER' });
     await panelControl(p2, p2.locator('[data-testid=picker]')).setInputFiles({ name: 'shapes.dxf', mimeType: 'text/plain', buffer: Buffer.from(shapesDoc(), 'latin1') });
-    await p2.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'shapes.dxf');
+    await waitTab(p2, 'shapes.dxf');
     await p2.locator('[data-tool=contour]').click();
     assert.equal(await panelControl(p2, p2.locator('[data-testid=contour-dist]')).inputValue(), '10.0'); assert.equal(await panelControl(p2, p2.locator('[data-testid=contour-steps]')).inputValue(), '3');
     assert.equal(await panelControl(p2, p2.locator('[data-testid=contour-panel] [data-testid=contour-rounded]')).getAttribute('aria-pressed'), 'true');
@@ -11922,7 +11923,7 @@ try {
   });
 
   await step('TODO 35: Apply adds the outlines as lines and arcs on the new layer "Contour" (one undo step), the original is untouched; inward steps stop early; a circle stays a circle; the words in the command line', async () => {
-    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'shapes.dxf');
+    await waitTab(page, 'shapes.dxf');
     const base = await entCount();
     await page.locator('[data-tool=contour]').click();
     await click(150, 100); await waitSel('1 selected');
@@ -12010,7 +12011,7 @@ try {
     const doc = newDoc();
     addEntities(doc, dxfPoly([[100, 100], [200, 100], [200, 200], [100, 200]], { closed: true }));
     await t('picker').setInputFiles({ name: 'contour-style.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(doc)) });
-    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'contour-style.dxf');
+    await waitTab(page, 'contour-style.dxf');
     await page.locator('[data-tool=contour]').click(); await click(150, 100); await waitSel('1 selected');
     const colours = t('contour-panel').getByRole('group', { name: 'Colour', exact: true });
     const styles = t('contour-panel').getByRole('group', { name: 'Line style', exact: true });
@@ -12066,7 +12067,7 @@ try {
     await closeTabs(/./);
     await page.reload(); await page.waitForSelector('[data-testid=count]', { state: 'attached' });
     await t('picker').setInputFiles({ name: 'contour-style-saved.dxf', mimeType: 'text/plain', buffer: Buffer.from(dl.text) });
-    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'contour-style-saved.dxf');
+    await waitTab(page, 'contour-style-saved.dxf');
     await pickEdge();
     await page.locator('[data-tool=contour]').click();
     assert.equal(await colours.getByRole('button', { name: 'Red', exact: true }).getAttribute('aria-pressed'), 'true');
@@ -12079,7 +12080,7 @@ try {
     // Custom Contour colour: picker OK / Cancel, preview, DXF true colour and one Undo / Redo.
     await closeTabs(/./);
     await t('picker').setInputFiles({ name: 'contour-custom.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(doc)) });
-    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'contour-custom.dxf');
+    await waitTab(page, 'contour-custom.dxf');
     await page.locator('[data-tool=contour]').click(); await click(150, 100); await waitSel('1 selected');
     await t('contour-steps').fill('1'); await t('contour-steps').press('Enter');
     await t('contour-colour').click(); await t('colour-hex').fill('336699'); await t('colour-ok').click();
@@ -12111,7 +12112,7 @@ try {
     const geometry = (raw) => raw.entities.map((e) => [e.type, e.layer, e.r.c.flatMap((c, i) => c === 5 || c === 330 ? [] : [[c, e.r.v[i]]])]);
     await closeTabs(/./);
     await t('picker').setInputFiles('fixtures/micro-gaps.dxf');
-    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'micro-gaps.dxf');
+    await waitTab(page, 'micro-gaps.dxf');
     await t('gap-tol').fill('0.01'); await t('gap-tol').press('Enter');
     await page.waitForFunction(() => document.querySelector('[data-testid=gap-count]').textContent === '2');
     await t('gap-join').click();
@@ -12137,7 +12138,7 @@ try {
   await step('TODO 121: Join gaps has a Method list (average point by default, remembered); each method joins in one undo step and the message names it', async () => {
     await closeTabs(/./);
     await t('picker').setInputFiles('fixtures/outline.dxf');
-    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'outline.dxf');
+    await waitTab(page, 'outline.dxf');
     await page.waitForFunction(() => document.querySelector('[data-testid=gap-count]').textContent === '2');
     assert.equal(await t('gap-method').inputValue(), 'average');
     await shotBoth('join-gaps-method');
@@ -12160,7 +12161,7 @@ try {
   await step('TODO 46: tiny gaps are counted (0.01 mm) and ringed; the tolerance is editable; Join gaps closes them in one undo step', async () => {
     await closeTabs(/./);
     await t('picker').setInputFiles('fixtures/outline.dxf');
-    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'outline.dxf');
+    await waitTab(page, 'outline.dxf');
     await page.waitForFunction(() => document.querySelector('[data-testid=gap-count]').textContent === '2');
     assert.equal(await t('gap-tol').inputValue(), '0.01');
     await t('gap-show').click();
@@ -12541,7 +12542,7 @@ try {
       const expected = ['Drawing 1.dxf', 'Drawing 2.dxf', 'Drawing 3.dxf', 'Drawing 4.dxf'];
       for (const name of expected) {
         await q('picker').setInputFiles({ name, mimeType: 'application/dxf', buffer: readFileSync('fixtures/outline.dxf') });
-        await p.waitForFunction((name) => document.querySelector('.dtab.on .tname').textContent === name, name);
+        await waitTab(p, name);
       }
       assert.deepEqual(await names(), expected);
       let count = 0;
@@ -12571,7 +12572,7 @@ try {
       };
       const edit = async (name) => {
         await q('picker').setInputFiles({ name, mimeType: 'application/dxf', buffer: readFileSync('fixtures/outline.dxf') });
-        await p.waitForFunction((name) => document.querySelector('.dtab.on .tname').textContent === name, name);
+        await waitTab(p, name);
         await p.waitForFunction(() => document.querySelector('[data-testid=gap-count]').textContent === '2');
         await q('gap-join').click();
       };
@@ -12604,7 +12605,7 @@ try {
       };
       const open = async (raw, name) => {
         await q('picker').setInputFiles({ name, mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(raw)) });
-        await p.waitForFunction((n) => document.querySelector('.dtab.on .tname').textContent === n, name);
+        await waitTab(p, name);
       };
       const key = async (word) => { await p.evaluate(() => document.activeElement?.blur()); await p.keyboard.press(word); };
       const atPoint = (x, y) => p.evaluate(([x, y]) => {
@@ -12718,7 +12719,7 @@ try {
       };
       const open = async (raw, name) => {
         await q('picker').setInputFiles({ name, mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(raw)) });
-        await p.waitForFunction((name) => document.querySelector('.dtab.on .tname').textContent === name, name);
+        await waitTab(p, name);
       };
       const save = async () => {
         await p.waitForTimeout(110);
@@ -12822,7 +12823,7 @@ try {
       await p.goto(URL_ + '?autosave=86400000'); await q('count').waitFor({ state: 'attached' });
       const open = async (name, raw) => {
         await q('picker').setInputFiles({ name, mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(raw)) });
-        await p.waitForFunction((name) => document.querySelector('.dtab.on .tname').textContent === name, name);
+        await waitTab(p, name);
       };
       const save = async () => {
         await p.waitForTimeout(110);
@@ -12866,7 +12867,7 @@ try {
         assert.equal(await q('drawing').getAttribute('data-preview'), '0', 'Esc drops the preview');
         assert.equal((await save()).entities.length, 0, 'Esc commits no objects');
         await q('new-tab').click();
-        const targetName = await p.locator('.dtab.on .tname').textContent();
+        const targetName = await p.locator('.dtab.on .tname')?.textContent();
         const at = await follow(coords[0] * factor, coords[3] * factor);
         await p.mouse.click(at.x, at.y);
         await p.waitForFunction(() => /2 selected/.test(document.querySelector('[data-testid=sel-count]').textContent));
@@ -12922,7 +12923,7 @@ try {
       const noGhost = () => p.waitForFunction(() => +document.querySelector('[data-testid=drawing]').dataset.preview === 0);
       const source = newDoc(1); addEntities(source, dxfLine(1, 2, 3, 4));
       await q('picker').setInputFiles({ name: '211a inches.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(source)) });
-      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === '211a inches.dxf');
+      await waitTab(p, '211a inches.dxf');
       await p.locator('.coords').click(); await p.keyboard.press('Control+a'); await p.keyboard.press('Control+c');
       for (const pdf of [false, true]) {
         if (pdf) {
@@ -12933,7 +12934,7 @@ try {
         } else {
           const target = newDoc(4); addEntities(target, dxfLine(0, 0, 220, 220), dxfLine(140, 140, 180, 140));
           await q('picker').setInputFiles({ name: '211a target.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(target)) });
-          await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === '211a target.dxf');
+          await waitTab(p, '211a target.dxf');
         }
         await p.locator('[data-testid=canvas]').getByRole('button', { name: 'Fit', exact: true }).click();
         if (await q('tog-snap').getAttribute('aria-pressed') !== 'true') await q('tog-snap').click();
@@ -13009,7 +13010,7 @@ try {
       }, [x, y]);
       const source = newDoc(1); addEntities(source, dxfLine(1, 2, 3, 4));
       await q('picker').setInputFiles({ name: '211a pan source.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(source)) });
-      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === '211a pan source.dxf');
+      await waitTab(p, '211a pan source.dxf');
       await p.locator('.coords').click(); await p.keyboard.press('Control+a'); await p.keyboard.press('Control+c');
       for (const pdf of [false, true]) {
         if (pdf) {
@@ -13020,7 +13021,7 @@ try {
         } else {
           const target = newDoc(4); addEntities(target, dxfLine(0, 0, 220, 220), dxfLine(140, 140, 180, 140));
           await q('picker').setInputFiles({ name: '211a pan target.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(target)) });
-          await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === '211a pan target.dxf');
+          await waitTab(p, '211a pan target.dxf');
         }
         await p.locator('[data-testid=canvas]').getByRole('button', { name: 'Fit', exact: true }).click();
         if (await q('tog-snap').getAttribute('aria-pressed') !== 'true') await q('tog-snap').click();
@@ -13045,7 +13046,7 @@ try {
     const editItem = (name) => page.getByRole('menuitem', { name, exact: true });
     const open = async (name, raw) => {
       await t('picker').setInputFiles({ name, mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(raw)) });
-      await page.waitForFunction((nm) => document.querySelector('.dtab.on .tname').textContent === nm, name);
+      await waitTab(page, name);
     };
     const selectDim = async (i) => {
       await t('ptab-objects').click();
@@ -13131,7 +13132,7 @@ try {
     await closeTabs(/./);
     const open = async (name, raw) => {
       await t('picker').setInputFiles({ name, mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(raw)) });
-      await page.waitForFunction((nm) => document.querySelector('.dtab.on .tname').textContent === nm, name);
+      await waitTab(page, name);
     };
     const parts = () => page.evaluate(async () => (await import('./partstore.js')).loadParts());
     const rawA = newDoc(4), rawB = newDoc(4), source = newLayout('144 source');
@@ -13217,7 +13218,7 @@ try {
     const raw = newDoc(4), name = '142c reopened part';
     addEntities(raw, dxfCircle(20, 30, 5));
     await t('picker').setInputFiles({ name: 'Bracket 1.5.DXF', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(raw)) });
-    await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'Bracket 1.5.DXF');
+    await waitTab(page, 'Bracket 1.5.DXF');
     await t('add-to-layout').click();
     const lay = layoutFromRaw(await savedDoc());
     assert.equal(lay.parts[lay.s.gridPart].name, 'Bracket 1.5');
@@ -13227,7 +13228,7 @@ try {
     lay.placed.push({ partId: '142c-reopened', x: 0, y: 0, rot: 0 }, { partId: '142c-legacy', x: 20, y: 0, rot: 0 });
     await closeTabs(/./);
     await t('picker').setInputFiles({ name: 'nest 1.5.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
-    await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'nest 1.5.dxf');
+    await waitTab(page, 'nest 1.5.dxf');
     await menuItem('Layout', 'Parts library');
     const expected = [['Bracket 1.5', 'Bracket 1.5'], [name, 'nest 1.5'], ['142c legacy source', 'original 1.5']];
     for (const [partName, source] of expected) {
@@ -13249,7 +13250,7 @@ try {
     await closeTabs(/./);
     const open = async (name, text) => {
       await t('picker').setInputFiles({ name, mimeType: 'application/dxf', buffer: Buffer.from(text, 'latin1') });
-      await page.waitForFunction((nm) => document.querySelector('.dtab.on .tname').textContent === nm, name);
+      await waitTab(page, name);
     };
     const rawA = newDoc(4), rawB = newDoc(4), src = newLayout('147 source');
     addEntities(rawA, ...[[0, 0, 100, 0], [100, 0, 100, 60], [100, 60, 0, 60], [0, 60, 0, 0]].map((q) => dxfLine(...q)), dxfCircle(50, 30, 10));
@@ -13351,7 +13352,7 @@ try {
     src.parts['147f-a'] = makePart('147f-a', 'Plate F', rawA, 1); src.parts['147f-b'] = makePart('147f-b', 'Block F', rawB, 1);
     src.placed = [{ partId: '147f-a', x: 100, y: 300, rot: 0, mirrorX: false, mirrorY: false }, { partId: '147f-b', x: 400, y: 300, rot: 90, mirrorX: false, mirrorY: false }];
     await t('picker').setInputFiles({ name: '147 fixes.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(layoutRaw(src)), 'latin1') });
-    await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === '147 fixes.dxf');
+    await waitTab(page, '147 fixes.dxf');
     try {
       const state = async () => {
         const lay = layoutFromRaw(await savedDoc()), name = (p) => lay.parts[p.partId].name;
@@ -13452,7 +13453,7 @@ try {
     src.parts['335-a'] = makePart('335-a', 'Plate T', rawA, 1); src.parts['335-b'] = makePart('335-b', 'Block T', rawB, 1);
     src.placed = [{ partId: '335-a', x: 100, y: 300, rot: 0, mirrorX: false, mirrorY: false }, { partId: '335-b', x: 400, y: 300, rot: 0, mirrorX: false, mirrorY: false }];
     await t('picker').setInputFiles({ name: '335 turn.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(layoutRaw(src)), 'latin1') });
-    await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === '335 turn.dxf');
+    await waitTab(page, '335 turn.dxf');
     try {
       // each part with its contour: [source, contour] by name, and the groups
       const state = async () => {
@@ -13573,7 +13574,7 @@ try {
     const name = '111b <img src=x>.dxf', base = '111b <img src=x>', first = `${base} paste`, second = `${first} 2`;
     const raw = newDoc(1); addEntities(raw, dxfCircle(6.25, 5.5, 2.5));
     await t('picker').setInputFiles({ name, mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(raw)) });
-    await page.waitForFunction((nm) => document.querySelector('.dtab.on .tname').textContent === nm, name);
+    await waitTab(page, name);
     await page.keyboard.press('Control+a'); await page.keyboard.press('Control+c');
     await typeCmd('newlayout'); await page.keyboard.press('Escape');
     await closeTabs(/111b/);
@@ -13646,7 +13647,7 @@ try {
     await closeTabs(/./);
     await menuItem('File', 'Open…');
     await t('picker').setInputFiles({ name: 'search-text.pdf', mimeType: 'application/pdf', buffer: readFileSync('fixtures/pdf-search-text.pdf') });
-    await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'search-text.dxf');
+    await waitTab(page, 'search-text.dxf');
     const before = await savedDoc();
     assert.deepEqual(before.entities.map((e) => e.type), ['LWPOLYLINE', 'LWPOLYLINE', 'TEXT']);
     assert.equal(before.entities[2].r.v[before.entities[2].r.c.indexOf(1)], 'C', 'invisible searchable A is not imported over its strokes');
@@ -13674,7 +13675,7 @@ try {
     const raw = newDoc(4);
     addEntities(raw, [dxfLine(20, 20, 60, 20), dxfLine(20, 40, 60, 40)]);
     await t('picker').setInputFiles({ name: 'ctrl-drag.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(raw)) });
-    await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'ctrl-drag.dxf');
+    await waitTab(page, 'ctrl-drag.dxf');
     await page.keyboard.press('Control+a'); await waitSel('2 selected');
     assert.equal(await t('hint-pill').isVisible(), true);
     assert.equal(await t('hint-pill').textContent(), 'Ctrl-drag = copy');
@@ -13727,7 +13728,7 @@ try {
     const raw = newDoc(4);
     addEntities(raw, [dxfLine(20, 20, 60, 20), dxfLine(20, 40, 60, 40)]);
     await t('picker').setInputFiles({ name: 'straight-copy.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(raw)) });
-    await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'straight-copy.dxf');
+    await waitTab(page, 'straight-copy.dxf');
     const before = await savedDoc();
     for (const [dx, dy] of [[15, 10], [10, 15]]) {
       await page.keyboard.press('Control+a'); await waitSel('2 selected');
@@ -13790,7 +13791,7 @@ try {
     pdf.text([8, 0, 0, 8, 60, 30], 'A');
     await menuItem('File', 'Open…');
     await t('picker').setInputFiles({ name: 'drag-letter.pdf', mimeType: 'application/pdf', buffer: Buffer.from(writePdf([pdf])) });
-    await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'drag-letter.dxf');
+    await waitTab(page, 'drag-letter.dxf');
     await page.getByRole('tab', { name: 'Objects', exact: true }).click();
     assert.match(await t('obj-filter-locked').textContent(), /Locked 0/, 'PDF imports open unlocked');
     assert.equal(await t('bg-name').textContent(), '', 'File Open creates drawing entities without a background picture');
@@ -13851,7 +13852,7 @@ try {
     addLayer(raw, 'Locked');
     raw.entities = [dxfLine(20, 20, 60, 20), dxfLine(60, 20, 60, 60, { layer: 'Locked' }), dxfLine(60, 60, 20, 60), dxfLine(20, 60, 20, 20)];
     await t('picker').setInputFiles({ name: 'locked-drag.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(raw)) });
-    await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'locked-drag.dxf');
+    await waitTab(page, 'locked-drag.dxf');
     await t('ptab-objects').click();
     await page.locator('.or.layer[data-layer=Locked] [data-act=lock]').click();
     await t('ptab-drawing').click();
@@ -14086,14 +14087,14 @@ try {
     // reopen the saved file: all the shapes come back as what they were
     const text = (await downloaded(() => page.keyboard.press('Control+s'))).text;
     await t('picker').setInputFiles({ name: 'drawn.dxf', mimeType: 'text/plain', buffer: Buffer.from(text, 'latin1') });
-    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'drawn.dxf');
+    await waitTab(page, 'drawn.dxf');
     assert.equal(await entCount(), 4);
   });
 
   await step('Current layer: a layer clicked in the Layers panel gets the new shapes; the file keeps its own layers', async () => {
     await closeTabs(/./);
     await t('picker').setInputFiles({ name: 'shapes.dxf', mimeType: 'text/plain', buffer: Buffer.from(shapesDoc(), 'latin1') });
-    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'shapes.dxf');
+    await waitTab(page, 'shapes.dxf');
     await t('ptab-objects').click();                                     // the layer rows are drawn when this tab opens
     assert.equal(await page.locator('[data-testid=layer-current]').count(), 1);
     assert.equal(await page.locator('.layer.current .nm').textContent(), '0');
@@ -14112,7 +14113,7 @@ try {
   await step('Layers + Add: Layer1, Layer2… become the current layer with the name ready to type; rename and colour; a bad name says why; one undo step; saved in the DXF', async () => {
     await closeTabs(/./);
     await t('picker').setInputFiles({ name: 'shapes.dxf', mimeType: 'text/plain', buffer: Buffer.from(shapesDoc(), 'latin1') });
-    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'shapes.dxf');
+    await waitTab(page, 'shapes.dxf');
     await t('ptab-objects').click();                                     // the layer rows are drawn when this tab opens
     const add = t('layer-add'), name = t('layer-name'), rows = page.locator('.layer');
     assert.equal(await add.isDisabled(), false);
@@ -14283,7 +14284,7 @@ try {
   await step('command bar: F2 opens the history on the right; the filter, Copy history and a click on a line that runs it again; F2 and Esc shut it', async () => {
     await closeTabs(/./);
     await t('picker').setInputFiles('fixtures/outline.dxf');
-    await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'outline.dxf');
+    await waitTab(page, 'outline.dxf');
     await page.locator('[data-tool=select]').click();
     await typeCmd('l'); await page.keyboard.press('Escape');
     await typeCmd('c'); await typeCmd('50,50');
@@ -14313,7 +14314,7 @@ try {
   await step('command bar: in Contour a bare option that takes a value waits for it (no "Unknown command"); `d 7` sets the distance; Esc with the bar open cancels the command; the footer says what Enter takes', async () => {
     await closeTabs(/./);
     await t('picker').setInputFiles({ name: 'shapes.dxf', mimeType: 'text/plain', buffer: Buffer.from(shapesDoc(), 'latin1') });
-    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'shapes.dxf');
+    await waitTab(page, 'shapes.dxf');
     await page.locator('[data-tool=contour]').click();
     const cb = await canvasBox();
     await page.mouse.move(cb.x + 300, cb.y + 200);
@@ -14526,7 +14527,7 @@ try {
     const back = readDxf(text), tx = texts(back).map((e) => decodeText(e));
     assert.deepEqual(tx.map((m) => m.lines), [['PLATE 05'], ['MATERIAL: ACRYLIC 3 MM', 'FINISH: GLOSS'], ['SCALE 1:1']]);
     await t('picker').setInputFiles({ name: 'texts.dxf', mimeType: 'text/plain', buffer: Buffer.from(text, 'latin1') });
-    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'texts.dxf');
+    await waitTab(page, 'texts.dxf');
     assert.equal(await entCount(), 3);
     await page.locator('[data-tool=select]').click();
     await click(40, 62);
@@ -14536,7 +14537,7 @@ try {
   await step('Text: the command line takes Height, Left / Centre / Right, Style, Bold and x,y; text goes on the current layer', async () => {
     await closeTabs(/./);
     await t('picker').setInputFiles({ name: 'shapes.dxf', mimeType: 'text/plain', buffer: Buffer.from(shapesDoc(), 'latin1') });
-    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'shapes.dxf');
+    await waitTab(page, 'shapes.dxf');
     await t('ptab-objects').click(); await page.locator('.layer', { hasText: 'Open' }).click();
     await page.locator('[data-tool=text]').click();
     await typeCmd('height 8');
@@ -14608,7 +14609,7 @@ try {
   const openGrips = async (text = gripsDoc(), name = 'grips.dxf') => {
     await closeTabs(/./);
     await t('picker').setInputFiles({ name, mimeType: 'text/plain', buffer: Buffer.from(text, 'latin1') });
-    await page.waitForFunction((n) => document.querySelector('.tabs .dtab.on .tname').textContent === n, name);
+    await waitTab(page, name);
     await page.waitForFunction(() => document.querySelector('[data-testid=gap-count]') && document.querySelector('[data-testid=gap-count]').textContent !== '…');
     await page.locator('[data-tool=select]').click();
   };
@@ -14827,7 +14828,7 @@ try {
       const lay = newLayout('Alt Z 298'), plate = addEntities(newDoc(4), dxfPoly([[0, 0], [100, 0], [100, 60], [0, 60]], { closed: true }));
       lay.parts.plate = makePart('plate', 'Plate', plate); lay.placed = [{ partId: 'plate', x: 200, y: 200, rot: 0 }];
       await t('picker').setInputFiles({ name: 'altz-298.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
-      await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'altz-298.dxf');
+      await waitTab(page, 'altz-298.dxf');
       await altZ(); assert.equal(await chip(), 'false', 'Layout: Alt+Z turns SNAP off');
       await altZ(); assert.equal(await chip(), 'true', 'Layout: Alt+Z turns SNAP on');
       console.log('298: Alt mid-drag drops free, Alt+Z toggles SNAP (Drawings, Compare, Layout), not in the command line');
@@ -14951,7 +14952,7 @@ try {
     lay.parts.plate = makePart('plate', 'Plate', plate); lay.parts.other = makePart('other', 'Other', plate);
     lay.placed = [{ partId: 'plate', x: 200, y: 200, rot: 0 }, { partId: 'other', x: 420, y: 330, rot: 0 }];
     await t('picker').setInputFiles({ name: 'pivot-338-layout.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
-    await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'pivot-338-layout.dxf');
+    await waitTab(page, 'pivot-338-layout.dxf');
     await page.locator('[data-tool=select]').click();
     const [x0, y0, x1, y1] = placedBox(lay.parts.plate, lay.placed[0]), [, v0, u1] = placedBox(lay.parts.other, lay.placed[1]);
     const centre = await exact338((x0 + x1) / 2, (y0 + y1) / 2);
@@ -14980,11 +14981,11 @@ try {
     const a = newDoc(4), b = newDoc(4); addEntities(a, dxfLine(20, 30, 120, 30)); addEntities(b, dxfLine(40, 50, 65, 50), dxfLine(65, 50, 140, 50));        // item 2 lines up on item 1 (same size, offset -20, -20): the join at (65, 50) lands on (45, 30), where item 1 has no node
     for (const [name, doc] of [['pivot-338-a.dxf', a], ['pivot-338-b.dxf', b]]) {
       await t('picker').setInputFiles({ name, mimeType: 'text/plain', buffer: Buffer.from(writeDxf(doc)) });
-      await page.waitForFunction((n) => document.querySelector('.tabs .dtab.on .tname').textContent === n, name);
+      await waitTab(page, name);
     }
     await page.locator('.tabs .dtab', { hasText: 'pivot-338-a' }).click();
     await menuItem('File', 'Compare drawings…');
-    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'Compare');
+    await waitTab(page, 'Compare');
     await t('cmp-run').click(); await page.waitForFunction(() => /difference/.test(document.querySelector('[data-testid=cmp-count]').textContent));
     await t('cmp-name-1').click(); await page.locator('[data-tool=select]').click();
     await page.keyboard.press('Escape'); await frames();
@@ -15050,7 +15051,7 @@ try {
         lay.parts.plate = makePart('plate', 'Plate', plate); lay.parts.thick = makePart('thick', 'Thick', thick);
         lay.placed = [{ partId: 'plate', x: 200, y: 200, rot: 0 }, { partId: 'thick', x: 520, y: 400, rot: 0 }];
         await t('picker').setInputFiles({ name: 'thick-339-lay.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
-        await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'thick-339-lay.dxf');
+        await waitTab(page, 'thick-339-lay.dxf');
         await page.locator('[data-tool=select]').click(); await click(240, 220);
         const ql = await drag([200, 200], [520, 400], -1);
         await page.screenshot({ path: `${shotDir}/todo339-layouts-${colour}.png` });
@@ -15134,7 +15135,7 @@ try {
       lay.parts.plate = makePart('plate', 'Plate', plate);
       lay.placed = [{ partId: 'plate', x: 200.1234, y: 200.4321, rot: 0 }, { partId: 'plate', x: 520.9876, y: 400.8765, rot: 0 }];
       await t('picker').setInputFiles({ name: 'own-340-lay.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
-      await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'own-340-lay.dxf');
+      await waitTab(page, 'own-340-lay.dxf');
       await page.locator('[data-tool=select]').click(); await click(400, 120); await click(240, 220);       // the empty click leaves a Rotate mode an earlier step left on
       const pl0 = await at(200.1234, 200.4321);
       await checks({ x: pl0.x, y: pl0.y - 1 }, 'Layouts');
@@ -15383,7 +15384,7 @@ try {
     try {
       await setChip('tog-snap', true); await setChip('tog-ortho', false);
       await t('picker').setInputFiles({ name: 'drag-layout201.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
-      await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'drag-layout201.dxf');
+      await waitTab(page, 'drag-layout201.dxf');
       await page.locator('[data-tool=select]').click(); await click(a[0] + 40, a[1] + 20);
       const before = await saved();
       await page.evaluate(() => { window.__drag201 = []; });
@@ -16614,7 +16615,7 @@ try {
     lay.placed = [objectPlacement(lay.parts.b), objectPlacement(lay.parts.m)];
     await closeTabs(/./);
     await t('picker').setInputFiles({ name: 'g164a-layout.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
-    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'g164a-layout.dxf');
+    await waitTab(page, 'g164a-layout.dxf');
     await frames(); await page.locator('[data-tool=select]').click();
     await page.keyboard.press('Control+a'); await frames(); await gripWhen(7);       // the MTEXT's 4 and the block object's 3 (TODO 171: a block object is in the layout objects' drawing now)
     const w = async () => gripBox(await page.locator('[data-testid=grip]').evaluateAll((l) => l.map((x) => x.dataset.grip).find((x) => x.endsWith(':w'))));
@@ -16641,7 +16642,7 @@ try {
     const open = async (text, name) => {
       await closeTabs(/./);
       await t('picker').setInputFiles({ name, mimeType: 'text/plain', buffer: Buffer.from(text) });
-      await page.waitForFunction((n) => document.querySelector('.tabs .dtab.on .tname').textContent === n, name);
+      await waitTab(page, name);
       await frames(); await page.locator('[data-tool=select]').click();
       await page.keyboard.press('Control+a'); await frames(); await gripWhen(3);
     };
@@ -17353,7 +17354,7 @@ try {
       lay.parts[id] = objectPart(id, id, e, lay.layers); lay.placed.push(objectPlacement(lay.parts[id]));
     }
     await t('picker').setInputFiles({ name: 'qselect-layout.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
-    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'qselect-layout.dxf');
+    await waitTab(page, 'qselect-layout.dxf');
     await page.locator('[data-tool=select]').click(); await propsOnNow();
   };
   const picked162b = async (n) => {
@@ -17635,7 +17636,7 @@ try {
         lay.parts[id] = makePart(id, id, doc, 1); lay.placed.push({ partId: id, x, y, rot: 0 });
       }
       await t('picker').setInputFiles({ name: 'grid-pick.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
-      await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'grid-pick.dxf');
+      await waitTab(page, 'grid-pick.dxf');
       await page.locator('[data-tool=select]').click(); await propsOnNow();
       const rows = panelControl(page, page.locator('[data-key=rows]'));
       await rows.fill('2'); await rows.press('Tab'); await frames();
@@ -17747,7 +17748,7 @@ try {
       lay.parts.line = objectPart('line', 'Line', dxfLine(100, 100, 250, 100, { layer: 'A' }), lay.layers);
       lay.placed = [objectPlacement(lay.parts.line)];
       await q('picker').setInputFiles({ name: 'layers188.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
-      await p.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'layers188.dxf');
+      await waitTab(p, 'layers188.dxf');
       await p.locator('[data-tool=select]').click(); await p.keyboard.press('Control+a');
       await q('prop-layer').waitFor({ state: 'visible' });
       assert.equal(await q('prop-layer').inputValue(), 'A');
@@ -17778,7 +17779,7 @@ try {
     lay.parts.circle = objectPart('circle', 'Circle', dxfCircle(450, 450, 25, { layer: 'B' }), lay.layers);
     lay.placed.push(objectPlacement(lay.parts.circle));
     await t('picker').setInputFiles({ name: 'layout-properties.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
-    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'layout-properties.dxf');
+    await waitTab(page, 'layout-properties.dxf');
     await frames(); await page.locator('[data-tool=select]').click(); await propsOnNow();
     const noFields = async () => {
       for (const id of ['prop-chip', 'prop-layer', 'prop-colour', 'prop-geo', 'prop-match', 'prop-empty']) assert.equal(await t(id).isVisible(), false, id);
@@ -18385,7 +18386,7 @@ try {
       addLayer(doc, 'Locked');
       addEntities(doc, dxfLine(10, 10, 90, 10), dxfLine(10, 10, 90, 10), dxfLine(10, 40, 90, 40, { layer: 'Locked' }), dxfLine(10, 40, 90, 40, { layer: 'Locked' }));
       await q('picker').setInputFiles({ name: 'locked-253c2.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(doc)) });
-      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'locked-253c2.dxf');
+      await waitTab(p, 'locked-253c2.dxf');
       await q('ptab-objects').click();
       await p.locator('.or.layer[data-layer=Locked] [data-act=lock]').click();
       await q('ptab-drawing').click();
@@ -18638,12 +18639,12 @@ try {
   await step('Compare: File → Compare drawings… opens a Compare tab with the open drawings as 1 and 2, differences listed and glowing', async () => {
     await closeTabs(/./);
     await t('picker').setInputFiles(plateDxf('plate-b.dxf', 30));
-    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'plate-b.dxf');
+    await waitTab(page, 'plate-b.dxf');
     await t('picker').setInputFiles(plateDxf('plate-c.dxf', 30.6));
-    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'plate-c.dxf');
+    await waitTab(page, 'plate-c.dxf');
     await page.locator('.tabs .dtab', { hasText: 'plate-b' }).click();
     await menuItem('File', 'Compare drawings…');
-    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'Compare');
+    await waitTab(page, 'Compare');
     assert.equal(await t('cmp-name-1').textContent(), 'plate-b.dxf');
     assert.equal(await t('cmp-name-2').textContent(), 'plate-c.dxf');
     assert.equal(await cmpCount(), 'Press Compare', 'nothing is worked out until the button is pressed');
@@ -18664,12 +18665,12 @@ try {
     if (!(await onTab.count()) || (await onTab.textContent()) !== 'Compare') {        // alone, the step before has not opened it (cmpSec stays hidden without a Compare tab)
       await closeTabs(/./);
       await t('picker').setInputFiles(plateDxf('plate-b.dxf', 30));
-      await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'plate-b.dxf');
+      await waitTab(page, 'plate-b.dxf');
       await t('picker').setInputFiles(plateDxf('plate-c.dxf', 30.6));
-      await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'plate-c.dxf');
+      await waitTab(page, 'plate-c.dxf');
       await page.locator('.tabs .dtab', { hasText: 'plate-b' }).click();
       await menuItem('File', 'Compare drawings…');
-      await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'Compare');
+      await waitTab(page, 'Compare');
     }
     await t('cmp-tol').fill('1'); await t('cmp-tol').press('Enter');
     await t('cmp-run').click();
@@ -18763,7 +18764,7 @@ try {
   await step('Compare: five snapshots from tabs, library and disk; tick, eye, reference, selection, removal and coloured table (TODO 114)', async () => {
     // Make a real library part through Extract, so the source picker has no fixture-only path.
     await t('picker').setInputFiles(plateDxf('compare-library-source.dxf', 30.9));
-    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'compare-library-source.dxf');
+    await waitTab(page, 'compare-library-source.dxf');
     await page.keyboard.press('Control+a');
     await t('bar-extract').click();
     const partName = '<b>Compare part</b>';
@@ -18891,7 +18892,7 @@ try {
     const raw294 = newDoc(4);
     addEntities(raw294, dxfPoly([[20, 30], [60, 30], [60, 50], [20, 50]], { closed: true }));
     await t('picker').setInputFiles({ name: 'fit294a.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(raw294)) });
-    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'fit294a.dxf');
+    await waitTab(page, 'fit294a.dxf');
     for (const compare of [false, true]) {
       if (compare) await menuItem('File', 'Compare drawings…');
       await page.locator('[data-tool=select]').click(); await page.keyboard.press('Control+a');
@@ -18917,7 +18918,7 @@ try {
     const file = (name, ents, layers = {}) => { const d = newDoc(4); for (const [n, aci] of Object.entries(layers)) addLayer(d, n, { aci }); addEntities(d, ents); return { name, mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(d)) }; };
     await closeTabs(/./);
     await t('picker').setInputFiles(file('t50-source.dxf', [dxfPoly([[0, 0], [100, 0], [100, 60], [0, 60]], { closed: true, layer: 'T50CUT' }), dxfCircle(50, 30, 10, { layer: 'T50HOLE' })], { T50CUT: 1, T50HOLE: 3 }));
-    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 't50-source.dxf');
+    await waitTab(page, 't50-source.dxf');
     await page.keyboard.press('Control+a');
     await t('bar-extract').click();
     await t('name-input').fill('T50 part'); await t('name-ok').click();
@@ -18945,7 +18946,7 @@ try {
 
     // a drawing tab: the entities go in at the drop point, the app stays on the tab
     await t('picker').setInputFiles(file('t50-target.dxf', [dxfLine(0, 0, 300, 0, { layer: 'T50CUT' }), dxfLine(0, 10, 300, 10)], { T50CUT: 5 }));
-    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 't50-target.dxf');
+    await waitTab(page, 't50-target.dxf');
     await page.locator('[data-tool=select]').click();
     assert.equal(await entCount(), 2);
     const to = await mid();
@@ -18992,7 +18993,7 @@ try {
     const raw = newDoc(4), name = 'T116 <b>& part';
     addEntities(raw, [dxfPoly([[0, 0], [100, 0], [100, 60], [0, 60]], { closed: true }), dxfCircle(50, 30, 10)]);
     await t('picker').setInputFiles({ name: 'todo116-source.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(raw)) });
-    await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'todo116-source.dxf');
+    await waitTab(page, 'todo116-source.dxf');
     await page.keyboard.press('Control+a'); await t('bar-extract').click();
     await t('name-input').fill(name); await t('name-ok').click();
     await t('name-dialog').waitFor({ state: 'detached' });
@@ -19374,7 +19375,7 @@ try {
     const dl = await downloaded(() => page.keyboard.press('Control+s'));
     await closeTabs(/./);
     await t('picker').setInputFiles({ name: 'dims2.dxf', mimeType: 'text/plain', buffer: Buffer.from(dl.text, 'latin1') });
-    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'dims2.dxf');
+    await waitTab(page, 'dims2.dxf');
     await page.locator('[data-tool=select]').click();
     await click(190, 150 + 0.1); await waitSel('1 selected');
     assert.equal(await t('dim-row').isVisible(), true, 'the reopened radius dimension is a kept dimension');
@@ -19547,7 +19548,7 @@ try {
     assert.equal(await count(), 2);
     // U after a tab switch does not undo the other tab (same history length in both)
     await t('picker').setInputFiles({ name: 'auto2b.dxf', mimeType: 'text/plain', buffer: Buffer.from(dimDoc(), 'latin1') });
-    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'auto2b.dxf');
+    await waitTab(page, 'auto2b.dxf');
     await click(175, 100); await click(190, 120); await click(200, 170); await click(215, 190);
     assert.equal(await count(), 2, 'tab B holds two dimensions of its own');
     await page.locator('.tabs .dtab').first().click();                                    // tab A (renamed once edited)
@@ -19669,7 +19670,7 @@ try {
     // reopen the saved file: the dimension keeps its look whatever style this PC has now
     await closeTabs(/./);
     await t('picker').setInputFiles({ name: 'styles3.dxf', mimeType: 'text/plain', buffer: Buffer.from(dl.text, 'latin1') });
-    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'styles3.dxf');
+    await waitTab(page, 'styles3.dxf');
     await page.locator('[data-tool=select]').click();
     await click(145, 113.3); await waitSel('1 selected');
     assert.equal(await t('dim-height').inputValue(), '3.5');
@@ -19785,7 +19786,7 @@ try {
     const dl = await downloaded(() => page.keyboard.press('Control+s'));
     await closeTabs(/./);
     await t('picker').setInputFiles({ name: 'leaders2.dxf', mimeType: 'text/plain', buffer: Buffer.from(dl.text, 'latin1') });
-    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'leaders2.dxf');
+    await waitTab(page, 'leaders2.dxf');
     await page.locator('[data-tool=select]').click();
     await click(80, 125); await waitSel('1 selected');
     await drawingFoldOpen();
@@ -19907,7 +19908,7 @@ try {
     // Another drawing starts at Auto; tab switches refresh the shared field.
     const other = newDoc(4); addEntities(other, dxfLine(0, 0, 50, 50));
     await t('picker').setInputFiles({ name: 'size-other.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(other)) });
-    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'size-other.dxf');
+    await waitTab(page, 'size-other.dxf');
     await page.locator('[data-tool=balloon]').click(); assert.equal(await sizeValue(''), '');
     await size.fill('20'); await size.press('Enter'); await size.blur();
     const emptySaved = await downloadsUtf8(() => page.keyboard.press('Control+s'), 2);
@@ -23444,7 +23445,7 @@ try {
     await t('obj-search').press('Escape'); assert.equal(await part.count(), 1);
     await shots('layout');
     await t('picker').setInputFiles({ name: 'compare-tree.dxf', mimeType: 'text/plain', buffer: Buffer.from(objDoc(), 'latin1') });
-    await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'compare-tree.dxf');
+    await waitTab(page, 'compare-tree.dxf');
     await menuItem('File', 'Compare drawings…'); await t('ptab-objects').click();
     assert.ok(await oLayer('Cut').count()); assert.ok(await page.locator('.or.obj[data-e]').count());
     assert.equal(await t('layer-add').isVisible(), false);
@@ -23508,7 +23509,7 @@ try {
     addEntities(doc, dxfInsert('Many', 0, 0, { layer: 'First', rows: 100, cols: 100 }),
       dxfLine(50, 0, 51, 1, { layer: 'Later' }), dxfLine(51, 1, 52, 2, { layer: 'Later' }));
     await t('picker').setInputFiles({ name: 'draw-limit.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(doc, { extents: [0, 0, 52, 2] }), 'latin1') });
-    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'draw-limit.dxf');
+    await waitTab(page, 'draw-limit.dxf');
     await t('ptab-objects').click();                                     // the layer rows are drawn when this tab opens
     const later = page.locator('.layer[data-file-layer]', { hasText: 'Later' });
     assert.equal(await later.locator('.lbl').textContent(), '2');
@@ -23827,7 +23828,7 @@ try {
         await page.evaluate((p) => { window.__open = p; window.__next = null; }, source);
         await menuItem('File', 'Open…');
         const name = source.split(/[\\/]/).pop();
-        await page.waitForFunction((name) => document.querySelector('.tabs .dtab.on .tname').textContent === name, name);
+        await waitTab(page, name);
         await openPdf();
         await suggestion(() => t('pdf-go').click(), source.replace(/[^\\/]*$/, () => name.replace(/\.dxf$/, '.pdf')));
         await t('pdf-cancel').click();
@@ -23967,7 +23968,7 @@ try {
         assert.equal(await page.locator('.tabs .dtab.on .dot').count(), 1);
         await page.evaluate(() => { window.__balloonWriteFails = false; });
         await page.keyboard.press('Control+s');
-        await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'plate-edited.dxf' && !document.querySelector('.tabs .dtab.on .dot'));
+        await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname')?.textContent === 'plate-edited.dxf' && !document.querySelector('.tabs .dtab.on .dot'));
         const log = await page.evaluate(() => window.__sidecarLog);
         assert.equal(log.dialogs.length, native ? 1 : 2, 'only drawing Save As dialogs were shown: ' + JSON.stringify(log));
         assert.ok(log.grants.includes('D:/output/plate-edited.dxf'), 'the Save picker grant is extended by an awaited command');
@@ -24285,7 +24286,7 @@ try {
     try {
       await p.goto(URL_ + '?autosave=86400000');
       await p.getByTestId('picker').setInputFiles('fixtures/outline.dxf');
-      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'outline.dxf');
+      await waitTab(p, 'outline.dxf');
       await p.evaluate(() => {
         window.__saveCalls = 0;
         window.__TAURI__ = { dialog: { save: async () => { window.__saveCalls++; return null; } }, fs: { writeTextFile: async () => {} } };
@@ -24365,15 +24366,15 @@ try {
         await p.waitForFunction(() => /Opened |Background /.test(document.querySelector('[data-testid=cmd-prompt]').textContent));
         if (saved) {
           await p.keyboard.press('Control+Shift+s');
-          await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'renamed.dxf');
+          await waitTab(p, 'renamed.dxf');
         }
         if (kind === 'dxfbg' || kind === 'dwgbg') {                     // a PDF background on the DXF tab: the DXF is still open
           await p.getByTestId('bg-picker').setInputFiles('fixtures/text-only.pdf');
           await p.waitForFunction(() => /^Background text-only\.pdf/.test(document.querySelector('[data-testid=cmd-prompt]').textContent));
         }
-        const sourceName = await p.locator('.dtab.on .tname').textContent();
+        const sourceName = await p.locator('.dtab.on .tname')?.textContent();
         await p.getByTestId('picker').setInputFiles({ name: 'other.dxf', mimeType: 'application/dxf', buffer: Buffer.from(drawing) });
-        await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'other.dxf');
+        await waitTab(p, 'other.dxf');
         const count = await p.locator('.dtab').count(), sidecars = await p.evaluate(() => window.__sidecars);
         await p.evaluate((path) => { window.__picked = path.replaceAll('/', '\\').toUpperCase(); window.__readPicture = false; }, reopen);
         await p.getByTestId('open').click();
@@ -24381,7 +24382,7 @@ try {
         assert.equal(await p.locator('.dtab').count(), count + (duplicate ? 0 : 1), `${kind}, ${reopen}`);
         if (duplicate) {
           assert.match(shown, /already open/);
-          assert.equal(await p.locator('.dtab.on .tname').textContent(), sourceName);
+          assert.equal(await p.locator('.dtab.on .tname')?.textContent(), sourceName);
           assert.equal(await p.evaluate(() => window.__sidecars), sidecars, 'no second sidecar read');
         } else assert.match(shown, /as a drawing/);
       } finally { await context.close(); }
@@ -24472,7 +24473,7 @@ try {
     const written = () => page.evaluate(() => window.__exp109.wrote);
     try {
       await menuItem('File', 'Open…');
-      await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'plate.dxf');
+      await waitTab(page, 'plate.dxf');
       await clean(); await open();
       assert.equal(await t('export-dxf-name').inputValue(), 'plate-export.dxf');
       assert.equal(await t('export-dxf-units').inputValue(), 'mm');
@@ -24522,14 +24523,14 @@ try {
       await page.evaluate(() => { window.__exp109.next = 'C:\\out\\layout-export.dxf'; });
       const lay = newLayout('Export layout');
       await t('picker').setInputFiles({ name: 'export-layout.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
-      await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'export-layout.dxf');
+      await waitTab(page, 'export-layout.dxf');
       await clean(); await open(); await t('export-dxf-scale').fill('2'); await t('export-dxf-go').click();
       await page.waitForFunction(() => window.__exp109.wrote.length === 3);
       assert.equal(readMeta(readDxf((await written())[2].text)), null); await clean();
       await closeTabs(/export-layout/);
       const unitless = newDoc(0); addEntities(unitless, dxfLine(0, 0, 100, 0));
       await t('picker').setInputFiles({ name: 'unitless.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(unitless)) });
-      await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'unitless.dxf');
+      await waitTab(page, 'unitless.dxf');
       await open(); assert.deepEqual(await t('export-dxf-units').locator('option').allTextContents(), ['Unitless (no conversion)']);
       await t('export-dxf-cancel').click(); await closeTabs(/unitless/);
       await page.evaluate(() => { window.__exp109.next = 'C:\\out\\plate-copy.dxf'; });
@@ -24544,7 +24545,7 @@ try {
       await t('export-dxf-scale').fill('2'); await t('export-dxf-go').click();
       await page.waitForFunction(() => window.__exp109.wrote.length === 6);
       assert.equal(+readDxf((await written())[5].text).entities[0].r.v[readDxf((await written())[5].text).entities[0].r.c.indexOf(11)], 200);
-      assert.equal(await page.locator('.tabs .dtab.on .tname').textContent(), 'Compare'); await clean();
+      assert.equal(await page.locator('.tabs .dtab.on .tname')?.textContent(), 'Compare'); await clean();
       await closeTabs(/plate-edited/);
       await menuItem('File', 'Export DXF…'); await said(/Open plate-edited.dxf to export DXF/);
       assert.equal(await dialog.count(), 0, 'a closed Compare source cannot open Export');
@@ -24552,7 +24553,7 @@ try {
       await clean();
       const kilometres = newDoc(7); addEntities(kilometres, dxfLine(0, 0, 100, 0));
       await t('picker').setInputFiles({ name: 'kilometres.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(kilometres)) });
-      await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'kilometres.dxf');
+      await waitTab(page, 'kilometres.dxf');
       await page.evaluate(() => { window.__exp109.next = 'C:\\out\\kilometres-export.dxf'; });
       await open(); assert.deepEqual(await t('export-dxf-units').locator('option').allTextContents(), ['km (no conversion)']);
       await t('export-dxf-go').click(); await said(/Exported kilometres-export.dxf/);
@@ -24572,7 +24573,7 @@ try {
     await closeTabs(/./);
     const d = newDoc(4); addEntities(d, [dxfPoly([[0, 0], [100, 0], [100, 60], [0, 60]], { closed: true }), dxfCircle(50, 30, 15), dxfText(10, 10, 5, 'HELLO')]);
     await t('picker').setInputFiles({ name: 'cut-plate.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(d)) });
-    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'cut-plate.dxf');
+    await waitTab(page, 'cut-plate.dxf');
     const dlg = t('cutter-dialog');
     const shot = async (n) => { await dlg.waitFor(); await page.waitForTimeout(250); await page.screenshot({ path: `${shotDir}/s11-52-${n}.png` }); };
     await menuItem('File', 'Export for cutter…'); await dlg.waitFor();
@@ -24651,9 +24652,9 @@ try {
     await closeTabs(/./);
     const d = newDoc(4); addEntities(d, [dxfPoly([[0, 0], [100, 0], [100, 60], [0, 60]], { closed: true }), dxfCircle(50, 30, 15)]);
     await t('picker').setInputFiles({ name: 'cut-244.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(d)) });
-    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'cut-244.dxf');
+    await waitTab(page, 'cut-244.dxf');
     await t('add-to-layout').click();
-    await page.waitForFunction(() => /layout/.test(document.querySelector('.tabs .dtab.on .tname').textContent));
+    await page.waitForFunction(() => /layout/.test(document.querySelector('.tabs .dtab.on .tname')?.textContent));
     await layoutTab();
     for (const key of ['crop', 'reg']) await panelControl(page, page.locator(`[data-key=${key}]`)).check();
     const saved = readDxf((await downloaded(() => page.keyboard.press('Control+s'))).text);
@@ -24696,11 +24697,11 @@ try {
       await p.goto(URL_); await q('wireframe').waitFor();
       await menu('Theme: light');
       await q('picker').setInputFiles('fixtures/wireframe.dxf');
-      await p.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'wireframe.dxf');
+      await waitTab(p, 'wireframe.dxf');
       await q('bg-picker').setInputFiles('fixtures/bg.png');
       await p.waitForFunction(() => document.querySelector('[data-testid=bg-name]').textContent === 'bg.png');
       const saved = await download(() => p.keyboard.press('Control+s'));
-      const drawingName = await p.locator('.tabs .dtab.on .tname').textContent();
+      const drawingName = await p.locator('.tabs .dtab.on .tname')?.textContent();
       const normalPdf = await pdf();
       for (const theme of ['light', 'dark']) {
         await menu('Theme: ' + theme);
@@ -24744,7 +24745,7 @@ try {
         assert.ok(n >= 10, what + ': ' + n);
       };
       await q('picker').setInputFiles('fixtures/outline.dxf');
-      await p.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'outline.dxf');
+      await waitTab(p, 'outline.dxf');
       await clickPoint(50, 0, { button: 'right' });
       await p.getByRole('menuitem', { name: 'Select connected', exact: true }).click();
       await p.waitForFunction(() => !document.querySelector('[data-testid=bar-extract]').disabled);
@@ -24752,7 +24753,7 @@ try {
       await q('name-input').fill('Plate A'); await p.keyboard.press('Enter');
       await q('name-dialog').waitFor({ state: 'detached' });
       await p.locator('[data-menu=File]').click(); await p.getByRole('menuitem', { name: 'Compare drawings…', exact: true }).click();
-      await p.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'Compare');
+      await waitTab(p, 'Compare');
       assert.equal(await q('wireframe').getAttribute('aria-pressed'), 'true');
       // hue tests in the dark theme (red #ff7b7b, blue #6db0ff, mark #fb923c); light has its own shades
       await menu('Theme: dark');
@@ -24874,7 +24875,7 @@ try {
     const open = async (name, doc) => {
       await closeTabs(/./);
       await t('picker').setInputFiles({ name, mimeType: 'text/plain', buffer: Buffer.from(writeDxf(doc)) });
-      await page.waitForFunction((n) => document.querySelector('.tabs .dtab.on .tname').textContent === n, name);
+      await waitTab(page, name);
       await frames();
     };
     const dbl = async (x, y) => { const p = await at(x, y); await page.mouse.dblclick(p.x, p.y); };
@@ -24982,7 +24983,7 @@ try {
       await typeCmd('eattedit');
       // opening a second tab (no closeTabs) switches tabs while the wait is pending
       await t('picker').setInputFiles({ name: 'attribute-switch.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(raw)) });
-      await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'attribute-switch.dxf');
+      await waitTab(page, 'attribute-switch.dxf');
       await frames();
       await click(150, 100); assert.equal(await dialog.count(), 0);
       assert.equal(await selCount(), '1 selected', 'tab switch ends the EATTEDIT wait');
@@ -25045,7 +25046,7 @@ try {
     const open = async (name, doc) => {
       await closeTabs(/./);
       await t('picker').setInputFiles({ name, mimeType: 'text/plain', buffer: Buffer.from(writeDxf(doc)) });
-      await page.waitForFunction((n) => document.querySelector('.tabs .dtab.on .tname').textContent === n, name);
+      await waitTab(page, name);
       await frames();
     };
     const clearPaint = () => page.evaluate(() => { window.__attrTexts = []; });
@@ -25142,7 +25143,7 @@ try {
     const open = async (name, doc) => {
       await closeTabs(/./);
       await t('picker').setInputFiles({ name, mimeType: 'text/plain', buffer: Buffer.from(writeDxf(doc)) });
-      await page.waitForFunction((n) => document.querySelector('.tabs .dtab.on .tname').textContent === n, name);
+      await waitTab(page, name);
       await frames();
     };
     const painted = async (shown, hidden, loose = true) => {
@@ -25228,7 +25229,7 @@ try {
     const open = async (name, doc) => {
       await closeTabs(/./);
       await t('picker').setInputFiles({ name, mimeType: 'text/plain', buffer: Buffer.from(writeDxf(doc)) });
-      await page.waitForFunction((n) => document.querySelector('.tabs .dtab.on .tname').textContent === n, name);
+      await waitTab(page, name);
     };
     const undo = async () => { await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z'); await frames(); };
     await open('hatch-explode.dxf', raw);
@@ -25302,7 +25303,7 @@ try {
       }
       const name = `native-explode-${tab}.dxf`;
       await t('picker').setInputFiles({ name, mimeType: 'text/plain', buffer: Buffer.from(writeDxf(doc)) });
-      await page.waitForFunction((n) => document.querySelector('.tabs .dtab.on .tname').textContent === n, name);
+      await waitTab(page, name);
       await click(170, 200); await typeCmd('x');
       assert.match(await prompt(), /^Explode: 1/);
       const result = await savedDoc(), pieces = result.entities.filter((e) => e.layer === '0');
@@ -25321,7 +25322,7 @@ try {
     const doc = newDoc();
     addEntities(doc, roundRect(100, 100, 100, 70, 15), dxfLine(250, 100, 300, 100));
     await t('picker').setInputFiles({ name: 'explode.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(doc)) });
-    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'explode.dxf');
+    await waitTab(page, 'explode.dxf');
     const theme = async (name) => { await menuItem('View', 'Theme: ' + name); await page.waitForTimeout(150); };
     const historyBefore = await histLabels();
     await typeCmd('x');
@@ -25364,7 +25365,7 @@ try {
     addBlock(block, 'Outer', [dxfInsert('Inner', 20, 20, { aci: 0 }), dxfLine(0, 0, 0, 30)]);
     addEntities(block, dxfInsert('Outer', 100, 100, { layer: 'Cut', rot: 90, sx: -2, sy: 3, aci: 1 }));
     await t('picker').setInputFiles({ name: 'explode-block.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(block)) });
-    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'explode-block.dxf');
+    await waitTab(page, 'explode-block.dxf');
     await page.keyboard.press('Control+a'); await typeCmd('EXPLODE');
     assert.equal(await entCount(), 2); await waitSel('2 selected');
     const oneLevel = await savedDoc();
@@ -25445,7 +25446,7 @@ try {
     for (const code of [41, 42]) assert.equal(Number(scaled.r.v[scaled.r.c.indexOf(code)]), 2, `saved INSERT scale ${code}`);
     await closeTabs(/./);
     await t('picker').setInputFiles({ name: 'scaled.dxf', mimeType: 'text/plain', buffer: Buffer.from(text, 'latin1') });
-    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'scaled.dxf');
+    await waitTab(page, 'scaled.dxf');
     assert.equal((await placedNow()).at(-1).sc, 2, 'reopened: still scaled');
     await page.locator('[data-group=parts] .part-hit').last().click({ force: true });
     [w1, h1] = await wh(); approx(w1, w0 * 2, 0.02, 'reopened W'); approx(h1, h0 * 2, 0.02, 'reopened H');
@@ -25503,7 +25504,7 @@ try {
     // reopen: still objects, not parts
     await closeTabs(/./);
     await t('picker').setInputFiles({ name: 'objects.dxf', mimeType: 'text/plain', buffer: Buffer.from(text, 'latin1') });
-    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'objects.dxf');
+    await waitTab(page, 'objects.dxf');
     assert.equal(await nParts(), n0 + 3, 'the three objects and the plate are back');
     assert.equal(await page.locator('.prow[data-part-id]').count(), 1, 'the Parts list holds only the plate');
     const back = layoutFromRaw(readDxf(text));
@@ -25583,7 +25584,7 @@ try {
     assert.ok(plain.some((e) => e.type === 'CIRCLE' && val(e, 40) === 55), 'the offset circle');
     await closeTabs(/./);
     await t('picker').setInputFiles({ name: 'objects2.dxf', mimeType: 'text/plain', buffer: Buffer.from(text, 'latin1') });
-    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'objects2.dxf');
+    await waitTab(page, 'objects2.dxf');
     assert.equal(await nParts(), n0 + 8, 'the objects and the plate are back');
     assert.equal(await page.locator('.prow[data-part-id]').count(), 1, 'the Parts list holds only the plate');
     assert.equal(Object.values(layoutFromRaw(readDxf(text)).parts).filter((p) => p.obj).length, 8);
@@ -25661,7 +25662,7 @@ try {
     assert.deepEqual(plain.map((e) => e.type).sort(), ['LINE', 'LWPOLYLINE']);
     await closeTabs(/./);
     await t('picker').setInputFiles({ name: 'objects3.dxf', mimeType: 'text/plain', buffer: Buffer.from(text, 'latin1') });
-    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'objects3.dxf');
+    await waitTab(page, 'objects3.dxf');
     assert.equal(await nParts(), n0 + 2, 'the objects and the plate are back');
     assert.equal(await page.locator('.prow[data-part-id]').count(), 1, 'the Parts list holds only the plate');
     assert.equal(Object.values(layoutFromRaw(readDxf(text)).parts).filter((p) => p.obj).length, 2);
@@ -25687,7 +25688,7 @@ try {
     assert.deepEqual(plainOf(text).map((e) => e.type), ['TEXT']);
     await closeTabs(/./);
     await t('picker').setInputFiles({ name: 'texts-lay.dxf', mimeType: 'text/plain', buffer: Buffer.from(text, 'latin1') });
-    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'texts-lay.dxf');
+    await waitTab(page, 'texts-lay.dxf');
     assert.equal(await nParts(), n0 + 1); assert.equal(await page.locator('.prow[data-part-id]').count(), 1, 'the Parts list holds only the plate');
     assert.equal(Object.values(layoutFromRaw(readDxf(text)).parts).filter((p) => p.obj).length, 1);
     // the plate and the text together: Text to outlines refuses (the plate is a placed part), nothing changes
@@ -25710,7 +25711,7 @@ try {
     await shotBoth('layout-text-objects');
     await closeTabs(/./);
     await t('picker').setInputFiles({ name: 'texts-lay2.dxf', mimeType: 'text/plain', buffer: Buffer.from(text, 'latin1') });
-    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'texts-lay2.dxf');
+    await waitTab(page, 'texts-lay2.dxf');
     assert.equal(await nParts(), n0 + 5, 'the outlines and the plate are back');
     assert.equal(Object.values(layoutFromRaw(readDxf(text)).parts).filter((p) => p.obj).length, 5);
     await page.locator('[data-tool=select]').click();
@@ -25750,7 +25751,7 @@ try {
     await shotBoth('layout-dimension-objects');
     await closeTabs(/./);
     await t('picker').setInputFiles({ name: 'dims-lay.dxf', mimeType: 'text/plain', buffer: Buffer.from(text, 'latin1') });
-    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'dims-lay.dxf');
+    await waitTab(page, 'dims-lay.dxf');
     assert.equal(await nParts(), n0 + 3, 'the plate, the line and the two dimensions are back');
     assert.equal(Object.values(layoutFromRaw(readDxf(text)).parts).filter((p) => p.obj).length, 3);
     // Move only the line: the dimensions that measure it follow
@@ -25826,7 +25827,7 @@ try {
     assert.deepEqual(labelsOf(text), ['200.00', '200.00', '300.00'], 'each dimension has its own block');
     await closeTabs(/./);
     await t('picker').setInputFiles({ name: 'dims-lay2.dxf', mimeType: 'text/plain', buffer: Buffer.from(text, 'latin1') });
-    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'dims-lay2.dxf');
+    await waitTab(page, 'dims-lay2.dxf');
     assert.deepEqual(labelsOf((await save())), ['200.00', '200.00', '300.00'], 'and after reopening');
     await page.locator('[data-tool=select]').click();
     // Trim the first of three copies sharing one part: only its dimension follows, and one Undo restores it.
@@ -25910,7 +25911,7 @@ try {
     await shotBoth('layout-arc-radius-diameter', fadeHistory);
     await closeTabs(/./);
     await t('picker').setInputFiles({ name: 'radius-diameter-lay.dxf', mimeType: 'text/plain', buffer: Buffer.from(text, 'latin1') });
-    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'radius-diameter-lay.dxf');
+    await waitTab(page, 'radius-diameter-lay.dxf');
     assert.equal(await nParts(), n0 + 6);
     const reopened = layoutFromRaw(readDxf(text));
     assert.equal(Object.values(reopened.parts).filter((p) => p.obj).length, 6);
@@ -26001,7 +26002,7 @@ try {
     addEntities(second, [dxfPoly([[110, 120], [170, 120], [170, 180], [110, 180]].map((pt) => pt.map((v) => v / 25.4)), true)]);
     const open = async (name, raw) => {
       await q('picker').setInputFiles({ name, mimeType: 'text/plain', buffer: Buffer.from(writeDxf(raw)) });
-      await p.waitForFunction((name) => document.querySelector('.dtab.on .tname').textContent === name, name);
+      await waitTab(p, name);
     };
     const tab = (name) => p.locator('.dtab').filter({ has: p.locator('.tname', { hasText: name.replace(/\.dxf$/, '') }) });
     const point = (x, y) => p.evaluate(([x, y]) => {
@@ -26060,7 +26061,7 @@ try {
         addEntities(raw, dxfLine(150, 150, 300, 150));
         Object.assign(raw, addDimension(raw, buildDim('linear', { a: [150, 150], b: [300, 150], offset: 50, axis: 'h', textH: 5 }, 1, 'PD_DIM_H1', 2)));
         await t('picker').setInputFiles({ name: 'dimension-text.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(raw), 'latin1') });
-        await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'dimension-text.dxf');
+        await waitTab(page, 'dimension-text.dxf');
       }
       await t('decimals').selectOption('2');
       await page.locator('[data-tool=select]').click();
@@ -26126,7 +26127,7 @@ try {
       await closeTabs(/./);
       const filename = 'dimension-text-' + tab + '.dxf';
       await t('picker').setInputFiles({ name: filename, mimeType: 'text/plain', buffer: Buffer.from(text, 'latin1') });
-      await page.waitForFunction((name) => document.querySelector('.tabs .dtab.on .tname').textContent === name, filename);
+      await waitTab(page, filename);
       assert.deepEqual(dimIn(await save()), dimIn(text), tab + ': override and geometry survive save/reopen');
       await page.locator('[data-tool=select]').click();
       const dim = dimIn(text), tx = dimGeom(dim.kind, dim.params, 1, 2).text;
@@ -26197,7 +26198,7 @@ try {
         addEntities(raw, dxfLine(150, 150, 300, 150));
         Object.assign(raw, addDimension(raw, buildDim('linear', { a: [150, 150], b: [300, 150], offset: 50, axis: 'h', textH: 5 }, 1, 'PD_DIM_H1', 2)));
         await t('picker').setInputFiles({ name: 'edit-follows.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(raw), 'latin1') });
-        await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'edit-follows.dxf');
+        await waitTab(page, 'edit-follows.dxf');
       }
       await t('decimals').selectOption('2');
       await page.locator('[data-tool=select]').click();
@@ -26261,7 +26262,7 @@ try {
         addEntities(raw, dxfLine(150, 150, 300, 150));
         Object.assign(raw, addDimension(raw, buildDim('linear', { a: [150, 150], b: [300, 150], offset: 50, axis: 'h', textH: 5, override: 'Width <> mm' }, 1, 'PD_DIM_H1', 2)));
         await t('picker').setInputFiles({ name: 'explode-dim.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(raw), 'latin1') });
-        await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'explode-dim.dxf');
+        await waitTab(page, 'explode-dim.dxf');
       }
       await t('decimals').selectOption('2');
       await page.locator('[data-tool=select]').click();
@@ -26299,7 +26300,7 @@ try {
     Object.assign(both, addDimension(both, buildDim('aligned', { a: [150, 150], b: [300, 200], offset: 30, textH: 5 }, 1, 'PD_DIM_1')));
     Object.assign(both, addDimension(both, buildDim('angle', { v: [200, 300], r: 50, a0: 0, a1: 60, textH: 5 }, 1, 'PD_DIM_A1', 2)));
     await t('picker').setInputFiles({ name: 'explode-dim2.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(both), 'latin1') });
-    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'explode-dim2.dxf');
+    await waitTab(page, 'explode-dim2.dxf');
     await page.locator('[data-tool=select]').click(); await page.keyboard.press('Control+a'); await frames();
     await typeCmd('explode'); await frames();
     assert.match(await prompt(), /^Explode: 2/);
@@ -26312,7 +26313,7 @@ try {
     Object.assign(flipped, addDimension(flipped, buildDim('aligned', { a: [150, 150], b: [300, 150], offset: 50, textH: 5 }, 1, 'PD_DIM_1')));
     flipped.entities[flipped.entities.length - 1] = dxfInsert('PD_DIM_1', 0, 0, { layer: 'Dimensions', sy: -1 });
     await t('picker').setInputFiles({ name: 'explode-dim3.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(flipped), 'latin1') });
-    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'explode-dim3.dxf');
+    await waitTab(page, 'explode-dim3.dxf');
     await page.locator('[data-tool=select]').click(); await page.keyboard.press('Control+a'); await frames();
     await typeCmd('explode'); await frames();
     assert.match(await prompt(), /^Explode: 1/);
@@ -26359,7 +26360,7 @@ try {
     await shotBoth('layout-angle', () => page.waitForFunction(() => document.querySelector('[data-testid=cmd-fade]').classList.contains('idle')));
     await closeTabs(/./);
     await t('picker').setInputFiles({ name: 'angle-lay.dxf', mimeType: 'text/plain', buffer: Buffer.from(text, 'latin1') });
-    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'angle-lay.dxf');
+    await waitTab(page, 'angle-lay.dxf');
     assert.equal(await nParts(), n0 + 3);
     assert.equal(Object.values(layoutFromRaw(readDxf(text)).parts).filter((q) => q.obj).length, 3);
     assert.deepEqual(angleIn(await save()), angleIn(text), 'the A block reopens as an angle dimension');
@@ -26434,7 +26435,7 @@ try {
     assert.deepEqual(xy.slice(-2).map((v) => Math.round(v * 1e6) / 1e6), [600, 500], 'the last point snapped to the first');
     await closeTabs(/./);
     await t('picker').setInputFiles({ name: 'fixes156.dxf', mimeType: 'text/plain', buffer: Buffer.from(text, 'latin1') });
-    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'fixes156.dxf');
+    await waitTab(page, 'fixes156.dxf');
     assert.match(await prompt(), /Opened fixes156\.dxf as a layout: 1 placed part, 1 part,/, 'the open note counts parts only');
     await t('ptab-objects').click();
     assert.equal((await t('obj-count').textContent()).trim(), '1 placed · 1 parts');
@@ -26503,7 +26504,7 @@ try {
       src.parts.plate = makePart('plate', 'Plate', raw, 1);
       src.placed = [1, 2, 2].map((sc, i) => ({ partId: 'plate', x: 100 + i * 300, y: 200, rot: 0, mirrorX: false, mirrorY: false, sc }));
       await q('picker').setInputFiles({ name: 'scaled-contours.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(layoutRaw(src)), 'latin1') });
-      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'scaled-contours.dxf');
+      await waitTab(p, 'scaled-contours.dxf');
       await p.keyboard.press('Control+a'); await p.locator('[data-tool=contour]').click();
       await q('contour-dist').fill('5'); await q('contour-dist').press('Enter');
       await q('contour-steps').fill('1'); await q('contour-steps').press('Enter');
@@ -26535,7 +26536,7 @@ try {
     await closeTabs(/./);
     const open = async (raw, name) => {
       await t('picker').setInputFiles({ name, mimeType: 'text/plain', buffer: Buffer.from(writeDxf(raw)) });
-      await page.waitForFunction((n) => document.querySelector('.tabs .dtab.on .tname').textContent === n, name);
+      await waitTab(page, name);
       await page.keyboard.press('Control+a');
     };
     const run = async (key) => {
@@ -26633,7 +26634,7 @@ try {
     };
     const open = async (raw, name) => {
       await q('picker').setInputFiles({ name, mimeType: 'text/plain', buffer: Buffer.from(writeDxf(raw), 'latin1') });
-      await p.waitForFunction((n) => document.querySelector('.tabs .dtab.on .tname').textContent === n, name);
+      await waitTab(p, name);
       await key('Escape');
     };
     const at = (x, y) => p.evaluate(([x, y]) => {
@@ -26730,7 +26731,7 @@ try {
       await key('Control+z'); d = await raw(); assert.equal(colour(d), 'aci:5'); assert.equal(colour(d, 1), 'aci:1', 'one Undo restores both layout fills');
 
       await open(fixture(), 'compare257.dxf'); await command('compare');
-      await p.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'Compare');
+      await waitTab(p, 'Compare');
       await click(20, 60); await swatch('aci:5'); d = await raw(); assert.equal(colour(d), 'aci:5'); assert.equal(colour(d, 1), 'aci:1');
       await shoot('compare'); await key('Control+z'); assert.equal(colour(await raw()), 'aci:1', 'one Compare Undo restores the source');
       await p.locator('.dtab').filter({ has: p.locator('.tname', { hasText: /^compare257.dxf$/ }) }).click();
@@ -26844,7 +26845,7 @@ try {
       dxfPoly([[100, 50], [150, 50], [150, 80], [100, 80]], { closed: true, layer: 'Top', fill: 'aci:1' }), dxfText(200, 40, 6, 'NOTE', { layer: 'Cut' }));
     const open = async (text, name) => {
       await t('picker').setInputFiles({ name, mimeType: 'text/plain', buffer: Buffer.from(text, 'latin1') });
-      await page.waitForFunction((n) => document.querySelector('.tabs .dtab.on .tname').textContent === n, name);
+      await waitTab(page, name);
     };
     const key = async (k) => { await page.locator('[data-testid=cmd-input]').evaluate((e) => e.blur()); await page.keyboard.press(k); };
     const box = async (x0, y0, x1, y1) => {
@@ -26948,7 +26949,7 @@ try {
     }
     const name = 'combine218b.dxf';
     await t('picker').setInputFiles({ name, mimeType: 'text/plain', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
-    await page.waitForFunction((n) => document.querySelector('.tabs .dtab.on .tname').textContent === n, name);
+    await waitTab(page, name);
     await page.locator('[data-tool=select]').click();
     const key = async (k) => { await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press(k); };
     const readout = async (re) => { try { await page.waitForFunction((s) => new RegExp(s).test(document.querySelector('[data-testid=sel-readout]')?.textContent || ''), re.source, { timeout: 5000 }); } catch (e) { throw new Error('readout ' + re + ' != ' + (await page.locator('[data-testid=sel-readout]').allTextContents())); } };
@@ -27020,7 +27021,7 @@ try {
     const text = (await downloaded(() => page.keyboard.press('Control+s'))).text;
     await closeTabs(/./);
     await t('picker').setInputFiles({ name: 'combine218b-reopened.dxf', mimeType: 'text/plain', buffer: Buffer.from(text, 'latin1') });
-    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'combine218b-reopened.dxf');
+    await waitTab(page, 'combine218b-reopened.dxf');
     assert.equal(await nParts(), n0 - 2);
     assert.equal(await red(150, 475), false, 'the hole is still there'); assert.equal(await red(275, 475), false); assert.equal(await red(120, 420), true);
     await click(100, 475); await page.waitForFunction(() => document.querySelector('[data-testid=prop-chip]')?.textContent === 'Combined (3 outlines)');
@@ -27032,9 +27033,9 @@ try {
     const doc = newDoc();
     addEntities(doc, dxfPoly([[20, 20], [120, 20], [120, 100], [20, 100]], { closed: true }), dxfCircle(50, 60, 15), dxfPoly([[100, 50], [150, 50], [150, 80], [100, 80]], { closed: true, fill: 'aci:1' }));
     await t('picker').setInputFiles({ name: 'cmp218b.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(doc)) });
-    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'cmp218b.dxf');
+    await waitTab(page, 'cmp218b.dxf');
     await page.keyboard.press('Escape'); await typeCmd('compare');
-    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'Compare');
+    await waitTab(page, 'Compare');
     await t('cmp-eye').first().click(); await key('Control+l'); await said(/^Show .* to edit$/);
     await t('cmp-eye').first().click();
     await key('Control+a'); await key('Control+l'); await said(/^Combine: 3 outlines are one object \(Combined 1\)/);
@@ -27051,7 +27052,7 @@ try {
     const doc = newDoc();
     addEntities(doc, dxfPoly([[100, 100], [160, 100], [160, 160], [100, 160]], { closed: true }), dxfPoly([[130, 130], [190, 130], [190, 190], [130, 190]], { closed: true }), dxfPoly([[300, 100], [350, 100], [350, 150]]));
     await t('picker').setInputFiles({ name: 'shaping.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(doc)) });
-    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'shaping.dxf');
+    await waitTab(page, 'shaping.dxf');
     assert.equal(await entCount(), 3);
     // the Modify menu lists all seven after the existing items
     await page.locator('[data-menu=Modify]').click();
@@ -27104,7 +27105,7 @@ try {
     const far = newDoc();
     addEntities(far, dxfPoly([[100, 100], [140, 100], [140, 140], [100, 140]], { closed: true }), dxfPoly([[200, 100], [240, 100], [240, 140], [200, 140]], { closed: true }));
     await t('picker').setInputFiles({ name: 'shaping-far.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(far)) });
-    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'shaping-far.dxf');
+    await waitTab(page, 'shaping-far.dxf');
     await page.keyboard.press('Control+a');
     await typeCmd('intersect');
     assert.equal(await prompt(), 'Intersect: the outlines do not overlap, nothing changed');
@@ -27117,7 +27118,7 @@ try {
     const doc = newDoc();
     addEntities(doc, dxfPoly([[100, 100], [200, 100], [200, 200], [100, 200]], { closed: true }), dxfPoly([[130, 130], [150, 130], [150, 150], [130, 150]], { closed: true }));
     await t('picker').setInputFiles({ name: 'shaping-288a.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(doc)) });
-    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'shaping-288a.dxf');
+    await waitTab(page, 'shaping-288a.dxf');
     await page.keyboard.press('Control+a');                          // no last pick: the largest outline is the target
     await typeCmd('shapetrim');
     await said(/^Trim: 2 outlines → 2 outlines, area 9600\.00 mm²\. The cutters stay\. Ctrl\+Z puts the originals back$/);
@@ -27145,7 +27146,7 @@ try {
     addEntities(doc, dxfPoly([[100, 100], [160, 100], [160, 160], [100, 160]], { closed: true, layer: 'Back', aci: 1 }),
       dxfPoly([[130, 130], [190, 130], [190, 190], [130, 190]], { closed: true, layer: 'Front', aci: 3 }), dxfPoly([[300, 100], [350, 100], [350, 150]]));
     await t('picker').setInputFiles({ name: 'shaping-122b.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(doc)) });
-    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'shaping-122b.dxf');
+    await waitTab(page, 'shaping-122b.dxf');
     // Saving renumbers DXF handles when entities are removed; compare all geometry and attributes without those handles.
     const withoutHandles = (ents) => ents.map((e) => ({ ...e, r: { c: e.r.c.filter((c) => c !== 5), v: e.r.v.filter((_, i) => e.r.c[i] !== 5) } }));
     const original = withoutHandles((await savedDoc()).entities);
@@ -27183,7 +27184,7 @@ try {
     const square = dxfPoly([[100, 100], [160, 100], [160, 160], [100, 160]], { closed: true });
     addEntities(same, square, square);
     await t('picker').setInputFiles({ name: 'shaping-covered.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(same)) });
-    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'shaping-covered.dxf');
+    await waitTab(page, 'shaping-covered.dxf');
     for (const [cmd, label, count, area] of [['simplify', 'Simplify', 1, '3600.00'], ['frontminus', 'Front minus back', 0, '0.00'], ['backminus', 'Back minus front', 0, '0.00']]) {
       await page.keyboard.press('Control+a'); await typeCmd(cmd);
       assert.equal(await prompt(), `${label}: 2 outlines → ${count} outline${count === 1 ? '' : 's'}, area ${area} mm². Ctrl+Z puts the originals back`);
@@ -27232,7 +27233,7 @@ try {
       addEntities(doc, dxfPoly([[100, 100], [160, 100], [160, 160], [100, 160]], { closed: true, layer: 'Back', aci: 1 }),
         dxfPoly([[130, 130], [190, 130], [190, 190], [130, 190]], { closed: true, layer: 'Front', aci: 3 }), dxfPoly([[300, 100], [350, 100], [350, 150]]));
       await t('picker').setInputFiles({ name: 'shaping-123.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(doc)) });
-      await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'shaping-123.dxf');
+      await waitTab(page, 'shaping-123.dxf');
       const original = await save(), bytes = entityBytes(original);
       await t('ptab-objects').click();
       for (const [cmd, label, area, layer] of [
@@ -27265,7 +27266,7 @@ try {
       const same = newDoc(), square = dxfPoly([[100, 100], [160, 100], [160, 160], [100, 160]], { closed: true });
       addEntities(same, square, square);
       await t('picker').setInputFiles({ name: 'shaping-123-empty.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(same)) });
-      await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'shaping-123-empty.dxf');
+      await waitTab(page, 'shaping-123-empty.dxf');
       await page.locator('[data-menu=Modify]').click(); await tick().click(); await remembered(true);
       for (const cmd of ['frontminus', 'backminus']) {
         await page.keyboard.press('Control+a'); await typeCmd(cmd);
@@ -27291,7 +27292,7 @@ try {
     addBlock(doc, 'B', [dxfPoly([[0, 0], [20, 0], [20, 20], [0, 20]], { closed: true }), dxfPoly([[30, 0], [50, 0], [50, 20]])]);
     addEntities(doc, dxfPoly([[100, 100], [160, 100], [160, 160], [100, 160]], { closed: true }), dxfPoly([[130, 130], [190, 130], [190, 190], [130, 190]], { closed: true }), dxfInsert('B', 300, 100));
     await t('picker').setInputFiles({ name: 'shaping-block.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(doc)) });
-    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'shaping-block.dxf');
+    await waitTab(page, 'shaping-block.dxf');
     await page.keyboard.press('Control+a');
     await typeCmd('weld');
     assert.equal(await prompt(), 'Weld: 2 outlines → 1 outline, area 6300.00 mm²; 1 block skipped: explode it first. Ctrl+Z puts the originals back');
@@ -27303,7 +27304,7 @@ try {
     addLayer(lk, 'Cut');
     addEntities(lk, dxfPoly([[100, 100], [160, 100], [160, 160], [100, 160]], { closed: true }), dxfPoly([[130, 130], [190, 130], [190, 190], [130, 190]], { closed: true, layer: 'Cut' }));
     await t('picker').setInputFiles({ name: 'shaping-lock.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(lk)) });
-    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'shaping-lock.dxf');
+    await waitTab(page, 'shaping-lock.dxf');
     await t('ptab-objects').click(); await t('objects-panel').waitFor();
     await page.locator('[data-testid=obj-tree] .or.layer[data-layer="Cut"] [data-act=lock]').click();
     await page.keyboard.press('Control+a');
@@ -27361,7 +27362,7 @@ try {
       const otherDoc = newDoc(4); addEntities(otherDoc, dxfLine(0, 0, 10, 0));
       const other = 'preflight-other.dxf';
       await t('picker').setInputFiles({ name: other, mimeType: 'text/plain', buffer: Buffer.from(writeDxf(otherDoc), 'latin1') });
-      await page.waitForFunction((n) => document.querySelector('.tabs .dtab.on .tname').textContent === n, other);
+      await waitTab(page, other);
       await menuItem('Tools', 'Preflight…');
       assert.equal(await t('preflight-text-count').textContent(), '0');
       await owner.click();
@@ -27598,7 +27599,7 @@ try {
       dxfLine(20, 90, 70, 90, { tc: 0xffffff }), dxfLine(70.005, 90, 120, 90, { aci: 7 }));
     const open = async () => {
       await q('picker').setInputFiles({ name: 'work-area.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(doc), 'latin1') });
-      await p.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'work-area.dxf');
+      await waitTab(p, 'work-area.dxf');
       await frame();
     };
     const pixels = (hex) => q('drawing').evaluate((el, hex) => {
@@ -27688,7 +27689,7 @@ try {
     const menu = async (name) => { await p.locator('[data-menu=View]').click(); await p.getByRole('menuitemcheckbox', { name: new RegExp(name + '\\b') }).click(); await frame(); };
     const open = async (name, raw) => {
       await q('picker').setInputFiles({ name, mimeType: 'text/plain', buffer: Buffer.from(writeDxf(raw)) });
-      await p.waitForFunction((name) => document.querySelector('.tabs .dtab.on .tname').textContent === name, name); await frame();
+      await waitTab(p, name); await frame();
     };
     const pixels = (hex) => q('drawing').evaluate((el, hex) => {
       const rgb = hex.match(/\w\w/g).map((v) => parseInt(v, 16)), data = el.getContext('2d').getImageData(0, 0, el.width, el.height).data;
@@ -27925,7 +27926,7 @@ try {
     if (obstacle) lay.parts.other = makePart('other', 'Other plate', doc);
     if (placed) lay.placed.push({ partId: obstacle ? 'other' : 'fit', x: 0, y: 200, rot: 0, mirrorX: false, mirrorY: false });
     await t('picker').setInputFiles({ name, mimeType: 'text/plain', buffer: Buffer.from(writeDxf(layoutRaw(lay)), 'latin1') });
-    await page.waitForFunction((n) => document.querySelector('.tabs .dtab.on .tname').textContent === n, name);
+    await waitTab(page, name);
     await t('ptab-drawing').click();
   };
   await step('TODO 86: Fit skips placed parts, reports skipped cells, and Apply keeps them clear (light then dark)', async () => {
@@ -27960,7 +27961,7 @@ try {
     Object.assign(lay.s, { sheetW: 400, sheetH: 300, gripBottom: 0, gapX: 0, gapY: 0, gridPart: 'fit' });
     lay.placed.push({ partId: 'fit', x: 150, y: 100, rot: 0 }, { partId: 'other', x: 250, y: 100, rot: 0 });
     await t('picker').setInputFiles({ name: 'matching-grid.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
-    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'matching-grid.dxf');
+    await waitTab(page, 'matching-grid.dxf');
     await t('ptab-drawing').click();
     await t('fit-switch').uncheck();
     await panelControl(page, page.locator('[data-key=cols]')).fill('3');
@@ -27999,7 +28000,7 @@ try {
       gridPart: 'fit', fit: false, cols: 3, rows: 2 });
     lay.placed.push({ partId: 'fit', x: 150, y: 100, rot: 0 });
     await t('picker').setInputFiles({ name: 'dropped-grid.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
-    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'dropped-grid.dxf');
+    await waitTab(page, 'dropped-grid.dxf');
     await t('ptab-step').click();
     assert.equal(await t('step-hint').textContent(), '3 × 2: 2 off the sheet');
     assert.equal(await t('count').textContent(), '3');
@@ -28102,7 +28103,7 @@ try {
     };
     const open = async (n) => {
       await q('picker').setInputFiles({ name: 'gaps-' + n + '.dxf', mimeType: 'application/dxf', buffer: fixture(n) });
-      await p.waitForFunction((n) => document.querySelector('.tabs .dtab.on .tname').textContent === 'gaps-' + n + '.dxf' && document.querySelector('[data-testid=gap-count]').textContent === (n > 50 ? n + ' (count only)' : String(n)), n);
+      await p.waitForFunction((n) => document.querySelector('.tabs .dtab.on .tname')?.textContent === 'gaps-' + n + '.dxf' && document.querySelector('[data-testid=gap-count]').textContent === (n > 50 ? n + ' (count only)' : String(n)), n);
       await p.waitForTimeout(150);
     };
     try {
@@ -28165,7 +28166,7 @@ try {
       const { makeDimension, addDimension } = await import('./web/edit.js');
       Object.assign(raw, addDimension(raw, makeDimension([X, Y], [X + .6, Y], 1, raw.blocks, 2, { offset: -.2, textH: .06, arrow: .04, gap: .02 })));
       await q('picker').setInputFiles({ name: 'zoom-detail.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(raw)) });
-      await p.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'zoom-detail.dxf');
+      await waitTab(p, 'zoom-detail.dxf');
       const svg = p.locator('.canvas > svg').first();
       const viewNow = async () => (await svg.getAttribute('viewBox')).split(' ').map(Number);
       const atPoint = async (x, y) => {
@@ -28352,7 +28353,7 @@ try {
         addEntities(raw, dxfLine(150, 150, 300, 150));
         Object.assign(raw, addDimension(raw, buildDim('aligned', { a: [150, 150], b: [300, 150], offset: 50, textH: 5 }, 1, 'PD_DIM_1', 2)));
         await t('picker').setInputFiles({ name: 'drive-76a.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(raw), 'latin1') });
-        await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'drive-76a.dxf');
+        await waitTab(page, 'drive-76a.dxf');
       }
       await t('decimals').selectOption('2');
       await page.locator('[data-tool=select]').click();
@@ -28427,7 +28428,7 @@ try {
         addEntities(raw, dxfLine(150, 150, 300, 150), dxfLine(350, 100, 400, 120));
         Object.assign(raw, addDimension(raw, buildDim('aligned', { a: [150, 150], b: [300, 150], offset: 50, textH: 5 }, 1, 'PD_DIM_1', 2)));
         await t('picker').setInputFiles({ name: 'gone-76c.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(raw), 'latin1') });
-        await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'gone-76c.dxf');
+        await waitTab(page, 'gone-76c.dxf');
       }
       await t('decimals').selectOption('2'); await page.locator('[data-tool=select]').click();
       const a = await at(120, 120), b = await at(430, 240);
@@ -28487,7 +28488,7 @@ try {
       const params = radial ? { c: [200, 150], r: 25, p: [300, 150] } : { a: [150, 150], b: [300, 190], axis, offset: 50 };
       Object.assign(raw, addDimension(raw, buildDim(kind, { ...params, textH: 5 }, 1, radial ? 'PD_DIM_R1' : axis ? `PD_DIM_${axis.toUpperCase()}1` : 'PD_DIM_1', 2)));
       await t('picker').setInputFiles({ name: 'reason-76c.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(raw), 'latin1') });
-      await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'reason-76c.dxf');
+      await waitTab(page, 'reason-76c.dxf');
       await page.locator('[data-tool=select]').click();
       const before = await savedDoc(), dim = dimOfEntity(before, before.entities.length - 1), tx = dimGeom(dim.kind, dim.params, 1, 2).text;
       const p = await at(tx.x, tx.y + tx.h / 2); await page.mouse.dblclick(p.x, p.y); await t('text-editor').waitFor();
@@ -28529,7 +28530,7 @@ try {
         addEntities(raw, dxfLine(150, 150, 300, 190), dxfLine(350, 100, 400, 120));
         Object.assign(raw, addDimension(raw, buildDim('linear', { a: [150, 150], b: [300, 190], axis: 'h', offset: 100, textH: 5 }, 1, 'PD_DIM_H1', 2)));
         await t('picker').setInputFiles({ name: 'drive-76b.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(raw), 'latin1') });
-        await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'drive-76b.dxf');
+        await waitTab(page, 'drive-76b.dxf');
       }
       await t('decimals').selectOption('2'); await page.locator('[data-tool=select]').click();
       const edit = async (text) => {
@@ -28589,7 +28590,7 @@ try {
         addEntities(raw, dxfPoly([[150, 150], [300, 150], [300, 230], [150, 230]], { closed: true }));
         Object.assign(raw, addDimension(raw, buildDim('linear', { a: [150, 190], b: [300, 190], axis: 'h', offset: 100, textH: 5 }, 1, 'PD_DIM_H1', 2)));
         await t('picker').setInputFiles({ name: 'drive-76d.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(raw), 'latin1') });
-        await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'drive-76d.dxf');
+        await waitTab(page, 'drive-76d.dxf');
       }
       await t('decimals').selectOption('2'); await page.locator('[data-tool=select]').click();
       const apply = async (text, expected = '150.00') => {
@@ -28622,7 +28623,7 @@ try {
       addEntities(raw, dxfLine(150, 150, ...b));
       Object.assign(raw, addDimension(raw, buildDim('linear', { a: [150, 150], b, axis, offset: 100, textH: 5 }, 1, axis === 'h' ? 'PD_DIM_H1' : 'PD_DIM_V1', 2)));
       await t('picker').setInputFiles({ name: 'zero-76b.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(raw), 'latin1') });
-      await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'zero-76b.dxf');
+      await waitTab(page, 'zero-76b.dxf');
       await page.locator('[data-tool=select]').click();
       const before = await savedDoc(), history = await histLabels();
       const [name, block] = Object.entries(before.blocks).find(([k]) => /^PD_DIM_/.test(k));
@@ -28646,7 +28647,7 @@ try {
     const raw = newDoc(4);
     addEntities(raw, [dxfCircle(60, 60, 20)]);
     await t('picker').setInputFiles({ name: 'linked-radius.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(raw)) });
-    await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'linked-radius.dxf');
+    await waitTab(page, 'linked-radius.dxf');
     await typeCmd('dra'); await click(60, 80); await click(100, 60);
     assert.match(await prompt(), /Dimension placed: R/);
     await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click();
@@ -28676,7 +28677,7 @@ try {
     addEntities(raw, [dxfCircle(60.123456789, 60.987654321, 20.3333333)]);
     Object.assign(raw, addDimension(raw, buildDim('radius', { textH: 2, c: [60.123456789, 60.987654321], r: 20.3333333, p: [80, 61] }, 1, 'PD_DIM_R1', 2)));
     await t('picker').setInputFiles({ name: 'reopened-radius.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(raw)) });
-    await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'reopened-radius.dxf');
+    await waitTab(page, 'reopened-radius.dxf');
     const before = await savedDoc();
     await pick(60, 81, 5);
     await dragGripTo('0:c', 75, 75); await frames();
@@ -28849,7 +28850,7 @@ try {
       const menu = async (top, name) => { await p.locator(`[data-menu=${top}]`).click(); await p.getByRole('menuitem', { name, exact: true }).click({ timeout: 120000 }); };
       const open = async (name) => {
         await p.getByTestId('picker').setInputFiles({ name, mimeType: 'text/plain', buffer });
-        await p.waitForFunction((n) => document.querySelector('.dtab.on .tname').textContent === n, name, { timeout: 120000 });
+        await p.waitForFunction((n) => document.querySelector('.dtab.on .tname')?.textContent === n, name, { timeout: 120000 });
         await frame();
       };
       // One toggle: the quick paint (read in the frame it lands), then the settled one; the two differ only by the skipped items.
@@ -28922,7 +28923,7 @@ try {
         const menu = async (top, name) => { await p.locator(`[data-menu=${top}]`).click(); await p.getByRole('menuitem', { name, exact: true }).click({ timeout: 120000 }); };
         const open = async (name) => {
           await p.getByTestId('picker').setInputFiles({ name, mimeType: 'text/plain', buffer });
-          await p.waitForFunction((n) => document.querySelector('.dtab.on .tname').textContent === n, name, { timeout: 120000 });
+          await p.waitForFunction((n) => document.querySelector('.dtab.on .tname')?.textContent === n, name, { timeout: 120000 });
           await frame();
         };
         await p.goto(URL_ + '?autosave=86400000');
@@ -28980,7 +28981,7 @@ try {
         const menu = async (top, name) => { await p.locator(`[data-menu=${top}]`).click(); await p.getByRole('menuitem', { name, exact: true }).click({ timeout: 120000 }); };
         const open = async (name) => {
           await p.getByTestId('picker').setInputFiles({ name, mimeType: 'text/plain', buffer });
-          await p.waitForFunction((n) => document.querySelector('.dtab.on .tname').textContent === n, name, { timeout: 120000 });
+          await p.waitForFunction((n) => document.querySelector('.dtab.on .tname')?.textContent === n, name, { timeout: 120000 });
           await frame();
         };
         const settled = () => p.waitForFunction(() => document.querySelector('[data-testid=drawing]').dataset.snap === '', null, { timeout: 10000 });
@@ -29081,7 +29082,7 @@ try {
         const menu = async (top, name) => { await p.locator(`[data-menu=${top}]`).click(); await p.getByRole('menuitem', { name, exact: true }).click({ timeout: 120000 }); };
         const open = async (name) => {
           await p.getByTestId('picker').setInputFiles({ name, mimeType: 'text/plain', buffer });
-          await p.waitForFunction((n) => document.querySelector('.dtab.on .tname').textContent === n, name, { timeout: 120000 });
+          await p.waitForFunction((n) => document.querySelector('.dtab.on .tname')?.textContent === n, name, { timeout: 120000 });
           await frame();
         };
         const settled = () => p.waitForFunction(() => { const c = document.querySelector('[data-testid=drawing]'); return c.dataset.snap === '' && c.dataset.chunk === ''; }, null, { timeout: 20000 });
@@ -29203,7 +29204,7 @@ try {
       await p.goto(URL_ + '?autosave=86400000'); await p.getByTestId('count').waitFor({ state: 'attached' });
       await menu('View', 'Theme: light');
       await p.getByTestId('picker').setInputFiles({ name: 'p7b1-big.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(bigDoc(20000))) });
-      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'p7b1-big.dxf');
+      await waitTab(p, 'p7b1-big.dxf');
       await menu('Layout', 'Add to layout');
       await p.locator('[data-ribbon-tab=Layout]').click();
       for (const key of ['sheetW', 'sheetH']) {
@@ -29338,7 +29339,7 @@ try {
       };
       await p.goto(URL_ + '?autosave=86400000'); await p.getByTestId('count').waitFor({ state: 'attached' });
       await p.getByTestId('picker').setInputFiles({ name: 't258-big.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(crossDoc(150000)), 'latin1') });
-      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 't258-big.dxf', null, { timeout: 120000 });
+      await p.waitForFunction(() => document.querySelector('.dtab.on .tname')?.textContent === 't258-big.dxf', null, { timeout: 120000 });
       await p.waitForFunction(() => Number(document.querySelector('[data-testid=entities]').textContent.replace(/\D/g, '')) === 150000, null, { timeout: 120000 });
       await p.getByTestId('canvas').getByRole('button', { name: 'Fit', exact: true }).click(); await frame();
       await p.waitForFunction(() => window.t258Index >= 1, null, { timeout: 60000 }); await p.waitForTimeout(500); await frame();
@@ -29393,7 +29394,7 @@ try {
         await p.goto(URL_ + '?autosave=86400000'); await p.getByTestId('count').waitFor({ state: 'attached' });
         const fileName = name.replace(':', '-') + '.dxf';
         await p.getByTestId('picker').setInputFiles({ name: fileName, mimeType: 'text/plain', buffer });
-        await p.waitForFunction((n) => document.querySelector('.dtab.on .tname').textContent === n, fileName, { timeout: 120000 });
+        await p.waitForFunction((n) => document.querySelector('.dtab.on .tname')?.textContent === n, fileName, { timeout: 120000 });
         await p.waitForFunction(() => window.t258Index >= 1, null, { timeout: 60000 });
         await p.waitForFunction(() => window.t259Ready(), null, { timeout: 60000 }); await frame();
         const primed = await p.evaluate(() => window.t259Misses.length);
@@ -29451,7 +29452,7 @@ try {
       const menu = async (top, name) => { await p.locator(`[data-menu=${top}]`).click(); await p.getByRole('menuitem', { name, exact: true }).click(); };
       await p.goto(URL_ + '?autosave=86400000'); await p.getByTestId('count').waitFor({ state: 'attached' });
       await p.getByTestId('picker').setInputFiles({ name: 'p7b2-big.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(bigDoc(20000))) });
-      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'p7b2-big.dxf');
+      await waitTab(p, 'p7b2-big.dxf');
       await menu('Layout', 'Add to layout');
       await p.locator('.tabs .dtab').first().click(); await menu('Layout', 'Add to layout');
       await p.locator('[data-ribbon-tab=Layout]').click();
@@ -29521,7 +29522,7 @@ try {
       const buffer = Buffer.from(writeDxf(bigDoc(20000)));
       for (const name of ['p14b-a.dxf', 'p14b-b.dxf']) {
         await p.getByTestId('picker').setInputFiles({ name, mimeType: 'text/plain', buffer });
-        await p.waitForFunction((name) => document.querySelector('.dtab.on .tname').textContent === name, name);
+        await waitTab(p, name);
       }
       await menu('File', 'Compare drawings…');
       await panelControl(p, p.getByTestId('cmp-item').first().locator('.cmpname')).click(); // drag the first-painted snapshot over the second
@@ -29569,7 +29570,7 @@ try {
       const buffer = Buffer.from(writeDxf(bigDoc(20000)));
       for (const name of ['t317-a.dxf', 't317-b.dxf']) {
         await p.getByTestId('picker').setInputFiles({ name, mimeType: 'text/plain', buffer });
-        await p.waitForFunction((name) => document.querySelector('.dtab.on .tname').textContent === name, name);
+        await waitTab(p, name);
       }
       for (const kind of ['drawing', 'compare']) {
         if (kind === 'compare') { await p.locator('[data-menu=File]').click(); await p.getByRole('menuitem', { name: 'Compare drawings…', exact: true }).click(); }
@@ -29628,7 +29629,7 @@ try {
       await p.goto(URL_ + '?autosave=86400000'); await q('count').waitFor({ state: 'attached' });
       for (const [name, n] of [['t316-a.dxf', 20000], ['t316-b.dxf', 20300]]) {
         await q('picker').setInputFiles({ name, mimeType: 'text/plain', buffer: Buffer.from(writeDxf(bigDoc(n))) });
-        await p.waitForFunction((name) => document.querySelector('.dtab.on .tname').textContent === name, name);
+        await waitTab(p, name);
       }
       await p.locator('[data-menu=File]').click(); await p.getByRole('menuitem', { name: 'Compare drawings…', exact: true }).click();
       const text = () => q('cmp-count').textContent(), done = () => p.waitForFunction(() => /difference|No differences/.test(document.querySelector('[data-testid=cmp-count]').textContent), null, { timeout: 120000 });
@@ -29662,7 +29663,7 @@ try {
       await p.goto(URL_ + '?autosave=86400000'); await q('count').waitFor({ state: 'attached' });
       for (const name of ['t327-a.dxf', 't327-b.dxf']) {
         await q('picker').setInputFiles({ name, mimeType: 'text/plain', buffer: Buffer.from(writeDxf(bigDoc(20000))) });
-        await p.waitForFunction((name) => document.querySelector('.dtab.on .tname').textContent === name, name);
+        await waitTab(p, name);
       }
       await p.waitForTimeout(1500); await frame();
       const start = await paints();
@@ -30074,14 +30075,14 @@ try {
       assert.equal(await readout(), '200%', 'typing clears the preset highlight');
       await t('zoom').click(); await list.getByRole('option', { name: 'Fit', exact: true }).click();
       near(await viewBox(), fitted);
-      const promptBefore = await prompt(), nameBefore = await page.locator('.tabs .dtab.on .tname').textContent();
+      const promptBefore = await prompt(), nameBefore = await page.locator('.tabs .dtab.on .tname')?.textContent();
       const snap = await t('tog-snap').getAttribute('aria-pressed');
       await t('zoom').click();
       for (const key of ['F3', 'Delete', 'Control+Tab', 'Control+w']) await input.press(key);
       await input.fill('z');
       assert.equal(await t('tog-snap').getAttribute('aria-pressed'), snap);
       assert.equal(await prompt(), promptBefore, 'keys leave the command bar alone');
-      assert.equal(await page.locator('.tabs .dtab.on .tname').textContent(), nameBefore, 'tab shortcuts stay in the input');
+      assert.equal(await page.locator('.tabs .dtab.on .tname')?.textContent(), nameBefore, 'tab shortcuts stay in the input');
       await input.press('Escape');
     };
     await openGrips();
@@ -30125,16 +30126,16 @@ try {
     }
     await page.evaluate(() => document.documentElement.dataset.theme = 'light');
     await t('add-to-layout').click();
-    await page.waitForFunction(() => /layout/.test(document.querySelector('.tabs .dtab.on .tname').textContent));
+    await page.waitForFunction(() => /layout/.test(document.querySelector('.tabs .dtab.on .tname')?.textContent));
     const sheetPct = await t('pct').textContent();
     await exercise('Layouts'); assert.equal(await t('pct').textContent(), sheetPct, '% of sheet stays unchanged');
     await closeTabs(/./);
     await t('picker').setInputFiles(plateDxf('zoom-a.dxf', 30));
-    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'zoom-a.dxf');
+    await waitTab(page, 'zoom-a.dxf');
     await t('picker').setInputFiles(plateDxf('zoom-b.dxf', 31));
-    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'zoom-b.dxf');
+    await waitTab(page, 'zoom-b.dxf');
     await menuItem('File', 'Compare drawings…');
-    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'Compare');
+    await waitTab(page, 'Compare');
     await exercise('Compare');
     await closeTabs(/./);
   });
@@ -30192,7 +30193,7 @@ try {
 
   await step('TODO 74: Zoom Selection on a layout fits the selected parts; Zoom Previous keeps at most 10', async () => {
     await openGrips(); await t('add-to-layout').click();
-    await page.waitForFunction(() => /layout/.test(document.querySelector('.tabs .dtab.on .tname').textContent));
+    await page.waitForFunction(() => /layout/.test(document.querySelector('.tabs .dtab.on .tname')?.textContent));
     await t('apply').click();
     await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Escape');
     assert.equal(await viewItemOff('Zoom Selection'), true, 'greyed with no part selected');
@@ -30923,13 +30924,13 @@ try {
     await t('obj-search').fill('door');
     assert.deepEqual(await names(), ['Door']);
     await t('picker').setInputFiles({ name: 'objects2.dxf', mimeType: 'text/plain', buffer: Buffer.from(objDoc(), 'latin1') });
-    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'objects2.dxf');
+    await waitTab(page, 'objects2.dxf');
     await page.waitForFunction(() => document.querySelector('[data-testid=gap-count]') && document.querySelector('[data-testid=gap-count]').textContent !== '…');
     assert.equal(await t('obj-search').inputValue(), '', 'a new tab starts unfiltered');
     // switching away and back keeps each tab's filter; with the cursor still in the box (Ctrl+Tab) the box shows the new tab's text
     await t('obj-search').fill('cut');
     await page.keyboard.press('Control+Tab');
-    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'walls.dxf');
+    await waitTab(page, 'walls.dxf');
     assert.equal(await t('obj-search').inputValue(), 'door', 'Ctrl+Tab with the cursor in the box: the box shows the other tab\'s filter');
     assert.deepEqual(await names(), ['Door'], 'the first tab still shows only Door');
     await page.keyboard.press('Control+Tab');
@@ -31767,7 +31768,7 @@ try {
     const open = async (name, lay) => {
       await closeTabs(/./);
       await t('picker').setInputFiles({ name, mimeType: 'text/plain', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
-      await page.waitForFunction((n) => document.querySelector('.tabs .dtab.on .tname').textContent === n, name);
+      await waitTab(page, name);
     };
     const shots = async (name) => {
       await page.screenshot({ path: `shots-k156b4/${name}-light.png` });
@@ -31852,7 +31853,7 @@ try {
     mixed.s.gridPart = part.partId; mixed.s.fit = false; mixed.s.rows = 2; mixed.s.cols = 2;
     await closeTabs(/./);
     await t('picker').setInputFiles({ name: 'explode-mixed-grid.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(layoutRaw(mixed))) });
-    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'explode-mixed-grid.dxf');
+    await waitTab(page, 'explode-mixed-grid.dxf');
     const gridN = await nParts();
     await page.keyboard.press('Control+a'); await frames();
     await typeCmd('explode'); await frames();
@@ -31922,7 +31923,7 @@ try {
   await step('TODO 253c1: a part that is one horizontal line is sized by itself, not by the dimension drawn beside it', async () => {
     const raw = newDoc(); addEntities(raw, dxfLine(0, 0, 100, 0));
     await t('picker').setInputFiles({ name: 'one-line.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(raw)) });
-    await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'one-line.dxf');
+    await waitTab(page, 'one-line.dxf');
     const n0 = await entitiesN();
     assert.deepEqual(await sizeNow(), ['100', '0'], 'the line alone');
     await typeCmd('d');
@@ -31998,7 +31999,7 @@ try {
 
   const open97b = async (raw, name = 'group97b.dxf') => {
     await t('picker').setInputFiles({ name, mimeType: 'text/plain', buffer: Buffer.from(writeDxf(raw)) });
-    await page.waitForFunction((n) => document.querySelector('.dtab.on .tname').textContent === n, name);
+    await waitTab(page, name);
     await typeCmd('select'); await frames();
   };
   const lines97b = (grouped = false) => {
@@ -32102,7 +32103,7 @@ try {
     const saved = await downloaded(() => page.keyboard.press('Control+s'));
     await closeTabs(/./);
     await t('picker').setInputFiles({ name: 'reopened97b.dxf', mimeType: 'text/plain', buffer: Buffer.from(saved.text, 'latin1') });
-    await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'reopened97b.dxf');
+    await waitTab(page, 'reopened97b.dxf');
     await click(150, 160); await waitSel('Group of 2');
     const p = await at(150, 160); await page.mouse.click(p.x, p.y, { button: 'right' });
     assert.equal(await page.getByRole('menuitem', { name: 'Group', exact: true }).isDisabled(), true);
@@ -32214,7 +32215,7 @@ try {
   const open97c = async (raw, name = 'break97c.dxf') => {
     await closeTabs(/./);
     await t('picker').setInputFiles({ name, mimeType: 'text/plain', buffer: Buffer.from(writeDxf(raw)) });
-    await page.waitForFunction((n) => document.querySelector('.dtab.on .tname').textContent === n, name);
+    await waitTab(page, name);
     await typeCmd('select');
     if (await t('tog-snap').getAttribute('aria-pressed') === 'true') await t('tog-snap').click();
     await frames();
@@ -34676,7 +34677,7 @@ try {
     await open97c(shapingDoc97k(), 'shaping97k.dxf'); const before = (await savedDoc()).entities, labels = await histLabels();
     const other = newDoc(4); addEntities(other, dxfCircle(100, 100, 20));
     await t('picker').setInputFiles({ name: 'other97k.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(other)) });
-    await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'other97k.dxf');
+    await waitTab(page, 'other97k.dxf');
     const otherBefore = (await savedDoc()).entities;
     await typeCmd('compare');
     const target = t('cmp-item').filter({ hasText: 'shaping97k' });
