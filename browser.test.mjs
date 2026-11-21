@@ -14905,6 +14905,7 @@ try {
     const p = new DOMPoint(x, h - y).matrixTransform(svg.getScreenCTM()); return { x: p.x, y: p.y };
   }, [x, y]);
   const pivotAt338 = async (scope) => { let r; for (let i = 0; i < 100; i++) { r = await rectOf(page.locator(`${scope} [data-pivot]`)); if (r.width > 0) break; await frames(); }       // a SNAP click repaints the overlay: until it is laid out the ◎ reads as a 0 x 0 box at (0, 0), and a press there missed it
+    assert.ok(r.width > 0, 'the ◎ was not laid out');
     return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; };
   const arrowAt338 = (scope) => page.locator(`${scope} [data-rot]`).first().evaluate((el) => { const q = el.getPointAtLength(el.getTotalLength() / 2), p = new DOMPoint(q.x, q.y).matrixTransform(el.getScreenCTM()); return { x: p.x, y: p.y }; });
   /** Presses the ◎, drags it to `to` (client px), runs `during` with the button still down, lets go. `alt`: Alt is down from the press on. */
@@ -15069,6 +15070,7 @@ try {
   });
 
   await step('TODO 339: the snap marker and its label are painted last, above a 3 mm line, on Drawings, Layouts and Compare', async () => {
+    await closeTabs(/./);                                                    // a red 338 step leaves tabs open
     const snapOn = await t('tog-snap').getAttribute('aria-pressed'), orthoOn = await t('tog-ortho').getAttribute('aria-pressed');
     const theme = await page.locator('html').getAttribute('data-theme') || 'light';
     const setChip = async (id, on) => { if (await t(id).getAttribute('aria-pressed') !== String(on)) await t(id).click(); };
@@ -15138,6 +15140,7 @@ try {
     }
   });
   await step('TODO 340: hovering the selected object\'s own snap point shows the marker before a press (not with Alt or Snap off); a press 5 px off lands exactly, on Drawings, Layouts and Compare', async () => {
+    await closeTabs(/./);                                                    // a red 338 step leaves tabs open
     const snapOn = await t('tog-snap').getAttribute('aria-pressed');
     const setChip = async (on) => { if (await t('tog-snap').getAttribute('aria-pressed') !== String(on)) await t('tog-snap').click(); };
     await page.evaluate(() => {
@@ -23558,8 +23561,8 @@ try {
     await t('mod-preview').waitFor();       // CI (Linux) painted the preview later than the move + 2 frames
     await typeCmd('nu');
     assert.equal(overlap(await boxOf(t('nudge-box')), await boxOf(t('mod-preview'))), 0, 'nudge uses the same preview avoidance');
-    const nudge = await t('nudge-box').boundingBox(); await t('nudge-input').hover(); await frames();
-    assert.deepEqual(await t('nudge-box').boundingBox(), nudge, 'nudge stays still while using its input');
+    const nudge = await boxOf(t('nudge-box')); await t('nudge-input').hover(); await frames();
+    assert.deepEqual(await boxOf(t('nudge-box')), nudge, 'nudge stays still while using its input');
     await t('nudge-input').fill('0'); await t('nudge-input').press('Enter');
     await frames();
     assert.equal(overlap(await boxOf(t('nudge-box')), await boxOf(t('mod-preview'))), 0, 'nudge error text is reclamped without covering the preview');
@@ -37321,6 +37324,7 @@ try {
   const centre346 = 'Specify centre (x,y) [3P/2P/Ttr (tan tan radius)/Diameter]:', first2p346 = "Specify first end point of circle's diameter (x,y):", first3p346 = 'Specify first point on circle (x,y):';
   const prompt346 = async (text, label = '') => { try { await said(new RegExp('^' + text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$')); } catch { throw new Error(`${label}: expected the prompt "${text}", got "${await prompt()}"`); } };
   const said346 = async () => (await t('cmd-hist').textContent()) + ' | ' + await prompt();
+  const cursor346 = async () => { const b = await t('canvas').boundingBox(); return [b.x + b.width * .6, b.y + b.height * .5]; };   // over the canvas, for the rubber band
   const stop346 = async () => { await key97c('Escape'); await key97c('Escape'); await page.locator('[data-tool=select]').click(); };
   const sourceCircles346 = async (name) => {
     await page.locator('.dtab').filter({ has: page.locator('.tname', { hasText: new RegExp('^' + name + '(?:-edited)*\\.dxf$') }) }).click();
@@ -37336,6 +37340,12 @@ try {
       await typeCmd('3'); assert.match(await said346(), /Type the centre as x,y/, kind + ': a bare 3 is a number');
       await typeCmd('2P');
       await prompt346(first2p346, kind);
+      await typeCmd('100,100'); await said(/Specify second end point of circle's diameter/);
+      await page.mouse.move(...await cursor346()); await frames();
+      assert.equal(await t('draw-preview').count(), 1, kind + ': 2P shows its preview after the first pick');
+      await key97c('Escape');
+      assert.equal(await t('draw-preview').count(), 0, kind + ': Esc mid 2P drops the preview');
+      await prompt346(first2p346, kind + ': Esc mid 2P is back at the first point');
       await typeCmd('100,100'); await typeCmd('100,100');
       assert.match(await said346(), /\*Invalid\*/, kind + ': two equal points'); await said(/Specify second end point of circle's diameter/);
       await typeCmd('180,100');
@@ -37343,6 +37353,12 @@ try {
       await typeCmd('c'); await prompt346(centre346, kind + ': typed C is Centre, Radius');
       await typeCmd('3p');
       await prompt346(first3p346, kind);
+      await typeCmd('100,200'); await typeCmd('140,200'); await said(/Specify third point on circle/);
+      await page.mouse.move(...await cursor346()); await frames();
+      assert.equal(await t('draw-preview').count(), 1, kind + ': 3P shows its preview after two picks');
+      await key97c('Escape');
+      assert.equal(await t('draw-preview').count(), 0, kind + ': Esc mid 3P drops the preview');
+      await prompt346(first3p346, kind + ': Esc mid 3P is back at the first point');
       await typeCmd('100,200'); await typeCmd('140,200'); await said(/Specify third point on circle/);
       await typeCmd('180,200'); assert.match(await said346(), /\*Invalid\*/, kind + ': collinear 3P'); await said(/Specify third point on circle/);
       await typeCmd('140,240'); assert.match(await said346(), /Circle made on layer/, kind);
