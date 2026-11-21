@@ -95,6 +95,8 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Edge grip**: A handle at the middle of a selected rectangle's side. Dragging it moves that side along its normal, keeping a rectangle; Shift keeps proportions about the opposite side's midpoint. Where: `DECISIONS.md`, Rectangle edge grips. Avoid: Gripper.
 
+**Extra key**: A second or later keyboard key for a command, kept beside its main key. Where: `DECISIONS.md`, Shortcuts. Avoid: Command alias; Alt shortcut.
+
 **Extra gap**: Adds room after one chosen row or column of the repeat grid and drops rows or columns that no longer fit. Where: `DECISIONS.md`, Extra gap.
 
 **Extract part**: Names the selected drawing geometry and saves it in the Parts library for reuse at the drawing's prepared scale. Where: `TODO.md`, items 5, 6 and 19; `web/app.js`.

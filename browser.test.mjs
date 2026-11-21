@@ -24801,6 +24801,71 @@ try {
     } finally { await scCtx.close(); }
   });
 
+  await step('TODO 134: extra keys for fixed commands: Alt+X deletes in one undo step, Alt+S saves, clash Remove, kept after reload', async () => {
+    const xCtx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    const p = await xCtx.newPage();
+    p.on('pageerror', (err) => errors.push(String(err)));
+    const dialog = p.getByRole('dialog', { name: 'Shortcuts', exact: true });
+    const plus = (name) => dialog.getByRole('button', { name: 'Add extra key to ' + name, exact: true });
+    const chips = (name) => dialog.locator(`tr[data-command=${name}] .sc-chip`);
+    const dlSave = async (press) => { const [dl] = await Promise.all([p.waitForEvent('download'), p.keyboard.press(press)]); return readDxf(readFileSync(await dl.path(), 'latin1')).entities.length; };
+    const open = async () => { await p.locator('[data-menu=Tools]').click(); await p.getByRole('menuitem', { name: 'Shortcuts…' }).click(); await dialog.waitFor(); };
+    const load = async () => {
+      await p.goto(URL_); await p.waitForSelector('[data-testid=count]', { state: 'attached' });
+      await p.locator('[data-testid=picker]').setInputFiles('fixtures/outline.dxf');
+      await p.waitForFunction(() => document.querySelector('.tabs').textContent.includes('outline.dxf'));
+    };
+    try {
+      await load(); await open();
+      await plus('Delete').click(); await p.keyboard.press('Alt+x');
+      assert.deepEqual(await chips('delete').allTextContents(), ['Alt+X×'], 'a fixed row takes an extra key; its main key stays locked');
+      assert.equal(await dialog.getByRole('button', { name: 'Delete key', exact: true }).isDisabled(), true);
+      await plus('Delete').click(); await p.keyboard.press('Alt+x');
+      await dialog.locator('.sc-status').filter({ hasText: /Alt\+X is already a key of Delete/ }).waitFor();
+      await plus('Delete').click(); await p.keyboard.press('Delete');
+      await dialog.locator('.sc-status').filter({ hasText: /Delete cannot be assigned to Delete\. Reserved for deleting/ }).waitFor();
+      await plus('Line').click(); await p.keyboard.press('Alt+z');
+      await dialog.locator('.sc-status').filter({ hasText: /Reserved for Snap/ }).waitFor();
+      await plus('Line').click(); await p.keyboard.press('Alt+x');
+      await dialog.locator('.sc-warning-line').filter({ hasText: /Key “Alt\+X” is used by Delete/ }).waitFor();
+      assert.equal(await dialog.getByRole('button', { name: 'Save', exact: true }).isDisabled(), true);
+      await dialog.getByRole('button', { name: 'Remove extra key Alt+X', exact: true }).click();
+      assert.equal(await chips('line').count(), 0); assert.equal(await dialog.getByRole('button', { name: 'Save', exact: true }).isDisabled(), false);
+      await plus('Save').click(); await p.keyboard.press('Alt+s');
+      await plus('Save As').click(); await p.keyboard.press('Control+Alt+s');
+      assert.deepEqual(await chips('save').allTextContents(), ['Alt+S×']); assert.deepEqual(await chips('saveas').allTextContents(), ['Ctrl+Alt+S×']);
+      await dialog.getByRole('searchbox').fill('Ctrl+Alt+S'); assert.equal(await dialog.locator('tr[data-command]:visible').count(), 1, 'search finds an extra key');
+      await dialog.getByRole('searchbox').fill('');
+      await plus('Line').click(); await p.keyboard.press('Alt+l');
+      await dialog.getByRole('button', { name: 'Remove extra key Alt+L from Line', exact: true }).click();
+      assert.equal(await chips('line').count(), 0);
+      await plus('Line').click(); await p.keyboard.press('Alt+x');       // a clash row in the shot
+      await dialog.getByRole('searchbox').fill('Alt+');
+      for (const theme of ['light', 'dark']) { await p.evaluate((th) => { document.documentElement.dataset.theme = th; }, theme); await p.screenshot({ path: `${shotDir}/134-extra-keys-${theme}.png` }); }
+      await p.setViewportSize({ width: 1024, height: 700 }); await p.screenshot({ path: `${shotDir}/134-extra-keys-1024.png` });
+      await p.setViewportSize({ width: 1440, height: 900 }); await p.evaluate(() => { document.documentElement.dataset.theme = 'light'; });
+      await dialog.getByRole('button', { name: 'Remove extra key Alt+X', exact: true }).click(); await dialog.getByRole('searchbox').fill('');
+      await dialog.getByRole('button', { name: 'Save', exact: true }).click(); await dialog.waitFor({ state: 'hidden' });
+      const stored = () => p.evaluate(async () => { const { idbStore } = await import('./idbstore.js'); return idbStore('project-d-shortcuts', 'settings', 'test').all(); });
+      assert.deepEqual(await stored(), [{ id: 'own', overrides: { delete: { extra: ['Alt+X'] }, save: { extra: ['Alt+S'] }, saveas: { extra: ['Ctrl+Alt+S'] } } }], 'only the differences');
+      const all = await dlSave('Control+s'); assert.ok(all > 0);
+      await p.keyboard.press('Control+a'); await p.keyboard.press('Alt+x');
+      assert.equal(await dlSave('Alt+s'), 0, 'Alt+X deleted the selection and Alt+S saved the file');
+      await p.keyboard.press('Control+z');
+      assert.equal(await dlSave('Alt+s'), all, 'one Ctrl+Z brings back all of it: the delete was one undo step');
+      await p.locator('[data-testid=cmd-echo]').click(); await p.locator('[data-testid=cmd-input]').fill('abc'); await p.keyboard.press('Home');
+      await p.keyboard.press('Alt+x');
+      await p.waitForFunction(() => document.querySelector('[data-testid=cmd-input]').value === 'bc');       // in a text field an extra Delete does what Delete does there
+      assert.equal(await dlSave('Alt+s'), all, 'an extra key of Save saves from a text field, as Ctrl+S does');
+      await p.keyboard.press('Escape');
+      await load(); await open();
+      assert.deepEqual(await chips('delete').allTextContents(), ['Alt+X×']); assert.deepEqual(await chips('saveas').allTextContents(), ['Ctrl+Alt+S×']);
+      await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+      assert.equal(await dlSave('Alt+s'), all, 'the extra keys work after a reload');
+      console.log('134: extra keys on fixed rows, clash Remove, Alt+X delete in one undo step, Alt+S save, kept after reload');
+    } finally { await xCtx.close(); }
+  });
+
   await step('TODO 253b: Export DXF Enter respects dialog focus and Cancel / Close', async () => {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const p = await context.newPage();

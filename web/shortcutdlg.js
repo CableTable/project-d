@@ -15,7 +15,7 @@ const lock = () => glyph('M5 10h14v11H5zM8 10V7a4 4 0 0 1 8 0v3', 11);
 
 export function openShortcuts(current, save) {
   if (document.querySelector('[data-testid=shortcuts-dialog]')) return;
-  let draft = SC.bindings(current), listening = '', busy = false;
+  let draft = SC.bindings(current), listening = '', listenField = 'key', busy = false;
   const previous = new Map(), lastEdited = { alias: '', key: '' }, rows = new Map(), focusBefore = document.activeElement;
   const button = (text, fn, attrs = {}) => h('button', { type: 'button', class: 'btn', onclick: fn, ...attrs }, text);
   const search = h('input', { type: 'search', placeholder: 'Search commands or aliases…', 'aria-label': 'Search commands' });
@@ -46,7 +46,7 @@ export function openShortcuts(current, save) {
     draft = SC.bindings(); previous.clear(); lastEdited.alias = lastEdited.key = ''; listening = ''; status.textContent = ''; update();
   });
   function imported(text) {
-    for (const c of COMMANDS) for (const field of ['alias', 'key']) previous.set(c.name + ':' + field, structuredClone(draft[c.name][field]));
+    for (const c of COMMANDS) for (const field of ['alias', 'key', 'extra']) previous.set(c.name + ':' + field, structuredClone(draft[c.name][field]));
     lastEdited.alias = lastEdited.key = '';
     const parsed = SC.parsePgp(text, draft);
     draft = parsed.draft; listening = '';
@@ -84,9 +84,9 @@ export function openShortcuts(current, save) {
     } catch (err) { status.textContent = 'Import failed: ' + (err.message || err); }
   });
   const dlg = h('section', { class: 'pop-dialog sc-dialog', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Shortcuts', 'data-testid': 'shortcuts-dialog' },
-    h('header', { class: 'sc-head' }, h('div', { class: 'sc-title' }, h('b', null, 'Shortcuts'), h('span', { class: 'chp' }, 'Aliases + keys'), h('span', { class: 'spacer' }), button('×', finish, { class: 'sc-icon', 'aria-label': 'Close shortcuts' })), h('p', null, 'Type an alias, or press a key combination. Use commas for more aliases.')),
+    h('header', { class: 'sc-head' }, h('div', { class: 'sc-title' }, h('b', null, 'Shortcuts'), h('span', { class: 'chp' }, 'Aliases + keys'), h('span', { class: 'spacer' }), button('×', finish, { class: 'sc-icon', 'aria-label': 'Close shortcuts' })), h('p', null, 'Type an alias, or press a key combination. Use commas for more aliases. Extra keys work beside the main key, also for the reserved ones.')),
     h('div', { class: 'sc-filters' }, h('label', { class: 'sc-search' }, glyph('M5 11a6 6 0 1 0 12 0a6 6 0 1 0-12 0M16 16l4 4', 12), search), category, count),
-    h('div', { class: 'sc-tablewrap' }, h('table', null, h('colgroup', null, [26, 11, 24, 34, 5].map((w) => h('col', { style: `width:${w}%` }))), h('thead', null, h('tr', null, ['Command', 'Category', 'Aliases', 'Key', ''].map((x) => h('th', { scope: 'col', 'aria-label': x ? null : 'Reset row' }, x)))), tbody)),
+    h('div', { class: 'sc-tablewrap' }, h('table', null, h('colgroup', null, [22, 9, 18, 20, 26, 5].map((w) => h('col', { style: `width:${w}%` }))), h('thead', null, h('tr', null, ['Command', 'Category', 'Aliases', 'Key', 'Extra keys', ''].map((x) => h('th', { scope: 'col', 'aria-label': x ? null : 'Reset row' }, x)))), tbody)),
     status,
     h('div', { class: 'sc-note' }, changed, h('span', { class: 'sc-reserved' }, lock(), ' Reserved'), h('span', null, 'Drawing / layout aliases may overlap.'), h('span', { class: 'spacer' }), h('span', null, '.pgp: aliases + keys')),
     h('footer', { class: 'sc-foot' }, resetAll, exportButton, importButton, h('span', { class: 'spacer' }), cancelButton, saveButton), picker);
@@ -97,15 +97,19 @@ export function openShortcuts(current, save) {
       if (!SC.clashes(draft).some((x) => x.field === 'alias' && (x.name === c.name || x.other === c.name))) previous.set(c.name + ':alias', [...draft[c.name].alias]);
     }, oninput: () => edit(c.name, 'alias', SC.aliases(input.value)), onblur: () => { input.value = draft[c.name].alias.join(', '); } });
     const key = button('', () => {
-      listening = c.name; status.textContent = `Listening for ${label(c.name)} · Previous key: ${draft[c.name].key || 'none'} · Press the full combination. Esc cancels capture.`; update();
+      listening = c.name; listenField = 'key'; status.textContent = `Listening for ${label(c.name)} · Previous key: ${draft[c.name].key || 'none'} · Press the full combination. Esc cancels capture.`; update();
     }, { class: 'sc-key', 'aria-label': label(c.name) + ' key', disabled: SC.fixedKey(c.name), title: SC.fixedKey(c.name) ? 'Reserved: this key stays available.' : 'Press keys…' });
+    const chips = h('span', { class: 'sc-chips' });
+    const plus = button('+', () => {
+      listening = c.name; listenField = 'extra'; status.textContent = `Listening for an extra key of ${label(c.name)} · Press the full combination. Esc cancels capture.`; update();
+    }, { class: 'sc-key sc-plus', 'aria-label': 'Add extra key to ' + label(c.name), title: 'Add an extra key' });
     const dot = h('span', { class: 'sc-dot', title: 'Changed' }, '●');
-    const tr = h('tr', { 'data-command': c.name }, h('td', null, h('span', { class: 'sc-command', title: c.name }, label(c.name)), c.where ? h('span', { class: 'sc-scope' }, c.where) : null, dot), h('td', { class: 'sc-category' }, c.cat), h('td', null, input), h('td', null, key), h('td', null, button(glyph('M3 10a9 9 0 1 1 2 8M3 4v6h6'), () => {
+    const tr = h('tr', { 'data-command': c.name }, h('td', null, h('span', { class: 'sc-command', title: c.name }, label(c.name)), c.where ? h('span', { class: 'sc-scope' }, c.where) : null, dot), h('td', { class: 'sc-category' }, c.cat), h('td', null, input), h('td', null, key), h('td', { class: 'sc-extra' }, chips, plus), h('td', null, button(glyph('M3 10a9 9 0 1 1 2 8M3 4v6h6'), () => {
       previous.set(c.name + ':alias', [...draft[c.name].alias]); previous.set(c.name + ':key', draft[c.name].key);
-      lastEdited.alias = lastEdited.key = c.name; draft[c.name] = { alias: [...c.alias], key: c.key }; listening = ''; update();
+      lastEdited.alias = lastEdited.key = c.name; draft[c.name] = { alias: [...c.alias], key: c.key, extra: [] }; listening = ''; update();
     }, { class: 'sc-icon', 'aria-label': 'Reset ' + label(c.name), title: 'Reset row' })));
-    const warnings = h('td', { colspan: 5 }), warningRow = h('tr', { class: 'sc-warning', hidden: true }, warnings);
-    rows.set(c.name, { tr, input, key, dot, warnings, warningRow }); tbody.append(tr, warningRow);
+    const warnings = h('td', { colspan: 6 }), warningRow = h('tr', { class: 'sc-warning', hidden: true }, warnings);
+    rows.set(c.name, { tr, input, key, chips, plus, dot, warnings, warningRow }); tbody.append(tr, warningRow);
   }
   function update() {
     const conflicts = SC.clashes(draft), changes = SC.differences(draft), q = search.value.trim().toLowerCase();
@@ -114,17 +118,30 @@ export function openShortcuts(current, save) {
     let shown = 0;
     for (const c of COMMANDS) {
       const r = rows.get(c.name), b = draft[c.name];
-      r.tr.hidden = !(label(c.name) + ' ' + c.name + ' ' + b.alias.join(' ')).toLowerCase().includes(q) || !!category.value && category.value !== c.cat;
+      r.tr.hidden = !(label(c.name) + ' ' + c.name + ' ' + b.alias.join(' ') + ' ' + b.extra.join(' ')).toLowerCase().includes(q) || !!category.value && category.value !== c.cat;
       if (!r.tr.hidden) shown++;
       r.tr.classList.toggle('sc-edited', Object.hasOwn(changes, c.name)); r.dot.hidden = !Object.hasOwn(changes, c.name); r.tr.classList.remove('sc-conflict');
       if (document.activeElement !== r.input) r.input.value = b.alias.join(', ');
-      r.key.replaceChildren(...(SC.fixedKey(c.name) ? [lock()] : []), listening === c.name ? '● Press a key… Esc to cancel' : b.key || 'Press keys…');
-      r.key.classList.toggle('sc-listening', listening === c.name); r.key.classList.toggle('sc-assigned', !!b.key);
+      const listenKey = listening === c.name && listenField === 'key', listenExtra = listening === c.name && listenField === 'extra';
+      r.key.replaceChildren(...(SC.fixedKey(c.name) ? [lock()] : []), listenKey ? '● Press a key… Esc to cancel' : b.key || 'Press keys…');
+      r.key.classList.toggle('sc-listening', listenKey); r.key.classList.toggle('sc-assigned', !!b.key);
       r.input.disabled = busy; r.key.disabled = busy || SC.fixedKey(c.name);
+      r.chips.replaceChildren(...b.extra.map((k) => h('span', { class: 'sc-chip', 'data-key': k }, k, button('×', () => {
+        draft[c.name].extra = draft[c.name].extra.filter((x) => x !== k); update(); r.plus.focus();
+      }, { class: 'sc-chip-x', 'aria-label': `Remove extra key ${k} from ${label(c.name)}`, disabled: busy }))));
+      r.plus.textContent = listenExtra ? '● Press a key… Esc to cancel' : '+'; r.plus.classList.toggle('sc-listening', listenExtra); r.plus.disabled = busy;
       r.warnings.replaceChildren(); r.warningRow.hidden = true;
     }
     for (const conflict of conflicts) {
       let { name, other, field, value, reason } = conflict;
+      if (field === 'extra') {       // an extra key cannot be swapped: the owner's chip is removed instead
+        const r = rows.get(name);
+        r.tr.classList.add('sc-conflict');
+        r.warnings.append(h('div', { class: 'sc-warning-line' }, h('span', null, reason || `Key “${value}” is used by ${label(other)}.`), h('span', { class: 'spacer' }),
+          button('Remove', () => { draft[name].extra = draft[name].extra.filter((x) => x !== value); update(); }, { 'aria-label': `Remove extra key ${value}` })));
+        r.warningRow.hidden = r.tr.hidden;
+        continue;
+      }
       const edited = (n) => JSON.stringify(draft[n][field]) !== JSON.stringify(previous.get(n + ':' + field) ?? current[n][field]);
       if (other && (lastEdited[field] === other || lastEdited[field] !== name && edited(other) && !edited(name))) [name, other] = [other, name];
       const r = rows.get(name), old = previous.get(name + ':' + field) ?? current[name][field];
@@ -149,6 +166,12 @@ export function openShortcuts(current, save) {
       const key = SC.eventKey(e);
       if (key == null) return;
       const name = listening, reason = SC.keyReason(key); listening = '';
+      if (listenField === 'extra') {
+        if (!reason && (key === draft[name].key || draft[name].extra.includes(key))) { status.textContent = `${key} is already a key of ${label(name)}.`; update(); }
+        else if (reason) { status.textContent = `${key} cannot be assigned to ${label(name)}. ${reason}`; update(); }
+        else { status.textContent = ''; edit(name, 'extra', [...draft[name].extra, key]); }
+        return;
+      }
       if (reason) { status.textContent = `${key} cannot be assigned to ${label(name)}. ${reason}`; update(); }
       else { if (!SC.clashes(draft).some((x) => x.field === 'key' && (x.name === name || x.other === name))) previous.set(name + ':key', draft[name].key); status.textContent = ''; edit(name, 'key', key); }
       return;

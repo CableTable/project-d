@@ -11821,6 +11821,9 @@ function startQuickSelect() {
     } });
 }
 
+/** The command whose extra key this keydown is, if any. */
+const extraCommand = (e) => { const key = SC.eventKey(e); return key ? ownCommands.find((c) => c.extra.includes(key)) : null; };
+const FIELD_EDIT = { delete: 'forwardDelete', undo: 'undo', redo: 'redo', copy: 'copy' };       // what Delete, Ctrl+Z, Ctrl+Y, Ctrl+C do in a text field
 function editKey(e) {
   if (document.querySelector('[data-testid=pdf-dialog], [data-testid=qselect-dialog]')) return;       // a dialog's own handlers take every key, wherever focus is
   const inField = e.target?.closest?.('input, textarea, select');
@@ -11886,10 +11889,15 @@ function editKey(e) {
     else if (curLay() && selIdxs().length) { selectMany([]); update(); }
     return;
   }
-  const key = SC.eventKey(e), own = ownCommands.find((c) => c.key && c.key === key && !SC.fixedKey(c.name));
+  const key = SC.eventKey(e), ext = extraCommand(e);       // an extra key acts as its command's main key would at this place (save / save as: see the Ctrl+S listener)
+  const own = ownCommands.find((c) => c.key && c.key === key && !SC.fixedKey(c.name)) || (ext && !SC.fixedKey(ext.name) ? ext : null);
   if (key === 'Ctrl+C' || key === 'Ctrl+V' || key === 'Ctrl+Shift+V') {
     if (inField || e.target?.isContentEditable) return;
     e.preventDefault(); if (key === 'Ctrl+C') copySelection(); else if (key === 'Ctrl+Shift+V') pasteInPlace(); else pasteSelection(); return;
+  }
+  if (ext && SC.fixedKey(ext.name) && ext.name !== 'save' && ext.name !== 'saveas') {
+    if (inField || e.target?.isContentEditable) { const how = FIELD_EDIT[ext.name]; if (how) { e.preventDefault(); document.execCommand(how); } return; }       // in text: what the main key does there
+    e.preventDefault(); if (ext.name === 'copy') copySelection(); else runCommand(ext); return;       // Copy's main key is the clipboard Ctrl+C, not the Copy tool
   }
   if (own && (!inField || own.name === 'properties' || (e.target === ui.cmd && /^F\d+$/.test(key)))) { e.preventDefault(); runCommand(own); return; }       // Function keys also work while typing a command.
   if (inField || e.target?.isContentEditable) return;
@@ -13656,7 +13664,7 @@ async function init() {
   }, true);
   document.addEventListener('keydown', (e) => {
     if (document.querySelector('.pop-back, .pdlg-back, dialog[open]')) return;
-    const key = SC.eventKey(e), cmd = ownCommands.find((c) => c.key && c.key === key);
+    const key = SC.eventKey(e), cmd = ownCommands.find((c) => c.key && c.key === key) || extraCommand(e);
     if (!['closetab', 'nexttab', 'previoustab'].includes(cmd?.name)) return;
     e.preventDefault(); e.stopPropagation();
     if (cmd.name === 'closetab' && e.repeat) return;
@@ -13665,6 +13673,7 @@ async function init() {
   document.addEventListener('keydown', (e) => {
     if (document.querySelector('.pop-back, .pdlg-back, dialog[open]')) return;                       // a dialog is open: its keys are its own, the drawing behind it waits
     if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 's') { e.preventDefault(); save(e.shiftKey); }
+    else { const x = extraCommand(e); if (x?.name === 'save' || x?.name === 'saveas') { e.preventDefault(); save(x.name === 'saveas'); } }       // an extra key of Save / Save as, as Ctrl+S: also in a field
     ctrlTap = e.key === 'Control' && !e.repeat;                       // 163a: a Ctrl tap (down, up, nothing between) cycles a hot grip's options
     editKey(e);
   });

@@ -465,6 +465,7 @@
   "Save in the exe: the opened file is never written; a name without .dxf that exists asks first; a balloons file that could not be read is not written over": 6.15,
   "Save in the exe: a cancelled balloons Save dialog writes nothing": 11.11,
   "TODO 34 Shortcuts: aliases + keys, capture, clashes, Swap, persistence and native PGP round trip": 2.25,
+  "TODO 134: extra keys for fixed commands: Alt+X deletes in one undo step, Alt+S saves, clash Remove, kept after reload": 4,
   "TODO 253b: Export DXF Enter respects dialog focus and Cancel / Close": 0.73,
   "TODO 253b / 330: a picture-only two-page PDF opened as a background asks no page: both pages in one picture": 2.6,
   "TODO 253b: reopening matches both drawing paths and skips PDF backgrounds": 3.5,
