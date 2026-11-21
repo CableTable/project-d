@@ -5211,6 +5211,7 @@ function rotationControls(cor, c, pv, k, label) {
  * What is drawn over the selected placed part: its outline, and the size handles (for show: a part is scaled with its drawing) or, in rotate
  * mode, the four turn arrows and the pivot ◎. Sizes are in screen pixels, so it is redrawn when the view zooms.
  */
+const OUTLINE_MAX = 2000;
 function drawTools() {
   const g = ui.gTools;
   if (!g) return;
@@ -5220,7 +5221,8 @@ function drawTools() {
   const poly = (pts) => pts.map((q) => `${+q[0].toFixed(3)},${+q[1].toFixed(3)}`).join(' ');
   /** A selected part drawn dashed along its own lines and arcs (TODO 352: no box; a part with none, text alone, keeps the box); orange off the sheet or in a gripper. points = the outline area's corners. */
   const outline = (x, attrs) => {
-    const dd = partPathD(x.part), a = { ...attrs, class: attrs.class + (x.p.off || x.p.grip ? ' off' : ''), points: poly(PL.corners(x.part, x.p).map(Y)) };
+    // shortcut: a part of more than OUTLINE_MAX lines keeps the box: a dashed stroke of 20k long lines made every pan / zoom frame slower than the kept picture's settle; upgrade with a clipped or cached outline
+    const dd = x.part.fl?.items.length > OUTLINE_MAX ? '' : partPathD(x.part), a = { ...attrs, class: attrs.class + (x.p.off || x.p.grip ? ' off' : ''), points: poly(PL.corners(x.part, x.p).map(Y)) };
     top.push(dd ? s('path', { ...a, d: dd, transform: `matrix(${placedMat(x.part, x.p, H).join(' ')})` }) : s('polygon', a));
   };
   const done = () => { g.replaceChildren(...out); ui.gSel.replaceChildren(...top); };
@@ -5434,8 +5436,7 @@ function paintOverlay(gesture = false) {
     if (chunk && full && nk && !dkey && !quick && chunk.view.w === want.w && chunk.view.h === want.h && chunk.view.dpr === want.dpr && chunk.view.view.ox === view.ox && chunk.view.view.oy === view.oy
       && chunk.view.view.scale === view.scale && sameBase(chunk.key, nk)) { ui.cmdUI.place(); return; }
     chunk = null; chunkGen++;
-    c.dataset.snap = ''; c.dataset.keep = ''; c.dataset.quick = ''; c.dataset.pan = ''; c.dataset.chunk = '';
-    if (full && dkey && c.dataset.nokeep !== '1' && !(kept && sameBase(kept.key, dkey))) {
+    c.dataset.snap = ''; c.dataset.keep = ''; c.dataset.quick = ''; c.dataset.pan = ''; c.dataset.chunk = '';    if (full && dkey && c.dataset.nokeep !== '1' && !(kept && sameBase(kept.key, dkey))) {
       // a drag starts, or the view moved under it: the base without what is dragged is painted off screen once, so it is no counted full paint (TODO 317 / 320)
       snap = null; keptCv = keptCv || document.createElement('canvas'); keptCv.width = cw; keptCv.height = chh;
       kept = { key: dkey, drag: null };
