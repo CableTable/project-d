@@ -37420,6 +37420,15 @@ try {
       await group.getByRole('button', { name: 'Circle', exact: true }).waitFor();
       await t('circle-ribbon-flyout').click();
       assert.deepEqual(await flyoutItems(), items, kind + ': ribbon');
+      await page.keyboard.press('Escape');
+      const rb = await page.locator('.ribbon-body [data-panel=Draw]').getByRole('button', { name: 'Circle', exact: true }).boundingBox();   // ribbon button: press and hold 450 ms
+      await page.mouse.move(rb.x + rb.width / 2, rb.y + rb.height / 2); await page.mouse.down(); await page.waitForTimeout(650);
+      assert.deepEqual(await flyoutItems(), items, kind + ': ribbon hold');
+      await page.mouse.up(); await page.keyboard.press('Escape');
+      await page.locator('.ribbon-body [data-panel=Draw]').getByRole('button', { name: 'Circle', exact: true }).click({ button: 'right' });
+      assert.deepEqual(await flyoutItems(), items, kind + ': ribbon right-click');
+      await page.keyboard.press('Escape');
+      await t('circle-ribbon-flyout').click();
       await pick('3-Point'); await prompt346(first3p346, kind + ': ribbon pick');
       await stop346();
       assert.equal(await (await home()).getByRole('button', { name: 'Circle', exact: true }).locator('svg circle').count(), 4, kind + ': the ribbon icon shows the mode too');
@@ -37838,6 +37847,15 @@ try {
       await b.waitFor();
       await t('arc-ribbon-flyout').click();
       assert.deepEqual(await flyoutItems(), modes347c, kind + ': ribbon');
+      await page.keyboard.press('Escape');
+      const rb = await (await homeArc347()).boundingBox();                               // ribbon button: press and hold 450 ms
+      await page.mouse.move(rb.x + rb.width / 2, rb.y + rb.height / 2); await page.mouse.down(); await page.waitForTimeout(650);
+      assert.deepEqual(await flyoutItems(), modes347c, kind + ': ribbon hold');
+      await page.mouse.up(); await page.keyboard.press('Escape');
+      await (await homeArc347()).click({ button: 'right' });
+      assert.deepEqual(await flyoutItems(), modes347c, kind + ': ribbon right-click');
+      await page.keyboard.press('Escape');
+      await t('arc-ribbon-flyout').click();
       await pickArc347('Start, End, Radius'); await prompt346(start347, kind + ': ribbon pick');
       await stop346();
       assert.equal(await (await homeArc347()).locator('svg circle').count(), 2, kind + ': the ribbon icon shows the mode too');
