@@ -4754,8 +4754,8 @@ try {
   await step('layout: menu bar, rail tools in order, layers', async () => {
     assert.deepEqual(await page.locator('.menubar .menu').allTextContents(), ['File', 'Edit', 'View', 'Draw', 'Modify', 'Arrange', 'Format', 'Layout', 'Tools', 'Help']);
     const labels = await page.locator('nav[aria-label=Tools] button').evaluateAll((b) => b.map((x) => x.getAttribute('aria-label')));
-    assert.equal(labels.length, 21); assert.equal(labels[0], 'Select'); assert.equal(labels.at(-1), 'Measure');
-    assert.equal(labels[labels.indexOf('Offset') - 1], 'Move');
+    assert.equal(labels.length, 22); assert.ok(labels.includes('Shape')); assert.equal(labels[0], 'Select'); assert.equal(labels.at(-1), 'Measure');
+    assert.equal(labels[labels.indexOf('Offset') - 1], 'Shape');
     assert.deepEqual(await page.locator('.layer .nm').allTextContents(), ['Parts', 'Marks', 'Dimensions']);
   }, { needs: ['a DXF opens on a drawing tab (no sheet); Add to layout makes a layout tab and the part fills Step and repeat'] });
 
@@ -10137,6 +10137,7 @@ try {
   });
 
   await step('review: the smallest window (1024 × 700): every tool is reachable without scrolling, on a drawing and on a layout', async () => {
+    if (only) { await t('picker').setInputFiles('fixtures/outline.dxf'); await waitTab(page, 'outline.dxf'); await pdfLayout(); }
     await page.setViewportSize({ width: 1024, height: 700 });
     await page.waitForTimeout(250);
     const rail = async () => page.locator('nav.rail').evaluate((n) => {
@@ -10144,11 +10145,13 @@ try {
       return { scrolls: n.scrollHeight > n.clientHeight + 1, all: bs.every((b) => b.top >= r.top - 0.5 && b.bottom <= r.bottom + 0.5 && b.left >= r.left - 0.5 && b.right <= r.right + 0.5), n: bs.length };
     });
     const lay = await rail();
-    assert.deepEqual([lay.scrolls, lay.all, lay.n], [false, true, 21], 'layout: ' + JSON.stringify(lay));
+    assert.deepEqual([lay.scrolls, lay.all, lay.n], [false, true, 22], 'layout: ' + JSON.stringify(lay));
     await shotBoth('small-layout');
     await drawingTab().click(); await click(50, 0);
     const dr = await rail();
-    assert.deepEqual([dr.scrolls, dr.all, dr.n], [false, true, 21], 'drawing: ' + JSON.stringify(dr));
+    assert.deepEqual([dr.scrolls, dr.all, dr.n], [false, true, 22], 'drawing: ' + JSON.stringify(dr));
+    const cut = await page.evaluate(() => [...document.querySelectorAll('.ribbon-group')].filter((g) => ['Modify', 'Copy'].includes(g.dataset.panel) && g.offsetWidth).map((g) => ({ g: g.dataset.panel, right: Math.round(g.getBoundingClientRect().right), over: g.scrollWidth - g.clientWidth })).filter((x) => x.right > innerWidth || x.over > 1));
+    assert.deepEqual(cut, [], 'no ribbon group is cut off at 1024 px');
     await shotBoth('small-drawing');
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.waitForTimeout(150);
