@@ -4095,6 +4095,38 @@ async function save(forceAs) {
   }
 }
 
+/** Export DXF's Layers list: [name, ticked] as the tab's Layers panel shows them, ticked = visible. A layout lists Parts, Marks and its objects' layers (the panel's rows). */
+function exportLayerRows(d) {
+  if (d.lay) return [['Parts', !state.hidden.parts], ['Marks', !state.hidden.marks], ...Object.entries(LD.layersOf(d.lay)).map(([n, def]) => [n, !(def.off || def.frozen)])];
+  return d.fl.layers.map((l, i) => [l.name, !d.off.has(i)]);
+}
+
+/**
+ * Export DXF's Text: Curves (TODO 109b): `raw` (what Save writes) with its top-level TEXT / MTEXT outlined by the Text to outlines maths, on a copy.
+ * A font that cannot load leaves that text as text. → { raw, note } (the note for the save report)
+ */
+async function exportCurves(raw, d, skip) {
+  const lay = !!d.lay, fontOf = (it) => it.font || fontForStyle(raw.styles, it.st), keyOf = (it) => fontOf(it) + (it.bold ? ':b' : '');
+  const items = flatten(raw).items.filter((it) => it.k === 't'), fonts = new Map(), lost = new Map();
+  const own = items.filter((it) => /^M?TEXT$/.test(raw.entities[it.e]?.type) && !skip.has(String(raw.entities[it.e].layer ?? '0').toLowerCase()));
+  for (const item of own) for (const run of TO.outlineItem(item, raw.entities[item.e]).runs || [item]) {
+    const it = { ...item, ...run }, key = keyOf(it);
+    if (fonts.has(key) || lost.has(key)) continue;
+    try { fonts.set(key, await loadFont(fontOf(it), it.bold)); } catch { lost.set(key, fontOf(it)); }
+  }
+  const r = TO.outlineDoc(raw, items, (it) => fonts.get(keyOf(it))?.font, 0.01 / (lay ? 1 : d.factor), skip);
+  const subs = [...new Set([...fonts.values()].filter((f) => f.fallback).map((f) => `${f.wanted} → ${f.name}`))];
+  const asked = fontSubstitutions(raw.styles, own).map(({ asked, shown }) => `${asked} → ${shown}`);
+  const said = [`Text as curves: ${r.texts} ${r.texts === 1 ? 'text' : 'texts'} made into outlines`];
+  if (r.blockText) said.push(`${r.blockText} text${r.blockText === 1 ? '' : 's'} in blocks, attributes or placed parts stay${r.blockText === 1 ? 's' : ''} text`);
+  if (r.failed) said.push(`${r.failed} ${r.failed === 1 ? 'text' : 'texts'} stay text: font could not load (${[...lost.values()].join(', ')})`);
+  if (asked.length) said.push('Fonts: ' + asked.join(', '));
+  if (subs.length) said.push(`Font file not found, used the fallback font (${subs.join(', ')})`);
+  if (r.missing.length) said.push('Missing glyphs skipped (advance kept): ' + TO.missingGlyphsLabel(r.missing));
+  if ([...fonts.values()].some((f) => f.regularForBold)) r.notes.push('Bold face unavailable, used regular');
+  return { raw: r.raw, note: '. ' + [...said, ...r.notes].join('. ') };
+}
+
 /** Export the same content as Save, through the writer's copy-only settings. */
 function exportDxf() {
   const active = curDoc(), d = active?.cmp ? cmpEdit('export DXF') : active;
@@ -4113,6 +4145,9 @@ function exportDxf() {
   units.value = convertible ? sourceUnits === 1 ? 'in' : 'mm' : sourceUnits ? '' : 'unitless';
   const scale = field('scale', { type: 'text', inputmode: 'decimal', value: '1' });
   const precision = field('precision', { type: 'text', inputmode: 'numeric', value: remembered });
+  const text = h('select', { class: 'fld', 'data-testid': 'export-dxf-text' }, h('option', { value: 'text' }, 'Text'), h('option', { value: 'curves' }, 'Curves'));
+  const ticks = exportLayerRows(d).map(([layer, on]) => h('input', { type: 'checkbox', checked: on || layer === '0', disabled: layer === '0', 'aria-label': 'Layer ' + layer, 'data-testid': 'export-dxf-layer', 'data-layer': layer }));
+  const layers = h('div', { class: 'export-dxf-layers', 'data-testid': 'export-dxf-layers' }, ticks.map((box) => h('label', null, box, box.dataset.layer + (box.dataset.layer === '0' ? ' (always kept)' : ''))));
   const err = h('div', { class: 'pd-bad', role: 'alert', hidden: true, 'data-testid': 'export-dxf-err' });
   const validate = () => {
     const problems = [
@@ -4129,7 +4164,8 @@ function exportDxf() {
   const finish = () => { back.remove(); document.removeEventListener('keydown', onKey, true); };
   const go = async () => {
     const bad = validate(); if (bad) { bad.focus(); validate(); return; }
-    const want = dxfName(name.value.trim()), settings = { units: units.value || undefined, scale: +scale.value, precision: +precision.value, escapeUnicode: true };
+    const skipLayers = ticks.filter((box) => !box.checked).map((box) => box.dataset.layer), curves = text.value === 'curves';       // read now: finish() removes the dialog
+    const want = dxfName(name.value.trim()), settings = { units: units.value || undefined, scale: +scale.value, precision: +precision.value, escapeUnicode: true, skipLayers };
     finish();
     try {
       const t = window.__TAURI__;
@@ -4143,8 +4179,9 @@ function exportDxf() {
         destination = path;
         written = path.split(/[\\/]/).pop();
       }
-      const report = await writeDrawing(rawForSave(d), written, destination, settings);
-      note('Exported ' + written + saveReportNote(report));
+      const saved = rawForSave(d), skip = new Set(skipLayers.map((n) => n.toLowerCase())), made = curves ? await exportCurves(saved, d, skip) : null;
+      const report = await writeDrawing(made ? made.raw : saved, written, destination, settings);
+      note('Exported ' + written + saveReportNote(report) + (made ? made.note : ''));
     } catch (e) { note('Export failed: ' + (e?.message || e)); }
   };
   const row = (label, input) => h('label', { class: 'qs-row' }, h('span', null, label), input);
@@ -4153,7 +4190,8 @@ function exportDxf() {
   const dlg = h('div', { class: 'pop-dialog export-dxf-dialog', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Export DXF', 'data-testid': 'export-dxf-dialog' },
     h('div', { class: 'row between' }, h('strong', null, 'Export DXF'), close),
     h('span', { class: 'lbl' }, 'Write a DXF copy with export settings.'),
-    row('File name', name), row('Units', units), row('Scale', scale), row('Precision', precision),
+    row('File name', name), row('Units', units), row('Scale', scale), row('Precision', precision), row('Text', text),
+    h('div', { class: 'qs-row' }, h('span', null, 'Layers'), layers),
     h('span', { class: 'lbl' }, 'Scale is applied about 0,0. Precision sets decimal places for coordinates and lengths.'), err,
     h('div', { class: 'row' }, h('span', { class: 'lbl', style: 'flex:1' }, 'Next: native file picker'),
       cancel,

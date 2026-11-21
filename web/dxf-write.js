@@ -4,7 +4,7 @@
 //   writeDxf(doc, opts) → string, CRLF lines.   opts: { escapeUnicode: true writes non-ASCII as \U+XXXX (R2000's own way); extents: [x0, y0, x1, y1] of model space, when the caller has them (flatten is slow on a big file) }
 //   unwritable(doc) → [{ type, count }]: what writeDxf leaves out (warn before overwriting a file)
 //   writeDxfWithReport(doc, opts) → { text, pictures: [{ name, px }], tables, skipped }: opts.name is the final DXF file name; pictures: false skips IMAGEs when the caller cannot write PNGs
-//   Export opts: units ('mm', 'in', 'unitless'), scale (> 0), precision (0–8); transforms a deep copy.
+//   Export opts: units ('mm', 'in', 'unitless'), scale (> 0), precision (0–8), skipLayers (names left out, layer 0 never: withoutLayers); transforms a deep copy.
 //
 // The document (drawing.js): { header: { $NAME: string | [x, y] }, layers: { NAME: { aci, tc, off, frozen, lt, lw } },
 //   ltypes: { NAME: { pattern: [dash, gap, …] } }, blocks: { NAME: { base: [x, y], xref, entities } }, entities, groups (groups.js) }
@@ -18,7 +18,7 @@ import { flatten, ownBlock } from './drawing.js';
 import { nearestAci, unpack420 } from './colour.js';
 import { fillHatch, fillHoles } from './fill.js';
 import { remap } from './groups.js';
-import { scaleRecord, SPEC, relabel, DIM_BLOCK, readDim, dimGeom, insertTransform } from './edit.js';
+import { scaleRecord, SPEC, removeEntities, usedBlocks, relabel, DIM_BLOCK, readDim, dimGeom, insertTransform } from './edit.js';
 import { measuredText, readOverride, textRecord, overrideRecord, dimensionText, measureOverride } from './dimension-text.js';
 import { isPng } from './pictures.js';
 
@@ -299,6 +299,27 @@ export function writeDxf(doc, opts = {}) {
   return writeDxfWithReport(doc, opts).text;
 }
 
+/**
+ * Export's Layers list (TODO 109b): the entities on the unticked layers (names ignore case; layer 0 is always kept) are left out, with the
+ * blocks and layers only they used. An INSERT on a ticked layer keeps its block whole, so a layer used inside it stays in the table.
+ * A layout's PD_LAYOUT block goes too (it no longer describes the file).
+ */
+export function withoutLayers(doc, names) {
+  const skip = new Set(names.map((n) => String(n).toLowerCase())); skip.delete('0');
+  const layerOf = (e) => String(e.layer ?? '0').toLowerCase();
+  const gone = new Set();
+  doc.entities.forEach((e, i) => { if (skip.has(layerOf(e))) gone.add(i); });
+  if (!gone.size) return doc;
+  const { entities, blocks } = removeEntities(doc, gone), indexes = new Map();
+  let k = 0;
+  doc.entities.forEach((_, i) => { if (!gone.has(i)) indexes.set(i, [k++]); });
+  delete blocks.PD_LAYOUT;
+  const used = new Set(entities.map(layerOf));
+  for (const name of usedBlocks(blocks, entities)) for (const e of blocks[name]?.entities || []) used.add(layerOf(e));
+  const layers = Object.fromEntries(Object.entries(doc.layers || {}).filter(([n]) => !skip.has(n.toLowerCase()) || used.has(n.toLowerCase())));
+  return { ...doc, entities, blocks, layers, groups: remap(doc.groups, indexes) };
+}
+
 export function writeDxfWithReport(doc, opts = {}) {
   const { units, scale = 1, precision = 6 } = opts;
   if (units !== undefined && !['mm', 'in', 'unitless'].includes(units)) throw new Error('Units must be mm or in (unitless drawings do not convert)');
@@ -310,7 +331,8 @@ export function writeDxfWithReport(doc, opts = {}) {
   const factor = (unitChange ? mm[source] / (units === 'in' ? 25.4 : 1) : 1) * scale;
   if (!Number.isFinite(factor) || factor <= 0) throw new Error('Cannot convert these drawing units or scale');
   // Only export options need a deep copy; ordinary Save keeps its existing fast path.
-  if (units !== undefined || opts.scale !== undefined || opts.precision !== undefined) doc = structuredClone(doc);
+  if (units !== undefined || opts.scale !== undefined || opts.precision !== undefined || opts.skipLayers) doc = structuredClone(doc);
+  if (opts.skipLayers?.length) doc = withoutLayers(doc, opts.skipLayers);
   const prepared = prepareSave(doc, true, opts.pictures !== false);
   const unreadLabels = new Set();
   doc = prepared.doc;

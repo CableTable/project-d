@@ -25793,6 +25793,57 @@ try {
     }
   });
 
+  await step('TODO 109b: Export DXF Layers and Text: an unticked layer and Curves leave no entity on it and no top-level TEXT; block text stays; the drawing stays clean', async () => {
+    await closeTabs(/./); await menuItem('View', 'Theme: light');
+    const raw = newDoc(4);
+    for (const [n, o] of [['Cut', { aci: 1 }], ['Notes', { aci: 3 }], ['Hid', { aci: 5, off: true }]]) addLayer(raw, n, o);
+    raw.blocks.B = { base: [0, 0], xref: false, entities: [dxfText(0, 0, 2, 'blk', { layer: '0' })] };
+    addEntities(raw, dxfLine(0, 0, 100, 0, { layer: 'Cut' }), dxfLine(0, 10, 100, 10, { layer: 'Notes' }), dxfLine(0, 20, 100, 20, { layer: 'Hid' }),
+      dxfText(5, 30, 5, 'Hi', { layer: 'Notes' }), dxfText(5, 40, 5, 'Gone', { layer: 'Cut' }), dxfInsert('B', 50, 50));
+    await page.evaluate((bytes) => {
+      window.__exp109b = { wrote: [] };
+      window.__TAURI__ = {
+        dialog: { open: async () => 'C:\\source\\curves.dxf', ask: async () => true, save: async () => 'C:\\out\\curves-export.dxf' },
+        fs: { readFile: async () => new Uint8Array(bytes), exists: async () => false, writeTextFile: async (path, text) => { window.__exp109b.wrote.push({ path, text }); } },
+      };
+    }, [...Buffer.from(writeDxf(raw))]);
+    const dialog = t('export-dxf-dialog'), open = async () => { await menuItem('File', 'Export DXF…'); await dialog.waitFor(); };
+    const layer = (n) => page.locator(`[data-testid=export-dxf-layer][data-layer="${n}"]`);
+    try {
+      await menuItem('File', 'Open…'); await waitTab(page, 'curves.dxf');
+      await open();
+      assert.deepEqual(await page.locator('[data-testid=export-dxf-layer]').evaluateAll((l) => l.map((b) => [b.dataset.layer, b.checked, b.disabled])),
+        [['Cut', true, false], ['Notes', true, false], ['Hid', false, false], ['0', true, true]], 'ticked = the visible layers; layer 0 is kept and cannot be unticked');
+      assert.equal(await t('export-dxf-text').evaluate((s) => s.value), 'text');
+      await layer('Cut').uncheck(); await t('export-dxf-text').selectOption('curves');
+      await page.screenshot({ path: `${shotDir}/export-dxf-layers-light.png` });
+      await t('export-dxf-cancel').click(); await dialog.waitFor({ state: 'detached' });
+      await menuItem('View', 'Theme: dark'); await open(); await layer('Cut').uncheck(); await t('export-dxf-text').selectOption('curves');
+      await page.screenshot({ path: `${shotDir}/export-dxf-layers-dark.png` });
+      await page.keyboard.press('Escape'); await dialog.waitFor({ state: 'detached' });
+      await menuItem('View', 'Theme: light'); await open();
+      await layer('Cut').uncheck(); await t('export-dxf-text').selectOption('curves');
+      await t('export-dxf-go').click(); await page.waitForFunction(() => window.__exp109b.wrote.length === 1);
+      const out = readDxf(await page.evaluate(() => window.__exp109b.wrote[0].text));
+      const top = out.entities.map((e) => e.type + ':' + e.layer);
+      assert.ok(!top.some((e) => /:(Cut|Hid)$/.test(e)), 'nothing on the unticked layers (Cut by hand, Hid by default): ' + top);
+      assert.ok(!top.some((e) => /^TEXT/.test(e)), 'no TEXT at the top level: ' + top);
+      assert.ok(top.filter((e) => e === 'LWPOLYLINE:Notes').length >= 2, 'Hi became outlines on its own layer: ' + top);
+      assert.ok(top.includes('LINE:Notes') && top.includes('INSERT:0'));
+      assert.equal(out.blocks.B.entities[0].type, 'TEXT', 'block text stays text');
+      await said(/Exported curves-export\.dxf.*Text as curves: 1 text made into outlines.*1 text in blocks, attributes or placed parts stays text/);
+      assert.equal(await page.locator('.tabs .dtab.on .dirty').count(), 0, 'the open drawing stays clean');
+      const doc = await page.evaluate(() => document.querySelector('.tabs .dtab.on .tname').textContent);
+      assert.equal(doc, 'curves.dxf');
+      for (const theme of ['light', 'dark']) assert.ok(readFileSync(`${shotDir}/export-dxf-layers-${theme}.png`).length > 1000);
+      console.log(`109b: Cut unticked + Curves: ${top.join(' ')}; screenshots ${shotDir}/export-dxf-layers-{light,dark}.png`);
+    } finally {
+      await page.evaluate(() => { delete window.__TAURI__; delete window.__exp109b; });
+      await page.keyboard.press('Escape');
+      await closeTabs(/./);
+    }
+  });
+
   await step('TODO 52: File → Export for cutter… asks for the tolerance (bad values refused), cancels cleanly, then writes lines / arcs / polylines only; screenshots light and dark', async () => {
     await closeTabs(/./);
     const d = newDoc(4); addEntities(d, [dxfPoly([[0, 0], [100, 0], [100, 60], [0, 60]], { closed: true }), dxfCircle(50, 30, 15), dxfText(10, 10, 5, 'HELLO')]);
