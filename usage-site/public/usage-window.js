@@ -20,7 +20,8 @@ export function isTodayIst(iso, now = Date.now()) {
 // A missing doc gives no chip; `hm` formats a time (ms) as HH:MM in IST.
 export function stripChips({ breaks, forhim, ci } = {}, now = Date.now(), hm = String) {
   const chips = [];
-  for (const b of breaks?.rows || []) {
+  for (const b of Array.isArray(breaks?.rows) ? breaks.rows : []) {
+    if (!b || typeof b !== 'object') continue;
     const from = Date.parse(b.from), to = Date.parse(b.to);
     if (from <= now && now <= to) chips.push({ cls: 'muted', text: b.account + ' break till ' + hm(to) });
   }

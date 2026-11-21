@@ -19,6 +19,7 @@ test('TODO 353b2: strip chips for breaks, for-him and CI; a missing doc or a suc
   const breaks = { rows: [{ account: 'Bishop', from: min(-10), to: min(30) }, { account: 'King', from: min(5), to: min(90) }, { account: 'Rook', from: min(-90), to: min(-1) }, { account: 'Knight', from: 'x', to: 'y' }] };
   assert.deepEqual(stripChips({ breaks }, now, hm), [{ cls: 'muted', text: 'Bishop break till HH10:30' }]); // upcoming, ended and unreadable ones are left out
   assert.deepEqual(stripChips({ breaks: { rows: [{ account: 'Bishop', from: min(0), to: min(0) }] } }, now, hm).length, 1); // both ends count
+  for (const rows of [5, [null], { a: 1 }]) assert.deepEqual(stripChips({ breaks: { rows } }, now, hm), []); // a malformed breaks doc must not throw
   assert.deepEqual(stripChips({ forhim: { open: 3, ids: [15, 19, 28] } }, now), [{ cls: 'accent', text: 'for you: 3' }]);
   assert.deepEqual(stripChips({ forhim: { open: 0, ids: [] } }, now), []);
   const ci = (patch) => stripChips({ ci: { sha: '1a2b3c4d5e6f', updated: min(-40), ...patch } }, now);
