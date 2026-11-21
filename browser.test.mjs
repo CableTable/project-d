@@ -10145,11 +10145,11 @@ try {
       return { scrolls: n.scrollHeight > n.clientHeight + 1, all: bs.every((b) => b.top >= r.top - 0.5 && b.bottom <= r.bottom + 0.5 && b.left >= r.left - 0.5 && b.right <= r.right + 0.5), n: bs.length };
     });
     const lay = await rail();
-    assert.deepEqual([lay.scrolls, lay.all, lay.n], [false, true, 22], 'layout: ' + JSON.stringify(lay));
+    assert.deepEqual([lay.scrolls, lay.all, lay.n], [false, true, 23], 'layout: ' + JSON.stringify(lay));
     await shotBoth('small-layout');
     await drawingTab().click(); await click(50, 0);
     const dr = await rail();
-    assert.deepEqual([dr.scrolls, dr.all, dr.n], [false, true, 22], 'drawing: ' + JSON.stringify(dr));
+    assert.deepEqual([dr.scrolls, dr.all, dr.n], [false, true, 23], 'drawing: ' + JSON.stringify(dr));
     const cut = await page.evaluate(() => [...document.querySelectorAll('.ribbon-group')].filter((g) => ['Modify', 'Copy'].includes(g.dataset.panel) && g.offsetWidth).map((g) => ({ g: g.dataset.panel, right: Math.round(g.getBoundingClientRect().right), over: g.scrollWidth - g.clientWidth })).filter((x) => x.right > innerWidth || x.over > 1));
     assert.deepEqual(cut, [], 'no ribbon group is cut off at 1024 px');
     const edges = await page.evaluate(() => [...document.querySelectorAll('.ribbon-group')].filter((g) => ['Modify', 'Copy'].includes(g.dataset.panel) && g.offsetWidth).map((g) => g.dataset.panel + ' right ' + Math.round(g.getBoundingClientRect().right) + ' of ' + innerWidth));
@@ -34554,6 +34554,61 @@ try {
     await page.locator('.dtab').filter({ has: page.locator('.tname', { hasText: /^compare97f2(?:-edited)*\.dxf$/ }) }).click();
     const doc = await savedDoc(); assert.equal(GR.shapeOf(doc.entities[0]).pts.length, 8); assert.deepEqual(doc.entities[1], before[1]);
     await key97c('Control+z'); assert.deepEqual((await savedDoc()).entities, before);
+    await closeTabs(/./); assert.deepEqual(errors, []);
+  });
+
+  await step('TODO 140a: Pen draws a 3-node SPLINE by clicks, Enter keeps it with one Undo, Esc cancels, click on node 1 closes; Drawings, Layouts, Compare', async () => {
+    const splines = async () => (await savedDoc()).entities.filter((e) => e.type === 'SPLINE');
+    const controls = (e) => e.r.c.filter((c) => c === 10).length;       // 3 per segment + 1
+    const snapOn = async () => { if (await t('tog-snap').getAttribute('aria-pressed') !== 'true') await t('tog-snap').click(); };
+    const rawDoc = () => { const r = newDoc(4); addEntities(r, dxfPoly([[0, 0], [300, 0], [300, 300], [0, 300]], { closed: true })); return r; };
+    const three = async () => { await click(100, 100); await click(200, 100); await click(200, 200); };
+    // Drawings
+    await open97c(rawDoc(), 'pen140a.dxf'); await snapOn();
+    const toolIsPen = () => page.waitForFunction(() => document.querySelector('[data-testid=tool-chip]').textContent === 'Tool: Pen');
+    await typeCmd('pen'); await toolIsPen();
+    await three();
+    assert.equal(await t('draw-preview').count(), 1, 'the path so far is previewed');
+    await key97c('Enter');
+    let found = await splines(); assert.equal(found.length, 1); assert.equal(controls(found[0]), 7, '3 nodes: 2 straight cubics'); assert.equal(fieldOf(found[0], 70) & 1, 0, 'open');
+    assert.equal((await histLabels()).at(-1), 'Pen');
+    await key97c('Control+z'); assert.equal((await splines()).length, 0, 'one Undo takes the whole path');
+    await three(); await key97c('Escape');
+    assert.equal((await splines()).length, 0, 'Esc cancels the whole path: nothing made');
+    await key97c('Enter'); assert.equal((await splines()).length, 0);
+    await three(); await click(100, 100);                                // a click on node 1 closes
+    found = await splines(); assert.equal(found.length, 1); assert.equal(controls(found[0]), 10, '3 nodes closed: 3 segments'); assert.equal(fieldOf(found[0], 70) & 1, 1, 'closed');
+    await key97c('Control+z');
+    await click(100, 100); await click(200, 100); const dbl = await at(200, 200); await page.mouse.dblclick(dbl.x, dbl.y);       // double-click ends and keeps
+    found = await splines(); assert.equal(found.length, 1); assert.equal(controls(found[0]), 7, 'the double-click ends with 3 nodes: its 2nd click is the same point, not a 4th');
+    await key97c('Control+z');
+    await click(100, 100); await click(200, 100); await click(200, 200); const rc = await at(200, 200); await page.mouse.click(rc.x, rc.y, { button: 'right' });
+    found = await splines(); assert.equal(found.length, 1); assert.equal(controls(found[0]), 7, 'right-click ends and keeps');
+    await key97c('Control+z');
+    await click(100, 100); await key97c('Enter');
+    await page.waitForFunction(() => /needs two points/.test(document.querySelector('[data-testid=cmd-hist]').textContent)); assert.equal((await splines()).length, 0, 'one node makes nothing');
+    await key97c('Escape'); await key97c('Escape');
+    // Layouts
+    await freshLayoutWithPlate(); await snapOn();
+    const n0 = await nParts();
+    await typeCmd('pen'); await three(); await key97c('Enter');
+    assert.equal(await nParts(), n0 + 1, 'the path is one layout object'); assert.equal((await histLabels()).at(-1), 'Pen');
+    found = await splines(); assert.equal(found.length, 1); assert.equal(controls(found[0]), 7);
+    await key97c('Control+z'); assert.equal(await nParts(), n0, 'one Undo');
+    await three(); await key97c('Escape'); assert.equal(await nParts(), n0, 'Esc cancels');
+    await click(100, 100); await click(200, 100); await click(200, 200); await click(100, 100);
+    assert.equal(await nParts(), n0 + 1, 'a click on node 1 closes it'); found = await splines(); assert.equal(controls(found[0]), 10); assert.equal(fieldOf(found[0], 70) & 1, 1);
+    await key97c('Control+z');
+    await three(); const lrc = await at(200, 200); await page.mouse.click(lrc.x, lrc.y, { button: 'right' });
+    assert.equal(await nParts(), n0 + 1, 'right-click ends and keeps it on a layout too'); await key97c('Control+z'); await key97c('Escape'); await key97c('Escape');
+    // Compare (edits the linked drawing)
+    await open97f1(rawDoc(), 'compare140a.dxf'); await snapOn();
+    await typeCmd('compare'); await typeCmd('pen'); await toolIsPen();
+    await three(); await key97c('Enter');
+    const drawingTab = page.locator('.dtab').filter({ has: page.locator('.tname', { hasText: /^compare140a(?:-edited)*\.dxf$/ }) });
+    await drawingTab.click(); found = await splines(); assert.equal(found.length, 1, 'the spline is in the linked drawing'); assert.equal(controls(found[0]), 7);
+    await page.locator('.dtab').filter({ has: page.locator('.tname', { hasText: /^Compare$/ }) }).click(); await key97c('Control+z');
+    await drawingTab.click(); assert.equal((await splines()).length, 0, 'one Undo');
     await closeTabs(/./); assert.deepEqual(errors, []);
   });
 

@@ -4,6 +4,7 @@ import * as DR from './web/draw.js';
 import { overlapArea } from './web/cmdbar.js';
 import { movePoint } from './web/move.js';
 import { readDxf, flatten } from './web/drawing.js';
+import { bezierOf } from './web/shape.js';
 import { newDoc, addEntities, writeDxf } from './web/dxf-write.js';
 
 let n = 0;
@@ -304,6 +305,35 @@ test('Polyline: one LWPOLYLINE; C closes it', () => {
   assert.equal(r.made[0].closed, true);
   click(T, [0, 0], [1, 1]);
   assert.equal(DR.toolType(T, 'c').made, null, 'two points cannot close');
+});
+
+test('Pen (140a): corner nodes -> a SPLINE with its handles on the thirds; one node makes nothing; node 1 closes with 3+', () => {
+  const T = DR.createTool('pen');
+  click(T, [0, 0], [30, 0], [30, 60]);
+  let r = DR.toolFinish(T);
+  assert.equal(r.made.length, 1); assert.equal(r.made[0].t, 'spline'); assert.equal(r.made[0].closed, false); assert.equal(r.made[0].pts.length, 3);
+  const e = DR.toEntity(r.made[0], { layer: 'L' }, 1), b = bezierOf(e);
+  assert.equal(e.type, 'SPLINE'); assert.equal(e.layer, 'L'); assert.equal(b.n, 2); assert.equal(b.closed, false);
+  [[0, 0], [10, 0], [20, 0], [30, 0], [30, 20], [30, 40], [30, 60]].forEach((p, i) => nearPt(b.P[i], p));
+  click(T, [5, 5]);
+  r = DR.toolFinish(T);
+  assert.equal(r.made, null); assert.match(r.msg, /needs two points/); assert.deepEqual(T.pts, []);
+  click(T, [0, 0], [30, 0], [30, 60]);
+  r = click(T, [0, 0]);
+  assert.equal(r.made[0].closed, true); assert.deepEqual(T.pts, [], 'a click on node 1 closes it');
+  click(T, [0, 0], [30, 0]);
+  r = click(T, [0, 0]);
+  assert.match(r.msg, /Close needs three points/); assert.equal(T.pts.length, 2, 'two nodes cannot close');
+  DR.toolFinish(T);
+  click(T, [0, 0], [30, 0], [30, 60]);
+  r = DR.toolType(T, 'c');
+  const c = bezierOf(DR.toEntity(r.made[0], {}, 1));
+  assert.equal(r.made[0].closed, true); assert.equal(c.closed, true); assert.equal(c.n, 3);
+  nearPt(c.P[9], [0, 0]); nearPt(c.P[7], [20, 40]); nearPt(c.P[8], [10, 20]);       // the closing segment: straight back to node 1
+  click(T, [0, 0], [30, 0], [30, 60]);
+  DR.toolType(T, 'u');
+  assert.equal(T.pts.length, 2, 'U drops the last node');
+  assert.deepEqual(DR.toolCancel(T).made, null); assert.deepEqual(T.pts, [], 'Esc cancels the whole path');
 });
 
 test('Rectangle: two corners, or a first corner and W,H / @W,H (negative goes the other way)', () => {

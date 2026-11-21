@@ -13,6 +13,7 @@ const TABLE = [
   ['readout', 'Edit', 'Show the colour under the cursor; a click copies its hex', [], ''],
   ['line', 'Draw', 'Straight segments', ['l'], 'draw'],
   ['polyline', 'Draw', 'Connected segments in one object', ['pl', 'pline', 'p'], 'draw'],
+  ['pen', 'Draw', 'Pen: draw a curve node by node', [], 'draw'],
   ['rectangle', 'Draw', 'Rectangle from two corners', ['rec', 'rect', 'r'], 'draw'],
   ['rrect', 'Draw', 'Rectangle with rounded corners', ['rr'], 'draw'],
   ['circle', 'Draw', 'Circle by centre and radius', ['c'], 'draw'],

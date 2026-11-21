@@ -16,9 +16,10 @@
 //   toEntity(shape, o, factor) → the DXF entity record (dxf-write.js); svgPath(shape, H) → an SVG path for the preview.
 import { line, lwpoly, circle, arc, ellipse } from './dxf-write.js';
 import { tangentCircle } from './tangent.js';
+import { bezierEnt } from './shape.js';
 
-export const KINDS = ['line', 'polyline', 'rect', 'rrect', 'circle', 'ellipse', 'arc'];
-export const LABELS = { line: 'Line', polyline: 'Polyline', rect: 'Rectangle', rrect: 'Rounded rectangle', circle: 'Circle', ellipse: 'Ellipse', arc: 'Arc' };
+export const KINDS = ['line', 'polyline', 'pen', 'rect', 'rrect', 'circle', 'ellipse', 'arc'];
+export const LABELS = { line: 'Line', polyline: 'Polyline', pen: 'Pen', rect: 'Rectangle', rrect: 'Rounded rectangle', circle: 'Circle', ellipse: 'Ellipse', arc: 'Arc' };
 const DEG = 180 / Math.PI;
 
 // ---------------------------------------------------------------- numbers
@@ -282,6 +283,14 @@ export function toEntity(sh, o = {}, factor = 1) {
     case 'circle': return circle(u(sh.c[0]), u(sh.c[1]), u(sh.r), o);
     case 'arc': return arc(u(sh.c[0]), u(sh.c[1]), u(sh.r), ff(sh.a0), ff(sh.a1), o);
     case 'ellipse': return ellipse(u(sh.c[0]), u(sh.c[1]), u(sh.m[0]), u(sh.m[1]), ff(sh.ratio), 0, Math.PI * 2, o);
+    case 'spline': {       // the Pen's path: every node a corner, so every segment a straight cubic with its handles on the thirds (a closed one ends on node 1)
+      const q = sh.pts.map((p) => [u(p[0]), u(p[1])]), P = [q[0]];
+      for (let i = 1; i <= q.length - (sh.closed ? 0 : 1); i++) {
+        const a = q[i - 1], b = q[i % q.length];
+        P.push([a[0] + (b[0] - a[0]) / 3, a[1] + (b[1] - a[1]) / 3], [a[0] + (b[0] - a[0]) * 2 / 3, a[1] + (b[1] - a[1]) * 2 / 3], b);
+      }
+      return bezierEnt(P, !!sh.closed, o);
+    }
     default: throw new Error('unknown shape ' + sh.t);
   }
 }
@@ -412,14 +421,17 @@ function reset(T) { T.pts = []; T.objs = []; T.rbase = null; T.trail = []; T.hov
 function chain(T, closed) {
   const pts = T.pts.map((p) => [p[0], p[1]]);
   if (pts.length < 2) return null;
-  return [{ t: 'poly', pts, closed: !!closed && pts.length > 2 }];
+  return [{ t: T.kind === 'pen' ? 'spline' : 'poly', pts, closed: !!closed && pts.length > 2 }];
 }
 
 function finishChain(T, closed) {
   const made = chain(T, closed);
   reset(T);
-  return made ? done(made) : say('A polyline needs two points');
+  return made ? done(made) : say(T.kind === 'pen' ? 'A curve needs two points' : 'A polyline needs two points');
 }
+
+/** Esc in the Pen: the whole path goes, nothing is made. */
+export function toolCancel(T) { reset(T); return say('Cancelled'); }
 
 /** A point picked or typed. */
 function addPoint(T, p, obj) {
@@ -451,8 +463,9 @@ function placePoint(T, p, obj) {
   p = [p[0], p[1]];
   if (tangentMode(T)) return tangentClick(T, p, obj);
   const k = T.kind, n = T.pts.length;
-  if (k === 'line' || k === 'polyline') {
+  if (k === 'line' || k === 'polyline' || k === 'pen') {
     if (n && dist(T.pts[n - 1], p) < 1e-9) return say('That is the last point again: pick another');
+    if (k === 'pen' && n && dist(T.pts[0], p) < 1e-9) return n > 2 ? finishChain(T, true) : say('Close needs three points; there are ' + n);       // a click on node 1 (the snap lands on it) closes
     if (k === 'line' && n) { const seg = { t: 'line', a: T.pts[0], b: p }; T.trail.push(T.pts[0]); T.pts = [p]; return done([seg]); }     // each click after the first is a segment at once
     T.pts.push(p);
     return say(null);
@@ -536,7 +549,7 @@ export function toolHover(T, p, flip) { T.hover = p ? [p[0], p[1]] : null; if (f
 export function toolFinish(T) {
   if (T.stage === 'radius') { T.stage = 'pts'; return say(`Corner radius ${n2(T.radius)} mm`); }
   if (T.kind === 'line') { reset(T); return say(null); }
-  if (T.kind === 'polyline') return T.pts.length ? finishChain(T, false) : say(null);
+  if (T.kind === 'polyline' || T.kind === 'pen') return T.pts.length ? finishChain(T, false) : say(null);
   if (T.pts.length || T.am) { reset(T); return say('Cancelled'); }
   if (T.kind === 'arc' && !T.am) {                                    // Enter at the first prompt: Continue from the last line or arc (T.cont, set by the app), no Ctrl flip
     const c = arcContinue(T.cont);
@@ -586,7 +599,7 @@ export function toolType(T, text, unit = 'mm') {
   const ref = toolRef(T);
   if (inp.kind === 'word') {
     const [w, ...rest] = inp.w.split(/\s+/), arg = rest.length ? parseLength(rest.join(' '), unit) : null;
-    if ((k === 'line' || k === 'polyline') && (w === 'c' || w === 'close')) {
+    if ((k === 'line' || k === 'polyline' || k === 'pen') && (w === 'c' || w === 'close')) {
       if (k === 'line') {
         if (T.trail.length < 2) return say(`Close needs two segments; there ${T.trail.length === 1 ? 'is' : 'are'} ${T.trail.length}`);
         const made = [{ t: 'line', a: T.pts[0], b: T.trail[0] }];
@@ -653,7 +666,7 @@ const lenAng = (a, b) => `${n2(dist(a, b))} mm · ${n2(angleOf(a, b))}°`;
 export function toolPreview(T) {
   const k = T.kind, H = T.hover, P = T.pts, out = { shapes: [], guides: [], readout: null, at: H };
   if (T.stage === 'radius') return out;
-  if (k === 'line' || k === 'polyline') {
+  if (k === 'line' || k === 'polyline' || k === 'pen') {       // the Pen's corner nodes are straight cubics: the same picture as a polyline until 140b bends them
     const pts = H && P.length ? [...P, H] : P;
     if (pts.length >= 2) out.shapes.push({ t: 'poly', pts: pts.map((p) => [p[0], p[1]]), closed: false });
     if (H && P.length) { out.readout = lenAng(P[P.length - 1], H); out.at = H; }
@@ -734,7 +747,7 @@ export function toolPrompt(T, layer = '0') {
     const g = T.trail.length;
     return { status: st(`${g} segment${g === 1 ? '' : 's'} made · layer ${layer} · Enter ends`), prompt: `Next point or length [${g > 1 ? 'Close / ' : ''}Undo]:` };
   }
-  if (k === 'polyline') {
+  if (k === 'polyline' || k === 'pen') {
     if (!n) return { status: st(`layer ${layer}`), prompt: 'Specify first point (x,y):' };
     return { status: st(`${n} point${n === 1 ? '' : 's'} · layer ${layer} · Enter ends`), prompt: `Next point or length [${n > 2 ? 'Close / ' : ''}Undo]:` };
   }
@@ -779,7 +792,7 @@ export function toolPrompt(T, layer = '0') {
 export function toolWords(T) {
   const k = T.kind;
   if (T.stage === 'radius') return new Set();
-  if (k === 'line' || k === 'polyline') return new Set(['c', 'close', 'u', 'undo']);
+  if (k === 'line' || k === 'polyline' || k === 'pen') return new Set(['c', 'close', 'u', 'undo']);
   if (k === 'circle') return new Set(['d', 'diameter', 'r', 'radius', 'u', 'undo', '2p', '3p', 't', 'ttr']);
   if (k === 'rrect') return new Set(['r', 'radius', 'u', 'undo']);
   if (k === 'arc') return new Set(['u', 'undo', 'c', 'center', 'centre']);       // a typed C at the Arc's first prompt is its option, not the Circle command (A and L are only options once a C is typed: the tool is busy then)
@@ -788,5 +801,5 @@ export function toolWords(T) {
 
 /** Does Shift / ORTHO keep the next point straight along X or Y from the last one here? (lines, polylines and an ellipse's first axis) */
 export function orthoApplies(T) {
-  return T.kind === 'line' || T.kind === 'polyline' || (T.kind === 'ellipse' && T.pts.length === 1);
+  return T.kind === 'line' || T.kind === 'polyline' || T.kind === 'pen' || (T.kind === 'ellipse' && T.pts.length === 1);
 }

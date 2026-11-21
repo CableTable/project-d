@@ -184,7 +184,7 @@ function cubics(s) {
 }
 
 /** A Bezier SPLINE through the control points P (3n + 1: node, handle, handle, node, …), closed or open, with like's layer, colour, line type and lineweight. */
-function bezierEnt(P, closed, like) {
+export function bezierEnt(P, closed, like) {
   const count = (P.length - 1) / 3, U = [0, 0, 0, 0, ...Array.from({ length: count - 1 }, (_, i) => [i + 1, i + 1, i + 1]).flat(), ...Array(4).fill(count)];
   return entity('SPLINE', [[70, closed ? 9 : 8], [71, 3], [72, U.length], [73, P.length], [74, 0], ...U.map((u) => [40, u]), ...P.flatMap((p) => [[10, p[0]], [20, p[1]], [30, p[2] ?? 0]])], like);
 }

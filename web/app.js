@@ -162,6 +162,7 @@ const TOOLS = [
   { sep: true },
   { id: 'line', label: 'Line', svg: '<path d="M6 18L18 6"/><circle cx="5" cy="19" r="1.8"/><circle cx="19" cy="5" r="1.8"/>' },
   { id: 'polyline', label: 'Polyline', join: 'round', svg: '<path d="M3 18l5-9 5 6 7-10"/>' },
+  { id: 'pen', label: 'Pen', description: 'Draw a curve node by node', cap: 'round', svg: '<path d="M3 17C8 17 8 7 12 7s4 10 9 10"/><rect x="2" y="15.5" width="3" height="3"/><rect x="10.5" y="5.5" width="3" height="3"/><rect x="19" y="15.5" width="3" height="3"/>' },
   { id: 'rect', label: 'Rectangle', svg: '<rect x="3.5" y="6" width="17" height="12"/>' },
   { id: 'rrect', label: 'Rounded rectangle', svg: '<rect x="3.5" y="6" width="17" height="12" rx="4"/>' },
   { id: 'circle', label: 'Circle', svg: '<circle cx="12" cy="12" r="8"/>' },
@@ -597,7 +598,7 @@ function buildMenus() {
         ...[['system', 'follow system'], ['light', 'light (CorelDRAW-like)'], ['dark', 'dark (AutoCAD-like)']].map(([mode, label], i) => [tick(theme === mode, 'Theme: ' + label), () => setTheme(mode), null, null, null, i === 0, theme === mode])];
     },
   };
-  menus.Draw = [['Line', 'line', 'L'], ['Polyline', 'polyline', 'P'], ['Rectangle', 'rect', 'R'], ['Rounded rectangle', 'rrect', 'RR'], ['Circle', 'circle', 'C'],
+  menus.Draw = [['Line', 'line', 'L'], ['Polyline', 'polyline', 'P'], ['Pen', 'pen', null], ['Rectangle', 'rect', 'R'], ['Rounded rectangle', 'rrect', 'RR'], ['Circle', 'circle', 'C'],
     ['Ellipse', 'ellipse', 'EL'], ['Arc', 'arc', 'A'], ['Text', 'text', 'T'], ['Divide', 'divide', 'DIV'], ['Measure points', 'measurepoints', 'ME']].map(([text, id, key]) => [text, () => setTool(id), key, null, null, false, undefined, id === 'circle' ? circleRows : id === 'arc' ? arcRows : null]);       // every draw tool works on a layout too (156b2); Circle and Arc open their modes as a submenu (346a, 347c)
   menus.Modify = [['Move', 'move', 'MV'], ['Copy', 'copy', 'CO'], ['Stretch', 'stretch', 'STR'], ['Array', 'array', 'AR'], ['Rotate', 'rotate', 'RO'], ['Align', 'align', 'AL'], ['Scale', 'scale', 'SC'], ['Fillet', 'fillet', 'F'], ['Offset', 'offset', 'O'], ['Trim', 'trim', 'TR'], ['Extend', 'extend', 'EX'], ['Mirror', 'mirror', 'MI'], ['Reverse', 'reverse', null]].map(([text, id, key]) => [text, () => id === 'rotate' ? DO.rotate() : setTool(id), key, () => !curLay() || LAY_MODS.includes(id) || id === 'rotate' && !!selectedPlaced()]);
   menus.Modify.push(['Text to outlines', () => textToOutlines(), 'TXO']);
@@ -864,7 +865,7 @@ function ribbonContents(kind) {
     stack(...['frontminus', 'backminus'].map((op) => convert(SH.OPS[op].label, () => shapeSelection(op), '<rect x="3" y="5" width="12" height="12" fill="currentColor" opacity=".5"/><rect x="9" y="9" width="12" height="12"/>', true, op, true)),
       btn('Keep originals', copy, toggleShapingKeep, { small: true, pressed: () => state.shapingKeepOriginals })));
   if (ribbon.tab === 'Draw') return [
-    group('Draw', ...['line', 'polyline', 'rect', 'rrect', 'circle', 'ellipse', 'arc'].map((id) => ribbonTool(id))),
+    group('Draw', ...['line', 'polyline', 'pen', 'rect', 'rrect', 'circle', 'ellipse', 'arc'].map((id) => ribbonTool(id))),
     group('Text', ribbonTool('text'), convert('Text to outlines', textToOutlines, outlinesIcon, false, undefined, true)),
     group('Annotate', ...['dimension', 'leader', 'balloon', 'measure'].map((id) => ribbonTool(id))),
     group('Tools', ribbonTool('select'), ribbonTool('pan'))];
@@ -899,7 +900,7 @@ function ribbonContents(kind) {
     stack(btn('Cut', TOOLS.find((t) => t.id === 'trim').svg, cutSelection, { small: true, enabled: () => !!editable()?.sel.size }),
       btn('Copy', copy, copySelection, { small: true, enabled: () => curLay() ? !!selItems().length : !!editable()?.sel.size }),
       btn('Select all', '<rect x="4" y="4" width="16" height="16" stroke-dasharray="3 2"/><path d="M8 12l3 3 5-6"/>', selectAll, { small: true, enabled: () => !!editable() || !!curLay() })))];
-  groups.push(group('Draw', ...['line', 'polyline', 'circle', 'arc'].map((id) => ribbonTool(id)), stack(...['rect', 'ellipse', 'text'].map((id) => ribbonTool(id, true))), ribbonTool('divide')));
+  groups.push(group('Draw', ...['line', 'polyline', 'pen', 'circle', 'arc'].map((id) => ribbonTool(id)), stack(...['rect', 'ellipse', 'text'].map((id) => ribbonTool(id, true))), ribbonTool('divide')));
   if (kind === 'layout') return [...groups,
     group('Parts', btn('Add to layout', '<rect x="3" y="5" width="12" height="14"/><path d="M18 9v8M14 13h8"/>', addToLayout),
       btn('Parts library', '<rect x="3" y="4" width="5" height="16"/><rect x="10" y="4" width="5" height="16"/><path d="M17 5l4 1-3 15-4-1z"/>', showLibrary, { command: 'library' }),
@@ -5953,7 +5954,7 @@ function attachCanvasEvents() {
   });
   c.addEventListener('click', (e) => { const gh = e.target.closest && e.target.closest('[data-gap]'); if (gh && !state.setlen && state.tool !== 'measure') pickGap(gh.dataset.gap); });
   c.addEventListener('mousedown', (e) => { if (curLay() && e.button === 0 && e.detail === 2) { textDblClick(e); if (state.text.ed?.dim) e.preventDefault(); } });       // layout selection rebuilds its SVG before dblclick can fire
-  c.addEventListener('dblclick', (e) => { if (state.dimHot) { state.dimHot.g.cancelled = true; state.dimHot = state.dimDrag = null; paintOverlay(); } if (!balDbl(e) && !shapeDblClick(e)) textDblClick(e); });       // the double-click on a dimension's text edits it: its first click did not leave a hot grip (345b2)
+  c.addEventListener('dblclick', (e) => { if (drawLive() && state.draw.kind === 'pen' && DR.toolBusy(state.draw)) { state.msg = null; if (state.draw.pts.length < 2) drawCancel(); else drawFinish(); return; } if (state.dimHot) { state.dimHot.g.cancelled = true; state.dimHot = state.dimDrag = null; paintOverlay(); } if (!balDbl(e) && !shapeDblClick(e)) textDblClick(e); });       // the double-click on a dimension's text edits it: its first click did not leave a hot grip (345b2)
   c.addEventListener('mousedown', (e) => { if (e.button === 0 && state.tool === 'text' && !e.target.closest('.texted, .zoombox, .contourpanel')) e.preventDefault(); });      // the click places a text: it must not take the focus from the box it opens
   c.addEventListener('pointercancel', () => { if (state.drawingRotate) state.drawingRotate.drag = null; if (state.grip && !state.grip.hot) gripCancel(); state.entityDrag = null; state.balDrag = null; if (state.text.drag) textDragEnd(true); if (gdrag) cancelGuideDrag(); if (pdrag) cancelPlacedDrag(); drag = null; lrub = null; lmod = null; state.dimDrag = null; hideRubber(); paintOverlay(); end(); });
   c.addEventListener('auxclick', (e) => e.preventDefault());
@@ -5963,7 +5964,7 @@ function attachCanvasEvents() {
     if (e.shiftKey && toolMenu(e)) return;                       // Shift+right-click while a tool is on: its menu (plain right-click finishes, below)
     if (shapeMenu(e)) return;                                    // the Shape tool with nodes selected: Break at node / Join nodes (139c)
     const gh =e.target.closest && e.target.closest('[data-guide]');
-    if (state.draw && !curLay()) { if (DR.toolBusy(state.draw)) drawFinish(); return; }
+    if (state.draw && (!curLay() || state.draw.kind === 'pen' && drawLive())) { if (DR.toolBusy(state.draw)) drawFinish(); return; }
     if (modLive()) { modEnter(editable()); return; }
     if (layModLive()) { modEnter(curDoc()); return; }
     if (gh && guideTarget()) { guideMenu(e, Number(gh.dataset.guide)); return; }
@@ -8571,6 +8572,8 @@ function drawApply(r) {
 }
 /** Enter / Esc / right-click: the tool ends what it has (a line or polyline keeps it) and the acquired points go. */
 function drawFinish() { state.draw.cursorInput = null; trackClear(); state.draw.cont = lastDrawn.get(state.drawDoc) || null; drawApply(DR.toolFinish(state.draw)); }
+/** Esc in the Pen: the whole path goes, nothing is made. */
+function drawCancel() { state.draw.cursorInput = null; trackClear(); drawApply(DR.toolCancel(state.draw)); }
 const lastDrawn = new WeakMap();                                    // tab document → the last shape drawn in it (mm): where the Arc's Continue starts (347c)
 /** Shift+right-click while a tool asks for a point (TODO 72): Enter, Cancel, Close and Undo last point where they apply, then the snap types. → false when no such tool is on */
 function toolMenu(e) {
@@ -8582,7 +8585,7 @@ function toolMenu(e) {
     rows.push(['Enter', () => { state.msg = null; drawFinish(); }, 'Enter']);
     const count = (d) => (d.lay ? d.lay.placed.length : d.raw.entities.length);
     rows.push(['Cancel', () => { const d = state.drawDoc, before = count(d); if (DR.toolBusy(T)) drawFinish(); const made = count(d) > before && state.msg; setTool('select'); note(made || 'Cancelled'); }]);   // setTool clears the msg: keep drawCommit's "made on layer" line
-    if (T.kind === 'polyline') rows.push(['Close', () => drawTyped('c'), null, T.pts.length >= 3]);
+    if (T.kind === 'polyline' || T.kind === 'pen') rows.push(['Close', () => drawTyped('c'), null, T.pts.length >= 3]);
     rows.push(['Undo last point', () => drawTyped('u'), null, DR.toolBusy(T)]);
   } else rows.push(['Cancel', () => { setTool('select'); note('Cancelled'); }]);
   rows.push('-', ...Object.entries(SNAP_NAME).map(([kind, name]) => [tick(state.snapTypes[kind], 'Snap: ' + name), () => setSnapType(kind, !state.snapTypes[kind])]));
@@ -8665,7 +8668,7 @@ function drawOvl(paint = false) {
         tip.fields = DR.dynamicInput(T.pts.at(-1) || [0, 0], pv.at, state.dp, drawingUnit());
         tip.dynamic = dynamic; tip.single = DI.isSingle(DI.inputMode(T)) ? DI.inputMode(T) : null;
         tip.tracking = state.trk.res?.text;
-        if (T.pts.length && (['line', 'polyline'].includes(T.kind) || ['arc', 'ellipse'].includes(T.kind) && T.pts.length === 1) && cursorInput().mode === 'polar') tip.segment = [T.pts.at(-1), pv.at];
+        if (T.pts.length && (['line', 'polyline', 'pen'].includes(T.kind) || ['arc', 'ellipse'].includes(T.kind) && T.pts.length === 1) && cursorInput().mode === 'polar') tip.segment = [T.pts.at(-1), pv.at];
         if (T.pts.length && ['rect', 'rrect', 'circle'].includes(T.kind) && ['size', 'radius'].includes(cursorInput().mode)) {
           tip.segment = [T.pts[0], pv.at]; tip.placementKind = T.kind;
         }
@@ -12042,6 +12045,7 @@ function editKey(e) {
     else if (modLive()) modEsc(d);
     else if (state.tool === 'text' && state.text.askHeight && !textEditing()) { state.text.askHeight = false; renderCommand(); paintOverlay(); }
     else if (state.tool === 'text' && d && !textEditing()) { if (d.sel.size) setSel(d, new Set()); else setTool('select'); }
+    else if (drawLive() && state.draw.kind === 'pen' && DR.toolBusy(state.draw)) { state.msg = null; drawCancel(); }
     else if (drawLive()) { if (DR.toolBusy(state.draw) || state.draw.stage === 'radius') { state.msg = null; drawFinish(); } else setTool('select'); }
     else if (state.dimDrag || state.dimHot) { (state.dimDrag || state.dimHot.g).cancelled = true; state.dimDrag = state.dimHot = null; note('Move cancelled'); paintOverlay(); }
     else if (state.dim && state.dim.askText) { state.dim.askText = false; note(dimPrompt()); }

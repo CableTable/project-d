@@ -10,6 +10,13 @@ const near = (a, b, e = 1e-6) => assert.ok(Math.abs(a - b) < e, `${a} vs ${b}`);
 const nodes = (ent, ...ids) => SH.nodesOf(ent).filter((n) => ids.includes(n.id));
 const pts = (ent) => SH.nodesOf(ent).map((n) => [+n.x.toFixed(6) + 0, +n.y.toFixed(6) + 0]);       // + 0: -0 becomes 0
 
+test('TODO 140a: bezierEnt (the Pen) makes a Bezier SPLINE from its control points, open or closed, with the given layer', () => {
+  const P = [[0, 0], [10, 0], [20, 0], [30, 0], [30, 10], [30, 20], [30, 30]];
+  const open = SH.bezierEnt(P, false, { layer: 'Q' }), b = SH.bezierOf(open);
+  assert.equal(open.layer, 'Q'); assert.equal(b.n, 2); assert.equal(b.closed, false); assert.deepEqual(b.P.map((p) => [p[0], p[1]]), P);
+  assert.equal(SH.bezierOf(SH.bezierEnt([...P.slice(0, 6), P[0]], true, {})).closed, true);
+});
+
 test('nodes: polyline vertices, line and arc ends, circle quadrants; none on other kinds', () => {
   assert.deepEqual(SH.nodesOf(lwpoly([[0, 0], [10, 0], [10, 5]])).map((n) => n.id), ['v0', 'v1', 'v2']);
   assert.deepEqual(SH.nodesOf(line(0, 0, 10, 0)).map((n) => n.id), ['a', 'b']);
