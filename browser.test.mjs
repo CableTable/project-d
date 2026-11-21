@@ -16155,6 +16155,77 @@ try {
     await closeTabs(/./);
   });
 
+  await step('TODO 139a: Shape tool selects and drags nodes', async () => {
+    await menuItem('View', 'Theme: light');
+    const hotWhen = (n) => page.waitForFunction((k) => document.querySelectorAll('[data-testid=grip-hot]').length === k, n);
+    const nodeClick = async (id, shift = false) => { const a = await gripBox(id); if (shift) await page.keyboard.down('Shift'); try { await page.mouse.click(a.x, a.y); } finally { if (shift) await page.keyboard.up('Shift'); } await frames(); };
+    const nodeDrag = async (id, dx, dy) => { const a = await gripBox(id); await page.mouse.move(a.x, a.y); await page.mouse.down(); await page.mouse.move(a.x + dx, a.y + dy, { steps: 6 }); await page.mouse.up(); await frames(); };
+    const undo = async () => { await page.evaluate(() => document.activeElement && document.activeElement.blur()); await page.keyboard.press('Control+z'); await frames(); };
+    const verts = async () => GR.lwVertices(entOf(await savedDoc(), 0).r).map((v) => [v.x, v.y]);
+    const circ = async () => { const e = entOf(await savedDoc(), 1); return [10, 20, 40].map((k) => GR.get(e.r, k)); };
+    const same = (a, b) => assert.ok(a.every((p, i) => near(p[0], b[i][0], 1e-6) && near(p[1], b[i][1], 1e-6)), JSON.stringify([a, b]));
+    // Drawings: an open polyline and a circle selected; the Shape tool shows their nodes (3 vertices, 4 quadrants), no mids or centre
+    const raw = newDoc(4); addEntities(raw, dxfPoly([[20, 30], [80, 30], [80, 70]]), dxfCircle(160, 60, 20));
+    await openGrips(writeDxf(raw), 'shape-nodes.dxf');
+    await click(50, 30); await click(160, 80, { shift: true }); await frames(); await gripWhen(5 + 5);
+    await typeCmd('shape'); await gripWhen(7);
+    await page.waitForFunction(() => /^Shape: click a node/.test(document.querySelector('[data-testid=grip-hint]').textContent));
+    // click selects a node alone; Shift+click adds one, again takes it out
+    await nodeClick('0:v1'); await hotWhen(1);
+    await nodeClick('0:v2', true); await hotWhen(2);
+    await nodeClick('0:v2', true); await hotWhen(1);
+    await nodeClick('0:v2', true); await hotWhen(2);
+    await shotBoth('shape-nodes');
+    await menuItem('View', 'Theme: light');
+    await page.setViewportSize({ width: 1024, height: 768 }); await frames(); await page.screenshot({ path: `${shotDir}/s12-shape-nodes-1024.png` });
+    await page.setViewportSize({ width: 1440, height: 900 }); await frames();
+    // dragging one selected node moves both by the same offset; v0 stays; the nodes stay selected; one Undo takes it back
+    const before = await verts();
+    await nodeDrag('0:v1', 40, -30); await hotWhen(2);
+    const after = await verts(), d1 = [after[1][0] - before[1][0], after[1][1] - before[1][1]], d2 = [after[2][0] - before[2][0], after[2][1] - before[2][1]];
+    assert.ok(Math.abs(d1[0]) > 1 && near(d1[0], d2[0], 1e-6) && near(d1[1], d2[1], 1e-6), 'v1 and v2 moved by one offset: ' + JSON.stringify([d1, d2]));
+    same([after[0]], [before[0]]);
+    await undo(); same(await verts(), before);
+    // a box round two quadrants selects them; dragging one moves the circle whole (radius stays)
+    const p = await at(135, 85), q = await at(165, 55);
+    await page.mouse.move(p.x, p.y); await page.mouse.down(); await page.mouse.move(q.x, q.y, { steps: 6 }); await page.mouse.up(); await frames();
+    await hotWhen(2);
+    assert.deepEqual(await page.locator('[data-testid=grip-hot]').evaluateAll((g) => g.map((x) => x.dataset.grip).sort()), ['1:q1', '1:q2']);
+    await nodeDrag('1:q1', 30, 0);
+    const c = await circ();
+    assert.ok(c[0] > 161 && near(c[1], 60, 1) && near(c[2], 20, 1e-6), 'the circle moved, radius 20: ' + c);
+    await undo(); assert.deepEqual(await circ(), [160, 60, 20]);
+    // Esc ends the tool
+    await page.keyboard.press('Escape');
+    await page.waitForFunction(() => document.querySelector('[data-tool=select]').classList.contains('on'));
+    // Layouts: a layout line's end node dragged alone, one Undo
+    await freshLayoutWithPlate();
+    await typeCmd('line'); await typeCmd('50,600'); await typeCmd('300,600'); await typeCmd('');
+    await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click(); await click(175, 600); await frames(); await gripWhen(3);
+    await page.locator('[data-tool=shape]').click(); await gripWhen(2);
+    const gid = (k) => page.locator('[data-testid=grip], [data-testid=grip-hot]').evaluateAll((g, s) => g.map((x) => x.dataset.grip).find((x) => x.endsWith(':' + s)), k);
+    const [la, lb] = [await gid('a'), await gid('b')], a0 = await gripBox(la), b0 = await gripBox(lb);
+    await nodeClick(lb); await hotWhen(1);
+    await nodeDrag(lb, 0, -40); await gripWhen(2);
+    const a1 = await gripBox(await gid('a')), b1 = await gripBox(await gid('b'));
+    assert.ok(near(a1.x, a0.x, 1) && near(a1.y, a0.y, 1) && near(b1.y, b0.y - 40, 3), 'the layout line end moved, the other stayed');
+    await undo(); await gripWhen(2);
+    const b2 = await gripBox(await gid('b'));
+    assert.ok(near(b2.y, b0.y, 1), 'one Undo puts the layout line back');
+    await page.keyboard.press('Escape');
+    // Compare: the Shape tool opens the source for editing (cmpEdit); a node drag, one Undo
+    const cmp = newDoc(4); addEntities(cmp, dxfLine(20, 30, 120, 30));
+    await openGrips(writeDxf(cmp), 'shape-cmp.dxf'); await typeCmd('compare');
+    await typeCmd('shape'); await page.keyboard.press('Control+a'); await gripWhen(2);
+    const cid = await gid('b'), c0 = await gripBox(cid);
+    await nodeDrag(cid, 0, -40); await gripWhen(2);
+    assert.ok(near((await gripBox(cid)).y, c0.y - 40, 3), 'the Compare source line end moved');
+    await undo(); await gripWhen(2);
+    assert.ok(near((await gripBox(cid)).y, c0.y, 1), 'one Undo puts it back');
+    await page.keyboard.press('Escape');
+    await closeTabs(/./);
+  });
+
   // ---- TODO 163a: Grip options, the hover list on a line / arc grip ----
   const g163 = {
     list: async () => { await t('ctx-menu').waitFor(); return page.locator('[data-testid=ctx-menu] .mi').allTextContents(); },

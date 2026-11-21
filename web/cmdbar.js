@@ -63,6 +63,7 @@ const TABLE = [
   ['breakatpoint', 'Edit', 'Split an open object at one point without a gap', [], 'draw'],
   ['lengthen', 'Edit', 'Change the length of the picked end of a line, arc or open polyline', ['len'], 'draw'],
   ['join', 'Edit', 'Merge lines, arcs and polylines that meet end to end into one object', ['j'], 'draw'],
+  ['shape', 'Edit', 'Shape tool: select the nodes of the selected objects and drag them', [], ''],
   ['close', 'Edit', 'Close an open line, arc or polyline: extend the ends to where they meet, or a straight segment', ['cl'], 'draw'],
   ['reverse', 'Edit', 'Turn lines, polylines and splines round: the start becomes the end', [], 'draw'],
   ['divide', 'Draw', 'Place points at equal divisions along an object', ['div'], 'draw'],
