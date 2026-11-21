@@ -28414,6 +28414,48 @@ try {
     await closeTabs(/./);
   });
 
+  await step('TODO 156e3c: Preflight on a layout looks across objects: two loose lines on top of each other are Duplicates 2, two loose lines 0.005 mm apart end to end are Gaps 1, two copies of one part stacked list both placements and Select picks both', async () => {
+    await closeTabs(/./);
+    const shows = (id, re) => page.waitForFunction(([i, s]) => new RegExp(s).test(document.querySelector(`[data-testid=${i}]`)?.textContent || ''), [id, re.source], { timeout: 8000 });
+    const lineObj = (id, x0, x1, y = 200) => objectPart(id, 'Line', dxfLine(x0, y, x1, y), newDoc(4).layers);
+    const openLay = async (name, parts, placed) => {
+      const lay = newLayout(name); lay.parts = Object.fromEntries(parts.map((p) => [p.id, p])); lay.placed = placed;
+      await t('picker').setInputFiles({ name: name + '.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
+      await waitTab(page, name + '.dxf');
+      await menuItem('Tools', 'Preflight…');
+    };
+    // (a) one line drawn twice
+    const a1 = lineObj('c-a1', 20, 100), a2 = lineObj('c-a2', 20, 100);
+    await openLay('pf156e3c-a', [a1, a2], [objectPlacement(a1), objectPlacement(a2)]);
+    await shows('preflight-duplicates-count', /^2$/); await shows('preflight-gaps-count', /^0$/);
+    assert.equal(await t('preflight-duplicates-fix').count(), 0, 'report only on a layout');
+    await closeTabs(/./);
+    // (b) two lines end to end, 0.005 mm apart
+    const b1 = lineObj('c-b1', 20, 60), b2 = lineObj('c-b2', 60.005, 100);
+    await openLay('pf156e3c-b', [b1, b2], [objectPlacement(b1), objectPlacement(b2)]);
+    await shows('preflight-gaps-count', /^1$/); await shows('preflight-duplicates-count', /^0$/);
+    await t('preflight-gaps-select').click(); await frames();
+    await shows('cmd-prompt', /Tiny gaps.* · 2 placements selected/);
+    await closeTabs(/./);
+    // (c) two copies of one part on the same spot, and a third one elsewhere
+    const raw = newDoc(4); addEntities(raw, dxfLine(0, 0, 100, 50));
+    const part = makePart('c-part', 'Slash', raw, 1);
+    await openLay('pf156e3c-c', [part], [{ partId: part.id, x: 20, y: 30, rot: 0 }, { partId: part.id, x: 20, y: 30, rot: 0 }, { partId: part.id, x: 150, y: 30, rot: 0 }]);
+    await shows('preflight-duplicates-count', /^2$/);
+    await t('preflight-duplicates-select').click(); await frames();
+    await shows('cmd-prompt', /Duplicates \/ overlaps · 2 placements selected/);
+    assert.equal(await page.locator('[data-group=tools] .sel-box').count(), 2, 'a selection box on each of the two stacked copies');
+    await closeTabs(/./);
+    // 220 placements: how long the first walk takes
+    const many = Array.from({ length: 220 }, (_, i) => ({ partId: part.id, x: 10 + (i % 20) * 120, y: 10 + Math.floor(i / 20) * 70, rot: 0 }));
+    many[1] = { ...many[0] };       // one stacked pair, so the count shows the walk is done
+    const t0 = Date.now();
+    await openLay('pf156e3c-many', [part], many);
+    await shows('preflight-duplicates-count', /^2$/);
+    console.log('TODO 156e3c: 220 placements, Preflight shown after', Date.now() - t0, 'ms (incl. opening the file)');
+    await closeTabs(/./);
+  });
+
   await step('TODO 156b fixes: Esc cancels a hot grip with 2 objects selected; Polyline snaps to its own first point on a layout; lock and group of objects survive save and reopen; the counts say parts only; Add to layout after objects starts the grid', async () => {
     await freshLayoutWithPlate();
     const n0 = await nParts(), blur = () => page.evaluate(() => document.activeElement?.blur());

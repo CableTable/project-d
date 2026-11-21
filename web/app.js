@@ -13356,21 +13356,37 @@ const pfDoc = () => editable() || (curLay() ? curDoc() : null);
 /** What a Preflight run was made of: a drawing's entities, or (text) a layout's placements and sheet. */
 const pfSource = (d) => (d.lay ? JSON.stringify([d.lay.placed, d.lay.s.sheetW, d.lay.s.sheetH]) : d.raw.entities);
 const pfLocked = (lay, p) => !!p.lock || !!(lay.parts[p.partId].obj && LD.layersOf(lay)[lay.parts[p.partId].raw.entities[0]?.layer]?.flags & 4);
-/** Preflight of the open layout (TODO 156e3a/b): the checks on each loose object's own raw (one object at a time, no cross-object checks;
+/** Preflight of the open layout (TODO 156e3a/b): the checks on each loose object's own raw (one object at a time;
  * tolerance and stroke width follow the placement's scale), on each placed part's raw once per part id (report only: a part record is shared by its copies; `placed` counts those hits),
- * and "off the sheet" on every placement. Hidden placements are skipped. Offenders are indexes into placedNow (a placed part's: all its copies). Only Hairline on loose objects is a Fix. */
+ * and "off the sheet" on every placement. Hidden placements are skipped. Offenders are indexes into placedNow (a placed part's: all its copies). Only Hairline on loose objects is a Fix.
+ * Duplicates and Gaps also look across placements (TODO 156e3c): each visible placement's outlines in sheet mm (gap tolerance in sheet mm), a pair from two different placements flags both
+ * (count: the placements for Duplicates, the gaps for Gaps; hits inside one placement stay in the rows above). Report only: no Fix. */
 function layPreflight(d, check) {
   const lay = d.lay, { sheetW, sheetH } = lay.s;
   const rows = CL.preflight(newDoc(4), { tolerance: state.gapMm, sheetW, sheetH, check }).map((r) => ({ ...r, placed: 0, fix: r.id === 'wide' ? r.fix : undefined })), by = Object.fromEntries(rows.map((r) => [r.id, r]));
-  const copies = new Map();
+  const copies = new Map(), outlines = new Map(), items = [];
   placedNow.forEach((p, k) => {
     if (partHid(p)) return;
     const part = lay.parts[p.partId];
+    if (by.duplicates || by.gaps) {
+      if (!outlines.has(p.partId)) outlines.set(p.partId, C.polylines(part.fl || flatten(part.raw), part.factor || 1, part.off).polys);
+      const f = part.factor || 1, [b0, b1] = part.box || [0, 0], th = (p.rot || 0) * Math.PI / 180, co = Math.cos(th), si = Math.sin(th), sx = (p.mirrorX ? -1 : 1) * (p.sc || 1), sy = (p.mirrorY ? -1 : 1) * (p.sc || 1);
+      items.push({ k, polys: outlines.get(p.partId).map((q) => {       // the part's mm outline from its box corner, mirrored, turned, moved to x, y (placedBox's maths)
+        const o = new Float64Array(q.length);
+        for (let i = 0; i < q.length; i += 2) { const u = (q[i] - b0 * f) * sx, v = (q[i + 1] - b1 * f) * sy; o[i] = p.x + co * u - si * v; o[i + 1] = p.y + si * u + co * v; }
+        return o;
+      }) });
+    }
     if (part.obj && p.src === 'loose' && check !== 'offsheet') for (const r of CL.preflight(part.raw, { factor: p.sc || 1, tolerance: state.gapMm, check })) if (r.id !== 'offsheet' && r.count) { by[r.id].offenders.push(k); by[r.id].count += r.count; }
     if (!part.obj && check !== 'offsheet') copies.set(p.partId, [...(copies.get(p.partId) || []), k]);
     if (by.offsheet && PL.offSheet(part, p, sheetW, sheetH)) { by.offsheet.offenders.push(k); by.offsheet.count++; }
   });
   for (const [id, ks] of copies) for (const r of CL.preflight(lay.parts[id].raw, { factor: lay.parts[id].factor || 1, tolerance: state.gapMm, check })) if (r.id !== 'offsheet' && r.count) { by[r.id].offenders.push(...ks); by[r.id].count += r.count; by[r.id].placed += r.count; }
+  if (items.length) {
+    const x = CL.crossChecks(items, state.gapMm), add = (id, ks, n) => { if (n) { by[id].offenders = [...new Set([...by[id].offenders, ...ks])]; by[id].count += n; } };
+    if (by.duplicates) add('duplicates', x.duplicates, x.duplicates.size);
+    if (by.gaps) add('gaps', x.gaps.flatMap((s) => [...s]), x.gaps.length);
+  }
   return rows;
 }
 /** Preflight's Hairline Fix on a layout: the unlocked loose objects among `offenders` (placedNow indexes) become hairline objects (objectReplace: new part ids), one undo step. */

@@ -144,6 +144,46 @@ export function hairline(raw, offenders, locked = new Set()) {
   return { entities: raw.entities.map((e, i) => selected.has(i) ? fix(e) : e), blocks };
 }
 
+/**
+ * Cross-object Duplicates and Gaps (TODO 156e3c) on a layout: `items` = [{ k, polys }], the outlines (Float64Array x, y, x, y… in sheet mm) of placement k.
+ * Only pairs from two different k count (a hit inside one k is the per-object row's). Returns { duplicates: Set of k, gaps: [Set of the k's of one gap] }.
+ * shortcut: arcs are compared as their sampled chords (a rotated copy of a circle samples elsewhere, so it is no duplicate); upgrade with arc-aware covered().
+ */
+export function crossChecks(items, tolerance) {
+  const D = 1e-6, duplicates = new Set(), prev = new Map(), gaps = [], ends = [];
+  for (const { k, polys } of items) for (const q of polys) {
+    const n = q.length;
+    if (n >= 4 && Math.hypot(q[0] - q[n - 2], q[1] - q[n - 1]) > 2e-6) ends.push({ k, x: q[0], y: q[1] }, { k, x: q[n - 2], y: q[n - 1] });       // a closed outline has no ends
+    for (let i = 0; i + 3 < n; i += 2) {
+      const a = [q[i], q[i + 1]], b = [q[i + 2], q[i + 3]], len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+      if (len <= D) continue;
+      const u = [(b[0] - a[0]) / len, (b[1] - a[1]) / len], bucket = support({ line: true, a, u }), key = bucket.join(',');
+      for (const t of nearbyKeys(bucket).flatMap((nk) => prev.get(nk) || [])) {
+        if (t.k === k || (duplicates.has(k) && duplicates.has(t.k)) || Math.abs(cross(sub(t.a, a), u)) > D || Math.abs(cross(sub(t.b, a), u)) > D) continue;
+        const s0 = dot(sub(t.a, a), u), s1 = dot(sub(t.b, a), u);
+        if (Math.min(len, Math.max(s0, s1)) - Math.max(0, Math.min(s0, s1)) > D) { duplicates.add(k); duplicates.add(t.k); }
+      }
+      if (!prev.has(key)) prev.set(key, []);
+      prev.get(key).push({ k, a, b });
+    }
+  }
+  const cell = Math.max(tolerance, 1e-12), at = new Map(), parent = ends.map((_, i) => i);
+  const find = (a) => { while (parent[a] !== a) a = parent[a] = parent[parent[a]]; return a; };
+  ends.forEach((p, i) => {
+    const cx = Math.floor(p.x / cell), cy = Math.floor(p.y / cell), key = cx + ',' + cy;
+    for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) for (const j of at.get((cx + dx) + ',' + (cy + dy)) || []) if (Math.hypot(ends[j].x - p.x, ends[j].y - p.y) <= tolerance) parent[find(j)] = find(i);
+    if (!at.has(key)) at.set(key, []);
+    at.get(key).push(i);
+  });
+  const groups = new Map();
+  ends.forEach((p, i) => { const r = find(i); if (!groups.has(r)) groups.set(r, []); groups.get(r).push(p); });
+  for (const g of groups.values()) {
+    const ks = new Set(g.map((p) => p.k));
+    if (ks.size > 1 && g.some((p) => g.some((o) => Math.hypot(p.x - o.x, p.y - o.y) > 2e-6))) gaps.push(ks);       // ends that already meet are joined, not a gap
+  }
+  return { duplicates, gaps };
+}
+
 /** Six warning checks. Sheet/tolerance are mm; counts are offending entities except gap clusters. */
 export function preflight(raw, { factor = 1, tolerance = 0.01, sheetW, sheetH, check } = {}) {
   const wanted = (id) => !check || check === id, hasSheet = sheetW != null && sheetH != null;

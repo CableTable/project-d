@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { removeDuplicates, preflight, hairline } from './web/cleanup.js';
+import { removeDuplicates, preflight, hairline, crossChecks } from './web/cleanup.js';
 import { newDoc, addEntities, addLayer, line, arc, circle, lwpoly, text, writeDxf, insert, entity } from './web/dxf-write.js';
 import { readDxf } from './web/drawing.js';
 import { shapeOf } from './web/grips.js';
@@ -169,4 +169,18 @@ test('Cut names on block members are checked in world coordinates; closed block 
   assert.deepEqual(rows(d).open.offenders, [0]);
   d.blocks.Paths.entities.shift();
   assert.equal(rows(d).open.count, 0);
+});
+
+test('crossChecks: only pairs from two different placements count, both are flagged', () => {
+  const L = (...v) => [Float64Array.from(v)], run = (items, tol = 0.01) => crossChecks(items, tol);
+  // the same line in two placements (one drawn backwards), a longer one overlapping half of it, a parallel one 1 mm away, one only touching at an end
+  const r = run([{ k: 0, polys: L(0, 0, 100, 0) }, { k: 1, polys: L(100, 0, 0, 0) }, { k: 2, polys: L(50, 0, 150, 0) }, { k: 3, polys: L(0, 1, 100, 1) }, { k: 4, polys: L(150, 0, 200, 0) }]);
+  assert.deepEqual([...r.duplicates].sort(), [0, 1, 2]);
+  assert.deepEqual(run([{ k: 0, polys: L(0, 0, 100, 0, 0, 0) }]).duplicates.size, 0, 'inside one placement is the per-object row');
+  // end to end 0.005 apart is one gap of both placements; 0.05 apart is not; ends that meet exactly are joined; a closed outline has no ends
+  assert.deepEqual(run([{ k: 0, polys: L(0, 0, 10, 0) }, { k: 1, polys: L(10.005, 0, 20, 0) }]).gaps.map((s) => [...s]), [[0, 1]]);
+  assert.equal(run([{ k: 0, polys: L(0, 0, 10, 0) }, { k: 1, polys: L(10.05, 0, 20, 0) }]).gaps.length, 0);
+  assert.equal(run([{ k: 0, polys: L(0, 0, 10, 0) }, { k: 1, polys: L(10, 0, 20, 0) }]).gaps.length, 0);
+  assert.equal(run([{ k: 0, polys: L(0, 0, 10, 0) }, { k: 0, polys: L(10.005, 0, 20, 0) }]).gaps.length, 0, 'a gap inside one placement is the per-object row');
+  assert.equal(run([{ k: 0, polys: L(0, 0, 10, 0, 10, 10, 0, 0) }, { k: 1, polys: L(0.005, 0, 20, 5) }]).gaps.length, 0, 'a closed outline has no ends to join');
 });
