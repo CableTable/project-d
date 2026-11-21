@@ -251,7 +251,12 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
 136. **Start page with recent files and pinned / favourite drawings instead of an empty sheet** (M, ask, T46): see T46 in support/tickets.md. Grill first.
 137. ✅ (built, Knight + Rook builder fix, Rook S36d full control, 2026-11-04) **Zoom level at bottom right: type a custom zoom** (S, T47): click the readout, type a value or pick 25 / 50 / 100 / 200 / 400 % / Fit (grill `runs36/grill-137.md`).
 138. ✅ (built, King Opus + 1 fix round, review ship, Rook S54c, 2026-11-21; `9e41f98` + `e2818e3`, suite on `9136330` `SUITE unit=0 browser=0`) **Open .tif / .tiff files (as a background picture and for Trace bitmap)** (M, ask, T48): pages side by side like the 330 PDF background, decoded one page at a time (grill `rook-hq/runs54/grill-138.md`).
-139. **Shape tool (CorelDRAW): edit the nodes of lines and polylines** (M, ask, T51): see T51 in support/tickets.md. Grill first.
+139. **Shape tool (CorelDRAW): edit the nodes of lines, polylines, arcs and circles** (M, ask, T51): see T51 in support/tickets.md. Grill `rook-hq/runs54/grill-139.md`.
+  - 139a ✅ (built, King, review ship, Rook S54f, 2026-11-21; `b518132` + `38a436d`, suite on `b144964` `SUITE unit=0 browser=0`) select and drag nodes, all 3 tabs.
+  - 139b1 ✅ (built, King, review ship, Rook S54f, 2026-11-21; `b144964`, suite on `b144964` `SUITE unit=0 browser=0`) double-click adds a node, outline kept.
+  - 139b2 ✅ (built, King, review ship; `8ba55c1` picked S54f, suite pending) Delete removes a node, arcs of one circle kept.
+  - 139c Break at node, Join two end nodes (right-click, grill R7-R8), GLOSSARY "Shape tool" + "Node".
+  - 139e To curve, Smooth / Cusp / Symmetrical nodes (grill R6; T52 Pen waits on it).
 140. **Pen tool (CorelDRAW): draw lines and Bezier curves** (M, ask, T52): see T52 in support/tickets.md. Grill first.
 141. ✅ **Save drops AutoCAD tables without a word** (S–M, bug, found by Bishop-review 2026-10-24): `web/dxf-write.js:16` has no ACAD_TABLE in its save list, so open a DXF with a table, Save, reopen: the table is gone (its *T block is still written, unused). Write ACAD_TABLE back as read, or save it as a plain block reference, and note anything dropped. Grill first.
 142. ✅ **Session 20 review leftovers** (built, Knight): (a) layout paste uses `writeDxfWithReport` + `saveReportNote` like Extract part; (b) TODO 111b matches its DECISIONS row (base name, sheet number); (c) Extract and paste store the source name without extension using `baseName`; old library entries are unchanged. Browser coverage checks the paste conversion / loss note and the extracted part's source label.
