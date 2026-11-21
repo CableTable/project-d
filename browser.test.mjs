@@ -16481,7 +16481,9 @@ try {
     P = ctl(entOf(await savedDoc(), 0));
     assert.ok(P[1][1] > 33 && P[1][0] > 40 && near(P[2][0], 60, 1e-6) && near(P[0][0], 20, 1e-6) && near(P[3][0], 80, 1e-6), 'only the handle moved: ' + JSON.stringify(P));
     await shotBoth('shape-curve');
-    await page.setViewportSize({ width: 1024, height: 768 }); await frames(); await page.screenshot({ path: `${shotDir}/s12-shape-curve-1024.png` });
+    await page.setViewportSize({ width: 1024, height: 768 }); await frames();
+    await page.locator('[data-testid=canvas]').getByRole('button', { name: 'Fit', exact: true }).click(); await frames(); // fit keeps the curve and handle clear of the hint and log
+    await page.screenshot({ path: `${shotDir}/s12-shape-curve-1024.png` });
     await page.setViewportSize({ width: 1440, height: 900 }); await frames();
     // To line: its handles back on the chord; one Undo bends it again; the saved DXF read back is the SPLINE
     items = await menu('0:n0'); assert.equal(await items.nth(3).isDisabled(), false);
