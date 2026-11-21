@@ -10154,6 +10154,9 @@ try {
     assert.deepEqual(cut, [], 'no ribbon group is cut off at 1024 px');
     const edges = await page.evaluate(() => [...document.querySelectorAll('.ribbon-group')].filter((g) => ['Modify', 'Copy'].includes(g.dataset.panel) && g.offsetWidth).map((g) => g.dataset.panel + ' right ' + Math.round(g.getBoundingClientRect().right) + ' of ' + innerWidth));
     console.log('ribbon edges', edges.join('; '));
+    // slack: room left beside the label in each fixed-width (big) tool box; small tools grow with their label (scrollWidth never drops below clientWidth, so it can't show this)
+    const slack = await page.evaluate(() => [...document.querySelectorAll('.ribbon-group')].filter((g) => ['Modify', 'Copy'].includes(g.dataset.panel) && g.offsetWidth).map((g) => g.dataset.panel + ' slack ' + [...g.querySelectorAll('.ribbon-big')].map((b) => { const s = getComputedStyle(b); return Math.round(b.clientWidth - parseFloat(s.paddingLeft) - parseFloat(s.paddingRight) - b.querySelector('span').getBoundingClientRect().width); }).join('/')));
+    console.log('ribbon slack', slack.join('; '));
     assert.ok(await page.evaluate(() => [...document.querySelectorAll('.ribbon-group')].filter((g) => ['Modify', 'Copy'].includes(g.dataset.panel) && g.offsetWidth).every((g) => g.getBoundingClientRect().right <= innerWidth - 50)), 'at least 50 px spare in each group (Linux fonts are about 46 px wider): ' + edges.join('; '));
     await shotBoth('small-drawing');
     await page.setViewportSize({ width: 1440, height: 900 });

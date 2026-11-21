@@ -103,6 +103,7 @@ a { color: var(--accenttext); } a:hover { color: var(--text); }
   .ribbon-body[data-contents='drawingHome'] .ribbon-group { padding-inline: 3px; }
   .ribbon-body[data-contents='drawingHome'] .ribbon-gtitle { margin-inline: -3px; }
   .ribbon-body[data-contents='drawingHome'] .ribbon-big { width: 40px; }
+  .ribbon-body[data-contents='drawingHome'] [data-panel='Copy'] .ribbon-big { width: auto; min-width: 40px; }  /* 139a: "Duplicate" is wider than 40 px; it grows with the font instead of spilling out */
   .ribbon-body[data-contents='drawingHome'] .ribbon-small { gap: 3px; padding-inline: 3px; }
   .ribbon-body[data-contents='drawingHome'] .ribbon-field select { width: 84px; }
   .ribbon-body[data-contents='drawingHome'] [data-panel='Layers'] .ribbon-groupbody { flex-direction: column; }
