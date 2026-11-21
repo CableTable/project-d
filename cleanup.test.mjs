@@ -184,3 +184,27 @@ test('crossChecks: only pairs from two different placements count, both are flag
   assert.equal(run([{ k: 0, polys: L(0, 0, 10, 0) }, { k: 0, polys: L(10.005, 0, 20, 0) }]).gaps.length, 0, 'a gap inside one placement is the per-object row');
   assert.equal(run([{ k: 0, polys: L(0, 0, 10, 0, 10, 10, 0, 0) }, { k: 1, polys: L(0.005, 0, 20, 5) }]).gaps.length, 0, 'a closed outline has no ends to join');
 });
+
+test('crossChecks: stacked copies of a part with an inner gap are no cross gap (TODO 156e3d, rv-156e3c Low 1)', () => {
+  const L = (...v) => [Float64Array.from(v)], run = (items) => crossChecks(items, 0.01), inner = (k, x = 0) => ({ k, polys: [Float64Array.from([x, 0, x + 10, 0]), Float64Array.from([x + 10.005, 0, x + 20, 0])] });
+  assert.equal(run([inner(0), inner(1)]).gaps.length, 0, 'both copies have the gap inside themselves');
+  assert.equal(run([inner(0), inner(1), inner(2)]).gaps.length, 0, 'three stacked copies too');
+  assert.equal(run([inner(0), { k: 1, polys: L(20, 0, 30, 0) }]).gaps.length, 0, 'a line meeting the far end exactly is joined to it');
+  assert.deepEqual(run([inner(0), { k: 1, polys: L(10.0025, 0, 10.0025, 5) }]).gaps.map((s) => [...s].sort()), [[0, 1]], 'a line ending inside the gap is a gap between two placements, counted once');
+});
+
+test('crossChecks: covered = loose placements lying whole on a placed part (TODO 156e3d)', () => {
+  const L = (...v) => [Float64Array.from(v)], run = (items) => crossChecks(items, 0.01);
+  const part = { k: 0, solid: true, polys: L(0, 0, 100, 0, 100, 50, 0, 0) };
+  assert.deepEqual([...run([part, { k: 1, polys: L(0, 0, 100, 0) }]).covered], [1], 'one edge of the part');
+  assert.deepEqual([...run([part, { k: 1, polys: L(100, 0, 0, 0) }]).covered], [1], 'drawn backwards');
+  assert.deepEqual([...run([part, { k: 1, polys: L(0, 0, 50, 0) }]).covered], [1], 'half an edge');
+  assert.equal(run([part, { k: 1, polys: L(0, 0, 150, 0) }]).covered.size, 0, 'longer than the edge: a partial overlap stays reported');
+  assert.equal(run([part, { k: 1, polys: L(0, 1, 100, 1) }]).covered.size, 0, '1 mm away');
+  assert.deepEqual([...run([part, { k: 1, polys: L(0, 0, 40, 0, 100, 0) }]).covered], [1], 'a polyline over the whole edge');
+  assert.deepEqual([...run([{ k: 0, solid: true, polys: L(0, 0, 60, 0) }, { k: 2, solid: true, polys: L(60, 0, 100, 0) }, { k: 1, polys: L(0, 0, 100, 0) }]).covered], [1], 'two parts together cover it');
+  const two = run([{ k: 0, polys: L(0, 0, 100, 0) }, { k: 1, polys: L(0, 0, 100, 0) }]);
+  assert.equal(two.covered.size, 0, 'two loose copies are the later one removeDuplicates takes, not a part');
+  assert.deepEqual([...two.duplicates].sort(), [0, 1]);
+  assert.equal(run([part, { k: 1, solid: true, polys: L(0, 0, 100, 0) }]).covered.size, 0, 'a placed part is never covered');
+});

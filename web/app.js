@@ -13358,12 +13358,12 @@ const pfSource = (d) => (d.lay ? JSON.stringify([d.lay.placed, d.lay.s.sheetW, d
 const pfLocked = (lay, p) => !!p.lock || !!(lay.parts[p.partId].obj && LD.layersOf(lay)[lay.parts[p.partId].raw.entities[0]?.layer]?.flags & 4);
 /** Preflight of the open layout (TODO 156e3a/b): the checks on each loose object's own raw (one object at a time;
  * tolerance and stroke width follow the placement's scale), on each placed part's raw once per part id (report only: a part record is shared by its copies; `placed` counts those hits),
- * and "off the sheet" on every placement. Hidden placements are skipped. Offenders are indexes into placedNow (a placed part's: all its copies). Only Hairline on loose objects is a Fix.
+ * and "off the sheet" on every placement. Hidden placements are skipped. Offenders are indexes into placedNow (a placed part's: all its copies). Hairline, Duplicates and Gaps are a Fix on loose objects (layHairline, layFix).
  * Duplicates and Gaps also look across placements (TODO 156e3c): each visible placement's outlines in sheet mm (gap tolerance in sheet mm), a pair from two different placements flags both
- * (count: the placements for Duplicates, the gaps for Gaps; hits inside one placement stay in the rows above). Report only: no Fix. */
+ * (count: the placements for Duplicates, the gaps for Gaps; hits inside one placement stay in the rows above). */
 function layPreflight(d, check) {
   const lay = d.lay, { sheetW, sheetH } = lay.s;
-  const rows = CL.preflight(newDoc(4), { tolerance: state.gapMm, sheetW, sheetH, check }).map((r) => ({ ...r, placed: 0, fix: r.id === 'wide' ? r.fix : undefined })), by = Object.fromEntries(rows.map((r) => [r.id, r]));
+  const rows = CL.preflight(newDoc(4), { tolerance: state.gapMm, sheetW, sheetH, check }).map((r) => ({ ...r, placed: 0 })), by = Object.fromEntries(rows.map((r) => [r.id, r]));
   const copies = new Map(), outlines = new Map(), items = [];
   placedNow.forEach((p, k) => {
     if (partHid(p)) return;
@@ -13371,7 +13371,7 @@ function layPreflight(d, check) {
     if (by.duplicates || by.gaps) {
       if (!outlines.has(p.partId)) outlines.set(p.partId, C.polylines(part.fl || flatten(part.raw), part.factor || 1, part.off).polys);
       const f = part.factor || 1, [b0, b1] = part.box || [0, 0], th = (p.rot || 0) * Math.PI / 180, co = Math.cos(th), si = Math.sin(th), sx = (p.mirrorX ? -1 : 1) * (p.sc || 1), sy = (p.mirrorY ? -1 : 1) * (p.sc || 1);
-      items.push({ k, polys: outlines.get(p.partId).map((q) => {       // the part's mm outline from its box corner, mirrored, turned, moved to x, y (placedBox's maths)
+      items.push({ k, solid: !part.obj, polys: outlines.get(p.partId).map((q) => {       // the part's mm outline from its box corner, mirrored, turned, moved to x, y (placedBox's maths)
         const o = new Float64Array(q.length);
         for (let i = 0; i < q.length; i += 2) { const u = (q[i] - b0 * f) * sx, v = (q[i + 1] - b1 * f) * sy; o[i] = p.x + co * u - si * v; o[i + 1] = p.y + si * u + co * v; }
         return o;
@@ -13386,8 +13386,32 @@ function layPreflight(d, check) {
     const x = CL.crossChecks(items, state.gapMm), add = (id, ks, n) => { if (n) { by[id].offenders = [...new Set([...by[id].offenders, ...ks])]; by[id].count += n; } };
     if (by.duplicates) add('duplicates', x.duplicates, x.duplicates.size);
     if (by.gaps) add('gaps', x.gaps.flatMap((s) => [...s]), x.gaps.length);
+    rows.covered = x.covered;       // the loose placements lying whole on a placed part (layFix removes them)
   }
   return rows;
+}
+/** Preflight's Duplicates / Gaps Fix on a layout (TODO 156e3d): loose, unlocked, visible objects only (layObjDoc: one entity each, in sheet mm); one Undo step.
+ * Duplicates: the later copy goes (a locked later one: the earlier unlocked one), a loose object lying whole on a placed part goes, the part stays; Gaps: the gap inside one object (Average point: one object stays one object).
+ * Gaps between two objects and anything on a placed part stay reported (fix a part in its drawing). */
+function layFix(d, id) {
+  const lay = d.lay, v = layObjDoc(d), ents = v.raw.entities, locked = (e) => pfLocked(lay, lay.placed[v.at.get(e)]);
+  let done = false;
+  if (id === 'duplicates') {
+    const entOf = new Map(ents.map((e) => [v.at.get(e), e])), onPart = new Set([...layPreflight(d, id).covered || []].map((k) => entOf.get(placedNow[k].i)));
+    const order = [...ents].sort((a, b) => locked(b) - locked(a) || v.at.get(a) - v.at.get(b));       // locked first: they stay, and the later unlocked copy goes
+    const r = CL.removeDuplicates({ ...v.raw, entities: order }, (j) => !locked(order[j])), next = r.entities.filter((e) => !(onPart.has(e) && !locked(e)));
+    if (next.length !== ents.length || next.some((e) => !v.at.has(e))) { done = true; selectMany([]); layObjCommit(v, { entities: next, blocks: r.blocks }, 'Preflight Remove duplicates'); }
+  } else {
+    const pairs = [];
+    for (const e of ents) {
+      if (locked(e)) continue;
+      const one = { ...v.raw, entities: [e] }, r = Ed.joinTinyGaps(one, CL.checkIndex(one), state.gapMm, () => true, 'average');
+      if (r.changed && r.entities.length === 1) pairs.push([e, r.entities[0]]);
+    }
+    done = pairs.length > 0 && layGripCommit(v, pairs, 'Preflight Join gaps');
+  }
+  if (layPreflight(d, id)[0].offenders.some((k) => placedNow[k].src === 'loose' && pfLocked(lay, placedNow[k]))) note('Preflight: locked objects skipped');
+  else if (!done) note('Preflight: nothing to fix here (parts, and gaps between two objects, are report only)');
 }
 /** Preflight's Hairline Fix on a layout: the unlocked loose objects among `offenders` (placedNow indexes) become hairline objects (objectReplace: new part ids), one undo step. */
 function layHairline(d, offenders) {
@@ -13440,7 +13464,7 @@ function recheckPreflight(check) {
     note(`Preflight: ${fresh.label} · ${offenders.length} entities selected` + (offenders.length < fresh.offenders.length ? ' (locked layers skipped)' : ''));
   };
   const fix = (id) => {
-    if (d.lay) layHairline(d, layPreflight(d, 'wide')[0].offenders);
+    if (d.lay) { if (id === 'wide') layHairline(d, layPreflight(d, 'wide')[0].offenders); else layFix(d, id); }
     else if (id === 'duplicates') removeDuplicates();
     else if (id === 'gaps') joinTinyGaps(true);
     else {
@@ -13461,7 +13485,7 @@ function recheckPreflight(check) {
         h('span', { class: 'pfcount', 'data-testid': `preflight-${r.id}-count` }, r.count ?? 'n/a (no sheet)'),
         button('Select', `preflight-${r.id}-select`, () => select(r.id), !r.count),
         r.fix && !(r.placed && r.placed === r.count) ? Object.assign(button(r.fix, `preflight-${r.id}-fix`, () => fix(r.id), !r.count), r.placed ? { title: 'Fixes loose objects only: fix a placed part in its drawing' } : {}) : h('span', { class: 'pfmanual' }, r.placed ? 'fix in its drawing' : 'Manual'))),
-      h('p', { class: 'lbl' }, `Tiny gaps use Drawing scale’s ${state.gapMm} mm tolerance. Hairline: 0.05 mm. Hidden / locked objects are checked; fixes skip locks. Warnings only; output is never blocked.`)),
+      h('p', { class: 'lbl' }, `Tiny gaps use Drawing scale’s ${state.gapMm} mm tolerance. Hairline: 0.05 mm. ${d.lay ? 'Locked objects are checked; hidden ones are skipped' : 'Hidden / locked objects are checked'}; fixes skip locks. Warnings only; output is never blocked.`)),
     h('div', { class: 'pfbuttons' }, button('Recheck', 'preflight-recheck', () => recheckPreflight()), button('Close', 'preflight-close', closePreflight))
   );
   return fresh[0];

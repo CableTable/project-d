@@ -28428,7 +28428,7 @@ try {
     const a1 = lineObj('c-a1', 20, 100), a2 = lineObj('c-a2', 20, 100);
     await openLay('pf156e3c-a', [a1, a2], [objectPlacement(a1), objectPlacement(a2)]);
     await shows('preflight-duplicates-count', /^2$/); await shows('preflight-gaps-count', /^0$/);
-    assert.equal(await t('preflight-duplicates-fix').count(), 0, 'report only on a layout');
+    assert.equal(await t('preflight-duplicates-fix').isEnabled(), true, 'a Fix on a layout since TODO 156e3d');
     await closeTabs(/./);
     // (b) two lines end to end, 0.005 mm apart
     const b1 = lineObj('c-b1', 20, 60), b2 = lineObj('c-b2', 60.005, 100);
@@ -28453,6 +28453,96 @@ try {
     await openLay('pf156e3c-many', [part], many);
     await shows('preflight-duplicates-count', /^2$/);
     console.log('TODO 156e3c: 220 placements, Preflight shown after', Date.now() - t0, 'ms (incl. opening the file)');
+    await closeTabs(/./);
+  });
+
+  await step('TODO 156e3d: Preflight Fix on a layout: Duplicates removes the later of two stacked loose lines (one Undo), Gaps joins a loose polyline\'s own gap, a locked pair says locked objects skipped, stacked copies of a part with an inner gap count once, a loose line on a part\'s edge goes and the part stays, two Fix clicks are two Undo steps', async () => {
+    await closeTabs(/./);
+    const shows = (id, re) => page.waitForFunction(([i, s]) => new RegExp(s).test(document.querySelector(`[data-testid=${i}]`)?.textContent || ''), [id, re.source], { timeout: 8000 });
+    const lineObj = (id, x0, x1, y = 200) => objectPart(id, 'Line', dxfLine(x0, y, x1, y), newDoc(4).layers);
+    const gapObj = (id) => objectPart(id, 'Polyline', dxfPoly([[20, 100], [60, 100], [60, 60], [20.005, 100]]), newDoc(4).layers);       // its own ends are 0.005 mm apart
+    const openLay = async (name, parts, placed) => {
+      const lay = newLayout(name); lay.parts = Object.fromEntries(parts.map((p) => [p.id, p])); lay.placed = placed;
+      await t('picker').setInputFiles({ name: name + '.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
+      await waitTab(page, name + '.dxf');
+      await menuItem('Tools', 'Preflight…');
+    };
+    const undo = async () => { await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z'); await frames(); };
+    const recheck = async () => { await t('preflight-recheck').click(); await frames(); };
+    // (a) two stacked loose lines: Fix removes the later one, one Undo brings it back
+    const a1 = lineObj('d-a1', 20, 100), a2 = lineObj('d-a2', 20, 100);
+    await openLay('pf156e3d-a', [a1, a2], [objectPlacement(a1), objectPlacement(a2)]);
+    await shows('preflight-duplicates-count', /^2$/);
+    assert.equal(await t('preflight-duplicates-fix').isEnabled(), true);
+    assert.match(await t('preflight').locator('.lbl').last().textContent(), /Locked objects are checked; hidden ones are skipped/);
+    await shotBoth('layout-preflight-fix');
+    await page.setViewportSize({ width: 1024, height: 768 }); await page.waitForTimeout(250);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'the layout top bar fits 1024 px with Preflight open');
+    await page.screenshot({ path: `${shotDir}/todo156e3d-layout-preflight-1024.png` });
+    await page.setViewportSize({ width: 1440, height: 900 });
+    const n = (await histLabels()).length;
+    await t('preflight-duplicates-fix').click(); await frames();
+    await shows('preflight-duplicates-count', /^0$/);
+    assert.equal((await histLabels()).at(-1), 'Preflight Remove duplicates');
+    assert.equal((await histLabels()).length, n + 1, 'one undo step');
+    await undo(); await recheck();
+    await shows('preflight-duplicates-count', /^2$/);       // one Undo brings both lines back
+    await closeTabs(/./);
+    // (b) a loose polyline whose own ends are 0.005 mm apart: Fix joins them
+    const b1 = gapObj('d-b1');
+    await openLay('pf156e3d-b', [b1], [objectPlacement(b1)]);
+    await shows('preflight-gaps-count', /^1$/);
+    await t('preflight-gaps-fix').click(); await frames();
+    await shows('preflight-gaps-count', /^0$/);
+    assert.equal((await histLabels()).at(-1), 'Preflight Join gaps');
+    await closeTabs(/./);
+    // (c) the same two stacked lines, both locked: the note, the count stays
+    const c1 = lineObj('d-c1', 20, 100), c2 = lineObj('d-c2', 20, 100);
+    await openLay('pf156e3d-c', [c1, c2], [{ ...objectPlacement(c1), lock: true }, { ...objectPlacement(c2), lock: true }]);
+    await shows('preflight-duplicates-count', /^2$/);
+    const nc = (await histLabels()).length;
+    await t('preflight-duplicates-fix').click(); await frames();
+    await shows('cmd-prompt', /Preflight: locked objects skipped/);
+    await shows('preflight-duplicates-count', /^2$/);
+    assert.equal((await histLabels()).length, nc, 'nothing changed: no undo step');
+    await closeTabs(/./);
+    // the later one locked, the earlier not: the earlier goes, the locked one stays
+    const c3 = lineObj('d-c3', 20, 100), c4 = lineObj('d-c4', 20, 100);
+    await openLay('pf156e3d-c2', [c3, c4], [objectPlacement(c3), { ...objectPlacement(c4), lock: true }]);
+    await shows('preflight-duplicates-count', /^2$/);
+    await t('preflight-duplicates-fix').click(); await frames();
+    await shows('preflight-duplicates-count', /^0$/);
+    assert.equal(await page.locator('[data-group=parts] .part-hit.ob').count(), 1, 'the locked line is the one left');
+    await closeTabs(/./);
+    // (d) two stacked copies of a part with a gap inside it: the Gaps row counts it once (the part's own), with no Fix for it
+    const raw = newDoc(4); addEntities(raw, [dxfLine(0, 0, 50, 25), dxfLine(50.005, 25, 100, 50)]);
+    const part = makePart('d-part', 'Gappy', raw, 1);
+    await openLay('pf156e3d-d', [part], [{ partId: part.id, x: 20, y: 30, rot: 0 }, { partId: part.id, x: 20, y: 30, rot: 0 }]);
+    await shows('preflight-gaps-count', /^1$/);
+    await shows('preflight-gaps', /fix in its drawing$/);
+    await closeTabs(/./);
+    // (e) a loose line exactly on a placed part's edge: Fix takes the loose line, the part stays
+    const raw2 = newDoc(4); addEntities(raw2, dxfLine(0, 0, 100, 50));
+    const part2 = makePart('d-part2', 'Slash', raw2, 1), e1 = objectPart('d-e1', 'Line', dxfLine(20, 30, 120, 80), raw2.layers);
+    await openLay('pf156e3d-e', [part2, e1], [{ partId: part2.id, x: 20, y: 30, rot: 0 }, objectPlacement(e1)]);
+    await shows('preflight-duplicates-count', /^2$/);
+    assert.equal(await page.locator('[data-group=parts] .part-hit.ob').count(), 1, 'a loose object and a part');
+    await t('preflight-duplicates-fix').click(); await frames();
+    await shows('preflight-duplicates-count', /^0$/);
+    assert.equal(await page.locator('[data-group=parts] .part-hit.ob').count(), 0, 'the loose line is gone');
+    assert.equal(await page.locator('[data-group=parts] .part-hit:not(.ob)').count(), 1, 'the part is still there');
+    await closeTabs(/./);
+    // (f) one Fix on Duplicates, then one on Gaps: two Undo steps, each brings its own back, last first
+    const f1 = lineObj('d-f1', 20, 100), f2 = lineObj('d-f2', 20, 100), f3 = gapObj('d-f3');
+    await openLay('pf156e3d-f', [f1, f2, f3], [objectPlacement(f1), objectPlacement(f2), objectPlacement(f3)]);
+    await shows('preflight-duplicates-count', /^2$/); await shows('preflight-gaps-count', /^1$/);
+    await t('preflight-duplicates-fix').click(); await frames();
+    await t('preflight-gaps-fix').click(); await frames();
+    await shows('preflight-duplicates-count', /^0$/); await shows('preflight-gaps-count', /^0$/);
+    await undo(); await recheck();
+    await shows('preflight-gaps-count', /^1$/); await shows('preflight-duplicates-count', /^0$/);       // the gap is back, the line is not
+    await undo(); await recheck();
+    await shows('preflight-duplicates-count', /^2$/);
     await closeTabs(/./);
   });
 
