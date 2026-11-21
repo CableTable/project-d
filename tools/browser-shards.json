@@ -691,6 +691,7 @@
   "TODO 97f2: Layout Polyline uses Chamfer dropdown, refuses locked objects and undoes once": 6.43,
   "TODO 97f2: Compare Polyline edits its linked drawing and refuses locked layers": 6.51,
   "TODO 140a: Pen draws a 3-node SPLINE by clicks, Enter keeps it with one Undo, Esc cancels, click on node 1 closes; Drawings, Layouts, Compare": 10,
+  "TODO 140b: Pen click-drag makes a Symmetrical curve node, Shift locks the handle angle, closing drag on node 1, one Undo; Drawings, Layouts, Compare": 12,
   "TODO 97g2: Drawings crossing line and two polyline vertices, multiple boxes, groups, preview, Esc, Undo and source edit": 7.93,
   "TODO 97g2: Drawings crossing preselection, ordinary window, Enter second point, displacement default and locked layer skipped": 7.25,
   "TODO 97g2: Layouts crossing line and polyline, preselection, circle, placed insertion, locks, Enter rule, one Undo and source edit": 12.4,

@@ -22,6 +22,7 @@ import { rotateAbout } from './web/place.js';
 import { curveShape } from './web/extend.js';
 import { closest, pathOf } from './web/modify.js';
 import { svgPath } from './web/draw.js';
+import { bezierOf, nodeType } from './web/shape.js';
 import { COMMANDS, placeBar } from './web/cmdbar.js';
 import { SNAP_NAME } from './web/snap.js';
 import { Page, writePdf, winAnsi } from './web/pdf-write.js';
@@ -34570,6 +34571,7 @@ try {
     await three();
     assert.equal(await t('draw-preview').count(), 1, 'the path so far is previewed');
     await key97c('Enter');
+    await page.waitForFunction(() => /Pen made on layer/.test(document.querySelector('[data-testid=cmd-hist]').textContent));       // the undo step is in once the made line shows (before the save below overwrites it)
     let found = await splines(); assert.equal(found.length, 1); assert.equal(controls(found[0]), 7, '3 nodes: 2 straight cubics'); assert.equal(fieldOf(found[0], 70) & 1, 0, 'open');
     assert.equal((await histLabels()).at(-1), 'Pen');
     await key97c('Control+z'); assert.equal((await splines()).length, 0, 'one Undo takes the whole path');
@@ -34607,6 +34609,60 @@ try {
     await three(); await key97c('Enter');
     const drawingTab = page.locator('.dtab').filter({ has: page.locator('.tname', { hasText: /^compare140a(?:-edited)*\.dxf$/ }) });
     await drawingTab.click(); found = await splines(); assert.equal(found.length, 1, 'the spline is in the linked drawing'); assert.equal(controls(found[0]), 7);
+    await page.locator('.dtab').filter({ has: page.locator('.tname', { hasText: /^Compare$/ }) }).click(); await key97c('Control+z');
+    await drawingTab.click(); assert.equal((await splines()).length, 0, 'one Undo');
+    await closeTabs(/./); assert.deepEqual(errors, []);
+  });
+
+  await step('TODO 140b: Pen click-drag makes a Symmetrical curve node, Shift locks the handle angle, closing drag on node 1, one Undo; Drawings, Layouts, Compare', async () => {
+    const splines = async () => (await savedDoc()).entities.filter((e) => e.type === 'SPLINE');
+    const snapOn = async () => { if (await t('tog-snap').getAttribute('aria-pressed') !== 'true') await t('tog-snap').click(); };
+    const rawDoc = () => { const r = newDoc(4); addEntities(r, dxfPoly([[0, 0], [300, 0], [300, 300], [0, 300]], { closed: true })); return r; };
+    const nearTo = (p, x, y, tol, msg) => assert.ok(Math.abs(p[0] - x) <= tol && Math.abs(p[1] - y) <= tol, `${msg} ${p} != ${x},${y}`);
+    const down = async (x, y) => { const a = await at(x, y); await page.mouse.move(a.x, a.y); await page.mouse.down(); };
+    const moveTo = async (x, y) => { const b = await at(x, y); await page.mouse.move(b.x, b.y, { steps: 6 }); await frames(); };
+    const press = async (x, y, x1, y1, shift = false) => { await down(x, y); if (shift) await page.keyboard.down('Shift'); await moveTo(x1, y1); await page.mouse.up(); if (shift) await page.keyboard.up('Shift'); await frames(); };
+    const toolIsPen = () => page.waitForFunction(() => document.querySelector('[data-testid=tool-chip]').textContent === 'Tool: Pen');
+    const made = () => page.waitForFunction(() => /Pen made on layer/.test(document.querySelector('[data-testid=cmd-hist]').textContent));
+    const curve = async () => { const found = await splines(); assert.equal(found.length, 1); return { e: found[0], b: bezierOf(found[0]) }; };
+    // Drawings
+    await open97c(rawDoc(), 'pen140b.dxf'); await snapOn();
+    await typeCmd('pen'); await toolIsPen();
+    await click(100, 100); await down(200, 100); await moveTo(230, 140);
+    assert.equal(await t('pen-handles').count(), 1, 'the dragged node shows its handles'); assert.equal(await page.locator('.ovl .dr-handle').count(), 2);    await page.mouse.up(); await frames();
+    assert.equal(await t('pen-handles').count(), 0, 'the handles go when the button is released');
+    await click(200, 200); await key97c('Enter'); await made();
+    let { e, b } = await curve();
+    assert.equal(b.n, 2); assert.equal(nodeType(e, 'n1'), 'Symmetrical', 'a dragged node is Symmetrical'); nearTo(b.P[4], 230, 140, 1.5, 'out-handle follows the pointer'); nearTo(b.P[2], 2 * b.P[3][0] - b.P[4][0], 2 * b.P[3][1] - b.P[4][1], 0.01, 'in-handle mirrored');
+    const third = (a, c, k) => [a[0] + (c[0] - a[0]) * k, a[1] + (c[1] - a[1]) * k];
+    nearTo(b.P[1], ...third(b.P[0], b.P[3], 1 / 3), 0.01, 'a clicked node stays a corner: handle on the third');
+    assert.equal((await histLabels()).at(-1), 'Pen');
+    await key97c('Control+z'); assert.equal((await splines()).length, 0, 'one Undo takes the whole path');
+    await click(100, 100); await press(200, 100, 240, 120, true); await click(200, 200); await key97c('Enter'); await made();       // Shift: the handle keeps the node's row
+    ({ e, b } = await curve()); assert.ok(Math.abs(b.P[4][1] - b.P[3][1]) < 0.01 && b.P[4][0] > b.P[3][0] + 10, `Shift locks the handle angle: ${b.P[3]} -> ${b.P[4]}`); assert.equal(nodeType(e, 'n1'), 'Symmetrical');
+    await key97c('Control+z');
+    await click(100, 100); await click(200, 100); await click(200, 200); await press(100, 100, 80, 70);        // a drag on node 1 shapes the closing segment
+    ({ e, b } = await curve()); assert.equal(fieldOf(e, 70) & 1, 1, 'closed'); assert.equal(b.n, 3);
+    nearTo(b.P[8], 120, 130, 1.5, 'the closing in-handle mirrors the drag'); nearTo(b.P[1], ...third(b.P[0], b.P[3], 1 / 3), 0.01, 'node 1 keeps its first handle');
+    await key97c('Control+z'); assert.equal((await splines()).length, 0, 'one Undo');
+    await click(100, 100); await click(200, 100); await click(200, 200); await click(100, 100);       // a click on node 1 still closes
+    ({ e } = await curve()); assert.equal(fieldOf(e, 70) & 1, 1); nearTo(bezierOf(e).P[8], ...third(bezierOf(e).P[6], bezierOf(e).P[9], 2 / 3), 0.01, 'a plain close keeps the straight closing segment'); await key97c('Control+z');
+    await key97c('Escape'); await key97c('Escape');
+    // Layouts
+    await freshLayoutWithPlate(); await snapOn();
+    const n0 = await nParts();
+    await typeCmd('pen'); await toolIsPen();
+    const rc = await at(100, 100); await page.mouse.click(rc.x, rc.y, { button: 'right' });
+    await t('ctx-menu').waitFor(); await key97c('Escape'); await t('ctx-menu').waitFor({ state: 'detached' });       // 140a review Low 1: with no node placed, a right-click on a layout opens its menu again
+    await click(100, 100); await press(200, 100, 230, 140); await click(200, 200); await key97c('Enter'); await made();
+    assert.equal(await nParts(), n0 + 1, 'one layout object'); ({ e } = await curve()); assert.equal(nodeType(e, 'n1'), 'Symmetrical');
+    await key97c('Control+z'); assert.equal(await nParts(), n0, 'one Undo'); await key97c('Escape'); await key97c('Escape');
+    // Compare (edits the linked drawing)
+    await open97f1(rawDoc(), 'compare140b.dxf'); await snapOn();
+    await typeCmd('compare'); await typeCmd('pen'); await toolIsPen();
+    await click(100, 100); await press(200, 100, 230, 140); await click(200, 200); await key97c('Enter'); await made();
+    const drawingTab = page.locator('.dtab').filter({ has: page.locator('.tname', { hasText: /^compare140b(?:-edited)*\.dxf$/ }) });
+    await drawingTab.click(); ({ e } = await curve()); assert.equal(nodeType(e, 'n1'), 'Symmetrical', 'the curve is in the linked drawing');
     await page.locator('.dtab').filter({ has: page.locator('.tname', { hasText: /^Compare$/ }) }).click(); await key97c('Control+z');
     await drawingTab.click(); assert.equal((await splines()).length, 0, 'one Undo');
     await closeTabs(/./); assert.deepEqual(errors, []);

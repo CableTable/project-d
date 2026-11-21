@@ -5812,7 +5812,7 @@ function attachCanvasEvents() {
       if (gripDown(e)) { capture(c, e); return; }
       if (!state.match && !state.drawingRotate && textHandleDown(e)) { capture(c, e); return; }
       if (state.tool === 'text' && drawTarget()) { textToolDown(e); return; }
-      if (state.draw && drawTarget()) { drawClick(e); return; }
+      if (state.draw && drawTarget()) { drawClick(e); if (state.penDrag) capture(c, e); return; }
       if (gh && !state.setlen && state.tool !== 'measure') return;                          // a gap is picked on click (below), so the browser's own focus change does not undo ours
       const d = pointTarget();
       if (d && (state.tool === 'select' || state.tool === 'shape' || state.tool === 'contour' || state.tool === 'measure' || state.tool === 'dimension' || state.tool === 'leader' || state.tool === 'balloon' || state.setlen || modLive())) {
@@ -5851,7 +5851,8 @@ function attachCanvasEvents() {
     if (state.drawingRotate?.drag) drawingRotateMove(e);
     if (lrub) { if (!lrub.moved && Math.hypot(e.clientX - lrub.x, e.clientY - lrub.y) > 4) lrub.moved = true; if (lrub.moved) showRubber(lrub, e); }
     const d = pointTarget();
-    if (drawLive()) drawHoverAt(state.drawDoc, e.clientX, e.clientY, e.shiftKey, e.ctrlKey);
+    if (state.penDrag) penDragMove(e);
+    if (drawLive() && !state.penDrag?.moved) drawHoverAt(state.drawDoc, e.clientX, e.clientY, e.shiftKey, e.ctrlKey);
     if (d && modLive()) modHover(d, e.clientX, e.clientY, e.shiftKey);
     else if (layModLive() && state.mod.stage !== 'pick') modHover(curDoc(), e.clientX, e.clientY, e.shiftKey);
     if (lmod && !lmod.moved && Math.hypot(e.clientX - lmod.x, e.clientY - lmod.y) > 4) lmod.moved = true;
@@ -5896,6 +5897,7 @@ function attachCanvasEvents() {
     pan = null; c.classList.remove('panning');
   };
   c.addEventListener('pointerup', (e) => {
+    if (state.penDrag && e.button === 0) penDragEnd(e);
     if (gdrag) guideUp();
     if (state.sheetDrag && !state.sheetDrag.hot) sheetUp(e);
     if (state.text.drag) textDragEnd(false);
@@ -5956,7 +5958,7 @@ function attachCanvasEvents() {
   c.addEventListener('mousedown', (e) => { if (curLay() && e.button === 0 && e.detail === 2) { textDblClick(e); if (state.text.ed?.dim) e.preventDefault(); } });       // layout selection rebuilds its SVG before dblclick can fire
   c.addEventListener('dblclick', (e) => { if (drawLive() && state.draw.kind === 'pen' && DR.toolBusy(state.draw)) { state.msg = null; if (state.draw.pts.length < 2) drawCancel(); else drawFinish(); return; } if (state.dimHot) { state.dimHot.g.cancelled = true; state.dimHot = state.dimDrag = null; paintOverlay(); } if (!balDbl(e) && !shapeDblClick(e)) textDblClick(e); });       // the double-click on a dimension's text edits it: its first click did not leave a hot grip (345b2)
   c.addEventListener('mousedown', (e) => { if (e.button === 0 && state.tool === 'text' && !e.target.closest('.texted, .zoombox, .contourpanel')) e.preventDefault(); });      // the click places a text: it must not take the focus from the box it opens
-  c.addEventListener('pointercancel', () => { if (state.drawingRotate) state.drawingRotate.drag = null; if (state.grip && !state.grip.hot) gripCancel(); state.entityDrag = null; state.balDrag = null; if (state.text.drag) textDragEnd(true); if (gdrag) cancelGuideDrag(); if (pdrag) cancelPlacedDrag(); drag = null; lrub = null; lmod = null; state.dimDrag = null; hideRubber(); paintOverlay(); end(); });
+  c.addEventListener('pointercancel', () => { if (state.penDrag) { state.penDrag = null; if (state.draw) { state.draw.cin = null; DR.toolPenDragEnd(state.draw); } } if (state.drawingRotate) state.drawingRotate.drag = null; if (state.grip && !state.grip.hot) gripCancel(); state.entityDrag = null; state.balDrag = null; if (state.text.drag) textDragEnd(true); if (gdrag) cancelGuideDrag(); if (pdrag) cancelPlacedDrag(); drag = null; lrub = null; lmod = null; state.dimDrag = null; hideRubber(); paintOverlay(); end(); });
   c.addEventListener('auxclick', (e) => e.preventDefault());
   c.addEventListener('contextmenu', (e) => {                       // right-click an outline on a drawing tab: Extract part… and the other things to do with it
     e.preventDefault();
@@ -5964,7 +5966,7 @@ function attachCanvasEvents() {
     if (e.shiftKey && toolMenu(e)) return;                       // Shift+right-click while a tool is on: its menu (plain right-click finishes, below)
     if (shapeMenu(e)) return;                                    // the Shape tool with nodes selected: Break at node / Join nodes (139c)
     const gh =e.target.closest && e.target.closest('[data-guide]');
-    if (state.draw && (!curLay() || state.draw.kind === 'pen' && drawLive())) { if (DR.toolBusy(state.draw)) drawFinish(); return; }
+    if (state.draw && (!curLay() || state.draw.kind === 'pen' && DR.toolBusy(state.draw))) { if (DR.toolBusy(state.draw)) drawFinish(); return; }
     if (modLive()) { modEnter(editable()); return; }
     if (layModLive()) { modEnter(curDoc()); return; }
     if (gh && guideTarget()) { guideMenu(e, Number(gh.dataset.guide)); return; }
@@ -8549,8 +8551,31 @@ function drawClick(e) {
   trackStop();                                                      // a click ends the hover (and the lock it showed)
   state.drawHover = q; state.msg = null;
   if (cursorDynamic() && DI.hasTyped(cursorInput())) { DR.toolHover(state.draw, q.slice(0, 2), e.ctrlKey); cursorCommit(); return; }
-  state.draw.cursorInput = null;
-  drawApply(DR.toolClick(state.draw, [q[0], q[1]], DR.tangentMode(state.draw) ? tangentObjectAt(d, e.clientX, e.clientY) : null, e.ctrlKey));
+  const T = state.draw, n = T.pts.length;
+  T.cursorInput = null;
+  if (T.kind === 'pen' && n > 2 && Math.hypot(q[0] - T.pts[0][0], q[1] - T.pts[0][1]) < 1e-9) { state.penDrag = { x: e.clientX, y: e.clientY, close: true, moved: false }; return; }       // the press on node 1 waits for the release: a drag shapes the closing segment first
+  drawApply(DR.toolClick(T, [q[0], q[1]], DR.tangentMode(T) ? tangentObjectAt(d, e.clientX, e.clientY) : null, e.ctrlKey));
+  if (T.kind === 'pen' && state.draw === T && T.pts.length === n + 1) state.penDrag = { x: e.clientX, y: e.clientY, close: false, moved: false };       // 140b: moving on before the release drags this node's handle
+}
+/** The Pen's press-and-drag (grill 140 Q3 / Q4 / Q5): past 4 px the pointer is the node's out-handle (free, no snap; Shift / ORTHO locks the angle), its in-handle the mirror. */
+function penDragMove(e) {
+  const g = state.penDrag, T = state.draw, d = state.drawDoc;
+  if (!T || !d || !drawLive() || !T.pts.length) { state.penDrag = null; return; }
+  if (!g.moved && Math.hypot(e.clientX - g.x, e.clientY - g.y) <= 4) return;
+  g.moved = true;
+  const f = d.factor, c = g.close ? T.pts[0] : T.pts.at(-1);
+  let p = toDrawing(d, e.clientX, e.clientY);
+  if (e.shiftKey || state.ortho) p = Ed.orthoLock([c[0] / f, c[1] / f], p);
+  DR.toolPenDrag(T, [p[0] * f, p[1] * f], g.close);
+  paintOverlay();
+}
+function penDragEnd(e) {
+  const g = state.penDrag, T = state.draw;
+  state.penDrag = null;
+  if (!T || !drawLive()) return;
+  DR.toolPenDragEnd(T);
+  if (g.close && T.pts.length > 2) drawApply(DR.toolClick(T, T.pts[0], null, false));       // the click on node 1 closes, with the in-handle the drag gave
+  else if (g.moved) drawHoverAt(state.drawDoc, e.clientX, e.clientY, e.shiftKey, e.ctrlKey);
 }
 /** The line, circle or arc under a click (mm) for a Circle's tangent pick, on a drawing, a Compare source or a layout; null when the click is on none (or on a spline or ellipse). */
 function tangentObjectAt(d, cx, cy) {
@@ -8662,6 +8687,11 @@ function drawOvl(paint = false) {
       if (dynamic && T.kind === 'circle') circleGuide = out.at(-1);        // dropped below once the Radius box's own guide is placed
     }
     for (const sh of pv.shapes) out.push(s('path', { class: 'dr-shape', transform: drawingTransform(d), d: DR.svgPath(sh, H), 'data-testid': 'draw-preview' }));
+    if (pv.handles) {                                                   // the Pen's dragged node: its two handles, a thin line and a small square each
+      const k = 3.5 / view.scale;
+      out.push(s('path', { class: 'dr-hline', transform: drawingTransform(d), d: DR.svgPath({ t: 'poly', pts: [pv.handles[0][1], pv.handles[0][0], pv.handles[1][1]] }, H), 'data-testid': 'pen-handles' }));
+      for (const [, hp] of pv.handles) out.push(s('rect', { class: 'dr-handle', transform: drawingTransform(d), x: hp[0] - k, y: H - hp[1] - k, width: 2 * k, height: 2 * k }));
+    }
     if (pv.at && (pv.readout || state.trk.res || dynamic)) {
       tip = { text: state.trk.res ? state.trk.res.text : pv.readout, x: T.hover[0], y: T.hover[1] };
       if (dynamic) {

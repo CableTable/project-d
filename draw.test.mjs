@@ -4,7 +4,7 @@ import * as DR from './web/draw.js';
 import { overlapArea } from './web/cmdbar.js';
 import { movePoint } from './web/move.js';
 import { readDxf, flatten } from './web/drawing.js';
-import { bezierOf } from './web/shape.js';
+import { bezierOf, nodeType } from './web/shape.js';
 import { newDoc, addEntities, writeDxf } from './web/dxf-write.js';
 
 let n = 0;
@@ -334,6 +334,31 @@ test('Pen (140a): corner nodes -> a SPLINE with its handles on the thirds; one n
   DR.toolType(T, 'u');
   assert.equal(T.pts.length, 2, 'U drops the last node');
   assert.deepEqual(DR.toolCancel(T).made, null); assert.deepEqual(T.pts, [], 'Esc cancels the whole path');
+});
+
+test('Pen (140b): a click-dragged node is Symmetrical (handles mirrored), a clicked one a corner; a closing drag shapes node 1\'s in-handle; U drops the handle with its node', () => {
+  const T = DR.createTool('pen');
+  click(T, [0, 0], [30, 0]);
+  DR.toolPenDrag(T, [40, 20]);
+  const pv = DR.toolPreview(T);
+  assert.equal(T.drag, 'node'); assert.deepEqual(pv.handles, [[[30, 0], [40, 20]], [[30, 0], [20, -20]]], 'the dragged node shows its two handles'); assert.equal(pv.shapes[0].pts.length, 2, 'no rubber band while dragging');
+  DR.toolPenDragEnd(T);
+  click(T, [30, 60]);
+  const e = DR.toEntity(DR.toolFinish(T).made[0], {}, 1), b = bezierOf(e);
+  [[0, 0], [10, 0], [20, -20], [30, 0], [40, 20], [30, 40], [30, 60]].forEach((p, i) => nearPt(b.P[i], p));       // corners keep the thirds, the dragged node its mirrored pair
+  assert.equal(nodeType(e, 'n1'), 'Symmetrical'); assert.equal(nodeType(e, 'n0'), null);
+  click(T, [0, 0], [30, 0], [30, 60]);
+  DR.toolPenDrag(T, [-20, 10], true);
+  assert.equal(T.drag, 'close'); assert.deepEqual(T.pts.length, 3, 'a closing drag adds no node');
+  DR.toolPenDragEnd(T);
+  const r = click(T, [0, 0]), c = bezierOf(DR.toEntity(r.made[0], {}, 1));
+  assert.equal(r.made[0].closed, true); assert.equal(c.n, 3);
+  nearPt(c.P[8], [20, -10]); nearPt(c.P[7], [20, 40]); nearPt(c.P[1], [10, 0]);       // the in-handle mirrors the drag; the first segment keeps its corner handle
+  click(T, [0, 0], [30, 0]);
+  DR.toolPenDrag(T, [40, 20]); DR.toolPenDragEnd(T);
+  DR.toolType(T, 'u'); click(T, [30, 0]);
+  assert.deepEqual(DR.toolFinish(T).made[0].hs, [null, null], 'U drops the handle with its node');
+  DR.toolPenDrag(T, [1, 1]); assert.equal(T.drag, null, 'nothing to drag with no node');
 });
 
 test('Rectangle: two corners, or a first corner and W,H / @W,H (negative goes the other way)', () => {
