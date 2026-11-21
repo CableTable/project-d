@@ -359,3 +359,89 @@ test('node types on a closed curve: node 0 wraps (its in handle is the last cont
   collinear(d, 0); near(Math.hypot(...vec(d, 'o0')), Math.hypot(...vec(d, 'i0'))); assert.ok(SH.bezierOf(d).closed);
   assert.equal(SH.setNodeType(c, ['n0'], 'Cusp').why, 'This node is Cusp already');
 });
+
+// ---- TODO 139e2b: add node, Delete, Break, Join on Bezier splines
+const dense = (e) => { const b = SH.bezierOf(e); return Array.from({ length: b.n }, (_, k) => Array.from({ length: 1501 }, (_, i) => cubicAt(b, k, i / 1500))).flat(); };
+const sameCurve = (a, b) => { const A = dense(a), B = dense(b), off = (p, S) => Math.min(...S.map((q) => Math.hypot(p[0] - q[0], p[1] - q[1]))); for (const p of A.filter((_, i) => i % 7 === 0)) assert.ok(off(p, B) < 0.05, `${p} is off the other curve`); for (const p of B.filter((_, i) => i % 7 === 0)) assert.ok(off(p, A) < 0.05, `${p} is off the other curve`); };
+const bent = () => { let e = SH.toCurve(lwpoly([[0, 0], [30, 0], [30, 30], [0, 30]], { layer: 'CUT', aci: 3 }), ['v0']).ent; e = pull(e, 'o0', 0, 12).ent; e = pull(e, 'i1', 8, 5).ent; return pull(e, 'o2', 5, -9).ent; };       // 3 curved segments, 4 nodes
+const xy = (e) => SH.bezierOf(e).P.map((q) => q.slice(0, 2).map((v) => +v.toFixed(6) + 0));
+const onSeg = (e, k, t) => cubicAt(SH.bezierOf(e), k, t);
+
+test('addNode on a Bezier spline: the cubic splits at the click, the outline is unchanged, the new node is a Cusp and the old Cusps keep their number', () => {
+  const s = SH.setNodeType(SH.setNodeType(bent(), ['n2'], 'Smooth').ent, ['n2'], 'Cusp').ent;       // n2 a remembered Cusp (its handles may line up)
+  const r = SH.addNode(s, onSeg(s, 1, 0.4).concat(0), 0.5);
+  assert.equal(r.label, 'Add node'); assert.equal(r.ent.type, 'SPLINE'); assert.equal(r.ent.layer, 'CUT'); assert.equal(r.ent.aci, 3);
+  assert.equal(SH.bezierOf(r.ent).n, 4); assert.equal(SH.nodesOf(r.ent).length, 5);
+  sameCurve(s, r.ent);
+  near(SH.nodesOf(r.ent)[2].x, onSeg(s, 1, 0.4)[0], 1e-3); near(SH.nodesOf(r.ent)[2].y, onSeg(s, 1, 0.4)[1], 1e-3);
+  assert.equal(SH.nodeType(r.ent, 'n2'), 'Cusp', 'the new node'); assert.equal(SH.nodeType(r.ent, 'n3'), 'Cusp', 'the old n2, now n3, is still a Cusp');
+  assert.equal(SH.setNodeType(r.ent, ['n2'], 'Cusp').why, 'This node is Cusp already');
+  assert.equal(SH.addNode(s, [onSeg(s, 1, 0.4)[0] + 80, onSeg(s, 1, 0.4)[1] + 80], 1), null, 'too far from the curve');
+  assert.equal(SH.addNode(s, [30, 0], 1), null, 'on a node'); assert.equal(SH.addNode(s, [0, 0], 1), null, 'on an end node');
+  const c = SH.toCurve(circle(0, 0, 10), ['q0']).ent, rc = SH.addNode(c, [10 * Math.cos(2), 10 * Math.sin(2)], 1);       // the closed curve's 2nd segment: node 2 is the new one
+  assert.ok(SH.bezierOf(rc.ent).closed && SH.bezierOf(rc.ent).n === 5); sameCurve(c, rc.ent);
+  const last = SH.addNode(c, [10 * Math.cos(5.5), 10 * Math.sin(5.5)], 1);       // the closing segment: the new node comes last, node 0 stays
+  assert.equal(SH.bezierOf(last.ent).n, 5); assert.deepEqual(xy(last.ent)[0], [10, 0]); sameCurve(c, last.ent);
+});
+
+test('deleteNodes on a Bezier spline: the neighbour segments become one cubic with the outer handles; an end drops its segment; under 2 nodes the object goes', () => {
+  const s = bent(), P = xy(s);
+  const m = SH.deleteNodes(s, ['n1']);
+  assert.equal(m.label, 'Delete node'); assert.equal(m.ent.layer, 'CUT'); assert.equal(SH.bezierOf(m.ent).n, 2);
+  assert.deepEqual(xy(m.ent).slice(0, 4), [P[0], P[1], P[5], P[6]], 'outer handles kept'); assert.deepEqual(xy(m.ent).slice(4), P.slice(7));
+  assert.deepEqual(xy(SH.deleteNodes(s, ['n0']).ent), P.slice(3), 'the start node drops its segment');
+  assert.deepEqual(xy(SH.deleteNodes(s, ['n3']).ent), P.slice(0, 7), 'the end node too');
+  const two = SH.deleteNodes(s, ['n1', 'n2']);
+  assert.equal(two.label, 'Delete nodes'); assert.deepEqual(xy(two.ent), [P[0], P[1], P[8], P[9]], 'two next to each other: one cubic');
+  assert.equal(SH.deleteNodes(s, ['n0', 'n1', 'n3']).ent, null, 'one node left: it goes'); assert.equal(SH.deleteNodes(SH.deleteNodes(s, ['n0']).ent, ['n0']).ent.type, 'SPLINE');
+  assert.equal(SH.deleteNodes(SH.toCurve(line(0, 0, 9, 0), ['a']).ent, ['n1']).ent, null, 'a 2-node curve: the object goes');
+  assert.equal(SH.deleteNodes(s, ['x9']), null); assert.equal(SH.deleteNodes(s, []), null);
+  const c = SH.toCurve(circle(0, 0, 10), ['q0']).ent, cp = xy(c);       // closed: 4 nodes
+  const c2 = SH.deleteNodes(c, ['n2']).ent;
+  assert.ok(SH.bezierOf(c2).closed && SH.bezierOf(c2).n === 3); assert.deepEqual(xy(c2).slice(0, 4), cp.slice(0, 4)); assert.deepEqual(xy(c2), [...cp.slice(0, 5), ...cp.slice(8)], 'nodes 1 and 3 joined by one cubic with the outer handles');
+  const c0 = SH.deleteNodes(c, ['n0']).ent, b0 = SH.bezierOf(c0);
+  assert.ok(b0.closed && b0.n === 3); assert.deepEqual(xy(c0)[0], cp[3], 'it starts at the old node 1'); assert.deepEqual(xy(c0).slice(-3), [cp[10], cp[2], cp[3]], 'the closing cubic: node 3\'s out handle, node 1\'s in handle, node 1');
+  assert.equal(SH.deleteNodes(c, ['n0', 'n1', 'n2']).ent, null); assert.equal(SH.deleteNodes(SH.deleteNodes(c, ['n0']).ent, ['n0', 'n1']).ent, null, 'a closed curve of 3 keeps 2 at the least');
+  assert.equal(SH.bezierOf(SH.deleteNodes(c, ['n0', 'n1']).ent).n, 2, 'a closed curve may drop to 2 nodes');
+  const cu = SH.addNode(s, onSeg(s, 2, 0.5).concat(0), 0.5).ent, g = SH.deleteNodes(cu, ['n0']).ent;       // new node n3 is a Cusp: it is n2 after n0 goes
+  assert.equal(SH.nodeType(g, 'n2'), 'Cusp');
+});
+
+test('breakNodes on a Bezier spline: an open curve gives two at an inner node, a closed one opens at the first cut; curves unchanged, properties kept', () => {
+  const s = bent(), r = SH.breakNodes(s, ['n2']);
+  assert.equal(r.length, 2); assert.ok(r.every((e) => e.type === 'SPLINE' && e.layer === 'CUT' && !SH.bezierOf(e).closed));
+  assert.deepEqual(SH.bezierOf(r[0]).n, 2); assert.deepEqual(SH.bezierOf(r[1]).n, 1);
+  assert.deepEqual([...xy(r[0]), ...xy(r[1]).slice(1)], xy(s), 'the pieces share the control points');
+  assert.equal(SH.breakNodes(s, ['n0']), null, 'an end node cuts nothing'); assert.equal(SH.breakNodes(s, ['n3', 'n0']), null);
+  assert.equal(SH.breakNodes(s, ['n1', 'n2']).length, 3);
+  const c = SH.toCurve(circle(0, 0, 10), ['q0']).ent, one = SH.breakNodes(c, ['n2']);
+  assert.equal(one.length, 1); assert.ok(!SH.bezierOf(one[0]).closed); assert.equal(SH.bezierOf(one[0]).n, 4); assert.deepEqual(xy(one[0])[0], xy(c)[6], 'starts at the node'); assert.deepEqual(xy(one[0]).at(-1), xy(c)[6], 'and ends there');
+  const two = SH.breakNodes(c, ['n3', 'n1']);
+  assert.deepEqual(two.map((e) => SH.bezierOf(e).n), [2, 2], 'cut at n1 and n3: two halves'); assert.deepEqual(xy(two[0])[0], xy(c)[3]);
+  assert.equal(SH.breakNodes(lwpoly([[0, 0], [5, 5]]), ['n0']), null);
+});
+
+test('joinNodes with a Bezier spline: two ends meet at their midpoint in one Bezier SPLINE (a Cusp joint), a polyline / line / arc end converts first, a spline\'s two ends Close', () => {
+  const a = bent(), b = SH.toCurve(lwpoly([[40, 30], [60, 40], [60, 60]], { layer: 'OTHER' }), ['v0']).ent;
+  const r = SH.joinNodes({ ent: a, id: 'n3' }, { ent: b, id: 'n0' });       // a ends at (0, 30), b starts at (40, 30): the joint is (20, 30)
+  assert.equal(r.label, 'Join nodes'); assert.equal(r.result.type, 'SPLINE'); assert.equal(r.result.layer, 'CUT', "a's properties");
+  const j = SH.bezierOf(r.result); assert.equal(j.n, 5); assert.deepEqual(xy(r.result)[9], [20, 30], 'the joint: the midpoint');
+  assert.equal(SH.nodeType(r.result, 'n3'), 'Cusp');
+  const ra = SH.joinNodes({ ent: a, id: 'n0' }, { ent: b, id: 'n2' });       // either end of either: the curves are turned to run on
+  assert.equal(SH.bezierOf(ra.result).n, 5); assert.deepEqual(xy(ra.result)[0], xy(a).at(-1), 'a, turned round, starts at its old end'); assert.deepEqual(xy(ra.result).at(-1), [40, 30], 'b, turned round, ends at its start');
+  const poly = lwpoly([[30, 30], [30, 50]], { layer: 'PL' }), rp = SH.joinNodes({ ent: a, id: 'n3' }, { ent: poly, id: 'v0' });
+  assert.equal(SH.bezierOf(rp.result).n, 4); assert.deepEqual(xy(rp.result).at(-1), [30, 50]);
+  const rl = SH.joinNodes({ ent: line(0, 30, 0, 50), id: 'a' }, { ent: a, id: 'n3' });       // the line first: its layer is the result's
+  assert.equal(rl.result.type, 'SPLINE'); assert.equal(rl.result.layer, '0'); assert.equal(SH.bezierOf(rl.result).n, 4);
+  const ra2 = SH.joinNodes({ ent: a, id: 'n3' }, { ent: arc(0, 40, 10, 270, 90), id: 'a' });
+  assert.equal(SH.bezierOf(ra2.result).n, 5, 'a half circle is 2 cubics');
+  assert.match(SH.joinNodes({ ent: a, id: 'n3' }, { ent: lwpoly([[0, 0], [5, 5]], { width: 2 }), id: 'v0' }).why, /width/);
+  const cl = SH.joinNodes({ ent: a, id: 'n0' }, { ent: a, id: 'n3' });
+  assert.equal(cl.label, 'Close'); assert.ok(SH.bezierOf(cl.result).closed); assert.equal(SH.bezierOf(cl.result).n, 4); assert.equal(cl.result.layer, 'CUT');
+  const shut = SH.toCurve(lwpoly([[0, 0], [10, 0], [10, 10], [0, 0]]), ['v0']).ent, cm = SH.joinNodes({ ent: shut, id: 'n0' }, { ent: shut, id: 'n3' });
+  assert.ok(SH.bezierOf(cm.result).closed && SH.bezierOf(cm.result).n === 3, 'ends that meet: no new segment');
+  assert.match(SH.joinNodes({ ent: a, id: 'n1' }, { ent: b, id: 'n0' }).why, /end nodes/);
+  assert.match(SH.joinNodes({ ent: SH.toCurve(circle(0, 0, 5), ['q0']).ent, id: 'n0' }, { ent: b, id: 'n0' }).why, /end nodes/, 'a closed spline has no ends');
+  const quad = spl([71, 72, 73, 74, 40, 40, 40, 40, 40, 40, 10, 20, 10, 20, 10, 20], [2, 6, 3, 0, 0, 0, 0, 1, 1, 1, 0, 0, 5, 5, 10, 0]);
+  assert.match(SH.joinNodes({ ent: quad, id: 'n0' }, { ent: b, id: 'n0' }).why, /Not a Bezier curve/);
+});

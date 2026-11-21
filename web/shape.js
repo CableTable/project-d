@@ -47,7 +47,8 @@ const quarters = (c, r) => [0, 1, 2, 3].map((i) => ({ a: [c[0] + r * Math.cos(i 
  * with its layer, colour, line type and lineweight (dxf-write.js lwpoly); a polyline keeps its record (grips.js insertVertex, then each half's bulge).
  */
 export function addNode(ent, p, tol = Infinity) {
-  if (!nodesOf(ent).length || !p || ent.type === 'SPLINE') return null;       // a node on a Bezier spline: 139e2
+  if (!nodesOf(ent).length || !p) return null;
+  if (ent.type === 'SPLINE') return addBezier(ent, p, tol);       // 139e2b
   const sh = shapeOf(ent), path = sh.t === 'circle' ? { closed: true, segs: quarters(sh.c, sh.r) } : pathOf(sh), hit = closest(path, p);
   const i = hit.index, f = hit.u - i, s = path.segs[i];
   if (!(hit.d <= tol) || f < 1e-9 || f > 1 - 1e-9) return null;
@@ -71,6 +72,7 @@ function removeNode(ent, i) {
 
 /** TODO 139b2: delete the nodes with these ids ('v3') of a polyline, each by removeNode: { ent, label } or null (not a polyline, or fewer than 2 / 3 nodes would stay: then none go). Lines, arcs and circles keep all theirs. */
 export function deleteNodes(ent, ids) {
+  if (ent?.type === 'SPLINE') return deleteBezier(ent, ids);       // 139e2b
   let r = { ent };
   for (const i of [...new Set(ids)].map((id) => +id.slice(1)).sort((a, b) => b - a)) if (r && ent?.type === 'LWPOLYLINE') r = removeNode(r.ent, i); else return null;       // from the last: the lower numbers stay valid
   return r && r.ent !== ent ? { ent: r.ent, label: new Set(ids).size > 1 ? 'Delete nodes' : 'Delete node' } : null;
@@ -85,6 +87,7 @@ const openPoly = (segs) => { const sh = polyOf(segs, false), l = sh.pts.at(-1); 
  * A line or arc has only end nodes: null.
  */
 export function breakNodes(ent, ids) {
+  if (ent?.type === 'SPLINE') return breakBezier(ent, ids);       // 139e2b
   if (!['LWPOLYLINE', 'CIRCLE'].includes(ent?.type) || !flat(ent)) return null;
   const sh = shapeOf(ent), { closed, segs } = sh.t === 'circle' ? { closed: true, segs: quarters(sh.c, sh.r) } : pathOf(sh), n = segs.length;
   const cuts = [...new Set(ids)].map((id) => +id.slice(1)).filter((k) => k >= (closed ? 0 : 1) && k < n).sort((a, b) => a - b);
@@ -94,7 +97,10 @@ export function breakNodes(ent, ids) {
 }
 
 /** An open object's end node ids: a polyline's first and last vertex, a line's or arc's a and b; none for a closed one or another kind. */
-const endIds = (ent) => (classify(ent).reason ? [] : ent.type === 'LWPOLYLINE' ? ['v0', 'v' + (nodesOf(ent).length - 1)] : ['a', 'b']);
+const endIds = (ent) => {
+  if (ent?.type === 'SPLINE') { const b = bezierOf(ent); return b && !b.closed ? ['n0', 'n' + b.n] : []; }       // 139e2b
+  return classify(ent).reason ? [] : ent.type === 'LWPOLYLINE' ? ['v0', 'v' + (nodesOf(ent).length - 1)] : ['a', 'b'];
+};
 
 /**
  * TODO 139c Join nodes (grill Q6, R2): a and b are { ent, id }, two end nodes. Of one open object: the Close tool's result (closeline.js closeEntities, opts.ends 'extend' | 'straight').
@@ -102,7 +108,9 @@ const endIds = (ent) => (classify(ent).reason ? [] : ent.type === 'LWPOLYLINE' ?
  * { result, label, note } or { why } (nothing changes).
  */
 export function joinNodes(a, b, opts = {}) {
-  if (!endIds(a.ent).includes(a.id) || !endIds(b.ent).includes(b.id)) return { why: 'Join nodes needs two end nodes of open lines, arcs or polylines' };
+  if ([a, b].some((x) => x.ent?.type === 'SPLINE' && !bezierOf(x.ent))) return { why: 'Not a Bezier curve: only Bezier splines are joined' };       // 139e2b
+  if (!endIds(a.ent).includes(a.id) || !endIds(b.ent).includes(b.id)) return { why: 'Join nodes needs two end nodes of open lines, arcs, polylines or Bezier splines' };
+  if ([a, b].some((x) => x.ent.type === 'SPLINE')) return a.ent === b.ent ? closeBezier(a.ent) : joinBezier(a, b);
   if (a.ent === b.ent) { const r = closeEntities([a.ent], opts); return r.result ? { result: r.result, label: 'Close', note: r.note } : { why: r.why }; }
   const [p, q] = [a, b].map((x) => nodesOf(x.ent).find((k) => k.id === x.id)), m = [(p.x + q.x) / 2, (p.y + q.y) / 2];
   const moved = [[a, p], [b, q]].map(([x, k]) => (Math.hypot(m[0] - k.x, m[1] - k.y) < 1e-12 ? x.ent : dragNodes(x.ent, [k], m[0] - k.x, m[1] - k.y).ent));
@@ -174,6 +182,12 @@ function cubics(s) {
   });
 }
 
+/** A Bezier SPLINE through the control points P (3n + 1: node, handle, handle, node, …), closed or open, with like's layer, colour, line type and lineweight. */
+function bezierEnt(P, closed, like) {
+  const count = (P.length - 1) / 3, U = [0, 0, 0, 0, ...Array.from({ length: count - 1 }, (_, i) => [i + 1, i + 1, i + 1]).flat(), ...Array(4).fill(count)];
+  return entity('SPLINE', [[70, closed ? 9 : 8], [71, 3], [72, U.length], [73, P.length], [74, 0], ...U.map((u) => [40, u]), ...P.flatMap((p) => [[10, p[0]], [20, p[1]], [30, p[2] ?? 0]])], like);
+}
+
 /**
  * TODO 139e1 To curve (grill R1 / R4): the whole object (a polyline, line, arc or circle) becomes one Bezier SPLINE with its layer, colour, line type and lineweight, closed when it was;
  * every line a straight cubic (handles at 1/3 and 2/3), every arc its closest cubics, so the outline stays. Needs a segment after one of the nodes ids.
@@ -192,8 +206,7 @@ export function toCurve(ent, ids) {
   const count = (P.length - 1) / 3;
   if (closed) P[P.length - 1] = P[0];
   first.push(count);
-  const U = [0, 0, 0, 0, ...Array.from({ length: count - 1 }, (_, i) => [i + 1, i + 1, i + 1]).flat(), ...Array(4).fill(count)];
-  const out = entity('SPLINE', [[70, closed ? 9 : 8], [71, 3], [72, U.length], [73, P.length], [74, 0], ...U.map((u) => [40, u]), ...P.flatMap((p) => [[10, p[0]], [20, p[1]], [30, 0]])], ent);
+  const out = bezierEnt(P, closed, ent);
   return { ent: withCusps(out, nodesOf(out).map((n) => n.id).filter((id) => (nodeType(out, id) ?? 'Cusp') !== 'Cusp')), label: 'To curve', ids: want.filter((k) => k <= m).map((k) => 'n' + first[k]) };       // 139e2a: every new node is a Cusp, even where the handles happen to line up
 }
 
@@ -272,4 +285,90 @@ export function setNodeType(ent, ids, type) {
     changed++;
   }
   return changed ? { ent: withCusps(spRecord(ent, { ...splineOf(ent.r), P: Q }), [...cusps]), label: `${type} node${changed > 1 ? 's' : ''}` } : { why };
+}
+
+// ---- TODO 139e2b: add node, Delete, Break and Join on Bezier splines (grill-139e R6 / R9). Each builds a new Bezier SPLINE (bezierEnt) and carries the Cusp memory over to the nodes' new numbers. ----
+const lerp = (a, b, t) => a.map((x, k) => x + (b[k] - x) * t);
+const bezAt = (q, t) => { const m = lerp(q[1], q[2], t); return lerp(lerp(lerp(q[0], q[1], t), m, t), lerp(m, lerp(q[2], q[3], t), t), t); };
+const cubicAt = (b, s) => b.P.slice(3 * s, 3 * s + 4);
+
+/** The parameter of cubic q nearest to p, and the distance there: four rounds of 33 samples, each narrowed to the best one's neighbours. */
+function nearest(q, p) {
+  let lo = 0, hi = 1, t = 0, d = Infinity;
+  for (let r = 0; r < 4; r++) {
+    const w = (hi - lo) / 32;
+    for (let k = 0; k <= 32; k++) { const u = lo + w * k, c = bezAt(q, u), e = Math.hypot(c[0] - p[0], c[1] - p[1]); if (e < d) { d = e; t = u; } }
+    lo = Math.max(0, t - w); hi = Math.min(1, t + w);
+  }
+  return { t, d };
+}
+
+/** `out` (a spline made from ent) with ent's remembered Cusps: its node j was ent's node from[j] (null: a new one); the ids in `extra` are Cusps too. */
+const carry = (out, ent, from, extra = []) => withCusps(out, [...new Set([...extra, ...from.flatMap((o, j) => (o != null && ent.cusps?.includes('n' + o) ? ['n' + j] : []))])]);
+
+/** Add node on a Bezier spline: the cubic nearest p (within tol) splits there by de Casteljau, so the curve stays; the new node is a Cusp. { ent, label } or null (not a Bezier curve, too far, on a node). */
+function addBezier(ent, p, tol) {
+  const b = bezierOf(ent);
+  if (!b) return null;
+  let hit = null;
+  for (let s = 0; s < b.n; s++) { const h = nearest(cubicAt(b, s), p); if (!hit || h.d < hit.d) hit = { ...h, s }; }
+  if (!(hit.d <= tol) || hit.t < 1e-6 || hit.t > 1 - 1e-6) return null;
+  const { s, t } = hit, [q0, q1, q2, q3] = cubicAt(b, s), a = lerp(q0, q1, t), m = lerp(q1, q2, t), c = lerp(q2, q3, t), d = lerp(a, m, t), e = lerp(m, c, t);
+  const P = [...b.P.slice(0, 3 * s + 1), a, d, lerp(d, e, t), e, c, ...b.P.slice(3 * s + 3)];
+  return { ent: carry(bezierEnt(P, b.closed, ent), ent, Array.from({ length: (b.closed ? b.n : b.n + 1) + 1 }, (_, j) => (j <= s ? j : j === s + 1 ? null : j - 1)), ['n' + (s + 1)]), label: 'Add node' };
+}
+
+/** Delete nodes of a Bezier spline: a node's two segments become one cubic with the outer handles kept; an open curve's end drops its segment. { ent, label }; ent null when fewer than 2 nodes would stay (the object goes); null when no id is a node. */
+function deleteBezier(ent, ids) {
+  const b = bezierOf(ent), N = b && (b.closed ? b.n : b.n + 1), gone = b ? [...new Set(ids)].filter((id) => id[0] === 'n' && +id.slice(1) < N).map((id) => +id.slice(1)).sort((x, y) => y - x) : [];
+  if (!gone.length) return null;
+  const label = gone.length > 1 ? 'Delete nodes' : 'Delete node';
+  let P = b.P, n = b.n;
+  for (const i of gone) {       // from the last: the lower numbers stay valid
+    if ((b.closed ? n : n + 1) - 1 < 2) return { ent: null, label };
+    if (!b.closed && i === 0) P = P.slice(3);
+    else if (!b.closed && i === n) P = P.slice(0, 3 * n - 2);
+    else if (i === 0) P = [...P.slice(3, 3 * n - 1), P[2], P[3]];       // closed: the curve starts at the old node 1 now
+    else P = [...P.slice(0, 3 * i - 1), ...P.slice(3 * i + 2)];
+    n--;
+  }
+  return { ent: carry(bezierEnt(P, b.closed, ent), ent, Array.from({ length: N }, (_, j) => j).filter((j) => !gone.includes(j))), label };
+}
+
+/** Break at node on a Bezier spline: an open curve splits into two at an inner node, a closed one opens into one starting at its first cut node (more cuts, more pieces); the curves stay. The open splines, or null when nothing is cut. */
+function breakBezier(ent, ids) {
+  const b = bezierOf(ent);
+  if (!b) return null;
+  const { closed, n } = b, cuts = [...new Set(ids)].filter((id) => id[0] === 'n').map((id) => +id.slice(1)).filter((k) => k >= (closed ? 0 : 1) && k < n).sort((x, y) => x - y);
+  if (!cuts.length) return null;
+  const c0 = closed ? cuts[0] : 0, segs = Array.from({ length: n }, (_, s) => cubicAt(b, s)), run = [...segs.slice(c0), ...segs.slice(0, c0)], from = [...new Set([0, ...cuts.map((k) => k - c0)])];
+  return from.map((s, j) => {
+    const part = run.slice(s, from[j + 1] ?? n);
+    return carry(bezierEnt(part.flatMap((q, k) => (k ? q.slice(1) : q)), false, ent), ent, Array.from({ length: part.length + 1 }, (_, k) => (s + k + c0) % (closed ? n : n + 1)));
+  });
+}
+
+/** Join nodes, the two ends of one Bezier spline: closed by a straight segment (none when they meet). { result, label } like closeline.js closeEntities. */
+function closeBezier(ent) {
+  const b = bezierOf(ent), p = b.P[3 * b.n], q = b.P[0], meet = Math.hypot(q[0] - p[0], q[1] - p[1]) <= 1e-9;
+  const P = meet ? [...b.P.slice(0, -1), q] : [...b.P, lerp(p, q, 1 / 3), lerp(p, q, 2 / 3), q];
+  return { result: carry(bezierEnt(P, true, ent), ent, Array.from({ length: meet ? b.n : b.n + 1 }, (_, j) => j), meet ? ['n0'] : ['n0', 'n' + b.n]), label: 'Close' };
+}
+
+/** Join nodes of two objects, a Bezier spline end and another spline's or a polyline's, line's or arc's (that one goes through toCurve first): both ends move to their midpoint (dragNodes), the curves run on from there into one Bezier SPLINE with a's properties; the joint is a Cusp. */
+function joinBezier(a, b) {
+  const parts = [];
+  for (const x of [a, b]) {
+    const r = x.ent.type === 'SPLINE' ? { ent: x.ent } : toCurve(x.ent, nodesOf(x.ent).map((k) => k.id));
+    if (!r.ent) return { why: r.why };
+    const z = bezierOf(r.ent), start = endIds(x.ent)[0] === x.id;
+    parts.push({ ent: r.ent, start, at: z.P[start ? 0 : 3 * z.n], id: start ? 'n0' : 'n' + z.n });
+  }
+  const m = [(parts[0].at[0] + parts[1].at[0]) / 2, (parts[0].at[1] + parts[1].at[1]) / 2];
+  const [A, B] = parts.map((x, k) => {
+    const e = dragNodes(x.ent, [nodesOf(x.ent).find((g) => g.id === x.id)], m[0] - x.at[0], m[1] - x.at[1]).ent, z = bezierOf(e), flip = k ? !x.start : x.start;       // a runs into the joint, b out of it
+    return { ent: e, P: flip ? z.P.slice().reverse() : z.P, n: z.n, cusps: (e.cusps ?? []).map((id) => (flip ? z.n - +id.slice(1) : +id.slice(1))) };
+  });
+  const out = bezierEnt([...A.P, ...B.P.slice(1)], false, A.ent);
+  return { result: withCusps(out, [...A.cusps, ...B.cusps.map((j) => j + A.n), A.n].map((j) => 'n' + j)), label: 'Join nodes' };
 }
