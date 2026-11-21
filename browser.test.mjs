@@ -37424,8 +37424,12 @@ try {
       const rb = await page.locator('.ribbon-body [data-panel=Draw]').getByRole('button', { name: 'Circle', exact: true }).boundingBox();   // ribbon button: press and hold 450 ms
       await page.mouse.move(rb.x + rb.width / 2, rb.y + rb.height / 2); await page.mouse.down(); await page.waitForTimeout(650);
       assert.deepEqual(await flyoutItems(), items, kind + ': ribbon hold');
-      await page.mouse.up(); await page.keyboard.press('Escape');
+      await page.mouse.up();
+      assert.equal(await page.locator('.ctxmenu .mi').count(), items.length, kind + ': the ribbon hold release keeps the flyout open');
+      assert.doesNotMatch(await prompt(), /^Specify /, kind + ': the ribbon hold release starts no Circle command');
+      await page.keyboard.press('Escape');
       await page.locator('.ribbon-body [data-panel=Draw]').getByRole('button', { name: 'Circle', exact: true }).click({ button: 'right' });
+      await page.locator('.ctxmenu .mi').first().waitFor();
       assert.deepEqual(await flyoutItems(), items, kind + ': ribbon right-click');
       await page.keyboard.press('Escape');
       await t('circle-ribbon-flyout').click();
@@ -37851,8 +37855,12 @@ try {
       const rb = await (await homeArc347()).boundingBox();                               // ribbon button: press and hold 450 ms
       await page.mouse.move(rb.x + rb.width / 2, rb.y + rb.height / 2); await page.mouse.down(); await page.waitForTimeout(650);
       assert.deepEqual(await flyoutItems(), modes347c, kind + ': ribbon hold');
-      await page.mouse.up(); await page.keyboard.press('Escape');
+      await page.mouse.up();
+      assert.equal(await page.locator('.ctxmenu .mi').count(), modes347c.length, kind + ': the ribbon hold release keeps the flyout open');
+      assert.doesNotMatch(await prompt(), /^Specify /, kind + ': the ribbon hold release starts no Arc command');
+      await page.keyboard.press('Escape');
       await (await homeArc347()).click({ button: 'right' });
+      await page.locator('.ctxmenu .mi').first().waitFor();
       assert.deepEqual(await flyoutItems(), modes347c, kind + ': ribbon right-click');
       await page.keyboard.press('Escape');
       await t('arc-ribbon-flyout').click();
