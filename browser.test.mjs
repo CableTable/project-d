@@ -19365,6 +19365,54 @@ try {
     assert.doesNotMatch(await measureFrom([500.8, 20.9], [500.8, 0.6]), /^Distance 20 mm/, 'bottom gripper 0: no line to snap to');
   });
 
+  await step('TODO 150: Layouts: hovering where two placed parts cross shows the intersection marker; a Line starts exactly there', async () => {
+    await closeTabs(/./);
+    const lay = newLayout('Cross 150'), plate = addEntities(newDoc(4), dxfPoly([[0, 0], [100, 0], [100, 60], [0, 60]], { closed: true }));
+    lay.parts.plate = makePart('plate', 'Plate', plate); lay.parts.other = makePart('other', 'Other', plate);
+    lay.placed = [{ partId: 'plate', x: 200.4321, y: 200.1234, rot: 0 }, { partId: 'other', x: 260.9876, y: 215.8765, rot: 0 }];      // A's right side crosses B's bottom at (300.4321, 215.8765), 14 mm from A's side middle
+    const want = [300.4321, 215.8765];
+    const snapOn = await t('tog-snap').getAttribute('aria-pressed'), orthoOn = await t('tog-ortho').getAttribute('aria-pressed');
+    const setChip = async (id, on) => { if (await t(id).getAttribute('aria-pressed') !== String(on)) await t(id).click(); };
+    await page.evaluate(() => {
+      window.__tags150 = []; window.__fill150 = CanvasRenderingContext2D.prototype.fillText;
+      CanvasRenderingContext2D.prototype.fillText = function (text, ...args) {
+        if (this.canvas.dataset.testid === 'drawing') window.__tags150.push(text);
+        return window.__fill150.call(this, text, ...args);
+      };
+    });
+    try {
+      await setChip('tog-snap', true); await setChip('tog-ortho', false);
+      await t('picker').setInputFiles({ name: 'cross-150-layout.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
+      await waitTab(page, 'cross-150-layout.dxf');
+      const hover = async () => {
+        const q = await at(...want);
+        await page.evaluate(() => { window.__tags150 = []; });
+        await page.mouse.move(q.x + 3, q.y - 2, { steps: 4 });
+        await page.waitForFunction(() => window.__tags150.includes('intersection'), null, { timeout: 5000 });       // the label of the part-to-part crossing
+        return q;
+      };
+      await page.locator('[data-tool=measure]').click();                   // Measure and the draw tools share the marker; Measure shows it on hover
+      await hover();
+      await page.screenshot({ path: `${shotDir}/todo150-light.png` });
+      await menuItem('View', 'Theme: dark'); await frames(); await hover();
+      await page.screenshot({ path: `${shotDir}/todo150-dark.png` });
+      await menuItem('View', 'Theme: light'); await frames();
+      await page.keyboard.press('Escape'); await page.locator('[data-tool=line]').click();
+      const q = await at(...want);
+      await page.mouse.move(q.x + 3, q.y - 2, { steps: 4 }); await frames();
+      await page.mouse.click(q.x + 3, q.y - 2);
+      const far = await at(420, 120); await page.mouse.move(far.x, far.y, { steps: 4 }); await page.mouse.click(far.x, far.y);
+      await page.keyboard.press('Escape');
+      const e = objectDoc(layoutFromRaw(await savedDoc())).raw.entities.at(-1), start = [10, 20].map((c) => fieldOf(e, c));
+      approx(start[0], want[0], 1e-6, 'the Line starts at the crossing: x'); approx(start[1], want[1], 1e-6, 'the Line starts at the crossing: y');
+    } finally {
+      await page.evaluate(() => { CanvasRenderingContext2D.prototype.fillText = window.__fill150; });
+      await setChip('tog-snap', snapOn === 'true'); await setChip('tog-ortho', orthoOn === 'true');
+      await page.keyboard.press('Escape');
+    }
+    await closeTabs(/./);
+  });
+
   // ---- Compare drawings (TODO 41; mock-up R5d, Option B) ----
   const plateDxf = (name, r2) => {
     const d = newDoc(4); addEntities(d, [dxfPoly([[0, 0], [300, 0], [300, 180], [0, 180]], { closed: true }), dxfCircle(80, 90, 30), dxfCircle(220, 90, r2)]);
