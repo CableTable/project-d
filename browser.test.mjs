@@ -25693,7 +25693,7 @@ try {
       };
     }, [...Buffer.from(writeDxf(raw))]);
     const dialog = t('export-dxf-dialog'), open = async () => { await menuItem('File', 'Export DXF…'); await dialog.waitFor(); };
-    const clean = async () => assert.equal(await page.locator('.tabs .dtab.on .dirty').count(), 0);
+    const clean = async () => assert.equal(await page.locator('.tabs .dtab.on .dot').count(), 0);
     const written = () => page.evaluate(() => window.__exp109.wrote);
     try {
       await menuItem('File', 'Open…');
@@ -25811,6 +25811,9 @@ try {
     const layer = (n) => page.locator(`[data-testid=export-dxf-layer][data-layer="${n}"]`);
     try {
       await menuItem('File', 'Open…'); await waitTab(page, 'curves.dxf');
+      // the app keeps the document module-private: compare the drawn pixels before and after
+      const docJson = () => t('drawing').evaluate((el) => el.toDataURL());
+      const before = await docJson();
       await open();
       assert.deepEqual(await page.locator('[data-testid=export-dxf-layer]').evaluateAll((l) => l.map((b) => [b.dataset.layer, b.checked, b.disabled])),
         [['Cut', true, false], ['Notes', true, false], ['Hid', false, false], ['0', true, true]], 'ticked = the visible layers; layer 0 is kept and cannot be unticked');
@@ -25832,7 +25835,8 @@ try {
       assert.ok(top.includes('LINE:Notes') && top.includes('INSERT:0'));
       assert.equal(out.blocks.B.entities[0].type, 'TEXT', 'block text stays text');
       await said(/Exported curves-export\.dxf.*Text as curves: 1 text made into outlines.*1 text in blocks, attributes or placed parts stays text/);
-      assert.equal(await page.locator('.tabs .dtab.on .dirty').count(), 0, 'the open drawing stays clean');
+      assert.equal(await page.locator('.tabs .dtab.on .dot').count(), 0, 'the open drawing stays clean');
+      assert.equal(await docJson(), before, 'the open drawing is unchanged after the export');
       const doc = await page.evaluate(() => document.querySelector('.tabs .dtab.on .tname').textContent);
       assert.equal(doc, 'curves.dxf');
       for (const theme of ['light', 'dark']) assert.ok(readFileSync(`${shotDir}/export-dxf-layers-${theme}.png`).length > 1000);
@@ -25873,7 +25877,7 @@ try {
     await menuItem('File', 'Export for cutter…'); await shot('dark');
     await page.keyboard.press('Escape'); await dlg.waitFor({ state: 'detached' });
     await menuItem('View', 'Theme: light');
-    assert.deepEqual(await tabNames(), ['cut-plate.dxf']); assert.equal(await page.locator('.tabs .dtab.on .dirty').count(), 0, 'cancelled: the tab is untouched');
+    assert.deepEqual(await tabNames(), ['cut-plate.dxf']); assert.equal(await page.locator('.tabs .dtab.on .dot').count(), 0, 'cancelled: the tab is untouched');
 
     await page.evaluate(() => {
       window.__cut = { dlg: [], wrote: [] };
