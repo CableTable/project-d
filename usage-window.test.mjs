@@ -1,6 +1,38 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { codexWindow, resetLabel, weeklyForecast, windowReading } from './usage-site/public/usage-window.js';
+import { codexWindow, isTodayIst, resetLabel, stripChips, weeklyForecast, windowReading } from './usage-site/public/usage-window.js';
+
+test('TODO 353b2: Done today is today\'s IST date; a blank or bad end time is not today', () => {
+  const now = Date.parse('2026-11-21T20:00:00Z'); // 21 Nov 01:30 IST on the 22nd
+  assert.equal(isTodayIst('2026-11-21T18:29:59Z', now), false); // 23:59 IST on the 21st
+  assert.equal(isTodayIst('2026-11-21T18:30:00Z', now), true); // 00:00 IST on the 22nd
+  assert.equal(isTodayIst('2026-11-22T18:29:59Z', now), true);
+  assert.equal(isTodayIst('2026-11-22T18:30:00Z', now), false);
+  for (const bad of ['', undefined, null, 'garbage']) assert.equal(isTodayIst(bad, now), false);
+});
+
+test('TODO 353b2: strip chips for breaks, for-him and CI; a missing doc or a success shows nothing', () => {
+  const now = Date.parse('2026-11-21T10:00:00Z'), min = (m) => new Date(now + m * 60000).toISOString();
+  const hm = (ms) => 'HH' + new Date(ms).toISOString().slice(11, 16);
+  assert.deepEqual(stripChips({}, now, hm), []);
+  assert.deepEqual(stripChips(undefined, now, hm), []);
+  const breaks = { rows: [{ account: 'Bishop', from: min(-10), to: min(30) }, { account: 'King', from: min(5), to: min(90) }, { account: 'Rook', from: min(-90), to: min(-1) }, { account: 'Knight', from: 'x', to: 'y' }] };
+  assert.deepEqual(stripChips({ breaks }, now, hm), [{ cls: 'muted', text: 'Bishop break till HH10:30' }]); // upcoming, ended and unreadable ones are left out
+  assert.deepEqual(stripChips({ breaks: { rows: [{ account: 'Bishop', from: min(0), to: min(0) }] } }, now, hm).length, 1); // both ends count
+  assert.deepEqual(stripChips({ forhim: { open: 3, ids: [15, 19, 28] } }, now), [{ cls: 'accent', text: 'for you: 3' }]);
+  assert.deepEqual(stripChips({ forhim: { open: 0, ids: [] } }, now), []);
+  const ci = (patch) => stripChips({ ci: { sha: '1a2b3c4d5e6f', updated: min(-40), ...patch } }, now);
+  assert.deepEqual(ci({ status: 'completed', conclusion: 'failure' }), [{ cls: 'bad', text: 'CI red 1a2b3c4' }]);
+  assert.deepEqual(ci({ status: 'completed', conclusion: 'cancelled' }), [{ cls: 'muted', text: 'CI cancelled 1a2b3c4' }]);
+  assert.deepEqual(ci({ status: 'in_progress', conclusion: '' }), [{ cls: 'warn', text: 'CI running · 40 min ago' }]);
+  assert.deepEqual(ci({ status: 'queued', conclusion: '', updated: min(-150) }), [{ cls: 'warn', text: 'CI running · 2 h ago' }]);
+  assert.deepEqual(ci({ status: 'in_progress', updated: undefined }), [{ cls: 'warn', text: 'CI running' }]);
+  assert.deepEqual(ci({ status: 'completed', conclusion: 'success' }), []);
+  assert.deepEqual(ci({ status: 'none' }), []);
+  assert.deepEqual(ci({}), []);
+  const all = stripChips({ breaks, forhim: { open: 1 }, ci: { status: 'completed', conclusion: 'failure', sha: 'abc' } }, now, hm);
+  assert.deepEqual(all.map((c) => c.cls), ['muted', 'accent', 'bad']);
+});
 test('expired five-hour and weekly Codex readings show zero and Reset without guessing the next reset', () => {
   for (const reading of [[100, 10], [61, 15], [0, null], [100, 20]]) {
     const [used, resets] = codexWindow(reading, 20_000);

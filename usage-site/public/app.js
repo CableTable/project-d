@@ -2,7 +2,7 @@
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/12.3.0/firebase-app.js';
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut } from 'https://www.gstatic.com/firebasejs/12.3.0/firebase-auth.js';
 import { getFirestore, doc, onSnapshot, setDoc, serverTimestamp, getDocFromServer } from 'https://www.gstatic.com/firebasejs/12.3.0/firebase-firestore.js';
-import { resetLabel, weeklyForecast, windowReading } from './usage-window.js';
+import { isTodayIst, resetLabel, stripChips, weeklyForecast, windowReading } from './usage-window.js';
 import { firebaseConfig } from './firebase-config.js';
 import { dailyTokens } from './token-chart.js';
 
@@ -17,7 +17,8 @@ const compact = (n) => Intl.NumberFormat('en', { notation: 'compact', maximumFra
 const num = (x) => (x === '' || x == null ? null : Number(x));
 
 let data = { limits: [], history: [], runs: [], analysis: [], tickets: [], tokens: [], queue: [] };
-let queueUpdated = '', queueNext = [], showAllDone = false;
+let queueUpdated = '', queueNext = [], docs = {}; // docs: the `breaks`, `forhim` and `ci` docs, as uploaded
+const showAllDone = { queue: false, work: false }; // one fold per list
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = label(text); return e; };
 const mark = (e, src, field, where) => { e.dataset.source = src; e.dataset.field = field; if (where) e.dataset.where = where; return e; };
 const wh = (a, w) => 'agent=' + encodeURIComponent(a) + '&window=' + encodeURIComponent(w);
@@ -120,6 +121,7 @@ function drawStrip() {
     const [used] = windowReading(a, r);
     if (used >= at) alerts.append(el('span', 'ud-chip ' + cls, a + ' ' + w + ' ' + used + '%'));
   }
+  for (const { cls, text } of stripChips(docs, Date.now(), (ms) => HM.format(new Date(ms)))) alerts.append(el('span', 'ud-chip ' + cls, text));
   box.append(alerts);
 }
 
@@ -330,17 +332,19 @@ function renderQueue(box, work) {
     if (row && !work) head.append(el('span', 'ud-chip ' + (running(row) ? 'warn' : row.state === 'ended' ? 'ok' : 'info'), row.state === 'ended' ? 'done' : row.state));
     item.append(head); card.append(item);
   };
-  const now = rows.filter(running), done = rows.filter((row) => !running(row)), next = queueNext.map(String);
+  const now = rows.filter(running), next = queueNext.map(String);
+  const done = rows.filter((row) => !running(row) && (!work || isTodayIst(row.ended))); // Done today: the row's end time (`ended`) on today's IST date; no `ended`, left out
+  const fold = work ? 'work' : 'queue';
   const nextPart = () => part('Next', work ? 'nothing planned (no next: line in the queue)' : 'nothing planned', (card) => next.forEach((id) => line(card, id + todoTitle(id))), next.length);
   if (!rows.length && !work) { box.append(el('p', 'ud-muted', 'No runs')); if (next.length) nextPart(); return; } // planned work shows when nothing runs
   part('Now', 'nothing running', (card) => now.forEach((row) => line(card, queueHeadline(row), row)), now.length);
   nextPart();
   part(work ? 'Done today' : 'Done', 'nothing yet', (card) => {
-    done.slice(0, showAllDone ? done.length : 5).forEach((row) => line(card, queueHeadline(row), row));
+    done.slice(0, showAllDone[fold] ? done.length : 5).forEach((row) => line(card, queueHeadline(row), row));
     if (done.length > 5) {
-      const more = el('button', null, showAllDone ? 'Show fewer' : `Show ${done.length - 5} more`);
-      more.type = 'button'; more.setAttribute('aria-expanded', showAllDone);
-      more.addEventListener('click', () => { showAllDone = !showAllDone; drawQueue(); });
+      const more = el('button', null, showAllDone[fold] ? 'Show fewer' : `Show ${done.length - 5} more`);
+      more.type = 'button'; more.setAttribute('aria-expanded', showAllDone[fold]);
+      more.addEventListener('click', () => { showAllDone[fold] = !showAllDone[fold]; drawQueue(); });
       card.append(more);
     }
   }, done.length, work ? ` · ${done.length} ${done.length === 1 ? 'job' : 'jobs'}` : '');
@@ -435,6 +439,7 @@ function showStatus() {
   else if (pending?.requestedAt != null && errorAt > pending.requestedAt) finishUpdate('');
 }
 setInterval(showStatus, 10_000);
+setInterval(drawStrip, 60_000); // a break chip ends on its own
 
 if (Object.values(firebaseConfig).some((v) => v.includes('<'))) {
   message.textContent = 'Setup needed: fill the placeholders in firebase-config.js.';
@@ -465,12 +470,12 @@ if (Object.values(firebaseConfig).some((v) => v.includes('<'))) {
   getRedirectResult(auth).catch(report);
   onAuthStateChanged(auth, (user) => {
     stopListening(); allowed = false; currentStatus = {};
-    data = { limits: [], history: [], runs: [], analysis: [], tickets: [], tokens: [], queue: [] }; queueUpdated = ''; queueNext = [];
+    data = { limits: [], history: [], runs: [], analysis: [], tickets: [], tokens: [], queue: [] }; queueUpdated = ''; queueNext = []; docs = {};
     drawTodo([]); drawTickets(); drawQueue(); drawRookStuck(); drawRelease();
     draw(); finishUpdate(user ? 'Loading…' : 'Sign in to see usage.');
     dashboard.hidden = pageTabs.hidden = true; signin.hidden = !!user; signout.hidden = !user; showStatus();
     if (!user) return;
-    for (const name of ['limits', 'history', 'runs', 'analysis', 'todo', 'tickets', 'queue', 'tokens', 'rook', 'release', 'status']) {
+    for (const name of ['limits', 'history', 'runs', 'analysis', 'todo', 'tickets', 'queue', 'tokens', 'rook', 'release', 'breaks', 'forhim', 'ci', 'status']) {
       subscriptions.push(onSnapshot(doc(db, 'usage', name), { includeMetadataChanges: true }, (snapshot) => {
         if (snapshot.metadata.fromCache) return;
         allowed = true; dashboard.hidden = pageTabs.hidden = false;
@@ -481,6 +486,7 @@ if (Object.values(firebaseConfig).some((v) => v.includes('<'))) {
         else if (name === 'todo') drawTodo(value.sections || []);
         else if (name === 'rook') drawRookStuck(value);
         else if (name === 'release') drawRelease(value);
+        else if (['breaks', 'forhim', 'ci'].includes(name)) docs[name] = value;
         else data[name] = (value[name === 'analysis' ? 'items' : 'rows'] || []).map((r) => (r.agent === 'Pip' ? { ...r, agent: 'Bishop' } : r)); // rows uploaded before the rename
         if (name === 'tickets') drawTickets();
         if (name === 'queue') { queueUpdated = value.updated || ''; queueNext = Array.isArray(value.next) ? value.next : []; }

@@ -1,7 +1,9 @@
 // Called by browser.test.mjs, after CI installs Chromium; never touches the live account or Hosting.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { chromium } from 'playwright';
 
 // What the agent's parseTodo (kit/usage-agent.mjs) makes of a small TODO.md: written out, so this test reads no kit file.
@@ -648,12 +650,12 @@ test('TODO 287a: Latest exe card shows the version, IST date and added list as p
 });
 
 test('TODO 353a: status strip, account cards, Now / Next / Done today', async (t) => {
-  const shotDir = process.env.SHOTS_DIR || 'shots-353a';
+  const shotDir = process.env.SHOTS_DIR || mkdtempSync(join(tmpdir(), 'shots-353a-'));
   mkdirSync(shotDir, { recursive: true });
   const browser = await chromium.launch(process.env.CHROME ? { executablePath: process.env.CHROME } : {});
   t.after(() => browser.close());
-  const ended = (id) => ({ kind: 'build', id: 'king/' + id, out: 'b-' + id + '.jsonl', state: 'ended', extra: '' });
-  // Rows in file order (newest last): seven done, then a Bishop job and a King build running.
+  const ended = (id) => ({ kind: 'build', id: 'king/' + id, out: 'b-' + id + '.jsonl', state: 'ended', ended: '@now', extra: '' }); // '@now' becomes the page's current time
+  // Rows in file order (newest last): seven done today, then a Bishop job and a King build running.
   const queue = { updated: '2026-11-05T18:45:00.000Z', next: ['354', '<img src=x onerror=alert(1)>'], rows: [
     ...['101', '102', '103', '104', '105', '106', '107'].map(ended),
     { kind: 'job', id: 'debt47 (bishop, claude-sonnet-5-5)', out: 'debt47.jsonl', state: 'running', extra: '' },
@@ -668,6 +670,7 @@ test('TODO 353a: status strip, account cards, Now / Next / Done today', async (t
     try {
       await context.addInitScript(({ queue, todo }) => {
         const now = Date.now(), H = 3600e3, iso = (ms) => new Date(now + ms).toISOString();
+        for (const r of queue.rows) if (r.ended === '@now') r.ended = iso(0);
         // Every week is half gone (84 of 168 h), every 5-hour window 2 h in.
         const row = (agent, window, used_pct, extra = {}) => ({ agent, window, role: 'Builder', model: 'Fixture', used_pct: String(used_pct), cap_pct: '',
           starts: iso(window === 'week' ? -84 * H : -2 * H), resets: iso(window === 'week' ? 84 * H : 3 * H), as_of: iso(0), ...extra });
@@ -723,9 +726,10 @@ test('TODO 353a: status strip, account cards, Now / Next / Done today', async (t
       assert.deepEqual((await rows()).slice(0, 4), ['King building 280 · simpler Queue tab', 'Bishop job debt47', ' 354 · Usage page build', ' <img src=x onerror=alert(1)>']);
       assert.equal((await rows()).length, 9, '2 now + 2 next + 5 done');
       assert.equal(await page.locator('#work img').count(), 0);
-      await page.getByRole('button', { name: 'Show 2 more' }).click();
+      await page.locator('#work-list').getByRole('button', { name: 'Show 2 more' }).click();
       assert.equal((await rows()).length, 11);
-      await page.getByRole('button', { name: 'Show fewer' }).click();
+      assert.equal(await page.locator('#queue-list button').textContent(), 'Show 2 more', 'the Queue tab keeps its own fold');
+      await page.locator('#work-list').getByRole('button', { name: 'Show fewer' }).click();
       // Accounts first, one column on a phone; nothing wider than the screen.
       assert.equal(await page.locator('.ud-main').evaluate((node) => getComputedStyle(node).gridTemplateColumns.split(' ').length), 1);
       assert.ok((await page.locator('#strip').boundingBox()).y < (await page.locator('#agents').boundingBox()).y);
@@ -741,10 +745,97 @@ test('TODO 353a: status strip, account cards, Now / Next / Done today', async (t
       await noOverflow();
       // Knight returns with its tokens; an empty queue says why nothing is planned.
       await page.evaluate(() => window.__emit('tokens', { rows: window.__docs.tokens.rows.map((r) => ({ ...r, Knight: 5 })) }));
+      await page.locator('#agents h3').nth(3).waitFor();
       assert.deepEqual(await page.locator('#agents h3').allTextContents(), ['Rook', 'Bishop', 'King', 'Knight']);
       await page.evaluate(() => window.__emit('queue', { rows: [] }));
+      await page.locator('#work-list p', { hasText: 'Done today: nothing yet' }).waitFor();
       assert.deepEqual(await page.locator('#work-list p').allTextContents(), ['Now: nothing running', 'Next: nothing planned (no next: line in the queue)', 'Done today: nothing yet']);
       assert.deepEqual(await page.locator('#strip > span').allTextContents(), ['Nothing running']);
+      assert.deepEqual(errors, []);
+    } finally { await context.close(); }
+  }
+});
+
+test('TODO 353b2: break, CI and for-him chips; Done today by end time', async (t) => {
+  const shotDir = process.env.SHOTS_DIR || mkdtempSync(join(tmpdir(), 'shots-353b2-'));
+  mkdirSync(shotDir, { recursive: true });
+  const browser = await chromium.launch(process.env.CHROME ? { executablePath: process.env.CHROME } : {});
+  t.after(() => browser.close());
+  const now = Date.now(), H = 3600e3, iso = (ms) => new Date(ms).toISOString();
+  const hm = (ms) => new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(ms));
+  const build = (id, state, ended) => ({ kind: 'build', id: 'king/' + id, out: 'b-' + id + '.jsonl', state, ...(ended ? { ended: iso(ended) } : {}), extra: '' });
+  // File order, newest last: six done today, one ended yesterday, one done with no end time, one running.
+  const queue = { updated: iso(now), rows: [
+    ...['101', '102', '103', '104', '105', '106'].map((id) => build(id, 'ended', now)), build('190', 'ended', now - 36 * H), build('191', 'ended'), build('280', 'running'),
+  ] };
+  const breaks = { rows: [
+    { account: 'Bishop', from: iso(now - 10 * 60e3), to: iso(now + 30 * 60e3) },
+    { account: '<img src=x onerror=alert(1)>', from: iso(now - 60e3), to: iso(now + 90 * 60e3) },
+    { account: 'King', from: iso(now + 60 * 60e3), to: iso(now + 120 * 60e3) }, // upcoming: no chip
+    { account: 'Rook', from: iso(now - 3 * H), to: iso(now - 60e3) }, // over: no chip
+  ] };
+  const docs = { breaks, forhim: { open: 3, ids: [15, 19, 28] }, ci: { status: 'completed', conclusion: 'failure', sha: '1a2b3c4d5e6f', url: 'https://example.test/run', updated: iso(now) } };
+  const chips = (page) => page.locator('#strip .ud-chip').evaluateAll((all) => all.map((c) => c.className + ':' + c.textContent));
+  for (const colorScheme of ['light', 'dark']) {
+    const context = await browser.newContext({ viewport: { width: 390, height: 844 }, colorScheme });
+    try {
+      await context.addInitScript(({ queue, docs, now }) => {
+        const iso = (ms) => new Date(ms).toISOString();
+        const row = (agent, window, used_pct) => ({ agent, window, role: 'Builder', model: 'Fixture', used_pct: String(used_pct), cap_pct: '',
+          starts: iso(now - (window === 'week' ? 84 : 2) * 3600e3), resets: iso(now + (window === 'week' ? 84 : 3) * 3600e3), as_of: iso(now) });
+        window.__docs = { limits: { rows: ['Rook', 'Bishop', 'King'].flatMap((a) => [row(a, '5h', 10), row(a, 'week', 10)]) }, queue, ...docs, status: { lastUpdate: now - 60_000, lastError: '', lastErrorAt: 0 } };
+      }, { queue, docs, now });
+      await context.route('**/*', (route) => {
+        const url = new URL(route.request().url());
+        if (url.hostname === 'usage.test') {
+          const name = url.pathname === '/' ? 'index.html' : url.pathname.slice(1);
+          assert.ok(['index.html', 'app.js', 'app.css', 'firebase-config.js', 'token-chart.js', 'usage-window.js'].includes(name));
+          return route.fulfill({ body: readFileSync(new URL('../usage-site/public/' + name, import.meta.url)), contentType: name.endsWith('.html') ? 'text/html' : name.endsWith('.css') ? 'text/css' : 'text/javascript' });
+        }
+        const body = url.pathname.endsWith('firebase-app.js') ? 'export const initializeApp = () => ({});'
+          : url.pathname.endsWith('firebase-auth.js') ? authModule : url.pathname.endsWith('firebase-firestore.js') ? storeModule : '';
+        return route.fulfill({ body, contentType: body ? 'text/javascript' : 'text/css' });
+      });
+      const page = await context.newPage(), errors = [];
+      page.on('pageerror', (e) => errors.push(e.message));
+      await page.goto('http://usage.test/');
+      await page.locator('#agents h3').last().waitFor();
+      const noOverflow = async () => assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+      // Chips: a grey break chip per active break (IST), accent "for you", red CI; not the upcoming or the over break.
+      assert.deepEqual(await chips(page), [
+        'ud-chip muted:Bishop break till ' + hm(now + 30 * 60e3),
+        'ud-chip muted:<img src=x onerror=alert(1)> break till ' + hm(now + 90 * 60e3),
+        'ud-chip accent:for you: 3',
+        'ud-chip bad:CI red 1a2b3c4',
+      ]);
+      assert.equal(await page.locator('#strip img').count(), 0);
+      // Done today: rows ended today only (6 of the 8 not running); no end time or yesterday is left out here, and stays on the Queue tab.
+      assert.deepEqual(await page.locator('#work-list h3').allTextContents(), ['Now', 'Done today · 6 jobs']);
+      assert.equal(await page.locator('#work-list .queue-row').count(), 6, '1 now + 5 done');
+      assert.doesNotMatch(await page.locator('#work-list').textContent(), /190|191/);
+      await page.locator('#work-list').getByRole('button', { name: 'Show 1 more' }).waitFor();
+      assert.deepEqual(await page.locator('#queue-list h3').allTextContents(), ['Now', 'Done']);
+      assert.match(await page.locator('#queue-list').textContent(), /190[\s\S]*Show 3 more/);
+      await noOverflow();
+      await page.screenshot({ path: `${shotDir}/usage-353b2-390-${colorScheme}.png`, fullPage: true });
+      await page.setViewportSize({ width: 1280, height: 900 });
+      await noOverflow();
+      await page.screenshot({ path: `${shotDir}/usage-353b2-1280-${colorScheme}.png`, fullPage: true });
+      await page.setViewportSize({ width: 1024, height: 800 });
+      await noOverflow();
+      // CI running shows its age; success, no runs and a closed for-him list show nothing; a missing doc shows no chip.
+      await page.evaluate((updated) => window.__emit('ci', { status: 'in_progress', conclusion: '', sha: '1a2b3c4d5e6f', updated }), iso(now - 40 * 60e3));
+      await page.locator('#strip .ud-chip.warn').waitFor();
+      assert.equal(await page.locator('#strip .ud-chip.warn').textContent(), 'CI running · 40 min ago');
+      await page.evaluate(() => window.__emit('ci', { status: 'completed', conclusion: 'cancelled', sha: '9f8e7d6c5b4a' }));
+      await page.locator('#strip .ud-chip', { hasText: 'CI cancelled 9f8e7d6' }).waitFor();
+      await page.evaluate(() => window.__emit('ci', { status: 'completed', conclusion: 'success', sha: '1a2b3c4d5e6f' }));
+      await page.evaluate(() => window.__emit('forhim', { open: 0, ids: [] }));
+      await page.locator('#strip .ud-chip.accent').waitFor({ state: 'detached' });
+      assert.deepEqual((await chips(page)).filter((c) => /CI|for you/.test(c)), []);
+      await page.evaluate(() => { for (const name of ['breaks', 'ci', 'forhim']) window.__emit(name, {}); });
+      await page.locator('#strip .ud-chip.muted').first().waitFor({ state: 'detached' });
+      assert.deepEqual(await chips(page), []);
       assert.deepEqual(errors, []);
     } finally { await context.close(); }
   }
