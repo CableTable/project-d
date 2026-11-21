@@ -255,7 +255,7 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
   - 139a ✅ (built, King, review ship, Rook S54f, 2026-11-21; `b518132` + `38a436d`, suite on `b144964` `SUITE unit=0 browser=0`) select and drag nodes, all 3 tabs.
   - 139b1 ✅ (built, King, review ship, Rook S54f, 2026-11-21; `b144964`, suite on `b144964` `SUITE unit=0 browser=0`) double-click adds a node, outline kept.
   - 139b2 ✅ (built, King, review ship; `8ba55c1` picked S54f, suite pending) Delete removes a node, arcs of one circle kept.
-  - 139c Break at node, Join two end nodes (right-click, grill R7-R8), GLOSSARY "Shape tool" + "Node".
+  - 139c ✅ (built, King, review ship as is; `75b63cd` picked S54g, suite pending) Break at node, Join two end nodes (right-click, grill R7-R8), GLOSSARY "Shape tool" + "Node".
   - 139e To curve, Smooth / Cusp / Symmetrical nodes (grill R6; T52 Pen waits on it).
 140. **Pen tool (CorelDRAW): draw lines and Bezier curves** (M, ask, T52): see T52 in support/tickets.md. Grill first.
 141. ✅ **Save drops AutoCAD tables without a word** (S–M, bug, found by Bishop-review 2026-10-24): `web/dxf-write.js:16` has no ACAD_TABLE in its save list, so open a DXF with a table, Save, reopen: the table is gone (its *T block is still written, unused). Write ACAD_TABLE back as read, or save it as a plain block reference, and note anything dropped. Grill first.
