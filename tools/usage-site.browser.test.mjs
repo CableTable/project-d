@@ -348,7 +348,7 @@ test('Usage site: remembered TODO sub-steps, tabs, tickets, forecasts and safe r
       const king = page.locator('#agents .ud-card').filter({has: page.getByRole('heading', {name: 'King', exact: true})});
       assert.equal(await king.locator('.ud-ring').count(), 1);
       assert.equal(await king.locator('.ud-meter').count(), 1);
-      assert.match(await king.textContent(), /42%King.*5 h: resets in.*Week 42%resets .*no cap today(?:~\d+% at reset|too early to tell)$/);
+      assert.match(await king.textContent(), /42%King.*5 h: resets in.*Week 42%Resets .*no cap today(?:~\d+% at reset|too early to tell)$/);
       const fills = await page.locator('#agents .ud-card:not(.ud-empty)').evaluateAll((cards) => cards.map((card) => getComputedStyle(card.querySelector('.ud-fill')).backgroundColor));
       assert.equal(new Set(fills).size, 3);
       assert.equal(fills[2], await page.locator('#token-legend i').nth(2).evaluate((node) => getComputedStyle(node).backgroundColor));

@@ -2,7 +2,7 @@
 export function codexWindow([used, resets], now = Date.now()) {
   return resets == null || resets * 1000 <= now ? [0, null] : [used, resets];
 }
-export const resetLabel = (resets, format) => resets == null ? 'Reset' : 'resets ' + format(resets);
+export const resetLabel = (resets, format) => resets == null ? 'Reset' : 'Resets ' + format(resets); // the kit's status lines (outside this repo) import this too: keep the wording
 // [used %, reset in seconds or null] of one limits.csv row; a limited account's 5h row has a blank reset (Date.parse('') is NaN, and formatting NaN throws).
 export function windowReading(agent, r) {
   const reading = [Number(r.used_pct), r.resets ? Date.parse(r.resets) / 1000 : null];

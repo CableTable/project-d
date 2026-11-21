@@ -42,7 +42,7 @@ test('expired five-hour and weekly Codex readings show zero and Reset without gu
     assert.equal(resetLabel(resets, () => assert.fail('unknown reset formatted')), 'Reset');
   }
   assert.deepEqual(codexWindow([61, 30], 20_000), [61, 30]);
-  assert.equal(resetLabel(30, String), 'resets 30');
+  assert.equal(resetLabel(30, String), 'Resets 30');
 });
 
 test('TODO 196a: a limited account\'s 5h row with a blank reset reads as no reset, not NaN (the card would throw)', () => {
