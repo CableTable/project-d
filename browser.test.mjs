@@ -37426,7 +37426,8 @@ try {
       assert.deepEqual(await flyoutItems(), items, kind + ': ribbon hold');
       await page.mouse.up();
       assert.equal(await page.locator('.ctxmenu .mi').count(), items.length, kind + ': the ribbon hold release keeps the flyout open');
-      assert.doesNotMatch(await prompt(), /^Specify /, kind + ': the ribbon hold release starts no Circle command');
+      const idle = await page.getByTestId('cmd-prompt').textContent();
+      assert.doesNotMatch(idle, /^Specify /, kind + ': the ribbon hold release starts no Circle command');
       await page.keyboard.press('Escape');
       await page.locator('.ribbon-body [data-panel=Draw]').getByRole('button', { name: 'Circle', exact: true }).click({ button: 'right' });
       await page.locator('.ctxmenu .mi').first().waitFor();
@@ -37857,7 +37858,8 @@ try {
       assert.deepEqual(await flyoutItems(), modes347c, kind + ': ribbon hold');
       await page.mouse.up();
       assert.equal(await page.locator('.ctxmenu .mi').count(), modes347c.length, kind + ': the ribbon hold release keeps the flyout open');
-      assert.doesNotMatch(await prompt(), /^Specify /, kind + ': the ribbon hold release starts no Arc command');
+      const idle = await page.getByTestId('cmd-prompt').textContent();
+      assert.doesNotMatch(idle, /^Specify /, kind + ': the ribbon hold release starts no Arc command');
       await page.keyboard.press('Escape');
       await (await homeArc347()).click({ button: 'right' });
       await page.locator('.ctxmenu .mi').first().waitFor();
