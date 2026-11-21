@@ -20,6 +20,8 @@ export const dimName = (part) => {
 };
 /** Is this layout object a dimension or a leader (an INSERT of a PD_DIM / PD_LDR block that the part holds; TODO 156e1: a leader is kept the same way)? */
 export const isDimPart = (part) => { const n = dimName(part); return !!n && (DIM_BLOCK.test(n) || LDR_BLOCK.test(n)) && !!part.raw.blocks && !!part.raw.blocks[n]; };
+/** What a dimension object is called in a message: "leader" when every one given is a leader, else "dimension". */
+export const dimNoun = (parts) => parts.every((part) => LDR_BLOCK.test(dimName(part))) ? 'leader' : 'dimension';
 
 /** The matrix [a, b, c, d, e, f] (x' = a x + c y + e) from a part's own sheet mm to the sheet for a placement (apply.js placedBox's maths). */
 export function placeMatrix(part, p) {

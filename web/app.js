@@ -74,7 +74,7 @@ import { layoutSnap, placedSnap, layoutCandidates, layoutReference, layoutTangen
 import { nearestObject } from './tangent.js';
 import * as LD from './layoutdoc.js';
 import { labelGaps } from './pdf-source.js';
-import { isDimPart, isSettled } from './layoutdim.js';
+import { isDimPart, isSettled, dimNoun } from './layoutdim.js';
 import { dropPart } from './dropin.js';
 import { copySnapshot, copyPlacedSnapshot, drawingFromPlaced, pasteSnapshot, partFromSnapshot } from './clipboard.js';
 import * as PL from './place.js';
@@ -600,7 +600,7 @@ function buildMenus() {
   };
   menus.Draw = [['Line', 'line', 'L'], ['Polyline', 'polyline', 'P'], ['Pen', 'pen', null], ['Rectangle', 'rect', 'R'], ['Rounded rectangle', 'rrect', 'RR'], ['Circle', 'circle', 'C'],
     ['Ellipse', 'ellipse', 'EL'], ['Arc', 'arc', 'A'], ['Text', 'text', 'T'], ['Divide', 'divide', 'DIV'], ['Measure points', 'measurepoints', 'ME']].map(([text, id, key]) => [text, () => setTool(id), key, null, null, false, undefined, id === 'circle' ? circleRows : id === 'arc' ? arcRows : null]);       // every draw tool works on a layout too (156b2); Circle and Arc open their modes as a submenu (346a, 347c)
-  menus.Modify = [['Move', 'move', 'MV'], ['Copy', 'copy', 'CO'], ['Stretch', 'stretch', 'STR'], ['Array', 'array', 'AR'], ['Rotate', 'rotate', 'RO'], ['Align', 'align', 'AL'], ['Scale', 'scale', 'SC'], ['Fillet', 'fillet', 'F'], ['Offset', 'offset', 'O'], ['Trim', 'trim', 'TR'], ['Extend', 'extend', 'EX'], ['Mirror', 'mirror', 'MI'], ['Reverse', 'reverse', null]].map(([text, id, key]) => [text, () => id === 'rotate' ? DO.rotate() : setTool(id), key, () => !curLay() || LAY_MODS.includes(id) || id === 'rotate' && !!selectedPlaced()]);
+  menus.Modify = [['Move', 'move', 'MV'], ['Copy', 'copy', 'CO'], ['Stretch', 'stretch', 'STR'], ['Array', 'array', 'AR'], ['Rotate', 'rotate', 'RO'], ['Align', 'align', 'AL'], ['Scale', 'scale', 'SC'], ['Fillet', 'fillet', 'F'], ['Offset', 'offset', 'O'], ['Trim', 'trim', 'TR'], ['Extend', 'extend', 'EX'], ['Mirror', 'mirror', 'MI'], ['Reverse', 'reverse', null]].map(([text, id, key]) => [text, () => id === 'rotate' ? DO.rotate() : setTool(id), key, () => !curLay() || (id === 'rotate' ? !!selectedPlaced() : LAY_MODS.includes(id))]);
   menus.Modify.push(['Text to outlines', () => textToOutlines(), 'TXO']);
   menus.Modify.push(['Burst', burstSelected]);
   menus.Modify.push(['Explode', explodeSelected, 'X']);
@@ -901,11 +901,13 @@ function ribbonContents(kind) {
       btn('Copy', copy, copySelection, { small: true, enabled: () => curLay() ? !!selItems().length : !!editable()?.sel.size }),
       btn('Select all', '<rect x="4" y="4" width="16" height="16" stroke-dasharray="3 2"/><path d="M8 12l3 3 5-6"/>', selectAll, { small: true, enabled: () => !!editable() || !!curLay() })))];
   groups.push(group('Draw', ...['line', 'polyline', 'pen', 'circle', 'arc'].map((id) => ribbonTool(id)), stack(...['rect', 'ellipse', 'text'].map((id) => ribbonTool(id, true))), ribbonTool('divide')));
+  const colourBtns = () => [btn('Fill', '<path d="M4 12l8-8 8 8-8 8zM4 12h16"/>', () => startColourTool('fill'), { small: true, enabled: () => !!colourDoc(), pressed: () => state.colourTool?.kind === 'fill' }),
+    btn('Eyedropper', '<path d="M14 3l7 7M17 6L5 18l-2 3 3-2L18 7"/>', () => startColourTool('eyedropper'), { small: true, enabled: () => !!colourDoc(), pressed: () => state.colourTool?.kind === 'eyedropper' })];
   if (kind === 'layout') return [...groups,
     group('Parts', btn('Add to layout', '<rect x="3" y="5" width="12" height="14"/><path d="M18 9v8M14 13h8"/>', addToLayout),
       btn('Parts library', '<rect x="3" y="4" width="5" height="16"/><rect x="10" y="4" width="5" height="16"/><path d="M17 5l4 1-3 15-4-1z"/>', showLibrary, { command: 'library' }),
       btn('Extract part…', '<rect x="3" y="3" width="10" height="10" stroke-dasharray="2 2"/><path d="M10 10l10 10M14 20h6v-6"/>', extractPart, { command: 'extract' })),
-    group('Step and repeat', ribbonTool('step'), ribbonTool('nest')), group('Modify', stack(ribbonTool('copy', true), ribbonTool('stretch', true)), ribbonTool('rotate'), ribbonTool('fillet', true), ribbonTool('contour'), ribbonTool('break'), ribbonTool('join'), stack(ribbonTool('shape', true), ribbonTool('close', true)), stack(ribbonTool('reverse', true), ribbonTool('lengthen', true))), shaping()];
+    group('Step and repeat', ribbonTool('step'), ribbonTool('nest')), group('Modify', stack(ribbonTool('copy', true), ribbonTool('stretch', true)), ribbonTool('rotate'), ribbonTool('fillet', true), ribbonTool('contour'), ribbonTool('break'), ribbonTool('join'), stack(ribbonTool('shape', true), ribbonTool('close', true)), stack(ribbonTool('reverse', true), ribbonTool('lengthen', true))), group('Properties', stack(...colourBtns())), shaping()];
   if (kind === 'drawing') {
     groups.push(group('Modify', stack(ribbonTool('move', true), ribbonTool('rotate', true), ribbonTool('mirror', true)),
       stack(ribbonTool('copy', true), ribbonTool('stretch', true), ribbonTool('scale', true)), stack(ribbonTool('offset', true), ribbonTool('array', true)),
@@ -928,8 +930,7 @@ function ribbonContents(kind) {
     ui.ribbonSwatch = h('button', { class: 'ribbon-swatch', type: 'button', 'aria-label': 'Pick ribbon colour', onclick: pickPropColour });
     colourField.insertBefore(ui.ribbonSwatch, ui.ribbonColour);
     groups.push(group('Properties', stack(colourField, ribbonField('Line width', ui.ribbonWidth), ribbonField('Line style', ui.ribbonLt)),
-      stack(btn('Fill', '<path d="M4 12l8-8 8 8-8 8zM4 12h16"/>', () => startColourTool('fill'), { small: true, enabled: () => !!editable(), pressed: () => state.colourTool?.kind === 'fill' }),
-        btn('Eyedropper', '<path d="M14 3l7 7M17 6L5 18l-2 3 3-2L18 7"/>', () => startColourTool('eyedropper'), { small: true, enabled: () => !!editable(), pressed: () => state.colourTool?.kind === 'eyedropper' }),
+      stack(...colourBtns(),
         btn('Readout', '<circle cx="12" cy="12" r="8"/><path d="M12 4v16M4 12h16"/>', toggleReadout, { small: true, pressed: () => !!readout }))));
   }
   return groups;
@@ -4915,6 +4916,8 @@ const DO = {
   simplify: () => shapeSelection('simplify'), frontminus: () => shapeSelection('frontminus'), backminus: () => shapeSelection('backminus'), boundary: () => shapeSelection('boundary'),
   rotate: () => {
     if (!curLay()) { setTool('rotate'); return; }
+    const now = selItems();
+    if (now.length && now.every((x) => x.p.src === 'loose' && x.part.obj)) { setTool('rotate'); return; }       // loose layout objects only: Rotate as on a drawing (base point, angle, Reference); placed parts keep the turn arrows
     const sp = selectedPlaced();
     if (sp) { if (sp.p.lock) { note(LOCKED); return; } state.mode = 'rotate'; state.pivot = centrePivot(); state.rotCopy = false; state.lref = null; update(); return; }
     const order = ['best', '0', '90'];
@@ -5828,7 +5831,7 @@ function attachCanvasEvents() {
       c.classList.add('panning');
     } else if (e.button === 0 && state.tool !== 'pan') {
       if (state.match && curLay()) { const d = propDoc(); matchClick(d, toDrawing(d, e.clientX, e.clientY)); return; }
-      if (state.colourTool && editable() === state.colourTool.d) { colourToolClick(editable(), toDrawing(editable(), e.clientX, e.clientY)); return; }
+      if (state.colourTool && colourDoc() === state.colourTool.d) { const v = propDoc(); colourToolClick(v, toDrawing(v, e.clientX, e.clientY)); return; }
       const gh = e.target.closest && e.target.closest('[data-gap]');
       if (sheetDown(e)) { capture(c, e); return; }
       if (drawingRotateDown(e)) { capture(c, e); return; }
@@ -6054,7 +6057,7 @@ function renderCommand() {
   if (state.dsOpen) { ui.hist.textContent = 'Command: DIMSTYLE   Dimension style'; ui.prompt.textContent = 'Preset, arrow size, text height, decimals, gap, units and text position. OK applies, Esc cancels:'; return; }
   const t = TOOLS.find((x) => x.id === state.tool), lay = curLay(), ed = editable();
   if (state.zwin) { ui.hist.textContent = 'Command: ZOOM   Window'; ui.prompt.textContent = 'Drag a box with the left button to zoom into it (Esc cancels):'; return; }
-  if (state.colourTool && ed === state.colourTool.d) {
+  if (state.colourTool && colourDoc() === state.colourTool.d) {
     const t = state.colourTool;
     ui.hist.textContent = 'Command: ' + t.kind.toUpperCase() + (state.msg ? '   ' + state.msg : '');
     ui.prompt.textContent = t.kind === 'fill' ? 'Click inside a closed outline (Esc ends):' : t.source ? 'Click each target (Esc ends):' : 'Click a source object (Esc ends):'; return;
@@ -6458,7 +6461,7 @@ function explodeOnLayout(burst = false) {
   if (r.done) tidyGroups(d.lay);
   gCommit(g);
   selLooseMany = [...gridPl, ...made].map((p) => d.lay.placed.indexOf(p)); update();
-  const ex = [r.done ? `${r.done} part${r.done === 1 ? '' : 's'} exploded → ${r.pieces.length} objects` : '', nd ? `${nd} dimension${nd === 1 ? '' : 's'} exploded into lines, arrows and text` : ''].filter(Boolean).join('; ');
+  const ex = [r.done ? `${r.done} part${r.done === 1 ? '' : 's'} exploded → ${r.pieces.length} objects` : '', nd ? `${nd} ${dimNoun(dims.map((x) => x.part))}${nd === 1 ? '' : 's'} exploded into lines, arrows and text` : ''].filter(Boolean).join('; ');
   if (grid) note(`${label}: the grid's copies are separate placed parts now` + (ex ? '; ' + ex : `. ${label} again to break a part into outlines`) + why + '. Ctrl+Z puts the grid back');
   else note(label + ': ' + ex + why + '. Ctrl+Z puts ' + (all.length > 1 ? 'them' : 'the part') + ' back');
 }
@@ -6476,7 +6479,7 @@ function explodeOrBurst(burst) {
     const n = ats.length ? LD.explodeDims(lay.lay, ats, () => 'o' + uid()) : 0;
     if (!n) { note(label + ': nothing explodable (0 exploded)' + why); return; }
     state.sel = -1; pushLay(lay, snap, '', label); touch(); update();
-    note(`${label}: ${n} dimension${n === 1 ? '' : 's'} exploded into lines, arrows and text` + why + '. Ctrl+Z puts it back');
+    note(`${label}: ${n} ${dimNoun(items.map((x) => x.part))}${n === 1 ? '' : 's'} exploded into lines, arrows and text` + why + '. Ctrl+Z puts it back');
     return;
   }
   const d = editable();
@@ -6638,6 +6641,7 @@ function partBox(d) {
 const editable = () => { const tab = curDoc(), item = tab?.cmp && cmpSelected(tab.cmp), d = tab?.cmp ? item?.visible && cmpSourceTab(item) : tab; return d && !d.lay && d.raw && d.fl && d.hist ? d : null; };
 const measureTarget = () => curLay() || cmpDoc() ? curDoc() : editable();
 /** The tab the Dimension tool works on: a drawing tab, or a layout (its objects are in mm; the dimension becomes a layout object, TODO 156b2c1). */
+const colourDoc = () => curLay() ? curDoc() : editable();       // the tab Fill / Eyedropper work on: a layout works on its loose objects (156e2)
 const dimTarget = () => { const d = curDoc(); if (d?.lay) { d.factor = 1; return d; } return editable(); };
 /** The tab a point tool's pick lands on (Measure also works on a layout or Compare, Dimension on a layout). */
 const pointTarget = () => state.tool === 'measure' ? measureTarget() : state.tool === 'dimension' || state.tool === 'leader' ? dimTarget() : editable();
@@ -8930,7 +8934,7 @@ function cursorTool() {
     return { kind: 'rotate', A: state.pivot, layoutRotate: true, point: true, valueMode: 'angle', stage: state.lref?.step || '', f: 1, pts: [base], hover: snapPointer ? sheetAt(snapPointer.clientX, snapPointer.clientY) : base };
   }
   const m = state.mod;
-  const points = (modLive() || layModLive() && ['move', 'copy', 'stretch', 'scale'].includes(m.kind)) && DI.modifyPoints(m, state.pointLast);
+  const points = (modLive() || layModLive() && ['move', 'copy', 'stretch', 'scale', 'rotate'].includes(m.kind)) && DI.modifyPoints(m, state.pointLast);
   if (points) {
     const d = editable() || curDoc(), f = d.lay ? 1 : d.factor, mm = (q) => q && [q[0] * f, q[1] * f];
     const valueMode = m.p1 && ['rotate', 'scale'].includes(m.kind) && (!m.ref || m.ref.step === 'new') ? m.kind === 'rotate' ? 'angle' : m.ref ? 'length' : 'factor' : null;
@@ -9084,7 +9088,7 @@ const OFFSET_OPTIONS_SAVED = 'pd-offset-options';
 const FILLET_TRIM_SAVED = 'pd-fillet-trim';
 const CHAMFER_SAVED = 'pd-chamfer';
 const OBJ_MODS = ['trim', 'extend', 'fillet', 'chamfer', 'offset', 'break', 'breakatpoint', 'lengthen', 'join', 'close', 'reverse', 'divide', 'measurepoints'];      // the modify commands that work on a layout's objects, not its placed parts (TODO 156b3a)
-const LAY_MODS = ['move', 'copy', 'stretch', 'array', 'scale', 'mirror', 'align', ...OBJ_MODS];      // the modify commands that also work on a layout (TODO 156b1, 156b3a)
+const LAY_MODS = ['move', 'copy', 'stretch', 'array', 'scale', 'mirror', 'align', 'rotate', ...OBJ_MODS];      // the modify commands that also work on a layout (TODO 156b1, 156b3a; Rotate: loose objects only, 156e2: parts turn in the layout's own rotate mode)
 const objViews = new WeakMap();
 /** The layout's objects as a drawing (layoutdoc.js objectDoc) for the drawing tab's Trim / Extend / Fillet / Offset code; kept while the objects stay as they are. */
 function layObjDoc(d) {
@@ -9104,11 +9108,12 @@ function layObjSelDoc(d) {
 /** The doc a modify tool reads: on a layout, Trim / Extend / Fillet / Offset get the objects-as-a-drawing; every other case the doc itself. */
 const mdoc = (d) => (d.lay && state.mod && OBJ_MODS.includes(state.mod.kind) ? layObjDoc(d) : d);
 const inPoly = (poly, [x, y]) => { let c = false; for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) { const [xi, yi] = poly[i], [xj, yj] = poly[j]; if ((yi > y) !== (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi) c = !c; } return c; };
+/** Is point p (sheet mm) on a visible placed part of v's layout (a loose object is not a part here)? */
+const partAt = (v, p) => placedNow.some((q) => { const part = v.vlay.lay.parts[q.partId]; return part && !part.obj && !partHid(q) && inPoly(PL.corners(part, q), p); });
 /** A pick on a placed part (and on no object) in an object tool: refused, the tool waits for another pick. Parts are not cutting edges or boundaries either (they are not in the objects' drawing). */
 function partRefused(v, m, p) {
-  const lay = v.vlay.lay;
   if (m.fence || m.cross || state.hidden.parts || hitAt(v, p) >= 0 || Ed.hitEntity(edIndex(v), p[0], p[1], pickTol(v)) >= 0) return false;
-  if (!placedNow.some((q) => { const part = lay.parts[q.partId]; return part && !part.obj && !partHid(q) && inPoly(PL.corners(part, q), p); })) return false;
+  if (!partAt(v, p)) return false;
   note(m.kind === 'divide' || m.kind === 'measurepoints' ? 'Placed part cannot be divided.' : `${modLabel(m.kind)} works on layout objects, not placed parts`);
   return true;
 }
@@ -9567,7 +9572,7 @@ function modHover(d, cx, cy, shift) {
         const r = Math.hypot(m.cur[0] - m.p1[0], m.cur[1] - m.p1[1]), a = m.angle * Math.PI / 180;
         m.cur = [m.p1[0] + r * Math.cos(a), m.p1[1] + r * Math.sin(a)];
       }
-      m.move.slots = [mmul([d.factor, 0, 0, -d.factor, 0, state.sheetH], rotationMatrix(m.p1, m.ref ? referenceTurn(m.ref.value, m.angle) : m.angle))];
+      if (m.move) m.move.slots = [mmul([d.factor, 0, 0, -d.factor, 0, state.sheetH], rotationMatrix(m.p1, m.ref ? referenceTurn(m.ref.value, m.angle) : m.angle))];       // a layout has no m.move: layGhosts draws it
     }
   }
   if (m.kind === 'scale' && m.stage !== 'pick') {
@@ -9817,7 +9822,7 @@ function movePick(d, p, shift, hover = false) {
   return m.p1 && (shift || state.ortho) ? Ed.orthoLock(m.p1, q) : q;
 }
 function transformBase(d, q) {
-  if (d.lay) { const m = state.mod; m.p1 = q.slice(0, 2); m.cur = m.p1; m.stage = 'p2'; note('Scale: positive factor or click. C toggles a copy'); paintOverlay(); return; }
+  if (d.lay) { const m = state.mod; m.p1 = q.slice(0, 2); m.cur = m.p1; m.stage = 'p2'; note(m.kind === 'rotate' ? 'Rotate: angle in degrees or click. Shift = 15°; C toggles a copy' : 'Scale: positive factor or click. C toggles a copy'); paintOverlay(); return; }
   const m = state.mod;
   m.p1 = q.slice(0, 2); m.cur = m.p1; m.stage = 'p2';
   const preview = flatten({ ...d.raw, entities: [...m.sel].map((i) => m.raw[i]) });
@@ -9874,7 +9879,7 @@ function transformDo(d, value) {
   const m = state.mod, scaling = m.kind === 'scale', label = scaling ? 'Scale' : 'Rotate';
   if (m.ref) { value = scaling ? referenceFactor(m.ref.value, value) : referenceTurn(m.ref.value, value); if (value == null) { note('The new length must be above 0'); return; } }
   if (m.bg) { rotateBackgroundDo(d, value); return; }
-  if (d.lay) { layScaleDo(d, value); return; }
+  if (d.lay) { layTransformDo(d, value); return; }
   if (m.raw !== d.raw.entities) { setTool('select'); note(`Drawing changed: start ${label} again`); return; }
   if (moveLocked(d, m.sel)) { const msg = state.msg; setTool('select'); note(msg); return; }
   try {
@@ -10056,6 +10061,7 @@ function layResults(m, arg) {
   const its = m.items, one = (f) => [its.map((x) => f(x.part, x.orig))];
   if (m.kind === 'move' || m.kind === 'copy') return one((part, pl) => PL.translate(pl, arg[0] - m.p1[0], arg[1] - m.p1[1]));
   if (m.kind === 'scale') return one((part, pl) => PL.scaleAbout(part, pl, m.p1, arg));
+  if (m.kind === 'rotate') return one((part, pl) => PL.rotateAbout(part, pl, m.p1, arg));
   if (m.kind === 'mirror') return one((part, pl) => PL.mirrorAboutLine(part, pl, m.p1, arg));
   if (m.type === 'polar') return AR.polarPlacements(m.center, m.base, m.cfg).map(({ deg, dx, dy }) => its.map((x) => (m.cfg.rotate ? PL.rotateAbout(x.part, x.orig, m.center, deg) : PL.translate(x.orig, dx, dy))));
   return AR.rectOffsets(m.cfg).map(([dx, dy]) => its.map((x) => PL.translate(x.orig, dx, dy)));
@@ -10076,6 +10082,7 @@ function layGhosts(m) {
   let res = null;
   if (['move', 'copy', 'stretch'].includes(m.kind) && m.p1 && m.cur) res = layResults(m, m.cur);
   else if (m.kind === 'scale' && m.p1 && (!m.ref || m.ref.step === 'new') && (value ?? m.hoverK) > 0) res = layResults(m, value == null ? m.hoverK : m.ref ? referenceFactor(m.ref.value, value) : value);
+  else if (m.kind === 'rotate' && m.p1 && (!m.ref || m.ref.step === 'new') && (value ?? m.angle) != null) res = layResults(m, m.ref ? referenceTurn(m.ref.value, value ?? m.angle) : value ?? m.angle);
   else if (m.kind === 'mirror' && m.stage === 'p2' && m.cur) res = layResults(m, m.cur);
   else if (m.kind === 'mirror' && m.stage === 'erase') res = layResults(m, m.p2);
   else if (m.kind === 'align') { const t = alignPreview(m); res = t && [layAlignPlacements(m, t)]; }
@@ -10116,15 +10123,16 @@ function layStretchResult(q) {
   const parts = stretchPlacements(m.items.filter((x) => { const p = placedNow[x.i]; return !(p.src === 'loose' && at.has(p.i)); }), m.boxes, dx, dy, m.picked);
   return { objects, parts, view };
 }
-function layScaleDo(d, k) {
-  const m = state.mod;
+/** Scale (k: the factor) or Rotate (k: degrees) of the taken layout items. */
+function layTransformDo(d, k) {
+  const m = state.mod, turn = m.kind === 'rotate';
   if (!layStill()) { layStale(); return; }
   if (!m.copy && m.items.some((x) => x.orig.lock)) { setTool('select'); note(LOCKED); return; }
-  if (!(k >= 1e-4 && k <= 1e4)) { note('The scale factor must be between 0.0001 and 10000'); return; }
-  const to = layResults(m, k)[0], r = editSelected((part, pl, c) => to[c.k], { copy: m.copy, label: 'Scale' });
+  if (turn ? !Number.isFinite(k) : !(k >= 1e-4 && k <= 1e4)) { note(turn ? 'Type an angle in degrees' : 'The scale factor must be between 0.0001 and 10000'); return; }
+  const to = layResults(m, k)[0], r = editSelected((part, pl, c) => to[c.k], { copy: m.copy, label: turn ? 'Rotate' : 'Scale' });
   setTool('select');
-  const text = `Selection scaled${m.copy ? ' as a copy' : ''}. Ctrl+Z takes it back`;
-  if (r) afterEdit(r, text); else note('Scale factor 1: nothing changed');
+  const text = `Selection ${turn ? 'rotated' : 'scaled'}${m.copy ? ' as a copy' : ''}. Ctrl+Z takes it back`;
+  if (r) afterEdit(r, text); else note(turn ? 'Angle 0: nothing changed' : 'Scale factor 1: nothing changed');
 }
 function layMirrorDo(d, erase) {
   const m = state.mod;
@@ -12778,7 +12786,7 @@ function applyFill(key) {
   else note(key ? 'Current fill colour: ' + PR.colourLabel(key) : 'Select closed outlines to remove their fills');
 }
 function startColourTool(kind) {
-  const d = editable();
+  const d = colourDoc();
   if (!d) { note('Fill and Eyedropper work on a drawing tab'); return; }
   setTool('select'); state.match = null;
   state.colourTool = { kind, d, source: null };
@@ -12786,6 +12794,7 @@ function startColourTool(kind) {
   note(kind === 'fill' ? 'Fill: click inside a closed outline; Esc ends' : 'Eyedropper: click a source object; Esc ends');
   renderCommand();
 }
+const PART_COLOUR = 'Fill and Eyedropper work on layout objects, not placed parts';
 function closedAt(d, p) {
   const seen = new Set();
   for (let k = d.fl.items.length - 1; k >= 0; k--) {
@@ -12801,14 +12810,14 @@ function colourToolClick(d, p) {
   const tool = state.colourTool;
   if (tool.kind === 'fill') {
     const i = closedAt(d, p);
-    if (i < 0) { note('Not one closed outline: Join first'); return; }
+    if (i < 0) { note(d.vlay && partAt(d, p) ? PART_COLOUR : 'Not one closed outline: Join first'); return; }
     fillTargets(d, [i], currentFill); return;
   }
   const hit = Math.max(closedAt(d, p), hitAt(d, p));
-  if (hit < 0 || d.raw.entities[hit].layer === Ed.DIM_LAYER) { note('Eyedropper: click an object; Esc ends'); return; }
+  if (hit < 0 || d.raw.entities[hit].layer === Ed.DIM_LAYER) { note(d.vlay && partAt(d, p) ? PART_COLOUR : 'Eyedropper: click an object; Esc ends'); return; }
   if (!tool.source) { tool.source = PR.withColour(d.raw.entities[hit], PR.effectiveColour(d.raw.entities[hit], layerMap(d))); note('Eyedropper: click targets one by one; Esc ends'); return; }
   const next = FI.copyColours(tool.source, d.raw.entities[hit], layerMap(d));
-  if (!FI.coloursEqual(next, d.raw.entities[hit]) && !commit(d, { entities: d.raw.entities.map((e, k) => k === hit ? next : e), blocks: d.raw.blocks }, 'Eyedropper colours')) return;
+  if (!FI.coloursEqual(next, d.raw.entities[hit]) && !(d.vlay ? layGripCommit(d, [[d.raw.entities[hit], next]], 'Eyedropper colours') : commit(d, { entities: d.raw.entities.map((e, k) => k === hit ? next : e), blocks: d.raw.blocks }, 'Eyedropper colours'))) return;
   usedColour(PR.colourKey(next)); if (next.fill) usedColour(next.fill);
   renderEdit(); note('Eyedropper: colours copied; click the next target or Esc');
 }
@@ -13380,7 +13389,7 @@ function renderEdit() {
   const undoHead = on && selected ? ui.propHead : ui.drawSec.querySelector('.layers-head');   // Drawing scale hides with a selection; Undo / Redo stay reachable
   if (ui.undoTools.parentElement !== undoHead) undoHead.append(ui.undoTools);
   for (const section of [ui.drawSec, ui.tinySec, ui.dupsSec]) applySectionFold(section);
-  if (state.colourTool && (!on || state.colourTool.d !== d)) state.colourTool = null;
+  if (state.colourTool && state.colourTool.d !== colourDoc()) state.colourTool = null;
   if (state.match?.d.vlay === curDoc()) state.match.d = propDoc();
   if (state.match && (state.match.d !== propDoc() || !state.match.d.raw.entities[state.match.src])) state.match = null;
   renderPropsPanel(on ? d : null);

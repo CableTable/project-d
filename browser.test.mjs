@@ -27295,7 +27295,7 @@ try {
     };
     const readable = (list, what) => { for (const q of list) { const d = (((q.angle - q.line) % 180) + 180) % 180; assert.ok((d < 1e-3 || 180 - d < 1e-3) && (q.angle <= 90 + 1e-3 || q.angle > 270 - 1e-3), `${what}: text at ${q.angle}, line at ${q.line}`); } };
     await click(150, 190);
-    await typeCmd('ro'); await typeCmd('30');
+    await typeCmd('ro'); await typeCmd('150,190'); await typeCmd('30');       // 156e2: a loose object turns as on a drawing: pivot, then angle
     text = await save();
     assert.ok(textsIn(text).some((q) => q.angle > 1), 'a dimension was turned');
     readable(textsIn(text), 'rotated'); keepsSide(text, 'rotated');
@@ -27875,6 +27875,7 @@ try {
     await freshLayoutWithPlate();
     const n0 = await nParts(), undo = async () => { await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z'); };
     const save = async () => (await downloaded(() => page.keyboard.press('Control+s'))).text;
+    const partsWhen = (n) => page.waitForFunction((k) => document.querySelectorAll('[data-group=parts] .part-hit').length === k, n, { timeout: 8000 });       // the count follows the edit by a frame
     const ldrIn = (text) => Object.entries(readDxf(text).blocks).filter(([k]) => /^PD_LDR_/.test(k)).map(([k, b]) => ({ name: k, ...readLeader(k, b), types: b.entities.map((e) => e.type) }));
     const partsIn = (text) => Object.values(layoutFromRaw(readDxf(text)).parts);
     assert.equal(await page.locator('[data-tool=leader]').isEnabled(), true, 'the Leader button is on for a layout');
@@ -27889,10 +27890,10 @@ try {
     await typeCmd('100,150'); await typeCmd('150,190'); await typeCmd('200,190'); await t('text-editor').waitFor();
     await t('text-editor').fill('DEBURR'); await page.keyboard.press('Enter');
     await said(/Leader placed on the layer Dimensions: DEBURR\. Ctrl\+Z takes it back/);
-    assert.equal(await nParts(), n0 + 1, 'the leader is one object');
+    await partsWhen(n0 + 1); assert.equal(await nParts(), n0 + 1, 'the leader is one object');
     assert.equal((await histLabels()).at(-1), 'Leader');
-    await undo(); assert.equal(await nParts(), n0, 'one Undo takes the leader away');
-    await page.keyboard.press('Control+y'); assert.equal(await nParts(), n0 + 1, 'Redo brings it back');
+    await undo(); await partsWhen(n0); assert.equal(await nParts(), n0, 'one Undo takes the leader away');
+    await page.keyboard.press('Control+y'); await partsWhen(n0 + 1); assert.equal(await nParts(), n0 + 1, 'Redo brings it back');
     await page.keyboard.press('Escape');
     let text = await save(), L = ldrIn(text);
     assert.equal(L.length, 1); assert.deepEqual(L[0].lines, ['DEBURR']); assert.deepEqual(L[0].pts, [[100, 150], [150, 190], [200, 190]]);
@@ -27902,8 +27903,9 @@ try {
     await closeTabs(/./);
     await t('picker').setInputFiles({ name: 'ldr-lay.dxf', mimeType: 'text/plain', buffer: Buffer.from(text, 'latin1') });
     await waitTab(page, 'ldr-lay.dxf');
-    assert.equal(await nParts(), n0 + 1, 'the plate and the leader are back');
-    assert.equal(partsIn(text).filter((q) => q.obj).length, 1, 'the leader reopens as an object, not a part');
+    await partsWhen(n0 + 1); assert.equal(await nParts(), n0 + 1, 'the plate and the leader are back');
+    const reopened = partsIn(await save());       // the reopened tab itself, saved again
+    assert.equal(reopened.filter((q) => q.obj).length, 1, 'the leader reopens as an object, not a part'); assert.equal(reopened.filter((q) => !q.obj).length, 1, 'and the plate is still the one part');
     // grips: one per point; the end drags, the note goes with it, one Undo per drag
     await page.locator('[data-tool=select]').click(); await click(125, 170); await frames(); await gripWhen(3);
     const grips = await page.locator('[data-testid=grip]').evaluateAll((g) => g.map((x) => x.dataset.grip));
@@ -27939,11 +27941,113 @@ try {
     await undo(); assert.deepEqual(ldrIn(await save())[0].pts, [[100, 150], [150, 190], [200, 190]]);
     // Explode: lines, arrowhead and note as separate objects, one Undo
     await page.keyboard.press('Escape'); await click(125, 170); await frames();
-    await typeCmd('explode'); await said(/Explode: 1 dimension exploded into lines, arrows and text/);
-    assert.equal(await nParts(), n0 + 4, 'LINE, LINE, SOLID, TEXT');
+    await typeCmd('explode'); await said(/Explode: 1 leader exploded into lines, arrows and text/);
+    await partsWhen(n0 + 4); assert.equal(await nParts(), n0 + 4, 'LINE, LINE, SOLID, TEXT');
     text = await save(); assert.equal(ldrIn(text).length, 0, 'no leader block is left');
-    await undo(); assert.equal(await nParts(), n0 + 1); assert.equal(ldrIn(await save()).length, 1);
+    await undo(); await partsWhen(n0 + 1); assert.equal(await nParts(), n0 + 1); assert.equal(ldrIn(await save()).length, 1);
     await page.locator('[data-tool=select]').click();
+  });
+
+  await step('TODO 156e2: Fill, Eyedropper and Rotate on layout objects: fill, No fill, Eyedropper two targets, one Undo each, a placed part refused; Rotate with base point, angle and Reference, one Undo; saved, reopened and in the PDF', async () => {
+    await freshLayoutWithPlate();
+    const n0 = await nParts(), blur = () => page.evaluate(() => document.activeElement?.blur());
+    const undo = async () => { await blur(); await page.keyboard.press('Control+z'); };
+    const save = async () => (await downloaded(() => page.keyboard.press('Control+s'))).text;
+    const partsWhen = (n) => page.waitForFunction((k) => document.querySelectorAll('[data-group=parts] .part-hit').length === k, n, { timeout: 8000 });
+    const val = (e, c) => Number(e.r.v[e.r.c.indexOf(c)]);
+    const objs = (text) => readDxf(text).entities.filter((e) => e.type !== 'INSERT' && !['Sheet', 'Marks', 'Parts'].includes(e.layer));
+    const fills = (text) => objs(text).filter((e) => e.type === 'CIRCLE').map((e) => e.fill || null);       // the circles, in the order they were drawn
+    const swatch = (key) => page.locator(`[data-swatch-group=standard] [data-colour="${key}"]`);
+    const histSaid = (re) => page.waitForFunction((s) => new RegExp(s).test(document.querySelector('[data-testid=cmd-hist]').textContent), re.source);
+    const circle = async (x, y, r) => { await typeCmd('circle'); await typeCmd(`${x},${y}`); await typeCmd(String(r)); };
+    await circle(600, 500, 40); await circle(750, 500, 40); await circle(900, 500, 40);
+    await partsWhen(n0 + 3);
+    await page.locator('[data-tool=select]').click(); await page.keyboard.press('Escape');
+    await page.locator('[data-ribbon-tab=Home]').click();
+    const home = page.locator('[data-panel=Properties]');
+    assert.equal(await home.getByRole('button', { name: 'Fill', exact: true }).isEnabled(), true, 'Fill is on for a layout');
+    assert.equal(await home.getByRole('button', { name: 'Eyedropper', exact: true }).isEnabled(), true, 'Eyedropper is on for a layout');
+    // Fill tool: one circle, one Undo
+    await swatch('aci:1').click();
+    await home.getByRole('button', { name: 'Fill', exact: true }).click();
+    await click(600, 500); await frames();
+    assert.deepEqual(fills(await save()), ['aci:1', null, null], 'the Fill tool filled the circle it clicked');
+    assert.equal((await histLabels()).at(-1), 'Fill colour');
+    await undo(); assert.deepEqual(fills(await save()), [null, null, null], 'one Undo takes the fill away');
+    await page.keyboard.press('Control+y'); assert.equal(fills(await save())[0], 'aci:1', 'Redo brings it back');
+    // a click on the placed part is refused with one line
+    const plate = await page.locator('[data-group=parts] .part-hit:not(.ob)').first().boundingBox();
+    await page.mouse.click(plate.x + plate.width / 2, plate.y + plate.height / 2); await frames();
+    await histSaid(/Fill and Eyedropper work on layout objects, not placed parts/);
+    await page.keyboard.press('Escape');
+    // Eyedropper: the filled circle is the source, two targets, one Undo per target
+    await home.getByRole('button', { name: 'Eyedropper', exact: true }).click();
+    await click(600, 500); await click(750, 500); await click(900, 500); await frames();
+    assert.deepEqual(fills(await save()), ['aci:1', 'aci:1', 'aci:1'], 'both targets took the fill');
+    await undo(); assert.deepEqual(fills(await save()), ['aci:1', 'aci:1', null], 'one Undo per Eyedropper target');
+    await click(900, 500); await frames();       // the tool is still on: the second target again
+    await page.keyboard.press('Escape'); await frames();
+    // a placed part as the Eyedropper source is refused too
+    await home.getByRole('button', { name: 'Eyedropper', exact: true }).click();
+    await page.mouse.click(plate.x + plate.width / 2, plate.y + plate.height / 2); await frames();
+    await histSaid(/not placed parts/);
+    await page.keyboard.press('Escape');
+    // No fill on the selected circle (the ribbon button), one Undo
+    await click(790, 500); await frames();       // the circle's edge
+    await t('no-fill').click();
+    assert.deepEqual(fills(await save()), ['aci:1', null, 'aci:1']);
+    assert.equal((await histLabels()).at(-1), 'No fill');
+    await undo(); assert.deepEqual(fills(await save()), ['aci:1', 'aci:1', 'aci:1'], 'No fill is one Undo');
+    await page.keyboard.press('Escape');
+    // Rotate: a line and a filled rectangle turn about a base point, one Undo; Reference; a placed part keeps its turn arrows
+    await typeCmd('line'); await typeCmd('300,300'); await typeCmd('400,300'); await typeCmd('');
+    await typeCmd('rect'); await typeCmd('300,450'); await typeCmd('100,40');
+    await partsWhen(n0 + 5);
+    await page.locator('[data-tool=select]').click(); await page.keyboard.press('Escape');
+    await click(350, 300); await frames();
+    await typeCmd('rotate'); await said(/Pivot:/);
+    await typeCmd('300,300'); await said(/Angle:/); await typeCmd('90');
+    await said(/Selection rotated/);
+    assert.match((await histLabels()).at(-1), /^Rotate/);
+    let line = objs(await save()).find((e) => e.type === 'LINE');
+    assert.deepEqual([val(line, 10), val(line, 20), val(line, 11), val(line, 21)].map((v) => Math.round(v)), [300, 300, 300, 400], 'the line turned 90° about its base point');
+    await undo(); line = objs(await save()).find((e) => e.type === 'LINE');
+    assert.deepEqual([val(line, 10), val(line, 20), val(line, 11), val(line, 21)].map((v) => Math.round(v)), [300, 300, 400, 300], 'one Undo turns it back');
+    await page.keyboard.press('Escape');
+    await click(350, 300); await frames();
+    await typeCmd('rotate'); await typeCmd('300,300'); await typeCmd('r'); await typeCmd('0'); await typeCmd('45');       // Reference: 0 -> 45 is a turn of 45°
+    line = objs(await save()).find((e) => e.type === 'LINE');
+    assert.ok(Math.abs(val(line, 11) - (300 + 100 * Math.SQRT1_2)) < 1e-3 && Math.abs(val(line, 21) - (300 + 100 * Math.SQRT1_2)) < 1e-3, 'Reference turned it by 45°: ' + val(line, 11) + ',' + val(line, 21));
+    await page.keyboard.press('Escape');
+    // the rectangle: filled, then turned about its corner (the screenshot shows both)
+    await click(350, 450); await frames();
+    await swatch('aci:5').click();
+    await typeCmd('rotate'); await typeCmd('300,450'); await typeCmd('30'); await frames();
+    const pdfCount = objs(await save()).filter((e) => e.fill).length;
+    assert.equal(pdfCount, 4, 'three circles and the rectangle carry a fill');
+    await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click();
+    await shotBoth('layout-fill-rotate');
+    await page.setViewportSize({ width: 1024, height: 768 }); await page.waitForTimeout(250);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'the layout Home ribbon fits 1024 px');
+    await page.screenshot({ path: `${shotDir}/todo156e2-layout-1024.png` });
+    await page.setViewportSize({ width: 1440, height: 900 });
+    // only the placed part selected: Rotate keeps its turn arrows (Angle prompt); nothing selected: it cycles the nest rotation
+    await page.locator('[data-group=parts] .part-hit:not(.ob)').first().click({ force: true });
+    await typeCmd('rotate'); await said(/^Angle <0\.00>/);
+    await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
+    const nest0 = await t('rotate').inputValue(); await typeCmd('rotate');
+    await page.waitForFunction((v) => document.querySelector('[data-testid=rotate]').value !== v, nest0, { timeout: 5000 });       // nothing selected: Rotate still cycles the nest rotation
+    // saved and reopened: the fills and the turn are still there; the PDF carries the fill
+    const text = await save();
+    await closeTabs(/./);
+    await t('picker').setInputFiles({ name: 'fill-rot-lay.dxf', mimeType: 'text/plain', buffer: Buffer.from(text, 'latin1') });
+    await waitTab(page, 'fill-rot-lay.dxf'); await partsWhen(n0 + 5);
+    const back = await save();
+    assert.deepEqual(fills(back), ['aci:1', 'aci:1', 'aci:1'], 'the reopened layout keeps the fills');
+    assert.equal(objs(back).filter((e) => e.fill).length, 4);
+    await openPdf(); await t('pdf-black').uncheck();
+    const pdf = pdfText(await downloaded(() => t('pdf-go').click()));
+    assert.match(pdf, /1 0 0 rg/, 'the red fill is in the PDF'); assert.match(pdf, /0 0 1 rg/, 'and the blue one of the rectangle'); assert.match(pdf, /f\*/);
   });
 
   await step('TODO 156b fixes: Esc cancels a hot grip with 2 objects selected; Polyline snaps to its own first point on a layout; lock and group of objects survive save and reopen; the counts say parts only; Add to layout after objects starts the grid', async () => {
@@ -36216,7 +36320,7 @@ try {
     await closeTabs(/./); assert.deepEqual(errors, []);
     await open97c(layoutRaw(layout97i2()), 'running97lows3-rotate.dxf'); await key97c('Control+a');
     const parts = await selBoxes(), layoutSteps = (await histLabels()).length; assert.equal(parts.length, 3);
-    await typeCmd('rotate'); assert.match(await label97(/^Angle </), /^Angle </, 'rotate mode is on');
+    await typeCmd('rotate'); assert.match(await label97(/^Pivot:/), /^Pivot:/, 'the Rotate command is on (156e2: loose objects turn as on a drawing, about a pivot)');
     await typeCmd('left');
     assert.doesNotMatch(await prompt(), /aligned/, 'layout rotate mode');
     assert.deepEqual(await selBoxes(), parts, 'layout rotate mode'); assert.equal((await histLabels()).length, layoutSteps, 'layout rotate mode');

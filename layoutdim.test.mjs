@@ -5,7 +5,7 @@ import { readDxf } from './web/drawing.js';
 import { writeDxf } from './web/dxf-write.js';
 import * as LD from './web/layoutdoc.js';
 import * as Ed from './web/edit.js';
-import { isDimPart, dimName, turnedTag, freeBlockName } from './web/layoutdim.js';
+import { isDimPart, dimName, dimNoun, turnedTag, freeBlockName } from './web/layoutdim.js';
 import { trimEntity } from './web/modify.js';
 
 let n = 0;
@@ -486,6 +486,24 @@ test('Move bakes into the leader points (name and note stay); Scale scales the n
   assert.ok(!tx.r.c.includes(50) || Math.abs(+tx.r.v[tx.r.c.indexOf(50)]) < 1e-9, 'the note is not turned');
 });
 
+test('Rotate 90 / 180 and Mirror Y bake into the leader points; the note stays upright and keeps its words', () => {
+  const pts = [[0, 0], [30, 30], [60, 30]];
+  for (const [label, set, want] of [
+    ['rotate 90', (p) => { p.rot = 90; }, [[0, 0], [-30, 30], [-30, 60]]],
+    ['rotate 180', (p) => { p.rot = 180; }, [[0, 0], [-30, -30], [-60, -30]]],
+    ['mirror Y', (p) => { p.mirrorY = true; }, [[0, 0], [30, -30], [60, -30]]],
+  ]) {
+    const lay = layoutWith(), p = addLeader(lay, 'k1', pts);
+    set(p); assert.equal(LD.settleDims(lay, newId), true, label);
+    const r = ldrOf(lay, p), part = lay.parts[p.partId], tx = part.raw.blocks[dimName(part)].entities.find((e) => e.type === 'TEXT');
+    r.pts.forEach(([x, y], k) => { near(x, want[k][0], 1e-4); near(y, want[k][1], 1e-4); });
+    assert.deepEqual(r.lines, ['DEBURR'], label);
+    near(r.textH, 3.5, 1e-6);
+    assert.ok(!tx.r.c.includes(50) || Math.abs(+tx.r.v[tx.r.c.indexOf(50)]) < 1e-9, label + ': the note is not turned');
+    assert.equal(dimName(part), 'PD_LDR_1', label);
+  }
+});
+
 test('settleDims gives a leader whose block name another object has a free PD_LDR_ name', () => {
   const lay = layoutWith();
   addLeader(lay, 'k1', [[0, 0], [30, 30], [60, 30]]);
@@ -500,6 +518,7 @@ test('explodeDims: a leader becomes its lines, arrowhead and note as objects; no
   const lay = layoutWith();
   addLine(lay, 'l1', [0, 0], [10, 0]);
   addLeader(lay, 'k1', [[0, 0], [30, 30], [60, 30]]);
+  assert.equal(dimNoun([lay.parts.k1]), 'leader'); assert.equal(dimNoun([lay.parts.k1, lay.parts.l1]), 'dimension', 'a mix is called dimensions');
   assert.equal(LD.explodeDims(lay, [1], newId), 1);
   const kinds = lay.placed.map((q) => lay.parts[q.partId].raw.entities[0].type);
   assert.deepEqual(kinds, ['LINE', 'LINE', 'LINE', 'SOLID', 'TEXT']);
