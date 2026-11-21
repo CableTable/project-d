@@ -1,7 +1,9 @@
 // Called by browser.test.mjs, after CI installs Chromium; never touches the live account or Hosting.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { chromium } from 'playwright';
 
 // What the agent's parseTodo (kit/usage-agent.mjs) makes of a small TODO.md: written out, so this test reads no kit file.
@@ -275,6 +277,7 @@ test('TODO 280b: Queue tab has Now / Next / Done parts, 5 done rows and a Show N
       await page.screenshot({ path: `${shotDir}/queue-parts-${colorScheme}.png`, fullPage: true });
       await page.getByRole('button', { name: 'Show 2 more' }).click();
       assert.equal((await lines()).length, 11);
+      await page.evaluate(() => scrollTo(0, document.documentElement.scrollHeight)); // the button sits just under the fixed tab bar until the page is scrolled to its end
       await page.getByRole('button', { name: 'Show fewer' }).click();
       assert.equal((await lines()).length, 9);
       await page.setViewportSize({ width: 1024, height: 800 });
@@ -337,44 +340,44 @@ test('Usage site: remembered TODO sub-steps, tabs, tickets, forecasts and safe r
       page.on('pageerror', (error) => errors.push(error.message));
       await page.goto('http://usage.test/');
       await page.locator('#agents h3').last().waitFor();
-      assert.deepEqual(await page.locator('#agents h3').allTextContents(), ['Rook', 'Bishop', 'King', 'Knight']);
+      assert.deepEqual(await page.locator('#agents h3').allTextContents(), ['Rook', 'Bishop', 'King']); // Knight is retired: no card, though its tokens still chart
       assert.equal(await page.title(), 'Usage');
       assert.equal(await page.locator('#top').textContent(), 'Usage');
-      const knight = page.locator('#agents .ud-card').filter({has: page.getByRole('heading', {name: 'Knight', exact: true})});
-      assert.equal(await knight.locator('.ud-agent p').textContent(), 'Builder');
-      // King: its own card with both windows, a forecast line, and its own colour (not Bishop's or Knight's).
+      assert.equal(await page.locator('.ud-main').evaluate((node) => getComputedStyle(node).gridTemplateColumns.split(' ').length), 1, 'One column on a phone');
+      // King: its own card with a 5-hour ring, the week bar, a forecast line, and its own colour (not Bishop's or Knight's).
       const king = page.locator('#agents .ud-card').filter({has: page.getByRole('heading', {name: 'King', exact: true})});
-      assert.equal(await king.locator('.ud-meter').count(), 2);
-      assert.match(await king.textContent(), /5-hour window 42%.*Week 42%.*At this pace/);
-      const fills = await page.locator('#agents .ud-card').evaluateAll((cards) => cards.map((card) => getComputedStyle(card.querySelector('.ud-fill')).backgroundColor));
-      assert.equal(new Set(fills).size, 4);
+      assert.equal(await king.locator('.ud-ring').count(), 1);
+      assert.equal(await king.locator('.ud-meter').count(), 1);
+      assert.match(await king.textContent(), /42%King.*5 h: resets in.*Week 42%Resets .*no cap today(?:~\d+% at reset|too early to tell)$/);
+      const fills = await page.locator('#agents .ud-card:not(.ud-empty)').evaluateAll((cards) => cards.map((card) => getComputedStyle(card.querySelector('.ud-fill')).backgroundColor));
+      assert.equal(new Set(fills).size, 3);
       assert.equal(fills[2], await page.locator('#token-legend i').nth(2).evaluate((node) => getComputedStyle(node).backgroundColor));
+      // The chart's Knight bar and legend show only while the uploaded tokens hold some Knight use; the Queen slot is always there, empty.
+      await page.evaluate(() => window.__emit('tokens', { rows: window.__docs.tokens.rows.map((row) => ({ ...row, Knight: 0 })) }));
+      assert.deepEqual(await page.locator('#agents h3').allTextContents(), ['Rook', 'Bishop', 'King']);
+      assert.deepEqual(await page.locator('#token-legend span').allTextContents(), ['Rook', 'Bishop', 'King']);
+      assert.equal(await page.locator('#token-chart .token-bar').count(), 21);
+      assert.equal(await page.locator('#agents .ud-empty').textContent(), 'Queenempty slot, no account yet');
+      await page.evaluate(() => window.__emit('tokens', window.__docs.tokens));
       // Rows uploaded under the new name Bishop (the old name was Pip) fill the same card.
       await page.evaluate(() => window.__emit('limits', {rows: window.__docs.limits.rows.map((r) => r.agent === 'Pip' ? {...r, agent: 'Bishop'} : r)}));
-      assert.deepEqual(await page.locator('#agents h3').allTextContents(), ['Rook', 'Bishop', 'King', 'Knight']);
+      assert.deepEqual(await page.locator('#agents h3').allTextContents(), ['Rook', 'Bishop', 'King']);
       await page.evaluate(() => window.__emit('limits', window.__docs.limits));
-      await page.evaluate(() => window.__emit('limits', {rows: window.__docs.limits.rows.map((r) => r.agent === 'Rowan' ? {...r, role: 'Web research from role data'} : r)}));
-      assert.equal(await knight.locator('.ud-agent p').textContent(), 'Web research from role data');
-      for (const resets of ['2020-01-01T00:00:00Z', '']) {
-        await page.evaluate((resets) => window.__emit('limits', {rows: window.__docs.limits.rows.map((r) => r.agent === 'Rowan' ? {...r, used_pct: '100', resets} : r)}), resets);
-        assert.deepEqual(await knight.locator('[data-field=used_pct]').allTextContents(), ['0', '0']);
-        assert.deepEqual(await knight.locator('[data-field=resets]').allTextContents(), ['Reset', 'Reset']);
-        assert.match(await knight.textContent(), /At this pace: no data yet/);
-      }
-      for (const [used, hours] of [['3', 4], ['3', 1], ['0', 4], ['', 4]]) {      // no forecast until the week has 3 h of data and some use
+      const rook = page.locator('#agents .ud-card').filter({has: page.getByRole('heading', {name: 'Rook', exact: true})});
+      for (const [used, hours, hits] of [['3', 4, false], ['20', 14, true], ['0', 14, false], ['', 14, false]]) {      // a Claude account gets no forecast until its week has 12 h of data and some use
         await page.evaluate(([used_pct, hours]) => {
           const now = Date.now();
-          window.__emit('limits', {rows: window.__docs.limits.rows.map((r) => r.agent === 'Rowan' ? {...r, used_pct, starts: new Date(now - hours * 3600e3).toISOString(), resets: new Date(now + (168 - hours) * 3600e3).toISOString(), as_of: new Date(now).toISOString()} : r)});
+          window.__emit('limits', {rows: window.__docs.limits.rows.map((r) => r.agent === 'Rook' ? {...r, used_pct, starts: new Date(now - hours * 3600e3).toISOString(), resets: new Date(now + (168 - hours) * 3600e3).toISOString(), as_of: new Date(now).toISOString()} : r)});
         }, [used, hours]);
-        if (used === '3' && hours === 4) assert.equal(await knight.locator('[data-field=hit_at]').count(), 1);
-        else assert.match(await knight.textContent(), /At this pace: no data yet/);
+        if (hits) assert.equal(await rook.locator('[data-field=hit_at]').textContent(), 'hits 100% before reset');
+        else assert.match(await rook.textContent(), /too early to tell/);
       }
       await page.evaluate(() => window.__emit('limits', window.__docs.limits));
-      assert.equal(await page.locator('#token-chart rect').count(), 0);
-      assert.equal(await page.locator('#token-chart polyline').count(), 4);
-      assert.match(await page.locator('#token-chart svg').getAttribute('aria-label'), /running total.*14 days in IST, back to 0 at each weekly reset; input \+ output \+ cache creation; cache reads excluded/);
-      assert.equal(await page.locator('#token-chart').locator('..').locator('h3').textContent(), 'Tokens used, running total');
-      assert.equal(await page.locator('#token-chart').locator('..').locator('p').textContent(), 'Running total since each agent\'s weekly reset. Last 14 days in IST. Input + output + cache creation; cache reads excluded.');
+      assert.equal(await page.locator('#token-chart .token-bar').count(), 28);
+      assert.equal(await page.locator('#token-chart polyline').count(), 0);
+      assert.match(await page.locator('#token-chart svg').getAttribute('aria-label'), /per account per day.*7 days in IST; input \+ output \+ cache creation; cache reads excluded/);
+      assert.equal(await page.locator('#tokens h2').textContent(), 'Tokens per day');
+      assert.equal(await page.locator('#token-note').textContent(), 'Input + output + cache creation; cache reads excluded.'); // no "Today so far": the newest row is in October
       assert.deepEqual(await page.locator('#token-legend span').allTextContents(), ['Rook', 'Bishop', 'King', 'Knight']);
       assert.match(await page.locator('#notes tr[data-key=a1] td').first().textContent(), /^Bishop and KnightThu,? 22 Oct, 00:15 IST$/);
       assert.match(await page.locator('#notes tr[data-key=a2] td').first().textContent(), /^Thu,? 22 Oct, 00:15 IST$/);
@@ -389,83 +392,45 @@ test('Usage site: remembered TODO sub-steps, tabs, tickets, forecasts and safe r
           });
         });
         for (const id of ['token-chart', 'chart']) {
-          const { labels, box } = await page.locator(`#${id}`).evaluate((chart) => ({
-            labels: [...chart.querySelectorAll('text[y="234"]')].map((node) => {
+          const { labels, box } = await page.locator(`#${id}`).evaluate((chart, y) => ({
+            labels: [...chart.querySelectorAll(`text[y="${y}"]`)].map((node) => {
               const { left, right } = node.getBoundingClientRect(); return { left, right, text: node.textContent };
             }),
             box: chart.getBoundingClientRect().toJSON(),
-          }));
-          assert.equal(labels.at(-1).text, id === 'token-chart' ? '21-Oct' : '22-Oct');
+          }), id === 'token-chart' ? 118 : 234);
+          assert.equal(labels.at(-1).text, id === 'token-chart' ? 'Wed' : '22-Oct'); // 21 Oct 2026 is a Wednesday
           if (id === 'chart') assert.deepEqual(labels.map((label) => label.text), ['20-Oct', '21-Oct', '22-Oct']);
+          else assert.deepEqual(labels.map((label) => label.text), ['Thu', 'Fri', 'Sat', 'Sun', 'Mon', 'Tue', 'Wed']); // 15 to 21 Oct
           assert.ok(labels.length > 1);
           for (const label of labels) {
-            assert.match(label.text, /^\d{2}-[A-Z][a-z]{2}$/);
+            assert.match(label.text, id === 'token-chart' ? /^[A-Z][a-z]{2}$/ : /^\d{2}-[A-Z][a-z]{2}$/);
             assert.ok(label.left >= box.x && label.right <= box.x + box.width, `Date labels stay inside ${id}: ${JSON.stringify({ label, box })}`);
           }
           for (let i = 1; i < labels.length; i++) assert.ok(labels[i].left > labels[i - 1].right + 4, 'Date labels must have a readable gap');
         }
       };
-      const endLabels = async () => {
-        const { labels, box } = await page.locator('#token-chart').evaluate((chart) => ({
-          labels: [...chart.querySelectorAll('.token-end')].map((node) => {
-            const { left, right, top, bottom } = node.getBoundingClientRect(); return { left, right, top, bottom };
-          }),
-          box: chart.getBoundingClientRect().toJSON(),
-        }));
-        assert.equal(labels.length, 4);
-        for (const label of labels) {
-          assert.ok(label.left >= box.x && label.right <= box.x + box.width, 'End values stay inside the chart');
-          assert.ok(label.top >= box.y && label.bottom < box.y + 224, 'End values stay above the dates');
-        }
-        for (let i = 1; i < labels.length; i++) assert.ok(labels[i].top > labels[i - 1].bottom + 2, 'Close end values have a readable gap');
-      };
-      const runningChart = async () => {
-        const lines = await page.locator('#token-chart').evaluate((chart) => [...chart.querySelectorAll('polyline')].map((node) => ({
-          points: [...node.points].map(({ x, y }) => ({ x, y })), color: getComputedStyle(node).stroke,
-        })));
-        assert.equal(lines.length, 4);
-        // Independent expectation: hourly rate per agent, back to 0 in the buckets holding the Oct 9 and Oct 16 00:00Z resets (rows 29 and 197), drawn as a vertical drop.
-        const resetRows = [29, 197], rates = [1000, 1010, 1015, 1020], max = 168 * 1020;
-        for (let a = 0; a < lines.length; a++) {
-          const expected = []; let total = 0;
-          for (let i = 0; i < 336; i++) {
-            if (resetRows.includes(i)) { expected.push({ i, total }); total = 0; }
-            expected.push({ i, total: (total += rates[a]) });
-          }
-          assert.equal(lines[a].points.length, 338);
-          expected.forEach((point, k) => {
-            assert.ok(Math.abs(lines[a].points[k].y - (212 - point.total / max * 190)) < .001, 'Line plots the running total on the shared scale');
-            if (k) assert.ok(lines[a].points[k].x >= lines[a].points[k - 1].x);
-          });
-          for (const row of resetRows) {
-            const k = expected.findIndex((point) => point.i === row);
-            assert.equal(lines[a].points[k].x, lines[a].points[k + 1].x, 'A reset is a vertical drop');
-            assert.ok(lines[a].points[k + 1].y > lines[a].points[k].y);
-          }
-        }
-        assert.deepEqual(await page.locator('#token-chart .token-end').allTextContents(), ['141.8K', '141.1K', '140.4K', '139K']);
-        assert.deepEqual(await page.locator('#token-chart text[text-anchor=end]').allTextContents(), ['0', '85.7K', '171.4K']);
-        assert.deepEqual(lines.map((line) => line.color), await page.locator('#token-legend').evaluate((legend) => [...legend.querySelectorAll('i')].map((node) => getComputedStyle(node).backgroundColor)));
-        assert.deepEqual(await page.locator('#token-chart').evaluate((chart) => [...chart.querySelectorAll('.token-end')].map((node) => getComputedStyle(node).fill)), lines.map((line) => line.color).reverse());
-        assert.equal(await page.locator('#token-chart title').last().textContent(), '21-Oct IST · Knight: 141,780 tokens, running total');
-        await endLabels();
-        // An extra drop in a stored week % (a manual reset; Knight is stored as Rowan) restarts that line only.
-        await page.evaluate(() => window.__emit('history', { rows: [...window.__docs.history.rows, { when: '2026-10-20T08:00:00Z', agent: 'Rowan', window: 'week', used_pct: '60' }, { when: '2026-10-20T09:00:00Z', agent: 'Rowan', window: 'week', used_pct: '2' }] }));
-        assert.deepEqual(await page.locator('#token-chart .token-end').allTextContents(), ['141.1K', '140.4K', '139K', '34.7K']);
-        assert.equal(await page.locator('#token-chart polyline').nth(3).evaluate((node) => node.points.length), 339);
-        await page.evaluate(() => window.__emit('history', window.__docs.history));
-        // All-zero totals and two zero agents keep labels inside the lower edge too.
-        for (const rook of [0, 1000000]) {
-          await page.evaluate((Rook) => window.__emit('tokens', { rows: window.__docs.tokens.rows.map((row) => ({ t: row.t, Rook, Bishop: 0, King: 0, Knight: 0 })) }), rook);
-          await endLabels();
-        }
+      const dayBars = async () => {
+        const bars = await page.locator('#token-chart').evaluate((chart) => [...chart.querySelectorAll('.token-bar')].map((node) => ({ h: +node.getAttribute('height'), y: +node.getAttribute('y'), fill: getComputedStyle(node).fill })));
+        assert.equal(bars.length, 28);
+        // Independent expectation: 24 hourly buckets a day at each agent's rate, on one shared scale (plot 84 px, baseline 100); the biggest day is 24,480, so the axis is 0 / 10K / 20K / 30K.
+        const rates = [1000, 1010, 1015, 1020], max = 30000;
+        bars.forEach((bar, k) => {
+          assert.ok(Math.abs(bar.h - rates[k % 4] * 24 / max * 84) < .001, 'Bar height is that day\'s tokens on the shared scale');
+          assert.ok(Math.abs(bar.y + bar.h - 100) < .001, 'Bars stand on the baseline');
+        });
+        assert.deepEqual(bars.slice(0, 4).map((bar) => bar.fill), await page.locator('#token-legend').evaluate((legend) => [...legend.querySelectorAll('i')].map((node) => getComputedStyle(node).backgroundColor)));
+        assert.deepEqual(await page.locator('#token-chart text[text-anchor=end]').allTextContents(), ['0', '10K', '20K', '30K']);
+        assert.equal(await page.locator('#token-chart title').last().textContent(), '21-Oct IST · Knight: 24,480 tokens');
+        // All-zero totals draw empty bars, not NaN.
+        await page.evaluate(() => window.__emit('tokens', { rows: window.__docs.tokens.rows.map((row) => ({ t: row.t, Rook: 0, Bishop: 0, King: 0, Knight: 0 })) }));
+        assert.deepEqual(await page.locator('#token-chart .token-bar').evaluateAll((nodes) => [...new Set(nodes.map((node) => node.getAttribute('height')))]), ['0']);
         await page.evaluate(() => window.__emit('tokens', { rows: [] }));
         assert.equal(await page.locator('#token-chart').textContent(), 'No token data uploaded yet.');
         await page.evaluate(() => window.__emit('tokens', window.__docs.tokens));
       };
       await noOverflow();
       await readableDates();
-      await runningChart();
+      await dayBars();
       assert.match(await page.locator('#token-chart title').last().textContent(), /^21-Oct IST/);
       assert.match(await page.locator('#chart title').last().textContent(), /22-Oct 00:00 IST$/);
       for (const [when, date] of [['2026-10-31T18:30:00Z', '01-Nov'], ['2026-08-31T18:30:00Z', '01-Sep']]) {
@@ -582,13 +547,14 @@ test('Usage site: remembered TODO sub-steps, tabs, tickets, forecasts and safe r
 
       // A failed refresh changes only its short status; old readings and charts remain.
       await page.locator('[data-tab=usage]').click();
-      const before = await page.locator('#agents').textContent();
+      const readings = () => page.locator('#agents [data-field]:not([data-field=resets])').allTextContents(); // not the 5-hour "resets in" text: it ticks with the clock
+      const before = await readings();
       await page.locator('#refresh').click();
       await page.waitForFunction(() => !document.getElementById('refresh').disabled && document.getElementById('last-error').textContent === 'Rook usage probe failed, exit 1');
       assert.equal(await page.locator('#message').textContent(), '');
       assert.equal(await page.locator('#last-error').textContent(), 'Rook usage probe failed, exit 1');
-      assert.equal(await page.locator('#agents').textContent(), before);
-      assert.equal(await page.locator('#token-chart polyline').count(), 4);
+      assert.deepEqual(await readings(), before);
+      assert.equal(await page.locator('#token-chart .token-bar').count(), 28);
       await page.evaluate(() => window.__emit('status', { ...window.__docs.status, lastError: 'stack trace secret hook_started JSON', lastErrorAt: Date.now() }));
       assert.equal(await page.locator('#last-error').textContent(), 'Usage refresh failed; see the local agent log');
       await page.evaluate(() => window.__emit('status', { ...window.__docs.status, lastError: 'Main account: 100%, limit reached', lastErrorAt: Date.now() }));
@@ -596,11 +562,12 @@ test('Usage site: remembered TODO sub-steps, tabs, tickets, forecasts and safe r
 
       await page.setViewportSize({ width: 1280, height: 900 });
       assert.equal(await page.locator('.page-tabs').evaluate((node) => getComputedStyle(node).position), 'static');
-      assert.equal(await page.locator('.charts').evaluate((node) => getComputedStyle(node).gridTemplateColumns.split(' ').length), 2);
+      assert.equal(await page.locator('.ud-main').evaluate((node) => getComputedStyle(node).gridTemplateColumns.split(' ').length), 2);
+      assert.ok((await page.locator('#agents').boundingBox()).x < (await page.locator('#work').boundingBox()).x, 'Desktop: accounts left, work right');
       const brand = await page.locator('#top').boundingBox(), tabs = await page.locator('.page-tabs').boundingBox();
       assert.ok(tabs.x > brand.x + brand.width && Math.abs((tabs.y + tabs.height / 2) - (brand.y + brand.height / 2)) < 2, 'Desktop brand and tabs share a row');
       await readableDates();
-      await runningChart();
+      await dayBars();
       await page.screenshot({ path: `${shotDir}/s15-usage-fix-desktop-${colorScheme}.png`, fullPage: true });
       await page.locator('[data-tab=todo]').click();
       await checkSubsteps('desktop');
@@ -672,6 +639,227 @@ test('TODO 287a: Latest exe card shows the version, IST date and added list as p
       await page.locator('#signout').click();
       await page.locator('#release').waitFor({ state: 'hidden' });
       assert.equal(await page.locator('#release-card').textContent(), '');
+      assert.deepEqual(errors, []);
+    } finally { await context.close(); }
+  }
+});
+
+test('TODO 353a: status strip, account cards, Now / Next / Done today', async (t) => {
+  const shotDir = process.env.SHOTS_DIR || mkdtempSync(join(tmpdir(), 'shots-353a-'));
+  mkdirSync(shotDir, { recursive: true });
+  const browser = await chromium.launch(process.env.CHROME ? { executablePath: process.env.CHROME } : {});
+  t.after(() => browser.close());
+  const ended = (id) => ({ kind: 'build', id: 'king/' + id, out: 'b-' + id + '.jsonl', state: 'ended', ended: '@now', extra: '' }); // '@now' becomes the page's current time
+  // Rows in file order (newest last): seven done today, then a Bishop job and a King build running.
+  const queue = { updated: '2026-11-05T18:45:00.000Z', next: ['354', '<img src=x onerror=alert(1)>'], rows: [
+    ...['101', '102', '103', '104', '105', '106', '107'].map(ended),
+    { kind: 'job', id: 'debt47 (bishop, claude-sonnet-5-5)', out: 'debt47.jsonl', state: 'running', extra: '' },
+    { kind: 'build', id: 'king/280', out: 'b-280.jsonl', state: 'running', extra: '' },
+  ] };
+  const todo = { sections: [{ title: 'Whole TODO', items: [
+    { num: 280, title: 'U1d: simpler Queue tab', done: false },
+    { num: 354, title: 'Usage page build', done: false },
+  ] }] };
+  for (const colorScheme of ['light', 'dark']) {
+    const context = await browser.newContext({ viewport: { width: 390, height: 844 }, colorScheme });
+    try {
+      await context.addInitScript(({ queue, todo }) => {
+        const now = Date.now(), H = 3600e3, iso = (ms) => new Date(now + ms).toISOString();
+        for (const r of queue.rows) if (r.ended === '@now') r.ended = iso(0);
+        // Every week is half gone (84 of 168 h), every 5-hour window 2 h in.
+        const row = (agent, window, used_pct, extra = {}) => ({ agent, window, role: 'Builder', model: 'Fixture', used_pct: String(used_pct), cap_pct: '',
+          starts: iso(window === 'week' ? -84 * H : -2 * H), resets: iso(window === 'week' ? 84 * H : 3 * H), as_of: iso(0), ...extra });
+        window.__docs = {
+          limits: { rows: [
+            row('Rook', '5h', 85, { resets: iso(108 * 60e3) }), row('Rook', 'week', 94),
+            row('Bishop', '5h', 30), row('Bishop', 'week', 48, { cap_pct: '50' }),
+            row('King', '5h', 90, { resets: '' }), row('King', 'week', 96),
+            row('Rowan', '5h', 10), row('Rowan', 'week', 10),
+          ] },
+          tokens: { rows: Array.from({ length: 48 }, (_, i) => ({ t: now - (48 - i) * H, Rook: 1000, Bishop: 500, King: 200, Knight: 0 })) },
+          queue, todo,
+          status: { lastUpdate: now - 60_000, lastError: '', lastErrorAt: 0 },
+        };
+      }, { queue, todo });
+      await context.route('**/*', (route) => {
+        const url = new URL(route.request().url());
+        if (url.hostname === 'usage.test') {
+          const name = url.pathname === '/' ? 'index.html' : url.pathname.slice(1);
+          assert.ok(['index.html', 'app.js', 'app.css', 'firebase-config.js', 'token-chart.js', 'usage-window.js'].includes(name));
+          return route.fulfill({ body: readFileSync(new URL('../usage-site/public/' + name, import.meta.url)), contentType: name.endsWith('.html') ? 'text/html' : name.endsWith('.css') ? 'text/css' : 'text/javascript' });
+        }
+        const body = url.pathname.endsWith('firebase-app.js') ? 'export const initializeApp = () => ({});'
+          : url.pathname.endsWith('firebase-auth.js') ? authModule : url.pathname.endsWith('firebase-firestore.js') ? storeModule : '';
+        return route.fulfill({ body, contentType: body ? 'text/javascript' : 'text/css' });
+      });
+      const page = await context.newPage(), errors = [];
+      page.on('pageerror', (e) => errors.push(e.message));
+      await page.goto('http://usage.test/');
+      await page.locator('#agents h3').last().waitFor();
+      const noOverflow = async () => assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+      // Status strip: who builds what (running rows, newest first), then alerts from the usage % alone: week >= 95, 5h >= 85.
+      assert.deepEqual(await page.locator('#strip > span').allTextContents(), ['King building 280', 'Bishop job debt47']);
+      assert.deepEqual(await page.locator('#strip > span > b').allTextContents(), ['King', '280', 'Bishop', 'debt47'], 'the account and the id are bold, the verb is not');
+      assert.deepEqual(await page.locator('#strip .ud-chip').evaluateAll((chips) => chips.map((c) => c.className + ':' + c.textContent)),
+        ['ud-chip warn:Rook 5h 85%', 'ud-chip bad:King week 96%', 'ud-chip warn:King 5h 90%', 'ud-chip warn:Bishop cap 50%']); // Rook week 94 is below its limit; Bishop has today's cap
+      // Top row: "Usage" at 24 px and the yellow Refresh button on one row; the rest of the header is one small muted line.
+      const top = await page.locator('#top').boundingBox(), refresh = await page.locator('#refresh').boundingBox();
+      assert.ok(Math.abs((top.y + top.height / 2) - (refresh.y + refresh.height / 2)) < 2 && refresh.x > top.x + top.width, 'Usage and Refresh share a row');
+      assert.equal(await page.locator('#top').evaluate((node) => getComputedStyle(node).fontSize), '24px');
+      assert.equal(await page.locator('#refresh').textContent(), 'Refresh');
+      assert.equal((await page.locator('.ud-sub').boundingBox()).height < 40, true, 'Sign out, last update and status fit one or two small lines');
+      assert.equal(await page.locator('#asof').count(), 0, 'no intro paragraph');
+      // Account cards: Rook, Bishop, King, the empty Queen slot; Knight is retired and has no card.
+      assert.deepEqual(await page.locator('#agents h3').allTextContents(), ['Rook', 'Bishop', 'King']);
+      assert.equal(await page.locator('#agents .ud-empty').textContent(), 'Queenempty slot, no account yet');
+      assert.equal(await page.locator('#agents .ud-empty').evaluate((node) => getComputedStyle(node).borderStyle), 'dashed');
+      assert.deepEqual(await page.locator('#agents .ud-ring').allTextContents(), ['85%', '30%', '90%']);
+      assert.ok(await page.locator('#agents .ud-ring > span').first().evaluate((node) => { const range = document.createRange(); range.selectNodeContents(node); return range.getBoundingClientRect().height < 24; }), 'Ring number and % share one line');
+      const foot = page.locator('#agents .ud-card').nth(1).locator('.ud-mrow.ud-muted'); // card footer: two columns, the cap left and the forecast right
+      assert.deepEqual(await foot.locator('> span').allTextContents(), ['red tick = today’s cap 50%', '~96% at reset']);
+      assert.ok((await foot.locator('> span').nth(1).boundingBox()).x > (await foot.locator('> span').nth(0).boundingBox()).x + 100);
+      assert.deepEqual(await page.locator('#agents .ud-card').nth(2).locator('.ud-mrow.ud-muted > span').allTextContents(), ['no cap today', 'hits 100% before reset']);
+      assert.equal(await page.locator('#agents .ud-card').nth(2).locator('[data-field=hit_at]').getAttribute('class'), 'ud-hit');
+      assert.deepEqual(await page.locator('#agents .ud-fill').evaluateAll((all) => all.map((n) => n.style.background)).then((c) => c.map((x) => x.includes('critical'))), [false, false, false], 'a week bar at 96% keeps its account colour');
+      assert.match(await page.locator('#agents .ud-card').nth(0).locator('[data-field=resets]').first().textContent(), /^5 h: resets in 1 h 4[78] m \(\d\d:\d\d\)$/);
+      assert.equal(await page.locator('#agents .ud-card').nth(2).locator('[data-field=resets]').first().textContent(), '5 h: window not started');
+      assert.deepEqual(await page.locator('#agents .ud-card .ud-agent .ud-chip').evaluateAll((chips) => chips.map((c) => c.className + ':' + c.textContent)),
+        ['ud-chip ok:no cap today', 'ud-chip warn:cap 50%', 'ud-chip ok:no cap today']);
+      assert.equal(await page.locator('#agents .ud-tick.cap').count(), 1); // Bishop only
+      assert.deepEqual(await page.locator('#agents .ud-ghost').evaluateAll((g) => g.map((n) => n.style.left + '/' + n.style.width)), ['94%/6%', '48%/48%', '96%/4%']); // forecast to the reset
+      // Now / Next / Done today in ONE Work card on the Usage page: account chip, bold item, TODO title; last 5 done and an "N earlier today" fold.
+      assert.equal(await page.locator('#work').evaluate((node) => node.classList.contains('ud-card') && !node.querySelector('.ud-card')), true, 'one card, no card per part');
+      assert.deepEqual(await page.locator('#work-list h2').allTextContents(), ['Now', 'Next', 'Done today · 7 jobs']);
+      const rows = () => page.locator('#work-list .job').evaluateAll((all) => all.map((row) => [row.children[0].textContent, row.querySelector('strong').textContent, row.querySelector('strong + span')?.textContent.trim() ?? ''].join('|')));
+      assert.deepEqual((await rows()).slice(0, 5), ['King|280|simpler Queue tab', 'Bishop|debt47|', 'next|354|Usage page build', 'next|<img src=x onerror=alert(1)>|', 'King|107|']); // bold = the id only
+      assert.deepEqual(await page.locator('#work-list .job > span:last-child').evaluateAll((all) => all.slice(0, 5).map((m) => m.firstChild.nodeType === 3 ? m.firstChild.textContent : '')), ['building ', 'job ', '', '', 'built '], 'the verb stays plain text before the bold id');
+      assert.equal((await rows()).length, 11, '2 now + 2 next + 7 done (2 folded)');
+      assert.equal(await page.locator('#work-list .job:visible').count(), 9, '2 now + 2 next + 5 done');
+      assert.equal(await page.locator('#work img').count(), 0);
+      const fold = page.locator('#work-list details.ud-fold');
+      assert.equal(await fold.locator('summary').textContent(), '2 earlier today');
+      assert.equal(await fold.evaluate((node) => node.open), false);
+      await fold.locator('summary').click();
+      assert.equal(await page.locator('#work-list .job:visible').count(), 11);
+      assert.equal(await page.locator('#queue-list button').textContent(), 'Show 2 more', 'the Queue tab keeps its own fold');
+      await page.evaluate(() => window.__emit('todo', window.__docs.todo)); // a redraw keeps the fold open
+      assert.equal(await fold.evaluate((node) => node.open), true);
+      await fold.locator('summary').click();
+      assert.equal(await page.locator('#work-list .job:visible').count(), 9);
+      // Token chart as the mock: 4 gridlines with round labels, day names under the bars, one caption line below.
+      assert.equal(await page.locator('#tokens h2').textContent(), 'Tokens per day');
+      assert.equal(await page.locator('#token-chart line').count(), 4);
+      assert.match((await page.locator('#token-chart text[text-anchor=end]').allTextContents()).join(' '), /^0 \d+(\.\d)?[KM]? \d+(\.\d)?[KM]? \d+(\.\d)?[KM]?$/);
+      const dayNames = await page.locator('#token-chart text[text-anchor=middle]').allTextContents();
+      assert.equal(new Set(dayNames).size, 7, 'seven different day names');
+      for (const name of dayNames) assert.match(name, /^(Mon|Tue|Wed|Thu|Fri|Sat|Sun)$/);
+      // Accounts first, one column on a phone; nothing wider than the screen.
+      assert.equal(await page.locator('.ud-main').evaluate((node) => getComputedStyle(node).gridTemplateColumns.split(' ').length), 1);
+      assert.ok((await page.locator('#strip').boundingBox()).y < (await page.locator('#agents').boundingBox()).y);
+      assert.ok((await page.locator('#agents').boundingBox()).y < (await page.locator('#work').boundingBox()).y);
+      await noOverflow();
+      await page.screenshot({ path: `${shotDir}/usage-390-${colorScheme}.png`, fullPage: true });
+      await page.setViewportSize({ width: 1280, height: 900 });
+      assert.equal(await page.locator('.ud-main').evaluate((node) => getComputedStyle(node).gridTemplateColumns.split(' ').length), 2);
+      assert.ok((await page.locator('#agents').boundingBox()).x < (await page.locator('#work').boundingBox()).x);
+      await noOverflow();
+      await page.screenshot({ path: `${shotDir}/usage-1280-${colorScheme}.png`, fullPage: true });
+      await page.setViewportSize({ width: 1024, height: 800 });
+      await noOverflow();
+      // Knight's bar and legend return with its tokens (no card: Knight is retired); today's totals go in the caption; an empty queue says why nothing is planned.
+      await page.evaluate(() => window.__emit('tokens', { rows: [{ t: Date.now(), Rook: 5.1e6, Bishop: 2.9e6, King: 0, Knight: 5 }] }));
+      await page.locator('#token-legend span').nth(3).waitFor();
+      assert.deepEqual(await page.locator('#agents h3').allTextContents(), ['Rook', 'Bishop', 'King']);
+      assert.equal(await page.locator('#token-note').textContent(), 'Input + output + cache creation; cache reads excluded. Today so far: Rook 5.1M, Bishop 2.9M, Knight 5.');
+      assert.equal(await page.locator('#token-chart text[text-anchor=end]').last().textContent(), '6M'); // 5.1M -> axis 0, 2M, 4M, 6M
+      await page.evaluate(() => window.__emit('queue', { rows: [] }));
+      await page.locator('#work-list p', { hasText: 'Done today: nothing yet' }).waitFor();
+      assert.deepEqual(await page.locator('#work-list p').allTextContents(), ['Now: nothing running', 'Next: nothing planned (no next: line in the queue)', 'Done today: nothing yet']);
+      assert.deepEqual(await page.locator('#strip > span').allTextContents(), ['Nothing running']);
+      assert.deepEqual(errors, []);
+    } finally { await context.close(); }
+  }
+});
+
+test('TODO 353b2: break, CI and for-him chips; Done today by end time', async (t) => {
+  const shotDir = process.env.SHOTS_DIR || mkdtempSync(join(tmpdir(), 'shots-353b2-'));
+  mkdirSync(shotDir, { recursive: true });
+  const browser = await chromium.launch(process.env.CHROME ? { executablePath: process.env.CHROME } : {});
+  t.after(() => browser.close());
+  const now = Date.now(), H = 3600e3, iso = (ms) => new Date(ms).toISOString();
+  const build = (id, state, ended) => ({ kind: 'build', id: 'king/' + id, out: 'b-' + id + '.jsonl', state, ...(ended ? { ended: iso(ended) } : {}), extra: '' });
+  // File order, newest last: six done today, one ended yesterday, one done with no end time, one running.
+  const queue = { updated: iso(now), rows: [
+    ...['101', '102', '103', '104', '105', '106'].map((id) => build(id, 'ended', now)), build('190', 'ended', now - 36 * H), build('191', 'ended'), build('280', 'running'),
+  ] };
+  const breaks = { rows: [
+    { account: 'Bishop', from: iso(now - 10 * 60e3), to: iso(now + 30 * 60e3) },
+    { account: '<img src=x onerror=alert(1)>', from: iso(now - 60e3), to: iso(now + 90 * 60e3) },
+    { account: 'King', from: iso(now + 60 * 60e3), to: iso(now + 120 * 60e3) }, // upcoming: no chip
+    { account: 'Rook', from: iso(now - 3 * H), to: iso(now - 60e3) }, // over: no chip
+  ] };
+  const docs = { breaks, forhim: { open: 3, ids: [15, 19, 28] }, ci: { status: 'completed', conclusion: 'failure', sha: '1a2b3c4d5e6f', url: 'https://example.test/run', updated: iso(now) } };
+  const chips = (page) => page.locator('#strip .ud-chip').evaluateAll((all) => all.map((c) => c.className + ':' + c.textContent));
+  for (const colorScheme of ['light', 'dark']) {
+    const context = await browser.newContext({ viewport: { width: 390, height: 844 }, colorScheme });
+    try {
+      await context.addInitScript(({ queue, docs, now }) => {
+        const iso = (ms) => new Date(ms).toISOString();
+        const row = (agent, window, used_pct) => ({ agent, window, role: 'Builder', model: 'Fixture', used_pct: String(used_pct), cap_pct: '',
+          starts: iso(now - (window === 'week' ? 84 : 2) * 3600e3), resets: iso(now + (window === 'week' ? 84 : 3) * 3600e3), as_of: iso(now) });
+        window.__docs = { limits: { rows: ['Rook', 'Bishop', 'King'].flatMap((a) => [row(a, '5h', 10), row(a, 'week', 10)]) }, queue, ...docs, status: { lastUpdate: now - 60_000, lastError: '', lastErrorAt: 0 } };
+      }, { queue, docs, now });
+      await context.route('**/*', (route) => {
+        const url = new URL(route.request().url());
+        if (url.hostname === 'usage.test') {
+          const name = url.pathname === '/' ? 'index.html' : url.pathname.slice(1);
+          assert.ok(['index.html', 'app.js', 'app.css', 'firebase-config.js', 'token-chart.js', 'usage-window.js'].includes(name));
+          return route.fulfill({ body: readFileSync(new URL('../usage-site/public/' + name, import.meta.url)), contentType: name.endsWith('.html') ? 'text/html' : name.endsWith('.css') ? 'text/css' : 'text/javascript' });
+        }
+        const body = url.pathname.endsWith('firebase-app.js') ? 'export const initializeApp = () => ({});'
+          : url.pathname.endsWith('firebase-auth.js') ? authModule : url.pathname.endsWith('firebase-firestore.js') ? storeModule : '';
+        return route.fulfill({ body, contentType: body ? 'text/javascript' : 'text/css' });
+      });
+      const page = await context.newPage(), errors = [];
+      page.on('pageerror', (e) => errors.push(e.message));
+      await page.goto('http://usage.test/');
+      await page.locator('#agents h3').last().waitFor();
+      const noOverflow = async () => assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+      // Strip: a plain muted "X on break" line per active break (not the upcoming or the over one), then the chips: purple "3 for him", red CI. The card shows the break's end in IST.
+      assert.deepEqual(await page.locator('#strip > .ud-muted').allTextContents(), ['Bishop on break', '<img src=x onerror=alert(1)> on break']);
+      assert.deepEqual(await chips(page), ['ud-chip info:3 for him', 'ud-chip bad:CI red 1a2b3c4']);
+      assert.equal(await page.locator('#strip img').count(), 0);
+      const till = new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Kolkata', weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(now + 30 * 60e3)).replace(/,/g, '');
+      assert.equal(await page.locator('#agents .ud-card').nth(1).locator('.ud-agent .ud-chip').evaluate((c) => c.className + ':' + c.textContent), 'ud-chip bad:break till ' + till);
+      assert.equal(await page.locator('#agents .ud-card').nth(0).locator('.ud-agent .ud-chip').textContent(), 'no cap today');
+      // Done today: rows ended today only (6 of the 8 not running); no end time or yesterday is left out here, and stays on the Queue tab.
+      assert.deepEqual(await page.locator('#work-list h2').allTextContents(), ['Now', 'Done today · 6 jobs']);
+      assert.equal(await page.locator('#work-list .job:visible').count(), 6, '1 now + 5 done');
+      assert.doesNotMatch(await page.locator('#work-list').textContent(), /190|191/);
+      assert.equal(await page.locator('#work-list details.ud-fold summary').textContent(), '1 earlier today');
+      assert.deepEqual(await page.locator('#queue-list h3').allTextContents(), ['Now', 'Done']);
+      assert.match(await page.locator('#queue-list').textContent(), /190[\s\S]*Show 3 more/);
+      await noOverflow();
+      await page.screenshot({ path: `${shotDir}/usage-353b2-390-${colorScheme}.png`, fullPage: true });
+      await page.setViewportSize({ width: 1280, height: 900 });
+      await noOverflow();
+      await page.screenshot({ path: `${shotDir}/usage-353b2-1280-${colorScheme}.png`, fullPage: true });
+      await page.setViewportSize({ width: 1024, height: 800 });
+      await noOverflow();
+      // CI running shows its age; success, no runs and a closed for-him list show nothing; a missing doc shows no chip.
+      await page.evaluate((updated) => window.__emit('ci', { status: 'in_progress', conclusion: '', sha: '1a2b3c4d5e6f', updated }), iso(now - 40 * 60e3));
+      await page.locator('#strip .ud-chip.warn').waitFor();
+      assert.equal(await page.locator('#strip .ud-chip.warn').textContent(), 'CI running · 40 min ago');
+      await page.evaluate(() => window.__emit('ci', { status: 'completed', conclusion: 'cancelled', sha: '9f8e7d6c5b4a' }));
+      await page.locator('#strip .ud-chip', { hasText: 'CI cancelled 9f8e7d6' }).waitFor();
+      await page.evaluate(() => window.__emit('ci', { status: 'completed', conclusion: 'success', sha: '1a2b3c4d5e6f' }));
+      await page.evaluate(() => window.__emit('forhim', { open: 0, ids: [] }));
+      await page.locator('#strip .ud-chip.info').waitFor({ state: 'detached' });
+      assert.deepEqual(await chips(page), ['ud-chip ok:CI green']); // success is a green chip; no runs and a closed for-him list show nothing
+      await page.evaluate(() => { for (const name of ['breaks', 'ci', 'forhim']) window.__emit(name, {}); });
+      await page.locator('#strip > .ud-muted', { hasText: 'on break' }).first().waitFor({ state: 'detached' });
+      assert.deepEqual(await chips(page), []);
+      assert.equal(await page.locator('#agents .ud-card').nth(1).locator('.ud-agent .ud-chip').textContent(), 'no cap today', 'the break chip goes with the break');
       assert.deepEqual(errors, []);
     } finally { await context.close(); }
   }

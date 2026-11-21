@@ -1,6 +1,7 @@
 // Layout Measure snaps in sheet mm, y up; reuse each part's drawing snap index.
 import { placedMat } from './apply.js';
-import { mapply } from './drawing.js';
+import { mapply, piecesNear } from './drawing.js';
+import { pieceInter } from './modify.js';
 import { makeIndex, snapPick, snapObject, snapCandidates, snapReference } from './edit.js';
 import { DEFAULT_TYPES, preferSnap, orderCandidates } from './snap.js';
 import { nearestObject } from './tangent.js';
@@ -59,6 +60,43 @@ function onSegment([ax, ay], [bx, by], x, y) {
   return [ax + t * dx, ay + t * dy];
 }
 
+/** A part's piece turned into sheet mm, y up (`M` = placedMat with sheetH 0, y down); `src` says whose it is. */
+function sheetPiece(p, M, src, e) {
+  const w = (x, y) => { const q = mapply(M, x, y); return [q[0], -q[1]]; };
+  if (p.t === 's') { const a = w(p.x1, p.y1), b = w(p.x2, p.y2); return { t: 's', x1: a[0], y1: a[1], x2: b[0], y2: b[1], curve: p.curve, src, e }; }
+  const c = w(p.cx, p.cy), u = w(p.cx + p.r, p.cy), v = w(p.cx, p.cy + p.r), ps = w(p.cx + p.r * Math.cos(p.s), p.cy + p.r * Math.sin(p.s)), pe = w(p.cx + p.r * Math.cos(p.s + p.sw), p.cy + p.r * Math.sin(p.s + p.sw));
+  const flipped = (u[0] - c[0]) * (v[1] - c[1]) - (u[1] - c[1]) * (v[0] - c[0]) < 0, from = flipped ? pe : ps;      // a mirror turns the sweep round
+  return { t: 'a', cx: c[0], cy: c[1], r: Math.hypot(u[0] - c[0], u[1] - c[1]), s: Math.atan2(from[1] - c[1], from[0] - c[0]), sw: p.sw, full: p.full, src, e };
+}
+
+/**
+ * Where an object of one placed part crosses an object of another part, the sheet edge or a gripper line, within tol of (x, y): [{ x, y, a, b }] in sheet mm (a, b = the two pieces, each { src: placed index, or -1 sheet / -2 gripper line, e: its object }).
+ * Only parts whose box is near the cursor are read; one 200-piece cap over all of them (as one part's snap, edit.js).
+ */
+function crossings(parts, placed, W, H, x, y, tol, grip) {
+  const near = [];
+  placed.forEach((pl, n) => {
+    const part = parts[pl.partId];
+    if (!part?.fl) return;
+    const ed = partIndex(part), ix = ed.ix, lt = tol / (part.factor || 1), [px, py] = toPart(part, pl, x, y);
+    if (!ix.G || px < ix.x0 - lt || px > ix.x1 + lt || py < ix.y0 - lt || py > ix.y1 + lt) return;
+    const M = placedMat(part, pl, 0), sc = Math.sqrt(Math.abs(M[0] * M[3] - M[1] * M[2]));
+    for (const h of piecesNear(ix, px, py, lt, (i) => ed.vis[i] === 1)) near.push({ d: h.d * sc, ent: h.ent, M, n, e: ed.items[h.ent.it].e });
+  });
+  if (!near.length) return [];
+  const pieces = near.sort((a, b) => a.d - b.d).slice(0, 200).map((h) => sheetPiece(h.ent, h.M, h.n, h.e));
+  const line = (a, b, src, e) => ({ t: 's', x1: a[0], y1: a[1], x2: b[0], y2: b[1], src, e });
+  const edges = [[[0, 0], [W, 0]], [[W, 0], [W, H]], [[0, H], [W, H]], [[0, 0], [0, H]]].map(([a, b], e) => line(a, b, -1, e)).concat(gripperLines(W, H, grip).map(([a, b], e) => line(a, b, -2, e)));
+  for (const e of edges) { const [qx, qy] = onSegment([e.x1, e.y1], [e.x2, e.y2], x, y); if (Math.hypot(qx - x, qy - y) <= tol) pieces.push(e); }
+  const out = [];
+  for (let i = 0; i < pieces.length; i++) for (let j = i + 1; j < pieces.length; j++) {
+    const a = pieces[i], b = pieces[j];
+    if (a.src === b.src || a.src < 0 && b.src < 0) continue;       // within one part: the part's own snap; sheet x gripper line: no part
+    for (const [qx, qy] of pieceInter(a, b)) out.push({ x: qx, y: qy, a: { src: a.src, e: a.e }, b: { src: b.src, e: b.e } });
+  }
+  return out;
+}
+
 export function layoutSnap(parts, placed, W, H, x, y, tol, types = DEFAULT_TYPES, from = null, grip = null) {
   let best = placedSnap(parts, placed, x, y, tol, types, from);
   const consider = (qx, qy, kind) => { best = preferSnap(best, { x: qx, y: qy, kind }, x, y, tol, types); };
@@ -70,6 +108,13 @@ export function layoutSnap(parts, placed, W, H, x, y, tol, types = DEFAULT_TYPES
     consider(...a, 'end'); consider(...b, 'end');
     consider((a[0] + b[0]) / 2, (a[1] + b[1]) / 2, 'mid');
     consider(...onSegment(a, b, x, y), 'near');
+  }
+  if (types.intersection !== false) {
+    const eps = 1e-9 * (1 + Math.abs(x) + Math.abs(y));
+    for (const c of crossings(parts, placed, W, H, x, y, tol, grip)) {
+      if (best?.kind === 'end' && Math.hypot(best.x - c.x, best.y - c.y) <= eps) continue;     // a shared corner is an end, as in one part
+      consider(c.x, c.y, 'intersection');
+    }
   }
   return best;
 }
@@ -95,7 +140,13 @@ export function partEdgeSnap(parts, placed, axis, v, tol) {
 
 /** One placed object's candidates, transformed back into sheet millimetres. */
 export function layoutCandidates(parts, placed, W, H, x, y, tol, types = DEFAULT_TYPES, from = null, candidates = true, grip = null) {
-  let best = null;
+  let best = null, cross = null;
+  // the crossings of one object (a placed part's, the sheet edge's or a gripper line's) with the others
+  const crossOf = (src, e) => {
+    if (types.intersection === false) return [];
+    cross ??= crossings(parts, placed, W, H, x, y, tol, grip);
+    return cross.flatMap((c) => c.a.src === src && c.a.e === e || c.b.src === src && c.b.e === e ? [{ x: c.x, y: c.y, kind: 'intersection' }] : []);
+  };
   for (const pl of placed) {
     const part = parts[pl.partId];
     if (!part?.fl) continue;
@@ -107,7 +158,7 @@ export function layoutCandidates(parts, placed, W, H, x, y, tol, types = DEFAULT
     if (best && d >= best.distance) continue;
     const e = snapObject(ed, ...p, localTol, -1, types);
     if (e < 0) continue;
-    best = { object: pl, e, distance: d, candidates: candidates ? snapCandidates(ed, e, ...p, localTol, types, from && toPart(part, pl, ...from)).map(world) : [] };
+    best = { object: pl, e, distance: d, candidates: candidates ? orderCandidates([...snapCandidates(ed, e, ...p, localTol, types, from && toPart(part, pl, ...from)).map(world), ...crossOf(placed.indexOf(pl), e)], types, x, y) : [] };
   }
   if (best) return best;
   const edges = [[[0, 0], [W, 0]], [[W, 0], [W, H]], [[0, H], [W, H]], [[0, 0], [0, H]]], lines = gripperLines(W, H, grip);
@@ -115,7 +166,7 @@ export function layoutCandidates(parts, placed, W, H, x, y, tol, types = DEFAULT
     const [a, b] = list[e], [nx, ny] = onSegment(a, b, x, y);
     const q = { x: nx, y: ny, kind: 'near' }, d = Math.hypot(x - q.x, y - q.y);
     if (d > tol || best && d >= best.distance) continue;
-    best = { object, e, distance: d, candidates: candidates ? orderCandidates([{ x: a[0], y: a[1], kind: 'end' }, { x: b[0], y: b[1], kind: 'end' }, { x: (a[0] + b[0]) / 2, y: (a[1] + b[1]) / 2, kind: 'mid' }, q], types, x, y) : [] };
+    best = { object, e, distance: d, candidates: candidates ? orderCandidates([{ x: a[0], y: a[1], kind: 'end' }, { x: b[0], y: b[1], kind: 'end' }, { x: (a[0] + b[0]) / 2, y: (a[1] + b[1]) / 2, kind: 'mid' }, q, ...crossOf(object === 'sheet' ? -1 : -2, e)], types, x, y) : [] };
   }
   return best;
 }

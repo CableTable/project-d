@@ -144,6 +144,63 @@ export function hairline(raw, offenders, locked = new Set()) {
   return { entities: raw.entities.map((e, i) => selected.has(i) ? fix(e) : e), blocks };
 }
 
+/**
+ * Cross-object Duplicates and Gaps (TODO 156e3c) on a layout: `items` = [{ k, polys }], the outlines (Float64Array x, y, x, y… in sheet mm) of placement k.
+ * Only pairs from two different k count (a hit inside one k is the per-object row's). Returns { duplicates: Set of k, gaps: [Set of the k's of one gap], covered: Set of the k's (not `solid`, a placed part) whose whole outline lies on solid ones' (TODO 156e3d) }.
+ * shortcut: arcs are compared as their sampled chords (a rotated copy of a circle samples elsewhere, so it is no duplicate); upgrade with arc-aware covered().
+ */
+export function crossChecks(items, tolerance) {
+  const D = 1e-6, duplicates = new Set(), prev = new Map(), gaps = [], ends = [], segsOf = new Map();
+  for (const { k, polys, solid } of items) for (const q of polys) {
+    const n = q.length;
+    if (n >= 4 && Math.hypot(q[0] - q[n - 2], q[1] - q[n - 1]) > 2e-6) ends.push({ k, x: q[0], y: q[1] }, { k, x: q[n - 2], y: q[n - 1] });       // a closed outline has no ends
+    for (let i = 0; i + 3 < n; i += 2) {
+      const a = [q[i], q[i + 1]], b = [q[i + 2], q[i + 3]], len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+      if (len <= D) continue;
+      const u = [(b[0] - a[0]) / len, (b[1] - a[1]) / len], bucket = support({ line: true, a, u }), key = bucket.join(','), me = { k, a, b, u, len, solid, cov: [] };
+      for (const t of nearbyKeys(bucket).flatMap((nk) => prev.get(nk) || [])) {
+        if (t.k === k || (duplicates.has(k) && duplicates.has(t.k) && !solid && !t.solid) || Math.abs(cross(sub(t.a, a), u)) > D || Math.abs(cross(sub(t.b, a), u)) > D) continue;
+        const s0 = dot(sub(t.a, a), u), s1 = dot(sub(t.b, a), u), lo = Math.max(0, Math.min(s0, s1)), hi = Math.min(len, Math.max(s0, s1));
+        if (hi - lo <= D) continue;
+        duplicates.add(k); duplicates.add(t.k);
+        if (t.solid) me.cov.push([lo, hi]);       // what lies on a placed part's outline, for `covered`
+        if (solid) { const r0 = dot(sub(a, t.a), t.u), r1 = dot(sub(b, t.a), t.u); t.cov.push([Math.max(0, Math.min(r0, r1)), Math.min(t.len, Math.max(r0, r1))]); }
+      }
+      if (!prev.has(key)) prev.set(key, []);
+      prev.get(key).push(me);
+      if (!segsOf.has(k)) segsOf.set(k, []);
+      segsOf.get(k).push(me);
+    }
+  }
+  // covered: loose placements (not `solid`, a placed part) whose whole outline lies on placed parts' outlines
+  const covered = new Set();
+  for (const [k, segs] of segsOf) {
+    if (segs[0].solid) continue;
+    if (segs.every((s) => {
+      let at = 0, got = 0;
+      for (const [lo, hi] of s.cov.sort((p, q) => p[0] - q[0])) { if (hi > at) { got += hi - Math.max(lo, at); at = hi; } }
+      return s.len - got <= D;
+    })) covered.add(k);
+  }
+  const cell = Math.max(tolerance, 1e-12), at = new Map(), parent = ends.map((_, i) => i);
+  const find = (a) => { while (parent[a] !== a) a = parent[a] = parent[parent[a]]; return a; };
+  ends.forEach((p, i) => {
+    const cx = Math.floor(p.x / cell), cy = Math.floor(p.y / cell), key = cx + ',' + cy;
+    for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) for (const j of at.get((cx + dx) + ',' + (cy + dy)) || []) if (Math.hypot(ends[j].x - p.x, ends[j].y - p.y) <= tolerance) parent[find(j)] = find(i);
+    if (!at.has(key)) at.set(key, []);
+    at.get(key).push(i);
+  });
+  const groups = new Map();
+  ends.forEach((p, i) => { const r = find(i); if (!groups.has(r)) groups.set(r, []); groups.get(r).push(p); });
+  for (const g of groups.values()) {
+    const pts = [];       // ends that already meet (2e-6) are one point of the placements that have one there
+    for (const p of g) { const q = pts.find((o) => Math.hypot(p.x - o.x, p.y - o.y) <= 2e-6); if (q) q.ks.add(p.k); else pts.push({ x: p.x, y: p.y, ks: new Set([p.k]) }); }
+    // a gap is two points no one placement has both of: when every copy has both, it is the gap inside that placement (the per-object / per-part row's)
+    if (pts.some((p, i) => pts.some((o, j) => j > i && ![...p.ks].some((k) => o.ks.has(k))))) gaps.push(new Set(pts.flatMap((p) => [...p.ks])));
+  }
+  return { duplicates, gaps, covered };
+}
+
 /** Six warning checks. Sheet/tolerance are mm; counts are offending entities except gap clusters. */
 export function preflight(raw, { factor = 1, tolerance = 0.01, sheetW, sheetH, check } = {}) {
   const wanted = (id) => !check || check === id, hasSheet = sheetW != null && sheetH != null;

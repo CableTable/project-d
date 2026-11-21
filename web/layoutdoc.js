@@ -18,7 +18,7 @@ import { explodeInsert, explodeDimension, explodeSelection } from './explode.js'
 import { unitFactor, startHidden } from './doc.js';
 import { stepRepeat, markGeometry, MAX_LINE } from './layout.js';
 import { buildLayoutDoc, gridPlacements, placedBox, partFromDrawing, placement1, GRID_KEYS, gridSig } from './apply.js';
-import { keepOnly, newLayerName, DIM_LAYER, DIM_BLOCK, dimTag, freeNameWithPrefix } from './edit.js';
+import { keepOnly, newLayerName, DIM_LAYER, DIM_BLOCK, LDR_BLOCK, dimTag, freeNameWithPrefix } from './edit.js';
 import { followDimensions } from './linked-dimensions.js';
 import { isDimPart, dimName, isSettled, bakeBlock, turnedTag, freeBlockName } from './layoutdim.js';
 import { cleanGuides } from './guides.js';
@@ -177,15 +177,17 @@ const OBJ_NAMES = { LINE: 'Line', ARC: 'Arc', CIRCLE: 'Circle', LWPOLYLINE: 'Pol
 export function objectCommit(lay, view, entities, newId, heir, blocks = view.raw.blocks) {       // heir: the entity of `view` whose group, lock and place a joined result takes; blocks: where a new INSERT's blocks are (the command's result)
   const have = new Set(entities), gone = new Set(), layers = layersOf(lay);
   for (const [e, i] of view.at) if (!have.has(e)) gone.add(i);
-  const oneAt = gone.has(view.at.get(heir)) ? view.at.get(heir) : gone.size === 1 ? [...gone][0] : -1, one = lay.placed[oneAt];       // split pieces inherit the source member's group and lock, as a single replacement does
-  let slot = oneAt -[...gone].filter((i) => i < oneAt).length;       // where oneAt lands once the gone ones are removed
-  const oneName = one && lay.parts[one.partId]?.name;
+  const perPiece = heir instanceof Map, heirOf = (e) => (perPiece ? heir.get(e) : heir);       // a Map (new entity -> the entity it came from): each piece takes its own source's group, lock and place
+  const atOf = (e) => { const a = view.at.get(heirOf(e)); return gone.has(a) ? a : !perPiece && gone.size === 1 ? [...gone][0] : -1; };       // split pieces inherit the source member's group and lock, as a single replacement does
+  const was = lay.placed, inserted = [], nameAt = new Map([...gone].map((i) => [i, lay.parts[was[i].partId]?.name]));       // names before the unused parts go
   lay.placed = lay.placed.filter((_, i) => !gone.has(i));
   const used = new Set(lay.placed.map((p) => p.partId));
   for (const [id, part] of Object.entries(lay.parts)) if (part.obj && !used.has(id)) delete lay.parts[id];
-  const names = new Set(Object.values(lay.parts).map((p) => p.name)), back = view.back?.get(oneAt);       // back: the part's own block names, as objectReplace
+  const names = new Set(Object.values(lay.parts).map((p) => p.name));
   for (const e of entities) {
     if (view.at.has(e)) continue;
+    const oneAt = atOf(e), one = was[oneAt], oneName = nameAt.get(oneAt), back = view.back?.get(oneAt);       // back: the part's own block names, as objectReplace
+    const base = oneAt - [...gone].filter((i) => i < oneAt).length;       // where oneAt lands once the gone ones are removed
     e.ps = false;
     const own = Object.create(null);       // a new block object keeps its blocks, under the part's own names
     if (e.type === 'INSERT') for (const [n, b] of Object.entries(blocksUsed(blocks, [e]))) own[back?.get(n) ?? n] = back ? { ...b, entities: b.entities.map((x) => retarget(x, back)) } : b;
@@ -195,7 +197,7 @@ export function objectCommit(lay, view, entities, newId, heir, blocks = view.raw
     if (!part) continue;
     if (one) Object.assign(pl, one.g ? { g: one.g } : {}, one.lock ? { lock: true } : {});
     names.add(part.name); lay.parts[part.id] = part;
-    if (one) lay.placed.splice(slot++, 0, pl); else lay.placed.push(pl);
+    if (one) { lay.placed.splice(base + inserted.filter((b) => b <= base).length, 0, pl); inserted.push(base); } else lay.placed.push(pl);
     bakedCache.set(part, new Map([[bakeKey(pl), kept]]));
   }
 }
@@ -292,7 +294,8 @@ export function explodeDims(lay, ats, newId) {
     const native = part?.obj && part.raw.entities[0]?.type === 'DIMENSION';
     if (!native && (!isDimPart(part) || !isSettled(part, p))) continue;
     const pieces = [];
-    for (const e of native ? explodePart(part, p).entities : explodeDimension(part.raw.entities[0], { ...part.raw, layers })) {
+    const raw = { ...part.raw, layers }, leader = LDR_BLOCK.test(dimName(part));       // a leader breaks as on a drawing: Explode's INSERT (lines, SOLID arrowhead, TEXT)
+    for (const e of native ? explodePart(part, p).entities : leader ? explodeInsert(part.raw.entities[0], raw).entities : explodeDimension(part.raw.entities[0], raw)) {
       const obj = objectPart(newId(), nextName(OBJ_NAMES[e.type] || 'Object', names), { ...e, ps: false }, layers);
       if (!obj) continue;
       names.add(obj.name); lay.parts[obj.id] = obj;
@@ -314,7 +317,7 @@ export function settleDims(lay, newId, { taken, drawn } = dimensionNames(lay)) {
     const old = dimName(part), lo = old.toLowerCase(), settled = isSettled(part, p), clash = drawn.has(lo) || owner.has(lo) && owner.get(lo) !== p.partId;
     if (settled && !clash) { owner.set(lo, p.partId); continue; }
     const shared = lay.placed.filter((q) => q.partId === p.partId).length > 1, tag = settled ? dimTag(old) : turnedTag(dimTag(old), p.rot);
-    const name = !shared && !clash && tag === dimTag(old) ? old : freeBlockName(taken, tag), ent = part.raw.entities[0];
+    const name = !shared && !clash && tag === dimTag(old) ? old : LDR_BLOCK.test(old) ? freeNameWithPrefix(taken, 'PD_LDR_') : freeBlockName(taken, tag), ent = part.raw.entities[0];
     taken.add(name.toLowerCase());
     if (!replaceDim(lay, p, { ...ent, r: { ...ent.r, v: ent.r.v.map((v, k) => (ent.r.c[k] === 2 ? name : v)) } },
       { [name]: settled ? part.raw.blocks[old] : bakeBlock(part.raw.blocks[old], part, p) }, newId, names)) continue;
@@ -627,7 +630,7 @@ function layoutFromMeta(raw, name) {
 /** The plain entities of the file (not the sheet, the marks or the INSERTs) become layout objects again, one each. */
 function readObjects(lay, raw, ob, count) {
   const layers = layersOf(lay), insName = (e) => String(e.r.v[e.r.c.indexOf(2)] ?? '').trim();
-  const isDim = (e) => e.type === 'INSERT' && DIM_BLOCK.test(insName(e)) && !!raw.blocks[insName(e)];
+  const isDim = (e) => e.type === 'INSERT' && (DIM_BLOCK.test(insName(e)) || LDR_BLOCK.test(insName(e))) && !!raw.blocks[insName(e)];
   const plain = raw.entities.filter((e) => (e.type !== 'INSERT' || isDim(e)) && !e.ps && !isReserved(e.layer));
   // shortcut: equal-count outside reordering remains positional, use stable entity IDs if that must be detected
   if (count !== plain.length) ob = [];       // outside edits can shift the positional group / lock metadata

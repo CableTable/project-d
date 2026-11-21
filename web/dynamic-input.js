@@ -9,7 +9,7 @@ export const hasTyped = (s) => !!(s.prefix || s.values.some(Boolean));
 const PROMPTS = { offset: { distance: 'number', erase: 'option', layer: 'option' },
   chamfer: { d1: 'number', d2: 'number', length: 'number', angle: 'number', method: 'option', trim: 'option' },
   array: { type: 'option', opts: 'option' }, mirror: { erase: 'option' }, align: { scale: 'option' },
-  copy: { mode: 'option' } };
+  copy: { mode: 'option', count: 'number' } };
 export function promptKind(m) {
   if (m.kind === 'fillet') return m.askR ? 'number' : m.askTrim ? 'option' : null;
   if (['lengthen', 'divide', 'measurepoints'].includes(m.kind)) return m.stage === 'value' && !m.p1 ? 'number' : null;

@@ -5,7 +5,8 @@
 // bakeDim() then puts that placement into the block's own points (a rotate turns the text, a scale re-labels it, a mirror keeps it
 // readable), which is what the file and every other command see: a settled dimension is always at the identity placement.
 import { mapply } from './drawing.js';
-import { DIM_BLOCK, relabel, relabelDims, freeName } from './edit.js';
+import { DIM_BLOCK, LDR_BLOCK, relabel, relabelDims, freeName } from './edit.js';
+import * as LR from './leader.js';
 
 const DEG = Math.PI / 180;
 const field = (r, c) => { const k = r.c.indexOf(c); return k < 0 ? NaN : +r.v[k]; };
@@ -17,8 +18,10 @@ export const dimName = (part) => {
   const e = part && part.obj && part.raw.entities.length === 1 ? part.raw.entities[0] : null;
   return e && e.type === 'INSERT' ? String(e.r.v[e.r.c.indexOf(2)] ?? '').trim() : '';
 };
-/** Is this layout object a dimension (an INSERT of a PD_DIM block that the part holds)? */
-export const isDimPart = (part) => { const n = dimName(part); return !!n && DIM_BLOCK.test(n) && !!part.raw.blocks && !!part.raw.blocks[n]; };
+/** Is this layout object a dimension or a leader (an INSERT of a PD_DIM / PD_LDR block that the part holds; TODO 156e1: a leader is kept the same way)? */
+export const isDimPart = (part) => { const n = dimName(part); return !!n && (DIM_BLOCK.test(n) || LDR_BLOCK.test(n)) && !!part.raw.blocks && !!part.raw.blocks[n]; };
+/** What a dimension object is called in a message: "leader" when every one given is a leader, else "dimension". */
+export const dimNoun = (parts) => parts.every((part) => LDR_BLOCK.test(dimName(part))) ? 'leader' : 'dimension';
 
 /** The matrix [a, b, c, d, e, f] (x' = a x + c y + e) from a part's own sheet mm to the sheet for a placement (apply.js placedBox's maths). */
 export function placeMatrix(part, p) {
@@ -26,11 +29,21 @@ export function placeMatrix(part, p) {
   const a = co * sx, b = si * sx, c = -si * sy, d = co * sy;
   return [a, b, c, d, p.x - a * b0 - c * b1, p.y - b * b0 - d * b1];
 }
+/** The placement { x, y, rot, sc, mirrorX, mirrorY } that puts `part`'s block where the INSERT `ins` puts it (a grip mode's result for a dimension or leader that lay at the identity; TODO 156e1c). */
+export function insertPlacement(part, ins) {
+  const at = (c, k) => { const i = ins.r.c.indexOf(c); return i < 0 ? k : +ins.r.v[i]; }, sx = at(41, 1), sy = at(42, 1);
+  const pl = { rot: at(50, 0), sc: Math.abs(sx), mirrorX: sx < 0, mirrorY: sy < 0 }, m = placeMatrix(part, { ...pl, x: 0, y: 0 });       // m[4], m[5]: where the part's corner goes for x = y = 0
+  return { ...pl, x: at(10, 0) - m[4], y: at(20, 0) - m[5] };
+}
 /** Is the placement the identity (the part lies where it is drawn)? */
 export const isSettled = (part, p) => !p.rot && (p.sc || 1) === 1 && !p.mirrorX && !p.mirrorY && Math.abs(p.x - part.box[0]) < 1e-9 && Math.abs(p.y - part.box[1]) < 1e-9;
 
 /** A block with the placement p baked in: every point mapped, arcs turned (or swapped under a mirror), text turned (parallel to its line, upright) and scaled, the label re-measured. */
 export function bakeBlock(block, part, p) {
+  if (LDR_BLOCK.test(dimName(part))) {       // a leader: its points go through the placement, the note stays upright beside the new last point (leader.js builds it again, as Mirror does)
+    const m = LR.read(dimName(part), block), M = placeMatrix(part, p), k = p.sc || 1, b = m && LR.build({ ...m, pts: m.pts.map(([x, y]) => mapply(M, x, y)), textH: m.textH * k, arrow: m.arrow * k }, dimName(part));
+    return b ? b.block : block;
+  }
   const M = placeMatrix(part, p), k = p.sc || 1, flip = !!p.mirrorX !== !!p.mirrorY;
   const dir = (deg) => { const t = deg * DEG, x = M[0] * Math.cos(t) + M[2] * Math.sin(t), y = M[1] * Math.cos(t) + M[3] * Math.sin(t); return Math.atan2(y, x) / DEG; };
   let ents = block.entities.map((e) => {

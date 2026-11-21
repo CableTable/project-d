@@ -384,3 +384,20 @@ test('TODO 109a: layouts keep metadata at factor 1 and drop it otherwise; invali
   for (const opts of [{ scale: 0 }, { scale: -1 }, { scale: Infinity }, { scale: NaN }, { scale: '2' }, { precision: -1 },
     { precision: 9 }, { precision: 1.5 }, { precision: '2' }, { units: 'ft' }, { units: 'unitless' }]) assert.throws(() => W.writeDxf(doc, opts));
 });
+
+test('TODO 109b: unticked layers leave their entities out; an INSERT on a ticked layer keeps its whole block; layer 0 is always kept', () => {
+  const doc = W.newDoc(4);
+  for (const n of ['Cut', 'Keep', 'Inner', 'Dead', 'Gone']) W.addLayer(doc, n, { aci: 3 });
+  W.addBlock(doc, 'kept', [W.line(0, 0, 1, 1, { layer: 'Inner' }), W.text(0, 0, 1, 'in block')]);
+  W.addBlock(doc, 'dropped', [W.line(0, 0, 2, 2, { layer: 'Gone' })]);
+  W.addEntities(doc, W.line(0, 0, 10, 0, { layer: 'Cut' }), W.line(0, 5, 10, 5, { layer: 'Keep' }), W.line(0, 9, 10, 9),
+    W.insert('kept', 3, 3, { layer: 'Keep' }), W.insert('dropped', 4, 4, { layer: 'cut' }), W.text(0, 0, 2, 'note', { layer: 'CUT' }));
+  doc.groups = [{ members: [0, 1, 2] }, { members: [1, 2, 3] }];
+  const before = structuredClone(doc), saved = back(doc, { units: 'mm', skipLayers: ['Cut', 'Inner', 'Dead', '0'] });
+  assert.deepEqual(structuredClone(doc), before, 'the open drawing is a copy that is never touched');
+  assert.deepEqual(saved.entities.map((e) => e.type + ':' + e.layer), ['LINE:Keep', 'LINE:0', 'INSERT:Keep'], 'names ignore case; layer 0 stays although ticked off');
+  assert.deepEqual(Object.keys(saved.blocks).filter((n) => !n.startsWith('*')), ['kept'], 'the block only a dropped INSERT used goes with it');
+  assert.equal(saved.blocks.kept.entities.length, 2, 'a kept INSERT goes out whole, text and the Inner line too');
+  assert.deepEqual(Object.keys(saved.layers).sort(), ['0', 'Gone', 'Inner', 'Keep'], 'Inner stays (used in a kept block); unused unticked Dead and Cut go; a ticked layer stays even when empty');
+  assert.equal(back(doc, { skipLayers: [] }).entities.length, 6, 'nothing unticked: everything is written');
+});

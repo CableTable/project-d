@@ -47,12 +47,13 @@ import { attributeRows } from './attribute-edit.js';
 import { dimensionEditor, changeDimensionEditor, dimensionEditorOverride, measuredText, overrideText, measureOverride, readOverride } from './dimension-text.js';
 import { nativeDimensionOverrides } from './dimension-dxf.js';
 import * as GR from './grips.js';
+import * as SHP from './shape.js';
 import { stretchGrips, stretchEntities, stretchSelection, stretchPlacements } from './stretch.js';
 import * as GM from './gripmode.js';
-import { followDimensions, driveLine, driveDimension, dimensionEntry } from './linked-dimensions.js';
+import { followDimensions, linkedLine, driveLine, driveDimension, dimensionEntry } from './linked-dimensions.js';
 import * as MD from './modify.js';
 import * as AR from './array.js';
-import { movePoint, movePrompt } from './move.js';
+import { movePoint, movePrompt, parseArrayCount, arrayOffsets } from './move.js';
 import { dragTarget } from './drag.js';
 import { rotateEntities, rotationAngle, rotationDragAngle, rotationMatrix, referenceTurn } from './rotate.js';
 import { scaleEntities, scaleFactor, scaleDistance, scaleMatrix, referenceFactor } from './scale.js';
@@ -73,7 +74,7 @@ import { layoutSnap, placedSnap, layoutCandidates, layoutReference, layoutTangen
 import { nearestObject } from './tangent.js';
 import * as LD from './layoutdoc.js';
 import { labelGaps } from './pdf-source.js';
-import { isDimPart, isSettled } from './layoutdim.js';
+import { isDimPart, isSettled, dimNoun, insertPlacement } from './layoutdim.js';
 import { dropPart } from './dropin.js';
 import { copySnapshot, copyPlacedSnapshot, drawingFromPlaced, pasteSnapshot, partFromSnapshot } from './clipboard.js';
 import * as PL from './place.js';
@@ -99,7 +100,8 @@ import { loadFont } from './fontload.js';
 import { fontForStyle, fontSubstitutions } from './fontsub.js';
 import { outlineOf } from './nestshape.js';
 import { partSource, readTitleBlock, withTitleBlock } from './pdf-export.js';
-import { readPdf, renderPdfPage, renderPdfPages, isPdf } from './pdf-read.js';
+import { readPdf, renderPdfPage, renderPdfPages, isPdf, pageLayout } from './pdf-read.js';
+import { readTiff } from './tiff.js';
 import { preloadPictures, rawPixels } from './pictures.js';
 import { panelWidth } from './docker.js';
 
@@ -160,6 +162,7 @@ const TOOLS = [
   { sep: true },
   { id: 'line', label: 'Line', svg: '<path d="M6 18L18 6"/><circle cx="5" cy="19" r="1.8"/><circle cx="19" cy="5" r="1.8"/>' },
   { id: 'polyline', label: 'Polyline', join: 'round', svg: '<path d="M3 18l5-9 5 6 7-10"/>' },
+  { id: 'pen', label: 'Pen', description: 'Draw a curve node by node', cap: 'round', svg: '<path d="M3 17C8 17 8 7 12 7s4 10 9 10"/><rect x="2" y="15.5" width="3" height="3"/><rect x="10.5" y="5.5" width="3" height="3"/><rect x="19" y="15.5" width="3" height="3"/>' },
   { id: 'rect', label: 'Rectangle', svg: '<rect x="3.5" y="6" width="17" height="12"/>' },
   { id: 'rrect', label: 'Rounded rectangle', svg: '<rect x="3.5" y="6" width="17" height="12" rx="4"/>' },
   { id: 'circle', label: 'Circle', svg: '<circle cx="12" cy="12" r="8"/>' },
@@ -183,6 +186,7 @@ const TOOLS = [
   { id: 'lengthen', label: 'Lengthen', svg: '<path d="M3 17h12M15 17h6M17 13l4 4-4 4M3 7h10M3 4v6M13 4v6"/>' },
   { id: 'breakatpoint', label: 'Break at point', svg: '<path d="M3 21l7-7M14 10l7-7M8 8l8 8M12 5v3M5 12h3"/>' },
   { id: 'join', label: 'Join', svg: '<path d="M3 19l6-9h6l6-7"/><circle cx="9" cy="10" r="1.6"/><circle cx="15" cy="10" r="1.6"/>' },
+  { id: 'shape', label: 'Shape', svg: '<path d="M4 18L9 6l11 5"/><rect x="2.5" y="16.5" width="3" height="3"/><rect x="7.5" y="4.5" width="3" height="3"/><rect x="18.5" y="9.5" width="3" height="3"/>' },
   { id: 'close', label: 'Close', svg: '<path d="M4 18V8l6-5 10 7v8z" stroke-dasharray="3 2"/><path d="M4 18V8l6-5"/>' },
   { id: 'reverse', label: 'Reverse', svg: '<path d="M3 8h17M16 4l4 4-4 4M21 16H4M8 12l-4 4 4 4"/>' },
   { id: 'divide', label: 'Divide', svg: '<path d="M3 12h18M7 9v6M12 9v6M17 9v6"/>' },
@@ -198,7 +202,7 @@ const TOOLS = [
   { id: 'nest', label: 'Auto-nest', description: 'Auto-nest mixed parts', svg: '<rect x="3" y="3" width="10" height="8" rx="1"/><circle cx="18" cy="7" r="3.5"/><rect x="3" y="14" width="6" height="7" rx="1"/><rect x="11.5" y="14" width="9.5" height="7" rx="1"/>' },
   { id: 'measure', label: 'Measure', join: 'round', svg: '<path d="M3 17L17 3l4 4L7 21z"/><path d="M7 13l2 2M10 10l2 2M13 7l2 2"/>' },
 ];
-const BUILT = new Set(['select', 'pan', 'step', 'measure', 'dimension', 'leader', 'balloon', 'contour', 'text', 'move', 'copy', 'stretch', 'array', 'rotate', 'scale', 'fillet', 'chamfer', 'break', 'breakatpoint', 'lengthen', 'join', 'close', 'reverse', 'divide', 'measurepoints', 'align', 'offset', 'trim', 'extend', 'mirror', 'nest', ...DR.KINDS]);
+const BUILT = new Set(['select', 'pan', 'step', 'measure', 'dimension', 'leader', 'balloon', 'contour', 'text', 'move', 'copy', 'stretch', 'array', 'rotate', 'scale', 'fillet', 'chamfer', 'break', 'breakatpoint', 'lengthen', 'join', 'shape', 'close', 'reverse', 'divide', 'measurepoints', 'align', 'offset', 'trim', 'extend', 'mirror', 'nest', ...DR.KINDS]);
 // the Dimension button's flyout (mock-up R8a, Option A): [type, name, typed command, icon (20 px box), the command line's name]
 const DIM_TYPES = [
   ['auto', 'Automatic', 'DIM', '<path d="M3 15L11 7M3 15l3-1M3 15l1-3M11 7l-3 1M11 7l1 3"/><circle cx="14.5" cy="13.5" r="3.5"/>', 'DIM'],
@@ -355,6 +359,7 @@ const view = { scale: 1, ox: -80, oy: -80, fitted: true };
 let shownDoc = state.docs[0];       // the tab the global view belongs to (showDoc saves it when another becomes active)
 let layout = null;                  // the step-and-repeat grid of the open layout (layout.js stepRepeat; count 0 = none)
 let placedNow = [];                 // every placed part of the open layout (layoutdoc.js placedAll): grid copies, then loose ones
+let placedLay = null;               // the layout placedNow was made from (a tab switch draws before update() refreshes it)
 const ui = {};
 const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
 
@@ -577,7 +582,7 @@ function buildMenus() {
       ['Paste in place', pasteInPlace, 'Ctrl+Shift+V', () => ui.startScreen.hidden && !!clipboard && (!!cmpDoc() || !!curDoc()?.lay || !!editable())],
       ['Undo history…', showHistory, null, () => !!historyOf(curDoc())],
       ['Select all', selectAll, 'Ctrl+A', () => ui.startScreen.hidden && (!!editable() || !!curLay())],
-      ['Delete', () => (curLay() ? deletePlaced() : deleteSelection()), 'Del', () => { const d = editable(); return ui.startScreen.hidden && (d ? d.sel.size > 0 : !!selectedPlaced()); }]],
+      ['Delete', () => (curLay() ? deletePlaced() : deleteSelection()), 'Del', () => { const d = editable(); return ui.startScreen.hidden && (d ? d.sel.size > 0 : !!selectedPlaced() || !!balSelItem(curLay() && curDoc())); }]],
     View: () => {
       const lay = guideTarget(), theme = document.documentElement.dataset.theme || 'system', tick = (on, text) => (on ? '✓ ' : '  ') + text;
       return [['Fit to window', fitView, 'Ctrl+0'], ['Zoom Window', zoomWindow, 'ZW'], ['Zoom Selection', zoomSelection, 'ZS', () => !!selectionBox()], ['Zoom Previous', zoomPrevious, 'ZP', () => !!curDoc()?.viewHist?.length],
@@ -594,9 +599,9 @@ function buildMenus() {
         ...[['system', 'follow system'], ['light', 'light (CorelDRAW-like)'], ['dark', 'dark (AutoCAD-like)']].map(([mode, label], i) => [tick(theme === mode, 'Theme: ' + label), () => setTheme(mode), null, null, null, i === 0, theme === mode])];
     },
   };
-  menus.Draw = [['Line', 'line', 'L'], ['Polyline', 'polyline', 'P'], ['Rectangle', 'rect', 'R'], ['Rounded rectangle', 'rrect', 'RR'], ['Circle', 'circle', 'C'],
+  menus.Draw = [['Line', 'line', 'L'], ['Polyline', 'polyline', 'P'], ['Pen', 'pen', null], ['Rectangle', 'rect', 'R'], ['Rounded rectangle', 'rrect', 'RR'], ['Circle', 'circle', 'C'],
     ['Ellipse', 'ellipse', 'EL'], ['Arc', 'arc', 'A'], ['Text', 'text', 'T'], ['Divide', 'divide', 'DIV'], ['Measure points', 'measurepoints', 'ME']].map(([text, id, key]) => [text, () => setTool(id), key, null, null, false, undefined, id === 'circle' ? circleRows : id === 'arc' ? arcRows : null]);       // every draw tool works on a layout too (156b2); Circle and Arc open their modes as a submenu (346a, 347c)
-  menus.Modify = [['Move', 'move', 'MV'], ['Copy', 'copy', 'CO'], ['Stretch', 'stretch', 'STR'], ['Array', 'array', 'AR'], ['Rotate', 'rotate', 'RO'], ['Align', 'align', 'AL'], ['Scale', 'scale', 'SC'], ['Fillet', 'fillet', 'F'], ['Offset', 'offset', 'O'], ['Trim', 'trim', 'TR'], ['Extend', 'extend', 'EX'], ['Mirror', 'mirror', 'MI'], ['Reverse', 'reverse', null]].map(([text, id, key]) => [text, () => id === 'rotate' ? DO.rotate() : setTool(id), key, () => !curLay() || LAY_MODS.includes(id) || id === 'rotate' && !!selectedPlaced()]);
+  menus.Modify = [['Move', 'move', 'MV'], ['Copy', 'copy', 'CO'], ['Stretch', 'stretch', 'STR'], ['Array', 'array', 'AR'], ['Rotate', 'rotate', 'RO'], ['Align', 'align', 'AL'], ['Scale', 'scale', 'SC'], ['Fillet', 'fillet', 'F'], ['Offset', 'offset', 'O'], ['Trim', 'trim', 'TR'], ['Extend', 'extend', 'EX'], ['Mirror', 'mirror', 'MI'], ['Reverse', 'reverse', null]].map(([text, id, key]) => [text, () => id === 'rotate' ? DO.rotate() : setTool(id), key, () => !curLay() || (id === 'rotate' ? !!selectedPlaced() || (selItems().length > 0 && selItems().every((x) => x.p.src === 'loose' && x.part.obj)) : LAY_MODS.includes(id))]);
   menus.Modify.push(['Text to outlines', () => textToOutlines(), 'TXO']);
   menus.Modify.push(['Burst', burstSelected]);
   menus.Modify.push(['Explode', explodeSelected, 'X']);
@@ -792,7 +797,7 @@ function ribbonButton(label, svg, action, { small = false, enabled = () => true,
 function ribbonTool(id, small = false) {
   const t = TOOLS.find((t) => t.id === id);
   const b = ribbonButton(id === 'divide' ? 'Divide / Measure points' : t.label, t.svg, () => id === 'nest' ? openNestDialog() : id === 'step' ? DO.step() : id === 'rotate' ? (curLay() && !selectedPlaced() ? note('Rotate: select a part first (Align is in the dropdown)') : DO.rotate()) : startButtonTool(id),
-    { small, enabled: () => id === 'step' || id === 'nest' ? !!curLay() : id === 'measure' ? !!measureTarget() : id === 'dimension' ? !!dimTarget() : DR.KINDS.includes(id) || id === 'text' ? !!curDoc() : !!editable() || (id === 'contour' && !!curLay()) || (id === 'rotate' && !!curLay()) || (LAY_MODS.includes(id) && !!curLay()), pressed: () => state.tool === id, command: id, description: t.description });
+    { small, enabled: () => id === 'step' || id === 'nest' ? !!curLay() : id === 'measure' ? !!measureTarget() : id === 'dimension' || id === 'leader' || id === 'balloon' ? !!dimTarget() : DR.KINDS.includes(id) || id === 'text' ? !!curDoc() : !!editable() || (id === 'contour' && !!curLay()) || (id === 'rotate' && !!curLay()) || (LAY_MODS.includes(id) && !!curLay()), pressed: () => state.tool === id, command: id, description: t.description });
   if (id === 'dimension') {
     b.append(h('span', { class: 'flyout', title: 'Dimension types', 'aria-label': 'Dimension types' }, '▾'));
     b.setAttribute('aria-haspopup', 'menu');
@@ -861,14 +866,14 @@ function ribbonContents(kind) {
     stack(...['frontminus', 'backminus'].map((op) => convert(SH.OPS[op].label, () => shapeSelection(op), '<rect x="3" y="5" width="12" height="12" fill="currentColor" opacity=".5"/><rect x="9" y="9" width="12" height="12"/>', true, op, true)),
       btn('Keep originals', copy, toggleShapingKeep, { small: true, pressed: () => state.shapingKeepOriginals })));
   if (ribbon.tab === 'Draw') return [
-    group('Draw', ...['line', 'polyline', 'rect', 'rrect', 'circle', 'ellipse', 'arc'].map((id) => ribbonTool(id))),
+    group('Draw', ...['line', 'polyline', 'pen', 'rect', 'rrect', 'circle', 'ellipse', 'arc'].map((id) => ribbonTool(id))),
     group('Text', ribbonTool('text'), convert('Text to outlines', textToOutlines, outlinesIcon, false, undefined, true)),
     group('Annotate', ...['dimension', 'leader', 'balloon', 'measure'].map((id) => ribbonTool(id))),
     group('Tools', ribbonTool('select'), ribbonTool('pan'))];
   if (ribbon.tab === 'Modify') return [
     group('Modify', stack(ribbonTool('move', true), ribbonTool('rotate', true), ribbonTool('mirror', true)),
       stack(ribbonTool('copy', true), ribbonTool('stretch', true), ribbonTool('scale', true)), stack(ribbonTool('offset', true)),
-      stack(ribbonTool('fillet', true), ribbonTool('extend', true), ribbonTool('trim', true)), stack(ribbonTool('array', true)), ribbonTool('break'), ribbonTool('join'), ribbonTool('close'), ribbonTool('reverse'), ribbonTool('lengthen')),
+      stack(ribbonTool('fillet', true), ribbonTool('extend', true), ribbonTool('trim', true)), stack(ribbonTool('array', true)), ribbonTool('break'), ribbonTool('join'), stack(ribbonTool('shape', true), ribbonTool('close', true)), stack(ribbonTool('reverse', true), ribbonTool('lengthen', true))),
     group('Convert', convert('Explode', explodeSelected, '<path d="M12 4v4M12 16v4M4 12h4M16 12h4M6.5 6.5l2.5 2.5M15 15l2.5 2.5M17.5 6.5L15 9M9 15l-2.5 2.5"/>', false, undefined, true),
       convert('Break Apart', breakApartSelected, '<rect x="3" y="4" width="8" height="8"/><rect x="13" y="12" width="8" height="8"/>'),
       convert('Combine', combineSelected, '<rect x="3" y="4" width="11" height="11"/><rect x="10" y="10" width="11" height="10"/>'), ribbonTool('contour'), convert('Text to outlines', textToOutlines, outlinesIcon, false, undefined, true)),
@@ -896,18 +901,20 @@ function ribbonContents(kind) {
     stack(btn('Cut', TOOLS.find((t) => t.id === 'trim').svg, cutSelection, { small: true, enabled: () => !!editable()?.sel.size }),
       btn('Copy', copy, copySelection, { small: true, enabled: () => curLay() ? !!selItems().length : !!editable()?.sel.size }),
       btn('Select all', '<rect x="4" y="4" width="16" height="16" stroke-dasharray="3 2"/><path d="M8 12l3 3 5-6"/>', selectAll, { small: true, enabled: () => !!editable() || !!curLay() })))];
-  groups.push(group('Draw', ...['line', 'polyline', 'circle', 'arc'].map((id) => ribbonTool(id)), stack(...['rect', 'ellipse', 'text'].map((id) => ribbonTool(id, true))), ribbonTool('divide')));
+  groups.push(group('Draw', ...['line', 'polyline', 'pen', 'circle', 'arc'].map((id) => ribbonTool(id)), stack(...['rect', 'ellipse', 'text'].map((id) => ribbonTool(id, true))), ribbonTool('divide')));
+  const colourBtns = () => [btn('Fill', '<path d="M4 12l8-8 8 8-8 8zM4 12h16"/>', () => startColourTool('fill'), { small: true, enabled: () => !!colourDoc(), pressed: () => state.colourTool?.kind === 'fill' }),
+    btn('Eyedropper', '<path d="M14 3l7 7M17 6L5 18l-2 3 3-2L18 7"/>', () => startColourTool('eyedropper'), { small: true, enabled: () => !!colourDoc(), pressed: () => state.colourTool?.kind === 'eyedropper' })];
   if (kind === 'layout') return [...groups,
     group('Parts', btn('Add to layout', '<rect x="3" y="5" width="12" height="14"/><path d="M18 9v8M14 13h8"/>', addToLayout),
       btn('Parts library', '<rect x="3" y="4" width="5" height="16"/><rect x="10" y="4" width="5" height="16"/><path d="M17 5l4 1-3 15-4-1z"/>', showLibrary, { command: 'library' }),
       btn('Extract part…', '<rect x="3" y="3" width="10" height="10" stroke-dasharray="2 2"/><path d="M10 10l10 10M14 20h6v-6"/>', extractPart, { command: 'extract' })),
-    group('Step and repeat', ribbonTool('step'), ribbonTool('nest')), group('Modify', stack(ribbonTool('copy', true), ribbonTool('stretch', true)), ribbonTool('rotate'), ribbonTool('fillet', true), ribbonTool('contour'), ribbonTool('break'), ribbonTool('join'), ribbonTool('close'), ribbonTool('reverse'), ribbonTool('lengthen')), shaping()];
+    group('Step and repeat', ribbonTool('step'), ribbonTool('nest')), group('Modify', stack(ribbonTool('copy', true), ribbonTool('stretch', true)), ribbonTool('rotate'), ribbonTool('fillet', true), ribbonTool('contour'), ribbonTool('break'), ribbonTool('join'), stack(ribbonTool('shape', true), ribbonTool('close', true)), stack(ribbonTool('reverse', true), ribbonTool('lengthen', true))), group('Properties', stack(...colourBtns())), shaping()];
   if (kind === 'drawing') {
     groups.push(group('Modify', stack(ribbonTool('move', true), ribbonTool('rotate', true), ribbonTool('mirror', true)),
-      stack(ribbonTool('copy', true), ribbonTool('stretch', true), ribbonTool('scale', true)), stack(ribbonTool('offset', true)),
-      stack(ribbonTool('fillet', true), ribbonTool('extend', true), ribbonTool('trim', true)), stack(ribbonTool('array', true)), ribbonTool('break'), ribbonTool('join'), ribbonTool('close'), ribbonTool('reverse'), ribbonTool('lengthen')));
+      stack(ribbonTool('copy', true), ribbonTool('stretch', true), ribbonTool('scale', true)), stack(ribbonTool('offset', true), ribbonTool('array', true)),
+      stack(ribbonTool('fillet', true), ribbonTool('extend', true), ribbonTool('trim', true)), ribbonTool('break'), ribbonTool('join'), stack(ribbonTool('shape', true), ribbonTool('close', true)), stack(ribbonTool('reverse', true), ribbonTool('lengthen', true))));
   }
-  if (kind === 'compare') groups.push(group('Modify', stack(ribbonTool('copy', true), ribbonTool('stretch', true), ribbonTool('align', true)), ribbonTool('fillet', true), ribbonTool('break'), ribbonTool('join'), ribbonTool('close'), ribbonTool('reverse'), ribbonTool('lengthen')), shaping());
+  if (kind === 'compare') groups.push(group('Modify', stack(ribbonTool('copy', true), ribbonTool('stretch', true), ribbonTool('align', true)), ribbonTool('fillet', true), ribbonTool('break'), ribbonTool('join'), stack(ribbonTool('shape', true), ribbonTool('close', true)), stack(ribbonTool('reverse', true), ribbonTool('lengthen', true))), shaping());
   groups.push(group('Copy', btn('Duplicate', '<rect x="3" y="3" width="12" height="12"/><rect x="9" y="9" width="12" height="12"/>', duplicate, { enabled: () => !!editable()?.sel.size })));
   groups.push(group('Groups', btn('Group', ICONS.group, groupSel, { command: 'group', enabled: () => !!editable() && editable().sel.size > 1 && !wholeDrawingGroup(editable().raw.groups, editable().sel) }),
     btn('Ungroup', ICONS.ungroup, ungroupSel, { command: 'ungroup', enabled: () => !!editable() && [...editable().sel].some((i) => groupOf(editable().raw.groups, i)) })));
@@ -924,8 +931,7 @@ function ribbonContents(kind) {
     ui.ribbonSwatch = h('button', { class: 'ribbon-swatch', type: 'button', 'aria-label': 'Pick ribbon colour', onclick: pickPropColour });
     colourField.insertBefore(ui.ribbonSwatch, ui.ribbonColour);
     groups.push(group('Properties', stack(colourField, ribbonField('Line width', ui.ribbonWidth), ribbonField('Line style', ui.ribbonLt)),
-      stack(btn('Fill', '<path d="M4 12l8-8 8 8-8 8zM4 12h16"/>', () => startColourTool('fill'), { small: true, enabled: () => !!editable(), pressed: () => state.colourTool?.kind === 'fill' }),
-        btn('Eyedropper', '<path d="M14 3l7 7M17 6L5 18l-2 3 3-2L18 7"/>', () => startColourTool('eyedropper'), { small: true, enabled: () => !!editable(), pressed: () => state.colourTool?.kind === 'eyedropper' }),
+      stack(...colourBtns(),
         btn('Readout', '<circle cx="12" cy="12" r="8"/><path d="M12 4v16M4 12h16"/>', toggleReadout, { small: true, pressed: () => !!readout }))));
   }
   return groups;
@@ -1045,7 +1051,7 @@ function applyKind() {
   if (state.ptab === 'library' && !lib) state.ptab = 'drawing';
   if (state.ptab === 'step' && !lay) state.ptab = 'drawing';
   renderDocker();
-  if (lay && (state.tool === 'dimension' || state.tool === 'leader' || state.tool === 'balloon' || DR.KINDS.includes(state.tool) || state.tool === 'text')) setTool('step');
+  if (lay && (state.tool === 'dimension' || state.tool === 'leader' || DR.KINDS.includes(state.tool) || state.tool === 'text')) setTool('step');
   else if (!lay && state.tool === 'step') setTool('select');
   else if (lay && wasLayout === false && state.tool === 'select') setTool('step');
   wasLayout = lay;
@@ -1257,6 +1263,7 @@ function showDoc() {
     // Callers have already changed state.doc; the global view still belongs to shownDoc.
     if (shownDoc) shownDoc.view = { ...view, ...canvasSize() };
     shownDoc = curDoc();
+    state.balSel = null;       // balloon ids restart per tab: a pick on one tab must not stay selected on another
   }
   state.paste = null;
   for (const item of cmpDoc()?.cmp.items || []) { const source = cmpSourceTab(item); if (source) cmpRefresh(source); }
@@ -1340,6 +1347,7 @@ async function openBytes(name, buf, path = null, batch = {}) {
     note(`${name} is already open: here is its tab` + (state.docs[same].dirty ? ' (with unsaved changes)' : ''));
     return;
   }
+  if (/\.tiff?$/i.test(name)) { await importBackgroundTiff(name, buf, true, path); return; }   // TODO 138: a TIFF is a background picture in a tab of its own
   if (/\.pdf$/i.test(name) || (!/\.dxf$/i.test(name) && buf.byteLength && isPdf(buf))) { await openPdf(name, buf, path, null, batch); return; }
   if (/\.ai$/i.test(name)) { note(name + ": this .ai has no PDF part. In Illustrator: Save As .ai with 'Create PDF Compatible File' on, or Save a Copy as PDF."); return; }
   const dwg = /\.dwg$/i.test(name);
@@ -1372,7 +1380,7 @@ async function openBytes(name, buf, path = null, batch = {}) {
   const subs = fontSubstitutions(r.doc.styles, fl.items);
   const fontNote = subs.length ? 'Fonts: ' + subs.map(({ asked, shown }) => `${asked} → ${shown}`).join(', ') : '';
   const lay = LD.layoutFromRaw(r.doc, name);
-  if (lay) { openLayoutFile(lay, name, path, fontNote, readTitleBlock(r.doc), dwg); await unitsLoad(curDoc(), path, name); if (dwg && path) rememberRecent(path); return; } // one of our saved layouts: it opens as a layout tab
+  if (lay) { openLayoutFile(lay, name, path, fontNote, readTitleBlock(r.doc), dwg); await balLoad(curDoc(), path, name); if (dwg && path) rememberRecent(path); return; } // one of our saved layouts: it opens as a layout tab
   // openPath: the source file. Save backs up an opened DXF before overwriting it; a DWG has no writable path until Save As.
   const doc = { name, path: dwg ? null : path, openPath: path, guideFile: G.fileKey(path, name), dirty: false, ...(dwg && { fromDwg: true }), ...tabFields(r.doc, fl) };
   addTab(doc);
@@ -1459,7 +1467,7 @@ async function openFile() {
   const t = window.__TAURI__;
   if (!t || !t.dialog || !t.dialog.open) { ui.picker.value = ''; ui.picker.click(); return; }
   try {
-    const picked = await t.dialog.open({ multiple: false, filters: [{ name: 'Drawings', extensions: ['dxf', 'dwg', 'pdf', 'ai'] }] });
+    const picked = await t.dialog.open({ multiple: false, filters: [{ name: 'Drawings', extensions: ['dxf', 'dwg', 'pdf', 'ai', 'tif', 'tiff'] }] });
     const path = Array.isArray(picked) ? picked[0] : picked;
     if (path) await openPath(String(path));
   } catch (err) {
@@ -1484,7 +1492,7 @@ async function openPath(path, recent = false, batch = {}) {
   if (!t || !t.fs || !t.fs.readFile) return;
   try {
     if (!(await bigOk([{ name, size: await pathSize(path) }])).length) return;
-    if (!/\.(dxf|pdf|ai)$/i.test(name)) {                                   // a .dwg is converted from its path; other names are refused
+    if (!/\.(dxf|pdf|ai|tiff?)$/i.test(name)) {                                  // a .dwg is converted from its path; other names are refused
       if (recent && t.fs.exists && !(await t.fs.exists(path))) throw new Error('not found');   // a DXF's readFile fails by itself; the helper's error would not say "moved"
       await openBytes(name, new ArrayBuffer(0), path, batch); return;
     }
@@ -1781,9 +1789,10 @@ function setTool(id) {
   state.eatteditAsk = null;
   state.colourTool = null; endReadout();
   if (id === 'measure' && !measureTarget()) { note('Measure: open a drawing, layout or Compare tab first'); return; }
-  if (cmpDoc() && (MOD_KINDS.includes(id) || id === 'contour' || DR.KINDS.includes(id) || ['text', 'dimension', 'leader', 'balloon'].includes(id)) && !cmpEdit()) return;
-  if (id === 'balloon' && !editable()) { note('Balloons work on a drawing tab (a PDF or a picture too): open one first'); return; }
+  if (cmpDoc() && (MOD_KINDS.includes(id) || id === 'contour' || id === 'shape' || DR.KINDS.includes(id) || ['text', 'dimension', 'leader', 'balloon'].includes(id)) && !cmpEdit()) return;
+  if (id === 'balloon' && !balDoc()) { note('Balloons work on a drawing tab (a PDF or a picture too) or a layout: open one first'); return; }
   if (id === 'contour' && !editable() && !curLay()) { note('Contour works on a drawing tab or a layout: open one and pick a closed outline or a placed part'); return; }
+  if (id === 'shape' && !editable() && !curLay()) { note('Shape works on a drawing, layout or Compare tab: open one first'); return; }
   if (MOD_KINDS.includes(id) && !editable() && !(curLay() && LAY_MODS.includes(id))) { note(TOOLS.find((x) => x.id === id).label + ' works on a drawing tab: open a drawing first'); return; }
   if (state.text.ed && id !== 'text') textCommit();
   state.text.drag = null; gripEnd(); state.entityDrag = null; state.drawingRotate = null; state.txoWait = false; state.zwin = false; trackClear();
@@ -1812,6 +1821,8 @@ function setTool(id) {
   if (id === 'dimension') state.msg = dimPrompt();
   if (id === 'balloon') state.msg = balPrompt();
   if (id === 'leader') state.msg = ldrPrompt();
+  state.nodes = null;
+  if (id === 'shape') state.msg = 'Shape: click a node of a selected object (Shift+click adds or removes, a box picks several), then drag one to move them all';
   if (id === 'measure') state.msg = 'Measure: click the first point (it snaps to ends and centres)';
   if (id === 'measure' && curLay()) { state.mode = 'select'; state.rotCopy = false; selectSheet(false); }
   if (id === 'step') state.msg = curLay() ? null : 'Step and repeat is on a layout tab: New layout, or Add to layout';
@@ -1889,9 +1900,9 @@ function buildCanvas() {
   // the opened drawing: a canvas over the sheet, same view (applyView), drawn at true size
   ui.dcanvas = h('canvas', { class: 'drawing-layer', 'data-testid': 'drawing' });
   ui.gridDisplay = h('div', { class: 'drawing-grid', hidden: true, 'aria-hidden': 'true', 'data-testid': 'drawing-grid' });
-  ui.picker = h('input', { type: 'file', accept: '.dxf,.dwg,.pdf,.ai,.json', hidden: true, 'data-testid': 'picker', multiple: true });
+  ui.picker = h('input', { type: 'file', accept: '.dxf,.dwg,.pdf,.ai,.json,.tif,.tiff', hidden: true, 'data-testid': 'picker', multiple: true });
   ui.picker.addEventListener('change', async () => { const files = [...ui.picker.files], batch = {}; ui.picker.value = ''; for (const f of balFirst(await bigOk(files))) await openPicked(f, batch); });   // emptied, so the same file can be picked again
-  ui.bgPicker = h('input', { type: 'file', accept: '.png,.jpg,.jpeg,.pdf', hidden: true, 'data-testid': 'bg-picker' });
+  ui.bgPicker = h('input', { type: 'file', accept: '.png,.jpg,.jpeg,.pdf,.tif,.tiff', hidden: true, 'data-testid': 'bg-picker' });
   ui.bgPicker.addEventListener('change', async () => {
     const f = ui.bgPicker.files[0], trace = traceAfter;
     ui.bgPicker.value = ''; traceAfter = false;
@@ -1910,7 +1921,9 @@ function buildCanvas() {
   ui.guideTip = h('div', { class: 'pop guidetip', hidden: true, 'data-testid': 'guide-tip' });
   ui.ovl = s('svg', { 'aria-hidden': 'true', 'data-testid': 'overlay' });
   ui.grips = s('svg', { 'aria-hidden': 'true', style: 'position:absolute;inset:0', preserveAspectRatio: 'none' });
-  ui.ovlWrap = h('div', { class: 'ovl' }, ui.ovl, ui.grips);
+  ui.gSel = s('g', { class: 'ptools', 'data-group': 'tools' });         // a selected layout part's dashed outline (TODO 352): above the canvas, which would cover it on the part's own lines; the rest of the tools stay in ui.svg
+  ui.selTop = s('svg', { 'aria-hidden': 'true', style: 'position:absolute;inset:0', preserveAspectRatio: 'none' }, ui.gSel);
+  ui.ovlWrap = h('div', { class: 'ovl' }, ui.selTop, ui.ovl, ui.grips);
   ui.tip = h('div', { class: 'drawtip', hidden: true, 'data-testid': 'draw-tip' });
   ui.keepMeas = h('button', { class: 'btn sm', type: 'button', 'data-testid': 'meas-keep', title: 'Keep this measure as a dimension (Enter)', onclick: keepMeasure }, 'Keep');
   ui.measText = h('span', { 'data-testid': 'meas-tag-text' });
@@ -2426,7 +2439,8 @@ const r2 = (v) => Math.round(v * 100) / 100;
 const fmt1 = (v) => Number(v).toFixed(1);
 const centrePivot = () => ({ kind: 'centre', x: 0, y: 0 });
 const laySnap = (lay) => ({ sw: lay.s.sheetW, sh: lay.s.sheetH, s: structuredClone(lay.s), placed: lay.placed.map((p) => ({ ...p })), gridPart: lay.s.gridPart, parts: { ...lay.parts }, layers: LD.layersOf(lay), grids: structuredClone(lay.grids || {}),
-  lsel: lay === (curLay() || {}) ? selIdxs().map((i) => placedNow[i]).filter((p) => p.src === 'loose').map((p) => p.i) : [] });      // lsel: which loose parts were selected (undo brings the selection back)
+  lsel: lay === (curLay() || {}) ? selIdxs().map((i) => placedNow[i]).filter((p) => p.src === 'loose').map((p) => p.i) : [],      // lsel: which loose parts were selected (undo brings the selection back)
+  bl: state.docs.find((t) => t.lay === lay)?.balloons });      // bl: the tab's balloon set (immutable, so the reference is the snapshot)
 const layHist = (d) => d.lhist || (d.lhist = Ed.createHistory());
 /** Keeps the layout as it is now for undo; the same key within 0.8 s (arrow key held down) keeps only the first. */
 function pushLay(d, snap, key = '', label) {
@@ -2440,6 +2454,7 @@ function layRestore(d, st, dirty = true) {
   if (st.lsel && st.lsel.length) selLooseMany = st.lsel.slice();
   const sized = st.sw != null && (st.sw !== d.lay.s.sheetW || st.sh !== d.lay.s.sheetH);
   if (sized) { d.lay.s.sheetW = st.sw; d.lay.s.sheetH = st.sh; syncFields(); }
+  if ('bl' in st) d.balloons = st.bl;
   d.lay.placed = st.placed; d.lay.parts = st.parts; if (st.layers) d.lay.layers = st.layers; if (st.grids) d.lay.grids = st.grids; Object.assign(d.lay.s, structuredClone(st.s));       // every setting (grippers, gaps, rows, marks, grid part, guides) comes back with the parts
   gapSig = ''; syncFields();                                           // the extra-gap rows hold the old gap objects: rebuilt
   state.mode = 'select'; state.pivot = centrePivot(); state.rotCopy = false; pdrag = null; lastPush = { key: '', t: 0, d: null }; if (before !== JSON.stringify(LD.placedAll(d.lay))) { picksArr = []; state.sel = -1; d.stretchSelection = null; }
@@ -2452,9 +2467,14 @@ function undoLay() {
 
   if (!d?.lay) { if (d?.hist) undo(d); return; }
   if (dropLinePoint(d)) return;
+  const m = state.modDoc === d && state.mod?.kind === 'copy' ? state.mod : null, copied = m && layHist(d).labels().past.at(-1)?.startsWith('Copy');       // a layout's step is 'Copy <part name>'
   const st = stepHist(d, 'undo');
   if (!st) { note('Nothing to undo'); return; }
-  layRestore(d, st); note('Undone');
+  layRestore(d, st);
+  if (m && state.mod === m) {
+    if (copied) copyUndone(m); else { setTool('select'); note('Undone. Copy ended: the layout changed; start Copy again'); return; }
+  }
+  note('Undone');
   if (state.draw) { renderCommand(); paintOverlay(); }
 }
 function redoLay() {
@@ -2595,6 +2615,7 @@ function selectMany(list, main, stretchSelection = null) {
   ribbon.context = null;
   state.sel = l.length ? (main != null ? main : l[l.length - 1]) : -1;
   picksArr = l.length > 1 ? l : [];
+  if (l.length) state.balSel = null;       // a part and a balloon are not selected together (as setSel does on a drawing)
   state.mode = 'select'; state.pivot = centrePivot(); state.rotCopy = false;
 }
 /** A copy of a placement for a new part: not locked, and a group's copy is a group of its own (gmap: old group id → new one, one per copy).
@@ -2651,7 +2672,7 @@ const loosenedNote = (g) => (g.loosened ? 'The step and repeat grid became separ
  * A locked part is not changed (says so). Nothing happens (and nothing is kept for undo) when it comes out the same.
  * → { g, part, next, idx, idxs, lay, items, nexts, name, many } or null.
  */
-function editSelected(fn, { copy = false, key = '', pick = false, label = 'Edit', labelSelection = true } = {}) {
+function editSelected(fn, { copy = false, key = '', pick = false, label = 'Edit', labelSelection = true, copies = 1 } = {}) {       // copies: Copy Array's placements, one gesture (fn gets c.j, the copy's number)
   // Drawing copies use fn(raw, selection); the shared DXF copier also handles blocks, dimensions and groups.
   if (!curLay()) {
     const d = editable();
@@ -2672,16 +2693,16 @@ function editSelected(fn, { copy = false, key = '', pick = false, label = 'Edit'
   if (!copy && items.some((x) => x.p.lock)) { note(LOCKED); return null; }
   const curs = items.map((x) => placementOf(x.p)), box = A.unionBox(items.map(boxOf));
   const ctx = { many, box, cx: (box[0] + box[2]) / 2, cy: (box[1] + box[3]) / 2 };
-  const nexts = items.map((x, k) => fn(x.part, curs[k], { ...ctx, k }));
+  const nexts = Array.from({ length: copies }, (_, j) => items.map((x, k) => fn(x.part, curs[k], { ...ctx, k, j }))).flat();
   if (!copy && nexts.every((n, k) => PL.samePlacement(n, curs[k]))) return null;
   const name = many ? `${items.length} parts` : items[0].part.name;
   const g = startGesture(d, labelSelection ? `${label} ${name}` : label);
   g.key = key;
   gMark(g);
   let idxs;
-  if (copy) { const gm = {}; idxs = nexts.map((n) => { lay.placed.push(fresh(n, gm)); return lay.placed.length - 1; }); }
+  if (copy) { const gms = []; idxs = nexts.map((n, k) => { const c = Math.floor(k / items.length); lay.placed.push(fresh(n, gms[c] ||= {})); return lay.placed.length - 1; }); }
   else { idxs = gLooseMany(g, items.map((x) => x.i)); nexts.forEach((n, k) => { lay.placed[idxs[k]] = n; }); }
-  const scaledObjects = new Set(idxs.filter((_, k) => items[k].part.obj && (nexts[k].sc || 1) !== (curs[k].sc || 1)));
+  const scaledObjects = new Set(idxs.filter((_, k) => items[k % items.length].part.obj && (nexts[k].sc || 1) !== (curs[k % items.length].sc || 1)));
   if (scaledObjects.size) {
     const v = LD.objectDoc(lay);
     for (const ent of v.raw.entities) if (scaledObjects.has(v.at.get(ent))) LD.objectReplace(lay, v, ent, ent, () => 'o' + uid());
@@ -2693,9 +2714,9 @@ function editSelected(fn, { copy = false, key = '', pick = false, label = 'Edit'
 }
 /** Off-the-sheet wording for an edit's result: one part by name, several by count. */
 function offNoteOf(r) {
-  if (!r.many) return offNote(r.lay, r.part, r.next);
+  if (!r.many && r.nexts.length === 1) return offNote(r.lay, r.part, r.next);
   const W = r.lay.s.sheetW, H = r.lay.s.sheetH;
-  return offWords(r.items.filter((x, k) => PL.offSheet(x.part, r.nexts[k], W, H)).length, r.items.length);
+  return offWords(r.nexts.filter((n, k) => PL.offSheet(r.items[k % r.items.length].part, n, W, H)).length, r.nexts.length);
 }
 const offWords = (n, total) => (n ? `${n} of the ${total} parts ${n === 1 ? 'is' : 'are'} off the sheet (drawn in orange). ${n === 1 ? 'It is' : 'They are'} still placed` : '');
 const afterEdit = (r, text) => r && say(text, offNoteOf(r), loosenedNote(r.g));
@@ -2745,6 +2766,7 @@ function nudgeSel(dir, big) {
 }
 /** Delete: the selected placed parts go (a grid copy: the grid becomes placed parts first, the others stay). A locked part is not deleted. */
 function deletePlaced() {
+  if (balDelete()) return;       // the menu / command Delete: a selected balloon first
   const items = selItems();
   if (!items.length) { note('Delete: select a placed part first'); return; }
   if (items.some((x) => x.p.lock)) { note(LOCKED); return; }
@@ -3014,8 +3036,8 @@ function layoutBoxSelect(r, e) {
   const lay = curLay();
   if (!lay) return;
   if (!r.moved) {
-    // an empty click with the Select tool clears; Ctrl/Cmd keeps; Stretch / Step / Contour picks stay
-    if ((state.tool === 'select' || state.tool === 'step') && !layModLive()) { if (selIdxs().length && !r.shift && !r.ctrl) { selectMany([]); update(); note('Selection cleared'); } }
+    // an empty click with the Select (or Shape: its nodes go with it) tool clears; Ctrl/Cmd keeps; Stretch / Step / Contour picks stay
+    if ((state.tool === 'select' || state.tool === 'step' || state.tool === 'shape') && !layModLive()) { if (selIdxs().length && !r.shift && !r.ctrl) { selectMany([]); update(); note('Selection cleared'); } }
     else if (selIdxs().length > 1 && !r.shift) { selectMany(groupIdxs(state.sel), state.sel); update(); note('Selection: just the main part'); }
     return;
   }
@@ -3756,8 +3778,8 @@ function popMenu(x, y, items) {
   const m = h('div', { class: 'pop ctxmenu', role: 'menu', 'data-testid': 'ctx-menu' }, items.map((it) => {
     if (it instanceof HTMLElement) return it;
     if (it === '-') return h('div', { class: 'msep', role: 'separator' });
-    const [text, fn, hint, enabled, svg] = it;                        // svg: an icon on a 20 px box
-    const b = h('button', { class: 'mi', type: 'button', role: 'menuitem', disabled: enabled === false }, svg ? h('span', { class: 'mi-l' }, icon(svg, { size: 16, box: 20, width: 1.5, cap: 'round', join: 'round' }), text) : text, hint ? h('span', { class: 'hint', 'aria-hidden': 'true' }, hint) : null);
+    const [text, fn, hint, enabled, svg, title] = it;                 // svg: an icon on a 20 px box; title: the tooltip (a greyed item's why)
+    const b = h('button', { class: 'mi', type: 'button', role: 'menuitem', disabled: enabled === false, title },svg ? h('span', { class: 'mi-l' }, icon(svg, { size: 16, box: 20, width: 1.5, cap: 'round', join: 'round' }), text) : text, hint ? h('span', { class: 'hint', 'aria-hidden': 'true' }, hint) : null);
     b.addEventListener('click', (e) => { e.stopPropagation(); hideMenu(); fn(); });
     return b;
   }));
@@ -4067,7 +4089,7 @@ async function save(forceAs) {
     d.name = name; d.path = path; d.dirty = false; d.saved = true;
     if (d.fromDwg) { d.fromDwg = false; d.openPath = null; }              // the tab is now the .dxf it just wrote
     d.guideFile = G.fileKey(path, name); rememberGuides(d);
-    const balloonsSaved = d.lay || await balSave(d) !== false;
+    const balloonsSaved = await balSave(d) !== false;
     d.dirty = !!unitError || !balloonsSaved;
     if (!d.dirty) dropCopy(d);
     if (path) rememberRecent(path);
@@ -4083,6 +4105,38 @@ async function save(forceAs) {
   } catch (err) {
     note('Save failed: ' + (err && err.message ? err.message : err));
   }
+}
+
+/** Export DXF's Layers list: [name, ticked] as the tab's Layers panel shows them, ticked = visible. A layout lists Parts, Marks and its objects' layers (the panel's rows). */
+function exportLayerRows(d) {
+  if (d.lay) return [['Parts', !state.hidden.parts], ['Marks', !state.hidden.marks], ...Object.entries(LD.layersOf(d.lay)).map(([n, def]) => [n, !(def.off || def.frozen)])];
+  return d.fl.layers.map((l, i) => [l.name, !d.off.has(i)]);
+}
+
+/**
+ * Export DXF's Text: Curves (TODO 109b): `raw` (what Save writes) with its top-level TEXT / MTEXT outlined by the Text to outlines maths, on a copy.
+ * A font that cannot load leaves that text as text. → { raw, note } (the note for the save report)
+ */
+async function exportCurves(raw, d, skip) {
+  const lay = !!d.lay, fontOf = (it) => it.font || fontForStyle(raw.styles, it.st), keyOf = (it) => fontOf(it) + (it.bold ? ':b' : '');
+  const items = flatten(raw).items.filter((it) => it.k === 't'), fonts = new Map(), lost = new Map();
+  const own = items.filter((it) => /^M?TEXT$/.test(raw.entities[it.e]?.type) && !skip.has(String(raw.entities[it.e].layer ?? '0').toLowerCase()));
+  for (const item of own) for (const run of TO.outlineItem(item, raw.entities[item.e]).runs || [item]) {
+    const it = { ...item, ...run }, key = keyOf(it);
+    if (fonts.has(key) || lost.has(key)) continue;
+    try { fonts.set(key, await loadFont(fontOf(it), it.bold)); } catch { lost.set(key, fontOf(it)); }
+  }
+  const r = TO.outlineDoc(raw, items, (it) => fonts.get(keyOf(it))?.font, 0.01 / (lay ? 1 : d.factor), skip);
+  const subs = [...new Set([...fonts.values()].filter((f) => f.fallback).map((f) => `${f.wanted} → ${f.name}`))];
+  const asked = fontSubstitutions(raw.styles, own).map(({ asked, shown }) => `${asked} → ${shown}`);
+  const said = [`Text as curves: ${r.texts} ${r.texts === 1 ? 'text' : 'texts'} made into outlines`];
+  if (r.blockText) said.push(`${r.blockText} text${r.blockText === 1 ? '' : 's'} in blocks, attributes or placed parts stay${r.blockText === 1 ? 's' : ''} text`);
+  if (r.failed) said.push(`${r.failed} ${r.failed === 1 ? 'text' : 'texts'} stay text: font could not load (${[...lost.values()].join(', ')})`);
+  if (asked.length) said.push('Fonts: ' + asked.join(', '));
+  if (subs.length) said.push(`Font file not found, used the fallback font (${subs.join(', ')})`);
+  if (r.missing.length) said.push('Missing glyphs skipped (advance kept): ' + TO.missingGlyphsLabel(r.missing));
+  if ([...fonts.values()].some((f) => f.regularForBold)) r.notes.push('Bold face unavailable, used regular');
+  return { raw: r.raw, note: '. ' + [...said, ...r.notes].join('. ') };
 }
 
 /** Export the same content as Save, through the writer's copy-only settings. */
@@ -4103,6 +4157,9 @@ function exportDxf() {
   units.value = convertible ? sourceUnits === 1 ? 'in' : 'mm' : sourceUnits ? '' : 'unitless';
   const scale = field('scale', { type: 'text', inputmode: 'decimal', value: '1' });
   const precision = field('precision', { type: 'text', inputmode: 'numeric', value: remembered });
+  const text = h('select', { class: 'fld', 'data-testid': 'export-dxf-text' }, h('option', { value: 'text' }, 'Text'), h('option', { value: 'curves' }, 'Curves'));
+  const ticks = exportLayerRows(d).map(([layer, on]) => h('input', { type: 'checkbox', checked: on || layer === '0', disabled: layer === '0', 'aria-label': 'Layer ' + layer, 'data-testid': 'export-dxf-layer', 'data-layer': layer }));
+  const layers = h('div', { class: 'export-dxf-layers', 'data-testid': 'export-dxf-layers' }, ticks.map((box) => h('label', null, box, box.dataset.layer + (box.dataset.layer === '0' ? ' (always kept)' : ''))));
   const err = h('div', { class: 'pd-bad', role: 'alert', hidden: true, 'data-testid': 'export-dxf-err' });
   const validate = () => {
     const problems = [
@@ -4119,7 +4176,8 @@ function exportDxf() {
   const finish = () => { back.remove(); document.removeEventListener('keydown', onKey, true); };
   const go = async () => {
     const bad = validate(); if (bad) { bad.focus(); validate(); return; }
-    const want = dxfName(name.value.trim()), settings = { units: units.value || undefined, scale: +scale.value, precision: +precision.value, escapeUnicode: true };
+    const skipLayers = ticks.filter((box) => !box.checked).map((box) => box.dataset.layer), curves = text.value === 'curves';       // read now: finish() removes the dialog
+    const want = dxfName(name.value.trim()), settings = { units: units.value || undefined, scale: +scale.value, precision: +precision.value, escapeUnicode: true, skipLayers };
     finish();
     try {
       const t = window.__TAURI__;
@@ -4133,8 +4191,9 @@ function exportDxf() {
         destination = path;
         written = path.split(/[\\/]/).pop();
       }
-      const report = await writeDrawing(rawForSave(d), written, destination, settings);
-      note('Exported ' + written + saveReportNote(report));
+      const saved = rawForSave(d), skip = new Set(skipLayers.map((n) => n.toLowerCase())), made = curves ? await exportCurves(saved, d, skip) : null;
+      const report = await writeDrawing(made ? made.raw : saved, written, destination, settings);
+      note('Exported ' + written + saveReportNote(report) + (made ? made.note : ''));
     } catch (e) { note('Export failed: ' + (e?.message || e)); }
   };
   const row = (label, input) => h('label', { class: 'qs-row' }, h('span', null, label), input);
@@ -4143,7 +4202,8 @@ function exportDxf() {
   const dlg = h('div', { class: 'pop-dialog export-dxf-dialog', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Export DXF', 'data-testid': 'export-dxf-dialog' },
     h('div', { class: 'row between' }, h('strong', null, 'Export DXF'), close),
     h('span', { class: 'lbl' }, 'Write a DXF copy with export settings.'),
-    row('File name', name), row('Units', units), row('Scale', scale), row('Precision', precision),
+    row('File name', name), row('Units', units), row('Scale', scale), row('Precision', precision), row('Text', text),
+    h('div', { class: 'qs-row' }, h('span', null, 'Layers'), layers),
     h('span', { class: 'lbl' }, 'Scale is applied about 0,0. Precision sets decimal places for coordinates and lengths.'), err,
     h('div', { class: 'row' }, h('span', { class: 'lbl', style: 'flex:1' }, 'Next: native file picker'),
       cancel,
@@ -4822,7 +4882,7 @@ function cmdEnter(raw) {
     if (c === 'apply' || c === 'a') { applyContour(); return; }
     if (m) { const why = m[1][0] === 'd' ? setContourDist(m[2]) : setContourSteps(m[2]); renderContour(); renderCommand(); if (why) note(why); return; }
   }
-  if (state.tool === 'balloon' && editable() && /^\d+$/.test(c)) { balNextTyped(c); return; }
+  if (state.tool === 'balloon' && balDoc() && /^\d+$/.test(c)) { balNextTyped(c); return; }
   if (state.tool === 'dimension' && state.dimType === 'linear' && state.dim.pts.length === 2 && /^(h|horizontal|v|vertical)$/.test(c)) { state.dim.force = c[0]; note('Linear: ' + (c[0] === 'h' ? 'horizontal' : 'vertical') + '. ' + dimPrompt()); paintOverlay(); return; }
   const cmd = CB.resolve(c, curLay() ? 'layout' : 'draw', ownCommands);
   if (cmd) runCommand(cmd);
@@ -4854,7 +4914,7 @@ const DO = {
   },
   fill: () => startColourTool('fill'), eyedropper: () => startColourTool('eyedropper'), readout: () => toggleReadout(),
   dimension: () => { if (cmpDoc() && !cmpEdit()) return; if (!dimTarget()) { note('Dimensions work on a drawing tab or a layout: open one first'); return; } state.dimType = 'aligned'; paintDimButton(); setTool('dimension'); },       // D is the Aligned dimension
-  leader: () => { if (cmpDoc() && !cmpEdit()) return; if (editable()) setTool('leader'); else note('Leaders work on a drawing tab: open a drawing first'); },
+  leader: () => { if (cmpDoc() && !cmpEdit()) return; if (dimTarget()) setTool('leader'); else note('Leaders work on a drawing tab or a layout: open one first'); },
   dimstyle: () => showDimStyle(),
   nudge: () => ui.cmdUI.openNudge(String(state.nudge), setNudgeText),
   step: () => { setPtab('step'); docker.folds['step-panel'] = false; applySectionFold(ui.stepSec); rememberDocker(); setTool('step'); ui.stepSec.scrollIntoView({ block: 'nearest' }); },
@@ -4867,6 +4927,8 @@ const DO = {
   simplify: () => shapeSelection('simplify'), frontminus: () => shapeSelection('frontminus'), backminus: () => shapeSelection('backminus'), boundary: () => shapeSelection('boundary'),
   rotate: () => {
     if (!curLay()) { setTool('rotate'); return; }
+    const now = selItems();
+    if (now.length && now.every((x) => x.p.src === 'loose' && x.part.obj)) { setTool('rotate'); return; }       // loose layout objects only: Rotate as on a drawing (base point, angle, Reference); placed parts keep the turn arrows
     const sp = selectedPlaced();
     if (sp) { if (sp.p.lock) { note(LOCKED); return; } state.mode = 'rotate'; state.pivot = centrePivot(); state.rotCopy = false; state.lref = null; update(); return; }
     const order = ['best', '0', '90'];
@@ -4892,7 +4954,7 @@ function runCommand(cmd) {
   const n = cmd.name, label = n[0].toUpperCase() + n.slice(1), lay = curLay();
   if (!ui.startScreen.hidden && !['open', 'compare', 'nexttab', 'previoustab', 'closetab'].includes(n)) { note('Open or start a drawing first'); return; }
   if (cmd.where === 'layout' && !lay) { note(`${label} is on a layout tab: New layout, or Add to layout`); return; }
-  if (cmd.where === 'draw' && lay && cmd.cat !== 'Draw' && n !== 'textoutlines' && n !== 'combine' && n !== 'explode' && n !== 'dimension' && !DIM_OF[n] && !LAY_MODS.includes(TOOL_OF[n] || n)) { note(`${label} works on a drawing tab: open a drawing first`); return; }
+  if (cmd.where === 'draw' && lay && cmd.cat !== 'Draw' && n !== 'textoutlines' && n !== 'combine' && n !== 'explode' && n !== 'dimension' && n !== 'leader' && !DIM_OF[n] && !LAY_MODS.includes(TOOL_OF[n] || n)) { note(`${label} works on a drawing tab: open a drawing first`); return; }
   if (DIM_OF[n]) { if (cmpDoc() && !cmpEdit()) return; if (dimTarget()) setDimType(DIM_OF[n]); else note('Dimensions work on a drawing tab or a layout: open one first'); }
   else if (DO[n]) DO[n]();
   else setTool(TOOL_OF[n] || n);
@@ -5155,6 +5217,17 @@ function drawSheet() {
 
 /** The hit target of a layout object: its own lines and arcs (a stroke 14 px wide), so a click inside a frame still reaches what is under it. */
 function objHit(part, p, H) {
+  const dd = partPathD(part);
+  if (!dd) return s('polygon', { class: 'part-hit ob', points: polyPoints(PL.corners(part, p), H) });
+  const transform = `matrix(${placedMat(part, p, H).join(' ')})`, path = s('path', { class: 'part-hit ob', d: dd, transform });
+  return isDimPart(part) ? s('g', null, path, part.fl.items.filter((it) => it.k === 't').map((it) => s('rect', { fill: 'transparent', cursor: 'move', x: it.b[0], y: it.b[1], width: it.b[2] - it.b[0], height: it.b[3] - it.b[1], transform }))) : path;
+}
+
+/** SVG path data of a part's own lines and arcs (its drawing units, placedMat maps them to the sheet), '' when it has none; kept per flattened drawing. */
+const pathDs = new WeakMap();
+function partPathD(part) {
+  if (!part.fl) return '';
+  if (pathDs.has(part.fl)) return pathDs.get(part.fl);
   let dd = '';
   for (const it of part.fl.items) {
     const o = it.ops;
@@ -5167,9 +5240,8 @@ function objHit(part, p, H) {
       } else i++;
     }
   }
-  if (!dd) return s('polygon', { class: 'part-hit ob', points: polyPoints(PL.corners(part, p), H) });
-  const transform = `matrix(${placedMat(part, p, H).join(' ')})`, path = s('path', { class: 'part-hit ob', d: dd, transform });
-  return isDimPart(part) ? s('g', null, path, part.fl.items.filter((it) => it.k === 't').map((it) => s('rect', { fill: 'transparent', cursor: 'move', x: it.b[0], y: it.b[1], width: it.b[2] - it.b[0], height: it.b[3] - it.b[1], transform }))) : path;
+  pathDs.set(part.fl, dd);
+  return dd;
 }
 
 /** Points of an SVG polygon from sheet points (mm, y up). */
@@ -5199,13 +5271,21 @@ function rotationControls(cor, c, pv, k, label) {
  * What is drawn over the selected placed part: its outline, and the size handles (for show: a part is scaled with its drawing) or, in rotate
  * mode, the four turn arrows and the pivot ◎. Sizes are in screen pixels, so it is redrawn when the view zooms.
  */
+const OUTLINE_MAX = 2000;
 function drawTools() {
   const g = ui.gTools;
   if (!g) return;
   const lay = curLay(), sel = selectedPlaced();
-  if (!lay || state.hidden.parts || sheetSelOn()) { g.replaceChildren(); return; }
-  const H = state.sheetH, k = 1 / view.scale, Y = (q) => [q[0], H - q[1]], out = [];
+  if (!lay || state.hidden.parts || sheetSelOn()) { g.replaceChildren(); ui.gSel.replaceChildren(); return; }
+  const H = state.sheetH, k = 1 / view.scale, Y = (q) => [q[0], H - q[1]], out = [], top = [];
   const poly = (pts) => pts.map((q) => `${+q[0].toFixed(3)},${+q[1].toFixed(3)}`).join(' ');
+  /** A selected part drawn dashed along its own lines and arcs (TODO 352: no box; a part with none, text alone, keeps the box); orange off the sheet or in a gripper. points = the outline area's corners. */
+  const outline = (x, attrs) => {
+    // shortcut: a part of more than OUTLINE_MAX lines keeps the box: a dashed stroke of 20k long lines made every pan / zoom frame slower than the kept picture's settle; upgrade with a clipped or cached outline
+    const dd = x.part.fl?.items.length > OUTLINE_MAX ? '' : partPathD(x.part), a = { ...attrs, class: attrs.class + (x.p.off || x.p.grip ? ' off' : ''), points: poly(PL.corners(x.part, x.p).map(Y)) };
+    top.push(dd ? s('path', { ...a, d: dd, transform: `matrix(${placedMat(x.part, x.p, H).join(' ')})` }) : s('polygon', a));
+  };
+  const done = () => { g.replaceChildren(...out); ui.gSel.replaceChildren(...top); };
   for (const p of placedNow) {                                      // a padlock on the upper-right corner of every locked part
     if (!p.lock || !lay.parts[p.partId]) continue;
     const b = placedBox(lay.parts[p.partId], p);
@@ -5226,9 +5306,8 @@ function drawTools() {
   if (items.length > 1 && !(state.mode === 'rotate' && A.oneItem(placedNow, items.map((x) => x.i)) >= 0)) {       // several selected (not a part with its contour in rotate mode): each outline, the box round them with its readout, and the pick-order numbers
     const ghosts = pdrag && pdrag.ghosts;
     if (ghosts) for (const gh of ghosts) out.push(s('polygon', { class: 'ghost', points: poly(PL.corners(gh.part, gh.pl).map(Y)) }));
-    for (const x of items) out.push(s('polygon', { class: 'sel-box sel-multi', points: poly(PL.corners(x.part, x.p).map(Y)), 'stroke-dasharray': '6 6' }));
+    for (const x of items) outline(x, { class: 'sel-box sel-multi', 'stroke-dasharray': '6 6' });
     const ub = A.unionBox(items.map(boxOf)), pad = 8 * k, x0 = ub[0] - pad, x1 = ub[2] + pad, yT = H - ub[3] - pad, yB = H - ub[1] + pad, xm = (x0 + x1) / 2, ym = (yT + yB) / 2;
-    out.push(s('rect', { class: 'sel-union', x: x0, y: yT, width: x1 - x0, height: yB - yT }));
     out.push(s('g', { class: 'grip-sq' }, [[x0, yT], [xm, yT], [x1, yT], [x0, ym], [x1, ym], [x0, yB], [xm, yB], [x1, yB]].map((q) => s('rect', { x: q[0] - 6 * k, y: q[1] - 6 * k, width: 12 * k, height: 12 * k }))));
     const whole = wholeGroup(), text = whole ? `Group of ${items.length}` : `${items.length} parts · ${fmt(ub[2] - ub[0])} × ${fmt(ub[3] - ub[1])}`;
     if (whole) {
@@ -5241,21 +5320,21 @@ function drawTools() {
         out.push(s('g', { class: 'pick-badge' }, s('circle', { cx, cy, r: 11 * k }), s('text', { x: cx, y: cy + 4.5 * k, 'text-anchor': 'middle', 'font-size': 13 * k }, String(n + 1))));
       });
     }
-    g.replaceChildren(...out);
+    done();
     return;
   }
-  if (!sel) { g.replaceChildren(...out); return; }
+  if (!sel) { done(); return; }
   const cor = PL.corners(sel.part, sel.p).map(Y);
   if (pdrag && pdrag.ghost) out.push(s('polygon', { class: 'ghost', points: poly(PL.corners(sel.part, pdrag.ghost).map(Y)) }));
   if (pdrag && pdrag.ghosts) for (const gh of pdrag.ghosts) out.push(s('polygon', { class: 'ghost', points: poly(PL.corners(gh.part, gh.pl).map(Y)) }));
-  if (!gripDoc()?.layDim) out.push(s('polygon', { class: 'sel-box', points: poly(cor), 'data-mode': state.mode }));       // a dimension with grips is drawn solid instead (TODO 345b3)
+  if (!gripDoc()?.layDim) outline(sel, { class: 'sel-box', 'data-mode': state.mode });       // a dimension with grips is drawn solid instead (TODO 345b3)
   if (state.mode === 'rotate') {
     const mid = PL.centreOf(sel.part, sel.p), c = Y(mid), pv = Y(pivotPoint(sel.part, sel.p));
     out.push(...rotationControls(cor, c, pv, k, pdrag?.label?.text));
   } else if (!(sel.part.obj && sel.p.src === 'loose' && !sel.p.lock && gripOn(gripDoc()))) {      // an object with grips of its own has no resize squares on top of them
     out.push(s('g', { class: 'grip-sq' }, PL.handlePoints(sel.part, sel.p).map(Y).map((q) => s('rect', { x: q[0] - 3.5 * k, y: q[1] - 3.5 * k, width: 7 * k, height: 7 * k }))));
   }
-  g.replaceChildren(...out);
+  done();
 }
 
 function applyHidden() {
@@ -5264,7 +5343,7 @@ function applyHidden() {
   ui.gMarks.style.display = state.hidden.marks ? 'none' : '';
   ui.gDims.style.display = state.hidden.dims ? 'none' : '';
   ui.gGaps.style.display = state.hidden.parts ? 'none' : '';
-  ui.gTools.style.display = state.hidden.parts ? 'none' : '';
+  ui.gTools.style.display = ui.gSel.style.display = state.hidden.parts ? 'none' : '';
 }
 
 // ---- view: zoom, pan, fit ----
@@ -5277,6 +5356,7 @@ function applyView(gesture = false) {
   ui.gridDisplay.style.backgroundPosition = `${-view.ox * view.scale - step / 2}px ${(state.sheetH - view.oy) * view.scale - step / 2}px`;
   ui.svg.setAttribute('viewBox', `${view.ox} ${view.oy} ${w / view.scale} ${ch / view.scale}`);
   ui.ovl.setAttribute('viewBox', `${view.ox} ${view.oy} ${w / view.scale} ${ch / view.scale}`); ui.ovl.setAttribute('preserveAspectRatio', 'none');
+  ui.selTop.setAttribute('viewBox', `${view.ox} ${view.oy} ${w / view.scale} ${ch / view.scale}`);
   ui.grips.setAttribute('viewBox', `0 0 ${w} ${ch}`);
   ui.svg.setAttribute('preserveAspectRatio', 'none');
   // 100% = real size on a 96 dpi screen (3.78 px per mm)
@@ -5416,8 +5496,7 @@ function paintOverlay(gesture = false) {
     if (chunk && full && nk && !dkey && !quick && chunk.view.w === want.w && chunk.view.h === want.h && chunk.view.dpr === want.dpr && chunk.view.view.ox === view.ox && chunk.view.view.oy === view.oy
       && chunk.view.view.scale === view.scale && sameBase(chunk.key, nk)) { ui.cmdUI.place(); return; }
     chunk = null; chunkGen++;
-    c.dataset.snap = ''; c.dataset.keep = ''; c.dataset.quick = ''; c.dataset.pan = ''; c.dataset.chunk = '';
-    if (full && dkey && c.dataset.nokeep !== '1' && !(kept && sameBase(kept.key, dkey))) {
+    c.dataset.snap = ''; c.dataset.keep = ''; c.dataset.quick = ''; c.dataset.pan = ''; c.dataset.chunk = '';    if (full && dkey && c.dataset.nokeep !== '1' && !(kept && sameBase(kept.key, dkey))) {
       // a drag starts, or the view moved under it: the base without what is dragged is painted off screen once, so it is no counted full paint (TODO 317 / 320)
       snap = null; keptCv = keptCv || document.createElement('canvas'); keptCv.width = cw; keptCv.height = chh;
       kept = { key: dkey, drag: null };
@@ -5763,7 +5842,7 @@ function attachCanvasEvents() {
       c.classList.add('panning');
     } else if (e.button === 0 && state.tool !== 'pan') {
       if (state.match && curLay()) { const d = propDoc(); matchClick(d, toDrawing(d, e.clientX, e.clientY)); return; }
-      if (state.colourTool && editable() === state.colourTool.d) { colourToolClick(editable(), toDrawing(editable(), e.clientX, e.clientY)); return; }
+      if (state.colourTool && colourDoc() === state.colourTool.d) { const v = propDoc(); colourToolClick(v, toDrawing(v, e.clientX, e.clientY)); return; }
       const gh = e.target.closest && e.target.closest('[data-gap]');
       if (sheetDown(e)) { capture(c, e); return; }
       if (drawingRotateDown(e)) { capture(c, e); return; }
@@ -5785,10 +5864,10 @@ function attachCanvasEvents() {
       if (gripDown(e)) { capture(c, e); return; }
       if (!state.match && !state.drawingRotate && textHandleDown(e)) { capture(c, e); return; }
       if (state.tool === 'text' && drawTarget()) { textToolDown(e); return; }
-      if (state.draw && drawTarget()) { drawClick(e); return; }
+      if (state.draw && drawTarget()) { drawClick(e); if (state.penDrag) capture(c, e); return; }
       if (gh && !state.setlen && state.tool !== 'measure') return;                          // a gap is picked on click (below), so the browser's own focus change does not undo ours
       const d = pointTarget();
-      if (d && (state.tool === 'select' || state.tool === 'contour' || state.tool === 'measure' || state.tool === 'dimension' || state.tool === 'leader' || state.tool === 'balloon' || state.setlen || modLive())) {
+      if (d && (state.tool === 'select' || state.tool === 'shape' || state.tool === 'contour' || state.tool === 'measure' || state.tool === 'dimension' || state.tool === 'leader' || state.tool === 'balloon' || state.setlen || modLive())) {
         drag = { x: e.clientX, y: e.clientY, p: toDrawing(d, e.clientX, e.clientY), moved: false, shift: e.shiftKey };
         lengthenDown(d, drag);
         if ((state.tool === 'select' || state.tool === 'contour') && !state.setlen) drag.dim = dimGrab(d, drag.p);
@@ -5798,8 +5877,8 @@ function attachCanvasEvents() {
         }
         capture(c, e);
       }
-      if (curLay() && (state.tool === 'select' || state.tool === 'step' || state.tool === 'contour' || (layModLive() && state.mod.stage === 'pick'))) {
-        if (placedDown(e)) { capture(c, e); }
+      if (curLay() && (state.tool === 'select' || state.tool === 'shape' || state.tool === 'step' || state.tool === 'contour' || (layModLive() && state.mod.stage === 'pick'))) {
+        if (placedDown(e)) { if (state.tool === 'shape' && pdrag?.kind === 'move') pdrag = null; capture(c, e); }       // TODO 139a: the Shape tool picks objects, it does not move them
         else if (!gh) { lrub = { x: e.clientX, y: e.clientY, shift: e.shiftKey, ctrl: e.ctrlKey || e.metaKey, moved: false }; capture(c, e); }
       } else if (layModLive()) { lmod = { x: e.clientX, y: e.clientY, shift: e.shiftKey, moved: false }; lengthenDown(mdoc(curDoc()), lmod); capture(c, e); }
     }
@@ -5824,7 +5903,8 @@ function attachCanvasEvents() {
     if (state.drawingRotate?.drag) drawingRotateMove(e);
     if (lrub) { if (!lrub.moved && Math.hypot(e.clientX - lrub.x, e.clientY - lrub.y) > 4) lrub.moved = true; if (lrub.moved) showRubber(lrub, e); }
     const d = pointTarget();
-    if (drawLive()) drawHoverAt(state.drawDoc, e.clientX, e.clientY, e.shiftKey, e.ctrlKey);
+    if (state.penDrag) penDragMove(e);
+    if (drawLive() && !state.penDrag?.moved) drawHoverAt(state.drawDoc, e.clientX, e.clientY, e.shiftKey, e.ctrlKey);
     if (d && modLive()) modHover(d, e.clientX, e.clientY, e.shiftKey);
     else if (layModLive() && state.mod.stage !== 'pick') modHover(curDoc(), e.clientX, e.clientY, e.shiftKey);
     if (lmod && !lmod.moved && Math.hypot(e.clientX - lmod.x, e.clientY - lmod.y) > 4) lmod.moved = true;
@@ -5845,8 +5925,8 @@ function attachCanvasEvents() {
     const act = state.setlen || (state.tool === 'measure' ? state.meas : null);
     if (d && act && act.pts.length < 2) { act.hover = pickPoint(d, toDrawing(d, e.clientX, e.clientY), act.pts, e.shiftKey, true); paintOverlay(); }
     if (d && state.dim && dimTarget()) dimHover(d, toDrawing(d, e.clientX, e.clientY), e.shiftKey);
-    if (d && state.ldr && editable()) ldrHover(d, toDrawing(d, e.clientX, e.clientY), e.shiftKey);
-    if (d && state.bal && editable()) balHover(d, toDrawing(d, e.clientX, e.clientY), e.shiftKey);
+    if (d && state.ldr && dimTarget()) ldrHover(d, toDrawing(d, e.clientX, e.clientY), e.shiftKey);
+    if (d && state.bal && balDoc()) balHover(d, toDrawing(d, e.clientX, e.clientY), e.shiftKey);
     if ((d || curLay()) && state.tool === 'text' && !textEditing()) { state.text.hover = textPick(d || curDoc(), e.clientX, e.clientY); paintOverlay(); }
     const mx = view.ox + p.x / view.scale, my = view.oy + p.y / view.scale;
     const [cx, cy] = cursorMm(mx, my, state.sheetH);
@@ -5869,6 +5949,7 @@ function attachCanvasEvents() {
     pan = null; c.classList.remove('panning');
   };
   c.addEventListener('pointerup', (e) => {
+    if (state.penDrag && e.button === 0) penDragEnd(e);
     if (gdrag) guideUp();
     if (state.sheetDrag && !state.sheetDrag.hot) sheetUp(e);
     if (state.text.drag) textDragEnd(false);
@@ -5877,7 +5958,16 @@ function attachCanvasEvents() {
     if (pdrag) placedUp();
     if (lmod) { const r = lmod; lmod = null; if (r.path) trimPathUp(mdoc(curDoc()), e); else if ((!r.moved || state.mod?.kind === 'lengthen') && e.button === 0 && layModLive()) { const ld = curDoc(), p = toDrawing(ld, e.clientX, e.clientY); if (!cursorClick(ld, p, e.shiftKey)) modUp(ld, { ...r, p: toDrawing(ld, r.x, r.y) }, p, e.shiftKey, false); } }
     if (state.drawingRotate?.drag) drawingRotateUp(e);
-    if (lrub) { const r = lrub; lrub = null; hideRubber(); if (r.zoom) zoomWindowUp(r, e); else layoutBoxSelect(r, e); }
+    if (lrub) {
+      const r = lrub; lrub = null; hideRubber();
+      if (r.zoom) zoomWindowUp(r, e);
+      else if (state.tool === 'shape' && r.moved) {       // TODO 139a: a box picks the selected objects' nodes (with none selected, the objects first)
+        if (!gripDoc()?.vlay) layoutBoxSelect(r, e);
+        const v = gripDoc();
+        if (v?.vlay && !v.layDim) shapeBox(v, toDrawing(v, r.x, r.y), toDrawing(v, e.clientX, e.clientY), r.shift || e.shiftKey);
+      }
+      else layoutBoxSelect(r, e);
+    }
     const was = drag; drag = null;
     const d = pointTarget();
     if (was && d && e.button === 0) {
@@ -5909,6 +5999,7 @@ function attachCanvasEvents() {
         }
       }
       else if (!editable()) { /* a layout tab: its placed parts are picked by the page itself (data-i) */ }
+      else if (was.moved && state.tool === 'shape') shapeBox(d, was.p, p, e.shiftKey || was.shift);       // TODO 139a
       else if (was.moved) boxSelect(d, was.p, p, e.shiftKey || was.shift, e.clientX < was.x);
       else clickSelect(d, was.p, e.shiftKey || was.shift || e.ctrlKey || e.metaKey);
     }
@@ -5916,17 +6007,18 @@ function attachCanvasEvents() {
     state.entityDrag = null;
   });
   c.addEventListener('click', (e) => { const gh = e.target.closest && e.target.closest('[data-gap]'); if (gh && !state.setlen && state.tool !== 'measure') pickGap(gh.dataset.gap); });
-  c.addEventListener('mousedown', (e) => { if (curLay() && e.button === 0 && e.detail === 2) { textDblClick(e); if (state.text.ed?.dim) e.preventDefault(); } });       // layout selection rebuilds its SVG before dblclick can fire
-  c.addEventListener('dblclick', (e) => { if (state.dimHot) { state.dimHot.g.cancelled = true; state.dimHot = state.dimDrag = null; paintOverlay(); } if (!balDbl(e)) textDblClick(e); });       // the double-click on a dimension's text edits it: its first click did not leave a hot grip (345b2)
+  c.addEventListener('mousedown', (e) => { if (curLay() && e.button === 0 && e.detail === 2) { textDblClick(e); if (state.text.ed?.dim || state.text.ed?.lsl) e.preventDefault(); } });       // layout selection rebuilds its SVG before dblclick can fire
+  c.addEventListener('dblclick', (e) => { if (drawLive() && state.draw.kind === 'pen' && DR.toolBusy(state.draw)) { state.msg = null; if (state.draw.pts.length < 2) drawCancel(); else drawFinish(); return; } if (state.dimHot) { state.dimHot.g.cancelled = true; state.dimHot = state.dimDrag = null; paintOverlay(); } if (!balDbl(e) && !shapeDblClick(e)) textDblClick(e); });       // the double-click on a dimension's text edits it: its first click did not leave a hot grip (345b2)
   c.addEventListener('mousedown', (e) => { if (e.button === 0 && state.tool === 'text' && !e.target.closest('.texted, .zoombox, .contourpanel')) e.preventDefault(); });      // the click places a text: it must not take the focus from the box it opens
-  c.addEventListener('pointercancel', () => { if (state.drawingRotate) state.drawingRotate.drag = null; if (state.grip && !state.grip.hot) gripCancel(); state.entityDrag = null; state.balDrag = null; if (state.text.drag) textDragEnd(true); if (gdrag) cancelGuideDrag(); if (pdrag) cancelPlacedDrag(); drag = null; lrub = null; lmod = null; state.dimDrag = null; hideRubber(); paintOverlay(); end(); });
+  c.addEventListener('pointercancel', () => { if (state.penDrag) { state.penDrag = null; if (state.draw) { state.draw.cin = null; DR.toolPenDragEnd(state.draw); } } if (state.drawingRotate) state.drawingRotate.drag = null; if (state.grip && !state.grip.hot) gripCancel(); state.entityDrag = null; state.balDrag = null; if (state.text.drag) textDragEnd(true); if (gdrag) cancelGuideDrag(); if (pdrag) cancelPlacedDrag(); drag = null; lrub = null; lmod = null; state.dimDrag = null; hideRubber(); paintOverlay(); end(); });
   c.addEventListener('auxclick', (e) => e.preventDefault());
   c.addEventListener('contextmenu', (e) => {                       // right-click an outline on a drawing tab: Extract part… and the other things to do with it
     e.preventDefault();
     if (state.grip) { gripMenu(e); return; }                       // a grip run: its own menu (155e3)
     if (e.shiftKey && toolMenu(e)) return;                       // Shift+right-click while a tool is on: its menu (plain right-click finishes, below)
-    const gh = e.target.closest && e.target.closest('[data-guide]');
-    if (state.draw && !curLay()) { if (DR.toolBusy(state.draw)) drawFinish(); return; }
+    if (shapeMenu(e)) return;                                    // the Shape tool with nodes selected: Break at node / Join nodes (139c)
+    const gh =e.target.closest && e.target.closest('[data-guide]');
+    if (state.draw && (!curLay() || state.draw.kind === 'pen' && DR.toolBusy(state.draw))) { if (DR.toolBusy(state.draw)) drawFinish(); return; }
     if (modLive()) { modEnter(editable()); return; }
     if (layModLive()) { modEnter(curDoc()); return; }
     if (gh && guideTarget()) { guideMenu(e, Number(gh.dataset.guide)); return; }
@@ -5976,7 +6068,7 @@ function renderCommand() {
   if (state.dsOpen) { ui.hist.textContent = 'Command: DIMSTYLE   Dimension style'; ui.prompt.textContent = 'Preset, arrow size, text height, decimals, gap, units and text position. OK applies, Esc cancels:'; return; }
   const t = TOOLS.find((x) => x.id === state.tool), lay = curLay(), ed = editable();
   if (state.zwin) { ui.hist.textContent = 'Command: ZOOM   Window'; ui.prompt.textContent = 'Drag a box with the left button to zoom into it (Esc cancels):'; return; }
-  if (state.colourTool && ed === state.colourTool.d) {
+  if (state.colourTool && colourDoc() === state.colourTool.d) {
     const t = state.colourTool;
     ui.hist.textContent = 'Command: ' + t.kind.toUpperCase() + (state.msg ? '   ' + state.msg : '');
     ui.prompt.textContent = t.kind === 'fill' ? 'Click inside a closed outline (Esc ends):' : t.source ? 'Click each target (Esc ends):' : 'Click a source object (Esc ends):'; return;
@@ -6004,7 +6096,7 @@ function renderCommand() {
     : state.tool === 'select' && ed ? 'Command: SELECT   Click an unselected object to select it; click a selected object for rotate arrows. To pick one, click empty space first or Shift+click the others away. Shift / Ctrl adds or removes, drag a box, Esc clears. Right-click: Select connected / Extract part…'
     : state.tool === 'dimension' && (ed || lay) ? 'Command: ' + dimTypeRow(state.dimType)[4]
     : state.tool === 'leader' && ed ? 'Command: LEADER'
-    : state.tool === 'balloon' && ed ? `Command: BALLOON   next no. ${balOf(ed).next}`
+    : state.tool === 'balloon' && (ed || lay) ? `Command: BALLOON   next no. ${balOf(ed || curDoc()).next}`
     : 'Command: ' + t.label.toUpperCase();
   const word = state.fit ? 'fit' : 'placed';
   ui.prompt.textContent = gd ? `${gd.axis.toUpperCase()} position <${fmt(gd.mm)}>:` : state.msg ? state.msg
@@ -6013,6 +6105,7 @@ function renderCommand() {
     : rs ? `Angle <${fmt(rs.p.rot)}>: ${state.rotCopy ? 'Copy on. ' : ''}[Pivot / Copy / Reference / Esc]:`
     : state.tool === 'contour' && (ed || lay) ? 'Option [Inside / Outside / Distance / Steps / Sharp / Rounded / Apply]:'
     : nSel > 1 ? (wholeGroup() ? 'Command [Group / Ungroup / Lock / Unlock]:' : ARRANGE_PROMPT)
+    : state.tool === 'balloon' && lay ? balPrompt()
     : lay ? (gp
       ? (layout.count ? `${layout.count} ${word}${gridCellNote(layout) ? ' copies' : ` (${layout.cols} × ${layout.rows})`}, ${Math.round(layout.usedPct)}% of sheet${layout.fits ? '' : '. Does not fit the usable area'}. ${gridCellNote(layout) ? gridCellNote(layout) + '. ' : ''}[Apply / Rotate / Nest]:`
         : `${gridCellNote(layout) || (layout.taken ? 'All grid cells are already placed' : '0 fit: the part is larger than the usable area')}. [Apply / Rotate / Nest]:`)
@@ -6087,6 +6180,7 @@ function update(refit = false, dimNames) {
   layout = gridNow();
   for (let i = 0; i < 3 && pruneGaps(); i++) layout = gridNow();
   placedNow = lay ? LD.placedAll(lay, layout) : [];
+  placedLay = lay;
   for (const p of placedNow) { p.off = PL.offSheet(lay.parts[p.partId], p, lay.s.sheetW, lay.s.sheetH); p.grip = PL.inGripper(lay.parts[p.partId], p, lay.s); }       // off the sheet or in a gripper: drawn in orange (the counts say only p.off)
   if (selLooseMany) {
     curDoc().stretchSelection = null;
@@ -6107,7 +6201,8 @@ function update(refit = false, dimNames) {
 async function importBackground(file) {
   const ext = ((file.name.match(/\.([^.]+)$/) || [])[1] || '').toLowerCase();
   if (ext === 'pdf') { await importBackgroundPdf(file.name, await file.arrayBuffer()); return; }
-  if (!['png', 'jpg', 'jpeg'].includes(ext)) { note(file.name + ': a background must be a .png or .jpg'); return; }
+  if (ext === 'tif' || ext === 'tiff') { await importBackgroundTiff(file.name, await file.arrayBuffer()); return; }
+  if (!['png', 'jpg', 'jpeg'].includes(ext)) { note(file.name + ': a background must be a .png, .jpg, .tif or .pdf'); return; }
   let bitmap;
   try { bitmap = await createImageBitmap(file); } catch { note(file.name + ': could not read this picture'); return; }
   placeBackground(file.name, bitmap, 25.4 / 96, 'shown at 96 dpi. Set length makes it true size');
@@ -6122,6 +6217,41 @@ async function importBackgroundPdf(name, bytes, newTab = false, path = null) {
     placeBackground(name, bitmap, r.mmPerPx, r.pages > 1 ? `all ${r.pages} pages side by side, true size from the PDF` : 'page 1 of 1, true size from the PDF', newTab, { path, pdf: { name, bytes: keep, pages: r.pages, page: 1, sheets: [1], allPages: true, picture: true } });
     if (r.dpi < 150) note(`Background at ${r.dpi} dpi (${r.pages} pages)`);
   } catch (err) { note(name + ': could not draw this PDF (' + (err && err.message ? err.message : err) + ')'); }
+}
+/** TODO 138: every readable page of a .tif / .tiff as ONE background picture, laid out as a PDF's (pageLayout: side by side, 10 mm apart, top edges aligned),
+ *  each page at its own dpi (none: 96), the picture at the highest page dpi unless pageLayout lowers it. Unreadable pages are skipped and named. */
+async function importBackgroundTiff(name, bytes, newTab = false, path = null) {
+  let pages;
+  try { pages = readTiff(bytes); } catch (err) { note(name + ': could not read this TIFF (' + (err && err.message ? err.message : err) + ')'); return; }
+  let ok = pages.filter((p) => p.decode);
+  const bad = pages.filter((p) => p.error);
+  const unreadable = () => `${name}: could not read this TIFF (${[...new Set(bad.map((p) => p.error))].join('; ')})`;
+  if (!ok.length) { note(unreadable()); return; }
+  // sizes and dpi come from the headers: the layout first, then each page decoded, drawn and dropped in turn (only one page's RGBA alive at a time)
+  const lay = pageLayout(ok.map((p) => [p.w * 72 / p.dpi[0], p.h * 72 / p.dpi[1]]), { maxDpi: Math.max(...ok.flatMap((p) => p.dpi)) });
+  const canvas = document.createElement('canvas');
+  canvas.width = lay.W; canvas.height = lay.H;
+  const c = canvas.getContext('2d');
+  let bitmap;
+  try {
+    for (const [i, p] of ok.entries()) {
+      note(`Reading page ${i + 1} of ${ok.length}`);
+      let rgba;
+      try { rgba = await p.decode(); } catch (e) { bad.push({ n: p.n, error: e?.message || String(e) }); continue; } // a corrupt page: its cell stays blank, it is named as skipped
+      const bm = await createImageBitmap(new ImageData(rgba, p.w, p.h)), cell = lay.cells[i];
+      rgba = null;
+      c.drawImage(bm, cell.x, cell.y, cell.w, cell.h);
+      bm.close();
+    }
+    bad.sort((a, b) => a.n - b.n);
+    ok = ok.filter((p) => !bad.some((b) => b.n === p.n));
+    if (!ok.length) { note(unreadable()); return; }
+    bitmap = await createImageBitmap(canvas);
+  } catch (err) { note(name + ': could not draw this TIFF (' + (err && err.message ? err.message : err) + ')'); return; }
+  finally { canvas.width = canvas.height = 0; }
+  const how = (ok.length > 1 ? `${ok.length} pages side by side` : `page ${ok[0].n} of ${pages.length}`) + (ok.some((p) => p.dpi[0] === 96 && p.dpi[1] === 96) ? ', shown at 96 dpi where the TIFF gives none' : ', true size from the TIFF')
+    + (bad.length ? `; skipped page${bad.length > 1 ? 's' : ''} ${bad.map((p) => p.n).join(', ')} (${[...new Set(bad.map((p) => p.error))].join('; ')})` : '');
+  placeBackground(name, bitmap, lay.mmPerPx, how, newTab, { path });
 }
 function placeBackground(name, bitmap, mm, how, newTab = false, src = null) {
   let d = newTab ? null : curDoc();
@@ -6344,7 +6474,7 @@ function explodeOnLayout(burst = false) {
   if (r.done) tidyGroups(d.lay);
   gCommit(g);
   selLooseMany = [...gridPl, ...made].map((p) => d.lay.placed.indexOf(p)); update();
-  const ex = [r.done ? `${r.done} part${r.done === 1 ? '' : 's'} exploded → ${r.pieces.length} objects` : '', nd ? `${nd} dimension${nd === 1 ? '' : 's'} exploded into lines, arrows and text` : ''].filter(Boolean).join('; ');
+  const ex = [r.done ? `${r.done} part${r.done === 1 ? '' : 's'} exploded → ${r.pieces.length} objects` : '', nd ? `${nd} ${dimNoun(dims.map((x) => x.part))}${nd === 1 ? '' : 's'} exploded into lines, arrows and text` : ''].filter(Boolean).join('; ');
   if (grid) note(`${label}: the grid's copies are separate placed parts now` + (ex ? '; ' + ex : `. ${label} again to break a part into outlines`) + why + '. Ctrl+Z puts the grid back');
   else note(label + ': ' + ex + why + '. Ctrl+Z puts ' + (all.length > 1 ? 'them' : 'the part') + ' back');
 }
@@ -6362,7 +6492,7 @@ function explodeOrBurst(burst) {
     const n = ats.length ? LD.explodeDims(lay.lay, ats, () => 'o' + uid()) : 0;
     if (!n) { note(label + ': nothing explodable (0 exploded)' + why); return; }
     state.sel = -1; pushLay(lay, snap, '', label); touch(); update();
-    note(`${label}: ${n} dimension${n === 1 ? '' : 's'} exploded into lines, arrows and text` + why + '. Ctrl+Z puts it back');
+    note(`${label}: ${n} ${dimNoun(items.map((x) => x.part))}${n === 1 ? '' : 's'} exploded into lines, arrows and text` + why + '. Ctrl+Z puts it back');
     return;
   }
   const d = editable();
@@ -6524,9 +6654,12 @@ function partBox(d) {
 const editable = () => { const tab = curDoc(), item = tab?.cmp && cmpSelected(tab.cmp), d = tab?.cmp ? item?.visible && cmpSourceTab(item) : tab; return d && !d.lay && d.raw && d.fl && d.hist ? d : null; };
 const measureTarget = () => curLay() || cmpDoc() ? curDoc() : editable();
 /** The tab the Dimension tool works on: a drawing tab, or a layout (its objects are in mm; the dimension becomes a layout object, TODO 156b2c1). */
+const colourDoc = () => curLay() ? curDoc() : editable();       // the tab Fill / Eyedropper work on: a layout works on its loose objects (156e2)
 const dimTarget = () => { const d = curDoc(); if (d?.lay) { d.factor = 1; return d; } return editable(); };
+/** The tab the Balloon tool and its handlers work on: a drawing tab or a layout (balloons only; editable() stays drawing-only, TODO 156e4a). */
+const balDoc = dimTarget;
 /** The tab a point tool's pick lands on (Measure also works on a layout or Compare, Dimension on a layout). */
-const pointTarget = () => state.tool === 'measure' ? measureTarget() : state.tool === 'dimension' ? dimTarget() : editable();
+const pointTarget = () => state.tool === 'measure' ? measureTarget() : state.tool === 'dimension' || state.tool === 'leader' || state.tool === 'balloon' ? dimTarget() : editable();
 const drawBox = (fl) => fl.boxes[spaceOf(fl) ? 'paper' : 'model'];
 const fmtSize = (v) => String(+Number(v).toFixed(2));
 /** fl + hid (TODO 319b): the drawn items of this state and the entities hidden one by one they were made with; Undo / Redo reuse them (see drawnOf). */
@@ -7154,6 +7287,23 @@ function layGripCommit(v, pairs, label, keepSel) {
   touch(d); update();
   return true;
 }
+/** A grip edit of a layout's selected leader (v: layDimDoc; n: the LEADER pseudo with its new points): its block is rebuilt in place (the note follows the last point), one undo step. False when the block cannot be built. */
+function layLdrReplace(v, n, label) {
+  const d = v.vlay, snap = laySnap(d.lay), { p, part } = v.layDim, next = LR.replace(part.raw, n.name, n.model);
+  if (!next || !LD.replaceDim(d.lay, d.lay.placed[p.i], part.raw.entities[0], { [n.name]: next.blocks[n.name] }, () => 'o' + uid(), new Set(Object.values(d.lay.parts).map((q) => q.name)))) return false;
+  pushLay(d, snap, '', label); touch(d); update();
+  return true;
+}
+/** A grip mode (Move, Rotate, Scale, Mirror) on a layout's selected leader or dimension (v: layDimDoc; res: what the mode made of its little drawing, its INSERT first): the block it made replaces the old, the INSERT's offset / turn / scale
+ * become the placement, and update() settles that into the block (settleDims), as after a ribbon command; one undo step. False when the block cannot be built. */
+function layDimModeCommit(v, res, label) {
+  const d = v.vlay, snap = laySnap(d.lay), { p, part } = v.layDim, ins = res.entities[0], old = part.raw.entities[0], pl = d.lay.placed[p.i];
+  const name = String(ins.r.v[ins.r.c.indexOf(2)]).trim(), same = { ...old, r: { ...old.r, v: old.r.v.map((x, k) => (old.r.c[k] === 2 ? name : x)) } };       // the old INSERT (at the identity) under the block's new name
+  if (!res.blocks[name] || !LD.replaceDim(d.lay, pl, same, { [name]: res.blocks[name] }, () => 'o' + uid(), new Set(Object.values(d.lay.parts).map((q) => q.name)))) return false;
+  Object.assign(pl, insertPlacement(d.lay.parts[pl.partId], ins));
+  pushLay(d, snap, '', label); touch(d); update();
+  return true;
+}
 function restoreBg(d, st) {
   if (st.mm != null && d.bg) d.bg.mm = st.mm;
   if (st.pos && d.bg) [d.bg.x, d.bg.y] = st.pos;
@@ -7243,7 +7393,7 @@ function undo(d) {
   const st = stepHist(d, 'undo'); if (!st) { note('Nothing to undo'); return; }
   if (restore(d, st, drawnOf(d, st)) === false) { d.hist.redo(st); return; }       // the step goes back on the undo list
   if (m?.raw) {
-    if (copied && m.raw === raw && [...m.sel].every((i) => raw[i] === st.entities[i])) m.raw = d.raw.entities;
+    if (copied && m.raw === raw && [...m.sel].every((i) => raw[i] === st.entities[i])) { m.raw = d.raw.entities; copyUndone(m); }
     else { setTool('select'); note('Undone. Copy ended: drawing or source objects changed; start Copy again'); return; }
   }
   note('Undone'); if (state.draw) { renderCommand(); paintOverlay(); }
@@ -7723,10 +7873,21 @@ const saveDimStyles = () => { try { localStorage.setItem(DS_SAVED, JSON.stringif
 const curDimStyle = () => state.dimStyles.presets[state.dimStyles.cur];
 const fix2 = (v) => Number(v).toFixed(2);
 
+/** On a layout (TODO 156e1): the selected leaders take the style's text height and arrow size, one undo step; how many. (Layout dimensions are not restyled here yet.) */
+function layLeadersStyle(d) {
+  const look = dimNew(d), snap = laySnap(d.lay), names = new Set(Object.values(d.lay.parts).map((q) => q.name));
+  let k = 0;
+  for (const x of selItems()) {
+    const o = x.p.src === 'loose' && x.part.obj && LR.ofEntity(x.part.raw, 0), nl = o && LR.replace(x.part.raw, o.name, { ...o.model, textH: look.textH, arrow: look.arrow });
+    if (nl && LD.replaceDim(d.lay, d.lay.placed[x.p.i], x.part.raw.entities[0], { [o.name]: nl.blocks[o.name] }, () => 'o' + uid(), names)) k++;
+  }
+  if (k) { pushLay(d, snap, '', 'Dimension style'); touch(d); update(); }
+  return k;
+}
 /** The selected dimensions rebuilt in the current style (one undo step); how many, or null when commit refused. */
 function applyDimStyleToSelected() {
   const d = editable();
-  if (!d) return 0;
+  if (!d) return curLay() ? layLeadersStyle(dimTarget()) : 0;
   const look = dimNew(d), blocks = { ...d.raw.blocks };
   let k = 0;
   for (const e of d.sel) {
@@ -7829,7 +7990,7 @@ function showDimStyle() {
 /** The circle's radius in mm: half the typed diameter, or Auto (3.5 / 1.6 % of the page's longest side). */
 function balR(d) {
   if (balOf(d).size != null) return balOf(d).size / 2;
-  const bs = [d.bg ? Ed.bgBox(d.bg) : null, d.box].filter(Boolean);
+  const bs = [d.bg ? Ed.bgBox(d.bg) : null, d.box, d.lay ? [0, 0, d.lay.s.sheetW, d.lay.s.sheetH] : null].filter(Boolean);
   return Math.max(3.5, 0.016 * Math.max(0, ...bs.map((b) => Math.max(b[2] - b[0], b[3] - b[1]))));
 }
 const BAL_LABEL = { n: 'number', dim: 'dimension', tp: 'tolerance +', tm: 'tolerance -', note: 'note' };
@@ -7837,22 +7998,24 @@ const balOf = (d) => d.balloons || BAL.EMPTY;
 const sheetOf = (d) => (d.pdf ? d.pdf.page : 1);
 const balItem = (d, id) => balOf(d).items.find((it) => it.id === id) || null;
 const balSelItem = (d) => (d && state.balSel != null ? balItem(d, state.balSel) : null);
-const balPrompt = () => (!editable() ? 'Balloon: open a drawing tab first (a PDF or a picture too)' : state.bal && state.bal.tip ? 'Click where the balloon sits:' : 'Click the feature to balloon:');
+const balPrompt = () => (!balDoc() ? 'Balloon: open a drawing tab or a layout first (a PDF or a picture too)' : state.bal && state.bal.tip ? 'Click where the balloon sits:' : 'Click the feature to balloon:');
 /** The drawing's TEXT and MTEXT as text.js models (drawing units); null for a picture or a drawing with no text. Remembered until the entities change. */
 function balTexts(d) {
+  if (!d.raw) return [];                                                   // a layout has no PDF text to pick from
   if (!d.txtMemo || d.txtMemo.ents !== d.raw.entities) d.txtMemo = { ents: d.raw.entities, list: d.raw.entities.map(TX.decode).filter(Boolean) };
   return d.txtMemo.list;
 }
 
 /** A balloon change as ONE labelled undo step (the set is immutable, so the history keeps the old one); sel: the balloon selected afterwards. */
 function balApply(d, set, label, sel = state.balSel) {
-  pushHistory(d, { ...snapshotOf(d), blSize: label === 'Balloon size' }, label);
+  if (d.lay) pushLay(d, null, '', label); else pushHistory(d, { ...snapshotOf(d), blSize: label === 'Balloon size' }, label);       // a layout's own Undo: laySnap carries the set
   d.balloons = set; d.dirty = true; state.balSel = sel;
   renderTabs(); renderEdit(); renderCommand(); paintOverlay();
 }
 function balSelect(d, id) {
   state.balSel = id;
-  if (id != null && d.sel.size) { setSel(d, new Set()); return; }          // a balloon and a drawing selection are not picked together
+  if (id != null && d.lay && selIdxs().length) { selectMany([]); update(); return; }       // a balloon and the layout's part selection are not picked together
+  if (id != null && d.sel?.size) { setSel(d, new Set()); return; }          // a balloon and a drawing selection are not picked together
   renderEdit(); paintOverlay();
 }
 
@@ -7877,7 +8040,7 @@ function balClick(d, p, shift, typed = false) {
 
 // -- a selected balloon: grips at the circle's centre (moves the circle) and the tip (moves the arrow); a click on one selects it --
 function balDown(e) {
-  const d = editable();
+  const d = balDoc();
   if (!d || state.tool !== 'select' || state.setlen || state.match) return false;
   const p = sheetAt(e.clientX, e.clientY), tol = 7 / view.scale, sheet = sheetOf(d), sel = balSelItem(d);
   let it = sel && sel.sheet === sheet ? sel : null, which = it ? BAL.gripAt(it, p, tol * 1.3) : null;
@@ -7891,7 +8054,7 @@ function balDown(e) {
   return true;
 }
 function balMove(e) {
-  const g = state.balDrag, d = editable();
+  const g = state.balDrag, d = balDoc();
   if (!g || !d) return;
   if (!g.moved && Math.hypot(e.clientX - g.x, e.clientY - g.y) < 4) return;
   g.moved = true;
@@ -7902,14 +8065,14 @@ function balMove(e) {
   paintOverlay();
 }
 function balUp() {
-  const g = state.balDrag, d = editable();
+  const g = state.balDrag, d = balDoc();
   state.balDrag = null;
   if (!g || !d) return;
   if (g.moved && g.set) balApply(d, g.set, g.which === 'tip' ? 'Move balloon arrow' : 'Move balloon', g.id);
   else paintOverlay();
 }
 function balDelete() {
-  const d = editable(), it = balSelItem(d);
+  const d = balDoc(), it = balSelItem(d);
   if (!d || !it) return false;
   balApply(d, BAL.remove(balOf(d), it.id), `Delete balloon ${it.n}`, null);
   note(`Balloon ${it.n} deleted; the others keep their numbers. Ctrl+Z takes it back`);
@@ -7943,7 +8106,7 @@ function balOvl(d, out, k) {
 
 // -- the fields: the Balloon section of the right panel, typed; Pick from text; the count; Renumber --
 function balFieldTyped(key) {
-  const d = editable(), it = balSelItem(d), input = ui['bal_' + key];
+  const d = balDoc(), it = balSelItem(d), input = ui['bal_' + key];
   if (!it) return;
   const raw = input.value.trim();
   if (key === 'n') {
@@ -7960,7 +8123,7 @@ function balFieldTyped(key) {
 }
 /** Pick from text: the dimension is the text of the PDF under the arrow's tip (vector pages only). */
 function balPick() {
-  const d = editable(), it = balSelItem(d);
+  const d = balDoc(), it = balSelItem(d);
   if (!it) return;
   const texts = balTexts(d);
   if (!texts.length) { note('Pick from text: this page has no text (it is a picture), so type the dimension'); return; }
@@ -7971,14 +8134,14 @@ function balPick() {
 }
 /** The count carries on from n (typed in the Numbering field or at the command line). */
 function balNextTyped(text) {
-  const d = editable(), set = d && BAL.setNext(balOf(d), text);
+  const d = balDoc(), set = d && BAL.setNext(balOf(d), text);
   if (!d) return;
   if (!set) { note('Next number: a whole number from 1'); renderBalloons(); return; }
   if (set.next !== balOf(d).next) balApply(d, set, `Next balloon number ${set.next}`);
   note(`The next balloon is number ${set.next}`);
 }
 function balRenumber() {
-  const d = editable(), set = d && balOf(d);
+  const d = balDoc(), set = d && balOf(d);
   if (!set || !set.items.length) return;
   balApply(d, BAL.renumber(set), 'Renumber balloons');
   note(`Renumbered 1 to ${set.items.length} (sheet by sheet, in the order placed); the next is ${set.items.length + 1}. Ctrl+Z takes it back`);
@@ -7986,7 +8149,7 @@ function balRenumber() {
 
 // -- the table: a row zooms to its balloon (on its sheet); a selected balloon lights its row --
 async function balRow(id) {
-  const d = editable(), it = d && balItem(d, id);
+  const d = balDoc(), it = d && balItem(d, id);
   if (!it) return;
   if (it.sheet !== sheetOf(d) && !(await balSheet(d, it.sheet))) return;
   balSelect(d, it.id);
@@ -7996,7 +8159,7 @@ async function balRow(id) {
 }
 /** The table's file: Export CSV, and Export Excel (the same rows, as a UTF-8 CSV with a byte order mark: Excel opens it with Ø and ± right). */
 async function balExport(excel) {
-  const d = editable(), rows = d ? BAL.rows(balOf(d), state.balDock.sheet === 'all' ? null : +state.balDock.sheet) : [];
+  const d = balDoc(), rows = d ? BAL.rows(balOf(d), state.balDock.sheet === 'all' ? null : +state.balDock.sheet) : [];
   if (!rows.length) { note('Export: no balloons in the list'); return; }
   // shortcut: Excel gets a CSV with a BOM, not a real .xlsx (no xlsx writer in the app); upgrade when he needs formatting or several sheets in one file
   const name = baseName(d.balName || d.name) + '-balloons' + (excel ? '-excel' : '') + '.csv', text = BAL.csv(rows, { bom: excel });
@@ -8168,7 +8331,7 @@ function balPicked(name, text) {
 }
 /** Double-click a balloon (Select): its number is typed in the panel. */
 function balDbl(e) {
-  const d = editable();
+  const d = balDoc();
   if (!d || state.tool !== 'select') return false;
   const p = sheetAt(e.clientX, e.clientY), it = balOf(d).items.find((x) => x.sheet === sheetOf(d) && BAL.bodyAt(x, p, balR(d), 7 / view.scale));
   if (!it) return false;
@@ -8207,12 +8370,12 @@ function buildBalloonDock() {
   ui.balCount = h('span', { class: 'chip', 'data-testid': 'bal-count' }, '0');
   ui.balSize = h('input', { class: 'fld balsize', type: 'text', inputmode: 'decimal', autocomplete: 'off', 'aria-label': 'Size Ø', 'data-testid': 'bal-size', placeholder: 'Auto', title: 'Balloon circle diameter in mm for this drawing; empty = Auto' });
   const resetSize = () => {
-    const d = editable();
+    const d = balDoc();
     ui.balSize.value = d ? balOf(d).size ?? '' : '';
     ui.balSize.removeAttribute('aria-invalid');
   };
   const applySize = () => {
-    const d = editable();
+    const d = balDoc();
     if (!d) return;
     const set = BAL.setSize(balOf(d), ui.balSize.value);
     if (!set) { ui.balSize.setAttribute('aria-invalid', 'true'); return; }
@@ -8254,7 +8417,7 @@ function buildBalloonDock() {
 /** The panel, the table, the status bar's sheet chip and the sheet switcher follow the tab, the tool, the selection and the balloons. */
 function renderBalloons() {
   if (!ui.balDock) return;
-  const d = editable(), set = d ? balOf(d) : BAL.EMPTY, lib = state.panel === 'library';
+  const d = balDoc(), set = d ? balOf(d) : BAL.EMPTY, lib = state.panel === 'library';
   if (state.balSel != null && !(d && balItem(d, state.balSel))) state.balSel = null;
   const sel = d && balSelItem(d), tool = state.tool === 'balloon', show = !!d && (set.items.length > 0 || tool), P = d && d.pdf;
   const sheets = P ? PS.sheetNumbers(P) : Array.from({ length: Math.max(1, ...set.items.map((it) => it.sheet)) }, (_, i) => i + 1);
@@ -8291,7 +8454,7 @@ function renderBalloons() {
       return tr;
     }));
   }
-  ui.balPic.hidden = !(d && tool && !balTexts(d).length);
+  ui.balPic.hidden = !(d && !d.lay && tool && !balTexts(d).length);
   ui.balSheets.hidden = !(P && P.pages > 1 && !P.allPages);                 // a background PDF is one picture of all its pages: one sheet, no chips
   if (!ui.balSheets.hidden) {
     const key = P.page + ':' + sheets.join(',') + ':' + P.name;
@@ -8313,13 +8476,13 @@ const newLdr = () => ({ pts: [], hover: null, cursor: null });
 /** What the command line asks for next. */
 function ldrPrompt() {
   const L = state.ldr;
-  if (!editable()) return 'Leader: open a drawing tab first';
+  if (!dimTarget()) return 'Leader: open a drawing tab or a layout first';
   return L ? ['Specify leader arrowhead location:', 'Specify next point:', 'Specify next point, or Enter to type the note:'][L.pts.length] : null;
 }
 /** The leader being drawn, with the pointer as its last point, as a preview drawing (lines and arrowhead; no note yet), or null. */
 function ldrPreview(d) {
   const L = state.ldr, q = L && (typedAt() || L.hover || L.cursor);
-  if (!d || !editable() || !L || !L.pts.length || !q || textEditing()) return null;       // (no preview while the note is typed)
+  if (!d || !dimTarget() || !L || !L.pts.length || !q || textEditing()) return null;       // (no preview while the note is typed)
   const look = dimNew(d), g = LR.geometry({ pts: [...L.pts, [q[0], q[1]]], lines: [''], textH: look.textH, arrow: look.arrow });
   return g && { lines: g.lines, arrows: g.arrows, text: null };
 }
@@ -8330,7 +8493,7 @@ function ldrHover(d, p, shift) {
 }
 function ldrPoint(d, p, shift = false, typed = false) {
   const L = state.ldr;
-  if (!L || !editable()) return;
+  if (!L || !dimTarget()) return;
   const q = typed ? p : pickPoint(d, p, L.pts, shift), last = L.pts[L.pts.length - 1];
   if (last && Math.hypot(q[0] - last[0], q[1] - last[1]) < 1e-9) { note('Leader: that is the same point again, pick another'); return; }
   L.pts.push([q[0], q[1]]); L.hover = null;
@@ -8347,9 +8510,16 @@ function ldrNoteOpen(d) {
 }
 /** The typed note becomes the leader: one undo step, selected. */
 function ldrAdd(d, m) {
-  const b = LR.build(m, LR.freeName(d.raw.blocks));
+  const names = d.lay ? LD.dimensionNames(d.lay) : null, b = LR.build(m, names ? Ed.freeNameWithPrefix(names.taken, 'PD_LDR_') : LR.freeName(d.raw.blocks));
   if (state.ldr) { state.ldr.pts = []; state.ldr.hover = null; }
   if (!b) return;
+  if (d.lay) {                                                    // a layout object holding the leader's block, as a dimension is (TODO 156e1)
+    names.taken.add(b.name.toLowerCase());
+    layObjectsAdd(d, 'Leader', [b.insert], { [b.name]: b.block }, names);
+    if (placedNow.length) { selectMany([placedNow.length - 1]); update(); }       // selected, as on Drawings: the Leader row is there to restyle it (TODO 156e1b)
+    note(`Leader placed on the layer ${Ed.DIM_LAYER}: ${m.lines.join(' / ')}. Ctrl+Z takes it back`);
+    return;
+  }
   const idx = d.raw.entities.length;
   view.fitted = false;
   if (!commit(d, Ed.addDimension(d.raw, b), 'Add leader')) return;
@@ -8365,19 +8535,25 @@ function ldrReplace(d, e, m, label) {
   setSel(d, new Set([e]));
   return true;
 }
+/** A layout leader (sl: ldrSel's) changed to model m, as one undo step with this label (the same rebuild the grips use, layLdrReplace). */
+function ldrReplaceLay(d, sl, m, label) { return layLdrReplace({ vlay: d, layDim: { p: sl.p, part: sl.part } }, { name: sl.name, model: m }, label); }
 /** Double-click on a leader with Select: its note is typed in place. */
 function ldrEdit(d, e, model) { setSel(d, new Set([e])); textOpen(d, null, null, { model, e }); }
 /** The leader pseudo-entity the grips work on ({ type: 'LEADER', name, model }), or null when entity e is not a leader. */
 function ldrPseudo(d, e) { const o = d.raw.entities[e] && d.raw.entities[e].type === 'INSERT' && LR.ofEntity(d.raw, e); return o ? { type: 'LEADER', name: o.name, model: o.model } : null; }
-/** The one selected leader { e, name, model }, or null. */
+/** The one selected leader { e, name, model }, or null; on a layout the one selected part holding a leader (e 0, plus p and part). */
 function ldrSel(d) {
+  if (d?.lay) {
+    const it = selItems(), x = it.length === 1 && it[0].part.raw && partSelectable(it[0].p) && LR.ofEntity(it[0].part.raw, 0);
+    return x ? { e: 0, ...x, p: it[0].p, part: it[0].part } : null;
+  }
   if (!d || d.sel.size !== 1) return null;
   const e = [...d.sel][0], o = LR.ofEntity(d.raw, e);
   return o && { e, ...o };
 }
 /** The Leader section's fields: a typed note (one line), text height or arrow size (mm) changes the selected leader. */
 function ldrFieldTyped(which) {
-  const d = editable(), sl = d && ldrSel(d), input = which === 'note' ? ui.ldrNote : which === 'h' ? ui.ldrH : ui.ldrA;
+  const d = curLay() ? curDoc() : editable(), sl = d && ldrSel(d), input = which === 'note' ? ui.ldrNote : which === 'h' ? ui.ldrH : ui.ldrA;
   input.blur();
   if (!sl) return;
   let m = sl.model, label;
@@ -8389,11 +8565,11 @@ function ldrFieldTyped(which) {
   } else {
     const mm = Number(input.value.trim().replace(',', '.'));
     if (!(mm > 0) || !Number.isFinite(mm) || mm > 1e4) { note(`Type the ${which === 'h' ? 'text height' : 'arrow size'} in mm: a number above 0`); renderEdit(); return; }
-    const v = mm / d.factor;
+    const v = mm / (d.lay ? 1 : d.factor);
     if (Math.abs(v - (which === 'h' ? m.textH : m.arrow)) < 1e-9 * v) { renderEdit(); return; }
     m = which === 'h' ? { ...m, textH: v } : { ...m, arrow: v }; label = which === 'h' ? 'Leader text height' : 'Leader arrow size';
   }
-  if (ldrReplace(d, sl.e, m, label)) note(`${label}. Ctrl+Z takes it back`);
+  if (d.lay ? ldrReplaceLay(d, sl, m, label) : ldrReplace(d, sl.e, m, label)) note(`${label}. Ctrl+Z takes it back`);
 }
 function cancelSetlen() { state.setlen = null; note('Set length cancelled'); renderEdit(); paintOverlay(); }
 /** Set length and Scale Reference share this: one more picked point goes into L.pts; with two in, L.measured is their distance (mm). → 'first' | 'same' | 'done' */
@@ -8475,8 +8651,31 @@ function drawClick(e) {
   trackStop();                                                      // a click ends the hover (and the lock it showed)
   state.drawHover = q; state.msg = null;
   if (cursorDynamic() && DI.hasTyped(cursorInput())) { DR.toolHover(state.draw, q.slice(0, 2), e.ctrlKey); cursorCommit(); return; }
-  state.draw.cursorInput = null;
-  drawApply(DR.toolClick(state.draw, [q[0], q[1]], DR.tangentMode(state.draw) ? tangentObjectAt(d, e.clientX, e.clientY) : null, e.ctrlKey));
+  const T = state.draw, n = T.pts.length;
+  T.cursorInput = null;
+  if (T.kind === 'pen' && n > 2 && Math.hypot(q[0] - T.pts[0][0], q[1] - T.pts[0][1]) < 1e-9) { state.penDrag = { x: e.clientX, y: e.clientY, close: true, moved: false }; return; }       // the press on node 1 waits for the release: a drag shapes the closing segment first
+  drawApply(DR.toolClick(T, [q[0], q[1]], DR.tangentMode(T) ? tangentObjectAt(d, e.clientX, e.clientY) : null, e.ctrlKey));
+  if (T.kind === 'pen' && state.draw === T && T.pts.length === n + 1) state.penDrag = { x: e.clientX, y: e.clientY, close: false, moved: false };       // 140b: moving on before the release drags this node's handle
+}
+/** The Pen's press-and-drag (grill 140 Q3 / Q4 / Q5): past 4 px the pointer is the node's out-handle (free, no snap; Shift / ORTHO locks the angle), its in-handle the mirror. */
+function penDragMove(e) {
+  const g = state.penDrag, T = state.draw, d = state.drawDoc;
+  if (!T || !d || !drawLive() || !T.pts.length) { state.penDrag = null; return; }
+  if (!g.moved && Math.hypot(e.clientX - g.x, e.clientY - g.y) <= 4) return;
+  g.moved = true;
+  const f = d.factor, c = g.close ? T.pts[0] : T.pts.at(-1);
+  let p = toDrawing(d, e.clientX, e.clientY);
+  if (e.shiftKey || state.ortho) p = Ed.orthoLock([c[0] / f, c[1] / f], p);
+  DR.toolPenDrag(T, [p[0] * f, p[1] * f], g.close);
+  paintOverlay();
+}
+function penDragEnd(e) {
+  const g = state.penDrag, T = state.draw;
+  state.penDrag = null;
+  if (!T || !drawLive()) return;
+  DR.toolPenDragEnd(T);
+  if (g.close && T.pts.length > 2) drawApply(DR.toolClick(T, T.pts[0], null, false));       // the click on node 1 closes, with the in-handle the drag gave
+  else if (g.moved) drawHoverAt(state.drawDoc, e.clientX, e.clientY, e.shiftKey, e.ctrlKey);
 }
 /** The line, circle or arc under a click (mm) for a Circle's tangent pick, on a drawing, a Compare source or a layout; null when the click is on none (or on a spline or ellipse). */
 function tangentObjectAt(d, cx, cy) {
@@ -8489,6 +8688,7 @@ function tangentObjectAt(d, cx, cy) {
 function drawApply(r) {
   const T = state.draw, d = state.drawDoc;
   if (!T || !d) return;
+  if (!r.made && T.kind === 'pen') state.penDrag = null;           // U / Esc with the button still held: the next move must not write a handle onto the previous node
   if (r.undoSeg) { if (d.lay) undoLay(); else undo(d); return; }                             // U in a Line: the last segment's step is taken back (undo() steps the tool back too)
   if (r.made) trackClear();                                         // the tool action is over: the acquired points go
   if (T.kind === 'rrect' && T.radius !== state.drawCfg.radius) { state.drawCfg.radius = T.radius; try { localStorage.setItem('pd-rradius', String(T.radius)); } catch { /* ignore */ } }
@@ -8498,6 +8698,8 @@ function drawApply(r) {
 }
 /** Enter / Esc / right-click: the tool ends what it has (a line or polyline keeps it) and the acquired points go. */
 function drawFinish() { state.draw.cursorInput = null; trackClear(); state.draw.cont = lastDrawn.get(state.drawDoc) || null; drawApply(DR.toolFinish(state.draw)); }
+/** Esc in the Pen: the whole path goes, nothing is made. */
+function drawCancel() { state.penDrag = null; state.draw.cursorInput = null; trackClear(); drawApply(DR.toolCancel(state.draw)); }
 const lastDrawn = new WeakMap();                                    // tab document → the last shape drawn in it (mm): where the Arc's Continue starts (347c)
 /** Shift+right-click while a tool asks for a point (TODO 72): Enter, Cancel, Close and Undo last point where they apply, then the snap types. → false when no such tool is on */
 function toolMenu(e) {
@@ -8509,7 +8711,7 @@ function toolMenu(e) {
     rows.push(['Enter', () => { state.msg = null; drawFinish(); }, 'Enter']);
     const count = (d) => (d.lay ? d.lay.placed.length : d.raw.entities.length);
     rows.push(['Cancel', () => { const d = state.drawDoc, before = count(d); if (DR.toolBusy(T)) drawFinish(); const made = count(d) > before && state.msg; setTool('select'); note(made || 'Cancelled'); }]);   // setTool clears the msg: keep drawCommit's "made on layer" line
-    if (T.kind === 'polyline') rows.push(['Close', () => drawTyped('c'), null, T.pts.length >= 3]);
+    if (T.kind === 'polyline' || T.kind === 'pen') rows.push(['Close', () => drawTyped('c'), null, T.pts.length >= 3]);
     rows.push(['Undo last point', () => drawTyped('u'), null, DR.toolBusy(T)]);
   } else rows.push(['Cancel', () => { setTool('select'); note('Cancelled'); }]);
   rows.push('-', ...Object.entries(SNAP_NAME).map(([kind, name]) => [tick(state.snapTypes[kind], 'Snap: ' + name), () => setSnapType(kind, !state.snapTypes[kind])]));
@@ -8586,13 +8788,18 @@ function drawOvl(paint = false) {
       if (dynamic && T.kind === 'circle') circleGuide = out.at(-1);        // dropped below once the Radius box's own guide is placed
     }
     for (const sh of pv.shapes) out.push(s('path', { class: 'dr-shape', transform: drawingTransform(d), d: DR.svgPath(sh, H), 'data-testid': 'draw-preview' }));
+    if (pv.handles) {                                                   // the Pen's dragged node: its two handles, a thin line and a small square each
+      const k = 3.5 / view.scale;
+      out.push(s('path', { class: 'dr-hline', transform: drawingTransform(d), d: DR.svgPath({ t: 'poly', pts: [pv.handles[0][1], pv.handles[0][0], pv.handles[1][1]] }, H), 'data-testid': 'pen-handles' }));
+      for (const [, hp] of pv.handles) out.push(s('rect', { class: 'dr-handle', transform: drawingTransform(d), x: hp[0] - k, y: H - hp[1] - k, width: 2 * k, height: 2 * k }));
+    }
     if (pv.at && (pv.readout || state.trk.res || dynamic)) {
       tip = { text: state.trk.res ? state.trk.res.text : pv.readout, x: T.hover[0], y: T.hover[1] };
       if (dynamic) {
         tip.fields = DR.dynamicInput(T.pts.at(-1) || [0, 0], pv.at, state.dp, drawingUnit());
         tip.dynamic = dynamic; tip.single = DI.isSingle(DI.inputMode(T)) ? DI.inputMode(T) : null;
         tip.tracking = state.trk.res?.text;
-        if (T.pts.length && (['line', 'polyline'].includes(T.kind) || ['arc', 'ellipse'].includes(T.kind) && T.pts.length === 1) && cursorInput().mode === 'polar') tip.segment = [T.pts.at(-1), pv.at];
+        if (T.pts.length && (['line', 'polyline', 'pen'].includes(T.kind) || ['arc', 'ellipse'].includes(T.kind) && T.pts.length === 1) && cursorInput().mode === 'polar') tip.segment = [T.pts.at(-1), pv.at];
         if (T.pts.length && ['rect', 'rrect', 'circle'].includes(T.kind) && ['size', 'radius'].includes(cursorInput().mode)) {
           tip.segment = [T.pts[0], pv.at]; tip.placementKind = T.kind;
         }
@@ -8615,6 +8822,7 @@ function drawOvl(paint = false) {
     if (tt && state.grip && state.trk.res) tt.text = state.trk.res.text;
     if (tt && !CT?.grip) { const cr = ui.canvas.getBoundingClientRect(); tip = { text: tt.text, x: (tt.px[0] - cr.left) / view.scale + view.ox, y: H - ((tt.px[1] - cr.top) / view.scale + view.oy) }; }
   }
+  if (d?.lay) { const bt = balOvl(d, out, 1 / view.scale); if (bt && !CT) tip = bt; }       // a layout's balloons and the Balloon tool's ghost
   const gd = d && d.lay ? gripDoc() : null;                         // a layout's selected objects: their grips
   if (gd) {
     const tt = gripOvl(gd, out, 1 / view.scale, grips);
@@ -8636,7 +8844,7 @@ function drawOvl(paint = false) {
   if (ui.gripHint) {
     const gh = d && (d.lay ? gd : d), grips = gh && gripOn(gh) ? gripList(gh) : [];
     ui.gripHint.hidden = !grips.length;
-    ui.gripHint.textContent = grips.some((g) => g.rect) ? 'Grips: drag an edge to resize · Shift = keep proportions · Esc cancels' : 'Grips: drag, or click one then click the new place · type x,y · Shift = straight · Esc cancels';
+    ui.gripHint.textContent = state.tool === 'shape' ? 'Shape: click a node · Shift+click adds / removes · a box picks several · drag one to move them all · Delete removes · right-click breaks, joins, curves · Esc ends' : grips.some((g) => g.rect) ? 'Grips: drag an edge to resize · Shift = keep proportions · Esc cancels' : 'Grips: drag, or click one then click the new place · type x,y · Shift = straight · Esc cancels';
   }
   const t = ui.tip;
   for (const key of ['length', 'angle']) {
@@ -8761,13 +8969,13 @@ function cursorTool() {
     return { kind: 'rotate', A: state.pivot, layoutRotate: true, point: true, valueMode: 'angle', stage: state.lref?.step || '', f: 1, pts: [base], hover: snapPointer ? sheetAt(snapPointer.clientX, snapPointer.clientY) : base };
   }
   const m = state.mod;
-  const points = (modLive() || layModLive() && ['move', 'copy', 'stretch', 'scale'].includes(m.kind)) && DI.modifyPoints(m, state.pointLast);
+  const points = (modLive() || layModLive() && ['move', 'copy', 'stretch', 'scale', 'rotate'].includes(m.kind)) && DI.modifyPoints(m, state.pointLast);
   if (points) {
     const d = editable() || curDoc(), f = d.lay ? 1 : d.factor, mm = (q) => q && [q[0] * f, q[1] * f];
     const valueMode = m.p1 && ['rotate', 'scale'].includes(m.kind) && (!m.ref || m.ref.step === 'new') ? m.kind === 'rotate' ? 'angle' : m.ref ? 'length' : 'factor' : null;
     return { kind: m.kind, A: m, mod: true, point: true, valueMode, stage: m.stage + ':' + (m.ref?.step || ''), d, f, pts: points.map(mm), hover: mm(m.kind === 'offset' ? m.p : m.cur) };
   }
-  const drawing = editable();
+  const drawing = state.ldr || state.bal ? dimTarget() : editable();
   if (drawing && !textEditing() && (state.ldr || state.bal || state.tool === 'text')) {
     const A = state.ldr || state.bal || state.text, kind = state.ldr ? 'leader' : state.bal ? 'balloon' : 'text', f = drawing.factor;
     const mm = (q) => q && q.slice(0, 2).map((v) => v * f);
@@ -8915,7 +9123,7 @@ const OFFSET_OPTIONS_SAVED = 'pd-offset-options';
 const FILLET_TRIM_SAVED = 'pd-fillet-trim';
 const CHAMFER_SAVED = 'pd-chamfer';
 const OBJ_MODS = ['trim', 'extend', 'fillet', 'chamfer', 'offset', 'break', 'breakatpoint', 'lengthen', 'join', 'close', 'reverse', 'divide', 'measurepoints'];      // the modify commands that work on a layout's objects, not its placed parts (TODO 156b3a)
-const LAY_MODS = ['move', 'copy', 'stretch', 'array', 'scale', 'mirror', 'align', ...OBJ_MODS];      // the modify commands that also work on a layout (TODO 156b1, 156b3a)
+const LAY_MODS = ['move', 'copy', 'stretch', 'array', 'scale', 'mirror', 'align', 'rotate', ...OBJ_MODS];      // the modify commands that also work on a layout (TODO 156b1, 156b3a; Rotate: loose objects only, 156e2: parts turn in the layout's own rotate mode)
 const objViews = new WeakMap();
 /** The layout's objects as a drawing (layoutdoc.js objectDoc) for the drawing tab's Trim / Extend / Fillet / Offset code; kept while the objects stay as they are. */
 function layObjDoc(d) {
@@ -8935,16 +9143,20 @@ function layObjSelDoc(d) {
 /** The doc a modify tool reads: on a layout, Trim / Extend / Fillet / Offset get the objects-as-a-drawing; every other case the doc itself. */
 const mdoc = (d) => (d.lay && state.mod && OBJ_MODS.includes(state.mod.kind) ? layObjDoc(d) : d);
 const inPoly = (poly, [x, y]) => { let c = false; for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) { const [xi, yi] = poly[i], [xj, yj] = poly[j]; if ((yi > y) !== (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi) c = !c; } return c; };
+/** Is point p (sheet mm) on a visible placed part of v's layout (a loose object is not a part here)? */
+const partAt = (v, p) => placedNow.some((q) => { const part = v.vlay.lay.parts[q.partId]; return part && !part.obj && !partHid(q) && inPoly(PL.corners(part, q), p); });
 /** A pick on a placed part (and on no object) in an object tool: refused, the tool waits for another pick. Parts are not cutting edges or boundaries either (they are not in the objects' drawing). */
 function partRefused(v, m, p) {
-  const lay = v.vlay.lay;
   if (m.fence || m.cross || state.hidden.parts || hitAt(v, p) >= 0 || Ed.hitEntity(edIndex(v), p[0], p[1], pickTol(v)) >= 0) return false;
-  if (!placedNow.some((q) => { const part = lay.parts[q.partId]; return part && !part.obj && !partHid(q) && inPoly(PL.corners(part, q), p); })) return false;
+  if (!partAt(v, p)) return false;
   note(m.kind === 'divide' || m.kind === 'measurepoints' ? 'Placed part cannot be divided.' : `${modLabel(m.kind)} works on layout objects, not placed parts`);
   return true;
 }
 let copyMode = 'Multiple';
+let copyItems = 4;       // Copy Array's number of items: the last one used this session (AutoCAD's default is 4)
 let stretchDisplacement = [0, 0];
+/** What movePrompt needs of the running Copy: the Array count, the Array waiting for its point, a copy already down. */
+const copyPrompt = (m) => ({ count: copyItems, arr: m.arr, placed: m.placed });
 const lengthenValues = { Delta: 0, Percent: 100, Total: 1, DeltaAngle: 0, TotalAngle: 1 };
 let lengthenMode = 'Total';
 const loadFilletR = () => { try { const v = Number(localStorage.getItem(FILLET_SAVED) ?? 5); return v >= 0 && Number.isFinite(v) ? v : 5; } catch { return 5; } };
@@ -9086,7 +9298,7 @@ function modPrompt(d) {
   if (m.kind === 'align') return { status: `Command: ALIGN   ${m.sel?.size ?? d.sel.size} selected`, input, prompt: ALIGN_PROMPT[m.stage] };
   if (m.kind === 'scale') return { status: `Command: SCALE   ${m.sel?.size ?? d.sel.size} selected`, input, prompt: m.stage === 'pick' ? 'Select objects (click or drag a box), then Enter:' : m.stage === 'p1' ? 'Base point:' : refPrompt(m) || `Scale factor: ${m.copy ? 'Copy on. ' : ''}[Copy / Reference / Esc] (positive number or click):` };
   if (m.kind === 'rotate') return { status: m.bg ? 'Command: ROTATE BACKGROUND' : `Command: ROTATE   ${m.sel?.size ?? d.sel.size} selected`, input, prompt: m.stage === 'pick' ? 'Select objects (click or drag a box), then Enter:' : m.stage === 'p1' ? 'Pivot:' : refPrompt(m) || `Angle: ${m.copy ? 'Copy on. ' : ''}[${m.bg ? '' : 'Copy / '}Reference / Esc] (degrees or click; Shift = 15°):` };
-  if (['move', 'copy', 'stretch'].includes(m.kind)) return { status: `Command: ${m.kind.toUpperCase()}   ${m.sel?.size ?? d.sel.size} selected`, input, prompt: movePrompt(m.kind, m.stage, copyMode, stretchDisplacement) };
+  if (['move', 'copy', 'stretch'].includes(m.kind)) return { status: `Command: ${m.kind.toUpperCase()}   ${m.sel?.size ?? d.sel.size} selected`, input, prompt: movePrompt(m.kind, m.stage, copyMode, stretchDisplacement, copyPrompt(m)) };
   if (m.kind === 'array') return arrayPrompt(d, m);
   if (m.kind === 'fillet') return { status: 'Command: FILLET', input, prompt: m.askR ? `Fillet radius <${drawingLength(state.filR)}>:`
     : m.askTrim ? `Enter Trim mode option [Trim/No trim] <${m.trim ? 'Trim' : 'No trim'}>:`
@@ -9153,6 +9365,8 @@ function modEnter(d) {
     else if (m.stage === 'mode') { m.stage = 'p1'; note(modPrompt(d).prompt); }
     else if (m.stage === 'p1') { moveTo(d, [0, 0]); m.stage = 'displacement'; note(modPrompt(d).prompt); }
     else if (m.stage === 'displacement') moveTo(d, m.kind === 'stretch' ? stretchDisplacement.map((v) => v / d.factor) : [0, 0]);
+    else if (m.stage === 'count') copyCount(d, copyItems);
+    else if (m.arr) { m.arr = null; note(modPrompt(d).prompt); renderCommand(); paintOverlay(); }       // Enter at [Fit]: no array, back to the second point
     else if (!m.placed) { m.stage = 'displacement'; moveTo(d, m.p1.map((v) => v * 2)); }      // <use first point as displacement> places once and ends, even in Multiple
     else modEsc(d);
     return;
@@ -9272,6 +9486,7 @@ function modTyped(d, raw) {
     }
     if (m.stage === 'p1' && m.kind === 'copy' && (c === 'o' || c === 'mode')) { m.stage = 'mode'; note(modPrompt(d).prompt); paintOverlay(); return true; }
     if (m.stage === 'p1' && (c === 'd' || c === 'displacement')) { modEnter(d); return true; }
+    if (m.kind === 'copy' && copyArrayTyped(d, c)) return true;
     if (DR.parseInput(raw, drawingUnit()).kind === 'word') { note('Unknown option: ' + raw.trim()); ui.cmdUI.message(state.msg); return true; }
   }
   if (m.kind === 'array' && m.stage !== 'pick') return arrayTyped(d, raw, c);
@@ -9387,7 +9602,7 @@ function modHover(d, cx, cy, shift) {
   if (m.kind === 'trim' || m.kind === 'extend') m.client = [cx, cy];
   if (['move', 'copy', 'stretch'].includes(m.kind) && m.stage !== 'pick') {
     m.cur = movePick(d, p, shift, true);
-    if (m.move) { m.move.dx = m.cur[0] - m.p1[0]; m.move.dy = m.cur[1] - m.p1[1]; }
+    if (m.move) copyGhost(d, m);
   }
   if (m.kind === 'align' && m.stage !== 'pick') { m.cur = pickPoint(d, p, m.last ? [m.last] : [], shift, true); alignSync(d); }
   if (m.kind === 'rotate' && m.stage !== 'pick') {
@@ -9398,7 +9613,7 @@ function modHover(d, cx, cy, shift) {
         const r = Math.hypot(m.cur[0] - m.p1[0], m.cur[1] - m.p1[1]), a = m.angle * Math.PI / 180;
         m.cur = [m.p1[0] + r * Math.cos(a), m.p1[1] + r * Math.sin(a)];
       }
-      m.move.slots = [mmul([d.factor, 0, 0, -d.factor, 0, state.sheetH], rotationMatrix(m.p1, m.ref ? referenceTurn(m.ref.value, m.angle) : m.angle))];
+      if (m.move) m.move.slots = [mmul([d.factor, 0, 0, -d.factor, 0, state.sheetH], rotationMatrix(m.p1, m.ref ? referenceTurn(m.ref.value, m.angle) : m.angle))];       // a layout has no m.move: layGhosts draws it
     }
   }
   if (m.kind === 'scale' && m.stage !== 'pick') {
@@ -9648,7 +9863,7 @@ function movePick(d, p, shift, hover = false) {
   return m.p1 && (shift || state.ortho) ? Ed.orthoLock(m.p1, q) : q;
 }
 function transformBase(d, q) {
-  if (d.lay) { const m = state.mod; m.p1 = q.slice(0, 2); m.cur = m.p1; m.stage = 'p2'; note('Scale: positive factor or click. C toggles a copy'); paintOverlay(); return; }
+  if (d.lay) { const m = state.mod; m.p1 = q.slice(0, 2); m.cur = m.p1; m.stage = 'p2'; note(m.kind === 'rotate' ? 'Rotate: angle in degrees or click. Shift = 15°; C toggles a copy' : 'Scale: positive factor or click. C toggles a copy'); paintOverlay(); return; }
   const m = state.mod;
   m.p1 = q.slice(0, 2); m.cur = m.p1; m.stage = 'p2';
   const preview = flatten({ ...d.raw, entities: [...m.sel].map((i) => m.raw[i]) });
@@ -9705,7 +9920,7 @@ function transformDo(d, value) {
   const m = state.mod, scaling = m.kind === 'scale', label = scaling ? 'Scale' : 'Rotate';
   if (m.ref) { value = scaling ? referenceFactor(m.ref.value, value) : referenceTurn(m.ref.value, value); if (value == null) { note('The new length must be above 0'); return; } }
   if (m.bg) { rotateBackgroundDo(d, value); return; }
-  if (d.lay) { layScaleDo(d, value); return; }
+  if (d.lay) { layTransformDo(d, value); return; }
   if (m.raw !== d.raw.entities) { setTool('select'); note(`Drawing changed: start ${label} again`); return; }
   if (moveLocked(d, m.sel)) { const msg = state.msg; setTool('select'); note(msg); return; }
   try {
@@ -9717,8 +9932,49 @@ function transformDo(d, value) {
     note(`Selection ${scaling ? 'scaled' : 'rotated'}${m.copy ? ' as a copy' : ''}. Ctrl+Z takes it back`);
   } catch (err) { note(err.message); }
 }
+/** Copy Array's count is known: the next point is the spacing (or, after F, the last copy). */
+function copyCount(d, n) {
+  const m = state.mod;
+  copyItems = n; m.arr = { n, fit: false }; m.stage = 'p2'; m.cursorInput = null;
+  note(modPrompt(d).prompt); renderCommand(); paintOverlay();
+}
+/** A Copy placement is gone (Ctrl+Z, or the Undo option): back to the prompt without it. */
+const copyUndone = (m) => { m.placedN = Math.max(0, (m.placedN || 0) - 1); m.placed = m.placedN > 0; };
+function copyUndo(d) {
+  const m = state.mod;
+  undoCurrent();
+  if (state.mod !== m) return;       // the undo ended the command (the drawing or its source objects changed)
+  renderCommand(); paintOverlay();
+}
+/** The Copy words beyond points: A (Array) with its count, F (Fit), E (Exit) and U (Undo) after a placement. True when taken. */
+function copyArrayTyped(d, c) {
+  const m = state.mod, show = () => { note(modPrompt(d).prompt); renderCommand(); paintOverlay(); };
+  if (m.stage === 'count') {
+    const r = parseArrayCount(c);
+    if (r.error) { note(r.error); ui.cmdUI.message(state.msg); } else copyCount(d, r.n);
+    return true;
+  }
+  if (m.stage !== 'p2') return false;
+  if (c === 'a' || c === 'array') { m.arr = null; m.stage = 'count'; show(); return true; }
+  if (m.arr && (c === 'f' || c === 'fit')) { m.arr.fit = true; show(); return true; }
+  if (m.placed && !m.arr && (c === 'e' || c === 'exit')) { modEsc(d); return true; }
+  if (m.placed && (c === 'u' || c === 'undo')) { copyUndo(d); return true; }
+  return false;
+}
+/** The ghost of Move / Copy follows the cursor; Copy's Array draws every item (one slot each, dx stays 0). */
+function copyGhost(d, m) {
+  if (m.kind === 'copy' && m.stage === 'p2' && m.arr && Math.hypot(m.cur[0] - m.p1[0], m.cur[1] - m.p1[1]) > 1e-9) {
+    const base = [d.factor, 0, 0, -d.factor, 0, state.sheetH];
+    m.move.dx = m.move.dy = 0;
+    m.move.slots = arrayOffsets(m.cur[0] - m.p1[0], m.cur[1] - m.p1[1], m.arr.n, m.arr.fit).slice(0, 400).map((o) => mmul(base, [1, 0, 0, 1, o.dx, o.dy]));
+    return;
+  }
+  m.move.slots = null;
+  m.move.dx = m.cur[0] - m.p1[0]; m.move.dy = m.cur[1] - m.p1[1];
+}
 function moveTo(d, q) {
   const m = state.mod, copy = m.kind === 'copy', label = modLabel(m.kind);
+  if (m.stage === 'count') { note(modPrompt(d).prompt); return; }       // Array waits for its number of items, not a point
   if (d.lay) { layMoveTo(d, q); return; }
   if (m.raw !== d.raw.entities) { setTool('select'); note(`Drawing changed: start ${label} again`); return; }
   if (m.kind !== 'stretch' && moveLocked(d, m.sel)) { const msg = state.msg; setTool('select'); note(msg); return; }
@@ -9727,20 +9983,21 @@ function moveTo(d, q) {
     state.pointLast = m.p1;
     const preview = flatten({ ...d.raw, entities: [...m.sel].map((i) => m.raw[i]) });
     m.move = { preview, items: preview.items, dx: 0, dy: 0 };
-    note(movePrompt(m.kind, m.stage, copyMode, stretchDisplacement)); paintOverlay(); return;
+    note(movePrompt(m.kind, m.stage, copyMode, stretchDisplacement, copyPrompt(m))); paintOverlay(); return;
   }
-  const dx = q[0] - m.p1[0], dy = q[1] - m.p1[1];
+  const dx = q[0] - m.p1[0], dy = q[1] - m.p1[1], arr = copy && m.arr;
+  if (arr && Math.hypot(dx, dy) < 1e-9) { note('Zero spacing: pick a second point away from the base'); ui.cmdUI.message(state.msg); return; }
   try {
-    const next = m.kind === 'stretch' ? stretchResult(d, dx, dy) : (copy ? Ed.copyEntities : Ed.moveEntities)(d.raw, m.sel, dx, dy);
+    const next = m.kind === 'stretch' ? stretchResult(d, dx, dy) : arr ? Ed.copyMany(d.raw, m.sel, arrayOffsets(dx, dy, arr.n, arr.fit)) : (copy ? Ed.copyEntities : Ed.moveEntities)(d.raw, m.sel, dx, dy);
     view.fitted = false;
     const changed = m.kind === 'stretch' ? next.entities.some((e, i) => e !== d.raw.entities[i]) || next.blocks !== d.raw.blocks : copy || dx || dy;
     if (changed && !commit(d, copy || m.kind === 'stretch' ? next : followDimensions(d.raw, next, d.factor), label)) { const msg = state.msg; setTool('select'); note(msg); return; }
     state.pointLast = q.slice(0, 2);
     if (m.kind === 'stretch' && m.stage === 'displacement') stretchDisplacement = [dx * d.factor, dy * d.factor];
     const again = copy && copyMode === 'Multiple' && m.stage !== 'displacement';
-    if (again) { m.raw = d.raw.entities; m.placed = true; m.cursorInput = null; } else setTool('select');
+    if (again) { m.raw = d.raw.entities; m.placed = true; m.placedN = (m.placedN || 0) + 1; m.arr = null; m.cursorInput = null; } else setTool('select');
     setSel(d, m.sel);
-    note(m.kind === 'stretch' ? m.lockMessage || (changed ? 'Selection stretched. Ctrl+Z takes it back' : 'Nothing to stretch') : copy ? `Copy placed.${again ? ' Next target from the same base; Enter or Esc ends.' : ''} Ctrl+Z removes the last copy` : 'Selection moved. Ctrl+Z takes it back');
+    note(m.kind === 'stretch' ? m.lockMessage || (changed ? 'Selection stretched. Ctrl+Z takes it back' : 'Nothing to stretch') : copy ? `${arr ? `Array of ${arr.n} placed` : 'Copy placed'}.${again ? ' Next target from the same base; Enter or Esc ends.' : ''} Ctrl+Z removes the last ${arr ? 'array' : 'copy'}` : 'Selection moved. Ctrl+Z takes it back');
   } catch (err) { note(err.message); }
 }
 
@@ -9885,8 +10142,10 @@ function layModStart(id) {
  */
 function layResults(m, arg) {
   const its = m.items, one = (f) => [its.map((x) => f(x.part, x.orig))];
+  if (m.kind === 'copy' && m.arr) return arrayOffsets(arg[0] - m.p1[0], arg[1] - m.p1[1], m.arr.n, m.arr.fit).map((o) => its.map((x) => PL.translate(x.orig, o.dx, o.dy)));       // Array: a list per copy
   if (m.kind === 'move' || m.kind === 'copy') return one((part, pl) => PL.translate(pl, arg[0] - m.p1[0], arg[1] - m.p1[1]));
   if (m.kind === 'scale') return one((part, pl) => PL.scaleAbout(part, pl, m.p1, arg));
+  if (m.kind === 'rotate') return one((part, pl) => PL.rotateAbout(part, pl, m.p1, arg));
   if (m.kind === 'mirror') return one((part, pl) => PL.mirrorAboutLine(part, pl, m.p1, arg));
   if (m.type === 'polar') return AR.polarPlacements(m.center, m.base, m.cfg).map(({ deg, dx, dy }) => its.map((x) => (m.cfg.rotate ? PL.rotateAbout(x.part, x.orig, m.center, deg) : PL.translate(x.orig, dx, dy))));
   return AR.rectOffsets(m.cfg).map(([dx, dy]) => its.map((x) => PL.translate(x.orig, dx, dy)));
@@ -9907,6 +10166,7 @@ function layGhosts(m) {
   let res = null;
   if (['move', 'copy', 'stretch'].includes(m.kind) && m.p1 && m.cur) res = layResults(m, m.cur);
   else if (m.kind === 'scale' && m.p1 && (!m.ref || m.ref.step === 'new') && (value ?? m.hoverK) > 0) res = layResults(m, value == null ? m.hoverK : m.ref ? referenceFactor(m.ref.value, value) : value);
+  else if (m.kind === 'rotate' && m.p1 && (!m.ref || m.ref.step === 'new') && (value ?? m.angle) != null) res = layResults(m, m.ref ? referenceTurn(m.ref.value, value ?? m.angle) : value ?? m.angle);
   else if (m.kind === 'mirror' && m.stage === 'p2' && m.cur) res = layResults(m, m.cur);
   else if (m.kind === 'mirror' && m.stage === 'erase') res = layResults(m, m.p2);
   else if (m.kind === 'align') { const t = alignPreview(m); res = t && [layAlignPlacements(m, t)]; }
@@ -9916,7 +10176,9 @@ function layGhosts(m) {
 function layMoveTo(d, q) {
   const m = state.mod, copy = m.kind === 'copy', label = modLabel(m.kind);
   if (!layStill()) { layStale(); return; }
-  if (m.stage === 'p1') { m.p1 = q.slice(0, 2); m.cur = m.p1; m.stage = 'p2'; state.pointLast = m.p1; note(movePrompt(m.kind, m.stage, copyMode)); paintOverlay(); return; }
+  if (m.stage === 'p1') { m.p1 = q.slice(0, 2); m.cur = m.p1; m.stage = 'p2'; state.pointLast = m.p1; note(movePrompt(m.kind, m.stage, copyMode, undefined, copyPrompt(m))); paintOverlay(); return; }
+  const arr = copy && m.arr;
+  if (arr && Math.hypot(q[0] - m.p1[0], q[1] - m.p1[1]) < 1e-9) { note('Zero spacing: pick a second point away from the base'); ui.cmdUI.message(state.msg); return; }
   if (m.kind === 'stretch') {
     const r = layStretchResult(q), lay = d.lay, next = { ...lay, parts: { ...lay.parts }, placed: lay.placed.map((p) => ({ ...p })) };
     for (const [e, ent] of r.objects) if (!LD.objectReplace(next, r.view, e, ent, () => 'o' + uid())) { note('Stretch: object has no extents'); return; }
@@ -9931,12 +10193,12 @@ function layMoveTo(d, q) {
     if (m.stage === 'displacement') stretchDisplacement = [q[0] - m.p1[0], q[1] - m.p1[1]];
     state.pointLast = q.slice(0, 2); d.stretchSelection = null; setTool('select'); update(); note(m.lockMessage || (changed ? 'Selection stretched. Ctrl+Z takes it back' : 'Nothing to stretch')); return;
   }
-  const to = layResults(m, q)[0], r = editSelected((part, pl, c) => to[c.k], { copy, label });
+  const to = layResults(m, q), r = editSelected((part, pl, c) => to[c.j][c.k], { copy, label, copies: to.length });
   state.pointLast = q.slice(0, 2);
   const again = copy && copyMode === 'Multiple' && m.stage !== 'displacement';
   if (copy && r) { selectMany(m.keep, m.main); update(); }          // the originals stay selected, as on a drawing
-  if (again) { m.placed = true; m.cursorInput = null; } else setTool('select');
-  const text = copy ? `Copy placed.${again ? ' Next target from the same base; Enter or Esc ends.' : ''} Ctrl+Z removes the last copy` : 'Selection moved. Ctrl+Z takes it back';
+  if (again) { m.placed = true; m.placedN = (m.placedN || 0) + 1; m.arr = null; m.cursorInput = null; } else setTool('select');
+  const text = copy ? `${arr ? `Array of ${arr.n} placed` : 'Copy placed'}.${again ? ' Next target from the same base; Enter or Esc ends.' : ''} Ctrl+Z removes the last ${arr ? 'array' : 'copy'}` : 'Selection moved. Ctrl+Z takes it back';
   if (r) afterEdit(r, text); else note(text);
 }
 /** Loose objects stretch in sheet coordinates; every other placement is an insertion-only move. */
@@ -9947,15 +10209,16 @@ function layStretchResult(q) {
   const parts = stretchPlacements(m.items.filter((x) => { const p = placedNow[x.i]; return !(p.src === 'loose' && at.has(p.i)); }), m.boxes, dx, dy, m.picked);
   return { objects, parts, view };
 }
-function layScaleDo(d, k) {
-  const m = state.mod;
+/** Scale (k: the factor) or Rotate (k: degrees) of the taken layout items. */
+function layTransformDo(d, k) {
+  const m = state.mod, turn = m.kind === 'rotate';
   if (!layStill()) { layStale(); return; }
   if (!m.copy && m.items.some((x) => x.orig.lock)) { setTool('select'); note(LOCKED); return; }
-  if (!(k >= 1e-4 && k <= 1e4)) { note('The scale factor must be between 0.0001 and 10000'); return; }
-  const to = layResults(m, k)[0], r = editSelected((part, pl, c) => to[c.k], { copy: m.copy, label: 'Scale' });
+  if (turn ? !Number.isFinite(k) : !(k >= 1e-4 && k <= 1e4)) { note(turn ? 'Type an angle in degrees' : 'The scale factor must be between 0.0001 and 10000'); return; }
+  const to = layResults(m, k)[0], r = editSelected((part, pl, c) => to[c.k], { copy: m.copy, label: turn ? 'Rotate' : 'Scale' });
   setTool('select');
-  const text = `Selection scaled${m.copy ? ' as a copy' : ''}. Ctrl+Z takes it back`;
-  if (r) afterEdit(r, text); else note('Scale factor 1: nothing changed');
+  const text = `Selection ${turn ? 'rotated' : 'scaled'}${m.copy ? ' as a copy' : ''}. Ctrl+Z takes it back`;
+  if (r) afterEdit(r, text); else note(turn ? 'Angle 0: nothing changed' : 'Scale factor 1: nothing changed');
 }
 function layMirrorDo(d, erase) {
   const m = state.mod;
@@ -10575,7 +10838,7 @@ function modOvl(d, out, paint) {
   const add = (shape, cls, tid) => out.push(s('path', { class: cls, transform: drawingTransform(d), d: DR.svgPath(shape, H), 'data-testid': tid || null }));
   const addEnt = (ent, cls, tid) => { const sh = previewShape(ent, f, m.kind === 'fillet'); if (sh) { if (cls === 'dr-trim-fade') add(sh, 'dr-trim-under'); add(sh, cls, tid); } };
   if (['move', 'copy', 'stretch', 'rotate', 'scale'].includes(m.kind)) {
-    if (['move', 'copy'].includes(m.kind) && m.p1 && m.cur && m.move) { m.move.dx = m.cur[0] - m.p1[0]; m.move.dy = m.cur[1] - m.p1[1]; }
+    if (['move', 'copy'].includes(m.kind) && m.p1 && m.cur && m.move) copyGhost(d, m);
     if (m.kind === 'stretch' && m.p1 && m.cur && m.raw === d.raw.entities) {
       const dx = m.cur[0] - m.p1[0], dy = m.cur[1] - m.p1[1], cached = m.stretchPreview;
       if (!cached || cached.dx !== dx || cached.dy !== dy) {
@@ -10783,7 +11046,7 @@ function textOpen(d, p, e = null, ldr = null, dim = null) {
   else if (e != null) { orig = TX.decode(d.raw.entities[e]); m = { ...orig }; setSel(d, new Set([e])); }
   else m = { type: 'TEXT', x: p[0], y: p[1], h: c.h / d.factor, lines: [''], angle: c.angle || 0, ha: c.ha, font: c.font, styleName: c.font, bold: c.bold };
   if (p && e == null && !ldr) state.pointLast = p.slice(0, 2);
-  state.text.ed = { d, e, m, orig, ldr: ldr && ldr.model, dim };
+  state.text.ed = { d, e, m, orig, ldr: ldr && ldr.model, dim, lsl: ldr && ldr.sl };
   ui.textArea.value = m.lines.join('\n');
   ui.textHintEd.lastChild.textContent = dim ? 'Enter = done · Esc = cancel' : 'Enter = done · Shift+Enter = new line';
   ui.textEd.hidden = false;
@@ -10822,7 +11085,7 @@ function textCommit() {
   if (ed.ldr) {                                                       // a leader's note
     if (!lines) { if (ed.e == null && state.ldr) state.ldr.pts = []; renderCommand(); renderEdit(); paintOverlay(); if (ed.e == null) note('Leader: nothing typed, so nothing was made'); return; }
     if (ed.e == null) ldrAdd(d, { ...ed.ldr, lines });
-    else if (JSON.stringify(lines) !== JSON.stringify(ed.ldr.lines)) { if (ldrReplace(d, ed.e, { ...ed.ldr, lines }, 'Leader note')) note('Leader note changed. Ctrl+Z takes it back'); }
+    else if (JSON.stringify(lines) !== JSON.stringify(ed.ldr.lines)) { if (ed.lsl ? ldrReplaceLay(d, ed.lsl, { ...ed.ldr, lines }, 'Leader note') : ldrReplace(d, ed.e, { ...ed.ldr, lines }, 'Leader note')) note('Leader note changed. Ctrl+Z takes it back'); }
     else { renderCommand(); renderEdit(); paintOverlay(); }
     return;
   }
@@ -10890,6 +11153,8 @@ function textDblClick(e) {
     const hit = document.elementsFromPoint(e.clientX, e.clientY).map((x) => x.closest('[data-i]')).find(Boolean);
     const p = hit && placedNow[+hit.dataset.i], part = p && d.lay.parts[p.partId];
     if (p && partSelectable(p) && isDimPart(part)) {
+      const ldr = LR.ofEntity(part.raw, 0);                       // a leader: its note is typed in place, the commit is one undo step (TODO 156e1b)
+      if (ldr) { pdrag = null; selectMany([+hit.dataset.i]); update(); textOpen(d, null, null, { model: ldr.model, e: 0, sl: { e: 0, ...ldr, p, part } }); return; }
       const dim = Ed.dimOfEntity(part.raw, 0);
       if (dim) { pdrag = null; state.mode = 'select'; update(); textOpen(d, null, 0, null, { ...dim, raw: part.raw, placed: d.lay.placed[p.i] }); }
     }
@@ -11201,21 +11466,33 @@ function layDimDoc(d) {
   const s = layDimSel();
   if (!s) return null;
   let v = dimViews.get(d);
-  if (v?.raw !== s.part.raw) dimViews.set(d, v = { raw: s.part.raw, factor: 1, sel: new Set([0]), vlay: d, hid: null, locked: null });       // kept while the dimension stays the same: gripList's cache follows `sel`
+  if (v?.raw !== s.part.raw) dimViews.set(d, v = { raw: s.part.raw, fl: s.part.fl, off: s.part.off, factor: 1, sel: new Set([0]), vlay: d, hid: null, locked: null, at: { get: () => v.layDim.p.i } });       // (at: the one object's slot, for a leader's grip run: the base leaves it out) kept while the dimension stays the same: gripList's cache follows `sel`
   v.layDim = s;
   return v;
 }
 /** Do grips show? On a drawing tab (or a layout's objects) with the Select tool, something selected (not too many things). A single text shows them with its handles: the grip takes the click (gripDown runs first). */
-const gripOn = (d) => !!d && !state.drawingRotate && !state.match && !state.colourTool && gripDoc() === d && state.tool === 'select' && !state.setlen && !!d.sel && d.sel !== d.txoSel && d.sel.size > 0 && (d.sel.size <= GR.MAX_SELECTED || !!wholeDrawingGroup(d.raw.groups, d.sel)) && !textEditing();
+const gripOn = (d) => !!d && !state.drawingRotate && !state.match && !state.colourTool && gripDoc() === d && (state.tool === 'select' || state.tool === 'shape') && !state.setlen && !!d.sel && d.sel !== d.txoSel && d.sel.size > 0 && (d.sel.size <= GR.MAX_SELECTED || !!wholeDrawingGroup(d.raw.groups, d.sel)) && !textEditing();
 /** 164a: the drawing's attribute display mode (0 none, 1 normal, 2 all): the block attribute grips follow it. */
 const attMode = (d) => { const v = Number(d.raw.header?.$ATTMODE ?? 1); return Number.isFinite(v) ? v : 1; };
 /** Does a dimension of d show grips: a drawing tab, a PDF sheet, Compare's linked drawing or a layout's selected dimension (layDimDoc, TODO 345b3)? Not a layout's objects-as-a-drawing (it has no dimensions). */
 const dimGripsOk = (d) => !d.lay && (!d.vlay || !!d.layDim);
 /** Every grip of the selection: [{ e, id, kind, x, y }] (drawing units); kept while the selection and the drawing stay the same. */
 function gripList(d) {
-  const ents = d.raw.entities;
-  if (d.gripCache && d.gripCache.sel === d.sel && d.gripCache.ents === ents && d.gripCache.blocks === d.raw.blocks && d.gripCache.groups === d.raw.groups) return d.gripCache.list;       // blocks: an edited dimension keeps its entity list
+  const ents = d.raw.entities, shape = state.tool === 'shape';
+  const keys = shape ? shapeKeys(d) : null;       // TODO 139e1: the handles of the selected nodes are listed too
+  if (d.gripCache && d.gripCache.sel === d.sel && d.gripCache.ents === ents && d.gripCache.blocks === d.raw.blocks && d.gripCache.groups === d.raw.groups && d.gripCache.shape === shape && d.gripCache.keys === keys) return d.gripCache.list;       // blocks: an edited dimension keeps its entity list
   const list = [], grouped = new Set();
+  if (shape) {       // TODO 139a: the Shape tool lists the nodes of the selected objects (shape.js), no group, dimension or leader grips
+    for (const e of d.sel) {
+      const ent = ents[e];
+      if (!ent || d.lockedEnts && d.lockedEnts.has(ent)) continue;
+      const nodes = SHP.nodesOf(ent);
+      for (const g of nodes) list.push({ e, ...g });
+      if (ent.type === 'SPLINE') for (const g of SHP.handlesOf(ent, nodes.filter((n) => keys.has(e + ':' + n.id)).map((n) => n.id))) list.push({ e, ...g });       // a Bezier curve's handles, on its selected nodes only
+    }
+    d.gripCache = { sel: d.sel, ents, blocks: d.raw.blocks, groups: d.raw.groups, shape, keys, list: GR.capGrips(list) };
+    return d.gripCache.list;
+  }
   for (const g of d.raw.groups || []) {
     if (g.selectable === false || !g.members.every((i) => d.sel.has(i))) continue;
     g.members.forEach((i) => grouped.add(i));
@@ -11235,7 +11512,7 @@ function gripList(d) {
     for (const g of GR.gripsOf(ent, attMode(d))) list.push({ e, ...g });
   }
   const shown = GR.capGrips(list);
-  d.gripCache = { sel: d.sel, ents, blocks: d.raw.blocks, groups: d.raw.groups, list: shown };
+  d.gripCache = { sel: d.sel, ents, blocks: d.raw.blocks, groups: d.raw.groups, shape, keys, list: shown };
   return shown;
 }
 const sheetPx = (d, p) => { const [sx, sy] = toSheetPt(d, p), r = ui.canvas.getBoundingClientRect(); return [(sx - view.ox) * view.scale + r.left, (sy - view.oy) * view.scale + r.top]; };
@@ -11246,6 +11523,7 @@ function gripAt(d, cx, cy) {
 /** The point under the pointer for a grip: the snaps (the 0.01 mm grid when free), and Shift / ORTHO along X or Y from where the rubber band starts. */
 function gripPick(g, cx, cy, shift, hover) {
   const d = g.d, f = d.factor, p = toDrawing(d, cx, cy);
+  if (g.kind === 'handle') return p.length === 2 ? [Math.round(p[0] * f * 100) / 100 / f, Math.round(p[1] * f * 100) / 100 / f] : p;       // TODO 139e1: a Bezier handle goes where the pointer is: no snap, no tracking (grill R5)
   let q = snapPoint(d, p, g.hots ? g.skip : g.e);                // not to the shape(s) being dragged: the old place is going away
   const ref = g.mode || g.hots ? g.base : GR.refPoint(g.ent, g.id), base = ref && (g.mode || g.hots || !g.id.startsWith('e') && g.ent.type !== 'CIRCLE' && g.ent.type !== 'ARC') ? ref : null, straight = !!((shift || state.ortho) && base);       // a grip mode works from the hot grip itself
   const tq = trackPick(d, p, q, base, straight, hover);
@@ -11276,7 +11554,7 @@ function gripStretchHots(g, q, shift) {
   g.label = null;
   for (const [e, ent] of g.ents) {
     const mine = g.hots.filter((x) => x.e === e);
-    const r = stretchGrips(ent, mine, v[0], v[1], shift);
+    const r = state.tool === 'shape' ? SHP.dragNodes(ent, mine, v[0], v[1]) : stretchGrips(ent, mine, v[0], v[1], shift);
     g.label = g.label || r.label; part = part || r.part;
     if (r.ent !== ent) nexts.set(e, r.ent);
   }
@@ -11313,9 +11591,17 @@ function gripCycle() {
   if (g.copy) { gripExit(); return; }                                // Enter ends a multiple run
   gripModeTo(g, GM.cycle(g.mode));
 }
+/** A layout selection of loose objects plus a leader or a dimension that would stay put in a grip mode: the mode moves the objects' drawing only, a dimension follows just when it is linked to a selected line (followDims).
+ * shortcut: "linked" is linkedLine's (one line under both ends), so a dimension on a circle or polyline vertex counts as stranded; upgrade with a followDimensions dry run. */
+function strandedDims() {
+  const all = selItems(), isDim = (x) => isDimPart(x.part), dims = all.filter(isDim);
+  if (!dims.length || dims.length === all.length) return false;       // alone, a dimension or leader goes through layDimModeCommit
+  const lay = curLay(), view = LD.linkView(lay), raw = { header: {}, layers: view.layers, ltypes: {}, blocks: view.blocks, entities: view.entities }, picked = new Set(all.map((x) => x.p.i));
+  return dims.some((x) => { const hit = linkedLine(raw, view.at.indexOf(x.p.i)); return !hit || !picked.has(view.at[hit.i]); });
+}
 /** Mode i (Space / Enter cycle it, the right-click menu picks it). */
 function gripModeTo(g, i) {
-  if (curLay() && selItems().some((x) => x.p.src !== 'loose' || !x.part.obj || isDimPart(x.part))) { note('Grip Move / Rotate / Scale / Mirror take loose objects only here: use the ribbon command for Parts and dimensions'); return; }       // they act on the loose objects of the selection, not on a Part
+  if (curLay() && (selItems().some((x) => x.p.src !== 'loose' || !x.part.obj) || strandedDims())) { note('Grip Move / Rotate / Scale / Mirror take loose objects only here: use the ribbon command for Parts'); return; }       // they act on the loose objects of the selection (a dimension or leader too, 156e1c), not on a Part
   g.mode = i; g.opt = 0; g.move = null; g.res = null; g.err = null; g.next = null; g.val = null; g.to = null; g.ref = null; g.baseAsk = false; g.cursorPreview = false; g.cursorInput = null;
   if (g.cursor) gripAim(g, gripPick(g, g.cursor[0], g.cursor[1], false));
   state.msg = null; ui.cmdUI.message(GM.header(GM.MODES[g.mode])); renderCommand(); paintOverlay();
@@ -11382,6 +11668,7 @@ function gripPut(g, e) {
 function gripCopy(g, ctrl) {
   if (ctrl && !g.copy) { g.copy = true; if (g.mode) gripModeRun(g); }       // Ctrl at a pick: this pick copies and the run is multiple from here on
   const d = g.d, M = GM.MODES[g.mode];
+  if (d.layDim) { note('A leader on a layout cannot be copied with a grip yet'); return; }       // its little drawing has no slot for a copy (gripExit commits through layObjCommit)
   if (!g.mode && (g.nexts ? [...g.nexts.values()].some((x) => x.type === 'LEADER') : ldrPseudo(d, g.e))) { note('A leader cannot be copied with Stretch yet'); return; }
   const next = g.mode ? g.res : g.next && { entities: [...g.acc.entities, ...(g.nexts ? g.nexts.values() : [g.next])], blocks: g.acc.blocks };
   if (!next) { note(g.err || 'That would not change anything, so no copy is made'); gripRefresh(g); return; }
@@ -11415,15 +11702,134 @@ function gripHoverAt(e) {
   if (id === state.gripHover) return;
   state.gripHover = id; drawOvl();
   clearTimeout(gripOptTimer);
-  if (hit && !hit.group && hit.kind !== 'dim' && !ui.ctx) gripOptTimer = setTimeout(() => gripOptionsOpen(hit), 300);       // 163a: the grip's options list after 300 ms of rest
+  if (hit && !hit.group && hit.kind !== 'dim' && !ui.ctx && state.tool === 'select') gripOptTimer = setTimeout(() => gripOptionsOpen(hit), 300);       // 163a: the grip's options list after 300 ms of rest
 }
 /** The hot grips (Shift-click) of d's selection as a Map 'e:id' → grip, or null when there are none or the selection / drawing changed since. */
 function hotsOf(d) {
+  if (state.tool === 'shape') { const keys = shapeKeys(d), m = new Map(gripList(d).filter((g) => keys.has(g.e + ':' + g.id)).map((g) => [g.e + ':' + g.id, g])); return m.size ? m : null; }       // TODO 139a: the selected nodes are the hot grips
   const H = state.hots;
   return H && H.sel === d.sel && H.ents === d.raw.entities && H.map.size ? H.map : null;
 }
+/** TODO 139a: the Shape tool's selected nodes ('e:id' keys) on d, kept through edits and Undo while the same objects stay selected on the same tab. */
+const NO_KEYS = new Set();       // one set, so gripList's cache knows "no node selected" (139e1: handles show on the selected nodes)
+const shapeKeys = (d) => { const N = state.nodes; return N && N.doc === curDoc() && N.selKey === [...d.sel].join() ? N.keys : NO_KEYS; };
+function shapeSet(d, keys) {
+  state.nodes = { doc: curDoc(), selKey: [...d.sel].join(), keys };
+  note(`${keys.size} node${keys.size === 1 ? '' : 's'} selected`);
+  paintOverlay();
+}
+/** A box drag with the Shape tool (a, b: drawing points of d): the nodes inside are selected (Shift adds); with nothing selected the box picks the objects first. */
+function shapeBox(d, a, b, add) {
+  if (!d.sel.size) boxSelect(d, a, b, false, false);
+  if (!gripOn(d)) return;
+  const keys = new Set(add ? shapeKeys(d) : []);
+  for (const n of SHP.nodesIn(gripList(d), a, b)) keys.add(n.e + ':' + n.id);       // nodesIn skips the handles (139e1)
+  shapeSet(d, keys);
+}
+/** TODO 139b2: the Delete key (or a double-click on a node) with the Shape tool removes the selected nodes (shape.js deleteNodes), one Undo step. False when no node is selected (Delete then deletes objects as ever);
+ *  true when handled, also when every object kept its nodes (a polyline keeps 2, closed 3; a line, arc or circle all of them). */
+function shapeDelete() {
+  const d = gripDoc(), m = d && state.tool === 'shape' && !state.grip && !d.layDim && gripOn(d) ? hotsOf(d) : null;
+  if (!m) return false;
+  const ids = new Map(), pairs = [], next = new Map(), dead = new Map();       // dead: a Bezier spline left with fewer than 2 nodes goes (139e2b)
+  for (const g of m.values()) ids.set(g.e, [...(ids.get(g.e) || []), g.id]);
+  let gone = 0, label = 'Delete node';
+  for (const [i, list] of ids) {
+    const ent = d.raw.entities[i], r = SHP.deleteNodes(ent, list);
+    if (r) { if (r.ent) { pairs.push([ent, r.ent]); next.set(i, r.ent); } else dead.set(ent, []); gone += list.length; if (gone > 1) label = 'Delete nodes'; }
+  }
+  if (dead.size) {
+    if (shapeReplace(d, new Map([...dead, ...[...next].map(([i, e]) => [d.raw.entities[i], [e]])]), label, undefined, true)) note(`${label}: ${dead.size} spline${dead.size === 1 ? ' goes' : 's go'} with fewer than 2 nodes left. Ctrl+Z takes it back`);
+    return true;
+  }
+  if (!pairs.length) { note('Shape: nothing deleted. A polyline keeps at least 2 nodes (3 when closed); a line, arc or circle keeps all its nodes'); return true; }
+  const sel = new Set(d.sel);
+  view.fitted = false;
+  if (d.vlay) { if (!layGripCommit(d, pairs, label, sel)) { note('That would leave nothing of the shape, so it stays as it was'); return true; } }
+  else { if (!commit(d, followDimensions(d.raw, { entities: d.raw.entities.map((x, k) => next.get(k) || x), blocks: d.raw.blocks }, d.factor), label, sel)) return true; setSel(d, sel); }       // too nested: commit showed why
+  shapeSet(gripDoc() || d, new Set());       // the node numbers moved up: none is selected now
+  note(`${label}: ${gone} removed${gone < m.size ? `, ${m.size - gone} kept (a polyline keeps at least 2 nodes, 3 when closed)` : ''}. Ctrl+Z takes it back`);
+  return true;
+}
+/** TODO 139b1: a double-click with the Shape tool on a selected object's outline (not on a node) adds a node there (shape.js addNode), one Undo step; the new node is the one selected. */
+function shapeDblClick(e) {
+  const d = gripDoc();
+  if (state.tool !== 'shape' || state.grip || !d || !gripOn(d)) return false;
+  if (gripAt(d, e.clientX, e.clientY)) return shapeDelete();       // on a node (its first click selected it alone): it goes (139b2)
+  const p = toDrawing(d, e.clientX, e.clientY);
+  for (const i of d.sel) {
+    const ent = d.raw.entities[i], r = !lockedEnt(d, i) && SHP.addNode(ent, p, pickTol(d));
+    if (!r) continue;
+    const sel = new Set(d.sel);
+    view.fitted = false;
+    if (d.vlay) { if (!layGripCommit(d, [[ent, r.ent]], r.label, sel)) return true; }
+    else { if (!commit(d, { entities: d.raw.entities.map((x, k) => (k === i ? r.ent : x)), blocks: d.raw.blocks }, r.label, sel)) return true; setSel(d, sel); }       // too nested: commit showed why
+    const node = SHP.nodesOf(r.ent).reduce((a, b) => (Math.hypot(b.x - p[0], b.y - p[1]) < Math.hypot(a.x - p[0], a.y - p[1]) ? b : a));       // the nearest node to the click is the new one: it sits on the outline's nearest point
+    shapeSet(gripDoc() || d, new Set([i + ':' + node.id]));
+    note(`${r.label}${ent.type === 'LWPOLYLINE' || ent.type === 'SPLINE' ? '' : `: the ${ent.type.toLowerCase()} is a polyline now`}. Ctrl+Z takes it back`);
+    return true;
+  }
+  return false;
+}
+/** TODO 139c: the Shape tool's selected nodes' objects become `out` (Map entity of d → [what replaces it]) in ONE undo step, the new objects selected, no node. `heir`: a layout's joined result takes this object's group, lock and place. */
+function shapeReplace(d, out, label, heir, keepSel = false) {       // keepSel (139e2b): the selected objects that are not replaced stay selected too
+  const all = d.raw.entities, keep = new Map(), entities = [], made = new Set();
+  all.forEach((e, i) => { const r = out.get(e) ?? [e]; keep.set(i, r.map((_, k) => entities.length + k)); entities.push(...r); if (out.has(e) || (keepSel && d.sel.has(i))) r.forEach((x) => made.add(x)); });
+  view.fitted = false;
+  if (!commit(d, { entities, groups: remapGroups(d.raw.groups, keep), blocks: d.raw.blocks, heir }, label, new Set(d.sel))) return false;       // too nested: commit showed why
+  if (d.vlay) { const at = layObjDoc(d.vlay).at, ids = new Set([...made].map((x) => at.get(x))); selectMany(placedNow.flatMap((q, k) => (q.src === 'loose' && ids.has(q.i) ? [k] : [])).flatMap(groupIdxs)); update(); }       // the old picks' indexes would point at other objects
+  else setSel(d, new Set(entities.flatMap((x, i) => (made.has(x) ? [i] : []))));
+  shapeSet(gripDoc() || d, new Set());
+  return true;
+}
+/** TODO 139c: the Shape tool's right-click with nodes selected (hot nodes, as Delete) shows Break at node and Join nodes (grill R7); one that cannot run is greyed with its why as the title. True when the menu opened. */
+function shapeMenu(e) {
+  const d = gripDoc(), on = d && state.tool === 'shape' && !state.grip && !d.layDim && gripOn(d), m = on ? hotsOf(d) : null;
+  if (!m && !(on && [...d.sel].some((i) => d.raw.entities[i]?.type === 'SPLINE' && !SHP.bezierOf(d.raw.entities[i])))) return false;       // 139e1: a spline that is not a Bezier curve has no nodes: its items open greyed with their why
+  const ents = d.raw.entities, by = new Map(), gs = m ? [...m.values()].sort((a, b) => a.e - b.e) : [], cuts = new Map();
+  for (const g of gs) by.set(g.e, [...(by.get(g.e) || []), g.id]);
+  for (const [i, ids] of by) { const r = !lockedEnt(d, i) && SHP.breakNodes(ents[i], ids); if (r) cuts.set(ents[i], r); }
+  const node = (g) => ({ ent: ents[g.e], id: g.id });
+  const join = gs.length !== 2 ? { why: 'Select exactly 2 end nodes' } : gs.some((g) => lockedEnt(d, g.e)) ? { why: 'An object is on a locked layer' } : SHP.joinNodes(node(gs[0]), node(gs[1]), { ends: closeEnds });
+  const breakWhy = 'Break at node needs a node inside an open outline, or any node of a closed one (a line or an arc has end nodes only)';
+  const curve = new Map(), lined = new Map();       // TODO 139e1 To curve / To line (grill R1, R4): entity index → shape.js result
+  let curveWhy = 'Select a node first', lineWhy = curveWhy;
+  const NODE_TYPES = ['Cusp', 'Smooth', 'Symmetrical'], typed = Object.fromEntries(NODE_TYPES.map((t) => [t, { map: new Map(), why: curveWhy }])), have = new Set();
+  for (const i of m ? by.keys() : d.sel) {
+    const ent = ents[i];
+    if (!m && ent?.type !== 'SPLINE') continue;
+    if (lockedEnt(d, i)) { curveWhy = lineWhy = 'An object is on a locked layer'; for (const t of NODE_TYPES) typed[t].why = curveWhy; continue; }
+    const c = SHP.toCurve(ent, by.get(i) || []), l = SHP.toLine(ent, by.get(i) || []);
+    if (c.ent) curve.set(i, c); else curveWhy = c.why;
+    if (l.ent) lined.set(i, l); else lineWhy = l.why;
+    for (const t of NODE_TYPES) {       // TODO 139e2a Cusp / Smooth / Symmetrical (grill R5): the type of each selected node, and the object each could become
+      const r = SHP.setNodeType(ent, by.get(i) || [], t), me = typed[t];
+      if (r.ent) me.map.set(i, r); else me.why = r.why;
+      for (const id of by.get(i) || []) have.add(SHP.nodeType(ent, id));
+    }
+  }
+  have.delete(null);
+  const edit = (map, label) => () => { if (shapeEdit(d, new Map([...map].map(([i, r]) => [i, r.ent])), label, new Set([...map].flatMap(([i, r]) => (r.ids || by.get(i)).map((id) => i + ':' + id))))) note(`${label}: ${map.size} object${map.size === 1 ? '' : 's'}. Ctrl+Z takes it back`); };
+  popMenu(e.clientX, e.clientY, [
+    ['Break at node', () => { const all = [...cuts.values()].flat(), n = all.length, w = all.every((x) => x.type === 'SPLINE') ? 'spline' : 'polyline'; if (shapeReplace(d, cuts, 'Break at node')) note(`Break at node: ${n} open ${w}${n === 1 ? '' : 's'}. Ctrl+Z takes it back`); }, null, cuts.size > 0, null, cuts.size ? null : breakWhy],
+    ['Join nodes', () => { if (shapeReplace(d, new Map([[ents[gs[1].e], []], [ents[gs[0].e], [join.result]]]), join.label, ents[gs[0].e])) note(join.label === 'Close' ? 'Join nodes: the object is closed. Ctrl+Z takes it back' : 'Join nodes: 2 objects are 1 now. Ctrl+Z takes it back'); }, null, !join.why, null, join.why],
+    ['To curve', edit(curve, 'To curve'), null, curve.size > 0, null, curve.size ? null : curveWhy],
+    ['To line', edit(lined, 'To line'), null, lined.size > 0, null, lined.size ? null : lineWhy],
+    '-',
+    ...NODE_TYPES.map((t) => [((have.size === 1 && have.has(t)) ? '✓ ' : '  ') + t, edit(typed[t].map, `${t} node`), null, typed[t].map.size > 0, null, typed[t].map.size ? null : typed[t].why])]);
+  return true;
+}
+/** TODO 139e1: these objects of d (Map entity index → what replaces it, same place, same group) change in ONE undo step, the same objects selected, `keys` the selected nodes. False when nothing changed. */
+function shapeEdit(d, next, label, keys) {
+  const sel = new Set(d.sel);
+  view.fitted = false;
+  if (d.vlay) { if (!layGripCommit(d, [...next].map(([i, n]) => [d.raw.entities[i], n]), label, sel)) { note('That would leave nothing of the shape, so it stays as it was'); return false; } }
+  else { if (!commit(d, { entities: d.raw.entities.map((x, k) => next.get(k) || x), blocks: d.raw.blocks }, label, sel)) return false; setSel(d, sel); }       // too nested: commit showed why
+  shapeSet(gripDoc() || d, keys);
+  return true;
+}
 function gripDown(e) {
-  ctrlTap = false;                                                   // Ctrl held for a Ctrl-click is not a tap (163a)
+  ctrlTap = false;                                                  // Ctrl held for a Ctrl-click is not a tap (163a)
   const d = gripDoc();
   if (!d) return false;
   const g0 = state.grip;
@@ -11443,10 +11849,12 @@ function gripDown(e) {
 /** A grip run begins on `hit` (a click on it, or an item of its Grip options list: e gives the pointer and Shift). */
 function gripStart(d, hit, e) {
   clearTimeout(gripOptTimer);
-  const key = hit.e + ':' + hit.id, map = hotsOf(d);
-  const hots = !e.shiftKey && map && map.size > 1 && map.has(key) ? [...map.values()] : null;       // a click on one of several hot grips: Stretch moves them all
+  const key = hit.e + ':' + hit.id;
+  if (state.tool === 'shape' && !e.shiftKey && hit.kind !== 'handle' && !shapeKeys(d).has(key)) shapeSet(d, new Set([key]));       // TODO 139a: a press on a node not selected selects it alone; on a selected one the drag moves them all (a handle press leaves the nodes selected)
+  const map = hotsOf(d), bezier = state.tool === 'shape' && d.raw.entities[hit.e]?.type === 'SPLINE';       // TODO 139e1: a Bezier node or handle goes through shape.js dragNodes as hot grips do
+  const hots = (!e.shiftKey || state.tool === 'shape') && map && map.size > 1 && map.has(key) && hit.kind !== 'handle' ? [...map.values()] : bezier ? [hit] : null;       // a click on one of several hot grips: Stretch moves them all; the Shape tool's Shift+drag on a selected node too (139b2)
   if (!e.shiftKey) state.hots = null;                                // Shift: decided on release (gripUp: a click makes it hot, 155e3) or on the first move (a drag keeps proportions)
-  state.grip = { tog: e.shiftKey ? hit : null, hots, skip: hots && new Set(hots.map((x) => x.e)), ents: hots && new Map(hots.map((x) => [x.e, ldrPseudo(d, x.e) || d.raw.entities[x.e]])), nexts: null, d, e: hit.e, id: hit.id, ent: ldrPseudo(d, hit.e) || d.raw.entities[hit.e], next: null, to: null, label: null, hot: false, moved: false, px: [e.clientX, e.clientY], sel: new Set(d.sel), mode: 0, opt: 0, opts: hots || e.shiftKey ? [] : GR.optionsOf(ldrPseudo(d, hit.e) || d.raw.entities[hit.e], hit.id), base: [hit.x, hit.y], pos: [hit.x, hit.y], copy: false, acc: d.raw, hist: [], baseAsk: false, ref: null };
+  state.grip = { tog: e.shiftKey ? hit : null, hots, skip: hots && new Set(hots.map((x) => x.e)), ents: hots && new Map(hots.map((x) => [x.e, ldrPseudo(d, x.e) || d.raw.entities[x.e]])), nexts: null, d, e: hit.e, id: hit.id, ent: ldrPseudo(d, hit.e) || d.raw.entities[hit.e], next: null, to: null, label: null, kind: hit.kind, hot: false, moved: false, px: [e.clientX, e.clientY], sel: new Set(d.sel), mode: 0, opt: 0, opts: hots || e.shiftKey || state.tool === 'shape' ? [] : GR.optionsOf(ldrPseudo(d, hit.e) || d.raw.entities[hit.e], hit.id), base: [hit.x, hit.y], pos: [hit.x, hit.y], copy: false, acc: d.raw, hist: [], baseAsk: false, ref: null };
   state.msg = null; renderCommand(); renderEdit(); paintOverlay();       // renderEdit: the Undo button is on in a run
 }
 // ---- 163a Grip options: the list a line / arc grip offers after 300 ms of rest (AutoCAD's multifunctional grips) ----
@@ -11496,6 +11904,12 @@ function gripUp(e) {
   const g = state.grip;
   if (!g || g.hot) return;
   if (g.moved) { gripPut(g, e); return; }
+  if (state.tool === 'shape') {                                      // TODO 139a: a click selects the node alone, a Shift+click adds or removes it; no hot grip run
+    if (g.kind === 'handle') { gripCancel(); return; }               // TODO 139e1: a click on a handle changes nothing
+    const key = g.e + ':' + g.id, keys = new Set(g.tog ? shapeKeys(g.d) : []);
+    if (!(g.tog && keys.delete(key))) keys.add(key);
+    gripCancel(); shapeSet(g.d, keys); return;
+  }
   if (g.tog) {                                                       // Shift-click without a move: this grip turns hot, or cold again (155e3)
     const d = g.d, key = g.tog.e + ':' + g.tog.id, m = hotsOf(d) || (state.hots = { sel: d.sel, ents: d.raw.entities, map: new Map() }).map;
     gripCancel();
@@ -11514,9 +11928,10 @@ function gripCommit() {
   renderEdit();       // every end of the run, also one that changes nothing: the Undo button follows the run
   if (g.mode) { gripModeCommit(g); return; }
   if (!g.next) { note(g.to ? 'That would not change the shape (or leaves nothing of it), so it stays as it was' : 'Stretch cancelled'); renderCommand(); paintOverlay(); return; }
-  const d = g.d, label = g.nexts ? 'Stretch grips' : g.label, text = g.nexts ? GM.readout('MOVE', g.base, g.to, d.factor, drawingUnit()) : GR.readoutOf(g.ent, g.id, g.next, d.factor, drawingUnit());
+  const d = g.d, label = g.nexts ? (state.tool === 'shape' ? (g.kind === 'handle' ? 'Move handle' : 'Move nodes') : 'Stretch grips') : g.label, text = g.nexts ? GM.readout('MOVE', g.base, g.to, d.factor, drawingUnit()) : GR.readoutOf(g.ent, g.id, g.next, d.factor, drawingUnit());
   view.fitted = false;
-  if (d.vlay) { if (!layGripCommit(d, g.nexts ? [...g.nexts].map(([i, n]) => [g.ents.get(i), n]) : [[g.ent, g.next]], label, g.sel)) { note('That would leave nothing of the shape, so it stays as it was'); paintOverlay(); return; } paintOverlay(); }
+  if (d.layDim) { if (!layLdrReplace(d, g.nexts ? [...g.nexts.values()][0] : g.next, label)) { note('That would leave nothing of the shape, so it stays as it was'); paintOverlay(); return; } paintOverlay(); }       // a layout's selected leader (TODO 156e1)
+  else if (d.vlay) { if (!layGripCommit(d, g.nexts ? [...g.nexts].map(([i, n]) => [g.ents.get(i), n]) : [[g.ent, g.next]], label, g.sel)) { note('That would leave nothing of the shape, so it stays as it was'); paintOverlay(); return; } paintOverlay(); }
   else {
     if (!commit(d, g.nexts ? gripHotsRaw(g) : g.next.type === 'LEADER' ? LR.replace(d.raw, g.next.name, g.next.model) : dimsOnGrip(d, g, followDimensions(d.raw, { entities: d.raw.entities.map((x, i) => (i === g.e ? g.next : x)), blocks: d.raw.blocks }, d.factor)), label, g.sel)) { paintOverlay(); return; }       // too nested: commit showed why
     setSel(d, g.sel);
@@ -11627,7 +12042,8 @@ function gripModeCommit(g) {
   if (!g.res) { note(g.err || (g.to ? 'That would not change anything, so it stays as it was' : `${label} cancelled`)); renderCommand(); paintOverlay(); return; }
   if (moveLocked(d, g.sel)) { paintOverlay(); return; }
   view.fitted = false;
-  if (d.vlay) { if (!layGripCommit(d, [...g.sel].map((i) => [d.raw.entities[i], g.res.entities[i]]), label, g.sel)) { note('That would leave nothing of the shape, so it stays as it was'); paintOverlay(); return; } paintOverlay(); }
+  if (d.layDim) { if (!layDimModeCommit(d, g.res, label)) { note('That would leave nothing of the shape, so it stays as it was'); paintOverlay(); return; } paintOverlay(); }       // a layout's selected leader or dimension (156e1c), as gripCommit
+  else if (d.vlay) { if (!layGripCommit(d, [...g.sel].map((i) => [d.raw.entities[i], g.res.entities[i]]), label, g.sel)) { note('That would leave nothing of the shape, so it stays as it was'); paintOverlay(); return; } paintOverlay(); }
   else { if (!commit(d, M === 'MIRROR' ? g.res : followDimensions(d.raw, g.res, d.factor), label, g.sel)) { paintOverlay(); return; } setSel(d, g.sel); }
   const left = g.res.skipped || [];
   note(`${label}: ${GM.readout(M, g.base, g.val, d.factor, drawingUnit())}` + (left.length ? `; ${left.length} left out (${[...new Set(left)].join('; ')})` : '') + '. Ctrl+Z takes it back');
@@ -11647,15 +12063,16 @@ function gripModeOvl(d, out, grips, g, square) {
 /** Grips, and while one is dragged: the original as a dashed ghost, the new shape dashed, the hot grip, and the readout. Returns the readout tip or null. */
 function gripOvl(d, out, k, grips) {
   const g = state.grip;
-  const square = (p, hot, id, tri) => {
+  const square = (p, hot, id, tri, round) => {
     const [sx, sy] = toSheetPt(d, p), z = GR.gripSide(), cls = 'gr' + (hot ? ' hot' : state.gripHover === id ? ' hover' : ''), tid = hot ? 'grip-hot' : 'grip';
-    // 164a: an MTEXT's size grip is a triangle pointing at `tri` degrees (screen angle), the others a square
-    const sq = tri == null ? s('rect', { class: cls, x: -z / 2, y: -z / 2, width: z, height: z, 'data-grip': id, 'data-testid': tid })
+    // 164a: an MTEXT's size grip is a triangle pointing at `tri` degrees (screen angle), the others a square; 139e1: a Bezier handle is round
+    const sq = tri == null ? s('rect', { class: cls, x: -z / 2, y: -z / 2, width: z, height: z, ...(round ? { rx: z / 2 } : {}), 'data-grip': id, 'data-testid': tid })
       : s('path', { class: cls, d: `M${z * 0.7} 0L${-z * 0.5} ${-z * 0.6}L${-z * 0.5} ${z * 0.6}Z`, transform: `rotate(${tri})`, 'data-grip': id, 'data-testid': tid });
     // Screen coordinates keep small grips precise even far from the drawing origin.
     return s('g', { transform: `translate(${(sx - view.ox) / k} ${(sy - view.oy) / k})` }, sq,
       hot ? s('path', { class: 'gr-tick', d: 'M0 -14v-8M0 14v8M-14 0h-8M14 0h8' }) : null);
   };
+  const stem = (h, nodes) => { const n = nodes.find((k) => k.id === h.node); return s('path', { class: 'gr-spoke', d: `M${toSheetPt(d, [n.x, n.y]).join(' ')}L${toSheetPt(d, [h.x, h.y]).join(' ')}` }); };       // 139e1: the line from a node to its handle
   if (g && g.d === d && g.mode) return gripModeOvl(d, out, grips, g, square);
   if (g && g.d === d) {
     const targets = g.ents ? [...g.ents] : [[g.e, g.ent]];
@@ -11675,6 +12092,14 @@ function gripOvl(d, out, k, grips) {
     for (const [e, ent] of targets) for (const x of GR.gripsOf((g.nexts ? g.nexts.get(e) : g.next) || ent, attMode(d))) {
       const key = e + ':' + x.id, hot = hotKeys ? hotKeys.has(key) : x.id === g.id;
       (hot ? hotSq : cold).push(square([x.x, x.y], hot, hotKeys ? key : x.id, x.tri));
+    }
+    if (state.tool === 'shape') for (const [e, ent] of targets) {       // TODO 139e1: a Bezier curve's nodes and the handles of its selected nodes, as the changed curve has them
+      const cur = (g.nexts ? g.nexts.get(e) : g.next) || ent, nodes = cur.type === 'SPLINE' ? SHP.nodesOf(cur) : [], sel = shapeKeys(d);
+      for (const x of [...nodes, ...SHP.handlesOf(cur, nodes.filter((n) => sel.has(e + ':' + n.id)).map((n) => n.id))]) {
+        const hot = hotKeys ? hotKeys.has(e + ':' + x.id) : x.id === g.id;
+        if (x.kind === 'handle') out.push(stem(x, nodes));
+        (hot ? hotSq : cold).push(square([x.x, x.y], hot, e + ':' + x.id, null, x.kind === 'handle'));
+      }
     }
     grips.push(...cold, ...hotSq);
     if (g.next && g.to) { return { text: g.nexts ? GM.readout('MOVE', g.base, g.to, d.factor, drawingUnit()) : GR.readoutOf(g.ent, g.id, g.next, d.factor, drawingUnit()), px: g.cursor || sheetPx(d, [g.to[0], g.to[1]]) }; }
@@ -11702,7 +12127,8 @@ function gripOvl(d, out, k, grips) {
   for (const x of list) {
     const move = x.group && state.entityDrag?.d === d && x.group.members.every((i) => state.entityDrag.sel.has(i)) ? state.entityDrag : null;
     const dragged = x.kind === 'dim' && state.dimDrag?.moved && state.dimDrag.e === x.e && state.dimDrag.grip === x.id;       // the dimension grip being dragged is hot (red)
-    grips.push(square([x.x + (move?.dx || 0), x.y + (move?.dy || 0)], !!move || dragged || !!hots && hots.has(x.e + ':' + x.id), x.e + ':' + x.id, x.tri));
+    if (x.kind === 'handle') out.push(stem(x, list.filter((k) => k.e === x.e && k.kind === 'node')));
+    grips.push(square([x.x + (move?.dx || 0), x.y + (move?.dy || 0)], !!move || dragged || !!hots && hots.has(x.e + ':' + x.id), x.e + ':' + x.id, x.tri, x.kind === 'handle'));
     if (x.kind === 'centre') { const [sx, sy] = toSheetPt(d, [x.x, x.y]), px = (sx - view.ox) / k, py = (sy - view.oy) / k; grips.push(s('path', { class: 'gr-cross', d: `M${px - 12} ${py}h24M${px} ${py - 12}v24` })); }
   }
   return null;
@@ -11714,6 +12140,7 @@ function layoutKey(e, mod, k) {
   if (sheetSelOn() && !(mod && !e.altKey && (k === 'z' || k === 'y'))) return false;      // the sheet is selected: the arrow keys and Delete are not for the part behind it
   if (mod && !e.altKey && k === 'z') { e.preventDefault(); if (e.shiftKey) redoLay(); else undoLay(); return true; }
   if (mod && !e.altKey && !e.shiftKey && k === 'y') { e.preventDefault(); redoLay(); return true; }
+  if (e.key === 'Delete' && !mod && balSelItem(curDoc())) { e.preventDefault(); balDelete(); return true; }       // a selected balloon goes first, then the part
   if (!selectedPlaced()) return false;
   if (mod && !e.altKey && !e.shiftKey && k === 'd') { e.preventDefault(); duplicate(); return true; }
   if (e.key === 'Delete' && !mod) { e.preventDefault(); deletePlaced(); return true; }
@@ -11764,6 +12191,9 @@ function startQuickSelect() {
     } });
 }
 
+/** The command whose extra key this keydown is, if any. */
+const extraCommand = (e) => { const key = SC.eventKey(e); return key ? ownCommands.find((c) => c.extra.includes(key)) : null; };
+const FIELD_EDIT = { delete: 'forwardDelete', undo: 'undo', redo: 'redo', copy: 'copy' };       // what Delete, Ctrl+Z, Ctrl+Y, Ctrl+C do in a text field
 function editKey(e) {
   if (document.querySelector('[data-testid=pdf-dialog], [data-testid=qselect-dialog]')) return;       // a dialog's own handlers take every key, wherever focus is
   const inField = e.target?.closest?.('input, textarea, select');
@@ -11800,6 +12230,7 @@ function editKey(e) {
     else if (sheetSelOn() && !pdrag) selectSheet(false);
     else if (curLay() && pdrag) cancelPlacedDrag();
     else if (layModLive()) modEsc(curDoc());
+    else if (state.tool === 'shape' && !state.grip) { setTool('select'); note('Shape tool ended'); }       // TODO 139a
     else if (!state.grip && gripDoc() && hotsOf(gripDoc())) { state.hots = null; note('Hot grips cleared'); paintOverlay(); }
     else if (curLay() && multiSel() && !state.grip && !state.setlen && state.tool !== 'measure') { if (wholeGroup()) { selectMany([]); update(); note('Selection cleared'); } else { selectMany(groupIdxs(state.sel), state.sel); update(); note('Selection: just the main part'); } }
     else if (curLay() && state.mode === 'rotate') { state.mode = 'select'; state.rotCopy = false; update(); note('Rotate done'); }
@@ -11815,6 +12246,7 @@ function editKey(e) {
     else if (modLive()) modEsc(d);
     else if (state.tool === 'text' && state.text.askHeight && !textEditing()) { state.text.askHeight = false; renderCommand(); paintOverlay(); }
     else if (state.tool === 'text' && d && !textEditing()) { if (d.sel.size) setSel(d, new Set()); else setTool('select'); }
+    else if (drawLive() && state.draw.kind === 'pen' && DR.toolBusy(state.draw)) { state.msg = null; drawCancel(); }
     else if (drawLive()) { if (DR.toolBusy(state.draw) || state.draw.stage === 'radius') { state.msg = null; drawFinish(); } else setTool('select'); }
     else if (state.dimDrag || state.dimHot) { (state.dimDrag || state.dimHot.g).cancelled = true; state.dimDrag = state.dimHot = null; note('Move cancelled'); paintOverlay(); }
     else if (state.dim && state.dim.askText) { state.dim.askText = false; note(dimPrompt()); }
@@ -11824,15 +12256,20 @@ function editKey(e) {
     else if (state.meas && state.meas.pts.length) { state.meas.pts = []; state.meas.hover = null; note('Measure cleared'); paintOverlay(); }
     else if (state.tool === 'dimension' || state.tool === 'leader' || state.tool === 'measure' || state.tool === 'balloon') setTool('select');       // nothing in progress: back to Select
     else if (state.tool === 'contour' && !(d && d.sel.size)) setTool('select');
-    else if (d && state.balSel != null) balSelect(d, null);
+    else if (state.balSel != null && balDoc()) balSelect(balDoc(), null);       // balDoc(): a layout too (editable() is null there)
     else if (d && d.sel.size) setSel(d, new Set());
     else if (curLay() && selIdxs().length) { selectMany([]); update(); }
     return;
   }
-  const key = SC.eventKey(e), own = ownCommands.find((c) => c.key && c.key === key && !SC.fixedKey(c.name));
+  const key = SC.eventKey(e), ext = extraCommand(e);       // an extra key acts as its command's main key would at this place (save / save as: see the Ctrl+S listener)
+  const own = ownCommands.find((c) => c.key && c.key === key && !SC.fixedKey(c.name)) || (ext && !SC.fixedKey(ext.name) ? ext : null);
   if (key === 'Ctrl+C' || key === 'Ctrl+V' || key === 'Ctrl+Shift+V') {
     if (inField || e.target?.isContentEditable) return;
     e.preventDefault(); if (key === 'Ctrl+C') copySelection(); else if (key === 'Ctrl+Shift+V') pasteInPlace(); else pasteSelection(); return;
+  }
+  if (ext && SC.fixedKey(ext.name) && ext.name !== 'save' && ext.name !== 'saveas') {
+    if (inField || e.target?.isContentEditable) { const how = FIELD_EDIT[ext.name]; if (how) { e.preventDefault(); document.execCommand(how); } return; }       // in text: what the main key does there
+    e.preventDefault(); if (ext.name === 'copy') copySelection(); else runCommand(ext); return;       // Copy's main key is the clipboard Ctrl+C, not the Copy tool
   }
   if (own && (!inField || own.name === 'properties' || (e.target === ui.cmd && /^F\d+$/.test(key)))) { e.preventDefault(); runCommand(own); return; }       // Function keys also work while typing a command.
   if (inField || e.target?.isContentEditable) return;
@@ -11842,6 +12279,7 @@ function editKey(e) {
   if (state.grip && (e.key === 'Enter' || e.key === ' ') && !mod && !e.altKey && !dialog && !(e.target.closest && e.target.closest('button, a'))) { e.preventDefault(); gripCycle(); return; }       // Space / Enter on a hot grip: the next grip mode
   if ((e.key === 'Enter' || e.key === ' ') && !mod && !e.altKey && !dialog && dimAutoLive() && !(e.target.closest && e.target.closest('button, a'))) { e.preventDefault(); dimAutoEnd(); return; }       // Automatic dimension repeats until Enter, Space or Esc
   if (state.grip && mod && !e.altKey && (k === 'y' || k === 'z')) { e.preventDefault(); undoCurrent(k === 'y' || e.shiftKey); return; }       // in a grip run Undo / Redo are the run's own (see undoCurrent)
+  if (e.key === 'Delete' && !mod && !e.altKey && shapeDelete()) { e.preventDefault(); return; }       // TODO 139b2: nodes selected in the Shape tool; else the objects go as today
   if (cmpKey(e, mod)) return;
   if (!mod && !e.altKey && drawKey(e, k)) return;
   if (e.key === ' ' && !mod && !e.altKey && !e.shiftKey && !dialog && !activeCmd() && !(e.target.closest && e.target.closest('button, a'))) { e.preventDefault(); ui.cmdUI.repeat(); return; }       // Space is Enter: the last command again
@@ -12207,8 +12645,11 @@ function renderPropsPanel(d) {
 
 function renderPropsValues(d, lay = curLay()) {
   if (lay) d = propDoc();
+  const ldrOnly = !!lay && !d.sel.size && !!ldrSel(curDoc());       // a layout's selected leader (a dimension part, not in the object selection): the Info section with its Leader row alone
+  ui.propBody.classList.toggle('ldr-only', ldrOnly);
   if (lay && !d.sel.size) {
-    ui.propEmpty.hidden = ui.propBody.hidden = ui.propChip.hidden = ui.propMatch.hidden = true;
+    ui.propEmpty.hidden = ui.propChip.hidden = ui.propMatch.hidden = true;
+    ui.propBody.hidden = !ldrOnly; ui.propGeo.hidden = true;
     ui.propQuick.hidden = false;
     ui.propSimilar.hidden = !selItems().some((x) => x.p.src === 'loose' && x.part.obj);
     return;
@@ -12447,7 +12888,7 @@ function applyFill(key) {
   else note(key ? 'Current fill colour: ' + PR.colourLabel(key) : 'Select closed outlines to remove their fills');
 }
 function startColourTool(kind) {
-  const d = editable();
+  const d = colourDoc();
   if (!d) { note('Fill and Eyedropper work on a drawing tab'); return; }
   setTool('select'); state.match = null;
   state.colourTool = { kind, d, source: null };
@@ -12455,6 +12896,7 @@ function startColourTool(kind) {
   note(kind === 'fill' ? 'Fill: click inside a closed outline; Esc ends' : 'Eyedropper: click a source object; Esc ends');
   renderCommand();
 }
+const PART_COLOUR = 'Fill and Eyedropper work on layout objects, not placed parts';
 function closedAt(d, p) {
   const seen = new Set();
   for (let k = d.fl.items.length - 1; k >= 0; k--) {
@@ -12470,14 +12912,14 @@ function colourToolClick(d, p) {
   const tool = state.colourTool;
   if (tool.kind === 'fill') {
     const i = closedAt(d, p);
-    if (i < 0) { note('Not one closed outline: Join first'); return; }
+    if (i < 0) { note(d.vlay && partAt(d, p) ? PART_COLOUR : 'Not one closed outline: Join first'); return; }
     fillTargets(d, [i], currentFill); return;
   }
   const hit = Math.max(closedAt(d, p), hitAt(d, p));
-  if (hit < 0 || d.raw.entities[hit].layer === Ed.DIM_LAYER) { note('Eyedropper: click an object; Esc ends'); return; }
+  if (hit < 0 || d.raw.entities[hit].layer === Ed.DIM_LAYER) { note(d.vlay && partAt(d, p) ? PART_COLOUR : 'Eyedropper: click an object; Esc ends'); return; }
   if (!tool.source) { tool.source = PR.withColour(d.raw.entities[hit], PR.effectiveColour(d.raw.entities[hit], layerMap(d))); note('Eyedropper: click targets one by one; Esc ends'); return; }
   const next = FI.copyColours(tool.source, d.raw.entities[hit], layerMap(d));
-  if (!FI.coloursEqual(next, d.raw.entities[hit]) && !commit(d, { entities: d.raw.entities.map((e, k) => k === hit ? next : e), blocks: d.raw.blocks }, 'Eyedropper colours')) return;
+  if (!FI.coloursEqual(next, d.raw.entities[hit]) && !(d.vlay ? layGripCommit(d, [[d.raw.entities[hit], next]], 'Eyedropper colours') : commit(d, { entities: d.raw.entities.map((e, k) => k === hit ? next : e), blocks: d.raw.blocks }, 'Eyedropper colours'))) return;
   usedColour(PR.colourKey(next)); if (next.fill) usedColour(next.fill);
   renderEdit(); note('Eyedropper: colours copied; click the next target or Esc');
 }
@@ -12965,15 +13407,89 @@ function removeDuplicates() {
   note(`Removed redundant geometry from ${r.count} entities. Ctrl+Z brings it back`);
 }
 
+/** The tab Preflight checks: a drawing, or the open layout. */
+const pfDoc = () => editable() || (curLay() ? curDoc() : null);
+/** What a Preflight run was made of: a drawing's entities, or (text) a layout's placements and sheet. */
+const pfSource = (d) => (d.lay ? JSON.stringify([d.lay.placed, d.lay.s.sheetW, d.lay.s.sheetH]) : d.raw.entities);
+const pfLocked = (lay, p) => !!p.lock || !!(lay.parts[p.partId].obj && LD.layersOf(lay)[lay.parts[p.partId].raw.entities[0]?.layer]?.flags & 4);
+/** Preflight of the open layout (TODO 156e3a/b): the checks on each loose object's own raw (one object at a time;
+ * tolerance and stroke width follow the placement's scale), on each placed part's raw once per part id (report only: a part record is shared by its copies; `placed` counts those hits),
+ * and "off the sheet" on every placement. Hidden placements are skipped. Offenders are indexes into placedNow (a placed part's: all its copies). Hairline, Duplicates and Gaps are a Fix on loose objects (layHairline, layFix).
+ * Duplicates and Gaps also look across placements (TODO 156e3c): each visible placement's outlines in sheet mm (gap tolerance in sheet mm), a pair from two different placements flags both
+ * (count: the placements for Duplicates, the gaps for Gaps; hits inside one placement stay in the rows above). */
+function layPreflight(d, check) {
+  const lay = d.lay, { sheetW, sheetH } = lay.s;
+  const rows = CL.preflight(newDoc(4), { tolerance: state.gapMm, sheetW, sheetH, check }).map((r) => ({ ...r, placed: 0 })), by = Object.fromEntries(rows.map((r) => [r.id, r]));
+  const copies = new Map(), outlines = new Map(), items = [];
+  placedNow.forEach((p, k) => {
+    if (partHid(p)) return;
+    const part = lay.parts[p.partId];
+    if (by.duplicates || by.gaps) {
+      if (!outlines.has(p.partId)) outlines.set(p.partId, C.polylines(part.fl || flatten(part.raw), part.factor || 1, part.off).polys);
+      const f = part.factor || 1, [b0, b1] = part.box || [0, 0], th = (p.rot || 0) * Math.PI / 180, co = Math.cos(th), si = Math.sin(th), sx = (p.mirrorX ? -1 : 1) * (p.sc || 1), sy = (p.mirrorY ? -1 : 1) * (p.sc || 1);
+      items.push({ k, solid: !part.obj, polys: outlines.get(p.partId).map((q) => {       // the part's mm outline from its box corner, mirrored, turned, moved to x, y (placedBox's maths)
+        const o = new Float64Array(q.length);
+        for (let i = 0; i < q.length; i += 2) { const u = (q[i] - b0 * f) * sx, v = (q[i + 1] - b1 * f) * sy; o[i] = p.x + co * u - si * v; o[i + 1] = p.y + si * u + co * v; }
+        return o;
+      }) });
+    }
+    if (part.obj && p.src === 'loose' && check !== 'offsheet') for (const r of CL.preflight(part.raw, { factor: p.sc || 1, tolerance: state.gapMm, check })) if (r.id !== 'offsheet' && r.count) { by[r.id].offenders.push(k); by[r.id].count += r.count; }
+    if (!part.obj && check !== 'offsheet') copies.set(p.partId, [...(copies.get(p.partId) || []), k]);
+    if (by.offsheet && PL.offSheet(part, p, sheetW, sheetH)) { by.offsheet.offenders.push(k); by.offsheet.count++; }
+  });
+  for (const [id, ks] of copies) for (const r of CL.preflight(lay.parts[id].raw, { factor: lay.parts[id].factor || 1, tolerance: state.gapMm, check })) if (r.id !== 'offsheet' && r.count) { by[r.id].offenders.push(...ks); by[r.id].count += r.count; by[r.id].placed += r.count; }
+  if (items.length) {
+    const x = CL.crossChecks(items, state.gapMm), add = (id, ks, n) => { if (n) { by[id].offenders = [...new Set([...by[id].offenders, ...ks])]; by[id].count += n; } };
+    if (by.duplicates) add('duplicates', x.duplicates, x.duplicates.size);
+    if (by.gaps) add('gaps', x.gaps.flatMap((s) => [...s]), x.gaps.length);
+    rows.covered = x.covered;       // the loose placements lying whole on a placed part (layFix removes them)
+  }
+  return rows;
+}
+/** Preflight's Duplicates / Gaps Fix on a layout (TODO 156e3d): loose, unlocked, visible objects only (layObjDoc: one entity each, in sheet mm); one Undo step.
+ * Duplicates: the later copy goes (a locked later one: the earlier unlocked one), a loose object lying whole on a placed part goes, the part stays; Gaps: the gap inside one object (Average point: one object stays one object).
+ * Gaps between two objects and anything on a placed part stay reported (fix a part in its drawing). */
+function layFix(d, id) {
+  const lay = d.lay, v = layObjDoc(d), ents = v.raw.entities, locked = (e) => pfLocked(lay, lay.placed[v.at.get(e)]);
+  let done = false;
+  if (id === 'duplicates') {
+    const entOf = new Map(ents.map((e) => [v.at.get(e), e])), onPart = new Set([...layPreflight(d, id).covered || []].map((k) => entOf.get(placedNow[k].i)));
+    const order = [...ents].sort((a, b) => locked(b) - locked(a) || v.at.get(a) - v.at.get(b));       // locked first: they stay, and the later unlocked copy goes
+    const r = CL.removeDuplicates({ ...v.raw, entities: order }, (j) => !locked(order[j])), next = r.entities.filter((e) => !(onPart.has(e) && !locked(e)));
+    const heir = new Map();       // a trimmed piece takes its source's group, lock and draw place
+    for (const [j, ks] of r.indexes) for (const k of ks) if (!v.at.has(r.entities[k])) heir.set(r.entities[k], order[j]);
+    if (next.length !== ents.length || next.some((e) => !v.at.has(e))) { done = true; selectMany([]); layObjCommit(v, { entities: next, blocks: r.blocks, heir }, 'Preflight Remove duplicates'); }
+  } else {
+    const pairs = [];
+    for (const e of ents) {
+      if (locked(e)) continue;
+      const one = { ...v.raw, entities: [e] }, r = Ed.joinTinyGaps(one, CL.checkIndex(one), state.gapMm, () => true, 'average');
+      if (r.changed && r.entities.length === 1) pairs.push([e, r.entities[0]]);
+    }
+    done = pairs.length > 0 && layGripCommit(v, pairs, 'Preflight Join gaps');
+  }
+  if (layPreflight(d, id)[0].offenders.some((k) => placedNow[k].src === 'loose' && pfLocked(lay, placedNow[k]))) note('Preflight: locked objects skipped');
+  else if (!done) note('Preflight: nothing to fix here (parts, and gaps between two objects, are report only)');
+}
+/** Preflight's Hairline Fix on a layout: the unlocked loose objects among `offenders` (placedNow indexes) become hairline objects (objectReplace: new part ids), one undo step. */
+function layHairline(d, offenders) {
+  const v = layObjDoc(d), at = new Map(v.raw.entities.map((e, i) => [v.at.get(e), i]));
+  const loose = offenders.filter((k) => placedNow[k].src === 'loose'), mine = loose.filter((k) => !pfLocked(d.lay, placedNow[k]) && at.has(placedNow[k].i)).map((k) => at.get(placedNow[k].i));
+  if (!mine.length) { if (loose.length) note('Preflight: locked objects skipped'); return; }
+  const r = CL.hairline(v.raw, mine);
+  return layGripCommit({ ...v, raw: { ...v.raw, blocks: r.blocks } }, mine.map((i) => [v.raw.entities[i], r.entities[i]]), 'Preflight Hairline');
+}
+
 function showPreflight() {
-  if (!editable()) { note('Preflight works on a drawing tab: open a drawing first'); return; }
+  const d = pfDoc();
+  if (!d) { note('Preflight works on a drawing or layout tab: open one first'); return; }
   ui.cmdUI.close();
   if (!ui.preflight) {
     ui.preflight = h('section', { class: 'pop preflightpanel', role: 'dialog', 'aria-modal': 'false', 'aria-label': 'Preflight', 'data-testid': 'preflight' });
     ui.canvas.append(ui.preflight);
   }
   ui.preflight.hidden = false;
-  editable().preflightOpen = true;
+  d.preflightOpen = true;
   recheckPreflight();
 }
 function closePreflight() {
@@ -12981,26 +13497,33 @@ function closePreflight() {
   ui.preflight.hidden = true;
 }
 function recheckPreflight(check) {
-  const d = editable();
+  const d = pfDoc();
   if (!d || !ui.preflight || ui.preflight.hidden) return;
   let fresh;
-  try { fresh = CL.preflight(d.raw, { factor: d.factor, tolerance: state.gapMm, check }); } catch (e) { if (!(e instanceof DrawingError)) throw e; note('Preflight: ' + e.message); if (!check) { ui.preflight.hidden = true; d.preflightOpen = false; } return null; }       // the first walk failed: no strip, no walk again on every render
+  try { fresh = d.lay ? layPreflight(d, check) : CL.preflight(d.raw, { factor: d.factor, tolerance: state.gapMm, check }); } catch (e) { if (!(e instanceof DrawingError)) throw e; note('Preflight: ' + e.message); if (!check) { ui.preflight.hidden = true; d.preflightOpen = false; } return null; }       // the first walk failed: no strip, no walk again on every render
   const rows = check ? ui.preflightRows.map((r) => fresh.find((f) => f.id === r.id) || r) : fresh;
   ui.preflightRows = rows;
-  if (!check) { ui.preflightDoc = d; ui.preflightSource = d.raw.entities; }
+  if (!check) { ui.preflightDoc = d; ui.preflightSource = pfSource(d); }
   const duplicates = fresh.find((r) => r.id === 'duplicates');
-  if (duplicates) { d.duplicates = { source: d.raw.entities, count: duplicates.count }; renderEdit(); }
+  if (duplicates && !d.lay) { d.duplicates = { source: d.raw.entities, count: duplicates.count }; renderEdit(); }
   const button = (label, id, fn, disabled = false) => h('button', { class: 'btn sm', type: 'button', 'data-testid': id, disabled, onclick: fn }, label);
   const select = (id) => {
     const fresh = recheckPreflight(id);
     if (!fresh) return;
     setTool('select');
+    if (d.lay) {
+      const offenders = fresh.offenders.filter((k) => !pfLocked(d.lay, placedNow[k]));
+      selectMany(offenders); update();
+      note(`Preflight: ${fresh.label} · ${offenders.length} placement${offenders.length === 1 ? '' : 's'} selected` + (offenders.length < fresh.offenders.length ? ' (locked skipped)' : ''));
+      return;
+    }
     const offenders = fresh.offenders.filter((i) => !lockedEnt(d, i));
     setSel(d, new Set(offenders));
     note(`Preflight: ${fresh.label} · ${offenders.length} entities selected` + (offenders.length < fresh.offenders.length ? ' (locked layers skipped)' : ''));
   };
   const fix = (id) => {
-    if (id === 'duplicates') removeDuplicates();
+    if (d.lay) { if (id === 'wide') layHairline(d, layPreflight(d, 'wide')[0].offenders); else layFix(d, id); }
+    else if (id === 'duplicates') removeDuplicates();
     else if (id === 'gaps') joinTinyGaps(true);
     else {
       let wide;
@@ -13011,7 +13534,7 @@ function recheckPreflight(check) {
     recheckPreflight(id);
   };
   ui.preflightNote = h('p', { class: 'lbl', 'data-testid': 'preflight-note' },
-    (ui.preflightSource !== d.raw.entities ? 'Drawing changed · Recheck for other counts.' : 'Whole drawing · checked just now.') + ' Cut layer: name contains “cut” (any case).');
+    (ui.preflightSource !== pfSource(d) ? (d.lay ? 'Layout' : 'Drawing') + ' changed · Recheck for other counts.' : d.lay ? 'Whole layout · checked just now.' : 'Whole drawing · checked just now.') + ' Cut layer: name contains “cut” (any case).');
   ui.preflight.replaceChildren(
     h('div', { class: 'pfhead' }, h('strong', {}, 'Preflight'), h('span', { class: 'chip', 'data-testid': 'preflight-flagged' }, `${rows.filter((r) => r.count).length} checks flagged`)),
     h('div', { class: 'pfbody' }, ui.preflightNote,
@@ -13019,13 +13542,23 @@ function recheckPreflight(check) {
       rows.map((r) => h('div', { class: 'pfrow', 'data-testid': `preflight-${r.id}` }, h('span', {}, r.label),
         h('span', { class: 'pfcount', 'data-testid': `preflight-${r.id}-count` }, r.count ?? 'n/a (no sheet)'),
         button('Select', `preflight-${r.id}-select`, () => select(r.id), !r.count),
-        r.fix ? button(r.fix, `preflight-${r.id}-fix`, () => fix(r.id), !r.count) : h('span', { class: 'pfmanual' }, 'Manual'))),
-      h('p', { class: 'lbl' }, `Tiny gaps use Drawing scale’s ${state.gapMm} mm tolerance. Hairline: 0.05 mm. Hidden / locked objects are checked; fixes skip locks. Warnings only; output is never blocked.`)),
+        r.fix && !(r.placed && r.placed === r.count) ? Object.assign(button(r.fix, `preflight-${r.id}-fix`, () => fix(r.id), !r.count), r.placed ? { title: 'Fixes loose objects only: fix a placed part in its drawing' } : {}) : h('span', { class: 'pfmanual' }, r.placed ? 'fix in its drawing' : 'Manual'))),
+      h('p', { class: 'lbl' }, `Tiny gaps use Drawing scale’s ${state.gapMm} mm tolerance. Hairline: 0.05 mm. ${d.lay ? 'Locked objects are checked; hidden ones are skipped' : 'Hidden / locked objects are checked'}; fixes skip locks. Warnings only; output is never blocked.`)),
     h('div', { class: 'pfbuttons' }, button('Recheck', 'preflight-recheck', () => recheckPreflight()), button('Close', 'preflight-close', closePreflight))
   );
   return fresh[0];
 }
 
+/** The Leader row of the Info section: shown for the one selected leader (a drawing's or a layout's), its fields filled. */
+function renderLdrRow(d) {
+  const sl = ldrSel(d), f = d.lay ? 1 : d.factor;
+  ui.ldrRow.hidden = !sl;
+  if (!sl) return;
+  const set = (i, v) => { if (document.activeElement !== i) i.value = v; };
+  set(ui.ldrNote, sl.model.lines.join(' / ')); ui.ldrNote.disabled = sl.model.lines.length > 1; ui.ldrNote.title = ui.ldrNote.disabled ? 'Several lines: double-click the note to change it' : '';
+  set(ui.ldrH, String(+(sl.model.textH * f).toFixed(3))); set(ui.ldrA, String(+(sl.model.arrow * f).toFixed(3)));
+  ui.ldrStyle.textContent = `Style: ${state.dimStyles.cur}. Note lands ${LR.sideOf(sl.model.pts) > 0 ? 'right' : 'left'}.`;
+}
 function renderEdit() {
   if (!ui.drawSec) return;
   renderRibbon();
@@ -13033,10 +13566,10 @@ function renderEdit() {
   renderBalloons();
   const d = editable() || curDoc(), on = !!editable(), L = state.setlen;
   if (ui.preflight) {
-    ui.preflight.hidden = !on || !d.preflightOpen;
+    ui.preflight.hidden = !(on || d?.lay) || !d.preflightOpen;
     if (!ui.preflight.hidden) {
-      if (ui.preflightDoc !== d) recheckPreflight();
-      else if (ui.preflightSource !== d.raw.entities) ui.preflightNote.textContent = 'Drawing changed · Recheck for current counts. Cut layer: name contains “cut” (any case).';
+      if (ui.preflightDoc !== d && (!d.lay || placedLay === d.lay)) recheckPreflight();       // a layout waits for its own placedNow (update() draws again)
+      else if (ui.preflightSource !== pfSource(d)) ui.preflightNote.textContent = (d.lay ? 'Layout' : 'Drawing') + ' changed · Recheck for current counts. Cut layer: name contains “cut” (any case).';
     }
   }
   const selected = curLay() ? selIdxs().length > 0 : !!d?.sel?.size;
@@ -13049,7 +13582,7 @@ function renderEdit() {
   const undoHead = on && selected ? ui.propHead : ui.drawSec.querySelector('.layers-head');   // Drawing scale hides with a selection; Undo / Redo stay reachable
   if (ui.undoTools.parentElement !== undoHead) undoHead.append(ui.undoTools);
   for (const section of [ui.drawSec, ui.tinySec, ui.dupsSec]) applySectionFold(section);
-  if (state.colourTool && (!on || state.colourTool.d !== d)) state.colourTool = null;
+  if (state.colourTool && state.colourTool.d !== colourDoc()) state.colourTool = null;
   if (state.match?.d.vlay === curDoc()) state.match.d = propDoc();
   if (state.match && (state.match.d !== propDoc() || !state.match.d.raw.entities[state.match.src])) state.match = null;
   renderPropsPanel(on ? d : null);
@@ -13066,7 +13599,7 @@ function renderEdit() {
   }
   if (state.tool === 'measure') ui.hintPill.hidden = true;
   ui.canvas.classList.toggle('pick', (on && (state.tool === 'select' || state.tool === 'contour' || state.tool === 'dimension' || !!state.draw || !!L)) || (!!measureTarget() && state.tool === 'measure'));
-  if (!on) return;
+  if (!on) { if (d?.lay) { ui.dimRow.hidden = true; renderLdrRow(d); } return; }       // a layout's selected leader has its row too (TODO 156e1b)
   renderSelection(d);
   const n = d.sel.size, b = sizeBox(d), rb = resizeBox(d), scalable = !!b;
   ui.bgName.textContent = d.bg ? d.bg.name : '';
@@ -13079,14 +13612,7 @@ function renderEdit() {
   const sd = dimSel(d);
   ui.dimRow.hidden = !sd;
   if (sd && document.activeElement !== ui.dimH) ui.dimH.value = String(+(sd.params.textH * d.factor).toFixed(3));
-  const sl = ldrSel(d);
-  ui.ldrRow.hidden = !sl;
-  if (sl) {
-    const set = (i, v) => { if (document.activeElement !== i) i.value = v; };
-    set(ui.ldrNote, sl.model.lines.join(' / ')); ui.ldrNote.disabled = sl.model.lines.length > 1; ui.ldrNote.title = ui.ldrNote.disabled ? 'Several lines: double-click the note to change it' : '';
-    set(ui.ldrH, String(+(sl.model.textH * d.factor).toFixed(3))); set(ui.ldrA, String(+(sl.model.arrow * d.factor).toFixed(3)));
-    ui.ldrStyle.textContent = `Style: ${state.dimStyles.cur}. Note lands ${LR.sideOf(sl.model.pts) > 0 ? 'right' : 'left'}.`;
-  }
+  renderLdrRow(d);
   const put = (input, v) => { if (document.activeElement !== input) input.value = v; };
   const selectionBox = n && OB.boxOf(d.fl, [...d.sel]);
   for (const [kind, value] of [['x', selectionBox ? lengthText(selectionBox[0] * d.factor) : ''], ['y', selectionBox ? lengthText(selectionBox[1] * d.factor) : ''], ['rotation', '0'], ['scale', '100']]) {
@@ -13599,7 +14125,7 @@ async function init() {
   }, true);
   document.addEventListener('keydown', (e) => {
     if (document.querySelector('.pop-back, .pdlg-back, dialog[open]')) return;
-    const key = SC.eventKey(e), cmd = ownCommands.find((c) => c.key && c.key === key);
+    const key = SC.eventKey(e), cmd = ownCommands.find((c) => c.key && c.key === key) || extraCommand(e);
     if (!['closetab', 'nexttab', 'previoustab'].includes(cmd?.name)) return;
     e.preventDefault(); e.stopPropagation();
     if (cmd.name === 'closetab' && e.repeat) return;
@@ -13608,6 +14134,7 @@ async function init() {
   document.addEventListener('keydown', (e) => {
     if (document.querySelector('.pop-back, .pdlg-back, dialog[open]')) return;                       // a dialog is open: its keys are its own, the drawing behind it waits
     if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 's') { e.preventDefault(); save(e.shiftKey); }
+    else { const x = extraCommand(e); if (x?.name === 'save' || x?.name === 'saveas') { e.preventDefault(); save(x.name === 'saveas'); } }       // an extra key of Save / Save as, as Ctrl+S: also in a field
     ctrlTap = e.key === 'Control' && !e.repeat;                       // 163a: a Ctrl tap (down, up, nothing between) cycles a hot grip's options
     editKey(e);
   });

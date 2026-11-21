@@ -1,34 +1,21 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { resetTimes, cumulativeTokens } from './usage-site/public/token-chart.js';
+import { dailyTokens, niceStep } from './usage-site/public/token-chart.js';
 
 const at = (s) => Date.parse(s);
-const now = at('2026-10-21T20:00:00Z'), from = at('2026-10-08T18:30:00Z');
 
-test('reset times: resetsAt stepped back 7 days across the window, plus a sharp drop in the stored readings', () => {
-  const limits = [{ agent: 'Rook', window: 'week', resets: '2026-10-24T05:00:00Z' }, { agent: 'Rowan', window: 'week', resets: '2026-10-27T12:00:00Z' }, { agent: 'Rowan', window: '5h', resets: '2026-10-22T00:00:00Z' }];
-  assert.deepEqual(resetTimes('Rook', limits, [], from, now), [at('2026-10-10T05:00:00Z'), at('2026-10-17T05:00:00Z')]);
-  const reading = (when, used_pct, agent = 'Rowan') => ({ when, agent, window: 'week', used_pct: String(used_pct) });
-  const history = [reading('2026-10-20T08:00:00Z', 60), reading('2026-10-20T09:00:00Z', 2), reading('2026-10-19T09:00:00Z', 55), reading('2026-10-20T10:00:00Z', 5), reading('2026-10-20T11:00:00Z', 4, 'Rook')];
-  // Knight (stored as Rowan): scheduled Oct 13 and Oct 20 12:00, plus the manual reset seen at the 09:00 reading; a 5-point wobble is not a reset.
-  assert.deepEqual(resetTimes('Knight', limits, history, from, now), [at('2026-10-13T12:00:00Z'), at('2026-10-20T09:00:00Z')]);
-  // A drop read within 6 h of a scheduled reset is the same reset.
-  assert.deepEqual(resetTimes('Rook', limits, [reading('2026-10-17T05:40:00Z', 90, 'Rook'), reading('2026-10-17T06:40:00Z', 1, 'Rook')], from, now), [at('2026-10-10T05:00:00Z'), at('2026-10-17T05:00:00Z')]);
-  assert.deepEqual(resetTimes('Bishop', [], [], from, now), []);
-  // King: its own limits row and readings only (not Bishop's, whose old name was Pip).
-  const kingLimits = [...limits, { agent: 'King', window: 'week', resets: '2026-10-26T10:00:00Z' }, { agent: 'Pip', window: 'week', resets: '2026-10-25T10:00:00Z' }];
-  assert.deepEqual(resetTimes('King', kingLimits, [reading('2026-10-20T08:00:00Z', 70, 'King'), reading('2026-10-20T09:00:00Z', 3, 'King')], from, now), [at('2026-10-12T10:00:00Z'), at('2026-10-19T10:00:00Z'), at('2026-10-20T09:00:00Z')]);
-  assert.deepEqual(resetTimes('Bishop', kingLimits, [], from, now), [at('2026-10-11T10:00:00Z'), at('2026-10-18T10:00:00Z')]);
-  assert.deepEqual(resetTimes('Rook', [{ agent: 'Rook', window: 'week', resets: 'garbage' }], [], from, now), []);
+test('daily totals: IST days ending on the newest row, empty days are 0, rows outside the window are left out', () => {
+  const H = 3600e3, midnight = at('2026-10-20T18:30:00Z'); // Oct 21 00:00 IST
+  const rows = [{ t: midnight - H, Rook: 5, Bishop: 1 }, { t: midnight, Rook: 10, Bishop: 2 }, { t: midnight + 23 * H, Rook: 1 }, { t: midnight + 24 * H, Rook: 4, Bishop: 'x' }];
+  const days = dailyTokens(rows, ['Rook', 'Bishop', 'King'], 3);
+  assert.deepEqual(days.map((d) => d.t), [midnight - 24 * H, midnight, midnight + 24 * H]);
+  assert.deepEqual(days.map((d) => [d.Rook, d.Bishop, d.King]), [[5, 1, 0], [11, 2, 0], [4, 0, 0]]);
+  assert.equal(dailyTokens(rows, ['Rook'], 1).length, 1);
+  assert.deepEqual(dailyTokens(rows, ['Rook'], 1)[0], { t: midnight + 24 * H, Rook: 4 });
+  assert.deepEqual(dailyTokens([], ['Rook']), []);
 });
 
-test('hourly running total restarts at 0 in the bucket holding each reset', () => {
-  const t0 = at('2026-10-10T00:00:00Z'), H = 3600e3;
-  const rows = [10, 5, 7, 0, 3, 4].map((Rook, i) => ({ t: t0 + i * H, Rook, Bishop: 1 }));
-  assert.deepEqual(cumulativeTokens(rows, 'Rook'), [10, 15, 22, 22, 25, 29]);
-  // A reset at 02:30 falls in the 02:00 bucket: that bucket's tokens count toward the new week.
-  assert.deepEqual(cumulativeTokens(rows, 'Rook', [t0 + 2.5 * H]), [10, 15, 7, 7, 10, 14]);
-  assert.deepEqual(cumulativeTokens(rows, 'Rook', [t0 - H, t0 + 4 * H, t0 + 10 * H]), [10, 15, 22, 22, 3, 7]);
-  assert.deepEqual(cumulativeTokens(rows, 'Bishop', [t0 + 3 * H]), [1, 2, 3, 1, 2, 3]);
-  assert.deepEqual(cumulativeTokens(rows, 'Knight'), [0, 0, 0, 0, 0, 0]);
+test('TODO 353c: axis step is the smallest 1 / 2 / 3 / 5 x 10^k that holds the max in 3 steps; empty data gives 1', () => {
+  assert.deepEqual([0, 1, 3, 4, 6, 9, 9e6, 8.2e6, 24480, 1e7 + 1].map(niceStep), [1, 1, 1, 2, 2, 3, 3e6, 3e6, 10000, 5e6]);
+  for (const max of [0, 7, 123, 5e5, 3.3e7]) assert.ok(niceStep(max) * 3 >= max, 'the axis holds the biggest bar');
 });

@@ -2,7 +2,12 @@
   "hosting": {
     "public": "public",
     "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
-    "headers": [{ "source": "**/*.js", "headers": [{ "key": "Cache-Control", "value": "no-cache" }] }]
+    "headers": [
+      { "source": "/", "headers": [{ "key": "Cache-Control", "value": "no-cache" }] },
+      { "source": "**/*.html", "headers": [{ "key": "Cache-Control", "value": "no-cache" }] },
+      { "source": "**/*.css", "headers": [{ "key": "Cache-Control", "value": "no-cache" }] },
+      { "source": "**/*.js", "headers": [{ "key": "Cache-Control", "value": "no-cache" }] }
+    ]
   },
   "firestore": { "rules": "firestore.rules" }
 }

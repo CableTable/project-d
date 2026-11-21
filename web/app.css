@@ -103,7 +103,9 @@ a { color: var(--accenttext); } a:hover { color: var(--text); }
   .ribbon-body[data-contents='drawingHome'] .ribbon-group { padding-inline: 3px; }
   .ribbon-body[data-contents='drawingHome'] .ribbon-gtitle { margin-inline: -3px; }
   .ribbon-body[data-contents='drawingHome'] .ribbon-big { width: 40px; }
+  .ribbon-body[data-contents='drawingHome'] [data-panel='Copy'] .ribbon-big { width: auto; min-width: 40px; }  /* 139a: "Duplicate" is wider than 40 px; it grows with the font instead of spilling out */
   .ribbon-body[data-contents='drawingHome'] .ribbon-small { gap: 3px; padding-inline: 3px; }
+  .ribbon-body[data-contents='drawingHome'] .ribbon-groupbody { gap: 1px; }   /* 140a: the Pen button is one more big tool in Draw: 1 px less between tools keeps 50 px spare at 1024 */
   .ribbon-body[data-contents='drawingHome'] .ribbon-field select { width: 84px; }
   .ribbon-body[data-contents='drawingHome'] [data-panel='Layers'] .ribbon-groupbody { flex-direction: column; }
   [data-testid=part-ribbon] .ribbon-group { padding-inline: 3px; }
@@ -601,6 +603,8 @@ select.fld { font-family: var(--sans); }
 .cutdlg { width: min(580px, 100%); }
 .export-dxf-dialog { width: min(460px, 100%); }
 .export-dxf-dialog .fld { width: 100%; }
+.export-dxf-layers { max-height: 150px; overflow: auto; border: 1px solid var(--line); border-radius: var(--r); background: var(--field); padding: 6px 8px; display: grid; gap: 4px; }
+.export-dxf-layers label { display: flex; gap: 8px; align-items: center; overflow-wrap: anywhere; }
 .cutdlg .fld { width: 70px; }
 .cutchip { padding: 2px 8px; border: 1px solid var(--line); border-radius: 12px; }
 .cutnote { display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--r); background: var(--field); }
@@ -661,7 +665,7 @@ select.fld { font-family: var(--sans); }
 .member .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .propbar .vsep { width: 1px; height: 24px; background: var(--line); }
 .sel-multi { stroke-width: 1.6; vector-effect: non-scaling-stroke; }
-.sel-union { fill: none; stroke: var(--accent); stroke-dasharray: 6 4; stroke-width: 1.4; vector-effect: non-scaling-stroke; pointer-events: none; }
+.sel-box.off { stroke: var(--mark); }
 .sel-readout { fill: var(--accent); font-family: var(--mono); font-weight: 500; }
 .group-tag { fill: var(--accent); }
 .drawing-group-box { stroke-width: 1.5; stroke-dasharray: 6 4; vector-effect: non-scaling-stroke; }
@@ -739,6 +743,8 @@ select.fld { font-family: var(--sans); }
 .canvas > .ovl { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
 .canvas > .ovl svg { display: block; width: 100%; height: 100%; }
 .ovl .dr-shape { fill: none; stroke: var(--accent); stroke-width: 1.8; stroke-linejoin: round; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+.ovl .dr-hline { fill: none; stroke: var(--accent); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.ovl .dr-handle { fill: var(--accent); stroke: none; }
 .ovl .dr-guide { fill: none; stroke: var(--muted); stroke-width: 1.2; stroke-dasharray: 5 4; vector-effect: non-scaling-stroke; }
 .ovl .dr-edge { fill: none; stroke: var(--accent); stroke-width: 4; stroke-opacity: var(--edge-opacity); stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
 .ovl .dr-trim-cut, .ovl .dr-trim-under, .ovl .dr-trim-fade, .ovl .dr-trim-ext, .ovl .dr-trim-x { fill: none; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
@@ -934,6 +940,7 @@ button.cswatch, button.ribbon-swatch { padding: 0; cursor: pointer; }
 @media (max-width: 700px) { .ds-body { flex-direction: column; } .ds-side { width: auto; } }
 
 /* the Leader section of the Drawing panel (R8c) */
+.propbody.ldr-only > :not([data-testid=props-info]) { display: none; }       /* a layout's selected leader: only its Leader row (it has no shape properties) */
 .ldrrow { display: flex; flex-direction: column; gap: 8px; padding: 8px; border-radius: var(--r); background: var(--sel); }
 .ldrgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 
@@ -1177,6 +1184,12 @@ kbd { font: 500 11px var(--mono); padding: 1px 5px; border: 1px solid var(--line
 .sc-key.sc-assigned { color: var(--text); }
 .sc-key:disabled { background: var(--app); cursor: default; }
 .sc-key.sc-listening { border-color: var(--accent); outline: 2px solid var(--accent); outline-offset: 1px; color: var(--accenttext); background: var(--sel); }
+.sc-extra { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.sc-chips { display: contents; }
+.sc-chip { display: inline-flex; align-items: center; gap: 2px; height: 24px; padding: 0 2px 0 7px; border: 1px solid var(--line); border-radius: var(--r); background: var(--field); font: 12px var(--mono); color: var(--text); }
+.sc-chip-x { width: 18px; height: 18px; padding: 0; border: 0; background: transparent; color: var(--muted); cursor: pointer; font-size: 14px; line-height: 1; }
+.sc-key.sc-plus { width: auto; min-width: 26px; justify-content: center; }
+.sc-conflict .sc-chip { border-color: var(--mark); color: var(--mark); }
 .sc-icon { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; padding: 0; border: 0; background: transparent; color: var(--muted); border-radius: var(--r); cursor: pointer; font-size: 18px; }
 .sc-dialog button:focus-visible, .sc-dialog select:focus-visible, .sc-dialog input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .sc-warning { background: color-mix(in srgb, var(--mark) 7%, var(--panel)); color: var(--mark); }
