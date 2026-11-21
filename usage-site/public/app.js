@@ -117,8 +117,9 @@ function drawStrip() {
   const running = [...data.queue].reverse().filter((row) => row.state === 'running');
   if (!running.length) box.append(el('span', 'ud-muted', 'Nothing running'));
   for (const row of running) {
-    const { who, text } = queueParts(row), item = el('span');
-    if (who && text.startsWith(who + ' ')) { const b = el('b', null, who); b.style.color = AGENT_COLOR[who] || ''; item.append(b, document.createTextNode(cutSha(text.slice(who.length)))); } else item.textContent = cutSha(text);
+    const { who, text, item: id } = queueParts(row), item = el('span'), cut = text.endsWith(id) ? text.length - id.length : text.length, start = who && text.startsWith(who + ' ') ? who.length : 0;
+    if (start) { const b = el('b', null, who); b.style.color = AGENT_COLOR[who] || ''; item.append(b); }
+    item.append(cutSha(text.slice(start, cut)), el('b', null, cutSha(text.slice(cut))));
     box.append(item);
   }
   for (const a of ACCOUNTS) for (const [w, at, cls] of [['week', 95, 'bad'], ['5h', 85, 'warn']]) {
@@ -366,11 +367,12 @@ function renderWork(box) {
   const old = box.querySelector('details.ud-fold'); if (old) workFoldOpen = old.open; // a redraw keeps the fold as the user left it
   box.replaceChildren();
   const rows = [...data.queue].reverse(), running = (row) => row.state === 'running'; // newest first
-  const job = (chip, bold, title) => { const item = el('div', 'job'), main = el('span'); main.append(el('strong', null, bold)); if (title) main.append(el('span', null, ' ' + title)); item.append(chip, main); return item; };
+  const job = (chip, lead, bold, title) => { const item = el('div', 'job'), main = el('span'); if (lead) main.append(lead); main.append(el('strong', null, bold)); if (title) main.append(el('span', null, ' ' + title)); item.append(chip, main); return item; };
   const rowJob = (row) => {
-    const { who, text, base } = queueParts(row), chip = el('span', 'ud-chip', who || row.kind);
+    const { who, text, base, item } = queueParts(row), chip = el('span', 'ud-chip', who || row.kind);
     if (who) chip.style.color = AGENT_COLOR[who] || ''; else chip.classList.add('muted');
-    return job(chip, cutSha(who && text.startsWith(who + ' ') ? text.slice(who.length + 1) : text), cutSha(todoTitle(base).slice(3)));
+    const rest = who && text.startsWith(who + ' ') ? text.slice(who.length + 1) : text, cut = rest.endsWith(item) ? rest.length - item.length : rest.length; // only the id is bold, the verb before it plain
+    return job(chip, cutSha(rest.slice(0, cut)), cutSha(rest.slice(cut)), cutSha(todoTitle(base).slice(3)));
   };
   const part = (name, empty, jobs, tail = '') => {
     if (!jobs.length) { box.append(el('p', 'ud-muted', `${name}: ${empty}`)); return; }
@@ -379,7 +381,7 @@ function renderWork(box) {
   };
   const now = rows.filter(running), next = queueNext.map(String), done = rows.filter((row) => !running(row) && isTodayIst(row.ended));
   part('Now', 'nothing running', now.map(rowJob));
-  part('Next', 'nothing planned (no next: line in the queue)', next.map((id) => job(el('span', 'ud-chip muted', 'next'), id, todoTitle(id).slice(3))));
+  part('Next', 'nothing planned (no next: line in the queue)', next.map((id) => job(el('span', 'ud-chip muted', 'next'), '', id,todoTitle(id).slice(3))));
   part('Done today', 'nothing yet', done.slice(0, 5).map(rowJob), ` · ${done.length} ${done.length === 1 ? 'job' : 'jobs'}`);
   if (done.length > 5) {
     const fold = el('details', 'ud-fold'), more = el('div', 'ud-jobs');
@@ -407,7 +409,7 @@ function queueParts({ kind, id, out, state }) {
   const name = from.replace(/^(.+?)fix\d*$/, '$1 fix'), base = name.replace(/ fix$/, '');
   const done = state === 'ended', verbs = { build: ['building', 'built'], knight: ['building', 'built'], review: ['checking', 'checked'] }[kind];
   const text = kind === 'suite' ? 'Full tests ' + first : kind === 'fresh' ? 'Grill check ' + name : [who, verbs ? verbs[+done] : kind, name].filter(Boolean).join(' ');
-  return { who, text, base };
+  return { who, text, base, item: kind === 'suite' ? first : name };
 }
 
 // The "Latest exe" card from the `release` doc (`gh release view --json tagName,publishedAt,body`); no doc or no tag hides it. The body's first line is the build note, the rest lists what the exe added.

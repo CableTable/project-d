@@ -699,6 +699,7 @@ test('TODO 353a: status strip, account cards, Now / Next / Done today', async (t
       const noOverflow = async () => assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
       // Status strip: who builds what (running rows, newest first), then alerts from the usage % alone: week >= 95, 5h >= 85.
       assert.deepEqual(await page.locator('#strip > span').allTextContents(), ['King building 280', 'Bishop job debt47']);
+      assert.deepEqual(await page.locator('#strip > span > b').allTextContents(), ['King', '280', 'Bishop', 'debt47'], 'the account and the id are bold, the verb is not');
       assert.deepEqual(await page.locator('#strip .ud-chip').evaluateAll((chips) => chips.map((c) => c.className + ':' + c.textContent)),
         ['ud-chip warn:Rook 5h 85%', 'ud-chip bad:King week 96%', 'ud-chip warn:King 5h 90%', 'ud-chip warn:Bishop cap 50%']); // Rook week 94 is below its limit; Bishop has today's cap
       // Top row: "Usage" at 24 px and the yellow Refresh button on one row; the rest of the header is one small muted line.
@@ -730,7 +731,8 @@ test('TODO 353a: status strip, account cards, Now / Next / Done today', async (t
       assert.equal(await page.locator('#work').evaluate((node) => node.classList.contains('ud-card') && !node.querySelector('.ud-card')), true, 'one card, no card per part');
       assert.deepEqual(await page.locator('#work-list h2').allTextContents(), ['Now', 'Next', 'Done today · 7 jobs']);
       const rows = () => page.locator('#work-list .job').evaluateAll((all) => all.map((row) => [row.children[0].textContent, row.querySelector('strong').textContent, row.querySelector('strong + span')?.textContent.trim() ?? ''].join('|')));
-      assert.deepEqual((await rows()).slice(0, 5), ['King|building 280|simpler Queue tab', 'Bishop|job debt47|', 'next|354|Usage page build', 'next|<img src=x onerror=alert(1)>|', 'King|built 107|']);
+      assert.deepEqual((await rows()).slice(0, 5), ['King|280|simpler Queue tab', 'Bishop|debt47|', 'next|354|Usage page build', 'next|<img src=x onerror=alert(1)>|', 'King|107|']); // bold = the id only
+      assert.deepEqual(await page.locator('#work-list .job > span:last-child').evaluateAll((all) => all.slice(0, 5).map((m) => m.firstChild.nodeType === 3 ? m.firstChild.textContent : '')), ['building ', 'job ', '', '', 'built '], 'the verb stays plain text before the bold id');
       assert.equal((await rows()).length, 11, '2 now + 2 next + 7 done (2 folded)');
       assert.equal(await page.locator('#work-list .job:visible').count(), 9, '2 now + 2 next + 5 done');
       assert.equal(await page.locator('#work img').count(), 0);

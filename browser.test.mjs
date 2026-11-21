@@ -28660,7 +28660,8 @@ try {
     const g1 = lineObj('d-g1', 20, 100), g2 = lineObj('d-g2', 20, 100), g3 = lineObj('d-g3', 60, 140), g4 = lineObj('d-g4', 20, 100, 300);
     await openLay('pf156e3e', [g1, g2, g3, g4], [{ ...objectPlacement(g1), g: 'g1' }, objectPlacement(g2), { ...objectPlacement(g3), g: 'g1' }, objectPlacement(g4)]);
     await shows('preflight-duplicates-count', /^3$/);       // B, and C twice (over A and over B)
-    const ng = (await histLabels()).length;
+    const ng = (await histLabels()).length, gxy = async () => layoutFromRaw(await savedDoc()).placed.map((p) => [p.g || null, p.x, p.y]), before156 = await gxy();
+    assert.equal(before156.length, 4);
     await t('preflight-duplicates-fix').click(); await frames();
     await shows('preflight-duplicates-count', /^0$/);
     assert.equal((await histLabels()).length, ng + 1, 'one undo step for the whole click');
@@ -28668,7 +28669,8 @@ try {
     assert.deepEqual(after.map((p) => [p.g || null, p.x, p.y]), [['g1', 20, 200], ['g1', 100, 200], [null, 20, 300]], 'A, then C trimmed to 100..140 in its group and place, then Z');
     await undo(); await recheck();
     await shows('preflight-duplicates-count', /^3$/);
-    assert.equal(layoutFromRaw(await savedDoc()).placed.length, 4, 'one Undo restores all three');
+    assert.deepEqual(await gxy(), before156, 'one Undo restores all four with the same group (A and C g1) and place');
+    assert.deepEqual(before156.map((p) => p[0]), ['g1', null, 'g1', null]);
     await closeTabs(/./);
   });
 
