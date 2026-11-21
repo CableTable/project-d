@@ -324,7 +324,7 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
     156d. Guides, Layers (+ Add), Contour, Measure in every tab (S–M). Grilled 2026-10-28 (DECISIONS "Guides, Layers, Measure in every tab"):
       156d1. ✅ (built, Knight, 2026-10-28) Guides on drawing tabs (remembered per file on this PC, never in the DXF) and in Compare; Measure in Compare across all snapshots (S). Layouts' "+ Add layer" goes with 156b2; Compare Layers / Contour with 156c2.
     156e. Gaps from the S54 audit (`runs54/audit-156.md`, grill `runs54/grill-156e.md`):
-      156e1. Leader on Layouts as a loose layout object (not linked to parts; grips, style, Explode, DXF / PDF as layout dimensions) (S–M).
+      156e1. ✅ (built, King, 2026-11-21) Leader on Layouts as a loose layout object (not linked to parts; grips, style, Explode, DXF / PDF as layout dimensions) (S–M).
       156e2. Fill / Eyedropper on Layouts (`web/app.js:12756`) and Rotate on loose layout objects (`:4917`) (S).
       156e3. Preflight on Layouts: placed parts and loose objects (L, later; grill again).
       156e4. Balloons on Layouts: needs a layout balloon store and numbering (M–L, later; grill again).
