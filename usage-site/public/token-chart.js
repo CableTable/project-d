@@ -27,6 +27,18 @@ export function cumulativeTokens(rows, agent, resets = []) {
   });
 }
 
+// Tokens per IST day for the last `days` days ending on the day of the newest row: [{ t: the day's IST midnight (ms), <agent>: tokens }].
+export function dailyTokens(rows, agents, days = 7) {
+  if (!rows.length) return [];
+  const offset = 5.5 * HOUR, day = (t) => Math.floor((t + offset) / DAY), first = day(Math.max(...rows.map((r) => r.t))) - days + 1;
+  const out = Array.from({ length: days }, (_, i) => ({ t: (first + i) * DAY - offset, ...Object.fromEntries(agents.map((a) => [a, 0])) }));
+  for (const row of rows) {
+    const i = day(row.t) - first;
+    if (i >= 0 && i < days) for (const a of agents) out[i][a] += Math.max(0, Number(row[a]) || 0);
+  }
+  return out;
+}
+
 // Nudge end labels apart (min `gap` px) and keep them between the plot top and `bottom`; returns them top to bottom.
 export function tokenEndLabels(ends, bottom, gap = 20) {
   const labels = ends.map((end) => ({ ...end })).sort((a, b) => a.y - b.y);

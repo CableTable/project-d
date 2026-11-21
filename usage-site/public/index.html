@@ -31,12 +31,25 @@
 
   <main id="dashboard" class="ud-sec" hidden>
   <div id="usage" class="ud-sec" data-page>
-    <p class="ud-take" id="takeaway"><span class="">—</span></p>
-    <p class="ud-muted">Readings as of <span id="asof">—</span>. A tick on each bar marks where even use would be by now; red marks Bishop's daily cap.</p>
-  <section class="ud-sec" id="limits">
-    <h2>Limits now</h2>
-    <div class="ud-grid" id="agents"></div>
-  </section>
+    <div class="ud-strip" id="strip" aria-label="Status"></div>
+    <p class="ud-muted">Readings as of <span id="asof">—</span>. On each week bar the hatched part is the forecast to the reset; red marks the account's daily cap.</p>
+  <div class="ud-main">
+    <section class="ud-sec" id="limits">
+      <h2>Limits now</h2>
+      <div class="ud-col" id="agents"></div>
+    </section>
+    <div class="ud-col">
+      <section class="ud-sec" id="work">
+        <h2>Work</h2>
+        <div class="ud-sec" id="work-list"></div>
+      </section>
+      <div class="ud-card">
+        <div><h3>Tokens per day</h3><p class="ud-muted">Last 7 days in IST. Input + output + cache creation; cache reads excluded.</p></div>
+        <div class="ud-chart" id="token-chart"></div>
+        <div class="legend" id="token-legend" aria-label="Agents"></div>
+      </div>
+    </div>
+  </div>
 
   <section class="ud-sec" id="release" hidden>
     <h2>Latest exe</h2>
@@ -53,11 +66,6 @@
         </div>
       </div>
       <div class="ud-chart" id="chart"></div>
-    </div>
-    <div class="ud-card">
-      <div><h3>Tokens used, running total</h3><p class="ud-muted">Running total since each agent's weekly reset. Last 14 days in IST. Input + output + cache creation; cache reads excluded.</p></div>
-      <div class="ud-chart" id="token-chart"></div>
-      <div class="legend" id="token-legend" aria-label="Agents"></div>
     </div>
   </section>
 

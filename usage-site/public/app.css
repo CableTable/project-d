@@ -34,7 +34,25 @@ h1 { font-size: 28px; letter-spacing: -.03em; } h2 { font-size: 20px; } h3 { fon
 .queue-row .ud-mrow { flex-wrap: nowrap; align-items: flex-start; }
 .queue-row strong { min-width: 0; overflow-wrap: anywhere; }
 .queue-row .ud-chip { flex: none; }
-.ud-big { font-size: 32px; font-weight: 700; line-height: 1.2; }
+.ud-strip { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; padding: 10px 14px; background: var(--color-panel); border: 1px solid var(--color-border-line); border-left: 4px solid var(--accent); border-radius: 12px; font-size: 14px; }
+.ud-alerts { display: flex; flex-wrap: wrap; gap: 6px; flex-basis: 100%; }
+.ud-alerts:empty { display: none; }
+.ud-main { display: grid; gap: 20px; }
+.ud-col { display: grid; gap: 16px; align-content: start; min-width: 0; }
+.ud-acc-top { display: flex; align-items: center; gap: 14px; }
+.ud-acc-name { min-width: 0; flex: 1; display: grid; gap: 2px; }
+.ud-ring { flex: none; width: 64px; height: 64px; position: relative; }
+.ud-ring svg { width: 64px; height: 64px; transform: rotate(-90deg); }
+.ud-ring circle { fill: none; stroke-width: 7; }
+.ud-ring .t { stroke: var(--cds-chart-grid); } .ud-ring .v { stroke-linecap: round; }
+.ud-ring > span { position: absolute; inset: 0; display: flex; justify-content: center; align-items: center; font-weight: 700; font-size: 15px; font-variant-numeric: tabular-nums; }
+.ud-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; }
+.ud-ghost { position: absolute; top: 0; bottom: 0; border-radius: 5px; background: repeating-linear-gradient(45deg, transparent 0 3px, var(--color-fg-muted) 3px 4px); opacity: .45; }
+.ud-empty { border-style: dashed; background: transparent; color: var(--color-fg-muted); text-align: center; justify-items: center; }
+#work-list .ud-mrow { justify-content: flex-start; }
+#work-list .ud-chip { margin-right: 2px; }
+#token-chart { min-height: 150px; }
+#token-chart svg text { font-size: 10px; }
 .ud-track { position: relative; height: 10px; border-radius: 5px; background: var(--cds-chart-grid); }
 .ud-fill { position: absolute; inset: 0 auto 0 0; border-radius: 5px; }
 .ud-tick { position: absolute; top: -4px; bottom: -4px; width: 2px; background: var(--color-fg); }
@@ -104,5 +122,6 @@ summary { cursor: pointer; } details[open] > summary { margin-bottom: 16px; }
   .page-tabs { position: static; display: flex; justify-self: start; border: 1px solid var(--color-border-line); border-radius: 10px; padding: 3px; gap: 3px; }
   .page-tabs button { min-height: 36px; border-radius: 7px; }
   .page-tabs button[aria-pressed=true] { color: #1a1407; background: var(--accent); box-shadow: none; }
-  .charts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ud-main { grid-template-columns: 380px minmax(0, 1fr); align-items: start; }
+  .ud-alerts { flex-basis: auto; }
 }
