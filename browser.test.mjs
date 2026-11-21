@@ -36338,7 +36338,7 @@ try {
     const placed = await selBoxes(), placedSteps = (await histLabels()).length;
     await typeCmd('rotate'); assert.match(await label97(/^Angle </), /^Angle </, 'a placed part: Rotate asks for the angle');
     await typeCmd('left');
-    assert.doesNotMatch(await prompt(), /aligned/, 'placed part rotate mode');
+    await said(/^Unknown command: left/);       // the rotate mode took the word (an angle is expected): it is no Align
     assert.deepEqual(await selBoxes(), placed, 'placed part rotate mode'); assert.equal((await histLabels()).length, placedSteps, 'placed part rotate mode');
     await key97c('Escape'); assert.deepEqual(errors, []);
   });
