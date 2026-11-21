@@ -290,3 +290,72 @@ test('toLine: the segment after the node gets its handles on the chord; a straig
   assert.match(SH.toLine(r.ent, ['n1']).why, /straight already/);
   assert.match(SH.toCurve(s, ['n0']).why, /Bezier curve already/);
 });
+
+// ---- TODO 139e2a: node types
+const poly = () => SH.toCurve(lwpoly([[0, 0], [30, 0], [30, 30]]), ['v0']).ent;       // node n1 at (30, 0): out handle (30, 10), in handle (20, 0)
+const hp = (e, id) => { const h = SH.handlesOf(e, ['n' + id.slice(1)]).find((g) => g.id === id); return [h.x, h.y]; };
+const pull = (e, id, dx, dy) => SH.dragNodes(e, SH.handlesOf(e, ['n' + id.slice(1)]).filter((g) => g.id === id), dx, dy);
+const vec = (e, id) => { const n = SH.nodesOf(e).find((k) => k.id === 'n' + id.slice(1)), h = hp(e, id); return [h[0] - n.x, h[1] - n.y]; };
+const collinear = (e, i) => { const [a, b] = [vec(e, 'o' + i), vec(e, 'i' + i)]; near(a[0] * b[1] - a[1] * b[0], 0, 1e-6 * Math.hypot(...a) * Math.hypot(...b)); assert.ok(a[0] * b[0] + a[1] * b[1] < 0, 'opposite ways'); };
+
+test('nodeType: read back from the handles (collinear + equal = Symmetrical, collinear = Smooth, else Cusp); ends and other curves have none', () => {
+  const s = poly(), bent = pull(s, 'o1', 5, 8).ent;
+  assert.equal(SH.nodeType(s, 'n1'), 'Cusp', 'a corner');
+  assert.equal(SH.nodeType(s, 'n0'), null, 'an open curve end'); assert.equal(SH.nodeType(s, 'n9'), null); assert.equal(SH.nodeType(circle(0, 0, 1), 'q0'), null);
+  const c = SH.toCurve(circle(0, 0, 10), ['q0']).ent, { cusps, ...bare } = c;
+  assert.deepEqual(cusps, ['n0', 'n1', 'n2', 'n3'], 'To curve: every new node is a Cusp, though a circle quadrant reads Symmetrical');
+  assert.equal(SH.nodeType(c, 'n2'), 'Cusp'); assert.equal(SH.nodeType(bare, 'n2'), 'Symmetrical', 'what a reload gives');
+  assert.equal(SH.nodeType(SH.setNodeType(bent, ['n1'], 'Smooth').ent, 'n1'), 'Smooth');
+  const quad = spl([71, 72, 73, 74, 40, 40, 40, 40, 40, 40, 10, 20, 10, 20, 10, 20], [2, 6, 3, 0, 0, 0, 0, 1, 1, 1, 0, 0, 5, 5, 10, 0]);
+  assert.equal(SH.nodeType(quad, 'n0'), null);
+});
+
+test('setNodeType: Smooth keeps lengths and the straight side, Symmetrical equal lengths, Cusp frees; one result per call', () => {
+  const bent = pull(poly(), 'o1', 5, 8).ent, was = hp(bent, 'i1');
+  const sm = SH.setNodeType(bent, ['n1'], 'Smooth');
+  assert.equal(sm.label, 'Smooth node'); assert.equal(SH.nodeType(sm.ent, 'n1'), 'Smooth'); collinear(sm.ent, 1);
+  assert.deepEqual(hp(sm.ent, 'i1'), was, 'the straight side keeps its handle');
+  near(Math.hypot(...vec(sm.ent, 'o1')), Math.hypot(5, 18)); near(Math.hypot(...vec(sm.ent, 'i1')), 10);
+  const sy = SH.setNodeType(sm.ent, ['n1'], 'Symmetrical');
+  assert.equal(SH.nodeType(sy.ent, 'n1'), 'Symmetrical'); collinear(sy.ent, 1); near(Math.hypot(...vec(sy.ent, 'o1')), 10);
+  const cu = SH.setNodeType(sy.ent, ['n1'], 'Cusp');
+  assert.equal(SH.nodeType(cu.ent, 'n1'), 'Cusp', 'collinear handles, still a Cusp'); assert.deepEqual(SH.bezierOf(cu.ent).P, SH.bezierOf(sy.ent).P, 'Cusp moves nothing');
+  assert.match(SH.setNodeType(cu.ent, ['n1'], 'Cusp').why, /Cusp already/); assert.match(SH.setNodeType(sy.ent, ['n1'], 'Symmetrical').why, /Symmetrical already/);
+  const both = pull(bent, 'i1', -3, 5).ent, b2 = SH.setNodeType(both, ['n1'], 'Symmetrical').ent;       // both sides curved: they share the bisector
+  collinear(b2, 1); near(Math.hypot(...vec(b2, 'o1')), Math.hypot(...vec(b2, 'i1'))); assert.equal(SH.nodeType(b2, 'n1'), 'Symmetrical');
+  near(Math.hypot(...vec(b2, 'o1')), (Math.hypot(5, 18) + Math.hypot(...vec(both, 'i1'))) / 2);
+  assert.equal(SH.bezierOf(SH.setNodeType(b2, ['n1'], 'Cusp').ent).n, 2, 'still a curve of 2 segments');
+});
+
+test('setNodeType: greyed with its why — not Bezier, an end node, a straight node, already, a zero-length handle; several nodes: those that can change', () => {
+  const s = poly(), bent = pull(s, 'o1', 5, 8).ent;
+  assert.match(SH.setNodeType(s, ['n1'], 'Smooth').why, /No curve on either side/);
+  assert.match(SH.setNodeType(s, ['n0'], 'Smooth').why, /end node/);
+  assert.equal(SH.setNodeType(lwpoly([[0, 0], [1, 1]]), ['v0'], 'Smooth').why, 'Not a Bezier curve');
+  const zero = pull(bent, 'i1', 10, 0).ent;       // the in handle sits on its node
+  assert.match(SH.setNodeType(zero, ['n1'], 'Smooth').why, /zero length/);
+  assert.equal(SH.nodeType(SH.setNodeType(zero, ['n1'], 'Symmetrical').ent, 'n1'), 'Symmetrical', 'Symmetrical gives it the other length');
+  const r = SH.setNodeType(bent, ['n0', 'n1', 'n2'], 'Smooth');
+  assert.equal(SH.nodeType(r.ent, 'n1'), 'Smooth'); assert.equal(SH.nodeType(r.ent, 'n0'), null);
+});
+
+test('dragNodes on a handle keeps its node type: Smooth turns the other handle (length kept), Symmetrical mirrors it, Cusp leaves it; node + handle together move rigidly', () => {
+  const bent = pull(poly(), 'o1', 5, 8).ent, sm = SH.setNodeType(bent, ['n1'], 'Smooth').ent, sy = SH.setNodeType(bent, ['n1'], 'Symmetrical').ent;
+  const a = pull(sm, 'o1', 0, 6).ent;
+  assert.equal(SH.nodeType(a, 'n1'), 'Smooth'); collinear(a, 1); near(Math.hypot(...vec(a, 'i1')), 10, 1e-9);
+  const b = pull(sy, 'i1', 2, 3).ent;
+  assert.equal(SH.nodeType(b, 'n1'), 'Symmetrical'); collinear(b, 1); near(Math.hypot(...vec(b, 'o1')), Math.hypot(...vec(b, 'i1')));
+  const cu = SH.setNodeType(sy, ['n1'], 'Cusp').ent, c = pull(cu, 'o1', 4, 4).ent;
+  assert.deepEqual(hp(c, 'i1'), hp(cu, 'i1')); assert.equal(SH.nodeType(c, 'n1'), 'Cusp', 'a Cusp stays one, and the entity remembers it');
+  const together = SH.dragNodes(sm, [...SH.nodesOf(sm).filter((g) => g.id === 'n1'), ...SH.handlesOf(sm, ['n1'])], 3, 3).ent;
+  assert.equal(SH.nodeType(together, 'n1'), 'Smooth'); near(Math.hypot(...vec(together, 'o1')), Math.hypot(...vec(sm, 'o1')));
+  assert.deepEqual(hp(pull(sm, 'o1', 0, 0).ent, 'i1'), hp(sm, 'i1'), 'no move');
+});
+
+test('node types on a closed curve: node 0 wraps (its in handle is the last control point); a handle drag keeps Symmetrical', () => {
+  const c = SH.toCurve(circle(0, 0, 10), ['q0']).ent, s = SH.setNodeType(c, ['n0'], 'Symmetrical').ent;
+  assert.equal(SH.nodeType(s, 'n0'), 'Symmetrical'); assert.equal(SH.nodeType(s, 'n1'), 'Cusp', 'the others stay');
+  const d = pull(s, 'i0', 3, -2).ent;
+  collinear(d, 0); near(Math.hypot(...vec(d, 'o0')), Math.hypot(...vec(d, 'i0'))); assert.ok(SH.bezierOf(d).closed);
+  assert.equal(SH.setNodeType(c, ['n0'], 'Cusp').why, 'This node is Cusp already');
+});

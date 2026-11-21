@@ -150,6 +150,15 @@ function dragBezier(ent, nodes, dx, dy) {
     else mark(g.id[0] === 'o' ? 3 * i + 1 : before);
   }
   const Q = P.map((p, k) => (idx.has(k) ? [p[0] + dx, p[1] + dy, ...p.slice(2)] : p));
+  for (const g of nodes) {       // 139e2a (grill R5): a handle dragged alone keeps its node's type: Smooth turns the other handle to stay collinear, Symmetrical mirrors it
+    if (g.id[0] === 'n') continue;
+    const i = +g.id.slice(1), out = g.id[0] === 'o', h = hOf(b, i), mine = out ? h.o : h.i, other = out ? h.i : h.o, t = nodeType(ent, 'n' + i);
+    if (other == null || ids.has('n' + i) || ids.has((out ? 'i' : 'o') + i) || (t !== 'Smooth' && t !== 'Symmetrical')) continue;
+    const c = Q[3 * i], v = [Q[mine][0] - c[0], Q[mine][1] - c[1]], l = Math.hypot(...v);
+    if (l < 1e-9) continue;       // a handle on its node has no direction: the other stays
+    const keep = t === 'Symmetrical' ? l : Math.hypot(P[other][0] - c[0], P[other][1] - c[1]);
+    Q[other] = [c[0] - v[0] / l * keep, c[1] - v[1] / l * keep, ...P[other].slice(2)];
+  }
   return { ent: spRecord(ent, { ...splineOf(ent.r), P: Q }), label: nodes.every((g) => g.id[0] !== 'n') ? 'Move handle' : 'Move node', part: false };
 }
 
@@ -185,7 +194,14 @@ export function toCurve(ent, ids) {
   first.push(count);
   const U = [0, 0, 0, 0, ...Array.from({ length: count - 1 }, (_, i) => [i + 1, i + 1, i + 1]).flat(), ...Array(4).fill(count)];
   const out = entity('SPLINE', [[70, closed ? 9 : 8], [71, 3], [72, U.length], [73, P.length], [74, 0], ...U.map((u) => [40, u]), ...P.flatMap((p) => [[10, p[0]], [20, p[1]], [30, 0]])], ent);
-  return { ent: out, label: 'To curve', ids: want.filter((k) => k <= m).map((k) => 'n' + first[k]) };
+  return { ent: withCusps(out, nodesOf(out).map((n) => n.id).filter((id) => (nodeType(out, id) ?? 'Cusp') !== 'Cusp')), label: 'To curve', ids: want.filter((k) => k <= m).map((k) => 'n' + first[k]) };       // 139e2a: every new node is a Cusp, even where the handles happen to line up
+}
+
+/** Are the handles of segment s (control points 3s .. 3s+3 of P) on its chord: a straight segment? */
+function straight(P, s) {
+  const [a, c1, c2, d] = P.slice(3 * s, 3 * s + 4), len = Math.hypot(d[0] - a[0], d[1] - a[1]);
+  const off = (p) => (len ? Math.abs((p[0] - a[0]) * (d[1] - a[1]) - (p[1] - a[1]) * (d[0] - a[0])) / len : Math.hypot(p[0] - a[0], p[1] - a[1]));
+  return off(c1) <= 1e-9 * (1 + len) && off(c2) <= 1e-9 * (1 + len);
 }
 
 /** TODO 139e1 To line (grill R4): the segment after each of these nodes ids ('n3') of a Bezier spline gets its handles on its chord, at 1/3 and 2/3 (it stays a SPLINE). { ent, label } or { why } (not a Bezier curve, no segment after, or all straight already). */
@@ -197,11 +213,63 @@ export function toLine(ent, ids) {
   const Q = b.P.slice();
   let changed = false;
   for (const k of ks) {
-    const [a, c1, c2, d] = b.P.slice(3 * k, 3 * k + 4), len = Math.hypot(d[0] - a[0], d[1] - a[1]);
-    const off = (p) => (len ? Math.abs((p[0] - a[0]) * (d[1] - a[1]) - (p[1] - a[1]) * (d[0] - a[0])) / len : Math.hypot(p[0] - a[0], p[1] - a[1]));
-    if (off(c1) <= 1e-9 * (1 + len) && off(c2) <= 1e-9 * (1 + len)) continue;       // its handles are on the chord already
+    const [a, , , d] = b.P.slice(3 * k, 3 * k + 4);
+    if (straight(b.P, k)) continue;       // its handles are on the chord already
     Q[3 * k + 1] = [a[0] + (d[0] - a[0]) / 3, a[1] + (d[1] - a[1]) / 3, ...a.slice(2)]; Q[3 * k + 2] = [a[0] + (d[0] - a[0]) * 2 / 3, a[1] + (d[1] - a[1]) * 2 / 3, ...a.slice(2)];
     changed = true;
   }
   return changed ? { ent: spRecord(ent, { ...splineOf(ent.r), P: Q }), label: 'To line' } : { why: 'That segment is straight already' };
+}
+
+// ---- TODO 139e2a: node types Cusp / Smooth / Symmetrical (grill-139e R5). No saved form: a node's type is read back from its handles (collinear and equal = Symmetrical, collinear = Smooth, else Cusp),
+// except a Cusp whose handles happen to line up, which the entity remembers in ent.cusps (node ids, in memory only: lost with a reload or any edit that rebuilds the entity).
+const withCusps = (ent, list) => { const { cusps, ...rest } = ent; return list.length ? { ...rest, cusps: list } : rest; };
+/** The control point indexes of node i's handles: out (the segment after) and in (the one before), null where an open curve's end has none. */
+const hOf = (b, i) => ({ o: i < b.n ? 3 * i + 1 : null, i: i > 0 ? 3 * i - 1 : b.closed ? 3 * b.n - 1 : null });
+
+/** The type ('Cusp' | 'Smooth' | 'Symmetrical') of node id ('n3') of a Bezier spline; null for another curve or an end node of an open one (one handle only). */
+export function nodeType(ent, id) {
+  const b = bezierOf(ent), i = +id.slice(1);
+  if (!b || id[0] !== 'n' || !(i >= 0 && i < (b.closed ? b.n : b.n + 1))) return null;
+  const h = hOf(b, i);
+  if (h.o == null || h.i == null) return null;
+  if (ent.cusps?.includes(id)) return 'Cusp';
+  const c = b.P[3 * i], vo = [b.P[h.o][0] - c[0], b.P[h.o][1] - c[1]], vi = [b.P[h.i][0] - c[0], b.P[h.i][1] - c[1]], lo = Math.hypot(...vo), li = Math.hypot(...vi);
+  if (lo < 1e-9 || li < 1e-9 || Math.abs(vo[0] * vi[1] - vo[1] * vi[0]) > 1e-6 * lo * li || vo[0] * vi[0] + vo[1] * vi[1] >= 0) return 'Cusp';
+  return Math.abs(lo - li) <= 1e-6 * Math.max(lo, li) ? 'Symmetrical' : 'Smooth';
+}
+
+/** Node i's two handles made collinear (Smooth: lengths kept; Symmetrical: equal) → { o, i: the new control points } or { why }. A straight side keeps its direction (the curved side turns to it); two curved sides share the bisector. */
+function aligned(b, i, type) {
+  const h = hOf(b, i), c = b.P[3 * i], vo = [b.P[h.o][0] - c[0], b.P[h.o][1] - c[1]], vi = [b.P[h.i][0] - c[0], b.P[h.i][1] - c[1]], lo = Math.hypot(...vo), li = Math.hypot(...vi);
+  const so = straight(b.P, i), si = straight(b.P, (i + b.n - 1) % b.n);
+  if (so && si) return { why: 'No curve on either side of this node: drag a handle to curve one side first' };
+  const unit = (v) => { const l = Math.hypot(...v); return l > 1e-9 ? [v[0] / l, v[1] / l] : null; }, p = b.P[3 * (i ? i - 1 : b.n - 1)], q = b.P[3 * i + 3];
+  const uo = unit(so ? [q[0] - c[0], q[1] - c[1]] : vo), ui = unit(si ? [c[0] - p[0], c[1] - p[1]] : [-vi[0], -vi[1]]);       // the direction each side leaves the node in, travelling on
+  const sum = uo && ui ? unit([uo[0] + ui[0], uo[1] + ui[1]]) : null, u = so ? uo : si ? ui : sum || uo || ui;
+  if (!u) return { why: 'The handles have no direction (zero length): drag one out first' };
+  if (type === 'Smooth' && (lo < 1e-9 || li < 1e-9)) return { why: 'A handle of zero length has no direction: drag it out first' };
+  const L = (so ? lo : si ? li : (lo + li) / 2) || Math.max(lo, li), a = type === 'Smooth' ? lo : L, z = type === 'Smooth' ? li : L;
+  if (a + z < 1e-9) return { why: 'The handles have no length: drag one out first' };
+  return { o: [c[0] + u[0] * a, c[1] + u[1] * a, ...b.P[h.o].slice(2)], i: [c[0] - u[0] * z, c[1] - u[1] * z, ...b.P[h.i].slice(2)] };
+}
+
+/**
+ * TODO 139e2a Node types (grill R5): these nodes ('n3') of a Bezier spline become type 'Cusp' | 'Smooth' | 'Symmetrical'. Smooth turns the handles collinear (lengths kept), Symmetrical collinear and equal;
+ * Cusp leaves them where they are and frees them from then on (ent.cusps). { ent, label } or { why } when no node changed: not a Bezier curve, an end node, no curve either side, already that type.
+ */
+export function setNodeType(ent, ids, type) {
+  const b = bezierOf(ent);
+  if (!b) return { why: 'Not a Bezier curve' };
+  const Q = b.P.slice(), cusps = new Set(ent.cusps);
+  let why = 'Select a node first', changed = 0;
+  for (const id of new Set(ids)) {
+    const t = nodeType(ent, id), i = +id.slice(1), h = hOf(b, i);
+    if (!t) { why = 'An end node of an open curve has one handle only, so no type'; continue; }
+    if (t === type) { why = `This node is ${type} already`; continue; }
+    if (type === 'Cusp') cusps.add(id);
+    else { const r = aligned(b, i, type); if (r.why) { why = r.why; continue; } Q[h.o] = r.o; Q[h.i] = r.i; cusps.delete(id); }
+    changed++;
+  }
+  return changed ? { ent: withCusps(spRecord(ent, { ...splineOf(ent.r), P: Q }), [...cusps]), label: `${type} node${changed > 1 ? 's' : ''}` } : { why };
 }
