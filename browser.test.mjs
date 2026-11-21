@@ -22470,7 +22470,7 @@ try {
       assert.equal(await t('cursor-angle').getAttribute('aria-label'), 'Y');
       await page.evaluate(() => document.activeElement?.blur());
       await page.keyboard.type('10,5'); await page.keyboard.press('Enter');
-      assert.equal(await prompt(), 'Specify second point or <use first point as displacement>:');
+      assert.equal(await prompt(), kind === 'copy' ? 'Specify second point or [Array] <use first point as displacement>:' : 'Specify second point or <use first point as displacement>:');
       await t('cursor-length').waitFor({ state: 'visible' });
       await typeCmd('');
       const doc = await savedDoc();
@@ -22506,6 +22506,97 @@ try {
       assert.ok(history.some((v) => v.includes('Current settings:  Copy mode = Multiple')));
       assert.ok(history.some((v) => v.includes('Specify base point or [Displacement/mOde] <Displacement>:')));
     }, async () => { await page.keyboard.press('F2'); });
+    await page.keyboard.press('Escape');
+  });
+
+  await step('TODO 155n: Copy Array (count, spacing or Fit, live ghost, separate copies, one Undo per placement) on a drawing and a layout', async () => {
+    const raw = newDoc(4); addEntities(raw, dxfLine(20, 30, 60, 50));
+    const xy = (e) => [fieldOf(e, 10), fieldOf(e, 20)];
+    const blur = () => page.evaluate(() => document.activeElement?.blur());
+    const start = async () => { await openGrips(writeDxf(raw), 'array155n.dxf'); await page.keyboard.press('Control+a'); await typeCmd('copy'); await typeCmd('0,0'); };
+    const lines = async () => (await savedDoc()).entities;
+    const toolChip = () => t('tool-chip').textContent();
+    const ghost = () => page.evaluate(() => +document.querySelector('[data-testid=drawing]').dataset.preview);
+    const vp = page.viewportSize();
+    const is = (text) => said(new RegExp('^' + text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$'));       // the prompt, whole, once it shows
+
+    await start();
+    await is('Specify second point or [Array] <use first point as displacement>:');
+    await hoverPreview(10, 5);
+    const one = await ghost(); assert.ok(one > 0, 'one ghost of the copy');
+    await typeCmd('a'); await is('Enter number of items to array <4>:');
+    for (const bad of ['1', '0', '-2', '3.5', '1001', 'x']) {
+      await typeCmd(bad); assert.match(await histLine(), /Requires an integer|At most 1000/, bad);
+      await is('Enter number of items to array <4>:');       // asks again
+    }
+    await typeCmd('3'); await is('Specify second point or [Fit]:');
+    await hoverPreview(10, 5);
+    await page.waitForFunction((n) => +document.querySelector('[data-testid=drawing]').dataset.preview === n, one * 2, { timeout: 8000 });       // the ghost holds every new item: 2 copies
+    await typeCmd('');       // Enter at [Fit]: no array
+    await is('Specify second point or [Array] <use first point as displacement>:');
+    await typeCmd('a'); await is('Enter number of items to array <3>:');       // the count is remembered
+    await typeCmd('3'); await typeCmd('10,5');
+    let doc = await lines();
+    assert.deepEqual(doc.map((e) => e.type), ['LINE', 'LINE', 'LINE'], 'separate objects');
+    assert.deepEqual(doc.map(xy), [[20, 30], [30, 35], [40, 40]], 'count 3: copies at d and 2d');
+    assert.equal(await toolChip(), 'Tool: Copy');
+    await is('Specify second point or [Array/Exit/Undo] <Exit>:');
+
+    // Fit: the point is the last copy; zero length is refused
+    await typeCmd('a'); await typeCmd(''); await is('Specify second point or [Fit]:');       // Enter takes the remembered 3
+    await typeCmd('f'); await is('Specify second point or [Array]:');
+    await typeCmd('0,0'); assert.match(await histLine(), /Zero spacing/); assert.equal((await lines()).length, 3, 'zero spacing places nothing');
+    await typeCmd('40,20');
+    doc = await lines();
+    assert.deepEqual(doc.slice(3).map(xy), [[40, 40], [60, 50]], 'Fit: spaced evenly to the last copy');
+
+    // Undo removes the last placement (the whole array) and leaves the one before
+    await typeCmd('u'); assert.equal((await lines()).length, 3, 'Undo removed the Fit array as one');
+    await is('Specify second point or [Array/Exit/Undo] <Exit>:');
+    await typeCmd('u'); assert.equal((await lines()).length, 1);
+    await is('Specify second point or [Array] <use first point as displacement>:');       // nothing left to undo
+    await typeCmd('u'); assert.match(await histLine(), /Unknown option/);
+    // Ctrl+Z takes one array back too
+    await typeCmd('a'); await typeCmd('4'); await typeCmd('10,0');
+    assert.equal((await lines()).length, 4);
+    await blur(); await page.keyboard.press('Control+z');
+    assert.equal((await lines()).length, 1, 'Ctrl+Z removes the array as one step'); assert.equal(await toolChip(), 'Tool: Copy');
+    // Esc mid-array (at the count, then at the point) places none and ends
+    await typeCmd('a'); await page.keyboard.press('Escape');
+    assert.equal(await toolChip(), 'Tool: Select'); assert.equal((await lines()).length, 1);
+    await page.keyboard.press('Control+a'); await typeCmd('copy'); await typeCmd('0,0'); await typeCmd('a'); await typeCmd('3'); await page.keyboard.press('Escape');
+    assert.equal(await toolChip(), 'Tool: Select'); assert.equal((await lines()).length, 1);
+    // Single mode: the array is placed, then the command ends
+    await page.keyboard.press('Control+a'); await typeCmd('copy'); await typeCmd('o'); await typeCmd('s'); await typeCmd('0,0'); await typeCmd('a'); await typeCmd('2'); await typeCmd('7,7');
+    assert.deepEqual((await lines()).map(xy), [[20, 30], [27, 37]]); assert.equal(await toolChip(), 'Tool: Select');
+    await typeCmd('copy'); await typeCmd('o'); await typeCmd('m');       // Multiple again for the other steps
+    await page.keyboard.press('Escape');
+    // Move has no Array
+    await page.keyboard.press('Control+a'); await typeCmd('move'); await typeCmd('0,0'); await typeCmd('a');
+    assert.match(await histLine(), /Unknown option/);
+    await page.keyboard.press('Escape');
+
+    // the ghost at 1024 px, light and dark
+    await start(); await typeCmd('a'); await typeCmd('4');
+    await page.setViewportSize({ width: 1024, height: 700 }); await page.waitForTimeout(500);
+    await shotBoth('todo155n-ghost-1024', async () => { const p = await at(0, 8); await page.mouse.move(p.x, p.y, { steps: 3 }); await frames(); });
+    await page.setViewportSize(vp);
+    await page.keyboard.press('Escape');
+
+    // a layout: whole placed parts, one gesture per array
+    await freshLayoutWithPlate();
+    const rawText = async () => (await downloaded(() => page.keyboard.press('Control+s'))).text;
+    const placedNow = async () => layoutFromRaw(readDxf(await rawText())).placed;
+    const before = await placedNow(), n0 = await nParts(), x0 = before.at(-1).x;
+    await typeCmd('copy'); await typeCmd('0,0'); await typeCmd('a'); await typeCmd('3'); await typeCmd('100,0');
+    assert.equal(await nParts(), n0 + 2, 'two copies of the part');
+    let now = await placedNow();
+    assert.deepEqual(now.slice(before.length).map((p) => p.x - x0), [100, 200], 'copies at d and 2d');
+    await is('Specify second point or [Array/Exit/Undo] <Exit>:');
+    await typeCmd('u'); assert.equal(await nParts(), n0, 'the Undo option removes the array as one');
+    await typeCmd('a'); await typeCmd('3'); await typeCmd('f'); await typeCmd('300,0');
+    now = await placedNow(); assert.deepEqual(now.slice(before.length).map((p) => p.x - x0), [150, 300], 'Fit on a layout');
+    await blur(); await page.keyboard.press('Control+z'); assert.equal(await nParts(), n0, 'Ctrl+Z removes the array as one');
     await page.keyboard.press('Escape');
   });
 
@@ -22863,8 +22954,10 @@ try {
     await typeCmd('co'); assert.match(await prompt(), /Specify base point or \[Displacement\/mOde\] <Displacement>:/);
     assert.equal(await t('tool-chip').textContent(), 'Tool: Copy');
     assert.equal(await page.locator('nav.rail [data-tool=copy]').count(), 0);
-    await typeCmd('0,0'); await typeCmd('10,-5');
-    assert.match(await prompt(), /Specify second point or <use first point as displacement>:/);
+    await typeCmd('0,0');
+    assert.match(await prompt(), /Specify second point or \[Array\] <use first point as displacement>:/);
+    await typeCmd('10,-5');
+    await said(/Specify second point or \[Array\/Exit\/Undo\] <Exit>:/);
     await typeCmd('20,15');
     const twice = await savedDoc();
     assert.equal(twice.entities.length, 3, 'two placements add exactly two entities');
@@ -22874,7 +22967,7 @@ try {
     await blur(); await page.keyboard.press('Control+z');
     assert.deepEqual((await savedDoc()).entities, twice.entities.slice(0, 2), 'Undo during Copy removes the last placement');
     assert.equal(await t('tool-chip').textContent(), 'Tool: Copy');
-    assert.match(await prompt(), /Specify second point or <use first point as displacement>:/);
+    assert.match(await prompt(), /Specify second point or \[Array\/Exit\/Undo\] <Exit>:/);
     await click(60, 50);
     const resumed = await savedDoc();
     assert.equal(resumed.entities.length, 3, 'a click after Undo places another copy');

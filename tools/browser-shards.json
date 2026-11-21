@@ -413,6 +413,7 @@
   "TODO 78: Trim preview": 21.16,
   "TODO 78c: Trim preview invalidation": 4.53,
   "TODO 155f: Copy modes, displacement and Move / Copy second-point Enter": 47.17,
+  "TODO 155n: Copy Array (count, spacing or Fit, live ghost, separate copies, one Undo per placement) on a drawing and a layout": 5.5,
   "TODO 155d: Rotate and Scale Reference option (typed values, picked points, Points, Copy, zero refused, one undo step; Set length unchanged)": 88.13,
   "TODO 331: Rotate background: pivot, typed angle, drag preview, Reference, Esc, one Ctrl+Z; Set length and Trace on the turned picture; File menu; no-background note": 30,
   "TODO 66a: Move": 11.01,
