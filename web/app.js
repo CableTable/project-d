@@ -11530,12 +11530,16 @@ function shapeBox(d, a, b, add) {
 function shapeDelete() {
   const d = gripDoc(), m = d && state.tool === 'shape' && !state.grip && !d.layDim && gripOn(d) ? hotsOf(d) : null;
   if (!m) return false;
-  const ids = new Map(), pairs = [], next = new Map();
+  const ids = new Map(), pairs = [], next = new Map(), dead = new Map();       // dead: a Bezier spline left with fewer than 2 nodes goes (139e2b)
   for (const g of m.values()) ids.set(g.e, [...(ids.get(g.e) || []), g.id]);
   let gone = 0, label = 'Delete node';
   for (const [i, list] of ids) {
     const ent = d.raw.entities[i], r = SHP.deleteNodes(ent, list);
-    if (r) { pairs.push([ent, r.ent]); next.set(i, r.ent); gone += list.length; if (gone > 1) label = 'Delete nodes'; }
+    if (r) { if (r.ent) { pairs.push([ent, r.ent]); next.set(i, r.ent); } else dead.set(ent, []); gone += list.length; if (gone > 1) label = 'Delete nodes'; }
+  }
+  if (dead.size) {
+    if (shapeReplace(d, new Map([...dead, ...[...next].map(([i, e]) => [d.raw.entities[i], [e]])]), label, undefined, true)) note(`${label}: ${dead.size} spline${dead.size === 1 ? ' goes' : 's go'} with fewer than 2 nodes left. Ctrl+Z takes it back`);
+    return true;
   }
   if (!pairs.length) { note('Shape: nothing deleted. A polyline keeps at least 2 nodes (3 when closed); a line, arc or circle keeps all its nodes'); return true; }
   const sel = new Set(d.sel);
@@ -11561,15 +11565,15 @@ function shapeDblClick(e) {
     else { if (!commit(d, { entities: d.raw.entities.map((x, k) => (k === i ? r.ent : x)), blocks: d.raw.blocks }, r.label, sel)) return true; setSel(d, sel); }       // too nested: commit showed why
     const node = SHP.nodesOf(r.ent).reduce((a, b) => (Math.hypot(b.x - p[0], b.y - p[1]) < Math.hypot(a.x - p[0], a.y - p[1]) ? b : a));       // the nearest node to the click is the new one: it sits on the outline's nearest point
     shapeSet(gripDoc() || d, new Set([i + ':' + node.id]));
-    note(`${r.label}${ent.type === 'LWPOLYLINE' ? '' : `: the ${ent.type.toLowerCase()} is a polyline now`}. Ctrl+Z takes it back`);
+    note(`${r.label}${ent.type === 'LWPOLYLINE' || ent.type === 'SPLINE' ? '' : `: the ${ent.type.toLowerCase()} is a polyline now`}. Ctrl+Z takes it back`);
     return true;
   }
   return false;
 }
 /** TODO 139c: the Shape tool's selected nodes' objects become `out` (Map entity of d → [what replaces it]) in ONE undo step, the new objects selected, no node. `heir`: a layout's joined result takes this object's group, lock and place. */
-function shapeReplace(d, out, label, heir) {
+function shapeReplace(d, out, label, heir, keepSel = false) {       // keepSel (139e2b): the selected objects that are not replaced stay selected too
   const all = d.raw.entities, keep = new Map(), entities = [], made = new Set();
-  all.forEach((e, i) => { const r = out.get(e) ?? [e]; keep.set(i, r.map((_, k) => entities.length + k)); entities.push(...r); if (out.has(e)) r.forEach((x) => made.add(x)); });
+  all.forEach((e, i) => { const r = out.get(e) ?? [e]; keep.set(i, r.map((_, k) => entities.length + k)); entities.push(...r); if (out.has(e) || (keepSel && d.sel.has(i))) r.forEach((x) => made.add(x)); });
   view.fitted = false;
   if (!commit(d, { entities, groups: remapGroups(d.raw.groups, keep), blocks: d.raw.blocks, heir }, label, new Set(d.sel))) return false;       // too nested: commit showed why
   if (d.vlay) { const at = layObjDoc(d.vlay).at, ids = new Set([...made].map((x) => at.get(x))); selectMany(placedNow.flatMap((q, k) => (q.src === 'loose' && ids.has(q.i) ? [k] : [])).flatMap(groupIdxs)); update(); }       // the old picks' indexes would point at other objects
@@ -11606,7 +11610,7 @@ function shapeMenu(e) {
   have.delete(null);
   const edit = (map, label) => () => { if (shapeEdit(d, new Map([...map].map(([i, r]) => [i, r.ent])), label, new Set([...map].flatMap(([i, r]) => (r.ids || by.get(i)).map((id) => i + ':' + id))))) note(`${label}: ${map.size} object${map.size === 1 ? '' : 's'}. Ctrl+Z takes it back`); };
   popMenu(e.clientX, e.clientY, [
-    ['Break at node', () => { const n = [...cuts.values()].flat().length; if (shapeReplace(d, cuts, 'Break at node')) note(`Break at node: ${n} open polyline${n === 1 ? '' : 's'}. Ctrl+Z takes it back`); }, null, cuts.size > 0, null, cuts.size ? null : breakWhy],
+    ['Break at node', () => { const all = [...cuts.values()].flat(), n = all.length, w = all.every((x) => x.type === 'SPLINE') ? 'spline' : 'polyline'; if (shapeReplace(d, cuts, 'Break at node')) note(`Break at node: ${n} open ${w}${n === 1 ? '' : 's'}. Ctrl+Z takes it back`); }, null, cuts.size > 0, null, cuts.size ? null : breakWhy],
     ['Join nodes', () => { if (shapeReplace(d, new Map([[ents[gs[1].e], []], [ents[gs[0].e], [join.result]]]), join.label, ents[gs[0].e])) note(join.label === 'Close' ? 'Join nodes: the object is closed. Ctrl+Z takes it back' : 'Join nodes: 2 objects are 1 now. Ctrl+Z takes it back'); }, null, !join.why, null, join.why],
     ['To curve', edit(curve, 'To curve'), null, curve.size > 0, null, curve.size ? null : curveWhy],
     ['To line', edit(lined, 'To line'), null, lined.size > 0, null, lined.size ? null : lineWhy],

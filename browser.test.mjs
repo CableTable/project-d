@@ -16636,6 +16636,109 @@ try {
     await closeTabs(/./);
   });
 
+  await step('TODO 139e2b: Shape tool add node / Delete / Break / Join on Bezier splines: one Undo each, a spline and a polyline join, saved DXF and reload hold the curve; Drawings, Layouts, Compare', async () => {
+    await menuItem('View', 'Theme: light');
+    const undo = async () => { await page.evaluate(() => document.activeElement && document.activeElement.blur()); await page.keyboard.press('Control+z'); await frames(); };
+    const del = async () => { await page.evaluate(() => document.activeElement && document.activeElement.blur()); await page.keyboard.press('Delete'); await frames(); };
+    const hotWhen = (n) => page.waitForFunction((k) => document.querySelectorAll('[data-testid=grip-hot]').length === k, n);
+    const all = () => page.locator('[data-testid=grip], [data-testid=grip-hot]').evaluateAll((g) => g.map((x) => x.dataset.grip));
+    const gid = async (k) => (k.includes(':') ? k : (await all()).find((x) => x.endsWith(':' + k)));
+    const box = async (k) => gripBox(await gid(k));
+    const left = async (k) => { const ids = (await all()).filter((x) => x.endsWith(':' + k)), bs = await Promise.all(ids.map(gripBox)); return ids[bs.findIndex((b) => b.x === Math.min(...bs.map((c) => c.x)))]; };       // the object on the left of two
+    const nodeClick = async (k, shift = false) => { const a = await box(k); if (shift) await page.keyboard.down('Shift'); try { await page.mouse.click(a.x, a.y); } finally { if (shift) await page.keyboard.up('Shift'); } await frames(); };
+    const handleDrag = async (k, dx, dy) => { const a = await box(k); await page.mouse.move(a.x, a.y); await page.mouse.down(); await page.mouse.move(a.x + dx, a.y + dy, { steps: 6 }); await page.mouse.up(); await frames(); };
+    const menu = async (k) => { const p = await box(k); await page.mouse.click(p.x, p.y, { button: 'right' }); await t('ctx-menu').waitFor(); };
+    const pickItem = async (name) => { await page.locator('[data-testid=ctx-menu] .mi', { hasText: name }).first().click(); await frames(); };
+    const ctl = (e) => e.r.c.flatMap((c, k) => (c === 10 ? [[+e.r.v[k], +e.r.v[k + 1]]] : []));       // a SPLINE's control points
+    const rel = (a, b, c) => [(b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]), (c[0] - a[0]) * (b[0] - a[0]) + (c[1] - a[1]) * (b[1] - a[1])];       // cross and dot of a→b with a→c
+    const spCase = async (save, shots) => {       // an open L polyline A (left) and a 2-vertex polyline B (right), both selected in the Shape tool
+      const splines = async () => (await save()).entities.filter((x) => x.type === 'SPLINE'), total = async () => (await save()).entities.length, n0 = await total();
+      const a0 = await left('v0');
+      await nodeClick(a0); await hotWhen(1); await menu(a0); await pickItem('To curve');       // A is a spline of 2 cubics
+      await handleDrag('o0', 0, -40);
+      const P = ctl((await splines())[0]); let Q; assert.equal(P.length, 7, 'To curve: 2 cubics');
+      // Join nodes: the spline's end n2 and the polyline's first vertex: one spline of 3 cubics, the polyline gone
+      await nodeClick('n2'); await nodeClick('v0', true); await hotWhen(2); await menu('n2'); await pickItem('Join nodes');
+      let S = await splines();
+      assert.equal(S.length, 1); assert.equal(ctl(S[0]).length, 10, 'Join: 2 + 1 cubics'); assert.equal(await total(), n0 - 1, 'the polyline is part of it');
+      await undo(); assert.equal(ctl((await splines())[0]).length, 7, 'one Undo'); assert.equal(await total(), n0);
+      // Join nodes on the two ends of the spline: Close, a straight cubic bridges the ends
+      await nodeClick('n0'); await nodeClick('n2', true); await hotWhen(2); await menu('n2'); await pickItem('Join nodes');
+      S = await splines();
+      assert.ok(ctl(S[0]).length === 10 && (+S[0].r.v[S[0].r.c.indexOf(70)] & 1), 'Close: a closed spline of 3 cubics');
+      await undo(); assert.equal(ctl((await splines())[0]).length, 7, 'one Undo: open again');
+      // Delete: n1 goes, its two segments are one cubic with the outer handles; then the end node of a 2-node curve takes the object with it
+      await nodeClick('n1'); await hotWhen(1); await del();
+      Q = ctl((await splines())[0]);
+      assert.equal(Q.length, 4, 'Delete: one cubic'); assert.deepEqual(Q, [P[0], P[1], P[5], P[6]], 'the outer handles are kept');
+      await nodeClick('n0'); await hotWhen(1); await del();
+      assert.equal((await splines()).length, 0, 'fewer than 2 nodes left: the spline goes'); assert.equal(await total(), n0 - 1);
+      await undo(); assert.equal(ctl((await splines())[0]).length, 4, 'one Undo: the spline is back');
+      await undo(); assert.equal(ctl((await splines())[0]).length, 7, 'one Undo: both segments'); await frames();
+      // Break at node: two splines, one Undo
+      await nodeClick('n1'); await hotWhen(1); await menu('n1'); await pickItem('Break at node');
+      S = await splines();
+      assert.equal(S.length, 2, 'Break: two splines'); assert.deepEqual(S.map((s) => ctl(s).length), [4, 4]); assert.equal(await total(), n0 + 1);
+      assert.deepEqual([...ctl(S[0]), ...ctl(S[1]).slice(1)], P, 'the two halves hold the control points as they were');
+      await undo(); assert.equal((await splines()).length, 1, 'one Undo: one spline');
+      // add node: a double-click in the middle of the straight segment n1 - n2 (it selects the spline alone)
+      const [m1, m2] = [await box('n1'), await box('n2')];
+      await page.mouse.dblclick((m1.x + m2.x) / 2, (m1.y + m2.y) / 2); await frames(); await hotWhen(1);
+      Q = ctl((await splines())[0]);
+      assert.equal(Q.length, 10, 'a node added: 3 cubics'); assert.deepEqual(Q.slice(0, 4).map((q) => q.map((v) => +v.toFixed(4))), P.slice(0, 4).map((q) => q.map((v) => +v.toFixed(4))), 'the bent segment is untouched');
+      const [cr, dt] = rel(Q[3], Q[9], Q[6]); assert.ok(Math.abs(cr) < 1e-6 && dt > 0 && dt < Math.hypot(Q[9][0] - Q[3][0], Q[9][1] - Q[3][1]) ** 2, 'the new node sits on the old straight segment: ' + JSON.stringify([cr, dt]));
+      assert.equal((await all()).filter((x) => /:[io]\d$/.test(x)).length, 2, 'the new node shows its two handles'); assert.equal(await total(), n0);
+      if (shots) {
+        await shotBoth('shape-splinenode');
+        await page.setViewportSize({ width: 1024, height: 768 }); await frames();
+        await page.locator('[data-testid=canvas]').getByRole('button', { name: 'Fit', exact: true }).click(); await frames();
+        await page.screenshot({ path: `${shotDir}/s12-shape-splinenode-1024.png` });
+        await page.setViewportSize({ width: 1440, height: 900 }); await frames();
+      }
+      await undo(); assert.equal(ctl((await splines())[0]).length, 7, 'one Undo: the 2 cubics');
+    };
+    // Drawings: save, reload, the curve is still there
+    const raw = newDoc(4);
+    addEntities(raw, dxfPoly([[20, 30], [80, 30], [80, 70]], { layer: 'CUT' }), dxfPoly([[110, 30], [150, 30]]));
+    await openGrips(writeDxf(raw), 'shape-spline.dxf');
+    await click(50, 30); await click(130, 30, { shift: true }); await frames(); await typeCmd('shape'); await gripWhen(5);
+    await spCase(async () => savedDoc(), true);
+    await page.evaluate(() => document.activeElement && document.activeElement.blur()); await page.keyboard.press('Control+a'); await frames();       // B joins the selection again
+    await page.waitForFunction(() => [...document.querySelectorAll('[data-grip]')].some((x) => x.dataset.grip.startsWith('1:')));
+    await nodeClick('n2'); await nodeClick('v0', true); await hotWhen(2); await menu('n2'); await pickItem('Join nodes');
+    const saved = (await downloaded(() => page.keyboard.press('Control+s'))).text;
+    await page.keyboard.press('Escape'); await closeTabs(/./);
+    await openGrips(saved, 'shape-spline-reload.dxf');
+    await click(24, 30); await frames(); await typeCmd('shape'); await gripWhen(4);
+    assert.deepEqual((await all()).map((x) => x.split(':')[1]).sort(), ['n0', 'n1', 'n2', 'n3'], 'reloaded: one spline of 4 nodes, the joint n2');
+    await nodeClick('n2'); await hotWhen(1); await menu('n2');
+    assert.equal(await page.locator('[data-testid=ctx-menu] .mi', { hasText: 'Break at node' }).first().isDisabled(), false, 'the joint is an inner node');
+    await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
+    await closeTabs(/./);
+    // Layouts
+    await freshLayoutWithPlate();
+    await typeCmd('polyline'); for (const p of ['50,600', '150,600', '150,700']) await typeCmd(p);
+    await typeCmd('');
+    await typeCmd('polyline'); for (const p of ['200,600', '300,600']) await typeCmd(p);
+    await typeCmd('');
+    await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click(); await click(75, 600); await click(250, 600, { shift: true }); await frames();
+    await page.locator('[data-tool=shape]').click(); await gripWhen(5);
+    await spCase(async () => readDxf((await downloaded(async () => { await menuItem('File', 'Export DXF…'); await t('export-dxf-go').click(); })).text), false);
+    await page.keyboard.press('Escape');
+    // Compare (the grips go to the source drawing)
+    const cmp = newDoc(4); addEntities(cmp, dxfPoly([[20, 30], [80, 30], [80, 70]]), dxfPoly([[110, 30], [150, 30]]));
+    await openGrips(writeDxf(cmp), 'shape-spline-cmp.dxf'); await typeCmd('compare');
+    await typeCmd('shape'); await page.keyboard.press('Control+a'); await gripWhen(5);
+    await spCase(async () => {
+      await page.locator('.dtab', { hasText: 'shape-spline-cmp.dxf' }).click(); await frames();
+      const doc = await savedDoc();
+      await page.locator('.dtab', { hasText: 'Compare' }).click(); await frames();
+      return doc;
+    }, false);
+    await page.keyboard.press('Escape');
+    await closeTabs(/./);
+  });
+
   // ---- TODO 163a: Grip options, the hover list on a line / arc grip ----
   const g163 = {
     list: async () => { await t('ctx-menu').waitFor(); return page.locator('[data-testid=ctx-menu] .mi').allTextContents(); },
