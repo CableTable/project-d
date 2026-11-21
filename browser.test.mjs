@@ -26803,6 +26803,34 @@ try {
     await page.locator('[data-tool=select]').click();   // the Line tool stays on across tabs, as on drawings: end it for the next step
   });
 
+  await step('TODO 156e4a: on a layout the Balloon tool places 1, 2; Undo leaves 1; Save and reopen the layout shows 1 balloon numbered 1', async () => {
+    await freshLayoutWithPlate();
+    await page.locator('[data-tool=balloon]').click();
+    await said(/^Click the feature to balloon/);                         // the tool stays on a layout
+    const bal = (id, v) => page.waitForFunction(([i, x]) => { const e = document.querySelector(`[data-testid=${i}]`); return (e.value ?? e.textContent) === x; }, [id, v]);
+    await page.waitForTimeout(200); await frames();                      // the first click after the tool button is not taken before the canvas settles
+    await click(50, 50); await click(100, 100);
+    await page.waitForTimeout(200); await frames();                      // the table opens and the canvas is fitted again
+    await click(50, 200); await click(100, 250);
+    assert.deepEqual(await balNums(), ['1', '2']);
+    assert.equal((await histLabels()).at(-1), 'Add balloon 2'); await bal('bal-next', '3');
+    await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z');
+    assert.deepEqual(await balNums(), ['1'], 'one Undo takes the second balloon away');
+    await bal('bal-count', '1'); await bal('bal-next', '2');
+    await shotBoth('layout-balloons');
+    const dls = await downloadsUtf8(() => page.keyboard.press('Control+s'), 2);
+    const dxf = dls.find((x) => /\.dxf$/i.test(x.name)), side = dls.find((x) => /\.pdballoons\.json$/i.test(x.name));
+    assert.ok(dxf && side, 'Save writes the layout and its balloons file: ' + dls.map((x) => x.name));
+    const file = JSON.parse(side.text);
+    assert.equal(file.kind, 'project-d-balloons'); assert.deepEqual(file.items.map((i) => [i.n, i.sheet]), [[1, 1]]);
+    await closeTabs(/./);
+    await t('picker').setInputFiles([{ name: dxf.name, mimeType: 'text/plain', buffer: Buffer.from(dxf.text, 'utf8') }, { name: side.name, mimeType: 'application/json', buffer: Buffer.from(side.text, 'utf8') }]);
+    await waitTab(page, dxf.name);
+    await page.waitForFunction(() => document.querySelector('[data-testid=bal-count]')?.textContent === '1');
+    assert.deepEqual(await balNums(), ['1'], 'the reopened layout shows its balloon');
+    await said(/pdballoons\.json: 1 balloon/);
+  });
+
   await step('TODO 156b3a: on a layout, Trim / Extend / Fillet / Offset work on layout objects (one Undo each); a pick on a placed part is refused and the part stays; saved and reopened they are still objects', async () => {
     await freshLayoutWithPlate();
     const val = (e, c) => Number(e.r.v[e.r.c.indexOf(c)]);

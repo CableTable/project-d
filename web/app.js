@@ -797,7 +797,7 @@ function ribbonButton(label, svg, action, { small = false, enabled = () => true,
 function ribbonTool(id, small = false) {
   const t = TOOLS.find((t) => t.id === id);
   const b = ribbonButton(id === 'divide' ? 'Divide / Measure points' : t.label, t.svg, () => id === 'nest' ? openNestDialog() : id === 'step' ? DO.step() : id === 'rotate' ? (curLay() && !selectedPlaced() ? note('Rotate: select a part first (Align is in the dropdown)') : DO.rotate()) : startButtonTool(id),
-    { small, enabled: () => id === 'step' || id === 'nest' ? !!curLay() : id === 'measure' ? !!measureTarget() : id === 'dimension' || id === 'leader' ? !!dimTarget() : DR.KINDS.includes(id) || id === 'text' ? !!curDoc() : !!editable() || (id === 'contour' && !!curLay()) || (id === 'rotate' && !!curLay()) || (LAY_MODS.includes(id) && !!curLay()), pressed: () => state.tool === id, command: id, description: t.description });
+    { small, enabled: () => id === 'step' || id === 'nest' ? !!curLay() : id === 'measure' ? !!measureTarget() : id === 'dimension' || id === 'leader' || id === 'balloon' ? !!dimTarget() : DR.KINDS.includes(id) || id === 'text' ? !!curDoc() : !!editable() || (id === 'contour' && !!curLay()) || (id === 'rotate' && !!curLay()) || (LAY_MODS.includes(id) && !!curLay()), pressed: () => state.tool === id, command: id, description: t.description });
   if (id === 'dimension') {
     b.append(h('span', { class: 'flyout', title: 'Dimension types', 'aria-label': 'Dimension types' }, '▾'));
     b.setAttribute('aria-haspopup', 'menu');
@@ -1051,7 +1051,7 @@ function applyKind() {
   if (state.ptab === 'library' && !lib) state.ptab = 'drawing';
   if (state.ptab === 'step' && !lay) state.ptab = 'drawing';
   renderDocker();
-  if (lay && (state.tool === 'dimension' || state.tool === 'leader' || state.tool === 'balloon' || DR.KINDS.includes(state.tool) || state.tool === 'text')) setTool('step');
+  if (lay && (state.tool === 'dimension' || state.tool === 'leader' || DR.KINDS.includes(state.tool) || state.tool === 'text')) setTool('step');
   else if (!lay && state.tool === 'step') setTool('select');
   else if (lay && wasLayout === false && state.tool === 'select') setTool('step');
   wasLayout = lay;
@@ -1379,7 +1379,7 @@ async function openBytes(name, buf, path = null, batch = {}) {
   const subs = fontSubstitutions(r.doc.styles, fl.items);
   const fontNote = subs.length ? 'Fonts: ' + subs.map(({ asked, shown }) => `${asked} → ${shown}`).join(', ') : '';
   const lay = LD.layoutFromRaw(r.doc, name);
-  if (lay) { openLayoutFile(lay, name, path, fontNote, readTitleBlock(r.doc), dwg); await unitsLoad(curDoc(), path, name); if (dwg && path) rememberRecent(path); return; } // one of our saved layouts: it opens as a layout tab
+  if (lay) { openLayoutFile(lay, name, path, fontNote, readTitleBlock(r.doc), dwg); await balLoad(curDoc(), path, name); if (dwg && path) rememberRecent(path); return; } // one of our saved layouts: it opens as a layout tab
   // openPath: the source file. Save backs up an opened DXF before overwriting it; a DWG has no writable path until Save As.
   const doc = { name, path: dwg ? null : path, openPath: path, guideFile: G.fileKey(path, name), dirty: false, ...(dwg && { fromDwg: true }), ...tabFields(r.doc, fl) };
   addTab(doc);
@@ -1789,7 +1789,7 @@ function setTool(id) {
   state.colourTool = null; endReadout();
   if (id === 'measure' && !measureTarget()) { note('Measure: open a drawing, layout or Compare tab first'); return; }
   if (cmpDoc() && (MOD_KINDS.includes(id) || id === 'contour' || id === 'shape' || DR.KINDS.includes(id) || ['text', 'dimension', 'leader', 'balloon'].includes(id)) && !cmpEdit()) return;
-  if (id === 'balloon' && !editable()) { note('Balloons work on a drawing tab (a PDF or a picture too): open one first'); return; }
+  if (id === 'balloon' && !balDoc()) { note('Balloons work on a drawing tab (a PDF or a picture too) or a layout: open one first'); return; }
   if (id === 'contour' && !editable() && !curLay()) { note('Contour works on a drawing tab or a layout: open one and pick a closed outline or a placed part'); return; }
   if (id === 'shape' && !editable() && !curLay()) { note('Shape works on a drawing, layout or Compare tab: open one first'); return; }
   if (MOD_KINDS.includes(id) && !editable() && !(curLay() && LAY_MODS.includes(id))) { note(TOOLS.find((x) => x.id === id).label + ' works on a drawing tab: open a drawing first'); return; }
@@ -2438,7 +2438,8 @@ const r2 = (v) => Math.round(v * 100) / 100;
 const fmt1 = (v) => Number(v).toFixed(1);
 const centrePivot = () => ({ kind: 'centre', x: 0, y: 0 });
 const laySnap = (lay) => ({ sw: lay.s.sheetW, sh: lay.s.sheetH, s: structuredClone(lay.s), placed: lay.placed.map((p) => ({ ...p })), gridPart: lay.s.gridPart, parts: { ...lay.parts }, layers: LD.layersOf(lay), grids: structuredClone(lay.grids || {}),
-  lsel: lay === (curLay() || {}) ? selIdxs().map((i) => placedNow[i]).filter((p) => p.src === 'loose').map((p) => p.i) : [] });      // lsel: which loose parts were selected (undo brings the selection back)
+  lsel: lay === (curLay() || {}) ? selIdxs().map((i) => placedNow[i]).filter((p) => p.src === 'loose').map((p) => p.i) : [],      // lsel: which loose parts were selected (undo brings the selection back)
+  bl: state.docs.find((t) => t.lay === lay)?.balloons });      // bl: the tab's balloon set (immutable, so the reference is the snapshot)
 const layHist = (d) => d.lhist || (d.lhist = Ed.createHistory());
 /** Keeps the layout as it is now for undo; the same key within 0.8 s (arrow key held down) keeps only the first. */
 function pushLay(d, snap, key = '', label) {
@@ -2452,6 +2453,7 @@ function layRestore(d, st, dirty = true) {
   if (st.lsel && st.lsel.length) selLooseMany = st.lsel.slice();
   const sized = st.sw != null && (st.sw !== d.lay.s.sheetW || st.sh !== d.lay.s.sheetH);
   if (sized) { d.lay.s.sheetW = st.sw; d.lay.s.sheetH = st.sh; syncFields(); }
+  if ('bl' in st) d.balloons = st.bl;
   d.lay.placed = st.placed; d.lay.parts = st.parts; if (st.layers) d.lay.layers = st.layers; if (st.grids) d.lay.grids = st.grids; Object.assign(d.lay.s, structuredClone(st.s));       // every setting (grippers, gaps, rows, marks, grid part, guides) comes back with the parts
   gapSig = ''; syncFields();                                           // the extra-gap rows hold the old gap objects: rebuilt
   state.mode = 'select'; state.pivot = centrePivot(); state.rotCopy = false; pdrag = null; lastPush = { key: '', t: 0, d: null }; if (before !== JSON.stringify(LD.placedAll(d.lay))) { picksArr = []; state.sel = -1; d.stretchSelection = null; }
@@ -4079,7 +4081,7 @@ async function save(forceAs) {
     d.name = name; d.path = path; d.dirty = false; d.saved = true;
     if (d.fromDwg) { d.fromDwg = false; d.openPath = null; }              // the tab is now the .dxf it just wrote
     d.guideFile = G.fileKey(path, name); rememberGuides(d);
-    const balloonsSaved = d.lay || await balSave(d) !== false;
+    const balloonsSaved = await balSave(d) !== false;
     d.dirty = !!unitError || !balloonsSaved;
     if (!d.dirty) dropCopy(d);
     if (path) rememberRecent(path);
@@ -4872,7 +4874,7 @@ function cmdEnter(raw) {
     if (c === 'apply' || c === 'a') { applyContour(); return; }
     if (m) { const why = m[1][0] === 'd' ? setContourDist(m[2]) : setContourSteps(m[2]); renderContour(); renderCommand(); if (why) note(why); return; }
   }
-  if (state.tool === 'balloon' && editable() && /^\d+$/.test(c)) { balNextTyped(c); return; }
+  if (state.tool === 'balloon' && balDoc() && /^\d+$/.test(c)) { balNextTyped(c); return; }
   if (state.tool === 'dimension' && state.dimType === 'linear' && state.dim.pts.length === 2 && /^(h|horizontal|v|vertical)$/.test(c)) { state.dim.force = c[0]; note('Linear: ' + (c[0] === 'h' ? 'horizontal' : 'vertical') + '. ' + dimPrompt()); paintOverlay(); return; }
   const cmd = CB.resolve(c, curLay() ? 'layout' : 'draw', ownCommands);
   if (cmd) runCommand(cmd);
@@ -5916,7 +5918,7 @@ function attachCanvasEvents() {
     if (d && act && act.pts.length < 2) { act.hover = pickPoint(d, toDrawing(d, e.clientX, e.clientY), act.pts, e.shiftKey, true); paintOverlay(); }
     if (d && state.dim && dimTarget()) dimHover(d, toDrawing(d, e.clientX, e.clientY), e.shiftKey);
     if (d && state.ldr && dimTarget()) ldrHover(d, toDrawing(d, e.clientX, e.clientY), e.shiftKey);
-    if (d && state.bal && editable()) balHover(d, toDrawing(d, e.clientX, e.clientY), e.shiftKey);
+    if (d && state.bal && balDoc()) balHover(d, toDrawing(d, e.clientX, e.clientY), e.shiftKey);
     if ((d || curLay()) && state.tool === 'text' && !textEditing()) { state.text.hover = textPick(d || curDoc(), e.clientX, e.clientY); paintOverlay(); }
     const mx = view.ox + p.x / view.scale, my = view.oy + p.y / view.scale;
     const [cx, cy] = cursorMm(mx, my, state.sheetH);
@@ -6086,7 +6088,7 @@ function renderCommand() {
     : state.tool === 'select' && ed ? 'Command: SELECT   Click an unselected object to select it; click a selected object for rotate arrows. To pick one, click empty space first or Shift+click the others away. Shift / Ctrl adds or removes, drag a box, Esc clears. Right-click: Select connected / Extract part…'
     : state.tool === 'dimension' && (ed || lay) ? 'Command: ' + dimTypeRow(state.dimType)[4]
     : state.tool === 'leader' && ed ? 'Command: LEADER'
-    : state.tool === 'balloon' && ed ? `Command: BALLOON   next no. ${balOf(ed).next}`
+    : state.tool === 'balloon' && (ed || lay) ? `Command: BALLOON   next no. ${balOf(ed || curDoc()).next}`
     : 'Command: ' + t.label.toUpperCase();
   const word = state.fit ? 'fit' : 'placed';
   ui.prompt.textContent = gd ? `${gd.axis.toUpperCase()} position <${fmt(gd.mm)}>:` : state.msg ? state.msg
@@ -6095,6 +6097,7 @@ function renderCommand() {
     : rs ? `Angle <${fmt(rs.p.rot)}>: ${state.rotCopy ? 'Copy on. ' : ''}[Pivot / Copy / Reference / Esc]:`
     : state.tool === 'contour' && (ed || lay) ? 'Option [Inside / Outside / Distance / Steps / Sharp / Rounded / Apply]:'
     : nSel > 1 ? (wholeGroup() ? 'Command [Group / Ungroup / Lock / Unlock]:' : ARRANGE_PROMPT)
+    : state.tool === 'balloon' && lay ? balPrompt()
     : lay ? (gp
       ? (layout.count ? `${layout.count} ${word}${gridCellNote(layout) ? ' copies' : ` (${layout.cols} × ${layout.rows})`}, ${Math.round(layout.usedPct)}% of sheet${layout.fits ? '' : '. Does not fit the usable area'}. ${gridCellNote(layout) ? gridCellNote(layout) + '. ' : ''}[Apply / Rotate / Nest]:`
         : `${gridCellNote(layout) || (layout.taken ? 'All grid cells are already placed' : '0 fit: the part is larger than the usable area')}. [Apply / Rotate / Nest]:`)
@@ -6645,8 +6648,10 @@ const measureTarget = () => curLay() || cmpDoc() ? curDoc() : editable();
 /** The tab the Dimension tool works on: a drawing tab, or a layout (its objects are in mm; the dimension becomes a layout object, TODO 156b2c1). */
 const colourDoc = () => curLay() ? curDoc() : editable();       // the tab Fill / Eyedropper work on: a layout works on its loose objects (156e2)
 const dimTarget = () => { const d = curDoc(); if (d?.lay) { d.factor = 1; return d; } return editable(); };
+/** The tab the Balloon tool and its handlers work on: a drawing tab or a layout (balloons only; editable() stays drawing-only, TODO 156e4a). */
+const balDoc = dimTarget;
 /** The tab a point tool's pick lands on (Measure also works on a layout or Compare, Dimension on a layout). */
-const pointTarget = () => state.tool === 'measure' ? measureTarget() : state.tool === 'dimension' || state.tool === 'leader' ? dimTarget() : editable();
+const pointTarget = () => state.tool === 'measure' ? measureTarget() : state.tool === 'dimension' || state.tool === 'leader' || state.tool === 'balloon' ? dimTarget() : editable();
 const drawBox = (fl) => fl.boxes[spaceOf(fl) ? 'paper' : 'model'];
 const fmtSize = (v) => String(+Number(v).toFixed(2));
 /** fl + hid (TODO 319b): the drawn items of this state and the entities hidden one by one they were made with; Undo / Redo reuse them (see drawnOf). */
@@ -7977,7 +7982,7 @@ function showDimStyle() {
 /** The circle's radius in mm: half the typed diameter, or Auto (3.5 / 1.6 % of the page's longest side). */
 function balR(d) {
   if (balOf(d).size != null) return balOf(d).size / 2;
-  const bs = [d.bg ? Ed.bgBox(d.bg) : null, d.box].filter(Boolean);
+  const bs = [d.bg ? Ed.bgBox(d.bg) : null, d.box, d.lay ? [0, 0, d.lay.s.sheetW, d.lay.s.sheetH] : null].filter(Boolean);
   return Math.max(3.5, 0.016 * Math.max(0, ...bs.map((b) => Math.max(b[2] - b[0], b[3] - b[1]))));
 }
 const BAL_LABEL = { n: 'number', dim: 'dimension', tp: 'tolerance +', tm: 'tolerance -', note: 'note' };
@@ -7985,22 +7990,23 @@ const balOf = (d) => d.balloons || BAL.EMPTY;
 const sheetOf = (d) => (d.pdf ? d.pdf.page : 1);
 const balItem = (d, id) => balOf(d).items.find((it) => it.id === id) || null;
 const balSelItem = (d) => (d && state.balSel != null ? balItem(d, state.balSel) : null);
-const balPrompt = () => (!editable() ? 'Balloon: open a drawing tab first (a PDF or a picture too)' : state.bal && state.bal.tip ? 'Click where the balloon sits:' : 'Click the feature to balloon:');
+const balPrompt = () => (!balDoc() ? 'Balloon: open a drawing tab or a layout first (a PDF or a picture too)' : state.bal && state.bal.tip ? 'Click where the balloon sits:' : 'Click the feature to balloon:');
 /** The drawing's TEXT and MTEXT as text.js models (drawing units); null for a picture or a drawing with no text. Remembered until the entities change. */
 function balTexts(d) {
+  if (!d.raw) return [];                                                   // a layout has no PDF text to pick from
   if (!d.txtMemo || d.txtMemo.ents !== d.raw.entities) d.txtMemo = { ents: d.raw.entities, list: d.raw.entities.map(TX.decode).filter(Boolean) };
   return d.txtMemo.list;
 }
 
 /** A balloon change as ONE labelled undo step (the set is immutable, so the history keeps the old one); sel: the balloon selected afterwards. */
 function balApply(d, set, label, sel = state.balSel) {
-  pushHistory(d, { ...snapshotOf(d), blSize: label === 'Balloon size' }, label);
+  if (d.lay) pushLay(d, null, '', label); else pushHistory(d, { ...snapshotOf(d), blSize: label === 'Balloon size' }, label);       // a layout's own Undo: laySnap carries the set
   d.balloons = set; d.dirty = true; state.balSel = sel;
   renderTabs(); renderEdit(); renderCommand(); paintOverlay();
 }
 function balSelect(d, id) {
   state.balSel = id;
-  if (id != null && d.sel.size) { setSel(d, new Set()); return; }          // a balloon and a drawing selection are not picked together
+  if (id != null && d.sel?.size) { setSel(d, new Set()); return; }          // a balloon and a drawing selection are not picked together
   renderEdit(); paintOverlay();
 }
 
@@ -8025,7 +8031,7 @@ function balClick(d, p, shift, typed = false) {
 
 // -- a selected balloon: grips at the circle's centre (moves the circle) and the tip (moves the arrow); a click on one selects it --
 function balDown(e) {
-  const d = editable();
+  const d = balDoc();
   if (!d || state.tool !== 'select' || state.setlen || state.match) return false;
   const p = sheetAt(e.clientX, e.clientY), tol = 7 / view.scale, sheet = sheetOf(d), sel = balSelItem(d);
   let it = sel && sel.sheet === sheet ? sel : null, which = it ? BAL.gripAt(it, p, tol * 1.3) : null;
@@ -8039,7 +8045,7 @@ function balDown(e) {
   return true;
 }
 function balMove(e) {
-  const g = state.balDrag, d = editable();
+  const g = state.balDrag, d = balDoc();
   if (!g || !d) return;
   if (!g.moved && Math.hypot(e.clientX - g.x, e.clientY - g.y) < 4) return;
   g.moved = true;
@@ -8050,14 +8056,14 @@ function balMove(e) {
   paintOverlay();
 }
 function balUp() {
-  const g = state.balDrag, d = editable();
+  const g = state.balDrag, d = balDoc();
   state.balDrag = null;
   if (!g || !d) return;
   if (g.moved && g.set) balApply(d, g.set, g.which === 'tip' ? 'Move balloon arrow' : 'Move balloon', g.id);
   else paintOverlay();
 }
 function balDelete() {
-  const d = editable(), it = balSelItem(d);
+  const d = balDoc(), it = balSelItem(d);
   if (!d || !it) return false;
   balApply(d, BAL.remove(balOf(d), it.id), `Delete balloon ${it.n}`, null);
   note(`Balloon ${it.n} deleted; the others keep their numbers. Ctrl+Z takes it back`);
@@ -8091,7 +8097,7 @@ function balOvl(d, out, k) {
 
 // -- the fields: the Balloon section of the right panel, typed; Pick from text; the count; Renumber --
 function balFieldTyped(key) {
-  const d = editable(), it = balSelItem(d), input = ui['bal_' + key];
+  const d = balDoc(), it = balSelItem(d), input = ui['bal_' + key];
   if (!it) return;
   const raw = input.value.trim();
   if (key === 'n') {
@@ -8108,7 +8114,7 @@ function balFieldTyped(key) {
 }
 /** Pick from text: the dimension is the text of the PDF under the arrow's tip (vector pages only). */
 function balPick() {
-  const d = editable(), it = balSelItem(d);
+  const d = balDoc(), it = balSelItem(d);
   if (!it) return;
   const texts = balTexts(d);
   if (!texts.length) { note('Pick from text: this page has no text (it is a picture), so type the dimension'); return; }
@@ -8119,14 +8125,14 @@ function balPick() {
 }
 /** The count carries on from n (typed in the Numbering field or at the command line). */
 function balNextTyped(text) {
-  const d = editable(), set = d && BAL.setNext(balOf(d), text);
+  const d = balDoc(), set = d && BAL.setNext(balOf(d), text);
   if (!d) return;
   if (!set) { note('Next number: a whole number from 1'); renderBalloons(); return; }
   if (set.next !== balOf(d).next) balApply(d, set, `Next balloon number ${set.next}`);
   note(`The next balloon is number ${set.next}`);
 }
 function balRenumber() {
-  const d = editable(), set = d && balOf(d);
+  const d = balDoc(), set = d && balOf(d);
   if (!set || !set.items.length) return;
   balApply(d, BAL.renumber(set), 'Renumber balloons');
   note(`Renumbered 1 to ${set.items.length} (sheet by sheet, in the order placed); the next is ${set.items.length + 1}. Ctrl+Z takes it back`);
@@ -8134,7 +8140,7 @@ function balRenumber() {
 
 // -- the table: a row zooms to its balloon (on its sheet); a selected balloon lights its row --
 async function balRow(id) {
-  const d = editable(), it = d && balItem(d, id);
+  const d = balDoc(), it = d && balItem(d, id);
   if (!it) return;
   if (it.sheet !== sheetOf(d) && !(await balSheet(d, it.sheet))) return;
   balSelect(d, it.id);
@@ -8144,7 +8150,7 @@ async function balRow(id) {
 }
 /** The table's file: Export CSV, and Export Excel (the same rows, as a UTF-8 CSV with a byte order mark: Excel opens it with Ø and ± right). */
 async function balExport(excel) {
-  const d = editable(), rows = d ? BAL.rows(balOf(d), state.balDock.sheet === 'all' ? null : +state.balDock.sheet) : [];
+  const d = balDoc(), rows = d ? BAL.rows(balOf(d), state.balDock.sheet === 'all' ? null : +state.balDock.sheet) : [];
   if (!rows.length) { note('Export: no balloons in the list'); return; }
   // shortcut: Excel gets a CSV with a BOM, not a real .xlsx (no xlsx writer in the app); upgrade when he needs formatting or several sheets in one file
   const name = baseName(d.balName || d.name) + '-balloons' + (excel ? '-excel' : '') + '.csv', text = BAL.csv(rows, { bom: excel });
@@ -8316,7 +8322,7 @@ function balPicked(name, text) {
 }
 /** Double-click a balloon (Select): its number is typed in the panel. */
 function balDbl(e) {
-  const d = editable();
+  const d = balDoc();
   if (!d || state.tool !== 'select') return false;
   const p = sheetAt(e.clientX, e.clientY), it = balOf(d).items.find((x) => x.sheet === sheetOf(d) && BAL.bodyAt(x, p, balR(d), 7 / view.scale));
   if (!it) return false;
@@ -8355,12 +8361,12 @@ function buildBalloonDock() {
   ui.balCount = h('span', { class: 'chip', 'data-testid': 'bal-count' }, '0');
   ui.balSize = h('input', { class: 'fld balsize', type: 'text', inputmode: 'decimal', autocomplete: 'off', 'aria-label': 'Size Ø', 'data-testid': 'bal-size', placeholder: 'Auto', title: 'Balloon circle diameter in mm for this drawing; empty = Auto' });
   const resetSize = () => {
-    const d = editable();
+    const d = balDoc();
     ui.balSize.value = d ? balOf(d).size ?? '' : '';
     ui.balSize.removeAttribute('aria-invalid');
   };
   const applySize = () => {
-    const d = editable();
+    const d = balDoc();
     if (!d) return;
     const set = BAL.setSize(balOf(d), ui.balSize.value);
     if (!set) { ui.balSize.setAttribute('aria-invalid', 'true'); return; }
@@ -8402,7 +8408,7 @@ function buildBalloonDock() {
 /** The panel, the table, the status bar's sheet chip and the sheet switcher follow the tab, the tool, the selection and the balloons. */
 function renderBalloons() {
   if (!ui.balDock) return;
-  const d = editable(), set = d ? balOf(d) : BAL.EMPTY, lib = state.panel === 'library';
+  const d = balDoc(), set = d ? balOf(d) : BAL.EMPTY, lib = state.panel === 'library';
   if (state.balSel != null && !(d && balItem(d, state.balSel))) state.balSel = null;
   const sel = d && balSelItem(d), tool = state.tool === 'balloon', show = !!d && (set.items.length > 0 || tool), P = d && d.pdf;
   const sheets = P ? PS.sheetNumbers(P) : Array.from({ length: Math.max(1, ...set.items.map((it) => it.sheet)) }, (_, i) => i + 1);
@@ -8439,7 +8445,7 @@ function renderBalloons() {
       return tr;
     }));
   }
-  ui.balPic.hidden = !(d && tool && !balTexts(d).length);
+  ui.balPic.hidden = !(d && !d.lay && tool && !balTexts(d).length);
   ui.balSheets.hidden = !(P && P.pages > 1 && !P.allPages);                 // a background PDF is one picture of all its pages: one sheet, no chips
   if (!ui.balSheets.hidden) {
     const key = P.page + ':' + sheets.join(',') + ':' + P.name;
@@ -8807,6 +8813,7 @@ function drawOvl(paint = false) {
     if (tt && state.grip && state.trk.res) tt.text = state.trk.res.text;
     if (tt && !CT?.grip) { const cr = ui.canvas.getBoundingClientRect(); tip = { text: tt.text, x: (tt.px[0] - cr.left) / view.scale + view.ox, y: H - ((tt.px[1] - cr.top) / view.scale + view.oy) }; }
   }
+  if (d?.lay) { const bt = balOvl(d, out, 1 / view.scale); if (bt && !CT) tip = bt; }       // a layout's balloons and the Balloon tool's ghost
   const gd = d && d.lay ? gripDoc() : null;                         // a layout's selected objects: their grips
   if (gd) {
     const tt = gripOvl(gd, out, 1 / view.scale, grips);
@@ -8959,7 +8966,7 @@ function cursorTool() {
     const valueMode = m.p1 && ['rotate', 'scale'].includes(m.kind) && (!m.ref || m.ref.step === 'new') ? m.kind === 'rotate' ? 'angle' : m.ref ? 'length' : 'factor' : null;
     return { kind: m.kind, A: m, mod: true, point: true, valueMode, stage: m.stage + ':' + (m.ref?.step || ''), d, f, pts: points.map(mm), hover: mm(m.kind === 'offset' ? m.p : m.cur) };
   }
-  const drawing = state.ldr ? dimTarget() : editable();
+  const drawing = state.ldr || state.bal ? dimTarget() : editable();
   if (drawing && !textEditing() && (state.ldr || state.bal || state.tool === 'text')) {
     const A = state.ldr || state.bal || state.text, kind = state.ldr ? 'leader' : state.bal ? 'balloon' : 'text', f = drawing.factor;
     const mm = (q) => q && q.slice(0, 2).map((v) => v * f);
