@@ -99,7 +99,8 @@ import { loadFont } from './fontload.js';
 import { fontForStyle, fontSubstitutions } from './fontsub.js';
 import { outlineOf } from './nestshape.js';
 import { partSource, readTitleBlock, withTitleBlock } from './pdf-export.js';
-import { readPdf, renderPdfPage, renderPdfPages, isPdf } from './pdf-read.js';
+import { readPdf, renderPdfPage, renderPdfPages, isPdf, pageLayout } from './pdf-read.js';
+import { readTiff } from './tiff.js';
 import { preloadPictures, rawPixels } from './pictures.js';
 import { panelWidth } from './docker.js';
 
@@ -1340,6 +1341,7 @@ async function openBytes(name, buf, path = null, batch = {}) {
     note(`${name} is already open: here is its tab` + (state.docs[same].dirty ? ' (with unsaved changes)' : ''));
     return;
   }
+  if (/\.tiff?$/i.test(name)) { await importBackgroundTiff(name, buf, true, path); return; }   // TODO 138: a TIFF is a background picture in a tab of its own
   if (/\.pdf$/i.test(name) || (!/\.dxf$/i.test(name) && buf.byteLength && isPdf(buf))) { await openPdf(name, buf, path, null, batch); return; }
   if (/\.ai$/i.test(name)) { note(name + ": this .ai has no PDF part. In Illustrator: Save As .ai with 'Create PDF Compatible File' on, or Save a Copy as PDF."); return; }
   const dwg = /\.dwg$/i.test(name);
@@ -1459,7 +1461,7 @@ async function openFile() {
   const t = window.__TAURI__;
   if (!t || !t.dialog || !t.dialog.open) { ui.picker.value = ''; ui.picker.click(); return; }
   try {
-    const picked = await t.dialog.open({ multiple: false, filters: [{ name: 'Drawings', extensions: ['dxf', 'dwg', 'pdf', 'ai'] }] });
+    const picked = await t.dialog.open({ multiple: false, filters: [{ name: 'Drawings', extensions: ['dxf', 'dwg', 'pdf', 'ai', 'tif', 'tiff'] }] });
     const path = Array.isArray(picked) ? picked[0] : picked;
     if (path) await openPath(String(path));
   } catch (err) {
@@ -1484,7 +1486,7 @@ async function openPath(path, recent = false, batch = {}) {
   if (!t || !t.fs || !t.fs.readFile) return;
   try {
     if (!(await bigOk([{ name, size: await pathSize(path) }])).length) return;
-    if (!/\.(dxf|pdf|ai)$/i.test(name)) {                                   // a .dwg is converted from its path; other names are refused
+    if (!/\.(dxf|pdf|ai|tiff?)$/i.test(name)) {                                  // a .dwg is converted from its path; other names are refused
       if (recent && t.fs.exists && !(await t.fs.exists(path))) throw new Error('not found');   // a DXF's readFile fails by itself; the helper's error would not say "moved"
       await openBytes(name, new ArrayBuffer(0), path, batch); return;
     }
@@ -1889,9 +1891,9 @@ function buildCanvas() {
   // the opened drawing: a canvas over the sheet, same view (applyView), drawn at true size
   ui.dcanvas = h('canvas', { class: 'drawing-layer', 'data-testid': 'drawing' });
   ui.gridDisplay = h('div', { class: 'drawing-grid', hidden: true, 'aria-hidden': 'true', 'data-testid': 'drawing-grid' });
-  ui.picker = h('input', { type: 'file', accept: '.dxf,.dwg,.pdf,.ai,.json', hidden: true, 'data-testid': 'picker', multiple: true });
+  ui.picker = h('input', { type: 'file', accept: '.dxf,.dwg,.pdf,.ai,.json,.tif,.tiff', hidden: true, 'data-testid': 'picker', multiple: true });
   ui.picker.addEventListener('change', async () => { const files = [...ui.picker.files], batch = {}; ui.picker.value = ''; for (const f of balFirst(await bigOk(files))) await openPicked(f, batch); });   // emptied, so the same file can be picked again
-  ui.bgPicker = h('input', { type: 'file', accept: '.png,.jpg,.jpeg,.pdf', hidden: true, 'data-testid': 'bg-picker' });
+  ui.bgPicker = h('input', { type: 'file', accept: '.png,.jpg,.jpeg,.pdf,.tif,.tiff', hidden: true, 'data-testid': 'bg-picker' });
   ui.bgPicker.addEventListener('change', async () => {
     const f = ui.bgPicker.files[0], trace = traceAfter;
     ui.bgPicker.value = ''; traceAfter = false;
@@ -6126,7 +6128,8 @@ function update(refit = false, dimNames) {
 async function importBackground(file) {
   const ext = ((file.name.match(/\.([^.]+)$/) || [])[1] || '').toLowerCase();
   if (ext === 'pdf') { await importBackgroundPdf(file.name, await file.arrayBuffer()); return; }
-  if (!['png', 'jpg', 'jpeg'].includes(ext)) { note(file.name + ': a background must be a .png or .jpg'); return; }
+  if (ext === 'tif' || ext === 'tiff') { await importBackgroundTiff(file.name, await file.arrayBuffer()); return; }
+  if (!['png', 'jpg', 'jpeg'].includes(ext)) { note(file.name + ': a background must be a .png, .jpg, .tif or .pdf'); return; }
   let bitmap;
   try { bitmap = await createImageBitmap(file); } catch { note(file.name + ': could not read this picture'); return; }
   placeBackground(file.name, bitmap, 25.4 / 96, 'shown at 96 dpi. Set length makes it true size');
@@ -6141,6 +6144,31 @@ async function importBackgroundPdf(name, bytes, newTab = false, path = null) {
     placeBackground(name, bitmap, r.mmPerPx, r.pages > 1 ? `all ${r.pages} pages side by side, true size from the PDF` : 'page 1 of 1, true size from the PDF', newTab, { path, pdf: { name, bytes: keep, pages: r.pages, page: 1, sheets: [1], allPages: true, picture: true } });
     if (r.dpi < 150) note(`Background at ${r.dpi} dpi (${r.pages} pages)`);
   } catch (err) { note(name + ': could not draw this PDF (' + (err && err.message ? err.message : err) + ')'); }
+}
+/** TODO 138: every readable page of a .tif / .tiff as ONE background picture, laid out as a PDF's (pageLayout: side by side, 10 mm apart, top edges aligned),
+ *  each page at its own dpi (none: 96), the picture at the highest page dpi unless pageLayout lowers it. Unreadable pages are skipped and named. */
+async function importBackgroundTiff(name, bytes, newTab = false, path = null) {
+  let pages;
+  try { pages = await readTiff(bytes); } catch (err) { note(name + ': could not read this TIFF (' + (err && err.message ? err.message : err) + ')'); return; }
+  const ok = pages.filter((p) => p.rgba), bad = pages.filter((p) => p.error);
+  if (!ok.length) { note(`${name}: could not read this TIFF (${[...new Set(bad.map((p) => p.error))].join('; ')})`); return; }
+  const lay = pageLayout(ok.map((p) => [p.w * 72 / p.dpi[0], p.h * 72 / p.dpi[1]]), { maxDpi: Math.max(...ok.flatMap((p) => p.dpi)) });
+  const canvas = document.createElement('canvas');
+  canvas.width = lay.W; canvas.height = lay.H;
+  const c = canvas.getContext('2d');
+  let bitmap;
+  try {
+    for (const [i, p] of ok.entries()) {
+      const bm = await createImageBitmap(new ImageData(p.rgba, p.w, p.h)), cell = lay.cells[i];
+      c.drawImage(bm, cell.x, cell.y, cell.w, cell.h);
+      bm.close();
+    }
+    bitmap = await createImageBitmap(canvas);
+  } catch (err) { note(name + ': could not draw this TIFF (' + (err && err.message ? err.message : err) + ')'); return; }
+  finally { canvas.width = canvas.height = 0; }
+  const how = (ok.length > 1 ? `${ok.length} pages side by side` : `page ${ok[0].n} of ${pages.length}`) + (ok.some((p) => p.dpi[0] === 96 && p.dpi[1] === 96) ? ', shown at 96 dpi where the TIFF gives none' : ', true size from the TIFF')
+    + (bad.length ? `; skipped page${bad.length > 1 ? 's' : ''} ${bad.map((p) => p.n).join(', ')} (${[...new Set(bad.map((p) => p.error))].join('; ')})` : '');
+  placeBackground(name, bitmap, lay.mmPerPx, how, newTab, { path });
 }
 function placeBackground(name, bitmap, mm, how, newTab = false, src = null) {
   let d = newTab ? null : curDoc();

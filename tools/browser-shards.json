@@ -327,6 +327,7 @@
   "Background unit fix: chosen Background scales size and a nonzero corner by ×25.4; Ctrl+Z restores both": 5.47,
   "Picture PDF (TODO 330): all pages are one picture on one sheet: no sheet chips, the scale and Undo / Redo work on the whole picture": 5.67,
   "TODO 330: a background of three mixed-size pages: top edges aligned, width = the pages + 2 × 10 mm, own size each": 3,
+  "TODO 138: a two-page TIFF background: side by side (width = page 1 + 10 mm + page 2), Trace bitmap opens on it; a dropped .tif opens as a background tab": 3.5,
   "TODO 309 / 330: Background on a two-page PDF asks nothing: both pages side by side, width = page 1 + 10 mm + page 2": 3,
   "Sheet resize: Select sheet (or a click on its edge) selects the sheet: four side handles, \"Sheet selected · W × H mm\", where 0,0 is; Esc or a click away deselects": 3.3,
   "Sheet resize: dragging the right handle shows the new outline (dashed), the added strip and \"W … × H 700 mm\" with \"Whole mm only\"; releasing sets the size, whole mm; the parts stay; one undo step": 3.44,

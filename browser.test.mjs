@@ -27,6 +27,7 @@ import { SNAP_NAME } from './web/snap.js';
 import { Page, writePdf, winAnsi } from './web/pdf-write.js';
 import { tileGrid, PAPERS as PDF_PAPERS } from './web/pdf-export.js';
 import { bigDoc } from './tools/gen-big-dxf.mjs';
+import { makeTiff } from './tools/make-tiff-fixture.mjs';
 import { fillHatch, hatchKey } from './web/fill.js';
 
 // WCAG relative luminance; opacity composites drawing feedback onto its background.
@@ -8608,6 +8609,48 @@ try {
       assert.deepEqual(alpha.top, [255, 255, 255], 'every page starts at the top edge');
       assert.deepEqual(alpha.gap, [0, 0], 'the 10 mm gaps stay empty');
       assert.deepEqual(alpha.under, [0, 255, 255, 0], 'each page keeps its own height (50 / 120 / 70 mm)');
+    } finally { await context.close(); }
+  });
+
+  await step('TODO 138: a two-page TIFF background: side by side (width = page 1 + 10 mm + page 2), Trace bitmap opens on it; a dropped .tif opens as a background tab', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    try {
+      const p = await context.newPage(), q = (id) => p.getByTestId(id), prompt = (text) => p.waitForFunction((s) => document.querySelector('[data-testid=cmd-prompt]').textContent.includes(s), text);
+      await p.goto(URL_ + '?autosave=86400000'); await q('picker').waitFor({ state: 'attached' });
+      assert.match(await q('bg-picker').getAttribute('accept'), /\.tif,\.tiff$/);
+      assert.match(await q('picker').getAttribute('accept'), /\.tif,\.tiff$/);
+      await q('bg-picker').setInputFiles('fixtures/two-pages-lzw.tif');   // page 1: 300 × 150 px at 150 dpi, page 2: 200 × 200 px at 100 dpi (both 2 in wide)
+      await prompt('2 pages side by side, true size from the TIFF');
+      const bgName = (name) => p.waitForFunction((s) => document.querySelector('[data-testid=bg-name]')?.textContent === s, name);
+      await bgName('two-pages-lzw.tif');
+      const size = async () => [Number(await q('dw').inputValue()), Number(await q('dh').inputValue())];
+      const [w, h] = await size();
+      assert.ok(Math.abs(w - (50.8 + 10 + 50.8)) < 0.5 && Math.abs(h - 50.8) < 0.5, `picture ${w} × ${h} mm, want 111.6 × 50.8`);
+      await p.locator('[data-menu=File]').click(); await p.getByRole('menuitem', { name: 'Trace bitmap…', exact: true }).click();
+      await q('trace-dialog').waitFor();
+      await p.waitForFunction(() => document.querySelector('[data-testid=trace-dialog]').dataset.state === 'ready', null, { timeout: 60000 });
+      assert.ok(Number(await q('trace-dialog').getAttribute('data-count')) >= 2, 'the frame and the checks of the pages are outlines');
+      await q('trace-cancel').click();
+      const drop = (name, bytes) => p.evaluate(([name, bytes]) => {
+        const dt = new DataTransfer(); dt.items.add(new File([Uint8Array.from(bytes)], name));
+        document.querySelector('[data-testid=canvas]').dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt }));
+      }, [name, [...bytes]]);
+      const tabs = await p.locator('.dtab').count(), refused = { w: 4, h: 2, pixel: () => 9, compression: 34712 };
+      await drop('none.tif', makeTiff([refused, refused]));
+      await prompt('none.tif: could not read this TIFF (compression 34712 not supported)');
+      assert.equal(await p.locator('.dtab').count(), tabs, 'no readable page: nothing opens');
+      await drop('half.tiff', makeTiff([refused, { w: 96, h: 96, pixel: () => 0 }]));
+      await prompt('Background half.tiff: 96 × 96 px, page 2 of 2, shown at 96 dpi where the TIFF gives none; skipped page 1 (compression 34712 not supported)');
+      await drop('scan.tif', readFileSync('fixtures/g4-no-dpi.tif'));
+      await prompt('Background scan.tif: 96 × 48 px, page 1 of 1, shown at 96 dpi');
+      assert.equal(await p.locator('.dtab').count(), tabs + 2, 'a dropped TIFF gets a tab of its own');
+      const [w2, h2] = await size();
+      assert.ok(Math.abs(w2 - 25.4) < 0.3 && Math.abs(h2 - 12.7) < 0.3, `G4 page ${w2} × ${h2} mm, want 25.4 × 12.7 (96 dpi)`);
+      const tab = (name) => p.locator('.tabs .dtab').filter({ hasText: name }).click();
+      await tab('two-pages-lzw.tif');
+      await bgName('two-pages-lzw.tif');
+      await tab('scan.tif');
+      await bgName('scan.tif');   // the TIFF tab keeps its background over a tab switch
     } finally { await context.close(); }
   });
 
