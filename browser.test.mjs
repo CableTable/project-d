@@ -28191,26 +28191,67 @@ try {
     assert.equal(await t('preflight').isVisible(), true, 'Preflight opens on a layout tab');
     assert.equal(await t('preflight').locator('.pfrow:not(.pfcols)').count(), 6);
     const shows = (id, re) => page.waitForFunction(([i, s]) => new RegExp(s).test(document.querySelector(`[data-testid=${i}]`)?.textContent || ''), [id, re.source], { timeout: 8000 });
-    await shows('preflight-wide-count', /^1$/); await shows('preflight-offsheet-count', /^1$/); await shows('preflight-gaps-count', /^0$/);
+    await shows('preflight-wide-count', /^9$/); await shows('preflight-offsheet-count', /^1$/); await shows('preflight-gaps-count', /^2$/);       // the loose line (1 wide) and Plate A's own 8 wide, 2 gaps (156e3b: a placed part is checked too)
     assert.equal(await t('preflight-offsheet-fix').count(), 0, 'off the sheet is report only');
     assert.equal(await t('preflight-wide-fix').isEnabled(), true);
     await shotBoth('layout-preflight');
     await t('preflight-wide-select').click(); await frames();
-    await shows('cmd-prompt', /Lines wider than hairline · 1 placement selected/);       // the loose object only, not the placed part
-    assert.equal(await page.locator('[data-group=tools] .sel-box').count(), 1, 'and the selection box is on it');
+    await shows('cmd-prompt', /Lines wider than hairline · 2 placements selected/);       // the loose object and the placed part
+    assert.equal(await page.locator('[data-group=tools] .sel-box').count(), 2, 'and a selection box is on each');
     assert.equal(await t('preflight').isVisible(), true, 'Select keeps the panel open');
     const n = (await histLabels()).length;
     await t('preflight-wide-fix').click(); await frames();
-    await shows('preflight-wide-count', /^0$/);       // Hairline took the wide stroke away
+    await shows('preflight-wide-count', /^8$/);       // Hairline took the loose wide stroke away; the part's own stay (fix in its drawing)
     assert.equal((await histLabels()).at(-1), 'Preflight Hairline');
     assert.equal((await histLabels()).length, n + 1, 'one undo step');
     await t('preflight-recheck').click(); await frames();
-    await shows('preflight-wide-count', /^0$/); await shows('preflight-offsheet-count', /^1$/);       // the part past the sheet edge stays reported
+    await shows('preflight-wide-count', /^8$/); await shows('preflight-offsheet-count', /^1$/);       // the part past the sheet edge stays reported
     await shows('preflight-note', /Whole layout/);
     await page.keyboard.press('Control+z'); await frames();
     await shows('preflight-note', /Layout changed/);
-    await t('preflight-recheck').click(); await shows('preflight-wide-count', /^1$/);       // one Undo brings the wide stroke back
+    await t('preflight-recheck').click(); await shows('preflight-wide-count', /^9$/);       // one Undo brings the wide stroke back
     await t('preflight-close').click(); assert.equal(await t('preflight').isVisible(), false);
+  });
+
+  await step('TODO 156e3b: Preflight on a layout: a part placed twice with an open cut path is one report-only row ("fix in its drawing") and Select picks both copies; a locked wide object says locked objects skipped; the rows follow the tab', async () => {
+    await closeTabs(/./);
+    const raw = newDoc(4); addLayer(raw, 'Cut'); addEntities(raw, dxfLine(0, 0, 100, 50, { layer: 'Cut', lw: 5 }));
+    const part = makePart('156e3b-part', 'Open part', raw, 1), loose = objectPart('156e3b-obj', 'Line', dxfLine(20, 150, 100, 150, { lw: 50 }), raw.layers);
+    const lay = newLayout('156e3b'); lay.parts = { [part.id]: part, [loose.id]: loose };
+    lay.placed = [{ partId: part.id, x: 20, y: 30, rot: 0 }, { partId: part.id, x: 150, y: 30, rot: 0 }, { ...objectPlacement(loose), lock: true }];
+    await t('picker').setInputFiles({ name: 'pf156e3b.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
+    await waitTab(page, 'pf156e3b.dxf');
+    const layTab = page.locator('.tabs .dtab', { hasText: 'pf156e3b.dxf' });
+    const shows = (id, re) => page.waitForFunction(([i, s]) => new RegExp(s).test(document.querySelector(`[data-testid=${i}]`)?.textContent || ''), [id, re.source], { timeout: 8000 });
+    await menuItem('Tools', 'Preflight…');
+    await shows('preflight-open-count', /^1$/); await shows('preflight-wide-count', /^1$/);       // one open path, though the part is placed twice
+    assert.equal(await t('preflight-open-fix').count(), 0, 'a placed part has no Fix');
+    await shows('preflight-open', /fix in its drawing$/);
+    assert.equal(await t('preflight-wide-fix').isEnabled(), true);
+    await shotBoth('layout-preflight-parts');
+    await t('preflight-open-select').click(); await frames();
+    await shows('cmd-prompt', /Open paths on Cut · 2 placements selected/);       // both copies of the part
+    await t('preflight-wide-fix').click(); await frames();
+    await shows('cmd-prompt', /Preflight: locked objects skipped/);
+    await shows('preflight-wide-count', /^1$/);       // the locked object is untouched
+    // follows the tab: a drawing, this layout, a second layout
+    await t('picker').setInputFiles({ name: 'pf156e3b-drawing.dxf', mimeType: 'text/plain', buffer: Buffer.from(cleanupDrawing(), 'latin1') });
+    await waitTab(page, 'pf156e3b-drawing.dxf');
+    assert.equal(await t('preflight').isVisible(), false, 'the drawing has not opened it');
+    await menuItem('Tools', 'Preflight…');
+    await shows('preflight-text-count', /^1$/);
+    assert.equal(await t('preflight-wide-fix').isEnabled(), true);
+    await layTab.click(); await frames();
+    assert.equal(await t('preflight').isVisible(), true, 'back on the layout');
+    await shows('preflight-open-count', /^1$/); await shows('preflight-text-count', /^0$/);
+    await page.locator('.tabs .dtab', { hasText: 'pf156e3b-drawing.dxf' }).click(); await frames();
+    await shows('preflight-text-count', /^1$/);
+    await menuItem('File', 'New layout');
+    await menuItem('Tools', 'Preflight…');
+    await shows('preflight-open-count', /^0$/);       // an empty layout
+    await layTab.click(); await frames();
+    await shows('preflight-open-count', /^1$/);
+    await closeTabs(/./);
   });
 
   await step('TODO 156b fixes: Esc cancels a hot grip with 2 objects selected; Polyline snaps to its own first point on a layout; lock and group of objects survive save and reopen; the counts say parts only; Add to layout after objects starts the grid', async () => {

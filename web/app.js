@@ -359,6 +359,7 @@ const view = { scale: 1, ox: -80, oy: -80, fitted: true };
 let shownDoc = state.docs[0];       // the tab the global view belongs to (showDoc saves it when another becomes active)
 let layout = null;                  // the step-and-repeat grid of the open layout (layout.js stepRepeat; count 0 = none)
 let placedNow = [];                 // every placed part of the open layout (layoutdoc.js placedAll): grid copies, then loose ones
+let placedLay = null;               // the layout placedNow was made from (a tab switch draws before update() refreshes it)
 const ui = {};
 const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
 
@@ -6168,6 +6169,7 @@ function update(refit = false, dimNames) {
   layout = gridNow();
   for (let i = 0; i < 3 && pruneGaps(); i++) layout = gridNow();
   placedNow = lay ? LD.placedAll(lay, layout) : [];
+  placedLay = lay;
   for (const p of placedNow) { p.off = PL.offSheet(lay.parts[p.partId], p, lay.s.sheetW, lay.s.sheetH); p.grip = PL.inGripper(lay.parts[p.partId], p, lay.s); }       // off the sheet or in a gripper: drawn in orange (the counts say only p.off)
   if (selLooseMany) {
     curDoc().stretchSelection = null;
@@ -13342,23 +13344,28 @@ const pfDoc = () => editable() || (curLay() ? curDoc() : null);
 /** What a Preflight run was made of: a drawing's entities, or (text) a layout's placements and sheet. */
 const pfSource = (d) => (d.lay ? JSON.stringify([d.lay.placed, d.lay.s.sheetW, d.lay.s.sheetH]) : d.raw.entities);
 const pfLocked = (lay, p) => !!p.lock || !!(lay.parts[p.partId].obj && LD.layersOf(lay)[lay.parts[p.partId].raw.entities[0]?.layer]?.flags & 4);
-/** Preflight of the open layout (TODO 156e3a): the six checks on each loose object's own raw (one object at a time, no cross-object checks;
- * tolerance and stroke width follow the placement's scale), and "off the sheet" on every placement. Offenders are indexes into placedNow. Only Hairline is a Fix. */
+/** Preflight of the open layout (TODO 156e3a/b): the checks on each loose object's own raw (one object at a time, no cross-object checks;
+ * tolerance and stroke width follow the placement's scale), on each placed part's raw once per part id (report only: a part record is shared by its copies; `placed` counts those hits),
+ * and "off the sheet" on every placement. Hidden placements are skipped. Offenders are indexes into placedNow (a placed part's: all its copies). Only Hairline on loose objects is a Fix. */
 function layPreflight(d, check) {
   const lay = d.lay, { sheetW, sheetH } = lay.s;
-  const rows = CL.preflight(newDoc(4), { tolerance: state.gapMm, sheetW, sheetH, check }).map((r) => ({ ...r, fix: r.id === 'wide' ? r.fix : undefined })), by = Object.fromEntries(rows.map((r) => [r.id, r]));
+  const rows = CL.preflight(newDoc(4), { tolerance: state.gapMm, sheetW, sheetH, check }).map((r) => ({ ...r, placed: 0, fix: r.id === 'wide' ? r.fix : undefined })), by = Object.fromEntries(rows.map((r) => [r.id, r]));
+  const copies = new Map();
   placedNow.forEach((p, k) => {
+    if (partHid(p)) return;
     const part = lay.parts[p.partId];
     if (part.obj && p.src === 'loose' && check !== 'offsheet') for (const r of CL.preflight(part.raw, { factor: p.sc || 1, tolerance: state.gapMm, check })) if (r.id !== 'offsheet' && r.count) { by[r.id].offenders.push(k); by[r.id].count += r.count; }
+    if (!part.obj && check !== 'offsheet') copies.set(p.partId, [...(copies.get(p.partId) || []), k]);
     if (by.offsheet && PL.offSheet(part, p, sheetW, sheetH)) { by.offsheet.offenders.push(k); by.offsheet.count++; }
   });
+  for (const [id, ks] of copies) for (const r of CL.preflight(lay.parts[id].raw, { factor: lay.parts[id].factor || 1, tolerance: state.gapMm, check })) if (r.id !== 'offsheet' && r.count) { by[r.id].offenders.push(...ks); by[r.id].count += r.count; by[r.id].placed += r.count; }
   return rows;
 }
 /** Preflight's Hairline Fix on a layout: the unlocked loose objects among `offenders` (placedNow indexes) become hairline objects (objectReplace: new part ids), one undo step. */
 function layHairline(d, offenders) {
   const v = layObjDoc(d), at = new Map(v.raw.entities.map((e, i) => [v.at.get(e), i]));
-  const mine = offenders.filter((k) => placedNow[k].src === 'loose' && !pfLocked(d.lay, placedNow[k]) && at.has(placedNow[k].i)).map((k) => at.get(placedNow[k].i));
-  if (!mine.length) return;
+  const loose = offenders.filter((k) => placedNow[k].src === 'loose'), mine = loose.filter((k) => !pfLocked(d.lay, placedNow[k]) && at.has(placedNow[k].i)).map((k) => at.get(placedNow[k].i));
+  if (!mine.length) { if (loose.length) note('Preflight: locked objects skipped'); return; }
   const r = CL.hairline(v.raw, mine);
   return layGripCommit({ ...v, raw: { ...v.raw, blocks: r.blocks } }, mine.map((i) => [v.raw.entities[i], r.entities[i]]), 'Preflight Hairline');
 }
@@ -13425,7 +13432,7 @@ function recheckPreflight(check) {
       rows.map((r) => h('div', { class: 'pfrow', 'data-testid': `preflight-${r.id}` }, h('span', {}, r.label),
         h('span', { class: 'pfcount', 'data-testid': `preflight-${r.id}-count` }, r.count ?? 'n/a (no sheet)'),
         button('Select', `preflight-${r.id}-select`, () => select(r.id), !r.count),
-        r.fix ? button(r.fix, `preflight-${r.id}-fix`, () => fix(r.id), !r.count) : h('span', { class: 'pfmanual' }, 'Manual'))),
+        r.fix && !(r.placed && r.placed === r.count) ? Object.assign(button(r.fix, `preflight-${r.id}-fix`, () => fix(r.id), !r.count), r.placed ? { title: 'Fixes loose objects only: fix a placed part in its drawing' } : {}) : h('span', { class: 'pfmanual' }, r.placed ? 'fix in its drawing' : 'Manual'))),
       h('p', { class: 'lbl' }, `Tiny gaps use Drawing scale’s ${state.gapMm} mm tolerance. Hairline: 0.05 mm. Hidden / locked objects are checked; fixes skip locks. Warnings only; output is never blocked.`)),
     h('div', { class: 'pfbuttons' }, button('Recheck', 'preflight-recheck', () => recheckPreflight()), button('Close', 'preflight-close', closePreflight))
   );
@@ -13451,7 +13458,7 @@ function renderEdit() {
   if (ui.preflight) {
     ui.preflight.hidden = !(on || d?.lay) || !d.preflightOpen;
     if (!ui.preflight.hidden) {
-      if (ui.preflightDoc !== d) recheckPreflight();
+      if (ui.preflightDoc !== d && (!d.lay || placedLay === d.lay)) recheckPreflight();       // a layout waits for its own placedNow (update() draws again)
       else if (ui.preflightSource !== pfSource(d)) ui.preflightNote.textContent = (d.lay ? 'Layout' : 'Drawing') + ' changed · Recheck for current counts. Cut layer: name contains “cut” (any case).';
     }
   }
