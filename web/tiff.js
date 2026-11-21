@@ -21,31 +21,31 @@ export function tiffDpi(ifd) {
   return [dpi(ifd.t282?.[0]), dpi(ifd.t283?.[0])];
 }
 
-/** Decodes every page of TIFF bytes, one at a time. → [{ n, w, h, dpi: [x, y], rgba (Uint8ClampedArray) } | { n, error }], n from 1.
- *  A page that cannot be decoded is reported by its error, not thrown; throws only when the bytes are no TIFF or hold no page. */
-export async function readTiff(bytes) {
+/** Reads the page headers of TIFF bytes, decoding nothing. → [{ n, w, h, dpi: [x, y], decode } | { n, error }], n from 1.
+ *  decode() → the page's RGBA (Uint8ClampedArray), or throws; call it one page at a time and drop the RGBA once drawn (a 300 dpi A4 page is ~35 MB).
+ *  An unsupported compression is reported by its error, not thrown; throws only when the bytes are no TIFF or hold no page. */
+export function readTiff(bytes) {
   const u = ArrayBuffer.isView(bytes) ? new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength) : new Uint8Array(bytes);
   const head = String.fromCharCode(...u.subarray(0, 4));
   if (head !== 'II*\0' && head !== 'MM\0*') throw new Error('not a TIFF file');
   const buf = u.buffer.slice(u.byteOffset, u.byteOffset + u.byteLength); // UTIF copies a typed array on every call, not a buffer
   const pages = UTIF.decode(buf).filter((ifd) => ifd.t256 && ifd.t257);
   if (!pages.length) throw new Error('no pages');
-  const out = [];
-  for (const [i, ifd] of pages.entries()) {
-    try {
-      if (ifd.t259?.[0] === 32946) ifd.t259 = [8]; // Adobe's code for the same zlib data
-      const c = ifd.t259?.[0] ?? 1;
-      if (!DECODED.includes(c)) throw new Error(`compression ${c} not supported`);
-      if (c === 8) UTIF.inflated = await inflateStrips(buf, ifd);
-      UTIF.decodeImage(buf, ifd, pages);
-      const rgba = UTIF.toRGBA8(ifd);
-      out.push({ n: i + 1, w: ifd.width, h: ifd.height, dpi: tiffDpi(ifd), rgba: new Uint8ClampedArray(rgba.buffer, rgba.byteOffset, rgba.length) });
-    } catch (e) {
-      out.push({ n: i + 1, error: e?.message || String(e) });
-    } finally {
-      delete ifd.data; // the raw strips: only the RGBA is kept
-      UTIF.inflated = new Map();
-    }
-  }
-  return out;
+  return pages.map((ifd, i) => {
+    if (ifd.t259?.[0] === 32946) ifd.t259 = [8]; // Adobe's code for the same zlib data
+    const c = ifd.t259?.[0] ?? 1;
+    if (!DECODED.includes(c)) return { n: i + 1, error: `compression ${c} not supported` };
+    const decode = async () => {
+      try {
+        if (c === 8) UTIF.inflated = await inflateStrips(buf, ifd);
+        UTIF.decodeImage(buf, ifd, pages);
+        const rgba = UTIF.toRGBA8(ifd);
+        return new Uint8ClampedArray(rgba.buffer, rgba.byteOffset, rgba.length);
+      } finally {
+        delete ifd.data; // the raw strips: only the returned RGBA is kept
+        UTIF.inflated = new Map();
+      }
+    };
+    return { n: i + 1, w: ifd.t256[0], h: ifd.t257[0], dpi: tiffDpi(ifd), decode };
+  });
 }

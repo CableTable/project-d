@@ -6149,9 +6149,12 @@ async function importBackgroundPdf(name, bytes, newTab = false, path = null) {
  *  each page at its own dpi (none: 96), the picture at the highest page dpi unless pageLayout lowers it. Unreadable pages are skipped and named. */
 async function importBackgroundTiff(name, bytes, newTab = false, path = null) {
   let pages;
-  try { pages = await readTiff(bytes); } catch (err) { note(name + ': could not read this TIFF (' + (err && err.message ? err.message : err) + ')'); return; }
-  const ok = pages.filter((p) => p.rgba), bad = pages.filter((p) => p.error);
-  if (!ok.length) { note(`${name}: could not read this TIFF (${[...new Set(bad.map((p) => p.error))].join('; ')})`); return; }
+  try { pages = readTiff(bytes); } catch (err) { note(name + ': could not read this TIFF (' + (err && err.message ? err.message : err) + ')'); return; }
+  let ok = pages.filter((p) => p.decode);
+  const bad = pages.filter((p) => p.error);
+  const unreadable = () => `${name}: could not read this TIFF (${[...new Set(bad.map((p) => p.error))].join('; ')})`;
+  if (!ok.length) { note(unreadable()); return; }
+  // sizes and dpi come from the headers: the layout first, then each page decoded, drawn and dropped in turn (only one page's RGBA alive at a time)
   const lay = pageLayout(ok.map((p) => [p.w * 72 / p.dpi[0], p.h * 72 / p.dpi[1]]), { maxDpi: Math.max(...ok.flatMap((p) => p.dpi)) });
   const canvas = document.createElement('canvas');
   canvas.width = lay.W; canvas.height = lay.H;
@@ -6159,10 +6162,17 @@ async function importBackgroundTiff(name, bytes, newTab = false, path = null) {
   let bitmap;
   try {
     for (const [i, p] of ok.entries()) {
-      const bm = await createImageBitmap(new ImageData(p.rgba, p.w, p.h)), cell = lay.cells[i];
+      note(`Reading page ${i + 1} of ${ok.length}`);
+      let rgba;
+      try { rgba = await p.decode(); } catch (e) { bad.push({ n: p.n, error: e?.message || String(e) }); continue; } // a corrupt page: its cell stays blank, it is named as skipped
+      const bm = await createImageBitmap(new ImageData(rgba, p.w, p.h)), cell = lay.cells[i];
+      rgba = null;
       c.drawImage(bm, cell.x, cell.y, cell.w, cell.h);
       bm.close();
     }
+    bad.sort((a, b) => a.n - b.n);
+    ok = ok.filter((p) => !bad.some((b) => b.n === p.n));
+    if (!ok.length) { note(unreadable()); return; }
     bitmap = await createImageBitmap(canvas);
   } catch (err) { note(name + ': could not draw this TIFF (' + (err && err.message ? err.message : err) + ')'); return; }
   finally { canvas.width = canvas.height = 0; }
