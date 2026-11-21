@@ -3765,8 +3765,8 @@ function popMenu(x, y, items) {
   const m = h('div', { class: 'pop ctxmenu', role: 'menu', 'data-testid': 'ctx-menu' }, items.map((it) => {
     if (it instanceof HTMLElement) return it;
     if (it === '-') return h('div', { class: 'msep', role: 'separator' });
-    const [text, fn, hint, enabled, svg] = it;                        // svg: an icon on a 20 px box
-    const b = h('button', { class: 'mi', type: 'button', role: 'menuitem', disabled: enabled === false }, svg ? h('span', { class: 'mi-l' }, icon(svg, { size: 16, box: 20, width: 1.5, cap: 'round', join: 'round' }), text) : text, hint ? h('span', { class: 'hint', 'aria-hidden': 'true' }, hint) : null);
+    const [text, fn, hint, enabled, svg, title] = it;                 // svg: an icon on a 20 px box; title: the tooltip (a greyed item's why)
+    const b = h('button', { class: 'mi', type: 'button', role: 'menuitem', disabled: enabled === false, title },svg ? h('span', { class: 'mi-l' }, icon(svg, { size: 16, box: 20, width: 1.5, cap: 'round', join: 'round' }), text) : text, hint ? h('span', { class: 'hint', 'aria-hidden': 'true' }, hint) : null);
     b.addEventListener('click', (e) => { e.stopPropagation(); hideMenu(); fn(); });
     return b;
   }));
@@ -5961,7 +5961,8 @@ function attachCanvasEvents() {
     e.preventDefault();
     if (state.grip) { gripMenu(e); return; }                       // a grip run: its own menu (155e3)
     if (e.shiftKey && toolMenu(e)) return;                       // Shift+right-click while a tool is on: its menu (plain right-click finishes, below)
-    const gh = e.target.closest && e.target.closest('[data-guide]');
+    if (shapeMenu(e)) return;                                    // the Shape tool with nodes selected: Break at node / Join nodes (139c)
+    const gh =e.target.closest && e.target.closest('[data-guide]');
     if (state.draw && !curLay()) { if (DR.toolBusy(state.draw)) drawFinish(); return; }
     if (modLive()) { modEnter(editable()); return; }
     if (layModLive()) { modEnter(curDoc()); return; }
@@ -8708,7 +8709,7 @@ function drawOvl(paint = false) {
   if (ui.gripHint) {
     const gh = d && (d.lay ? gd : d), grips = gh && gripOn(gh) ? gripList(gh) : [];
     ui.gripHint.hidden = !grips.length;
-    ui.gripHint.textContent = state.tool === 'shape' ? 'Shape: click a node · Shift+click adds / removes · a box picks several · drag one to move them all · Delete removes · Esc ends' : grips.some((g) => g.rect) ? 'Grips: drag an edge to resize · Shift = keep proportions · Esc cancels' : 'Grips: drag, or click one then click the new place · type x,y · Shift = straight · Esc cancels';
+    ui.gripHint.textContent = state.tool === 'shape' ? 'Shape: click a node · Shift+click adds / removes · a box picks several · drag one to move them all · Delete removes · right-click breaks or joins · Esc ends' : grips.some((g) => g.rect) ? 'Grips: drag an edge to resize · Shift = keep proportions · Esc cancels' : 'Grips: drag, or click one then click the new place · type x,y · Shift = straight · Esc cancels';
   }
   const t = ui.tip;
   for (const key of ['length', 'angle']) {
@@ -11556,8 +11557,34 @@ function shapeDblClick(e) {
   }
   return false;
 }
+/** TODO 139c: the Shape tool's selected nodes' objects become `out` (Map entity of d → [what replaces it]) in ONE undo step, the new objects selected, no node. `heir`: a layout's joined result takes this object's group, lock and place. */
+function shapeReplace(d, out, label, heir) {
+  const all = d.raw.entities, keep = new Map(), entities = [], made = new Set();
+  all.forEach((e, i) => { const r = out.get(e) ?? [e]; keep.set(i, r.map((_, k) => entities.length + k)); entities.push(...r); if (out.has(e)) r.forEach((x) => made.add(x)); });
+  view.fitted = false;
+  if (!commit(d, { entities, groups: remapGroups(d.raw.groups, keep), blocks: d.raw.blocks, heir }, label, new Set(d.sel))) return false;       // too nested: commit showed why
+  if (d.vlay) { const at = layObjDoc(d.vlay).at, ids = new Set([...made].map((x) => at.get(x))); selectMany(placedNow.flatMap((q, k) => (q.src === 'loose' && ids.has(q.i) ? [k] : [])).flatMap(groupIdxs)); update(); }       // the old picks' indexes would point at other objects
+  else setSel(d, new Set(entities.flatMap((x, i) => (made.has(x) ? [i] : []))));
+  shapeSet(gripDoc() || d, new Set());
+  return true;
+}
+/** TODO 139c: the Shape tool's right-click with nodes selected (hot nodes, as Delete) shows Break at node and Join nodes (grill R7); one that cannot run is greyed with its why as the title. True when the menu opened. */
+function shapeMenu(e) {
+  const d = gripDoc(), m = d && state.tool === 'shape' && !state.grip && !d.layDim && gripOn(d) ? hotsOf(d) : null;
+  if (!m) return false;
+  const ents = d.raw.entities, by = new Map(), gs = [...m.values()].sort((a, b) => a.e - b.e), cuts = new Map();
+  for (const g of gs) by.set(g.e, [...(by.get(g.e) || []), g.id]);
+  for (const [i, ids] of by) { const r = !lockedEnt(d, i) && SHP.breakNodes(ents[i], ids); if (r) cuts.set(ents[i], r); }
+  const node = (g) => ({ ent: ents[g.e], id: g.id });
+  const join = gs.length !== 2 ? { why: 'Select exactly 2 end nodes' } : gs.some((g) => lockedEnt(d, g.e)) ? { why: 'An object is on a locked layer' } : SHP.joinNodes(node(gs[0]), node(gs[1]), { ends: closeEnds });
+  const breakWhy = 'Break at node needs a node inside an open outline, or any node of a closed one (a line or an arc has end nodes only)';
+  popMenu(e.clientX, e.clientY, [
+    ['Break at node', () => { const n = [...cuts.values()].flat().length; if (shapeReplace(d, cuts, 'Break at node')) note(`Break at node: ${n} open polyline${n === 1 ? '' : 's'}. Ctrl+Z takes it back`); }, null, cuts.size > 0, null, cuts.size ? null : breakWhy],
+    ['Join nodes', () => { if (shapeReplace(d, new Map([[ents[gs[1].e], []], [ents[gs[0].e], [join.result]]]), join.label, ents[gs[0].e])) note(join.label === 'Close' ? 'Join nodes: the object is closed. Ctrl+Z takes it back' : 'Join nodes: 2 objects are 1 now. Ctrl+Z takes it back'); }, null, !join.why, null, join.why]]);
+  return true;
+}
 function gripDown(e) {
-  ctrlTap = false;                                                   // Ctrl held for a Ctrl-click is not a tap (163a)
+  ctrlTap = false;                                                  // Ctrl held for a Ctrl-click is not a tap (163a)
   const d = gripDoc();
   if (!d) return false;
   const g0 = state.grip;

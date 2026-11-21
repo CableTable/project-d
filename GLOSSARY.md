@@ -472,3 +472,7 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 **Full paint**: One pass that clears the drawing canvas and draws every item again. Counted in `data-paints` on the drawing canvas; a frame that reuses the Kept picture is not one. Where: `web/app.js` `paintOverlay`; `DECISIONS.md`, Layout kept picture (P7b2).
 
 **Kept picture**: The bitmap of the last Full paint of a heavy tab, saved before the overlay (marks, ghosts, a dragged part) is drawn. Wheel and pan frames move and scale it; on a layout a hover, click or part drag frame whose base is unchanged (same view, size, theme, parts, layers) draws it 1:1 and then only the overlay. Where: `web/app.js` `snap`, `web/perf.js` `sameBase`; `DECISIONS.md` Big-file performance (TODO 55) and Layout kept picture (P7b2).
+
+**Shape tool**: The tool (`shape`, in Modify beside Join) that edits the selected objects' Nodes, as CorelDRAW's Shape tool: click or box-select nodes, drag them (all by one offset), double-click an outline to add one, Delete removes them, and the right-click offers Break at node and Join nodes. Works on Drawings, Layout objects and Compare. Where: `web/shape.js`, `web/app.js` `shapeMenu`; `DECISIONS.md` Shape tool (TODO 139).
+
+**Node**: A point of an object the Shape tool edits: a polyline's vertex, a line's or an arc's end, a circle's quadrant (not a segment middle or a centre). An end node is the first or last vertex of an open object (Join nodes takes two of them). Where: `web/shape.js` `nodesOf`.

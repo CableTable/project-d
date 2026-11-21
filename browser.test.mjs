@@ -16344,6 +16344,102 @@ try {
     await closeTabs(/./);
   });
 
+  await step('TODO 139c: Break at node and Join nodes from the Shape tool right-click, one Undo each', async () => {
+    await menuItem('View', 'Theme: light');
+    const undo = async () => { await page.evaluate(() => document.activeElement && document.activeElement.blur()); await page.keyboard.press('Control+z'); await frames(); };
+    const hotWhen = (n) => page.waitForFunction((k) => document.querySelectorAll('[data-testid=grip-hot]').length === k, n);
+    const nodeClick = async (id, shift = false) => { const a = await gripBox(id); if (shift) await page.keyboard.down('Shift'); try { await page.mouse.click(a.x, a.y); } finally { if (shift) await page.keyboard.up('Shift'); } await frames(); };
+    const ids = () => page.locator('[data-testid=grip], [data-testid=grip-hot]').evaluateAll((g) => g.map((x) => x.dataset.grip));
+    const menu = async () => { const p = await gripBox(await page.locator('[data-testid=grip-hot]').first().getAttribute('data-grip')); await page.mouse.click(p.x, p.y, { button: 'right' }); await t('ctx-menu').waitFor(); return page.locator('[data-testid=ctx-menu] .mi'); };
+    const pick = async (name) => { await page.locator('[data-testid=ctx-menu] .mi', { hasText: name }).first().click(); await frames(); };
+    const closed = (e) => !!(GR.get(e.r, 70) & 1);
+    const verts = (e) => GR.lwVertices(e.r).map((v) => [+v.x.toFixed(4), +v.y.toFixed(4)]);
+    // Drawings: nodes of a closed rectangle, an open polyline and two collinear lines
+    const raw = newDoc(4);
+    addEntities(raw, dxfPoly([[20, 30], [80, 30], [80, 70], [20, 70]], { closed: true, layer: 'CUT' }), dxfPoly([[100, 30], [140, 30], [140, 70]]), dxfLine(20, 110, 60, 110), dxfLine(100, 110, 140, 110));
+    await openGrips(writeDxf(raw), 'shape-break.dxf');
+    await click(50, 30); await frames(); await typeCmd('shape'); await gripWhen(4);
+    // a right-click with a node selected offers both, Join greyed with its why
+    await nodeClick('0:v1'); await hotWhen(1);
+    let items = await menu();
+    assert.deepEqual(await items.allTextContents().then((a) => a.map((x) => x.replace(/\s+/g, ' ').trim())), ['Break at node', 'Join nodes']);
+    assert.equal(await items.nth(0).isDisabled(), false); assert.equal(await items.nth(1).isDisabled(), true);
+    assert.equal(await items.nth(1).getAttribute('title'), 'Select exactly 2 end nodes', 'the greyed Join nodes says why');
+    await page.keyboard.press('Escape');       // the menu closes; the shots open it again
+    await shotBoth('shape-break', async () => { await menu(); }, async () => { await page.keyboard.press('Escape'); });
+    await page.setViewportSize({ width: 1024, height: 768 }); await frames(); await menu(); await page.screenshot({ path: `${shotDir}/s12-shape-break-1024.png` });
+    await page.keyboard.press('Escape'); await page.setViewportSize({ width: 1440, height: 900 }); await frames();
+    await menu(); await pick('Break at node');
+    let doc = await savedDoc();
+    assert.equal(doc.entities.length, 4, 'one object still: the closed rectangle is one open polyline now');
+    assert.ok(!closed(entOf(doc, 0)) && entOf(doc, 0).layer === 'CUT', 'open, same layer');
+    assert.deepEqual(verts(entOf(doc, 0)), [[80, 30], [80, 70], [20, 70], [20, 30], [80, 30]], 'it starts at the node');
+    await undo(); doc = await savedDoc(); assert.ok(closed(entOf(doc, 0)), 'one Undo closes it again');
+    await page.keyboard.press('Escape');
+    // an open polyline: an inner node splits it in two (the end nodes only grey Break out)
+    await click(110, 30); await frames(); await typeCmd('shape'); await gripWhen(3);
+    await nodeClick('1:v0'); await hotWhen(1);
+    items = await menu(); assert.equal(await items.nth(0).isDisabled(), true, 'an end node cuts nothing');
+    assert.match(await items.nth(0).getAttribute('title'), /inside an open outline/);
+    await page.keyboard.press('Escape');
+    await nodeClick('1:v1'); await hotWhen(1);
+    await menu(); await pick('Break at node');
+    doc = await savedDoc();
+    assert.equal(doc.entities.length, 5, 'two objects from one');
+    assert.deepEqual([verts(entOf(doc, 1)), verts(entOf(doc, 2))], [[[100, 30], [140, 30]], [[140, 30], [140, 70]]]);
+    await undo(); doc = await savedDoc(); assert.equal(doc.entities.length, 4, 'one Undo');
+    await page.keyboard.press('Escape');
+    // Join nodes: the two ends of one open object close it; two lines meet at their midpoint and become one
+    await click(110, 30); await frames(); await typeCmd('shape'); await gripWhen(3);
+    await nodeClick('1:v0'); await nodeClick('1:v2', true); await hotWhen(2);
+    await menu(); await pick('Join nodes');
+    doc = await savedDoc();
+    assert.ok(closed(entOf(doc, 1)) && doc.entities.length === 4, 'the open polyline is closed');
+    await undo(); doc = await savedDoc(); assert.ok(!closed(entOf(doc, 1)), 'one Undo');
+    await page.keyboard.press('Escape');
+    await click(30, 110); await click(110, 110, { shift: true }); await frames(); await typeCmd('shape'); await gripWhen(4);
+    await nodeClick('2:b'); await nodeClick('3:a', true); await hotWhen(2);
+    items = await menu(); assert.equal(await items.nth(1).isDisabled(), false);
+    await pick('Join nodes');
+    doc = await savedDoc();
+    assert.equal(doc.entities.length, 3, 'two lines are one object');
+    assert.equal(entOf(doc, 2).type, 'LINE', 'collinear: one line');
+    assert.deepEqual([GR.get(entOf(doc, 2).r, 10), GR.get(entOf(doc, 2).r, 11)], [20, 140]);
+    await undo(); doc = await savedDoc(); assert.equal(doc.entities.length, 4, 'one Undo');
+    await page.keyboard.press('Escape');
+    await closeTabs(/./);
+    // Layouts and Compare: a line gets a node (double-click); Break at node on it makes two objects, one Undo
+    const lineBreak = async () => {
+      const a = await gripBox((await ids()).find((x) => x.endsWith(':a'))), b = await gripBox((await ids()).find((x) => x.endsWith(':b')));
+      await page.mouse.dblclick((a.x + b.x) / 2, (a.y + b.y) / 2); await gripWhen(3); await hotWhen(1);
+      await menu(); await pick('Break at node');
+      await gripWhen(4);
+      await undo(); await gripWhen(3);
+    };
+    await freshLayoutWithPlate();
+    await typeCmd('line'); await typeCmd('50,600'); await typeCmd('300,600'); await typeCmd('');
+    await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click(); await click(175, 600); await frames(); await gripWhen(3);
+    await page.locator('[data-tool=shape]').click(); await gripWhen(2);
+    await lineBreak();
+    await page.keyboard.press('Escape');
+    // two layout lines: Join nodes makes one, one Undo
+    await typeCmd('line'); await typeCmd('50,500'); await typeCmd('130,500'); await typeCmd(''); await typeCmd('line'); await typeCmd('170,500'); await typeCmd('300,500'); await typeCmd('');
+    await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click(); await click(70, 500); await click(200, 500, { shift: true }); await frames(); await gripWhen(6);
+    await page.locator('[data-tool=shape]').click(); await gripWhen(4);
+    const ends = await ids(), lb = ends.filter((x) => x.endsWith(':b')), la = ends.filter((x) => x.endsWith(':a'));
+    await nodeClick(lb[0]); await nodeClick(la[1], true); await hotWhen(2);
+    await menu(); await pick('Join nodes');
+    await gripWhen(2);
+    await undo(); await gripWhen(4);
+    await page.keyboard.press('Escape');
+    const cmp = newDoc(4); addEntities(cmp, dxfLine(20, 30, 120, 30));
+    await openGrips(writeDxf(cmp), 'shape-break-cmp.dxf'); await typeCmd('compare');
+    await typeCmd('shape'); await page.keyboard.press('Control+a'); await gripWhen(2);
+    await lineBreak();
+    await page.keyboard.press('Escape');
+    await closeTabs(/./);
+  });
+
   // ---- TODO 163a: Grip options, the hover list on a line / arc grip ----
   const g163 = {
     list: async () => { await t('ctx-menu').waitFor(); return page.locator('[data-testid=ctx-menu] .mi').allTextContents(); },

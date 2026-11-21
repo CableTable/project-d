@@ -145,3 +145,70 @@ test('deleteNodes: never below 2 nodes open / 3 closed (all stay); lines, arcs, 
   for (const e of [line(0, 0, 10, 0), arc(0, 0, 10, 0, 90), circle(0, 0, 5), ellipse(0, 0, 10, 0, 0.5)]) assert.equal(SH.deleteNodes(e, ['a']), null);
   assert.equal(SH.deleteNodes(lwpoly([[0, 0], [10, 0], [10, 5]]), []), null);
 });
+
+// TODO 139c Break at node / Join nodes
+const closedP = lwpoly([[0, 0], [10, 0, 1], [10, 10], [0, 10]], { closed: true, ...props });       // the right side is a half circle
+const union = (pieces) => pieces.flatMap((e) => samples(e));       // sample points of every piece: all lie on the source outline
+
+test('breakNodes: a closed polyline opens at the node — one open polyline starting there, arcs keep their bulge, props kept', () => {
+  const [r, ...more] = SH.breakNodes(closedP, ['v1']);
+  assert.equal(more.length, 0);
+  assert.equal(GR.shapeOf(r).closed, false);
+  assert.deepEqual(pts(r), [[10, 0], [10, 10], [0, 10], [0, 0], [10, 0]]);
+  assert.deepEqual(bulges(r), [1, 0, 0, 0, 0]);
+  for (const k of Object.keys(props)) assert.equal(r[k], props[k], k);
+  for (const p of union([r])) near(MO.closest(MO.pathOf(GR.shapeOf(closedP)), p).d, 0);
+  assert.deepEqual(SH.breakNodes(closedP, ['v1', 'v3']).map(pts), [[[10, 0], [10, 10], [0, 10]], [[0, 10], [0, 0], [10, 0]]], 'two nodes: two pieces');
+});
+
+test('breakNodes: an open polyline splits at its inner nodes; its end nodes cut nothing', () => {
+  const p = lwpoly([[0, 0], [10, 0, 0.5], [20, 0], [30, 5]], props), r = SH.breakNodes(p, ['v1']);
+  assert.deepEqual(r.map(pts), [[[0, 0], [10, 0]], [[10, 0], [20, 0], [30, 5]]]);
+  assert.deepEqual(r.map(bulges), [[0, 0], [0.5, 0, 0]]);
+  assert.ok(r.every((e) => e.layer === 'CUT' && !GR.shapeOf(e).closed));
+  assert.equal(SH.breakNodes(p, ['v0', 'v3']), null);
+  assert.equal(SH.breakNodes(p, ['v0', 'v2']).length, 2);
+  assert.equal(SH.breakNodes(p, ['v1', 'v2']).length, 3);
+});
+
+test('breakNodes: on an arc (made two by a node) the outline stays and each half keeps its bulge', () => {
+  const a = arc(0, 0, 10, 0, 90, props), two = SH.addNode(a, [Math.SQRT1_2 * 11, Math.SQRT1_2 * 11]).ent, r = SH.breakNodes(two, ['v1']);
+  assert.equal(r.length, 2);
+  r.forEach((e) => near(bulges(e)[0], Math.tan(Math.PI / 16), 1e-5));
+  for (const p of union(r)) near(MO.closest(MO.pathOf(GR.shapeOf(a)), p).d, 0, 3e-6);       // Break's pieces are written to 6 decimals (modify.js rebuilt)
+});
+
+test('breakNodes: a circle opens at its quadrant node into one open outline of four arcs; a line, an arc and an ellipse have no inner node', () => {
+  const [r] = SH.breakNodes(circle(0, 0, 5, props), ['q1']);
+  assert.deepEqual(pts(r), [[0, 5], [-5, 0], [0, -5], [5, 0], [0, 5]]);
+  assert.equal(r.layer, 'CUT');
+  for (const e of [line(0, 0, 10, 0), arc(0, 0, 10, 0, 90), ellipse(0, 0, 10, 0, 0.5), null]) assert.equal(SH.breakNodes(e, ['a', 'b']), null);
+  assert.equal(SH.breakNodes(lwpoly([[0, 0], [10, 0], [10, 5]], { closed: true }), []), null);
+});
+
+const ends = (ent, id) => ({ ent, id });
+
+test('joinNodes: the two end nodes of one open object close it (the Close tool: extend or straight)', () => {
+  const p = lwpoly([[0, 0], [10, 0], [10, 10]], props), r = SH.joinNodes(ends(p, 'v0'), ends(p, 'v2'));
+  assert.equal(r.label, 'Close'); assert.equal(GR.shapeOf(r.result).closed, true); assert.equal(r.result.layer, 'CUT');
+  const l = line(0, 0, 10, 0);
+  assert.ok(SH.joinNodes(ends(l, 'a'), ends(l, 'b')).why, 'a single line cannot be closed');
+});
+
+test('joinNodes: two objects — both ends move to their midpoint, then the joined result as it comes', () => {
+  const a = lwpoly([[0, 0], [10, 0]], props), b = lwpoly([[10.4, 0.2], [20, 5]], { layer: 'OTHER' }), r = SH.joinNodes(ends(a, 'v1'), ends(b, 'v0'));
+  assert.equal(r.label, 'Join nodes'); assert.equal(r.result.type, 'LWPOLYLINE'); assert.equal(r.result.layer, 'CUT', 'the first object is the source');
+  assert.deepEqual(pts(r.result), [[0, 0], [10.2, 0.1], [20, 5]]);
+  const l = SH.joinNodes(ends(line(0, 0, 10, 0), 'b'), ends(line(10.4, 0, 20, 0), 'a'));
+  assert.equal(l.result.type, 'LINE', 'collinear lines merge into one line'); assert.deepEqual([GR.get(l.result.r, 10), GR.get(l.result.r, 11)], [0, 20]);
+  const same = SH.joinNodes(ends(arc(0, 0, 100, 0, 40), 'b'), ends(arc(0, 0, 100, 40, 90), 'a'));
+  assert.equal(same.result?.type, 'ARC', 'arcs of one circle that touch merge into one arc');
+  const gap = SH.joinNodes(ends(arc(0, 0, 100, 0, 40), 'b'), ends(arc(0, 0, 100, 40.2, 90), 'a'));
+  assert.equal(gap.result?.type, 'LWPOLYLINE', gap.why);       // the re-fitted ends are on two circles now: a polyline of two arcs
+  assert.equal(GR.lwVertices(gap.result.r).length, 3);
+});
+
+test('joinNodes: refused with its why — an inner node, a closed object, a circle', () => {
+  const p = lwpoly([[0, 0], [10, 0], [10, 10]]);
+  for (const [x, y] of [[ends(p, 'v1'), ends(line(0, 0, 1, 1), 'a')], [ends(lwpoly([[0, 0], [10, 0], [10, 5]], { closed: true }), 'v0'), ends(p, 'v0')], [ends(circle(0, 0, 5), 'q0'), ends(p, 'v0')]]) assert.match(SH.joinNodes(x, y).why, /end nodes/);
+});
