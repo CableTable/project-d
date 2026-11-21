@@ -27965,6 +27965,8 @@ try {
     await page.locator('[data-tool=select]').click(); await page.keyboard.press('Escape');
     await page.locator('[data-ribbon-tab=Home]').click();
     const home = page.locator('[data-panel=Properties]');
+    await home.getByRole('button', { name: 'Fill', exact: true }).waitFor();
+    await page.waitForFunction(() => [...document.querySelectorAll('[data-panel=Properties] button')].filter((b) => ['Fill', 'Eyedropper'].includes(b.textContent.trim()) || ['Fill', 'Eyedropper'].includes(b.getAttribute('aria-label'))).every((b) => !b.disabled), null, { timeout: 8000 });
     assert.equal(await home.getByRole('button', { name: 'Fill', exact: true }).isEnabled(), true, 'Fill is on for a layout');
     assert.equal(await home.getByRole('button', { name: 'Eyedropper', exact: true }).isEnabled(), true, 'Eyedropper is on for a layout');
     // Fill tool: one circle, one Undo
@@ -28005,6 +28007,9 @@ try {
     await partsWhen(n0 + 5);
     await page.locator('[data-tool=select]').click(); await page.keyboard.press('Escape');
     await click(350, 300); await frames();
+    await page.locator('[data-menu=Modify]').click();
+    assert.equal(await page.getByRole('menuitem', { name: /^Rotate/ }).isEnabled(), true, 'Modify > Rotate is on for a loose layout object');
+    await page.keyboard.press('Escape');
     await typeCmd('rotate'); await said(/Pivot:/);
     await typeCmd('300,300'); await said(/Angle:/); await typeCmd('90');
     await said(/Selection rotated/);
@@ -36320,11 +36325,22 @@ try {
     await closeTabs(/./); assert.deepEqual(errors, []);
     await open97c(layoutRaw(layout97i2()), 'running97lows3-rotate.dxf'); await key97c('Control+a');
     const parts = await selBoxes(), layoutSteps = (await histLabels()).length; assert.equal(parts.length, 3);
+    await page.locator('[data-menu=Modify]').click();
+    assert.equal(await page.getByRole('menuitem', { name: /^Rotate/ }).isEnabled(), true, 'Modify > Rotate is on for 3 loose layout objects selected together');
+    await page.keyboard.press('Escape');
     await typeCmd('rotate'); assert.match(await label97(/^Pivot:/), /^Pivot:/, 'the Rotate command is on (156e2: loose objects turn as on a drawing, about a pivot)');
     await typeCmd('left');
     assert.doesNotMatch(await prompt(), /aligned/, 'layout rotate mode');
     assert.deepEqual(await selBoxes(), parts, 'layout rotate mode'); assert.equal((await histLabels()).length, layoutSteps, 'layout rotate mode');
     await key97c('Escape'); await closeTabs(/./); assert.deepEqual(errors, []);
+    await freshLayoutWithPlate();       // placed part: Rotate keeps its turn arrows (Angle prompt) and a typed word goes to that mode, not Align
+    await page.locator('[data-group=parts] .part-hit:not(.ob)').first().click({ force: true });
+    const placed = await selBoxes(), placedSteps = (await histLabels()).length;
+    await typeCmd('rotate'); assert.match(await label97(/^Angle </), /^Angle </, 'a placed part: Rotate asks for the angle');
+    await typeCmd('left');
+    assert.doesNotMatch(await prompt(), /aligned/, 'placed part rotate mode');
+    assert.deepEqual(await selBoxes(), placed, 'placed part rotate mode'); assert.equal((await histLabels()).length, placedSteps, 'placed part rotate mode');
+    await key97c('Escape'); assert.deepEqual(errors, []);
   });
 
   await step('TODO 97 Lows 3: on a layout with 3 parts selected, H at the Linear Dimension prompt forces the dimension and distributes nothing', async () => {
