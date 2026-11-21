@@ -4755,7 +4755,7 @@ try {
   await step('layout: menu bar, rail tools in order, layers', async () => {
     assert.deepEqual(await page.locator('.menubar .menu').allTextContents(), ['File', 'Edit', 'View', 'Draw', 'Modify', 'Arrange', 'Format', 'Layout', 'Tools', 'Help']);
     const labels = await page.locator('nav[aria-label=Tools] button').evaluateAll((b) => b.map((x) => x.getAttribute('aria-label')));
-    assert.equal(labels.length, 22); assert.ok(labels.includes('Shape')); assert.equal(labels[0], 'Select'); assert.equal(labels.at(-1), 'Measure');
+    assert.equal(labels.length, 23); assert.equal(labels[labels.indexOf('Polyline') + 1], 'Pen'); assert.ok(labels.includes('Shape')); assert.equal(labels[0], 'Select'); assert.equal(labels.at(-1), 'Measure');
     assert.equal(labels[labels.indexOf('Offset') - 1], 'Shape');
     assert.deepEqual(await page.locator('.layer .nm').allTextContents(), ['Parts', 'Marks', 'Dimensions']);
   }, { needs: ['a DXF opens on a drawing tab (no sheet); Add to layout makes a layout tab and the part fills Step and repeat'] });
@@ -34647,6 +34647,8 @@ try {
     await key97c('Control+z'); assert.equal((await splines()).length, 0, 'one Undo');
     await click(100, 100); await click(200, 100); await click(200, 200); await click(100, 100);       // a click on node 1 still closes
     ({ e } = await curve()); assert.equal(fieldOf(e, 70) & 1, 1); nearTo(bezierOf(e).P[8], ...third(bezierOf(e).P[6], bezierOf(e).P[9], 2 / 3), 0.01, 'a plain close keeps the straight closing segment'); await key97c('Control+z');
+    await click(100, 100); await click(200, 100); await down(200, 200); await moveTo(230, 240); await page.keyboard.type('u'); await page.keyboard.press('Enter'); await moveTo(260, 260); await page.mouse.up(); await frames();       // 140b review Low 5: U with the button held drops the node and the drag
+    await key97c('Enter'); await made(); ({ e, b } = await curve()); assert.equal(b.n, 1, 'U dropped the dragged node'); nearTo(b.P[2], ...third(b.P[0], b.P[3], 2 / 3), 0.01, 'no handle written on the previous node'); await key97c('Control+z');
     await key97c('Escape'); await key97c('Escape');
     // Layouts
     await freshLayoutWithPlate(); await snapOn();

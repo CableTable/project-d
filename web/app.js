@@ -8588,6 +8588,7 @@ function tangentObjectAt(d, cx, cy) {
 function drawApply(r) {
   const T = state.draw, d = state.drawDoc;
   if (!T || !d) return;
+  if (!r.made && T.kind === 'pen') state.penDrag = null;           // U / Esc with the button still held: the next move must not write a handle onto the previous node
   if (r.undoSeg) { if (d.lay) undoLay(); else undo(d); return; }                             // U in a Line: the last segment's step is taken back (undo() steps the tool back too)
   if (r.made) trackClear();                                         // the tool action is over: the acquired points go
   if (T.kind === 'rrect' && T.radius !== state.drawCfg.radius) { state.drawCfg.radius = T.radius; try { localStorage.setItem('pd-rradius', String(T.radius)); } catch { /* ignore */ } }
@@ -8598,7 +8599,7 @@ function drawApply(r) {
 /** Enter / Esc / right-click: the tool ends what it has (a line or polyline keeps it) and the acquired points go. */
 function drawFinish() { state.draw.cursorInput = null; trackClear(); state.draw.cont = lastDrawn.get(state.drawDoc) || null; drawApply(DR.toolFinish(state.draw)); }
 /** Esc in the Pen: the whole path goes, nothing is made. */
-function drawCancel() { state.draw.cursorInput = null; trackClear(); drawApply(DR.toolCancel(state.draw)); }
+function drawCancel() { state.penDrag = null; state.draw.cursorInput = null; trackClear(); drawApply(DR.toolCancel(state.draw)); }
 const lastDrawn = new WeakMap();                                    // tab document → the last shape drawn in it (mm): where the Arc's Continue starts (347c)
 /** Shift+right-click while a tool asks for a point (TODO 72): Enter, Cancel, Close and Undo last point where they apply, then the snap types. → false when no such tool is on */
 function toolMenu(e) {
