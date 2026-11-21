@@ -325,7 +325,7 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
       156d1. ✅ (built, Knight, 2026-10-28) Guides on drawing tabs (remembered per file on this PC, never in the DXF) and in Compare; Measure in Compare across all snapshots (S). Layouts' "+ Add layer" goes with 156b2; Compare Layers / Contour with 156c2.
     156e. Gaps from the S54 audit (`runs54/audit-156.md`, grill `runs54/grill-156e.md`):
       156e1. ✅ (built, King, 2026-11-21) Leader on Layouts as a loose layout object (not linked to parts; grips, style, Explode, DXF / PDF as layout dimensions) (S–M).
-      156e2. Fill / Eyedropper on Layouts (`web/app.js:12756`) and Rotate on loose layout objects (`:4917`) (S).
+      156e2. ✅ (built, King, 2026-11-21) Fill / Eyedropper on Layouts (`web/app.js:12756`) and Rotate on loose layout objects (`:4917`) (S).
       156e3. Preflight on Layouts: placed parts and loose objects (L, later; grill again).
       156e4. Balloons on Layouts: needs a layout balloon store and numbering (M–L, later; grill again).
     157. ✅ (built: 157a + 157b, ticked Rook S54l 2026-11-21) **UI colours match AutoCAD** (M, grilled 2026-10-28, DECISIONS "UI colours match AutoCAD"; next session). Facts so far: ours `runs26/q-colours.out`, AutoCAD per web `runs26/pawn-acadcolours.json` (documented vs measured; snap marker colour conflicts). 155r already gives the 25% box fill.
