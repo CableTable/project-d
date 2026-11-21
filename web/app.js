@@ -2470,7 +2470,8 @@ function undoLay() {
   const m = state.modDoc === d && state.mod?.kind === 'copy' ? state.mod : null, copied = m && layHist(d).labels().past.at(-1)?.startsWith('Copy');       // a layout's step is 'Copy <part name>'
   const st = stepHist(d, 'undo');
   if (!st) { note('Nothing to undo'); return; }
-  layRestore(d, st);  if (m && state.mod === m) {
+  layRestore(d, st);
+  if (m && state.mod === m) {
     if (copied) copyUndone(m); else { setTool('select'); note('Undone. Copy ended: the layout changed; start Copy again'); return; }
   }
   note('Undone');
@@ -2699,7 +2700,7 @@ function editSelected(fn, { copy = false, key = '', pick = false, label = 'Edit'
   g.key = key;
   gMark(g);
   let idxs;
-  if (copy) { const gm = {}; idxs = nexts.map((n) => { lay.placed.push(fresh(n, gm)); return lay.placed.length - 1; }); }
+  if (copy) { const gms = []; idxs = nexts.map((n, k) => { const c = Math.floor(k / items.length); lay.placed.push(fresh(n, gms[c] ||= {})); return lay.placed.length - 1; }); }
   else { idxs = gLooseMany(g, items.map((x) => x.i)); nexts.forEach((n, k) => { lay.placed[idxs[k]] = n; }); }
   const scaledObjects = new Set(idxs.filter((_, k) => items[k % items.length].part.obj && (nexts[k].sc || 1) !== (curs[k % items.length].sc || 1)));
   if (scaledObjects.size) {

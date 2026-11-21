@@ -22516,6 +22516,8 @@ try {
     const start = async () => { await openGrips(writeDxf(raw), 'array155n.dxf'); await page.keyboard.press('Control+a'); await typeCmd('copy'); await typeCmd('0,0'); };
     const lines = async () => (await savedDoc()).entities;
     const toolChip = () => t('tool-chip').textContent();
+    const chipIs = async (want) => { await page.waitForFunction((w) => document.querySelector('[data-testid=tool-chip]')?.textContent === w, want, { timeout: 8000 }); return toolChip(); };       // waits for the new chip, returns it
+    const waitParts = async (n) => { await page.waitForFunction((k) => document.querySelectorAll('[data-group=parts] .part-hit').length === k, n, { timeout: 8000 }); return nParts(); };
     const ghost = () => page.evaluate(() => +document.querySelector('[data-testid=drawing]').dataset.preview);
     const vp = page.viewportSize();
     const is = (text) => said(new RegExp('^' + text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$'));       // the prompt, whole, once it shows
@@ -22560,15 +22562,15 @@ try {
     await typeCmd('a'); await typeCmd('4'); await typeCmd('10,0');
     assert.equal((await lines()).length, 4);
     await blur(); await page.keyboard.press('Control+z');
-    assert.equal((await lines()).length, 1, 'Ctrl+Z removes the array as one step'); assert.equal(await toolChip(), 'Tool: Copy');
+    assert.equal((await lines()).length, 1, 'Ctrl+Z removes the array as one step'); assert.equal(await chipIs('Tool: Copy'), 'Tool: Copy');
     // Esc mid-array (at the count, then at the point) places none and ends
     await typeCmd('a'); await page.keyboard.press('Escape');
-    assert.equal(await toolChip(), 'Tool: Select'); assert.equal((await lines()).length, 1);
+    assert.equal(await chipIs('Tool: Select'), 'Tool: Select'); assert.equal((await lines()).length, 1);
     await page.keyboard.press('Control+a'); await typeCmd('copy'); await typeCmd('0,0'); await typeCmd('a'); await typeCmd('3'); await page.keyboard.press('Escape');
-    assert.equal(await toolChip(), 'Tool: Select'); assert.equal((await lines()).length, 1);
+    assert.equal(await chipIs('Tool: Select'), 'Tool: Select'); assert.equal((await lines()).length, 1);
     // Single mode: the array is placed, then the command ends
     await page.keyboard.press('Control+a'); await typeCmd('copy'); await typeCmd('o'); await typeCmd('s'); await typeCmd('0,0'); await typeCmd('a'); await typeCmd('2'); await typeCmd('7,7');
-    assert.deepEqual((await lines()).map(xy), [[20, 30], [27, 37]]); assert.equal(await toolChip(), 'Tool: Select');
+    assert.deepEqual((await lines()).map(xy), [[20, 30], [27, 37]]); assert.equal(await chipIs('Tool: Select'), 'Tool: Select');
     await typeCmd('copy'); await typeCmd('o'); await typeCmd('m');       // Multiple again for the other steps
     await page.keyboard.press('Escape');
     // Move has no Array
@@ -22584,20 +22586,35 @@ try {
     await page.keyboard.press('Escape');
 
     // a layout: whole placed parts, one gesture per array
-    await freshLayoutWithPlate();    const rawText = async () => (await downloaded(() => page.keyboard.press('Control+s'))).text;
+    await freshLayoutWithPlate();
+    const rawText = async () => (await downloaded(() => page.keyboard.press('Control+s'))).text;
     const placedNow = async () => layoutFromRaw(readDxf(await rawText())).placed;
     const before = await placedNow(), n0 = await nParts(), x0 = before.at(-1).x;
     await typeCmd('copy'); await typeCmd('0,0'); await typeCmd('a'); await typeCmd('3'); await typeCmd('100,0');
-    assert.equal(await nParts(), n0 + 2, 'two copies of the part');
+    assert.equal(await waitParts(n0 + 2), n0 + 2, 'two copies of the part');
     let now = await placedNow();
     assert.deepEqual(now.slice(before.length).map((p) => p.x - x0), [100, 200], 'copies at d and 2d');
     await is('Specify second point or [Array/Exit/Undo] <Exit>:');
-    await typeCmd('u'); assert.equal(await nParts(), n0, 'the Undo option removes the array as one');
+    await typeCmd('u'); assert.equal(await waitParts(n0), n0, 'the Undo option removes the array as one');
     await typeCmd('a'); await typeCmd('3'); await typeCmd('f'); await typeCmd('300,0');
+    await waitParts(n0 + 2);
     now = await placedNow(); assert.deepEqual(now.slice(before.length).map((p) => p.x - x0), [150, 300], 'Fit on a layout');
-    await blur(); await page.keyboard.press('Control+z'); assert.equal(await nParts(), n0, 'Ctrl+Z removes the array as one');
+    await blur(); await page.keyboard.press('Control+z'); assert.equal(await waitParts(n0), n0, 'Ctrl+Z removes the array as one');
     await is('Specify second point or [Array] <use first point as displacement>:');       // Copy knows the placement is gone
     await typeCmd('u'); assert.equal(await nParts(), n0, 'U after Ctrl+Z does not undo the step before Copy');
+    await page.keyboard.press('Escape');
+
+    // a part with its contour (one group, one cid): every copy of the pair gets a group and a contour link of its own
+    await page.keyboard.press('Control+a'); await typeCmd('contour');
+    await t('contour-dist').fill('10'); await t('contour-dist').press('Enter'); await t('contour-apply').click();
+    await waitParts(n0 + 1);
+    await page.keyboard.press('Control+a');
+    await typeCmd('copy'); await typeCmd('0,0'); await typeCmd('a'); await typeCmd('3'); await typeCmd('400,0');
+    await waitParts(n0 + 5);
+    now = await placedNow();
+    assert.equal(new Set(now.map((p) => p.g)).size, 3, 'three groups: the pair and its two copies');
+    assert.equal(new Set(now.filter((p) => p.cid).map((p) => p.cid)).size, 3, 'three own contour links');
+    for (const p of now.filter((q) => q.ct)) assert.ok(now.some((q) => q.cid === p.ct && q.g === p.g), 'each contour is linked to its own copy');
     await page.keyboard.press('Escape');
   });
 
