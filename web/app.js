@@ -5996,7 +5996,7 @@ function attachCanvasEvents() {
     state.entityDrag = null;
   });
   c.addEventListener('click', (e) => { const gh = e.target.closest && e.target.closest('[data-gap]'); if (gh && !state.setlen && state.tool !== 'measure') pickGap(gh.dataset.gap); });
-  c.addEventListener('mousedown', (e) => { if (curLay() && e.button === 0 && e.detail === 2) { textDblClick(e); if (state.text.ed?.dim) e.preventDefault(); } });       // layout selection rebuilds its SVG before dblclick can fire
+  c.addEventListener('mousedown', (e) => { if (curLay() && e.button === 0 && e.detail === 2) { textDblClick(e); if (state.text.ed?.dim || state.text.ed?.lsl) e.preventDefault(); } });       // layout selection rebuilds its SVG before dblclick can fire
   c.addEventListener('dblclick', (e) => { if (drawLive() && state.draw.kind === 'pen' && DR.toolBusy(state.draw)) { state.msg = null; if (state.draw.pts.length < 2) drawCancel(); else drawFinish(); return; } if (state.dimHot) { state.dimHot.g.cancelled = true; state.dimHot = state.dimDrag = null; paintOverlay(); } if (!balDbl(e) && !shapeDblClick(e)) textDblClick(e); });       // the double-click on a dimension's text edits it: its first click did not leave a hot grip (345b2)
   c.addEventListener('mousedown', (e) => { if (e.button === 0 && state.tool === 'text' && !e.target.closest('.texted, .zoombox, .contourpanel')) e.preventDefault(); });      // the click places a text: it must not take the focus from the box it opens
   c.addEventListener('pointercancel', () => { if (state.penDrag) { state.penDrag = null; if (state.draw) { state.draw.cin = null; DR.toolPenDragEnd(state.draw); } } if (state.drawingRotate) state.drawingRotate.drag = null; if (state.grip && !state.grip.hot) gripCancel(); state.entityDrag = null; state.balDrag = null; if (state.text.drag) textDragEnd(true); if (gdrag) cancelGuideDrag(); if (pdrag) cancelPlacedDrag(); drag = null; lrub = null; lmod = null; state.dimDrag = null; hideRubber(); paintOverlay(); end(); });
@@ -8489,6 +8489,7 @@ function ldrAdd(d, m) {
   if (d.lay) {                                                    // a layout object holding the leader's block, as a dimension is (TODO 156e1)
     names.taken.add(b.name.toLowerCase());
     layObjectsAdd(d, 'Leader', [b.insert], { [b.name]: b.block }, names);
+    if (placedNow.length) { selectMany([placedNow.length - 1]); update(); }       // selected, as on Drawings: the Leader row is there to restyle it (TODO 156e1b)
     note(`Leader placed on the layer ${Ed.DIM_LAYER}: ${m.lines.join(' / ')}. Ctrl+Z takes it back`);
     return;
   }
@@ -8507,19 +8508,25 @@ function ldrReplace(d, e, m, label) {
   setSel(d, new Set([e]));
   return true;
 }
+/** A layout leader (sl: ldrSel's) changed to model m, as one undo step with this label (the same rebuild the grips use, layLdrReplace). */
+function ldrReplaceLay(d, sl, m, label) { return layLdrReplace({ vlay: d, layDim: { p: sl.p, part: sl.part } }, { name: sl.name, model: m }, label); }
 /** Double-click on a leader with Select: its note is typed in place. */
 function ldrEdit(d, e, model) { setSel(d, new Set([e])); textOpen(d, null, null, { model, e }); }
 /** The leader pseudo-entity the grips work on ({ type: 'LEADER', name, model }), or null when entity e is not a leader. */
 function ldrPseudo(d, e) { const o = d.raw.entities[e] && d.raw.entities[e].type === 'INSERT' && LR.ofEntity(d.raw, e); return o ? { type: 'LEADER', name: o.name, model: o.model } : null; }
-/** The one selected leader { e, name, model }, or null. */
+/** The one selected leader { e, name, model }, or null; on a layout the one selected part holding a leader (e 0, plus p and part). */
 function ldrSel(d) {
+  if (d?.lay) {
+    const it = selItems(), x = it.length === 1 && it[0].part.raw && partSelectable(it[0].p) && LR.ofEntity(it[0].part.raw, 0);
+    return x ? { e: 0, ...x, p: it[0].p, part: it[0].part } : null;
+  }
   if (!d || d.sel.size !== 1) return null;
   const e = [...d.sel][0], o = LR.ofEntity(d.raw, e);
   return o && { e, ...o };
 }
 /** The Leader section's fields: a typed note (one line), text height or arrow size (mm) changes the selected leader. */
 function ldrFieldTyped(which) {
-  const d = editable(), sl = d && ldrSel(d), input = which === 'note' ? ui.ldrNote : which === 'h' ? ui.ldrH : ui.ldrA;
+  const d = curLay() ? curDoc() : editable(), sl = d && ldrSel(d), input = which === 'note' ? ui.ldrNote : which === 'h' ? ui.ldrH : ui.ldrA;
   input.blur();
   if (!sl) return;
   let m = sl.model, label;
@@ -8531,11 +8538,11 @@ function ldrFieldTyped(which) {
   } else {
     const mm = Number(input.value.trim().replace(',', '.'));
     if (!(mm > 0) || !Number.isFinite(mm) || mm > 1e4) { note(`Type the ${which === 'h' ? 'text height' : 'arrow size'} in mm: a number above 0`); renderEdit(); return; }
-    const v = mm / d.factor;
+    const v = mm / (d.lay ? 1 : d.factor);
     if (Math.abs(v - (which === 'h' ? m.textH : m.arrow)) < 1e-9 * v) { renderEdit(); return; }
     m = which === 'h' ? { ...m, textH: v } : { ...m, arrow: v }; label = which === 'h' ? 'Leader text height' : 'Leader arrow size';
   }
-  if (ldrReplace(d, sl.e, m, label)) note(`${label}. Ctrl+Z takes it back`);
+  if (d.lay ? ldrReplaceLay(d, sl, m, label) : ldrReplace(d, sl.e, m, label)) note(`${label}. Ctrl+Z takes it back`);
 }
 function cancelSetlen() { state.setlen = null; note('Set length cancelled'); renderEdit(); paintOverlay(); }
 /** Set length and Scale Reference share this: one more picked point goes into L.pts; with two in, L.measured is their distance (mm). → 'first' | 'same' | 'done' */
@@ -10960,7 +10967,7 @@ function textOpen(d, p, e = null, ldr = null, dim = null) {
   else if (e != null) { orig = TX.decode(d.raw.entities[e]); m = { ...orig }; setSel(d, new Set([e])); }
   else m = { type: 'TEXT', x: p[0], y: p[1], h: c.h / d.factor, lines: [''], angle: c.angle || 0, ha: c.ha, font: c.font, styleName: c.font, bold: c.bold };
   if (p && e == null && !ldr) state.pointLast = p.slice(0, 2);
-  state.text.ed = { d, e, m, orig, ldr: ldr && ldr.model, dim };
+  state.text.ed = { d, e, m, orig, ldr: ldr && ldr.model, dim, lsl: ldr && ldr.sl };
   ui.textArea.value = m.lines.join('\n');
   ui.textHintEd.lastChild.textContent = dim ? 'Enter = done · Esc = cancel' : 'Enter = done · Shift+Enter = new line';
   ui.textEd.hidden = false;
@@ -10999,7 +11006,7 @@ function textCommit() {
   if (ed.ldr) {                                                       // a leader's note
     if (!lines) { if (ed.e == null && state.ldr) state.ldr.pts = []; renderCommand(); renderEdit(); paintOverlay(); if (ed.e == null) note('Leader: nothing typed, so nothing was made'); return; }
     if (ed.e == null) ldrAdd(d, { ...ed.ldr, lines });
-    else if (JSON.stringify(lines) !== JSON.stringify(ed.ldr.lines)) { if (ldrReplace(d, ed.e, { ...ed.ldr, lines }, 'Leader note')) note('Leader note changed. Ctrl+Z takes it back'); }
+    else if (JSON.stringify(lines) !== JSON.stringify(ed.ldr.lines)) { if (ed.lsl ? ldrReplaceLay(d, ed.lsl, { ...ed.ldr, lines }, 'Leader note') : ldrReplace(d, ed.e, { ...ed.ldr, lines }, 'Leader note')) note('Leader note changed. Ctrl+Z takes it back'); }
     else { renderCommand(); renderEdit(); paintOverlay(); }
     return;
   }
@@ -11067,6 +11074,8 @@ function textDblClick(e) {
     const hit = document.elementsFromPoint(e.clientX, e.clientY).map((x) => x.closest('[data-i]')).find(Boolean);
     const p = hit && placedNow[+hit.dataset.i], part = p && d.lay.parts[p.partId];
     if (p && partSelectable(p) && isDimPart(part)) {
+      const ldr = LR.ofEntity(part.raw, 0);                       // a leader: its note is typed in place, the commit is one undo step (TODO 156e1b)
+      if (ldr) { pdrag = null; selectMany([+hit.dataset.i]); update(); textOpen(d, null, null, { model: ldr.model, e: 0, sl: { e: 0, ...ldr, p, part } }); return; }
       const dim = Ed.dimOfEntity(part.raw, 0);
       if (dim) { pdrag = null; state.mode = 'select'; update(); textOpen(d, null, 0, null, { ...dim, raw: part.raw, placed: d.lay.placed[p.i] }); }
     }
@@ -12546,8 +12555,11 @@ function renderPropsPanel(d) {
 
 function renderPropsValues(d, lay = curLay()) {
   if (lay) d = propDoc();
+  const ldrOnly = !!lay && !d.sel.size && !!ldrSel(curDoc());       // a layout's selected leader (a dimension part, not in the object selection): the Info section with its Leader row alone
+  ui.propBody.classList.toggle('ldr-only', ldrOnly);
   if (lay && !d.sel.size) {
-    ui.propEmpty.hidden = ui.propBody.hidden = ui.propChip.hidden = ui.propMatch.hidden = true;
+    ui.propEmpty.hidden = ui.propChip.hidden = ui.propMatch.hidden = true;
+    ui.propBody.hidden = !ldrOnly; ui.propGeo.hidden = true;
     ui.propQuick.hidden = false;
     ui.propSimilar.hidden = !selItems().some((x) => x.p.src === 'loose' && x.part.obj);
     return;
@@ -13366,6 +13378,16 @@ function recheckPreflight(check) {
   return fresh[0];
 }
 
+/** The Leader row of the Info section: shown for the one selected leader (a drawing's or a layout's), its fields filled. */
+function renderLdrRow(d) {
+  const sl = ldrSel(d), f = d.lay ? 1 : d.factor;
+  ui.ldrRow.hidden = !sl;
+  if (!sl) return;
+  const set = (i, v) => { if (document.activeElement !== i) i.value = v; };
+  set(ui.ldrNote, sl.model.lines.join(' / ')); ui.ldrNote.disabled = sl.model.lines.length > 1; ui.ldrNote.title = ui.ldrNote.disabled ? 'Several lines: double-click the note to change it' : '';
+  set(ui.ldrH, String(+(sl.model.textH * f).toFixed(3))); set(ui.ldrA, String(+(sl.model.arrow * f).toFixed(3)));
+  ui.ldrStyle.textContent = `Style: ${state.dimStyles.cur}. Note lands ${LR.sideOf(sl.model.pts) > 0 ? 'right' : 'left'}.`;
+}
 function renderEdit() {
   if (!ui.drawSec) return;
   renderRibbon();
@@ -13406,7 +13428,7 @@ function renderEdit() {
   }
   if (state.tool === 'measure') ui.hintPill.hidden = true;
   ui.canvas.classList.toggle('pick', (on && (state.tool === 'select' || state.tool === 'contour' || state.tool === 'dimension' || !!state.draw || !!L)) || (!!measureTarget() && state.tool === 'measure'));
-  if (!on) return;
+  if (!on) { if (d?.lay) { ui.dimRow.hidden = true; renderLdrRow(d); } return; }       // a layout's selected leader has its row too (TODO 156e1b)
   renderSelection(d);
   const n = d.sel.size, b = sizeBox(d), rb = resizeBox(d), scalable = !!b;
   ui.bgName.textContent = d.bg ? d.bg.name : '';
@@ -13419,14 +13441,7 @@ function renderEdit() {
   const sd = dimSel(d);
   ui.dimRow.hidden = !sd;
   if (sd && document.activeElement !== ui.dimH) ui.dimH.value = String(+(sd.params.textH * d.factor).toFixed(3));
-  const sl = ldrSel(d);
-  ui.ldrRow.hidden = !sl;
-  if (sl) {
-    const set = (i, v) => { if (document.activeElement !== i) i.value = v; };
-    set(ui.ldrNote, sl.model.lines.join(' / ')); ui.ldrNote.disabled = sl.model.lines.length > 1; ui.ldrNote.title = ui.ldrNote.disabled ? 'Several lines: double-click the note to change it' : '';
-    set(ui.ldrH, String(+(sl.model.textH * d.factor).toFixed(3))); set(ui.ldrA, String(+(sl.model.arrow * d.factor).toFixed(3)));
-    ui.ldrStyle.textContent = `Style: ${state.dimStyles.cur}. Note lands ${LR.sideOf(sl.model.pts) > 0 ? 'right' : 'left'}.`;
-  }
+  renderLdrRow(d);
   const put = (input, v) => { if (document.activeElement !== input) input.value = v; };
   const selectionBox = n && OB.boxOf(d.fl, [...d.sel]);
   for (const [kind, value] of [['x', selectionBox ? lengthText(selectionBox[0] * d.factor) : ''], ['y', selectionBox ? lengthText(selectionBox[1] * d.factor) : ''], ['rotation', '0'], ['scale', '100']]) {

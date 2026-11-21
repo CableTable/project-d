@@ -940,6 +940,7 @@ button.cswatch, button.ribbon-swatch { padding: 0; cursor: pointer; }
 @media (max-width: 700px) { .ds-body { flex-direction: column; } .ds-side { width: auto; } }
 
 /* the Leader section of the Drawing panel (R8c) */
+.propbody.ldr-only > :not([data-testid=props-info]) { display: none; }       /* a layout's selected leader: only its Leader row (it has no shape properties) */
 .ldrrow { display: flex; flex-direction: column; gap: 8px; padding: 8px; border-radius: var(--r); background: var(--sel); }
 .ldrgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 

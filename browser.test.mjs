@@ -27948,6 +27948,44 @@ try {
     await page.locator('[data-tool=select]').click();
   });
 
+  await step('TODO 156e1b: layout leader select, panel, dblclick', async () => {
+    await freshLayoutWithPlate();
+    const n0 = await nParts(), undo = async () => { await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z'); };
+    const save = async () => (await downloaded(() => page.keyboard.press('Control+s'))).text;
+    const ldrIn = (text) => Object.entries(readDxf(text).blocks).filter(([k]) => /^PD_LDR_/.test(k)).map(([k, b]) => ({ name: k, ...readLeader(k, b) }));
+    await page.locator('[data-tool=select]').click();
+    await typeCmd('le'); await typeCmd('100,150'); await typeCmd('150,190'); await typeCmd('200,190'); await t('text-editor').waitFor();
+    await t('text-editor').fill('DEBURR'); await page.keyboard.press('Enter');
+    await said(/Leader placed on the layer Dimensions: DEBURR/);
+    assert.equal(await nParts(), n0 + 1);
+    await t('ldr-row').waitFor({ state: 'visible', timeout: 8000 });       // placed = selected, the Leader row is there
+    await page.waitForFunction(() => ['ldr-note', 'ldr-height', 'ldr-arrow'].map((id) => document.querySelector(`[data-testid=${id}]`).value).join('|') === 'DEBURR|3.5|2.5');
+    await shotBoth('layout-leader-row');
+    await t('ldr-height').fill('5'); await t('ldr-height').press('Enter');
+    await page.waitForFunction(() => document.querySelector('[data-testid=ldr-height]').value === '5' && document.querySelector('[data-testid=cmd-prompt]').textContent.includes('Leader text height'));
+    assert.equal((await histLabels()).at(-1), 'Leader text height');
+    assert.ok(Math.abs(ldrIn(await save())[0].textH - 5) < 1e-5, 'the row changed the text height');
+    await undo(); assert.ok(Math.abs(ldrIn(await save())[0].textH - 3.5) < 1e-5, 'one Undo restores it');
+    // double-click: the note is typed in place; Esc cancels with no step, Enter is one step
+    await page.locator('[data-tool=select]').click();       // (the Leader command repeats: back to Select)
+    const steps = await histLabels(), p = await at(125, 170);
+    await page.mouse.dblclick(p.x, p.y);
+    await page.waitForFunction(() => document.querySelector('[data-testid=text-editor]').value === 'DEBURR');       // the note opens as it is
+    await t('text-editor').fill('NOPE'); await page.keyboard.press('Escape');
+    assert.deepEqual(await histLabels(), steps, 'Esc adds no undo step'); assert.deepEqual(ldrIn(await save())[0].lines, ['DEBURR']);
+    await page.mouse.dblclick(p.x, p.y);
+    await t('text-editor').waitFor(); await t('text-editor').fill('BURR OFF'); await page.keyboard.press('Enter');
+    await said(/Leader note changed/);
+    assert.deepEqual(await histLabels(), [...steps.slice(0, -1), 'Leader note'], 'Enter is one step (it replaced the undone text-height step)');
+    assert.equal(await nParts(), n0 + 1, 'still one object');
+    const text = await save(); assert.deepEqual(ldrIn(text).map((x) => x.lines), [['BURR OFF']]);
+    await closeTabs(/./);
+    await t('picker').setInputFiles({ name: 'ldr-note.dxf', mimeType: 'text/plain', buffer: Buffer.from(text, 'latin1') });
+    await waitTab(page, 'ldr-note.dxf');
+    assert.deepEqual(ldrIn(await save()).map((x) => x.lines), [['BURR OFF']], 'the note is saved after reopening');
+    await page.locator('[data-tool=select]').click();
+  });
+
   await step('TODO 156e2: Fill, Eyedropper and Rotate on layout objects: fill, No fill, Eyedropper two targets, one Undo each, a placed part refused; Rotate with base point, angle and Reference, one Undo; saved, reopened and in the PDF', async () => {
     await freshLayoutWithPlate();
     const n0 = await nParts(), blur = () => page.evaluate(() => document.activeElement?.blur());
