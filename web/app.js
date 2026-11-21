@@ -907,8 +907,8 @@ function ribbonContents(kind) {
     group('Step and repeat', ribbonTool('step'), ribbonTool('nest')), group('Modify', stack(ribbonTool('copy', true), ribbonTool('stretch', true)), ribbonTool('rotate'), ribbonTool('fillet', true), ribbonTool('contour'), ribbonTool('break'), ribbonTool('join'), stack(ribbonTool('shape', true), ribbonTool('close', true)), stack(ribbonTool('reverse', true), ribbonTool('lengthen', true))), shaping()];
   if (kind === 'drawing') {
     groups.push(group('Modify', stack(ribbonTool('move', true), ribbonTool('rotate', true), ribbonTool('mirror', true)),
-      stack(ribbonTool('copy', true), ribbonTool('stretch', true), ribbonTool('scale', true)), stack(ribbonTool('offset', true)),
-      stack(ribbonTool('fillet', true), ribbonTool('extend', true), ribbonTool('trim', true)), stack(ribbonTool('array', true)), ribbonTool('break'), ribbonTool('join'), stack(ribbonTool('shape', true), ribbonTool('close', true)), stack(ribbonTool('reverse', true), ribbonTool('lengthen', true))));
+      stack(ribbonTool('copy', true), ribbonTool('stretch', true), ribbonTool('scale', true)), stack(ribbonTool('offset', true), ribbonTool('array', true)),
+      stack(ribbonTool('fillet', true), ribbonTool('extend', true), ribbonTool('trim', true)), ribbonTool('break'), ribbonTool('join'), stack(ribbonTool('shape', true), ribbonTool('close', true)), stack(ribbonTool('reverse', true), ribbonTool('lengthen', true))));
   }
   if (kind === 'compare') groups.push(group('Modify', stack(ribbonTool('copy', true), ribbonTool('stretch', true), ribbonTool('align', true)), ribbonTool('fillet', true), ribbonTool('break'), ribbonTool('join'), stack(ribbonTool('shape', true), ribbonTool('close', true)), stack(ribbonTool('reverse', true), ribbonTool('lengthen', true))), shaping());
   groups.push(group('Copy', btn('Duplicate', '<rect x="3" y="3" width="12" height="12"/><rect x="9" y="9" width="12" height="12"/>', duplicate, { enabled: () => !!editable()?.sel.size })));
