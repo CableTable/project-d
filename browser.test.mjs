@@ -26839,6 +26839,67 @@ try {
     await said(/pdballoons\.json: 1 balloon/);
   });
 
+  await step('TODO 156e4b: on a layout a balloon selects (part selection clears), drags by grip, takes typed fields, Delete removes only it, Renumber gives 1..n; each is one Undo', async () => {
+    await freshLayoutWithPlate();
+    const undo = async () => { await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z'); await frames(); };
+    const selBoxes = () => page.locator('[data-group=tools] .sel-box').count();
+    await page.locator('[data-tool=balloon]').click();
+    await said(/^Click the feature to balloon/);
+    await page.waitForTimeout(200); await frames();
+    await click(50, 50); await click(100, 100);
+    await page.waitForTimeout(200); await frames();
+    await click(50, 200); await click(100, 250); await click(50, 350); await click(100, 400);
+    assert.deepEqual(await balNums(), ['1', '2', '3']);
+    await page.locator('[data-tool=select]').click(); await frames();
+    // select: the balloon takes the selection from the plate; a click off it goes back to the plate
+    assert.equal(await selBoxes(), 1, 'the plate is selected before the balloon is');
+    await click(100, 250);
+    await t('bal-panel').waitFor({ state: 'visible' });
+    await page.waitForFunction(() => document.querySelector('[data-testid=bal-chip]').textContent === 'Balloon 2');
+    assert.equal(await selBoxes(), 0, 'selecting a balloon clears the part selection');
+    assert.equal(await page.locator('[data-testid=bal-grip]').count(), 2, 'centre and tip grips');
+    assert.deepEqual(await page.locator('[data-testid=bal-row].hi').evaluateAll((r) => r.map((x) => x.dataset.n)), ['2']);
+    assert.equal(await t('bal-pick').getAttribute('aria-disabled'), 'true', 'a layout has no PDF text to pick from');
+    // the typed fields
+    await t('bal-dim').fill('Ø25 ±0.1'); await t('bal-dim').press('Enter');
+    await t('bal-tp').fill('+0.1'); await t('bal-tp').press('Enter');
+    await t('bal-tm').fill('-0.1'); await t('bal-tm').press('Enter');
+    await t('bal-note').fill('Hole <b>A</b>'); await t('bal-note').press('Enter');
+    assert.deepEqual((await balRows()).find((r) => r[0] === '2'), ['2', 'Ø25 ±0.1', '+0.1', '-0.1', '1', 'Hole <b>A</b>']);
+    // the grips: the centre moves the circle, the tip the arrow; each drag is one labelled Undo step
+    const cx0 = await page.locator('[data-testid=balloon] .bal-c').nth(1).getAttribute('cx');
+    let a = await balGrip('c'), b = await at(120, 270);
+    await page.mouse.move(a.x, a.y); await page.mouse.down(); await page.mouse.move((a.x + b.x) / 2, (a.y + b.y) / 2, { steps: 3 }); await page.mouse.move(b.x, b.y, { steps: 3 }); await page.mouse.up();
+    await frames();
+    assert.notEqual(await page.locator('[data-testid=balloon] .bal-c').nth(1).getAttribute('cx'), cx0, 'the circle moved');
+    const tip0 = await balGrip('tip'); a = tip0; b = await at(60, 215);
+    await page.mouse.move(a.x, a.y); await page.mouse.down(); await page.mouse.move(b.x, b.y, { steps: 4 }); await page.mouse.up();
+    assert.deepEqual((await histLabels()).slice(-2), ['Move balloon', 'Move balloon arrow']);
+    await undo();
+    assert.deepEqual(await balGrip('tip'), tip0, 'one Undo puts the arrow back and leaves the circle moved');
+    assert.notEqual(await page.locator('[data-testid=balloon] .bal-c').nth(1).getAttribute('cx'), cx0);
+    await shotBoth('layout-balloon-selected');
+    // Delete removes only the balloon; the plate stays; Undo brings it back
+    await page.evaluate(() => document.activeElement?.blur());
+    await page.keyboard.press('Delete');
+    assert.deepEqual(await balNums(), ['1', '3'], 'the others keep their numbers'); assert.equal(await nParts(), 1, 'the plate stays');
+    await said(/Balloon 2 deleted/);
+    await undo(); assert.deepEqual(await balNums(), ['1', '2', '3']);
+    // a click off a balloon is the normal layout selection; with no balloon selected Delete deletes the part
+    await click(500, 350);       // the middle of the 100 x 60 mm plate
+    assert.equal(await t('bal-panel').isVisible(), false, 'the balloon is let go'); assert.equal(await selBoxes(), 1, 'the plate is selected');
+    await page.keyboard.press('Delete');
+    assert.equal(await nParts(), 0, 'Delete with no balloon selected deletes the part'); assert.deepEqual(await balNums(), ['1', '2', '3']);
+    await undo(); assert.equal(await nParts(), 1);
+    // Renumber: 1..n in placement order, one Undo step
+    await click(100, 250); await t('bal-n').waitFor({ state: 'visible' });
+    await t('bal-n').fill('7'); await t('bal-n').press('Enter');
+    assert.deepEqual(await balNums(), ['1', '7', '3']);
+    await t('bal-renumber').click();
+    assert.deepEqual(await balNums(), ['1', '2', '3']); await page.waitForFunction(() => document.querySelector('[data-testid=bal-next]').value === '4');
+    await undo(); assert.deepEqual(await balNums(), ['1', '7', '3'], 'one Undo takes the Renumber back');
+  });
+
   await step('TODO 156b3a: on a layout, Trim / Extend / Fillet / Offset work on layout objects (one Undo each); a pick on a placed part is refused and the part stays; saved and reopened they are still objects', async () => {
     await freshLayoutWithPlate();
     const val = (e, c) => Number(e.r.v[e.r.c.indexOf(c)]);

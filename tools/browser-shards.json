@@ -495,6 +495,7 @@
   "TODO 156b1: on a layout, Move, Copy, Mirror, Scale and Array work on the selected placed parts, one Undo each; W / H in the Part tab scale; a saved scale reopens": 10.81,
   "TODO 156b2: on a layout, Draw tools make layout objects on the sheet; they select with a part, move with it, are saved as plain entities, reopen as objects (not parts), nest ignores them, one Undo each": 7.95,
   "TODO 156e4a: on a layout the Balloon tool places 1, 2; Undo leaves 1; Save and reopen the layout shows 1 balloon numbered 1": 7,
+  "TODO 156e4b: on a layout a balloon selects (part selection clears), drags by grip, takes typed fields, Delete removes only it, Renumber gives 1..n; each is one Undo": 9,
   "TODO 156b3a: on a layout, Trim / Extend / Fillet / Offset work on layout objects (one Undo each); a pick on a placed part is refused and the part stays; saved and reopened they are still objects": 9.25,
   "TODO 156b3b: on a layout, a selected object shows grips (a drag moves one, one Undo); Shaping welds closed objects (Keep originals too); a placed part is refused; saved and reopened they are still objects": 8.55,
   "TODO 156b2b: on a layout, Text makes a text object (one Undo, saved as a plain TEXT, reopened as an object); Text to outlines works on it, a placed part is refused": 9.85,

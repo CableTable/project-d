@@ -582,7 +582,7 @@ function buildMenus() {
       ['Paste in place', pasteInPlace, 'Ctrl+Shift+V', () => ui.startScreen.hidden && !!clipboard && (!!cmpDoc() || !!curDoc()?.lay || !!editable())],
       ['Undo history…', showHistory, null, () => !!historyOf(curDoc())],
       ['Select all', selectAll, 'Ctrl+A', () => ui.startScreen.hidden && (!!editable() || !!curLay())],
-      ['Delete', () => (curLay() ? deletePlaced() : deleteSelection()), 'Del', () => { const d = editable(); return ui.startScreen.hidden && (d ? d.sel.size > 0 : !!selectedPlaced()); }]],
+      ['Delete', () => (curLay() ? deletePlaced() : deleteSelection()), 'Del', () => { const d = editable(); return ui.startScreen.hidden && (d ? d.sel.size > 0 : !!selectedPlaced() || !!balSelItem(curLay() && curDoc())); }]],
     View: () => {
       const lay = guideTarget(), theme = document.documentElement.dataset.theme || 'system', tick = (on, text) => (on ? '✓ ' : '  ') + text;
       return [['Fit to window', fitView, 'Ctrl+0'], ['Zoom Window', zoomWindow, 'ZW'], ['Zoom Selection', zoomSelection, 'ZS', () => !!selectionBox()], ['Zoom Previous', zoomPrevious, 'ZP', () => !!curDoc()?.viewHist?.length],
@@ -2609,6 +2609,7 @@ function selectMany(list, main, stretchSelection = null) {
   ribbon.context = null;
   state.sel = l.length ? (main != null ? main : l[l.length - 1]) : -1;
   picksArr = l.length > 1 ? l : [];
+  if (l.length) state.balSel = null;       // a part and a balloon are not selected together (as setSel does on a drawing)
   state.mode = 'select'; state.pivot = centrePivot(); state.rotCopy = false;
 }
 /** A copy of a placement for a new part: not locked, and a group's copy is a group of its own (gmap: old group id → new one, one per copy).
@@ -2759,6 +2760,7 @@ function nudgeSel(dir, big) {
 }
 /** Delete: the selected placed parts go (a grid copy: the grid becomes placed parts first, the others stay). A locked part is not deleted. */
 function deletePlaced() {
+  if (balDelete()) return;       // the menu / command Delete: a selected balloon first
   const items = selItems();
   if (!items.length) { note('Delete: select a placed part first'); return; }
   if (items.some((x) => x.p.lock)) { note(LOCKED); return; }
@@ -8006,6 +8008,7 @@ function balApply(d, set, label, sel = state.balSel) {
 }
 function balSelect(d, id) {
   state.balSel = id;
+  if (id != null && d.lay && selIdxs().length) { selectMany([]); update(); return; }       // a balloon and the layout's part selection are not picked together
   if (id != null && d.sel?.size) { setSel(d, new Set()); return; }          // a balloon and a drawing selection are not picked together
   renderEdit(); paintOverlay();
 }
@@ -12080,6 +12083,7 @@ function layoutKey(e, mod, k) {
   if (sheetSelOn() && !(mod && !e.altKey && (k === 'z' || k === 'y'))) return false;      // the sheet is selected: the arrow keys and Delete are not for the part behind it
   if (mod && !e.altKey && k === 'z') { e.preventDefault(); if (e.shiftKey) redoLay(); else undoLay(); return true; }
   if (mod && !e.altKey && !e.shiftKey && k === 'y') { e.preventDefault(); redoLay(); return true; }
+  if (e.key === 'Delete' && !mod && balSelItem(curDoc())) { e.preventDefault(); balDelete(); return true; }       // a selected balloon goes first, then the part
   if (!selectedPlaced()) return false;
   if (mod && !e.altKey && !e.shiftKey && k === 'd') { e.preventDefault(); duplicate(); return true; }
   if (e.key === 'Delete' && !mod) { e.preventDefault(); deletePlaced(); return true; }
