@@ -22584,8 +22584,7 @@ try {
     await page.keyboard.press('Escape');
 
     // a layout: whole placed parts, one gesture per array
-    await freshLayoutWithPlate();
-    const rawText = async () => (await downloaded(() => page.keyboard.press('Control+s'))).text;
+    await freshLayoutWithPlate();    const rawText = async () => (await downloaded(() => page.keyboard.press('Control+s'))).text;
     const placedNow = async () => layoutFromRaw(readDxf(await rawText())).placed;
     const before = await placedNow(), n0 = await nParts(), x0 = before.at(-1).x;
     await typeCmd('copy'); await typeCmd('0,0'); await typeCmd('a'); await typeCmd('3'); await typeCmd('100,0');
@@ -22597,6 +22596,8 @@ try {
     await typeCmd('a'); await typeCmd('3'); await typeCmd('f'); await typeCmd('300,0');
     now = await placedNow(); assert.deepEqual(now.slice(before.length).map((p) => p.x - x0), [150, 300], 'Fit on a layout');
     await blur(); await page.keyboard.press('Control+z'); assert.equal(await nParts(), n0, 'Ctrl+Z removes the array as one');
+    await is('Specify second point or [Array] <use first point as displacement>:');       // Copy knows the placement is gone
+    await typeCmd('u'); assert.equal(await nParts(), n0, 'U after Ctrl+Z does not undo the step before Copy');
     await page.keyboard.press('Escape');
   });
 

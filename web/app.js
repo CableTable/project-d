@@ -2467,9 +2467,13 @@ function undoLay() {
 
   if (!d?.lay) { if (d?.hist) undo(d); return; }
   if (dropLinePoint(d)) return;
+  const m = state.modDoc === d && state.mod?.kind === 'copy' ? state.mod : null, copied = m && layHist(d).labels().past.at(-1)?.startsWith('Copy');       // a layout's step is 'Copy <part name>'
   const st = stepHist(d, 'undo');
   if (!st) { note('Nothing to undo'); return; }
-  layRestore(d, st); note('Undone');
+  layRestore(d, st);  if (m && state.mod === m) {
+    if (copied) copyUndone(m); else { setTool('select'); note('Undone. Copy ended: the layout changed; start Copy again'); return; }
+  }
+  note('Undone');
   if (state.draw) { renderCommand(); paintOverlay(); }
 }
 function redoLay() {
@@ -9939,7 +9943,6 @@ function copyUndo(d) {
   const m = state.mod;
   undoCurrent();
   if (state.mod !== m) return;       // the undo ended the command (the drawing or its source objects changed)
-  if (d.lay) copyUndone(m);          // a drawing's undo() does it itself
   renderCommand(); paintOverlay();
 }
 /** The Copy words beyond points: A (Array) with its count, F (Fit), E (Exit) and U (Undo) after a placement. True when taken. */
