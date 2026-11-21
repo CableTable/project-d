@@ -6,9 +6,10 @@
 //   dragNodes(ent, nodes, dx, dy) → { ent, label, part } with these nodes of ent moved by (dx, dy): each through grips.js dragGrip (stretch.js stretchGrips),
 //                                  the whole object when every node is in the set or 2+ quadrants of a circle are (grill R3)
 //   addNode(ent, p, tol)        → { ent, label } with a new node on the outline nearest p, the outline unchanged (TODO 139b1)
+//   deleteNodes(ent, ids)       → { ent, label } with the polyline's nodes ids removed, a same-circle arc pair merged into one arc (TODO 139b2)
 // Where the app drives it (app.js; grep the name): gripList (the Shape tool lists nodes, not grips: gripAt hit-tests them), shapeKeys / shapeSet (the selected nodes),
 // hotsOf (they stand in for hot grips), gripUp (a click selects, Shift+click toggles), shapeBox (a box selects), gripStretchHots (dragNodes).
-import { gripsOf, shapeOf, insertVertex, convertToArc } from './grips.js';
+import { gripsOf, shapeOf, insertVertex, removeVertex, convertToArc } from './grips.js';
 import { stretchGrips } from './stretch.js';
 import { pathOf, closest, geo, pointAt, subSeg, polyOf } from './modify.js';
 import { lwpoly } from './dxf-write.js';
@@ -45,4 +46,22 @@ export function addNode(ent, p, tol = Infinity) {
   let r = insertVertex(ent, i, q);
   for (const [k, h] of halves.entries()) if (r && !g.line) r = convertToArc(r.ent, i + k, pointAt(geo(h), 0.5));
   return r && { ent: r.ent, label: 'Add node' };
+}
+
+/** Remove polyline vertex i: the segment that joins its neighbours is straight, unless both are arcs of one circle (same direction, under a full turn together): then one arc of it (grill R1). Null when refused. */
+function removeNode(ent, i) {
+  const r = removeVertex(ent, i);       // straight; refuses below 2 (open) / 3 (closed) vertices
+  if (!r) return null;
+  const { segs } = pathOf(shapeOf(ent)), n = nodesOf(ent).length, p = segs[(i + n - 1) % n], q = segs[i];       // the segments before and after vertex i (an open end has one only)
+  if (!p || !q) return r;
+  const a = geo(p), b = geo(q);
+  if (a.line || b.line || Math.abs(a.r - b.r) > 1e-6 * a.r || Math.hypot(a.c[0] - b.c[0], a.c[1] - b.c[1]) > 1e-6 * a.r || a.sw * b.sw <= 0 || Math.abs(a.sw + b.sw) > 2 * Math.PI - 1e-6) return r;
+  return convertToArc(r.ent, i ? i - 1 : n - 2, pointAt({ ...a, sw: a.sw + b.sw }, 0.5)) || r;
+}
+
+/** TODO 139b2: delete the nodes with these ids ('v3') of a polyline, each by removeNode: { ent, label } or null (not a polyline, or fewer than 2 / 3 nodes would stay: then none go). Lines, arcs and circles keep all theirs. */
+export function deleteNodes(ent, ids) {
+  let r = { ent };
+  for (const i of [...new Set(ids)].map((id) => +id.slice(1)).sort((a, b) => b - a)) if (r && ent?.type === 'LWPOLYLINE') r = removeNode(r.ent, i); else return null;       // from the last: the lower numbers stay valid
+  return r && r.ent !== ent ? { ent: r.ent, label: new Set(ids).size > 1 ? 'Delete nodes' : 'Delete node' } : null;
 }

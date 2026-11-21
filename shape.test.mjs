@@ -106,3 +106,42 @@ test('addNode: refused on a node, beyond tol, and on kinds with no nodes', () =>
   assert.ok(SH.addNode(line(0, 0, 10, 0), [5, 0.5], 1));
   assert.equal(SH.addNode(ellipse(0, 0, 10, 0, 0.5), [10, 0]), null);
 });
+
+// TODO 139b2 delete nodes
+const bulges = (ent) => GR.lwVertices(ent.r).map((v) => +v.b.toFixed(6) + 0);
+
+test('deleteNodes: the merged segment is straight (two lines, a line and an arc, arcs of two circles, arcs turning opposite ways)', () => {
+  const sq = lwpoly([[0, 0], [10, 0], [10, 5], [0, 5]], { ...props });
+  const r = SH.deleteNodes(sq, ['v1']);
+  assert.equal(r.label, 'Delete node'); assert.equal(r.ent.layer, 'CUT');
+  assert.deepEqual(pts(r.ent), [[0, 0], [10, 5], [0, 5]]);
+  assert.deepEqual(bulges(SH.deleteNodes(lwpoly([[0, 0], [10, 0, 0.5], [20, 0], [30, 5]]), ['v1']).ent), [0, 0, 0], 'a line and an arc');
+  assert.deepEqual(bulges(SH.deleteNodes(lwpoly([[0, 0, 0.5], [10, 0, 0.3], [20, 0], [30, 5]]), ['v1']).ent), [0, 0, 0], 'two circles');
+  assert.deepEqual(bulges(SH.deleteNodes(lwpoly([[0, 0, 0.5], [10, 0, -0.5], [20, 0], [30, 5]]), ['v1']).ent), [0, 0, 0], 'opposite turns');
+  assert.deepEqual(pts(SH.deleteNodes(lwpoly([[0, 0], [10, 0], [20, 5]]), ['v0']).ent), [[10, 0], [20, 5]], 'an end node goes');
+});
+
+test('deleteNodes: both neighbours arcs of one circle — one arc of that circle, outline unchanged', () => {
+  const p = lwpoly([[0, 0], [10, 0, 1], [10, 10], [0, 10]], { closed: true });
+  const split = SH.addNode(p, [15, 5]).ent, back = SH.deleteNodes(split, ['v2']).ent;       // a node added on the half circle, then deleted
+  assert.deepEqual(bulges(back), [0, 1, 0, 0]);
+  sameOutline(p, back);
+  const a = SH.addNode(arc(0, 0, 10, 0, 270), [10 * Math.cos(2.4), 10 * Math.sin(2.4)]).ent, one = SH.deleteNodes(a, ['v1']).ent;
+  assert.equal(GR.lwVertices(one.r).length, 2);
+  near(bulges(one)[0], Math.tan(Math.PI * 3 / 8), 1e-5);       // over half a turn: 270 degrees
+  sameOutline(arc(0, 0, 10, 0, 270), one);
+  const c = SH.addNode(circle(0, 0, 5), [5 * Math.cos(0.5), 5 * Math.sin(0.5)]).ent, two = SH.deleteNodes(c, ['v1', 'v2']).ent;       // v0 (0 deg), v3, v4 stay
+  near(bulges(two)[0], 1, 1e-5); sameOutline(circle(0, 0, 5), two);
+  const first = SH.deleteNodes(c, ['v0']).ent;       // a closed polyline's first node: the arc joins its last
+  assert.equal(GR.lwVertices(first.r).length, 4); near(bulges(first)[3], Math.tan((Math.PI / 2 + 0.5) / 4), 1e-5);
+  sameOutline(circle(0, 0, 5), SH.deleteNodes(c, ['v1']).ent);
+});
+
+test('deleteNodes: never below 2 nodes open / 3 closed (all stay); lines, arcs, circles and other kinds keep theirs', () => {
+  assert.equal(SH.deleteNodes(lwpoly([[0, 0], [10, 0]]), ['v0']), null);
+  assert.equal(SH.deleteNodes(lwpoly([[0, 0], [10, 0], [10, 5]]), ['v0', 'v1']), null, 'a set that would go too low: none go');
+  assert.equal(SH.deleteNodes(lwpoly([[0, 0], [10, 0], [10, 5]], { closed: true }), ['v1']), null);
+  assert.ok(SH.deleteNodes(lwpoly([[0, 0], [10, 0], [10, 5], [0, 5]], { closed: true }), ['v1']));
+  for (const e of [line(0, 0, 10, 0), arc(0, 0, 10, 0, 90), circle(0, 0, 5), ellipse(0, 0, 10, 0, 0.5)]) assert.equal(SH.deleteNodes(e, ['a']), null);
+  assert.equal(SH.deleteNodes(lwpoly([[0, 0], [10, 0], [10, 5]]), []), null);
+});

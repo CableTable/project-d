@@ -3023,8 +3023,8 @@ function layoutBoxSelect(r, e) {
   const lay = curLay();
   if (!lay) return;
   if (!r.moved) {
-    // an empty click with the Select tool clears; Ctrl/Cmd keeps; Stretch / Step / Contour picks stay
-    if ((state.tool === 'select' || state.tool === 'step') && !layModLive()) { if (selIdxs().length && !r.shift && !r.ctrl) { selectMany([]); update(); note('Selection cleared'); } }
+    // an empty click with the Select (or Shape: its nodes go with it) tool clears; Ctrl/Cmd keeps; Stretch / Step / Contour picks stay
+    if ((state.tool === 'select' || state.tool === 'step' || state.tool === 'shape') && !layModLive()) { if (selIdxs().length && !r.shift && !r.ctrl) { selectMany([]); update(); note('Selection cleared'); } }
     else if (selIdxs().length > 1 && !r.shift) { selectMany(groupIdxs(state.sel), state.sel); update(); note('Selection: just the main part'); }
     return;
   }
@@ -8708,7 +8708,7 @@ function drawOvl(paint = false) {
   if (ui.gripHint) {
     const gh = d && (d.lay ? gd : d), grips = gh && gripOn(gh) ? gripList(gh) : [];
     ui.gripHint.hidden = !grips.length;
-    ui.gripHint.textContent = state.tool === 'shape' ? 'Shape: click a node · Shift+click adds / removes · a box picks several · drag one to move them all · Esc ends' : grips.some((g) => g.rect) ? 'Grips: drag an edge to resize · Shift = keep proportions · Esc cancels' : 'Grips: drag, or click one then click the new place · type x,y · Shift = straight · Esc cancels';
+    ui.gripHint.textContent = state.tool === 'shape' ? 'Shape: click a node · Shift+click adds / removes · a box picks several · drag one to move them all · Delete removes · Esc ends' : grips.some((g) => g.rect) ? 'Grips: drag an edge to resize · Shift = keep proportions · Esc cancels' : 'Grips: drag, or click one then click the new place · type x,y · Shift = straight · Esc cancels';
   }
   const t = ui.tip;
   for (const key of ['length', 'angle']) {
@@ -11515,10 +11515,32 @@ function shapeBox(d, a, b, add) {
   for (const n of SHP.nodesIn(gripList(d), a, b)) keys.add(n.e + ':' + n.id);
   shapeSet(d, keys);
 }
+/** TODO 139b2: the Delete key (or a double-click on a node) with the Shape tool removes the selected nodes (shape.js deleteNodes), one Undo step. False when no node is selected (Delete then deletes objects as ever);
+ *  true when handled, also when every object kept its nodes (a polyline keeps 2, closed 3; a line, arc or circle all of them). */
+function shapeDelete() {
+  const d = gripDoc(), m = d && state.tool === 'shape' && !state.grip && !d.layDim && gripOn(d) ? hotsOf(d) : null;
+  if (!m) return false;
+  const ids = new Map(), pairs = [], next = new Map();
+  for (const g of m.values()) ids.set(g.e, [...(ids.get(g.e) || []), g.id]);
+  let gone = 0, label = 'Delete node';
+  for (const [i, list] of ids) {
+    const ent = d.raw.entities[i], r = SHP.deleteNodes(ent, list);
+    if (r) { pairs.push([ent, r.ent]); next.set(i, r.ent); gone += list.length; if (gone > 1) label = 'Delete nodes'; }
+  }
+  if (!pairs.length) { note('Shape: nothing deleted. A polyline keeps at least 2 nodes (3 when closed); a line, arc or circle keeps all its nodes'); return true; }
+  const sel = new Set(d.sel);
+  view.fitted = false;
+  if (d.vlay) { if (!layGripCommit(d, pairs, label, sel)) { note('That would leave nothing of the shape, so it stays as it was'); return true; } }
+  else { if (!commit(d, followDimensions(d.raw, { entities: d.raw.entities.map((x, k) => next.get(k) || x), blocks: d.raw.blocks }, d.factor), label, sel)) return true; setSel(d, sel); }       // too nested: commit showed why
+  shapeSet(gripDoc() || d, new Set());       // the node numbers moved up: none is selected now
+  note(`${label}: ${gone} removed${gone < m.size ? `, ${m.size - gone} kept (a polyline keeps at least 2 nodes, 3 when closed)` : ''}. Ctrl+Z takes it back`);
+  return true;
+}
 /** TODO 139b1: a double-click with the Shape tool on a selected object's outline (not on a node) adds a node there (shape.js addNode), one Undo step; the new node is the one selected. */
 function shapeDblClick(e) {
   const d = gripDoc();
-  if (state.tool !== 'shape' || state.grip || !d || !gripOn(d) || gripAt(d, e.clientX, e.clientY)) return false;
+  if (state.tool !== 'shape' || state.grip || !d || !gripOn(d)) return false;
+  if (gripAt(d, e.clientX, e.clientY)) return shapeDelete();       // on a node (its first click selected it alone): it goes (139b2)
   const p = toDrawing(d, e.clientX, e.clientY);
   for (const i of d.sel) {
     const ent = d.raw.entities[i], r = !lockedEnt(d, i) && SHP.addNode(ent, p, pickTol(d));
@@ -11558,7 +11580,7 @@ function gripStart(d, hit, e) {
   const key = hit.e + ':' + hit.id;
   if (state.tool === 'shape' && !e.shiftKey && !shapeKeys(d).has(key)) shapeSet(d, new Set([key]));       // TODO 139a: a press on a node not selected selects it alone; on a selected one the drag moves them all
   const map = hotsOf(d);
-  const hots = !e.shiftKey && map && map.size > 1 && map.has(key) ? [...map.values()] : null;       // a click on one of several hot grips: Stretch moves them all
+  const hots = (!e.shiftKey || state.tool === 'shape') && map && map.size > 1 && map.has(key) ? [...map.values()] : null;       // a click on one of several hot grips: Stretch moves them all; the Shape tool's Shift+drag on a selected node too (139b2)
   if (!e.shiftKey) state.hots = null;                                // Shift: decided on release (gripUp: a click makes it hot, 155e3) or on the first move (a drag keeps proportions)
   state.grip = { tog: e.shiftKey ? hit : null, hots, skip: hots && new Set(hots.map((x) => x.e)), ents: hots && new Map(hots.map((x) => [x.e, ldrPseudo(d, x.e) || d.raw.entities[x.e]])), nexts: null, d, e: hit.e, id: hit.id, ent: ldrPseudo(d, hit.e) || d.raw.entities[hit.e], next: null, to: null, label: null, hot: false, moved: false, px: [e.clientX, e.clientY], sel: new Set(d.sel), mode: 0, opt: 0, opts: hots || e.shiftKey || state.tool === 'shape' ? [] : GR.optionsOf(ldrPseudo(d, hit.e) || d.raw.entities[hit.e], hit.id), base: [hit.x, hit.y], pos: [hit.x, hit.y], copy: false, acc: d.raw, hist: [], baseAsk: false, ref: null };
   state.msg = null; renderCommand(); renderEdit(); paintOverlay();       // renderEdit: the Undo button is on in a run
@@ -11970,6 +11992,7 @@ function editKey(e) {
   if (state.grip && (e.key === 'Enter' || e.key === ' ') && !mod && !e.altKey && !dialog && !(e.target.closest && e.target.closest('button, a'))) { e.preventDefault(); gripCycle(); return; }       // Space / Enter on a hot grip: the next grip mode
   if ((e.key === 'Enter' || e.key === ' ') && !mod && !e.altKey && !dialog && dimAutoLive() && !(e.target.closest && e.target.closest('button, a'))) { e.preventDefault(); dimAutoEnd(); return; }       // Automatic dimension repeats until Enter, Space or Esc
   if (state.grip && mod && !e.altKey && (k === 'y' || k === 'z')) { e.preventDefault(); undoCurrent(k === 'y' || e.shiftKey); return; }       // in a grip run Undo / Redo are the run's own (see undoCurrent)
+  if (e.key === 'Delete' && !mod && !e.altKey && shapeDelete()) { e.preventDefault(); return; }       // TODO 139b2: nodes selected in the Shape tool; else the objects go as today
   if (cmpKey(e, mod)) return;
   if (!mod && !e.altKey && drawKey(e, k)) return;
   if (e.key === ' ' && !mod && !e.altKey && !e.shiftKey && !dialog && !activeCmd() && !(e.target.closest && e.target.closest('button, a'))) { e.preventDefault(); ui.cmdUI.repeat(); return; }       // Space is Enter: the last command again

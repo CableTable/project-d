@@ -16271,6 +16271,79 @@ try {
     await closeTabs(/./);
   });
 
+  await step('TODO 139b2: Delete removes a node, one Undo; Shift+drag moves the set', async () => {
+    const undo = async () => { await page.evaluate(() => document.activeElement && document.activeElement.blur()); await page.keyboard.press('Control+z'); await frames(); };
+    const del = async () => { await page.evaluate(() => document.activeElement && document.activeElement.blur()); await page.keyboard.press('Delete'); await frames(); };
+    const gid = (k) => page.locator('[data-testid=grip], [data-testid=grip-hot]').evaluateAll((g, s) => g.map((x) => x.dataset.grip).find((x) => x.endsWith(':' + s)), k);
+    const hotWhen = (n) => page.waitForFunction((k) => document.querySelectorAll('[data-testid=grip-hot]').length === k, n);
+    const nodeClick = async (id, shift = false) => { const a = await gripBox(id); if (shift) await page.keyboard.down('Shift'); try { await page.mouse.click(a.x, a.y); } finally { if (shift) await page.keyboard.up('Shift'); } await frames(); };
+    const shiftDrag = async (id, dx) => { const a = await gripBox(id); await page.mouse.move(a.x, a.y); await page.keyboard.down('Shift'); try { await page.mouse.down(); await page.mouse.move(a.x + dx, a.y, { steps: 6 }); await page.mouse.up(); } finally { await page.keyboard.up('Shift'); } await frames(); };
+    const verts = async (i = 0) => GR.lwVertices(entOf(await savedDoc(), i).r).map((v) => [v.x, v.y]);
+    // Drawings: v1 deleted by the key, v2 by a double-click on it (the first click selects it), one Undo each; the corner joins its neighbours straight
+    const raw = newDoc(4); addEntities(raw, dxfPoly([[20, 30], [80, 30], [80, 70], [140, 70]]), dxfLine(20, 110, 140, 110));
+    await openGrips(writeDxf(raw), 'shape-delete.dxf');
+    await click(50, 30); await frames(); await typeCmd('shape'); await gripWhen(4);
+    const first = await verts();
+    await nodeClick('0:v1'); await hotWhen(1);
+    await del();
+    assert.deepEqual(await verts(), [first[0], first[2], first[3]], 'v1 removed');
+    await gripWhen(3); await hotWhen(0);
+    await undo(); assert.deepEqual(await verts(), first, 'one Undo brings it back'); await gripWhen(4);
+    const n2 = await gripBox('0:v2'); await page.mouse.dblclick(n2.x, n2.y); await frames();
+    assert.deepEqual(await verts(), [first[0], first[1], first[3]], 'a double-click on a node removes it');
+    await undo(); await gripWhen(4);
+    // the set: v1 and v2 deleted together leave 2 nodes; v0 + v1 + v2 would leave 1: none go (the note says so)
+    await nodeClick('0:v1'); await nodeClick('0:v2', true); await hotWhen(2); await del();
+    assert.deepEqual(await verts(), [first[0], first[3]], 'both nodes removed, one Undo');
+    await undo(); await gripWhen(4);
+    await nodeClick('0:v0'); await nodeClick('0:v1', true); await nodeClick('0:v2', true); await nodeClick('0:v3', true); await hotWhen(4); await del();
+    assert.deepEqual(await verts(), first, 'a polyline keeps 2 nodes: none of the 4 went');
+    // Shift+drag on a selected node moves the whole set (v1 and v2 by one offset, v0 stays); one Undo
+    await nodeClick('0:v1'); await nodeClick('0:v2', true); await hotWhen(2);
+    await shotBoth('shape-delete'); await menuItem('View', 'Theme: light');
+    await page.setViewportSize({ width: 1024, height: 768 }); await frames(); await page.screenshot({ path: `${shotDir}/s12-shape-delete-1024.png` });
+    await page.setViewportSize({ width: 1440, height: 900 }); await frames();
+    await shiftDrag('0:v1', 40); await hotWhen(2);
+    const moved = await verts();
+    assert.ok(moved[1][0] - first[1][0] > 1 && near(moved[1][0] - first[1][0], moved[2][0] - first[2][0], 1e-6) && near(moved[1][1], first[1][1], 1e-6) && near(moved[0][0], first[0][0], 1e-6), 'Shift+drag moved v1 and v2 together: ' + JSON.stringify(moved));
+    await undo(); assert.deepEqual(await verts(), first);
+    // Delete with no node selected still deletes the selected object
+    await click(100, 90); await frames();       // empty: the selection clears
+    await click(80, 110); await frames(); await gripWhen(2); await hotWhen(0);
+    await del();
+    assert.equal((await savedDoc()).entities.length, 1, 'no node selected: the object is deleted');
+    await undo();
+    await page.keyboard.press('Escape');
+    // Layouts and Compare: a line gets a node (double-click), Delete takes it away, one Undo; Shift+drag on one of two selected ends moves both, the middle stays
+    const lineCase = async () => {
+      const a = await gripBox(await gid('a')), b = await gripBox(await gid('b'));
+      await page.mouse.dblclick((a.x + b.x) / 2, (a.y + b.y) / 2); await gripWhen(3); await hotWhen(1);
+      await del(); await gripWhen(2);
+      await undo(); await gripWhen(3);
+      const [v0, v1, v2] = [await gid('v0'), await gid('v1'), await gid('v2')], p0 = await gripBox(v0), p1 = await gripBox(v1), p2 = await gripBox(v2);
+      await nodeClick(v0); await nodeClick(v2, true); await hotWhen(2);
+      await shiftDrag(v0, 40); await gripWhen(3);
+      const q0 = await gripBox(v0), q1 = await gripBox(v1), q2 = await gripBox(v2);
+      assert.ok(near(q0.x, p0.x + 40, 3) && near(q2.x, p2.x + 40, 3) && near(q1.x, p1.x, 1) && near(q1.y, p1.y, 1), 'the two selected ends moved, the middle stayed');
+      await undo(); await gripWhen(3);
+    };
+    await freshLayoutWithPlate();
+    await typeCmd('line'); await typeCmd('50,600'); await typeCmd('300,600'); await typeCmd('');
+    await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click(); await click(175, 600); await frames(); await gripWhen(3);
+    await page.locator('[data-tool=shape]').click(); await gripWhen(2);
+    await lineCase();
+    // an empty click on the layout clears the selection, nodes with it
+    const empty = await at(175, 700); await page.mouse.click(empty.x, empty.y); await frames();
+    await gripWhen(0);
+    await page.keyboard.press('Escape');
+    const cmp = newDoc(4); addEntities(cmp, dxfLine(20, 30, 120, 30));
+    await openGrips(writeDxf(cmp), 'shape-delete-cmp.dxf'); await typeCmd('compare');
+    await typeCmd('shape'); await page.keyboard.press('Control+a'); await gripWhen(2);
+    await lineCase();
+    await page.keyboard.press('Escape');
+    await closeTabs(/./);
+  });
+
   // ---- TODO 163a: Grip options, the hover list on a line / arc grip ----
   const g163 = {
     list: async () => { await t('ctx-menu').waitFor(); return page.locator('[data-testid=ctx-menu] .mi').allTextContents(); },
