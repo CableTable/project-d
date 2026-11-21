@@ -326,7 +326,7 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
     156e. Gaps from the S54 audit (`runs54/audit-156.md`, grill `runs54/grill-156e.md`):
       156e1. ✅ (built, King, 2026-11-21) Leader on Layouts as a loose layout object (not linked to parts; grips, style, Explode, DXF / PDF as layout dimensions) (S–M).
       156e1b. ✅ (built, King, 2026-11-21) Layout leader follow-ups: a placed layout leader is selected, shows the Leader panel row, and double-click edits its note, as on Drawings (grill `runs54/grill-156e1b.md`) (S).
-      156e1c. Grip modes (Move / Rotate / Scale / Mirror) on loose layout leaders and dimensions, as on Drawings; Parts keep the refusal (grill `runs54/grill-156e1c.md`) (S).
+      156e1c. ✅ (built, King, 2026-11-21) Grip modes (Move / Rotate / Scale / Mirror) on loose layout leaders and dimensions, as on Drawings; Parts keep the refusal (grill `runs54/grill-156e1c.md`) (S).
       156e2. ✅ (built, King, 2026-11-21) Fill / Eyedropper on Layouts (`web/app.js:12756`) and Rotate on loose layout objects (`:4917`) (S).
       156e3. Preflight on Layouts: placed parts and loose objects (L, later; grill again).
       156e4. Balloons on Layouts: needs a layout balloon store and numbering (M–L, later; grill again).
