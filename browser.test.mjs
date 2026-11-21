@@ -26900,6 +26900,69 @@ try {
     await undo(); assert.deepEqual(await balNums(), ['1', '7', '3'], 'one Undo takes the Renumber back');
   });
 
+  await step('TODO 156e4c: on a layout the balloon table docks, a row zooms to its balloon, Export CSV writes the rows; Esc and a tab switch clear the balloon selection', async () => {
+    await freshLayoutWithPlate();
+    await page.locator('[data-tool=balloon]').click();
+    await said(/^Click the feature to balloon/);
+    await page.waitForTimeout(200); await frames();
+    await click(50, 50); await click(100, 100);
+    await page.waitForTimeout(200); await frames();
+    await click(50, 200); await click(100, 250); await click(50, 350); await click(100, 400);
+    assert.deepEqual(await balNums(), ['1', '2', '3']);
+    await page.locator('[data-tool=select]').click(); await frames();
+    // the dock: right above the status bar, resizes, collapses
+    const dock = t('bal-dock'), box0 = await dock.boundingBox(), st = await page.locator('.status').boundingBox();
+    assert.ok(Math.abs(box0.y + box0.height - st.y) < 2, 'the table sits right above the status bar on a layout');
+    const hb = await t('bal-drag').boundingBox();
+    await page.mouse.move(hb.x + hb.width / 2, hb.y + 4); await page.mouse.down(); await page.mouse.move(hb.x + hb.width / 2, hb.y - 76, { steps: 4 }); await page.mouse.up();
+    assert.ok((await dock.boundingBox()).height > box0.height + 50, 'dragging the bar up makes it taller');
+    await t('bal-collapse').click();
+    assert.ok((await dock.boundingBox()).height < 60, 'collapsed: only the header'); assert.equal(await page.locator('.balscroll').isVisible(), false);
+    await t('bal-collapse').click(); assert.equal(await page.locator('.balscroll').isVisible(), true);
+    await shotBoth('layout-balloon-table');
+    // a row zooms to its balloon and selects it
+    const before = await page.evaluate(() => document.querySelector('[data-testid=zoom]').textContent);
+    await page.locator('[data-testid=bal-row][data-n="3"]').click();
+    assert.notEqual(await page.evaluate(() => document.querySelector('[data-testid=zoom]').textContent), before, 'zoomed');
+    assert.deepEqual(await page.locator('[data-testid=bal-row].hi').evaluateAll((r) => r.map((x) => x.dataset.n)), ['3']);
+    await page.waitForFunction(() => document.querySelector('[data-testid=bal-chip]').textContent === 'Balloon 3');
+    await t('bal-dim').fill('Ø25 ±0.1'); await t('bal-dim').press('Enter');
+    await t('bal-note').fill('Hole <b>A</b>'); await t('bal-note').press('Enter');
+    // the files hold the layout's rows
+    const csv = (await downloadsUtf8(() => t('bal-csv').click(), 1))[0];
+    assert.match(csv.name, /-balloons\.csv$/);
+    assert.equal(csv.text.split('\r\n')[0], 'No.,Dimension,Tol +,Tol -,Sheet,Note'); assert.ok(csv.text.includes('3,Ø25 ±0.1,,,1,Hole <b>A</b>\r\n'), csv.text);
+    assert.equal(csv.text.split('\r\n').length, 5, 'header, three balloons, and the end');
+    const xl = (await downloadsUtf8(() => t('bal-excel').click(), 1))[0];
+    assert.match(xl.name, /-balloons-excel\.csv$/); assert.equal(xl.text.charCodeAt(0), 0xfeff); assert.equal(xl.text.slice(1), csv.text);
+    // Esc lets the balloon go (on a layout editable() is null: the branch uses balDoc())
+    await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Escape'); await frames();
+    assert.equal(await t('bal-panel').isVisible(), false, 'Esc deselects the balloon on a layout');
+    assert.equal(await page.locator('[data-testid=bal-row].hi').count(), 0);
+    // a tab switch: ids restart per tab, so balloon 1 picked on tab B must not stay picked on tab A
+    await t('new-layout').click(); await frames();
+    await page.locator('[data-tool=balloon]').click();
+    await page.waitForTimeout(200); await frames();
+    await click(50, 50); await click(100, 100);
+    await page.locator('[data-tool=select]').click(); await frames();
+    await click(100, 100);
+    await t('bal-panel').waitFor({ state: 'visible' });
+    await page.waitForFunction(() => document.querySelector('[data-testid=bal-chip]').textContent === 'Balloon 1');
+    await page.locator('.tabs .dtab:not([aria-label])').nth(1).click(); await frames();       // (the first tab is the empty Drawing 1)
+    assert.equal(await t('bal-panel').isVisible(), false, 'switching to tab A clears the selection (A has a balloon with the same id)');
+    assert.equal(await page.locator('[data-testid=bal-row].hi').count(), 0);
+    assert.deepEqual(await balNums(), ['1', '2', '3']);
+    // Save and reopen: the edited rows come back
+    const dls = await downloadsUtf8(() => page.keyboard.press('Control+s'), 2);
+    const dxf = dls.find((x) => /\.dxf$/i.test(x.name)), side = dls.find((x) => /\.pdballoons\.json$/i.test(x.name));
+    assert.ok(dxf && side, 'Save writes the layout and its balloons file: ' + dls.map((x) => x.name));
+    await closeTabs(/./);
+    await t('picker').setInputFiles([{ name: dxf.name, mimeType: 'text/plain', buffer: Buffer.from(dxf.text, 'utf8') }, { name: side.name, mimeType: 'application/json', buffer: Buffer.from(side.text, 'utf8') }]);
+    await waitTab(page, dxf.name);
+    await page.waitForFunction(() => document.querySelector('[data-testid=bal-count]')?.textContent === '3');
+    assert.deepEqual((await balRows()).find((r) => r[0] === '3'), ['3', 'Ø25 ±0.1', '', '', '1', 'Hole <b>A</b>'], 'the reopened layout has the edited row');
+  });
+
   await step('TODO 156b3a: on a layout, Trim / Extend / Fillet / Offset work on layout objects (one Undo each); a pick on a placed part is refused and the part stays; saved and reopened they are still objects', async () => {
     await freshLayoutWithPlate();
     const val = (e, c) => Number(e.r.v[e.r.c.indexOf(c)]);

@@ -1263,6 +1263,7 @@ function showDoc() {
     // Callers have already changed state.doc; the global view still belongs to shownDoc.
     if (shownDoc) shownDoc.view = { ...view, ...canvasSize() };
     shownDoc = curDoc();
+    state.balSel = null;       // balloon ids restart per tab: a pick on one tab must not stay selected on another
   }
   state.paste = null;
   for (const item of cmpDoc()?.cmp.items || []) { const source = cmpSourceTab(item); if (source) cmpRefresh(source); }
@@ -12199,7 +12200,7 @@ function editKey(e) {
     else if (state.meas && state.meas.pts.length) { state.meas.pts = []; state.meas.hover = null; note('Measure cleared'); paintOverlay(); }
     else if (state.tool === 'dimension' || state.tool === 'leader' || state.tool === 'measure' || state.tool === 'balloon') setTool('select');       // nothing in progress: back to Select
     else if (state.tool === 'contour' && !(d && d.sel.size)) setTool('select');
-    else if (d && state.balSel != null) balSelect(d, null);
+    else if (state.balSel != null && balDoc()) balSelect(balDoc(), null);       // balDoc(): a layout too (editable() is null there)
     else if (d && d.sel.size) setSel(d, new Set());
     else if (curLay() && selIdxs().length) { selectMany([]); update(); }
     return;
