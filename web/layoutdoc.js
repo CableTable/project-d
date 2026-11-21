@@ -18,7 +18,7 @@ import { explodeInsert, explodeDimension, explodeSelection } from './explode.js'
 import { unitFactor, startHidden } from './doc.js';
 import { stepRepeat, markGeometry, MAX_LINE } from './layout.js';
 import { buildLayoutDoc, gridPlacements, placedBox, partFromDrawing, placement1, GRID_KEYS, gridSig } from './apply.js';
-import { keepOnly, newLayerName, DIM_LAYER, DIM_BLOCK, dimTag, freeNameWithPrefix } from './edit.js';
+import { keepOnly, newLayerName, DIM_LAYER, DIM_BLOCK, LDR_BLOCK, dimTag, freeNameWithPrefix } from './edit.js';
 import { followDimensions } from './linked-dimensions.js';
 import { isDimPart, dimName, isSettled, bakeBlock, turnedTag, freeBlockName } from './layoutdim.js';
 import { cleanGuides } from './guides.js';
@@ -292,7 +292,8 @@ export function explodeDims(lay, ats, newId) {
     const native = part?.obj && part.raw.entities[0]?.type === 'DIMENSION';
     if (!native && (!isDimPart(part) || !isSettled(part, p))) continue;
     const pieces = [];
-    for (const e of native ? explodePart(part, p).entities : explodeDimension(part.raw.entities[0], { ...part.raw, layers })) {
+    const raw = { ...part.raw, layers }, leader = LDR_BLOCK.test(dimName(part));       // a leader breaks as on a drawing: Explode's INSERT (lines, SOLID arrowhead, TEXT)
+    for (const e of native ? explodePart(part, p).entities : leader ? explodeInsert(part.raw.entities[0], raw).entities : explodeDimension(part.raw.entities[0], raw)) {
       const obj = objectPart(newId(), nextName(OBJ_NAMES[e.type] || 'Object', names), { ...e, ps: false }, layers);
       if (!obj) continue;
       names.add(obj.name); lay.parts[obj.id] = obj;
@@ -314,7 +315,7 @@ export function settleDims(lay, newId, { taken, drawn } = dimensionNames(lay)) {
     const old = dimName(part), lo = old.toLowerCase(), settled = isSettled(part, p), clash = drawn.has(lo) || owner.has(lo) && owner.get(lo) !== p.partId;
     if (settled && !clash) { owner.set(lo, p.partId); continue; }
     const shared = lay.placed.filter((q) => q.partId === p.partId).length > 1, tag = settled ? dimTag(old) : turnedTag(dimTag(old), p.rot);
-    const name = !shared && !clash && tag === dimTag(old) ? old : freeBlockName(taken, tag), ent = part.raw.entities[0];
+    const name = !shared && !clash && tag === dimTag(old) ? old : LDR_BLOCK.test(old) ? freeNameWithPrefix(taken, 'PD_LDR_') : freeBlockName(taken, tag), ent = part.raw.entities[0];
     taken.add(name.toLowerCase());
     if (!replaceDim(lay, p, { ...ent, r: { ...ent.r, v: ent.r.v.map((v, k) => (ent.r.c[k] === 2 ? name : v)) } },
       { [name]: settled ? part.raw.blocks[old] : bakeBlock(part.raw.blocks[old], part, p) }, newId, names)) continue;
@@ -627,7 +628,7 @@ function layoutFromMeta(raw, name) {
 /** The plain entities of the file (not the sheet, the marks or the INSERTs) become layout objects again, one each. */
 function readObjects(lay, raw, ob, count) {
   const layers = layersOf(lay), insName = (e) => String(e.r.v[e.r.c.indexOf(2)] ?? '').trim();
-  const isDim = (e) => e.type === 'INSERT' && DIM_BLOCK.test(insName(e)) && !!raw.blocks[insName(e)];
+  const isDim = (e) => e.type === 'INSERT' && (DIM_BLOCK.test(insName(e)) || LDR_BLOCK.test(insName(e))) && !!raw.blocks[insName(e)];
   const plain = raw.entities.filter((e) => (e.type !== 'INSERT' || isDim(e)) && !e.ps && !isReserved(e.layer));
   // shortcut: equal-count outside reordering remains positional, use stable entity IDs if that must be detected
   if (count !== plain.length) ob = [];       // outside edits can shift the positional group / lock metadata

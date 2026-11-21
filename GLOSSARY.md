@@ -95,6 +95,8 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Edge grip**: A handle at the middle of a selected rectangle's side. Dragging it moves that side along its normal, keeping a rectangle; Shift keeps proportions about the opposite side's midpoint. Where: `DECISIONS.md`, Rectangle edge grips. Avoid: Gripper.
 
+**Extra key**: A second or later keyboard key for a command, kept beside its main key. Where: `DECISIONS.md`, Shortcuts. Avoid: Command alias; Alt shortcut.
+
 **Extra gap**: Adds room after one chosen row or column of the repeat grid and drops rows or columns that no longer fit. Where: `DECISIONS.md`, Extra gap.
 
 **Extract part**: Names the selected drawing geometry and saves it in the Parts library for reuse at the drawing's prepared scale. Where: `TODO.md`, items 5, 6 and 19; `web/app.js`.
@@ -470,3 +472,11 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 **Full paint**: One pass that clears the drawing canvas and draws every item again. Counted in `data-paints` on the drawing canvas; a frame that reuses the Kept picture is not one. Where: `web/app.js` `paintOverlay`; `DECISIONS.md`, Layout kept picture (P7b2).
 
 **Kept picture**: The bitmap of the last Full paint of a heavy tab, saved before the overlay (marks, ghosts, a dragged part) is drawn. Wheel and pan frames move and scale it; on a layout a hover, click or part drag frame whose base is unchanged (same view, size, theme, parts, layers) draws it 1:1 and then only the overlay. Where: `web/app.js` `snap`, `web/perf.js` `sameBase`; `DECISIONS.md` Big-file performance (TODO 55) and Layout kept picture (P7b2).
+
+**Shape tool**: The tool (`shape`, in Modify beside Join) that edits the selected objects' Nodes, as CorelDRAW's Shape tool: click or box-select nodes, drag them (all by one offset), double-click an outline to add one, Delete removes them, and the right-click offers Break at node and Join nodes. Works on Drawings, Layout objects and Compare. Where: `web/shape.js`, `web/app.js` `shapeMenu`; `DECISIONS.md` Shape tool (TODO 139).
+
+**Node**: A point of an object the Shape tool edits: a polyline's vertex, a line's or an arc's end, a circle's quadrant (not a segment middle or a centre). An end node is the first or last vertex of an open object (Join nodes takes two of them). A Bezier node (see **Handle**) has a type: **Cusp** (the two handles are free), **Smooth** (collinear, lengths free) or **Symmetrical** (collinear, equal length); a handle drag keeps it (Smooth turns the other handle, Symmetrical mirrors it). Where: `web/shape.js` `nodesOf`, `nodeType`, `setNodeType`.
+
+**Pen tool**: The tool (`pen`, in Draw beside Polyline; no short word, `p` stays Polyline) that draws a SPLINE node by node: a click is a corner node (its segments straight), a click-drag a Symmetrical node (the pointer is its handle, free of snaps; Shift locks the angle). Enter, Space, a double-click or a right-click ends and keeps the path, Esc cancels all of it, `U` drops the last node, a click on node 1 (or `c`) closes it, a drag on node 1 shapes the closing segment first. Always a Bezier SPLINE, also when every node is a corner. Works on Drawings, Layout objects and Compare. Where: `web/draw.js` kind `pen`, `toEntity` case `spline`; `DECISIONS.md` Pen tool (TODO 140a).
+
+**Handle**: The control point beside a Bezier node that sets the curve's direction there (two per segment, on the thirds of a straight one; the Shape tool shows a selected node's and drags it, the Pen tool makes it from a drag). Where: `web/shape.js` `handlesOf`.

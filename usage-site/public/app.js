@@ -2,9 +2,9 @@
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/12.3.0/firebase-app.js';
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut } from 'https://www.gstatic.com/firebasejs/12.3.0/firebase-auth.js';
 import { getFirestore, doc, onSnapshot, setDoc, serverTimestamp, getDocFromServer } from 'https://www.gstatic.com/firebasejs/12.3.0/firebase-firestore.js';
-import { resetLabel, weeklyForecast, windowReading } from './usage-window.js';
+import { isTodayIst, resetLabel, stripChips, weeklyForecast, windowReading } from './usage-window.js';
 import { firebaseConfig } from './firebase-config.js';
-import { cumulativeTokens, resetTimes, tokenEndLabels } from './token-chart.js';
+import { dailyTokens } from './token-chart.js';
 
 const AGENT_COLOR = { Rook: 'var(--ud-rook)', Pip: 'var(--ud-pip)', Rowan: 'var(--ud-rowan)', Bishop: 'var(--ud-pip)', King: 'var(--ud-king)', Knight: 'var(--ud-rowan)' };
 const ORDER = ['Rook', 'Bishop', 'King', 'Rowan'];
@@ -17,11 +17,8 @@ const compact = (n) => Intl.NumberFormat('en', { notation: 'compact', maximumFra
 const num = (x) => (x === '' || x == null ? null : Number(x));
 
 let data = { limits: [], history: [], runs: [], analysis: [], tickets: [], tokens: [], queue: [] };
-let queueUpdated = '', queueNext = [], showAllDone = false;
-function paceRows() {
-  return data.limits.map((r) => ({ agent: r.agent, window: r.window,
-    pace_pct: Math.round(Math.max(0, Math.min(1, (Date.parse(r.as_of) - Date.parse(r.starts)) / (Date.parse(r.resets) - Date.parse(r.starts)))) * 100) }));
-}
+let queueUpdated = '', queueNext = [], docs = {}; // docs: the `breaks`, `forhim` and `ci` docs, as uploaded
+const showAllDone = { queue: false, work: false }; // one fold per list
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = label(text); return e; };
 const mark = (e, src, field, where) => { e.dataset.source = src; e.dataset.field = field; if (where) e.dataset.where = where; return e; };
 const wh = (a, w) => 'agent=' + encodeURIComponent(a) + '&window=' + encodeURIComponent(w);
@@ -46,87 +43,86 @@ btn5.addEventListener('click', () => setWin('5h'));
 let query = '';
 document.getElementById('q').addEventListener('input', (e) => { query = e.target.value.toLowerCase(); draw(); });
 
-function status(used, pace, cap) {
-  if (cap != null && used >= cap) return ['bad', 'At today’s cap'];
-  if (used >= 85) return ['bad', 'Near the limit'];
-  if (used > pace + 10) return ['warn', 'Ahead of even use'];
-  return ['ok', 'Within pace'];
+// Knight card, chart series and legend show only while its tokens appear in the uploaded window; old Knight history still parses elsewhere.
+function knightSeen() { return data.tokens.some((r) => Number(r.Knight) > 0); } // a function: setPage draws the chart before this line runs
+const shownAgents = () => ORDER.filter((a) => a !== 'Rowan' || knightSeen());
+function svg(tag, attrs, parent, text) {
+  const node = document.createElementNS('http://www.w3.org/2000/svg', tag);
+  for (const [key, value] of Object.entries(attrs)) node.setAttribute(key, value);
+  if (text != null) node.textContent = text;
+  parent?.append(node); return node;
 }
+const RING = 2 * Math.PI * 28;
+const until = (secs) => { const m = Math.max(0, Math.round((secs * 1000 - Date.now()) / 60000)); return m >= 60 ? Math.floor(m / 60) + ' h ' + (m % 60) + ' m' : m + ' m'; };
 
-function drawAgents(limits, pace) {
+function drawAgents(limits) {
   const box = document.getElementById('agents');
   box.replaceChildren();
-  const pk = new Map(pace.map((p) => [p.agent + '|' + p.window, p.pace_pct]));
-  const fk = new Map(data.limits.filter((r) => r.window === 'week').map((r) => [r.agent, weeklyForecast(r)]));
-  ORDER.forEach((a) => {
+  const fk = new Map(limits.filter((r) => r.window === 'week').map((r) => [r.agent, weeklyForecast(r)]));
+  shownAgents().forEach((a) => {
     const rows = limits.filter((r) => r.agent === a);
     if (!rows.length) return;
-    const card = el('div', 'ud-card');
-    const head = el('div', 'ud-agent');
-    const t = el('div'); t.append(el('h3', null, a)); t.append(mark(el('p', 'ud-muted', rows[0].role), 'limits', 'role', 'agent=' + a + '&window=' + rows[0].window));
-    head.append(t);
-    head.append(mark(el('span', 'ud-muted', rows[0].model), 'limits', 'model', wh(a, rows[0].window)));
-    card.append(head);
-    ['5h', 'week'].forEach((w) => {
-      const r = rows.find((x) => x.window === w); if (!r) return;
-      const [used, resets] = windowReading(a, r);
-      const p = resets == null ? null : pk.get(a + '|' + w), cap = num(r.cap_pct);
-      const m = el('div', 'ud-meter');
-      const top = el('div', 'ud-mrow');
-      const left = el('div');
-      left.append(el('span', 'ud-muted', w === '5h' ? '5-hour window ' : 'Week '));
-      const big = el('div', 'ud-big'); big.append(mark(el('span', null, String(used)), 'limits', 'used_pct', wh(a, w)), document.createTextNode('%'));
-      left.append(big); top.append(left);
-      const [cls, label] = status(used, p ?? 0, cap);
-      top.append(el('span', 'ud-chip ' + cls, label));
-      m.append(top);
-      const tr = el('div', 'ud-track');
-      const f = el('div', 'ud-fill'); f.style.width = Math.min(100, used) + '%'; f.style.background = cls === 'bad' ? 'var(--cds-chart-status-critical)' : AGENT_COLOR[a];
-      tr.append(f);
-      if (p != null) { const k = el('div', 'ud-tick'); k.style.left = 'calc(' + p + '% - 1px)'; k.title = 'Even use'; tr.append(k); }
-      if (cap != null) { const k = el('div', 'ud-tick cap'); k.style.left = 'calc(' + cap + '% - 1px)'; tr.append(k); }
-      m.append(tr);
-      const foot = el('div', 'ud-mrow ud-muted');
-      const fl = el('span'); fl.append(document.createTextNode('Even use: '), mark(el('span', null, String(p ?? '—')), 'pace', 'pace_pct', wh(a, w)), document.createTextNode('%'));
-      if (cap != null) { fl.append(document.createTextNode(' · cap today: '), mark(el('span', null, String(cap)), 'limits', 'cap_pct', wh(a, w)), document.createTextNode('%')); }
-      foot.append(fl);
-      const rs = mark(el('span', null, resetLabel(resets, (s) => (w === '5h' ? HM : IST).format(new Date(s * 1000)))), 'limits', 'resets', wh(a, w));
-      foot.append(rs);
-      m.append(foot);
-      const fc = w === 'week' && fk.get(a);
-      if (fc) {
-        const fp = el('div', 'ud-mrow');
-        const s = el('span');
-        if (fc.hit_at) {
-          s.append(document.createTextNode('At this pace: hits 100% '), mark(el('b', 'ud-hit', IST.format(new Date(fc.hit_at))), 'forecast', 'hit_at', 'agent=' + encodeURIComponent(a)), document.createTextNode(', before the reset'));
-        } else if (fc.at_reset_pct != null) {
-          s.append(document.createTextNode('At this pace: about '), mark(el('b', null, String(fc.at_reset_pct)), 'forecast', 'at_reset_pct', 'agent=' + encodeURIComponent(a)), document.createTextNode('% at the reset'));
-        } else s.append(el('span', 'ud-muted', a === 'Rowan' ? 'At this pace: no data yet' : 'At this pace: too early in the week to tell'));
-        fp.append(s);
-        m.append(fp);
-      }
-      card.append(m);
-    });
+    const h5 = rows.find((x) => x.window === '5h'), wk = rows.find((x) => x.window === 'week');
+    const color = AGENT_COLOR[a], card = el('div', 'ud-card'), top = el('div', 'ud-acc-top'), name = el('div', 'ud-acc-name');
+    let h5Line;
+    if (h5) {
+      const [used, resets] = windowReading(a, h5), ring = el('div', 'ud-ring'), s = svg('svg', { viewBox: '0 0 64 64', 'aria-hidden': 'true' }, ring);
+      svg('circle', { class: 't', cx: 32, cy: 32, r: 28 }, s);
+      svg('circle', { class: 'v', cx: 32, cy: 32, r: 28, stroke: used >= 85 ? 'var(--color-bad)' : color, 'stroke-dasharray': RING * Math.max(0, Math.min(100, used)) / 100 + ' ' + RING }, s);
+      const big = el('span'); big.append(mark(el('span', null, String(used)), 'limits', 'used_pct', wh(a, '5h')), document.createTextNode('%'));
+      ring.append(big); top.append(ring);
+      h5Line = mark(el('div', 'ud-muted', '5 h: ' + (resets == null ? 'window not started' : 'resets in ' + until(resets) + ' (' + HM.format(new Date(resets * 1000)) + ')')), 'limits', 'resets', wh(a, '5h'));
+    }
+    const cap = num(wk?.cap_pct), wkUsed = wk ? windowReading(a, wk)[0] : 0;
+    const title = el('div', 'ud-agent'), h3 = el('h3'), dot = el('i', 'ud-dot');
+    dot.style.background = color; h3.append(dot, document.createTextNode(label(a)));
+    const chip = el('span', 'ud-chip ' + (cap == null ? 'ok' : wkUsed >= cap ? 'bad' : 'warn'));
+    if (cap == null) chip.textContent = 'no cap today'; else chip.append(document.createTextNode('cap '), mark(el('span', null, String(cap)), 'limits', 'cap_pct', wh(a, 'week')), document.createTextNode('%'));
+    title.append(h3, chip); name.append(title);
+    if (h5Line) name.append(h5Line);
+    top.append(name); card.append(top);
+    if (wk) {
+      const [used, resets] = windowReading(a, wk), fc = fk.get(a), m = el('div', 'ud-meter');
+      const row = el('div', 'ud-mrow'), wl = el('span'); wl.append(document.createTextNode('Week '), mark(el('b', null, String(used)), 'limits', 'used_pct', wh(a, 'week')), document.createTextNode('%'));
+      row.append(wl, mark(el('span', 'ud-muted', resetLabel(resets, (s) => IST.format(new Date(s * 1000)))), 'limits', 'resets', wh(a, 'week')));
+      const tr = el('div', 'ud-track'), f = el('div', 'ud-fill');
+      f.style.width = Math.min(100, used) + '%'; f.style.background = used >= 95 ? 'var(--cds-chart-status-critical)' : color; tr.append(f);
+      const to = fc?.hit_at ? 100 : fc?.at_reset_pct != null ? Math.min(100, fc.at_reset_pct) : 0;
+      if (to > used) { const g = el('div', 'ud-ghost'); g.style.left = Math.min(100, used) + '%'; g.style.width = to - Math.min(100, used) + '%'; tr.append(g); }
+      if (cap != null) { const k = el('div', 'ud-tick cap'); k.style.left = 'calc(' + cap + '% - 1px)'; k.title = 'Today’s cap'; tr.append(k); }
+      m.append(row, tr);
+      const foot = el('div', 'ud-muted'); // one block: a flex row would split the sentence at each bold part
+      if (fc?.hit_at) {
+        foot.append(document.createTextNode('At this pace: hits 100% '), mark(el('b', 'ud-hit', IST.format(new Date(fc.hit_at))), 'forecast', 'hit_at', 'agent=' + encodeURIComponent(a)), document.createTextNode(', before the reset'));
+      } else if (fc?.at_reset_pct != null) {
+        foot.append(document.createTextNode('At this pace: about '), mark(el('b', null, String(fc.at_reset_pct)), 'forecast', 'at_reset_pct', 'agent=' + encodeURIComponent(a)), document.createTextNode('% at the reset'));
+      } else foot.append(el('span', null, a === 'Rowan' ? 'At this pace: no data yet' : 'At this pace: too early in the week to tell'));
+      m.append(foot); card.append(m);
+    }
     box.append(card);
   });
+  const queen = el('div', 'ud-card ud-empty'); queen.append(el('b', null, 'Queen'), el('span', 'ud-muted', 'not set up')); box.append(queen);
 }
 
-function drawTake(limits, pace) {
-  const p = document.getElementById('takeaway');
-  p.replaceChildren();
-  const pk = new Map(pace.map((x) => [x.agent + '|' + x.window, x.pace_pct]));
-  const wk = limits.filter((r) => r.window === 'week').map((r) => ({ r, gap: Number(r.used_pct) - (pk.get(r.agent + '|week') ?? 0) }));
-  if (!wk.length) return;
-  wk.sort((a, b) => b.gap - a.gap);
-  const top = wk[0].r;
-  p.append(document.createTextNode(label(top.agent) + ' is the one to watch: '),
-    mark(el('b', null, top.used_pct), 'limits', 'used_pct', wh(top.agent, 'week')), document.createTextNode('% of its week used, with '),
-    mark(el('b', null, String(pk.get(top.agent + '|week'))), 'pace', 'pace_pct', wh(top.agent, 'week')), document.createTextNode('% of the week gone. '));
-  const bishop = limits.find((r) => r.agent === 'Bishop' && r.window === 'week');
-  if (bishop && bishop.cap_pct !== '') {
-    p.append(document.createTextNode('Bishop is at '), mark(el('b', null, bishop.used_pct), 'limits', 'used_pct', wh('Bishop', 'week')),
-      document.createTextNode('% against today’s cap of '), mark(el('b', null, bishop.cap_pct), 'limits', 'cap_pct', wh('Bishop', 'week')), document.createTextNode('%.'));
+// The one-line strip on top: who is building what, then alerts from the usage % alone (week >= 95%, 5h >= 85%).
+function drawStrip() {
+  const box = document.getElementById('strip'), alerts = el('div', 'ud-alerts');
+  box.replaceChildren();
+  const running = [...data.queue].reverse().filter((row) => row.state === 'running');
+  if (!running.length) box.append(el('span', 'ud-muted', 'Nothing running'));
+  for (const row of running) {
+    const { who, text } = queueParts(row), item = el('span');
+    if (who && text.startsWith(who + ' ')) { const b = el('b', null, who); b.style.color = AGENT_COLOR[who] || ''; item.append(b, document.createTextNode(cutSha(text.slice(who.length)))); } else item.textContent = cutSha(text);
+    box.append(item);
   }
+  for (const a of shownAgents()) for (const [w, at, cls] of [['week', 95, 'bad'], ['5h', 85, 'warn']]) {
+    const r = data.limits.find((x) => x.agent === a && x.window === w);
+    if (!r) continue;
+    const [used] = windowReading(a, r);
+    if (used >= at) alerts.append(el('span', 'ud-chip ' + cls, a + ' ' + w + ' ' + used + '%'));
+  }
+  for (const { cls, text } of stripChips(docs, Date.now(), (ms) => HM.format(new Date(ms)))) alerts.append(el('span', 'ud-chip ' + cls, text));
+  box.append(alerts);
 }
 
 function drawChart(hist) {
@@ -256,52 +252,30 @@ function drawTodo(sections) {
 function drawTokenChart() {
   const box = document.getElementById('token-chart'), legend = document.getElementById('token-legend');
   box.replaceChildren(); legend.replaceChildren();
-  const agents = ['Rook', 'Bishop', 'King', 'Knight'];
+  const agents = ['Rook', 'Bishop', 'King', 'Knight'].filter((a) => a !== 'Knight' || knightSeen());
   for (const agent of agents) {
     const item = el('span'), dot = el('i'); dot.style.background = AGENT_COLOR[agent]; item.append(dot, document.createTextNode(agent)); legend.append(item);
   }
   if (!data.tokens.length) { box.append(el('p', 'ud-muted', 'No token data uploaded yet.')); return; }
-  const W = Math.max(260, box.clientWidth), H = 240, left = 38, right = W - 70, bottom = 212;
-  const rows = data.tokens, lastDay = Math.floor((rows.length - 1) / 24);
-  const series = agents.map((agent) => ({ agent, values: cumulativeTokens(rows, agent, resetTimes(agent, data.limits, data.history, rows[0].t, rows.at(-1).t + 3600e3)) }));
-  const max = Math.max(1, ...series.flatMap((line) => line.values));
-  const step = (right - left) / Math.max(1, rows.length - 1);
-  const labelEvery = Math.max(1, Math.ceil(60 / (24 * step)));
-  const y = (value) => bottom - value / max * 190;
-  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-  svg.setAttribute('viewBox', `0 0 ${W} ${H}`); svg.setAttribute('role', 'img');
-  svg.setAttribute('aria-label', 'Tokens used, running total by Rook, Bishop, King and Knight over the last 14 days in IST, back to 0 at each weekly reset; input + output + cache creation; cache reads excluded');
-  box.append(svg);
-  function add(tag, attrs, text, parent = svg) {
-    const node = document.createElementNS(svg.namespaceURI, tag);
-    for (const [key, value] of Object.entries(attrs)) node.setAttribute(key, value);
-    if (text != null) node.textContent = text;
-    parent.append(node); return node;
-  }
+  const days = dailyTokens(data.tokens, agents, 7);
+  const W = Math.max(260, box.clientWidth), H = 150, left = 38, right = W - 4, bottom = 124, plot = 108;
+  const max = Math.max(1, ...days.flatMap((d) => agents.map((a) => d[a])));
+  const group = (right - left) / days.length, bar = Math.min(14, group * .8 / agents.length);
+  const chart = svg('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': 'Tokens per account per day over the last 7 days in IST; input + output + cache creation; cache reads excluded' });
+  box.append(chart);
   for (const fraction of [0, .5, 1]) {
-    const y = bottom - fraction * 190;
-    add('line', { x1: left, x2: right, y1: y, y2: y, stroke: 'var(--cds-chart-grid)' });
-    add('text', { x: left - 5, y: y + 4, 'text-anchor': 'end' }, compact(max * fraction));
+    const y = bottom - fraction * plot;
+    svg('line', { x1: left, x2: right, y1: y, y2: y, stroke: 'var(--cds-chart-grid)' }, chart);
+    svg('text', { x: left - 5, y: y + 4, 'text-anchor': 'end' }, chart, compact(max * fraction));
   }
-  const ends = [];
-  for (const { agent, values } of series) {
-    // A value below the one before is a reset: go straight down at the same x.
-    const points = values.flatMap((value, i) => (i && value < values[i - 1] ? [[i, values[i - 1]]] : []).concat([[i, value]]));
-    add('polyline', { class: 'token-line', points: points.map(([i, value]) => `${left + i * step},${y(value)}`).join(' '), stroke: AGENT_COLOR[agent] });
-    values.forEach((value, i) => {
-      if (i % 24 !== 23 && i !== values.length - 1) return; // one dot per day, with the day's closing total
-      const dot = add('circle', { cx: left + i * step, cy: y(value), r: 2.5, fill: AGENT_COLOR[agent] });
-      add('title', {}, `${chartDate(rows[i].t)} IST · ${agent}: ${value.toLocaleString('en')} tokens, running total`, dot);
+  days.forEach((day, i) => {
+    const x0 = left + i * group + (group - bar * agents.length) / 2;
+    agents.forEach((agent, k) => {
+      const h = day[agent] / max * plot;
+      const rect = svg('rect', { class: 'token-bar', x: x0 + k * bar, y: bottom - h, width: Math.max(1, bar - 1), height: h, rx: 2, fill: AGENT_COLOR[agent] }, chart);
+      svg('title', {}, rect, `${chartDate(day.t)} IST · ${agent}: ${day[agent].toLocaleString('en')} tokens`);
     });
-    ends.push({ agent, value: values.at(-1), y: y(values.at(-1)) });
-  }
-  const endX = left + (rows.length - 1) * step;
-  for (const end of tokenEndLabels(ends, bottom)) {
-    add('line', { x1: endX, y1: y(end.value), x2: endX + 8, y2: end.y, stroke: AGENT_COLOR[end.agent] });
-    add('text', { class: 'token-end', x: endX + 12, y: end.y, 'dominant-baseline': 'middle', style: 'fill:' + AGENT_COLOR[end.agent] }, compact(end.value));
-  }
-  rows.forEach((row, i) => {
-    if (i % 24 === 0 && (lastDay - i / 24) % labelEvery === 0) add('text', { x: left + i * step, y: 234, 'text-anchor': 'middle' }, chartDate(row.t));
+    svg('text', { x: left + (i + .5) * group, y: 142, 'text-anchor': 'middle' }, chart, chartDate(day.t));
   });
 }
 
@@ -337,34 +311,43 @@ function drawTickets() {
   }
 }
 
+// The Queue tab and the Usage page's Work section show the same rows; Work (work = true) puts the account in a chip, always shows all three parts and says why Next is empty.
 function drawQueue() {
-  const box = document.getElementById('queue-list'), time = Date.parse(queueUpdated);
+  const time = Date.parse(queueUpdated);
   document.getElementById('queue-updated').textContent = Number.isFinite(time) ? 'Updated ' + IST.format(new Date(time)) + ' IST' : '';
+  renderQueue(document.getElementById('queue-list'), false);
+  renderQueue(document.getElementById('work-list'), true);
+}
+function renderQueue(box, work) {
   box.replaceChildren();
   const rows = [...data.queue].reverse(), running = (row) => row.state === 'running'; // newest first
-  const part = (name, empty, build, count) => {
+  const part = (name, empty, build, count, tail = '') => {
     if (!count) { box.append(el('p', 'ud-muted', `${name}: ${empty}`)); return; }
-    const card = el('div', 'ud-card'); box.append(el('h3', null, name), card); build(card);
+    const card = el('div', 'ud-card'); box.append(el('h3', null, name + tail), card); build(card);
   };
   const line = (card, text, row) => {
-    const item = el('div', 'queue-row'), head = el('div', 'ud-mrow'); head.append(el('strong', null, text));
-    if (row) head.append(el('span', 'ud-chip ' + (running(row) ? 'warn' : row.state === 'ended' ? 'ok' : 'info'), row.state === 'ended' ? 'done' : row.state));
+    const item = el('div', 'queue-row'), head = el('div', 'ud-mrow'), who = work && row ? queueParts(row).who : '';
+    if (who && text.startsWith(who + ' ')) { const chip = el('span', 'ud-chip', who); chip.style.color = AGENT_COLOR[who] || ''; head.append(chip); text = text.slice(who.length + 1); }
+    head.append(el('strong', null, text));
+    if (row && !work) head.append(el('span', 'ud-chip ' + (running(row) ? 'warn' : row.state === 'ended' ? 'ok' : 'info'), row.state === 'ended' ? 'done' : row.state));
     item.append(head); card.append(item);
   };
-  const now = rows.filter(running), done = rows.filter((row) => !running(row)), next = queueNext.map(String);
-  const nextPart = () => part('Next', 'nothing planned', (card) => next.forEach((id) => line(card, id + todoTitle(id))), next.length);
-  if (!rows.length) { box.append(el('p', 'ud-muted', 'No runs')); if (next.length) nextPart(); return; } // planned work shows when nothing runs
+  const now = rows.filter(running), next = queueNext.map(String);
+  const done = rows.filter((row) => !running(row) && (!work || isTodayIst(row.ended))); // Done today: the row's end time (`ended`) on today's IST date; no `ended`, left out
+  const fold = work ? 'work' : 'queue';
+  const nextPart = () => part('Next', work ? 'nothing planned (no next: line in the queue)' : 'nothing planned', (card) => next.forEach((id) => line(card, id + todoTitle(id))), next.length);
+  if (!rows.length && !work) { box.append(el('p', 'ud-muted', 'No runs')); if (next.length) nextPart(); return; } // planned work shows when nothing runs
   part('Now', 'nothing running', (card) => now.forEach((row) => line(card, queueHeadline(row), row)), now.length);
   nextPart();
-  part('Done', 'nothing yet', (card) => {
-    done.slice(0, showAllDone ? done.length : 5).forEach((row) => line(card, queueHeadline(row), row));
+  part(work ? 'Done today' : 'Done', 'nothing yet', (card) => {
+    done.slice(0, showAllDone[fold] ? done.length : 5).forEach((row) => line(card, queueHeadline(row), row));
     if (done.length > 5) {
-      const more = el('button', null, showAllDone ? 'Show fewer' : `Show ${done.length - 5} more`);
-      more.type = 'button'; more.setAttribute('aria-expanded', showAllDone);
-      more.addEventListener('click', () => { showAllDone = !showAllDone; drawQueue(); });
+      const more = el('button', null, showAllDone[fold] ? 'Show fewer' : `Show ${done.length - 5} more`);
+      more.type = 'button'; more.setAttribute('aria-expanded', showAllDone[fold]);
+      more.addEventListener('click', () => { showAllDone[fold] = !showAllDone[fold]; drawQueue(); });
       card.append(more);
     }
-  }, done.length);
+  }, done.length, work ? ` · ${done.length} ${done.length === 1 ? 'job' : 'jobs'}` : '');
 }
 
 // " · short title" from the TODO row of an item id (number, sub-id like 273a, or letter id like U1d): "U1c: " prefix dropped, 8 words at most; '' when there is no row.
@@ -376,7 +359,9 @@ function todoTitle(base) {
 }
 
 // "Who verb item · short title" from a queue row; every sha is cut to 7 chars.
-function queueHeadline({ kind, id, out, state }) {
+const cutSha = (text) => text.replace(/\b(?=[0-9a-f]*\d)[0-9a-f]{8,}\b/gi, (hex) => hex.slice(0, 7));
+function queueHeadline(row) { const { text, base } = queueParts(row); return cutSha(text + todoTitle(base)); }
+function queueParts({ kind, id, out, state }) {
   const first = id.split(' ')[0], branch = first.match(/^(king|knight)\//);
   const acct = id.match(/\(([A-Za-z]\w*)[,)]/)?.[1] || id.match(/--as (\w+)/)?.[1] || (branch ? branch[1] : kind === 'knight' ? 'knight' : '');
   const who = acct && acct[0].toUpperCase() + acct.slice(1);
@@ -384,7 +369,7 @@ function queueHeadline({ kind, id, out, state }) {
   const name = from.replace(/^(.+?)fix\d*$/, '$1 fix'), base = name.replace(/ fix$/, '');
   const done = state === 'ended', verbs = { build: ['building', 'built'], knight: ['building', 'built'], review: ['checking', 'checked'] }[kind];
   const text = kind === 'suite' ? 'Full tests ' + first : kind === 'fresh' ? 'Grill check ' + name : [who, verbs ? verbs[+done] : kind, name].filter(Boolean).join(' ');
-  return (text + todoTitle(base)).replace(/\b(?=[0-9a-f]*\d)[0-9a-f]{8,}\b/gi, (hex) => hex.slice(0, 7));
+  return { who, text, base };
 }
 
 // The "Latest exe" card from the `release` doc (`gh release view --json tagName,publishedAt,body`); no doc or no tag hides it. The body's first line is the build note, the rest lists what the exe added.
@@ -404,8 +389,7 @@ function drawRelease(value) {
 function draw() {
   const times = data.limits.map((r) => Date.parse(r.as_of)).filter(Number.isFinite);
   document.getElementById('asof').textContent = times.length ? IST.format(new Date(Math.max(...times))) + ' IST' : '\u2014';
-  const pace = paceRows();
-  drawAgents(data.limits, pace); drawTake(data.limits, pace); drawChart(data.history); drawTokenChart();
+  drawAgents(data.limits); drawStrip(); drawChart(data.history); drawTokenChart();
   drawRuns(data.runs); drawNotes(data.analysis);
   const groups = new Map();
   for (const r of data.runs) {
@@ -455,6 +439,7 @@ function showStatus() {
   else if (pending?.requestedAt != null && errorAt > pending.requestedAt) finishUpdate('');
 }
 setInterval(showStatus, 10_000);
+setInterval(drawStrip, 60_000); // a break chip ends on its own
 
 if (Object.values(firebaseConfig).some((v) => v.includes('<'))) {
   message.textContent = 'Setup needed: fill the placeholders in firebase-config.js.';
@@ -485,12 +470,12 @@ if (Object.values(firebaseConfig).some((v) => v.includes('<'))) {
   getRedirectResult(auth).catch(report);
   onAuthStateChanged(auth, (user) => {
     stopListening(); allowed = false; currentStatus = {};
-    data = { limits: [], history: [], runs: [], analysis: [], tickets: [], tokens: [], queue: [] }; queueUpdated = ''; queueNext = [];
+    data = { limits: [], history: [], runs: [], analysis: [], tickets: [], tokens: [], queue: [] }; queueUpdated = ''; queueNext = []; docs = {};
     drawTodo([]); drawTickets(); drawQueue(); drawRookStuck(); drawRelease();
     draw(); finishUpdate(user ? 'Loading…' : 'Sign in to see usage.');
     dashboard.hidden = pageTabs.hidden = true; signin.hidden = !!user; signout.hidden = !user; showStatus();
     if (!user) return;
-    for (const name of ['limits', 'history', 'runs', 'analysis', 'todo', 'tickets', 'queue', 'tokens', 'rook', 'release', 'status']) {
+    for (const name of ['limits', 'history', 'runs', 'analysis', 'todo', 'tickets', 'queue', 'tokens', 'rook', 'release', 'breaks', 'forhim', 'ci', 'status']) {
       subscriptions.push(onSnapshot(doc(db, 'usage', name), { includeMetadataChanges: true }, (snapshot) => {
         if (snapshot.metadata.fromCache) return;
         allowed = true; dashboard.hidden = pageTabs.hidden = false;
@@ -501,6 +486,7 @@ if (Object.values(firebaseConfig).some((v) => v.includes('<'))) {
         else if (name === 'todo') drawTodo(value.sections || []);
         else if (name === 'rook') drawRookStuck(value);
         else if (name === 'release') drawRelease(value);
+        else if (['breaks', 'forhim', 'ci'].includes(name)) docs[name] = value;
         else data[name] = (value[name === 'analysis' ? 'items' : 'rows'] || []).map((r) => (r.agent === 'Pip' ? { ...r, agent: 'Bishop' } : r)); // rows uploaded before the rename
         if (name === 'tickets') drawTickets();
         if (name === 'queue') { queueUpdated = value.updated || ''; queueNext = Array.isArray(value.next) ? value.next : []; }

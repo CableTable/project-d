@@ -46,6 +46,7 @@ test('TODO 281: cp resolves in every tab and leaves P as Polyline', () => {
     const cmd = CB.resolve('cp', tab);
     assert.equal(cmd?.name, 'centreonpage'); assert.equal(cmd.where, ''); assert.equal(cmd.key, '');
     assert.equal(CB.resolve('p', tab).name, 'polyline');
+    assert.equal(CB.resolve('pen', tab).name, 'pen');
   }
 });
 

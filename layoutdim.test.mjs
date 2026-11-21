@@ -5,7 +5,7 @@ import { readDxf } from './web/drawing.js';
 import { writeDxf } from './web/dxf-write.js';
 import * as LD from './web/layoutdoc.js';
 import * as Ed from './web/edit.js';
-import { isDimPart, dimName, turnedTag, freeBlockName } from './web/layoutdim.js';
+import { isDimPart, dimName, dimNoun, turnedTag, freeBlockName } from './web/layoutdim.js';
 import { trimEntity } from './web/modify.js';
 
 let n = 0;
@@ -443,6 +443,142 @@ test('explodeDims: a copy sharing the part keeps its dimension', () => {
   lay.placed.push({ ...p });
   assert.equal(LD.explodeDims(lay, [0], newId), 1);
   assert.ok(isDimPart(lay.parts[lay.placed.at(-1).partId]));
+});
+
+// ---- TODO 156e1: a leader on a layout is a layout object, kept like a dimension ----
+import * as LR from './web/leader.js';
+function addLeader(lay, id, pts, name = 'PD_LDR_1', textH = 3.5, arrow = 2.5) {
+  const b = LR.build({ pts, lines: ['DEBURR'], textH, arrow }, name);
+  const part = LD.objectPart(id, id, b.insert, LD.layersOf(lay), {}, { [name]: b.block });
+  lay.parts[id] = part; lay.placed.push(LD.objectPlacement(part));
+  return lay.placed.at(-1);
+}
+const ldrOf = (lay, p) => { const part = lay.parts[p.partId]; return LR.read(dimName(part), part.raw.blocks[dimName(part)]); };
+
+test('a leader object is a dimension-like part; saves in the layout file and reopens as an object with the same points and note', () => {
+  const lay = layoutWith(), p = addLeader(lay, 'k1', [[10, 10], [40, 40], [70, 40]]);
+  assert.ok(isDimPart(lay.parts[p.partId]));
+  const raw = LD.layoutRaw(lay), text = writeDxf(raw), back = LD.layoutFromRaw(readDxf(text), 'L');
+  assert.ok(raw.blocks.PD_LDR_1, 'the block is in the file');
+  const objs = Object.values(back.parts).filter((q) => q.obj);
+  assert.equal(objs.length, 1);
+  assert.ok(isDimPart(objs[0]));
+  const r = ldrOf(back, back.placed[0]);
+  assert.deepEqual({ ...r, arrow: 0 }, { pts: [[10, 10], [40, 40], [70, 40]], lines: ['DEBURR'], textH: 3.5, arrow: 0 });
+  near(r.arrow, 2.5, 1e-4);
+});
+
+test('Move bakes into the leader points (name and note stay); Scale scales the note height and arrow; Mirror keeps the note upright beside the last point', () => {
+  const lay = layoutWith(), p = addLeader(lay, 'k1', [[0, 0], [30, 30], [60, 30]]);
+  p.x += 10; p.y += 20;
+  assert.equal(LD.settleDims(lay, newId), true);
+  assert.equal(dimName(lay.parts[p.partId]), 'PD_LDR_1');
+  assert.deepEqual(ldrOf(lay, p).pts, [[10, 20], [40, 50], [70, 50]]);
+  assert.equal(ldrOf(lay, p).lines[0], 'DEBURR');
+  p.sc = 2; LD.settleDims(lay, newId);
+  const s = ldrOf(lay, p);
+  near(s.textH, 7); near(s.arrow, 5);
+  assert.equal(p.sc, undefined);
+  p.mirrorX = true; LD.settleDims(lay, newId);
+  const m = ldrOf(lay, p), part = lay.parts[p.partId], tx = part.raw.blocks[dimName(part)].entities.find((e) => e.type === 'TEXT');
+  assert.ok(m.pts[2][0] < m.pts[1][0], 'the last segment now runs left');
+  assert.equal(m.lines[0], 'DEBURR');
+  assert.ok(!tx.r.c.includes(50) || Math.abs(+tx.r.v[tx.r.c.indexOf(50)]) < 1e-9, 'the note is not turned');
+});
+
+test('Rotate 90 / 180 and Mirror Y bake into the leader points; the note stays upright and keeps its words', () => {
+  const pts = [[0, 0], [30, 30], [60, 30]];
+  for (const [label, set, want] of [
+    ['rotate 90', (p) => { p.rot = 90; }, [[0, 0], [-30, 30], [-30, 60]]],
+    ['rotate 180', (p) => { p.rot = 180; }, [[0, 0], [-30, -30], [-60, -30]]],
+    ['mirror Y', (p) => { p.mirrorY = true; }, [[0, 0], [30, -30], [60, -30]]],
+  ]) {
+    const lay = layoutWith(), p = addLeader(lay, 'k1', pts);
+    set(p); assert.equal(LD.settleDims(lay, newId), true, label);
+    const r = ldrOf(lay, p), part = lay.parts[p.partId], tx = part.raw.blocks[dimName(part)].entities.find((e) => e.type === 'TEXT');
+    r.pts.forEach(([x, y], k) => { near(x, want[k][0], 1e-4); near(y, want[k][1], 1e-4); });
+    assert.deepEqual(r.lines, ['DEBURR'], label);
+    near(r.textH, 3.5, 1e-6);
+    assert.ok(!tx.r.c.includes(50) || Math.abs(+tx.r.v[tx.r.c.indexOf(50)]) < 1e-9, label + ': the note is not turned');
+    assert.equal(dimName(part), 'PD_LDR_1', label);
+  }
+});
+
+test('settleDims gives a leader whose block name another object has a free PD_LDR_ name', () => {
+  const lay = layoutWith();
+  addLeader(lay, 'k1', [[0, 0], [30, 30], [60, 30]]);
+  const q = addLeader(lay, 'k2', [[0, 100], [30, 130], [60, 130]]);       // same block name: a leader pasted from another layout
+  assert.equal(LD.settleDims(lay, newId), true);
+  assert.match(dimName(lay.parts[q.partId]), /^PD_LDR_\d+$/);
+  assert.notEqual(dimName(lay.parts[q.partId]), 'PD_LDR_1');
+  assert.deepEqual(ldrOf(lay, q).pts, [[0, 100], [30, 130], [60, 130]]);
+});
+
+test('explodeDims: a leader becomes its lines, arrowhead and note as objects; no leader part is left', () => {
+  const lay = layoutWith();
+  addLine(lay, 'l1', [0, 0], [10, 0]);
+  addLeader(lay, 'k1', [[0, 0], [30, 30], [60, 30]]);
+  assert.equal(dimNoun([lay.parts.k1]), 'leader'); assert.equal(dimNoun([lay.parts.k1, lay.parts.l1]), 'dimension', 'a mix is called dimensions');
+  assert.equal(LD.explodeDims(lay, [1], newId), 1);
+  const kinds = lay.placed.map((q) => lay.parts[q.partId].raw.entities[0].type);
+  assert.deepEqual(kinds, ['LINE', 'LINE', 'LINE', 'SOLID', 'TEXT']);
+  assert.ok(Object.values(lay.parts).every((part) => !isDimPart(part)));
+});
+
+// ---- TODO 156e1c: a grip mode (gripmode.js) on a layout's selected dimension or leader: its block and INSERT, then the placement (insertPlacement), then settleDims ----
+import * as GM from './web/gripmode.js';
+import { insertPlacement } from './web/layoutdim.js';
+/** What app.js layDimModeCommit does with a grip mode's result, on a layout holding only that dimension / leader. */
+function gripMode(lay, p, mode, base, v) {
+  const part = lay.parts[p.partId], res = GM.apply(part.raw, new Set([0]), mode, base, v), ins = res.entities[0], old = part.raw.entities[0];
+  const name = String(ins.r.v[ins.r.c.indexOf(2)]).trim(), same = { ...old, r: { ...old.r, v: old.r.v.map((x, k) => (old.r.c[k] === 2 ? name : x)) } };
+  assert.ok(LD.replaceDim(lay, p, same, { [name]: res.blocks[name] }, newId, new Set(Object.values(lay.parts).map((q) => q.name))));
+  Object.assign(p, insertPlacement(lay.parts[p.partId], ins));
+  LD.settleDims(lay, newId);
+  assert.ok(isDimPart(lay.parts[p.partId]));
+  const q = lay.parts[p.partId];
+  assert.ok(!p.rot && (p.sc || 1) === 1 && !p.mirrorX && !p.mirrorY && Math.abs(p.x - q.box[0]) < 1e-9, 'settled again: the placement is the identity');
+  return q;
+}
+const same = (pts, want, label) => pts.forEach(([x, y], k) => { near(x, want[k][0], 1e-4); near(y, want[k][1], 1e-4); });
+
+test('grip modes on a leader: Move, Rotate, Scale and Mirror about a base leave it settled, at the new place, note kept', () => {
+  const pts = [[0, 0], [30, 30], [60, 30]];
+  for (const [mode, base, v, want] of [
+    ['MOVE', [0, 0], [10, 20], [[10, 20], [40, 50], [70, 50]]],
+    ['ROTATE', [0, 0], 90, [[0, 0], [-30, 30], [-30, 60]]],
+    ['ROTATE', [30, 30], 90, [[60, 0], [30, 30], [30, 60]]],
+    ['SCALE', [0, 0], 2, [[0, 0], [60, 60], [120, 60]]],
+    ['MIRROR', [0, 0], [0, 1], [[0, 0], [-30, 30], [-60, 30]]],
+  ]) {
+    const lay = layoutWith(), p = addLeader(lay, 'k1', pts);
+    gripMode(lay, p, mode, base, v);
+    same(ldrOf(lay, p).pts, want, mode);
+    assert.deepEqual(ldrOf(lay, p).lines, ['DEBURR'], mode);
+  }
+  const lay = layoutWith(), p = addLeader(lay, 'k1', pts);
+  gripMode(lay, p, 'SCALE', [0, 0], 2);
+  near(ldrOf(lay, p).textH, 7); near(ldrOf(lay, p).arrow, 5);
+});
+
+test('grip modes on a linear dimension: Move, Rotate 90 (H becomes V), Scale (new label), Mirror (label kept) leave it settled', () => {
+  const make = () => { const lay = layoutWith(); return [lay, addDim(lay, 'd1', [0, 0], [100, 0], 10, 'PD_DIM_H1', 'linear', 'h')]; };
+  let [lay, p] = make();
+  gripMode(lay, p, 'MOVE', [0, 0], [50, 20]);
+  same([dimOf(lay, p).params.a, dimOf(lay, p).params.b], [[50, 20], [150, 20]]);
+  assert.equal(labelOf(lay, p), '100.00');
+  [lay, p] = make();
+  gripMode(lay, p, 'ROTATE', [0, 0], 90);
+  assert.match(dimName(lay.parts[p.partId]), /^PD_DIM_V\d+$/);
+  same([dimOf(lay, p).params.a, dimOf(lay, p).params.b], [[0, 0], [0, 100]]);
+  [lay, p] = make();
+  gripMode(lay, p, 'SCALE', [0, 0], 2);
+  assert.equal(labelOf(lay, p), '200.00');
+  same([dimOf(lay, p).params.a, dimOf(lay, p).params.b], [[0, 0], [200, 0]]);
+  [lay, p] = make();
+  gripMode(lay, p, 'MIRROR', [50, 0], [50, 1]);
+  assert.equal(labelOf(lay, p), '100.00');
+  assert.deepEqual([dimOf(lay, p).params.a[0], dimOf(lay, p).params.b[0]].sort((x, y) => x - y).map(Math.round), [0, 100]);
 });
 
 console.log(n + ' tests');

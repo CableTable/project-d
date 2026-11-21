@@ -12,8 +12,11 @@
 //   outlineItem(it, entity)          → the item with its original MTEXT runs and wrap width
 //   mtextLayout(it, fontOf)          → lines of positioned runs, in the text's own frame (y up)
 //   outlineEntities(items, raw, fontOf, tol) → { ents, texts, done, missing, notes } LWPOLYLINEs on the text's layer / colour / line style
+//   outlineDoc(raw, items, fontOf, tol, skip) → { raw (a copy with the top-level texts as outlines), texts, failed, blockText, missing, notes } (Export DXF's Curves)
 import { CAP, plainText } from './drawing.js';
 import { lwpoly } from './dxf-write.js';
+import { removeEntities } from './edit.js';
+import { swap } from './groups.js';
 
 export { fontFiles } from './fontsub.js';
 
@@ -217,3 +220,19 @@ export function outlineEntities(items, raw, fontOf, tol) {
   }
   return { ents, texts: done.size, done, from, missing: [...missing], notes: [...notes] };
 }
+
+/**
+ * Export DXF's Text: Curves (TODO 109b): a copy of `raw` whose top-level TEXT / MTEXT (on a layer not in `skip`, lower case) are outlines; `raw` itself
+ * is not touched. Text in blocks, ATTRIB and ATTDEF stay text. items: flatten(raw).items; fontOf(it) → the font, or falsy when it could not load (that text stays text).
+ * → { raw, texts, failed (texts left as text for want of a font), blockText (text items inside blocks or attributes), missing, notes }
+ */
+export function outlineDoc(raw, items, fontOf, tol, skip = new Set()) {
+  const kept = items.filter((it) => it.k === 't' && raw.entities[it.e] && !skip.has(String(raw.entities[it.e].layer ?? '0').toLowerCase()));
+  const top = (it) => isText(raw.entities[it.e]);
+  const mine = kept.filter(top).map((it) => outlineItem(it, raw.entities[it.e]));
+  const ready = mine.filter((it) => (it.runs || [it]).every((run) => fontOf({ ...it, ...run })));
+  const r = outlineEntities(ready, raw.entities, fontOf, tol), rest = removeEntities(raw, r.done);
+  return { raw: { ...raw, entities: [...rest.entities, ...r.ents], blocks: rest.blocks, groups: swap(raw.groups, raw.entities.length, r.from) },
+    texts: r.texts, failed: mine.length - ready.length, blockText: kept.length - mine.length, missing: r.missing, notes: r.notes };
+}
+const isText = (e) => e.type === 'TEXT' || e.type === 'MTEXT';

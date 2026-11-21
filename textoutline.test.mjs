@@ -318,4 +318,20 @@ test('MTEXT preserves entity colour and layer, names simplifications and missing
   assert.deepEqual(empty.missing, ['🦄']); assert.equal(empty.done.size, 0); assert.equal(empty.ents.length, 0);
 });
 
+test('TODO 109b outlineDoc: top-level texts become outlines on a copy; block text stays; a skipped layer and a missing font leave text', () => {
+  const d = newDoc(4);
+  d.blocks.B = { base: [0, 0], xref: false, entities: [TX.encode(model({ lines: ['in block'] }), { layer: '0' })] };
+  addEntities(d, [TX.encode(model({ lines: ['A'] }), { layer: 'Notes' }), TX.encode(model({ lines: ['B'], font: 'Arial' }), { layer: 'Skip' }), TX.encode(model({ lines: ['C'], font: 'Mono' }), { layer: 'Notes' }), entity('INSERT', [[2, 'B'], [10, 0], [20, 0], [30, 0]], { layer: 'Notes' })]);
+  d.groups = [{ members: [0, 3] }];
+  const raw = readDxf(writeDxf(d)), before = structuredClone(raw), items = flatten(raw).items.filter((it) => it.k === 't');
+  const r = TO.outlineDoc(raw, items, (it) => it.lines[0] === 'C' ? null : font, 0.01, new Set(['skip']));
+  assert.deepEqual(structuredClone(raw), before, 'the drawing it was given is not touched');
+  assert.equal(r.texts, 1); assert.equal(r.failed, 1, 'the Mono text has no font: it stays text'); assert.equal(r.blockText, 1, 'the text inside the block');
+  const types = r.raw.entities.map((e) => e.type + ':' + e.layer);
+  assert.deepEqual(types.filter((t) => t.startsWith('TEXT')), ['TEXT:Skip', 'TEXT:Notes']);
+  assert.equal(types.filter((t) => t === 'LWPOLYLINE:Notes').length, 2, 'A: ring and counter');
+  assert.equal(r.raw.blocks.B.entities.length, 1); assert.equal(r.raw.blocks.B.entities[0].type, 'TEXT');
+  assert.deepEqual(r.raw.groups.map((g) => g.members.map((i) => r.raw.entities[i].type).sort()), [['INSERT', 'LWPOLYLINE', 'LWPOLYLINE']], 'the group follows its INSERT and the letters that replaced its text');
+});
+
 console.log(n + ' tests');

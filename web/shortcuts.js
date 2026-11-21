@@ -13,6 +13,7 @@ export const RESERVED = {
   F2: 'Reserved for command history.', F10: 'Reserved for polar tracking.', F11: 'Reserved for object snap tracking.',
   F3: 'Reserved for Snap.', F7: 'Reserved for Grid.', F8: 'Reserved for Ortho.', F9: 'Reserved for Wireframe.', F12: 'Reserved for Dynamic input.',
   F5: 'Reserved for the desktop reload guard.', 'Ctrl+R': 'Reserved for the desktop reload guard.',
+  'Alt+Z': 'Reserved for Snap on / off.', 'Alt+Tab': 'Reserved: Windows switches windows with Alt+Tab.',
 };
 export const aliases = (text) => [...new Set(String(text).toLowerCase().split(',').map((x) => x.trim()).filter(Boolean))];
 
@@ -48,15 +49,22 @@ export function keyReason(key) {
   return '';
 }
 
+/** Extra keys: a list of normalised key strings, no blanks, no repeats (a malformed one is kept as typed so clashes() can name it). */
+const extraKeys = (list) => [...new Set((Array.isArray(list) ? list : []).filter((x) => typeof x === 'string').map((x) => normalizeKey(x) ?? x).filter(Boolean))];
+const OLD_OWN_KEYS = ['Ctrl+C', 'Ctrl+V', 'Ctrl+Shift+V', 'F3', 'F7', 'F8', 'F9', 'F12'];
+
 /** Apply only known, well-formed fields; callers check clashes before using loaded or imported bindings. */
 export function bindings(overrides = {}) {
   const bound = Object.fromEntries(COMMANDS.map((c) => {
     const o = Object.hasOwn(overrides || {}, c.name) ? overrides[c.name] : null;
     return [c.name, { alias: Array.isArray(o?.alias) && o.alias.every((a) => typeof a === 'string') ? aliases(o.alias.join(',')) : [...c.alias],
-      key: typeof o?.key === 'string' && !fixedKey(c.name) ? normalizeKey(o.key) ?? o.key : c.key }];
+      key: typeof o?.key === 'string' && !fixedKey(c.name) ? normalizeKey(o.key) ?? o.key : c.key, extra: extraKeys(o?.extra) }];
   }));
   // Discard older own keys now owned by the clipboard or fixed view toggles.
-  for (const c of COMMANDS) if (bound[c.name].key !== c.key && ['Ctrl+C', 'Ctrl+V', 'Ctrl+Shift+V', 'F3', 'F7', 'F8', 'F9', 'F12'].includes(bound[c.name].key)) bound[c.name].key = '';
+  for (const c of COMMANDS) {
+    if (bound[c.name].key !== c.key && OLD_OWN_KEYS.includes(bound[c.name].key)) bound[c.name].key = '';
+    bound[c.name].extra = bound[c.name].extra.filter((k) => !OLD_OWN_KEYS.includes(k));
+  }
   // Existing own keys win over the newly added tab defaults on upgrade.
   for (const name of ['closetab', 'nexttab', 'previoustab', 'combine']) {
     if (!Object.hasOwn(overrides?.[name] || {}, 'key') && COMMANDS.some((c) => c.name !== name && typeof overrides?.[c.name]?.key === 'string' && bound[c.name].key === bound[name].key)) bound[name].key = '';
@@ -68,6 +76,7 @@ export function differences(draft) {
     const b = draft[c.name], o = {};
     if (b.alias.join(',') !== c.alias.join(',')) o.alias = b.alias;
     if (b.key !== c.key) o.key = b.key;
+    if (b.extra.length) o.extra = b.extra;
     return Object.keys(o).length ? [[c.name, o]] : [];
   }));
 }
@@ -84,7 +93,14 @@ export function clashes(draft) {
       if (owner) out.push({ name: c.name, field: 'alias', value: a, reason: `Command name ${owner.name} cannot be reassigned.` });
     }
     if (b.key && b.key !== c.key && keyReason(b.key)) out.push({ name: c.name, field: 'key', value: b.key, reason: keyReason(b.key) });
+    b.extra.forEach((k, n) => {
+      if (keyReason(k)) out.push({ name: c.name, field: 'extra', value: k, reason: keyReason(k) });
+      else if (k === b.key || b.extra.indexOf(k) !== n) out.push({ name: c.name, field: 'extra', value: k, reason: `${k} is already a key of this command.` });
+    });
     for (const d of COMMANDS.slice(i + 1)) {
+      // An extra key that another command already uses: the extra's owner is named, so its Remove button clears it.
+      for (const k of b.extra) if (!keyReason(k) && (draft[d.name].key === k || draft[d.name].extra.includes(k))) out.push({ name: c.name, other: d.name, field: 'extra', value: k });
+      for (const k of draft[d.name].extra) if (!keyReason(k) && b.key === k) out.push({ name: d.name, other: c.name, field: 'extra', value: k });
       for (const a of b.alias.filter((a) => draft[d.name].alias.includes(a))) {
         const cw = aliasScope(c, a), dw = aliasScope(d, a);
         if (!cw || !dw || cw === dw) out.push({ name: c.name, other: d.name, field: 'alias', value: a });
@@ -97,7 +113,7 @@ export function clashes(draft) {
 
 /** First alias line for a command replaces its list. Unmentioned commands keep the supplied draft. */
 export function parsePgp(text, current = bindings()) {
-  const draft = bindings(current), seen = new Set();
+  const draft = bindings(current), seen = new Set(), seenKey = new Set();
   let skipped = 0;
   for (const raw of String(text).split(/\r?\n/)) {
     const line = raw.trim();
@@ -105,7 +121,11 @@ export function parsePgp(text, current = bindings()) {
     const keyLine = /^;KEY\s+([^,]+),\s*(.*)$/i.exec(line), aliasLine = /^([^,]+),\s*\*([a-z0-9]+)\s*$/i.exec(line);
     const name = (keyLine ? keyLine[1].trim() : aliasLine ? aliasLine[2] : '').toLowerCase();
     if (!Object.hasOwn(draft, name)) { skipped++; continue; }
-    if (keyLine) {
+    if (keyLine && seenKey.has(name)) {       // a repeated ;KEY line is an extra key
+      const key = normalizeKey(keyLine[2]);
+      if (!key || draft[name].extra.includes(key)) skipped++; else draft[name].extra.push(key);
+    } else if (keyLine) {
+      seenKey.add(name); draft[name].extra = [];       // a file's keys replace the command's extra list
       const key = normalizeKey(keyLine[2]);
       if (keyLine[2] === current[name].key || keyLine[2] === COMMANDS.find((c) => c.name === name).key) draft[name].key = keyLine[2];
       else if (key == null || (fixedKey(name) && key !== draft[name].key)) skipped++;
@@ -124,7 +144,7 @@ export function parsePgp(text, current = bindings()) {
 export function writePgp(draft) {
   return '; Project D shortcuts: aliases + keys\r\n' + COMMANDS.map((c) => {
     const b = draft[c.name];
-    return [...(b.alias.length ? b.alias : [c.name]).map((a) => `${a.toUpperCase()},        *${c.name.toUpperCase()}`), `;KEY ${c.name.toUpperCase()}, ${b.key}`].join('\r\n');
+    return [...(b.alias.length ? b.alias : [c.name]).map((a) => `${a.toUpperCase()},        *${c.name.toUpperCase()}`), ...[b.key, ...b.extra].map((k) => `;KEY ${c.name.toUpperCase()}, ${k}`)].join('\r\n');
   }).join('\r\n') + '\r\n';
 }
 

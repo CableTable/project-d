@@ -22,11 +22,13 @@ import { rotateAbout } from './web/place.js';
 import { curveShape } from './web/extend.js';
 import { closest, pathOf } from './web/modify.js';
 import { svgPath } from './web/draw.js';
+import { bezierOf, nodeType } from './web/shape.js';
 import { COMMANDS, placeBar } from './web/cmdbar.js';
 import { SNAP_NAME } from './web/snap.js';
 import { Page, writePdf, winAnsi } from './web/pdf-write.js';
 import { tileGrid, PAPERS as PDF_PAPERS } from './web/pdf-export.js';
 import { bigDoc } from './tools/gen-big-dxf.mjs';
+import { makeTiff } from './tools/make-tiff-fixture.mjs';
 import { fillHatch, hatchKey } from './web/fill.js';
 
 // WCAG relative luminance; opacity composites drawing feedback onto its background.
@@ -4753,8 +4755,8 @@ try {
   await step('layout: menu bar, rail tools in order, layers', async () => {
     assert.deepEqual(await page.locator('.menubar .menu').allTextContents(), ['File', 'Edit', 'View', 'Draw', 'Modify', 'Arrange', 'Format', 'Layout', 'Tools', 'Help']);
     const labels = await page.locator('nav[aria-label=Tools] button').evaluateAll((b) => b.map((x) => x.getAttribute('aria-label')));
-    assert.equal(labels.length, 21); assert.equal(labels[0], 'Select'); assert.equal(labels.at(-1), 'Measure');
-    assert.equal(labels[labels.indexOf('Offset') - 1], 'Move');
+    assert.equal(labels.length, 23); assert.equal(labels[labels.indexOf('Polyline') + 1], 'Pen'); assert.ok(labels.includes('Shape')); assert.equal(labels[0], 'Select'); assert.equal(labels.at(-1), 'Measure');
+    assert.equal(labels[labels.indexOf('Offset') - 1], 'Shape');
     assert.deepEqual(await page.locator('.layer .nm').allTextContents(), ['Parts', 'Marks', 'Dimensions']);
   }, { needs: ['a DXF opens on a drawing tab (no sheet); Add to layout makes a layout tab and the part fills Step and repeat'] });
 
@@ -8611,6 +8613,48 @@ try {
     } finally { await context.close(); }
   });
 
+  await step('TODO 138: a two-page TIFF background: side by side (width = page 1 + 10 mm + page 2), Trace bitmap opens on it; a dropped .tif opens as a background tab', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    try {
+      const p = await context.newPage(), q = (id) => p.getByTestId(id), prompt = (text) => p.waitForFunction((s) => document.querySelector('[data-testid=cmd-prompt]').textContent.includes(s), text);
+      await p.goto(URL_ + '?autosave=86400000'); await q('picker').waitFor({ state: 'attached' });
+      assert.match(await q('bg-picker').getAttribute('accept'), /\.tif,\.tiff$/);
+      assert.match(await q('picker').getAttribute('accept'), /\.tif,\.tiff$/);
+      await q('bg-picker').setInputFiles('fixtures/two-pages-lzw.tif');   // page 1: 300 × 150 px at 150 dpi, page 2: 200 × 200 px at 100 dpi (both 2 in wide)
+      await prompt('2 pages side by side, true size from the TIFF');
+      const bgName = (name) => p.waitForFunction((s) => document.querySelector('[data-testid=bg-name]')?.textContent === s, name);
+      await bgName('two-pages-lzw.tif');
+      const size = async () => [Number(await q('dw').inputValue()), Number(await q('dh').inputValue())];
+      const [w, h] = await size();
+      assert.ok(Math.abs(w - (50.8 + 10 + 50.8)) < 0.5 && Math.abs(h - 50.8) < 0.5, `picture ${w} × ${h} mm, want 111.6 × 50.8`);
+      await p.locator('[data-menu=File]').click(); await p.getByRole('menuitem', { name: 'Trace bitmap…', exact: true }).click();
+      await q('trace-dialog').waitFor();
+      await p.waitForFunction(() => document.querySelector('[data-testid=trace-dialog]').dataset.state === 'ready', null, { timeout: 60000 });
+      assert.ok(Number(await q('trace-dialog').getAttribute('data-count')) >= 2, 'the frame and the checks of the pages are outlines');
+      await q('trace-cancel').click();
+      const drop = (name, bytes) => p.evaluate(([name, bytes]) => {
+        const dt = new DataTransfer(); dt.items.add(new File([Uint8Array.from(bytes)], name));
+        document.querySelector('[data-testid=canvas]').dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt }));
+      }, [name, [...bytes]]);
+      const tabs = await p.locator('.dtab').count(), refused = { w: 4, h: 2, pixel: () => 9, compression: 34712 };
+      await drop('none.tif', makeTiff([refused, refused]));
+      await prompt('none.tif: could not read this TIFF (compression 34712 not supported)');
+      assert.equal(await p.locator('.dtab').count(), tabs, 'no readable page: nothing opens');
+      await drop('half.tiff', makeTiff([refused, { w: 96, h: 96, pixel: () => 0 }]));
+      await prompt('Background half.tiff: 96 × 96 px, page 2 of 2, shown at 96 dpi where the TIFF gives none; skipped page 1 (compression 34712 not supported)');
+      await drop('scan.tif', readFileSync('fixtures/g4-no-dpi.tif'));
+      await prompt('Background scan.tif: 96 × 48 px, page 1 of 1, shown at 96 dpi');
+      assert.equal(await p.locator('.dtab').count(), tabs + 2, 'a dropped TIFF gets a tab of its own');
+      const [w2, h2] = await size();
+      assert.ok(Math.abs(w2 - 25.4) < 0.3 && Math.abs(h2 - 12.7) < 0.3, `G4 page ${w2} × ${h2} mm, want 25.4 × 12.7 (96 dpi)`);
+      const tab = (name) => p.locator('.tabs .dtab').filter({ hasText: name }).click();
+      await tab('two-pages-lzw.tif');
+      await bgName('two-pages-lzw.tif');
+      await tab('scan.tif');
+      await bgName('scan.tif');   // the TIFF tab keeps its background over a tab switch
+    } finally { await context.close(); }
+  });
+
   await step('TODO 309: picker batches reuse Editable and Esc; picture-only PDFs still ask', async () => {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     try {
@@ -10094,6 +10138,7 @@ try {
   });
 
   await step('review: the smallest window (1024 × 700): every tool is reachable without scrolling, on a drawing and on a layout', async () => {
+    if (only) { await t('picker').setInputFiles('fixtures/outline.dxf'); await waitTab(page, 'outline.dxf'); await pdfLayout(); }
     await page.setViewportSize({ width: 1024, height: 700 });
     await page.waitForTimeout(250);
     const rail = async () => page.locator('nav.rail').evaluate((n) => {
@@ -10101,11 +10146,20 @@ try {
       return { scrolls: n.scrollHeight > n.clientHeight + 1, all: bs.every((b) => b.top >= r.top - 0.5 && b.bottom <= r.bottom + 0.5 && b.left >= r.left - 0.5 && b.right <= r.right + 0.5), n: bs.length };
     });
     const lay = await rail();
-    assert.deepEqual([lay.scrolls, lay.all, lay.n], [false, true, 21], 'layout: ' + JSON.stringify(lay));
+    assert.deepEqual([lay.scrolls, lay.all, lay.n], [false, true, 23], 'layout: ' + JSON.stringify(lay));
     await shotBoth('small-layout');
     await drawingTab().click(); await click(50, 0);
     const dr = await rail();
-    assert.deepEqual([dr.scrolls, dr.all, dr.n], [false, true, 21], 'drawing: ' + JSON.stringify(dr));
+    assert.deepEqual([dr.scrolls, dr.all, dr.n], [false, true, 23], 'drawing: ' + JSON.stringify(dr));
+    const cut = await page.evaluate(() => [...document.querySelectorAll('.ribbon-group')].filter((g) => ['Modify', 'Copy'].includes(g.dataset.panel) && g.offsetWidth).map((g) => ({ g: g.dataset.panel, right: Math.round(g.getBoundingClientRect().right), over: g.scrollWidth - g.clientWidth })).filter((x) => x.right > innerWidth || x.over > 1));
+    assert.deepEqual(cut, [], 'no ribbon group is cut off at 1024 px');
+    const edges = await page.evaluate(() => [...document.querySelectorAll('.ribbon-group')].filter((g) => ['Modify', 'Copy'].includes(g.dataset.panel) && g.offsetWidth).map((g) => g.dataset.panel + ' right ' + Math.round(g.getBoundingClientRect().right) + ' of ' + innerWidth));
+    console.log('ribbon edges', edges.join('; '));
+    // slack: room left beside the label in each fixed-width (big) tool box; small tools grow with their label (scrollWidth never drops below clientWidth, so it can't show this)
+    const slack = await page.evaluate(() => [...document.querySelectorAll('.ribbon-group')].filter((g) => ['Modify', 'Copy'].includes(g.dataset.panel) && g.offsetWidth).map((g) => g.dataset.panel + ' slack ' + [...g.querySelectorAll('.ribbon-big')].map((b) => { const s = getComputedStyle(b); return Math.round(b.clientWidth - parseFloat(s.paddingLeft) - parseFloat(s.paddingRight) - b.querySelector('span').getBoundingClientRect().width); }).join('/')));
+    console.log('ribbon slack', slack.join('; '));
+    // off Linux only: it predicts CI's wider Linux fonts; on Linux the fonts already are the wide ones and the cut-off check above is the proof
+    if (process.platform !== 'linux') assert.ok(await page.evaluate(() => [...document.querySelectorAll('.ribbon-group')].filter((g) => ['Modify', 'Copy'].includes(g.dataset.panel) && g.offsetWidth).every((g) => g.getBoundingClientRect().right <= innerWidth - 50)), 'at least 50 px spare in each group (Linux fonts are about 46 px wider): ' + edges.join('; '));
     await shotBoth('small-drawing');
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.waitForTimeout(150);
@@ -10188,7 +10242,7 @@ try {
   };
   /** The client position of a point inside the selected part: the centre moved f of the way to its first corner. */
   const partPoint = (f) => page.evaluate((fr) => {
-    const poly = document.querySelector('[data-group=tools] .sel-box'), m = poly.getScreenCTM();
+    const poly = document.querySelector('[data-group=tools] .sel-box'), m = poly.ownerSVGElement.getScreenCTM(); // points are sheet mm: skip the path's own part transform (TODO 352)
     const pts = poly.getAttribute('points').split(' ').map((p) => p.split(',').map(Number));
     const cx = pts.reduce((s, p) => s + p[0], 0) / 4, cy = pts.reduce((s, p) => s + p[1], 0) / 4;
     const x = cx + fr * (pts[0][0] - cx), y = cy + fr * (pts[0][1] - cy);
@@ -10775,7 +10829,7 @@ try {
     const badges = await page.locator('[data-group=tools] .pick-badge text').allTextContents();
     assert.deepEqual(badges, ['1', '2', '3']);
     assert.match(await t('sel-readout').textContent(), /^3 parts · \d+\.\d\d × \d+\.\d\d$/);
-    assert.equal(await page.locator('[data-group=tools] .sel-union').count(), 1);
+    assert.equal(await page.locator('[data-group=tools] .sel-union').count(), 0, 'no group box line (TODO 352)');
     assert.equal(await page.locator('[data-group=tools] .grip-sq rect').count(), 8);
     assert.equal(await t('members').locator('li').count(), 3);
     assert.equal(await t('hint-pill').textContent(), 'Rubber-band or Shift-click to select several parts · the number is the pick order');
@@ -15780,18 +15834,24 @@ try {
     await page.keyboard.press('Control+a'); await frames(); await gripWhen(3);
     await hotGrip(await gid('b')); await press(' ');
     await mode('STRETCH');
-    assert.match(await t('cmd-hist').textContent(), /take loose objects only here: use the ribbon command for Parts and dimensions/);
+    assert.match(await t('cmd-hist').textContent(), /take loose objects only here: use the ribbon command for Parts(?! and)/);
     await press('Escape'); await noHot();
-    // a layout dimension with the line (a loose object too) stays in STRETCH with the same note
+    // a layout dimension with the line (a loose object too): Move works (156e1c), both go, one Undo
     await typeCmd('dli'); await typeCmd('50,600'); await typeCmd('300,600'); await typeCmd('175,640');
     await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click();
     const w0 = await at(30, 570), w1 = await at(330, 680);       // a window round the line and its dimension (not the plate)
     await page.mouse.move(w0.x, w0.y); await page.mouse.down(); await page.mouse.move(w1.x, w1.y, { steps: 5 }); await page.mouse.up(); await frames();
     assert.match(await prompt(), /^2 parts selected/);
+    const dimA = async () => { const raw = readDxf((await downloaded(() => page.keyboard.press('Control+s'))).text), [nm, b] = Object.entries(raw.blocks).find(([k]) => /^PD_DIM/.test(k)); return readDim(nm, b).params.a; };
     await hotGrip(await gid('b')); await press(' ');
-    await mode('STRETCH');
-    assert.match(await t('cmd-hist').textContent(), /take loose objects only here/);
-    await press('Escape'); await noHot();
+    await mode('MOVE');
+    const mv = await at(360, 600); await page.mouse.move(mv.x, mv.y); await frames(); await page.mouse.click(mv.x, mv.y); await noHot(); await frames();
+    const dm = await dimA();
+    assert.ok(near(dm[0], 110, 1) && near(dm[1], 600, 1), `the dimension went with the line: ${dm}`);
+    assert.equal((await labelsNow()).at(-1), 'Move');
+    await undo(); await frames();
+    const dm0 = await dimA();
+    assert.ok(near(dm0[0], 50, 1e-3) && near(dm0[1], 600, 1e-3), `one Undo took both back: ${dm0}`);
     await typeCmd('d'); await page.keyboard.press('Escape');
     await closeTabs(/./);
   });
@@ -16109,6 +16169,584 @@ try {
     const moved = await gripBox(await gid('a')), where = await at(70, 600), movedB = await gripBox(await gid('b')), whereB = await at(320, 600);
     assert.ok(near(moved.x, where.x, 2) && near(moved.y, where.y, 2), 'the layout line moved 20 with both ends');
     assert.ok(near(movedB.x, whereB.x, 2) && near(movedB.y, whereB.y, 2), 'the far end moved 20 too');
+    await closeTabs(/./);
+  });
+
+  await step('TODO 139a: Shape tool selects and drags nodes', async () => {
+    await menuItem('View', 'Theme: light');
+    const hotWhen = (n) => page.waitForFunction((k) => document.querySelectorAll('[data-testid=grip-hot]').length === k, n);
+    const nodeClick = async (id, shift = false) => { const a = await gripBox(id); if (shift) await page.keyboard.down('Shift'); try { await page.mouse.click(a.x, a.y); } finally { if (shift) await page.keyboard.up('Shift'); } await frames(); };
+    const nodeDrag = async (id, dx, dy) => { const a = await gripBox(id); await page.mouse.move(a.x, a.y); await page.mouse.down(); await page.mouse.move(a.x + dx, a.y + dy, { steps: 6 }); await page.mouse.up(); await frames(); };
+    const undo = async () => { await page.evaluate(() => document.activeElement && document.activeElement.blur()); await page.keyboard.press('Control+z'); await frames(); };
+    const verts = async () => GR.lwVertices(entOf(await savedDoc(), 0).r).map((v) => [v.x, v.y]);
+    const circ = async () => { const e = entOf(await savedDoc(), 1); return [10, 20, 40].map((k) => GR.get(e.r, k)); };
+    const same = (a, b) => assert.ok(a.every((p, i) => near(p[0], b[i][0], 1e-6) && near(p[1], b[i][1], 1e-6)), JSON.stringify([a, b]));
+    // Drawings: an open polyline and a circle selected; the Shape tool shows their nodes (3 vertices, 4 quadrants), no mids or centre
+    const raw = newDoc(4); addEntities(raw, dxfPoly([[20, 30], [80, 30], [80, 70]]), dxfCircle(160, 60, 20));
+    await openGrips(writeDxf(raw), 'shape-nodes.dxf');
+    await click(50, 30); await click(160, 80, { shift: true }); await frames(); await gripWhen(5 + 5);
+    await typeCmd('shape'); await gripWhen(7);
+    await page.waitForFunction(() => /^Shape: click a node/.test(document.querySelector('[data-testid=grip-hint]').textContent));
+    // click selects a node alone; Shift+click adds one, again takes it out
+    await nodeClick('0:v1'); await hotWhen(1);
+    await nodeClick('0:v2', true); await hotWhen(2);
+    await nodeClick('0:v2', true); await hotWhen(1);
+    await nodeClick('0:v2', true); await hotWhen(2);
+    await shotBoth('shape-nodes');
+    await menuItem('View', 'Theme: light');
+    await page.setViewportSize({ width: 1024, height: 768 }); await frames(); await page.screenshot({ path: `${shotDir}/s12-shape-nodes-1024.png` });
+    await page.setViewportSize({ width: 1440, height: 900 }); await frames();
+    // dragging one selected node moves both by the same offset; v0 stays; the nodes stay selected; one Undo takes it back
+    const before = await verts();
+    await nodeDrag('0:v1', 40, -30); await hotWhen(2);
+    const after = await verts(), d1 = [after[1][0] - before[1][0], after[1][1] - before[1][1]], d2 = [after[2][0] - before[2][0], after[2][1] - before[2][1]];
+    assert.ok(Math.abs(d1[0]) > 1 && near(d1[0], d2[0], 1e-6) && near(d1[1], d2[1], 1e-6), 'v1 and v2 moved by one offset: ' + JSON.stringify([d1, d2]));
+    same([after[0]], [before[0]]);
+    await undo(); same(await verts(), before);
+    // a box round two quadrants selects them; dragging one moves the circle whole (radius stays)
+    const p = await at(135, 85), q = await at(165, 55);
+    await page.mouse.move(p.x, p.y); await page.mouse.down(); await page.mouse.move(q.x, q.y, { steps: 6 }); await page.mouse.up(); await frames();
+    await hotWhen(2);
+    assert.deepEqual(await page.locator('[data-testid=grip-hot]').evaluateAll((g) => g.map((x) => x.dataset.grip).sort()), ['1:q1', '1:q2']);
+    await nodeDrag('1:q1', 30, 0);
+    const c = await circ();
+    assert.ok(c[0] > 161 && near(c[1], 60, 1) && near(c[2], 20, 1e-6), 'the circle moved, radius 20: ' + c);
+    await undo(); assert.deepEqual(await circ(), [160, 60, 20]);
+    // Esc ends the tool
+    await page.keyboard.press('Escape');
+    await page.waitForFunction(() => document.querySelector('[data-tool=select]').classList.contains('on'));
+    // Layouts: a layout line's end node dragged alone, one Undo
+    await freshLayoutWithPlate();
+    await typeCmd('line'); await typeCmd('50,600'); await typeCmd('300,600'); await typeCmd('');
+    await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click(); await click(175, 600); await frames(); await gripWhen(3);
+    await page.locator('[data-tool=shape]').click(); await gripWhen(2);
+    const gid = (k) => page.locator('[data-testid=grip], [data-testid=grip-hot]').evaluateAll((g, s) => g.map((x) => x.dataset.grip).find((x) => x.endsWith(':' + s)), k);
+    const [la, lb] = [await gid('a'), await gid('b')], a0 = await gripBox(la), b0 = await gripBox(lb);
+    await nodeClick(lb); await hotWhen(1);
+    await nodeDrag(lb, 0, -40); await gripWhen(2);
+    const a1 = await gripBox(await gid('a')), b1 = await gripBox(await gid('b'));
+    assert.ok(near(a1.x, a0.x, 1) && near(a1.y, a0.y, 1) && near(b1.y, b0.y - 40, 3), 'the layout line end moved, the other stayed');
+    await undo(); await gripWhen(2);
+    const b2 = await gripBox(await gid('b'));
+    assert.ok(near(b2.y, b0.y, 1), 'one Undo puts the layout line back');
+    await page.keyboard.press('Escape');
+    // Compare: the Shape tool opens the source for editing (cmpEdit); a node drag, one Undo
+    const cmp = newDoc(4); addEntities(cmp, dxfLine(20, 30, 120, 30));
+    await openGrips(writeDxf(cmp), 'shape-cmp.dxf'); await typeCmd('compare');
+    await typeCmd('shape'); await page.keyboard.press('Control+a'); await gripWhen(2);
+    const cid = await gid('b'), c0 = await gripBox(cid);
+    await nodeDrag(cid, 0, -40); await gripWhen(2);
+    assert.ok(near((await gripBox(cid)).y, c0.y - 40, 3), 'the Compare source line end moved');
+    await undo(); await gripWhen(2);
+    assert.ok(near((await gripBox(cid)).y, c0.y, 1), 'one Undo puts it back');
+    await page.keyboard.press('Escape');
+    await closeTabs(/./);
+  });
+
+  await step('TODO 139b1: double-click adds a node, outline unchanged, one Undo', async () => {
+    const undo = async () => { await page.evaluate(() => document.activeElement && document.activeElement.blur()); await page.keyboard.press('Control+z'); await frames(); };
+    const gid = (k) => page.locator('[data-testid=grip], [data-testid=grip-hot]').evaluateAll((g, s) => g.map((x) => x.dataset.grip).find((x) => x.endsWith(':' + s)), k);
+    const midDbl = async () => { const a = await gripBox(await gid('a')), b = await gripBox(await gid('b')); await page.mouse.dblclick((a.x + b.x) / 2, (a.y + b.y) / 2); await frames(); };       // the middle of a line's two end nodes
+    // Drawings: a line becomes a 3-node open polyline on the same line; a circle a closed polyline of arcs on the same circle; one Undo each
+    const raw = newDoc(4); addEntities(raw, dxfLine(20, 30, 80, 30), dxfCircle(160, 60, 20));
+    await openGrips(writeDxf(raw), 'shape-add.dxf');
+    await click(50, 30); await frames(); await typeCmd('shape'); await gripWhen(2);
+    const p = await at(50, 30); await page.mouse.dblclick(p.x, p.y); await gripWhen(3);
+    let e = entOf(await savedDoc(), 0);
+    assert.equal(e.type, 'LWPOLYLINE');
+    const vs = GR.lwVertices(e.r);
+    assert.ok(vs.length === 3 && vs.every((v) => near(v.y, 30, 1e-5) && !v.b) && near(vs[0].x, 20, 1e-5) && near(vs[2].x, 80, 1e-5) && near(vs[1].x, 50, 1), 'the same line: ' + JSON.stringify(vs));
+    assert.equal(await page.locator('[data-testid=grip-hot]').count(), 1, 'the new node is selected');
+    await undo(); assert.equal(entOf(await savedDoc(), 0).type, 'LINE');
+    const q = await at(160 + 20 * Math.SQRT1_2, 60 + 20 * Math.SQRT1_2); await page.mouse.dblclick(q.x, q.y); await gripWhen(5);
+    e = entOf(await savedDoc(), 1);
+    const cv = GR.lwVertices(e.r);
+    assert.ok(e.type === 'LWPOLYLINE' && (GR.get(e.r, 70) & 1) && cv.length === 5, 'a closed polyline of 5 nodes');
+    assert.ok(cv.every((v) => near(Math.hypot(v.x - 160, v.y - 60), 20, 1e-5) && v.b > 0) && near(cv.reduce((s, v) => s + 4 * Math.atan(v.b), 0), 2 * Math.PI, 1e-5), 'the same circle (saved to 6 decimals): ' + JSON.stringify(cv));
+    await undo(); assert.equal(entOf(await savedDoc(), 1).type, 'CIRCLE');
+    await page.keyboard.press('Escape');
+    // Layouts: a layout line gets a node, one Undo
+    await freshLayoutWithPlate();
+    await typeCmd('line'); await typeCmd('50,600'); await typeCmd('300,600'); await typeCmd('');
+    await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click(); await click(175, 600); await frames(); await gripWhen(3);
+    await page.locator('[data-tool=shape]').click(); await gripWhen(2);
+    await midDbl(); await gripWhen(3);
+    await undo(); await gripWhen(2);
+    assert.ok(await gid('a') && await gid('b'), 'one Undo: the line with its 2 end nodes');
+    await page.keyboard.press('Escape');
+    // Compare: after cmpEdit, a node added and one Undo
+    const cmp = newDoc(4); addEntities(cmp, dxfLine(20, 30, 120, 30));
+    await openGrips(writeDxf(cmp), 'shape-add-cmp.dxf'); await typeCmd('compare');
+    await typeCmd('shape'); await page.keyboard.press('Control+a'); await gripWhen(2);
+    await midDbl(); await gripWhen(3);
+    await undo(); await gripWhen(2);
+    assert.ok(await gid('a') && await gid('b'), 'one Undo: the Compare line with its 2 end nodes');
+    await page.keyboard.press('Escape');
+    await closeTabs(/./);
+  });
+
+  await step('TODO 139b2: Delete removes a node, one Undo; Shift+drag moves the set', async () => {
+    const undo = async () => { await page.evaluate(() => document.activeElement && document.activeElement.blur()); await page.keyboard.press('Control+z'); await frames(); };
+    const del = async () => { await page.evaluate(() => document.activeElement && document.activeElement.blur()); await page.keyboard.press('Delete'); await frames(); };
+    const gid = (k) => page.locator('[data-testid=grip], [data-testid=grip-hot]').evaluateAll((g, s) => g.map((x) => x.dataset.grip).find((x) => x.endsWith(':' + s)), k);
+    const hotWhen = (n) => page.waitForFunction((k) => document.querySelectorAll('[data-testid=grip-hot]').length === k, n);
+    const nodeClick = async (id, shift = false) => { const a = await gripBox(id); if (shift) await page.keyboard.down('Shift'); try { await page.mouse.click(a.x, a.y); } finally { if (shift) await page.keyboard.up('Shift'); } await frames(); };
+    const shiftDrag = async (id, dx) => { const a = await gripBox(id); await page.mouse.move(a.x, a.y); await page.keyboard.down('Shift'); try { await page.mouse.down(); await page.mouse.move(a.x + dx, a.y, { steps: 6 }); await page.mouse.up(); } finally { await page.keyboard.up('Shift'); } await frames(); };
+    const verts = async (i = 0) => GR.lwVertices(entOf(await savedDoc(), i).r).map((v) => [v.x, v.y]);
+    // Drawings: v1 deleted by the key, v2 by a double-click on it (the first click selects it), one Undo each; the corner joins its neighbours straight
+    const raw = newDoc(4); addEntities(raw, dxfPoly([[20, 30], [80, 30], [80, 70], [140, 70]]), dxfLine(20, 110, 140, 110));
+    await openGrips(writeDxf(raw), 'shape-delete.dxf');
+    await click(50, 30); await frames(); await typeCmd('shape'); await gripWhen(4);
+    const first = await verts();
+    await nodeClick('0:v1'); await hotWhen(1);
+    await del();
+    assert.deepEqual(await verts(), [first[0], first[2], first[3]], 'v1 removed');
+    await gripWhen(3); await hotWhen(0);
+    await undo(); assert.deepEqual(await verts(), first, 'one Undo brings it back'); await gripWhen(4);
+    const n2 = await gripBox('0:v2'); await page.mouse.dblclick(n2.x, n2.y); await frames();
+    assert.deepEqual(await verts(), [first[0], first[1], first[3]], 'a double-click on a node removes it');
+    await undo(); await gripWhen(4);
+    // the set: v1 and v2 deleted together leave 2 nodes; v0 + v1 + v2 would leave 1: none go (the note says so)
+    await nodeClick('0:v1'); await nodeClick('0:v2', true); await hotWhen(2); await del();
+    assert.deepEqual(await verts(), [first[0], first[3]], 'both nodes removed, one Undo');
+    await undo(); await gripWhen(4);
+    await nodeClick('0:v0'); await nodeClick('0:v1', true); await nodeClick('0:v2', true); await nodeClick('0:v3', true); await hotWhen(4); await del();
+    assert.deepEqual(await verts(), first, 'a polyline keeps 2 nodes: none of the 4 went');
+    // Shift+drag on a selected node moves the whole set (v1 and v2 by one offset, v0 stays); one Undo
+    await nodeClick('0:v1'); await nodeClick('0:v2', true); await hotWhen(2);
+    await shotBoth('shape-delete'); await menuItem('View', 'Theme: light');
+    await page.setViewportSize({ width: 1024, height: 768 }); await frames(); await page.screenshot({ path: `${shotDir}/s12-shape-delete-1024.png` });
+    await page.setViewportSize({ width: 1440, height: 900 }); await frames();
+    await shiftDrag('0:v1', 40); await hotWhen(2);
+    const moved = await verts();
+    assert.ok(moved[1][0] - first[1][0] > 1 && near(moved[1][0] - first[1][0], moved[2][0] - first[2][0], 1e-6) && near(moved[1][1], first[1][1], 1e-6) && near(moved[0][0], first[0][0], 1e-6), 'Shift+drag moved v1 and v2 together: ' + JSON.stringify(moved));
+    await undo(); assert.deepEqual(await verts(), first);
+    // Delete with no node selected still deletes the selected object
+    await click(100, 90); await frames();       // empty: the selection clears
+    await click(80, 110); await frames(); await gripWhen(2); await hotWhen(0);
+    await del();
+    assert.equal((await savedDoc()).entities.length, 1, 'no node selected: the object is deleted');
+    await undo();
+    await page.keyboard.press('Escape');
+    // Layouts and Compare: a line gets a node (double-click), Delete takes it away, one Undo; Shift+drag on one of two selected ends moves both, the middle stays
+    const lineCase = async () => {
+      const a = await gripBox(await gid('a')), b = await gripBox(await gid('b'));
+      await page.mouse.dblclick((a.x + b.x) / 2, (a.y + b.y) / 2); await gripWhen(3); await hotWhen(1);
+      await del(); await gripWhen(2);
+      await undo(); await gripWhen(3);
+      const [v0, v1, v2] = [await gid('v0'), await gid('v1'), await gid('v2')], p0 = await gripBox(v0), p1 = await gripBox(v1), p2 = await gripBox(v2);
+      await nodeClick(v0); await nodeClick(v2, true); await hotWhen(2);
+      await shiftDrag(v0, 40); await gripWhen(3);
+      const q0 = await gripBox(v0), q1 = await gripBox(v1), q2 = await gripBox(v2);
+      assert.ok(near(q0.x, p0.x + 40, 3) && near(q2.x, p2.x + 40, 3) && near(q1.x, p1.x, 1) && near(q1.y, p1.y, 1), 'the two selected ends moved, the middle stayed');
+      await undo(); await gripWhen(3);
+    };
+    await freshLayoutWithPlate();
+    await typeCmd('line'); await typeCmd('50,600'); await typeCmd('300,600'); await typeCmd('');
+    await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click(); await click(175, 600); await frames(); await gripWhen(3);
+    await page.locator('[data-tool=shape]').click(); await gripWhen(2);
+    await lineCase();
+    // an empty click on the layout clears the selection, nodes with it
+    const empty = await at(175, 700); await page.mouse.click(empty.x, empty.y); await frames();
+    await gripWhen(0);
+    await page.keyboard.press('Escape');
+    const cmp = newDoc(4); addEntities(cmp, dxfLine(20, 30, 120, 30));
+    await openGrips(writeDxf(cmp), 'shape-delete-cmp.dxf'); await typeCmd('compare');
+    await typeCmd('shape'); await page.keyboard.press('Control+a'); await gripWhen(2);
+    await lineCase();
+    await page.keyboard.press('Escape');
+    await closeTabs(/./);
+  });
+
+  await step('TODO 139c: Break at node and Join nodes from the Shape tool right-click, one Undo each', async () => {
+    await menuItem('View', 'Theme: light');
+    const undo = async () => { await page.evaluate(() => document.activeElement && document.activeElement.blur()); await page.keyboard.press('Control+z'); await frames(); };
+    const hotWhen = (n) => page.waitForFunction((k) => document.querySelectorAll('[data-testid=grip-hot]').length === k, n);
+    const nodeClick = async (id, shift = false) => { const a = await gripBox(id); if (shift) await page.keyboard.down('Shift'); try { await page.mouse.click(a.x, a.y); } finally { if (shift) await page.keyboard.up('Shift'); } await frames(); };
+    const ids = () => page.locator('[data-testid=grip], [data-testid=grip-hot]').evaluateAll((g) => g.map((x) => x.dataset.grip));
+    const menu = async () => { const p = await gripBox(await page.locator('[data-testid=grip-hot]').first().getAttribute('data-grip')); await page.mouse.click(p.x, p.y, { button: 'right' }); await t('ctx-menu').waitFor(); return page.locator('[data-testid=ctx-menu] .mi'); };
+    const pick = async (name) => { await page.locator('[data-testid=ctx-menu] .mi', { hasText: name }).first().click(); await frames(); };
+    const closed = (e) => !!(GR.get(e.r, 70) & 1);
+    const verts = (e) => GR.lwVertices(e.r).map((v) => [+v.x.toFixed(4), +v.y.toFixed(4)]);
+    // Drawings: nodes of a closed rectangle, an open polyline and two collinear lines
+    const raw = newDoc(4);
+    addEntities(raw, dxfPoly([[20, 30], [80, 30], [80, 70], [20, 70]], { closed: true, layer: 'CUT' }), dxfPoly([[100, 30], [140, 30], [140, 70]]), dxfLine(20, 110, 60, 110), dxfLine(100, 110, 140, 110));
+    await openGrips(writeDxf(raw), 'shape-break.dxf');
+    await click(50, 30); await frames(); await typeCmd('shape'); await gripWhen(4);
+    // a right-click with a node selected offers both, Join greyed with its why
+    await nodeClick('0:v1'); await hotWhen(1);
+    let items = await menu();
+    assert.deepEqual(await items.allTextContents().then((a) => a.map((x) => x.replace(/\s+/g, ' ').trim())), ['Break at node', 'Join nodes', 'To curve', 'To line', 'Cusp', 'Smooth', 'Symmetrical']);       // 139e1 added To curve / To line, 139e2a the node types
+    assert.equal(await items.nth(0).isDisabled(), false); assert.equal(await items.nth(1).isDisabled(), true);
+    assert.equal(await items.nth(1).getAttribute('title'), 'Select exactly 2 end nodes', 'the greyed Join nodes says why');
+    await page.keyboard.press('Escape');       // the menu closes; the shots open it again
+    await shotBoth('shape-break', async () => { await menu(); }, async () => { await page.keyboard.press('Escape'); });
+    await page.setViewportSize({ width: 1024, height: 768 }); await frames(); await menu(); await page.screenshot({ path: `${shotDir}/s12-shape-break-1024.png` });
+    await page.keyboard.press('Escape'); await page.setViewportSize({ width: 1440, height: 900 }); await frames();
+    await menu(); await pick('Break at node');
+    let doc = await savedDoc();
+    assert.equal(doc.entities.length, 4, 'one object still: the closed rectangle is one open polyline now');
+    assert.ok(!closed(entOf(doc, 0)) && entOf(doc, 0).layer === 'CUT', 'open, same layer');
+    assert.deepEqual(verts(entOf(doc, 0)), [[80, 30], [80, 70], [20, 70], [20, 30], [80, 30]], 'it starts at the node');
+    await undo(); doc = await savedDoc(); assert.ok(closed(entOf(doc, 0)), 'one Undo closes it again');
+    await page.keyboard.press('Escape');
+    // an open polyline: an inner node splits it in two (the end nodes only grey Break out)
+    await click(110, 30); await frames(); await typeCmd('shape'); await gripWhen(3);
+    await nodeClick('1:v0'); await hotWhen(1);
+    items = await menu(); assert.equal(await items.nth(0).isDisabled(), true, 'an end node cuts nothing');
+    assert.match(await items.nth(0).getAttribute('title'), /inside an open outline/);
+    await page.keyboard.press('Escape');
+    await nodeClick('1:v1'); await hotWhen(1);
+    await menu(); await pick('Break at node');
+    doc = await savedDoc();
+    assert.equal(doc.entities.length, 5, 'two objects from one');
+    assert.deepEqual([verts(entOf(doc, 1)), verts(entOf(doc, 2))], [[[100, 30], [140, 30]], [[140, 30], [140, 70]]]);
+    await undo(); doc = await savedDoc(); assert.equal(doc.entities.length, 4, 'one Undo');
+    await page.keyboard.press('Escape');
+    // Join nodes: the two ends of one open object close it; two lines meet at their midpoint and become one
+    await click(110, 30); await frames(); await typeCmd('shape'); await gripWhen(3);
+    await nodeClick('1:v0'); await nodeClick('1:v2', true); await hotWhen(2);
+    await menu(); await pick('Join nodes');
+    doc = await savedDoc();
+    assert.ok(closed(entOf(doc, 1)) && doc.entities.length === 4, 'the open polyline is closed');
+    await undo(); doc = await savedDoc(); assert.ok(!closed(entOf(doc, 1)), 'one Undo');
+    await page.keyboard.press('Escape');
+    await click(30, 110); await click(110, 110, { shift: true }); await frames(); await typeCmd('shape'); await gripWhen(4);
+    await nodeClick('2:b'); await nodeClick('3:a', true); await hotWhen(2);
+    items = await menu(); assert.equal(await items.nth(1).isDisabled(), false);
+    await pick('Join nodes');
+    doc = await savedDoc();
+    assert.equal(doc.entities.length, 3, 'two lines are one object');
+    assert.equal(entOf(doc, 2).type, 'LINE', 'collinear: one line');
+    assert.deepEqual([GR.get(entOf(doc, 2).r, 10), GR.get(entOf(doc, 2).r, 11)], [20, 140]);
+    await undo(); doc = await savedDoc(); assert.equal(doc.entities.length, 4, 'one Undo');
+    await page.keyboard.press('Escape');
+    await closeTabs(/./);
+    // Layouts and Compare: a line gets a node (double-click); Break at node on it makes two objects, one Undo
+    const lineBreak = async () => {
+      const a = await gripBox((await ids()).find((x) => x.endsWith(':a'))), b = await gripBox((await ids()).find((x) => x.endsWith(':b')));
+      await page.mouse.dblclick((a.x + b.x) / 2, (a.y + b.y) / 2); await gripWhen(3); await hotWhen(1);
+      await menu(); await pick('Break at node');
+      await gripWhen(4);
+      await undo(); await gripWhen(3);
+    };
+    await freshLayoutWithPlate();
+    await typeCmd('line'); await typeCmd('50,600'); await typeCmd('300,600'); await typeCmd('');
+    await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click(); await click(175, 600); await frames(); await gripWhen(3);
+    await page.locator('[data-tool=shape]').click(); await gripWhen(2);
+    await lineBreak();
+    await page.keyboard.press('Escape');
+    // two layout lines: Join nodes makes one, one Undo
+    await typeCmd('line'); await typeCmd('50,500'); await typeCmd('130,500'); await typeCmd(''); await typeCmd('line'); await typeCmd('170,500'); await typeCmd('300,500'); await typeCmd('');
+    await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click(); await click(70, 500); await click(200, 500, { shift: true }); await frames(); await gripWhen(6);
+    await page.locator('[data-tool=shape]').click(); await gripWhen(4);
+    const ends = await ids(), lb = ends.filter((x) => x.endsWith(':b')), la = ends.filter((x) => x.endsWith(':a'));
+    await nodeClick(lb[0]); await nodeClick(la[1], true); await hotWhen(2);
+    await menu(); await pick('Join nodes');
+    await gripWhen(2);
+    await undo(); await gripWhen(4);
+    await page.keyboard.press('Escape');
+    const cmp = newDoc(4); addEntities(cmp, dxfLine(20, 30, 120, 30));
+    await openGrips(writeDxf(cmp), 'shape-break-cmp.dxf'); await typeCmd('compare');
+    await typeCmd('shape'); await page.keyboard.press('Control+a'); await gripWhen(2);
+    await lineBreak();
+    await page.keyboard.press('Escape');
+    await closeTabs(/./);
+  });
+
+  await step('TODO 139e1: Shape tool To curve / To line on Bezier splines: handles, one Undo each, a non-Bezier spline greyed; Drawings, Layouts, Compare', async () => {
+    await menuItem('View', 'Theme: light');
+    const undo = async () => { await page.evaluate(() => document.activeElement && document.activeElement.blur()); await page.keyboard.press('Control+z'); await frames(); };
+    const hotWhen = (n) => page.waitForFunction((k) => document.querySelectorAll('[data-testid=grip-hot]').length === k, n);
+    const ids = async () => (await page.locator('[data-testid=grip], [data-testid=grip-hot]').evaluateAll((g) => g.map((x) => x.dataset.grip))).sort();
+    const nodeClick = async (id) => { const a = await gripBox(id); await page.mouse.click(a.x, a.y); await frames(); };
+    const nodeDrag = async (id, dx, dy) => { const a = await gripBox(id); await page.mouse.move(a.x, a.y); await page.mouse.down(); await page.mouse.move(a.x + dx, a.y + dy, { steps: 6 }); await page.mouse.up(); await frames(); };
+    const menu = async (id) => { const p = await gripBox(id); await page.mouse.click(p.x, p.y, { button: 'right' }); await t('ctx-menu').waitFor(); return page.locator('[data-testid=ctx-menu] .mi'); };
+    const pick = async (name) => { await page.locator('[data-testid=ctx-menu] .mi', { hasText: name }).first().click(); await frames(); };
+    const gid = (k) => page.locator('[data-testid=grip], [data-testid=grip-hot]').evaluateAll((g, s) => g.map((x) => x.dataset.grip).find((x) => x.endsWith(':' + s)), k);
+    const ctl = (e) => e.r.c.flatMap((c, k) => (c === 10 ? [[+e.r.v[k], +e.r.v[k + 1]]] : []));       // a SPLINE's control points
+    // Drawings: an open polyline on layer CUT: To curve from its first node, 3 nodes and that node's one handle show
+    const raw = newDoc(4);
+    addEntities(raw, dxfPoly([[20, 30], [80, 30], [80, 70]], { layer: 'CUT' }), entity('SPLINE', [[8, '0'], [70, 8], [71, 2], [72, 6], [73, 3], [74, 0], ...[0, 0, 0, 1, 1, 1].map((u) => [40, u]), [10, 100], [20, 30], [30, 0], [10, 120], [20, 70], [30, 0], [10, 140], [20, 30], [30, 0]]));
+    await openGrips(writeDxf(raw), 'shape-curve.dxf');
+    await click(50, 30); await frames(); await typeCmd('shape'); await gripWhen(3);
+    await nodeClick('0:v0'); await hotWhen(1);
+    let items = await menu('0:v0');
+    assert.deepEqual(await items.allTextContents().then((a) => a.map((x) => x.replace(/\s+/g, ' ').trim())), ['Break at node', 'Join nodes', 'To curve', 'To line', 'Cusp', 'Smooth', 'Symmetrical']);       // 139e2a: the node types follow, greyed on a polyline
+    assert.equal(await items.nth(2).isDisabled(), false); assert.equal(await items.nth(3).isDisabled(), true);
+    assert.equal(await items.nth(3).getAttribute('title'), 'Not a Bezier curve', 'To line on a polyline says why');
+    await pick('To curve');
+    let e = entOf(await savedDoc(), 0), P = ctl(e);
+    assert.ok(e.type === 'SPLINE' && e.layer === 'CUT' && P.length === 7, 'one SPLINE of 2 cubics, layer kept: ' + e.type + P.length);
+    assert.deepEqual(P.slice(0, 4).map((q) => q.map((v) => +v.toFixed(4))), [[20, 30], [40, 30], [60, 30], [80, 30]], 'a line segment: handles at 1/3 and 2/3');
+    assert.deepEqual(await ids(), ['0:n0', '0:n1', '0:n2', '0:o0'], 'the nodes, and the first node\'s handle only'); await hotWhen(1);
+    items = await menu('0:n0');
+    assert.equal(await items.nth(2).isDisabled(), true); assert.match(await items.nth(2).getAttribute('title'), /Bezier curve already/);
+    assert.equal(await items.nth(3).isDisabled(), true); assert.match(await items.nth(3).getAttribute('title'), /straight already/, 'To line on a straight segment says why');
+    await page.keyboard.press('Escape');
+    // a handle drag: no snap, one Undo; the handle ends where the pointer let go, the nodes stay
+    const h0 = await gripBox('0:o0');
+    await nodeDrag('0:o0', 7, -40); await hotWhen(1);
+    const h1 = await gripBox('0:o0');
+    assert.ok(near(h1.x, h0.x + 7, 1.5) && near(h1.y, h0.y - 40, 1.5), `the handle followed the pointer: ${JSON.stringify([h0, h1])}`);
+    P = ctl(entOf(await savedDoc(), 0));
+    assert.ok(P[1][1] > 33 && P[1][0] > 40 && near(P[2][0], 60, 1e-6) && near(P[0][0], 20, 1e-6) && near(P[3][0], 80, 1e-6), 'only the handle moved: ' + JSON.stringify(P));
+    await shotBoth('shape-curve');
+    await page.setViewportSize({ width: 1024, height: 768 }); await frames();
+    await page.locator('[data-testid=canvas]').getByRole('button', { name: 'Fit', exact: true }).click(); await frames(); // fit keeps the curve and handle clear of the hint and log
+    await page.screenshot({ path: `${shotDir}/s12-shape-curve-1024.png` });
+    await page.setViewportSize({ width: 1440, height: 900 }); await frames();
+    // To line: its handles back on the chord; one Undo bends it again; the saved DXF read back is the SPLINE
+    items = await menu('0:n0'); assert.equal(await items.nth(3).isDisabled(), false);
+    await pick('To line');
+    P = ctl(entOf(await savedDoc(), 0));
+    assert.deepEqual(P.slice(0, 4).map((q) => q.map((v) => +v.toFixed(4))), [[20, 30], [40, 30], [60, 30], [80, 30]], 'To line: the handles are on the chord');
+    await undo(); e = entOf(await savedDoc(), 0);
+    assert.ok(e.type === 'SPLINE' && ctl(e)[1][1] > 33, 'one Undo bends it again; saved and read back it is the SPLINE');
+    await undo(); assert.ok(near(ctl(entOf(await savedDoc(), 0))[1][1], 30, 1e-6), 'one Undo puts the handle back');
+    await undo(); assert.equal(entOf(await savedDoc(), 0).type, 'LWPOLYLINE', 'one Undo: the polyline again');
+    await page.keyboard.press('Escape');
+    // a spline that is not a Bezier curve: no nodes, the right-click items grey with their why
+    await click(120, 50); await frames(); await typeCmd('shape'); await gripWhen(0);
+    const q = await at(120, 50); await page.mouse.click(q.x, q.y, { button: 'right' }); await t('ctx-menu').waitFor();
+    items = page.locator('[data-testid=ctx-menu] .mi');
+    for (const k of [2, 3]) { assert.equal(await items.nth(k).isDisabled(), true); assert.equal(await items.nth(k).getAttribute('title'), 'Not a Bezier curve'); }
+    await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
+    await closeTabs(/./);
+    // Layouts and Compare (Compare reaches the grips through editable(): its selected item's source): a line, To curve from its first node, a handle drag, To line, Undo
+    const lineCase = async (save) => {
+      const [a0, b0] = [await gripBox(await gid('a')), await gripBox(await gid('b'))];
+      await nodeClick(await gid('a')); await hotWhen(1);
+      await menu(await gid('a')); await pick('To curve'); await gripWhen(3);
+      assert.deepEqual((await ids()).map((x) => x.split(':')[1]), ['n0', 'n1', 'o0'], 'two nodes and the first one\'s handle');
+      const [n0, n1, o0] = [await gripBox(await gid('n0')), await gripBox(await gid('n1')), await gripBox(await gid('o0'))];
+      assert.ok(near(n0.x, a0.x, 1) && near(n1.x, b0.x, 1) && near(o0.x, a0.x + (b0.x - a0.x) / 3, 1.5), 'the same line, the handle at 1/3');
+      await nodeDrag(await gid('o0'), 0, -40);
+      const o1 = await gripBox(await gid('o0'));
+      assert.ok(near(o1.y, o0.y - 40, 2) && near((await gripBox(await gid('n0'))).y, n0.y, 1) && near((await gripBox(await gid('n1'))).y, n1.y, 1), 'the handle moved, both nodes stayed');
+      await menu(await gid('n0')); await pick('To line');
+      assert.ok(near((await gripBox(await gid('o0'))).y, o0.y, 1.5), 'To line: the handle is back on the chord');
+      await undo();
+      assert.ok(near((await gripBox(await gid('o0'))).y, o0.y - 40, 2), 'one Undo: bent again');
+      const sp = (await save()).entities.find((x) => x.type === 'SPLINE'), pts = sp && ctl(sp);       // saved as DXF and read back
+      assert.ok(pts?.length === 4 && Math.abs(pts[1][1] - pts[0][1]) > 1 && near(pts[2][1], pts[3][1], 1e-6), 'the saved DXF holds the bent SPLINE: ' + JSON.stringify(pts));
+      await undo(); await undo(); await gripWhen(2);
+      assert.ok(await gid('a') && await gid('b'), 'Undo x3: the line with its 2 end nodes');
+    };
+    await freshLayoutWithPlate();
+    await typeCmd('line'); await typeCmd('50,600'); await typeCmd('300,600'); await typeCmd('');
+    await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click(); await click(175, 600); await frames(); await gripWhen(3);
+    await page.locator('[data-tool=shape]').click(); await gripWhen(2);
+    await lineCase(async () => readDxf((await downloaded(async () => { await menuItem('File', 'Export DXF…'); await t('export-dxf-go').click(); })).text));
+    await page.keyboard.press('Escape');
+    const cmp = newDoc(4); addEntities(cmp, dxfLine(20, 30, 120, 30));
+    await openGrips(writeDxf(cmp), 'shape-curve-cmp.dxf'); await typeCmd('compare');
+    await typeCmd('shape'); await page.keyboard.press('Control+a'); await gripWhen(2);
+    await lineCase(async () => {       // the Compare tab has no save: the source tab holds the edit
+      await page.locator('.dtab', { hasText: 'shape-curve-cmp.dxf' }).click(); await frames();
+      const doc = await savedDoc();
+      await page.locator('.dtab', { hasText: 'Compare' }).click(); await frames();
+      return doc;
+    });
+    await page.keyboard.press('Escape');
+    await closeTabs(/./);
+  });
+
+  await step('TODO 139e2a: Shape tool node types Cusp / Smooth / Symmetrical: handles follow a handle drag, one Undo each, saved DXF holds the shape; Drawings, Layouts, Compare', async () => {
+    await menuItem('View', 'Theme: light');
+    const undo = async () => { await page.evaluate(() => document.activeElement && document.activeElement.blur()); await page.keyboard.press('Control+z'); await frames(); };
+    const hotWhen = (n) => page.waitForFunction((k) => document.querySelectorAll('[data-testid=grip-hot]').length === k, n);
+    const gid = (k) => page.locator('[data-testid=grip], [data-testid=grip-hot]').evaluateAll((g, s) => g.map((x) => x.dataset.grip).find((x) => x.endsWith(':' + s)), k);
+    const box = async (k) => gripBox(await gid(k));
+    const nodeClick = async (k) => { const a = await box(k); await page.mouse.click(a.x, a.y); await frames(); };
+    const handleDrag = async (k, dx, dy) => { const a = await box(k); await page.mouse.move(a.x, a.y); await page.mouse.down(); await page.mouse.move(a.x + dx, a.y + dy, { steps: 6 }); await page.mouse.up(); await frames(); };
+    const menu = async (k) => { const p = await box(k); await page.mouse.click(p.x, p.y, { button: 'right' }); await t('ctx-menu').waitFor(); return page.locator('[data-testid=ctx-menu] .mi'); };
+    const texts = async (items) => (await items.allTextContents()).map((x) => x.replace(/\s+/g, ' ').trim());
+    const pickItem = async (name) => { await page.locator('[data-testid=ctx-menu] .mi', { hasText: name }).first().click(); await frames(); };
+    const ctl = (e) => e.r.c.flatMap((c, k) => (c === 10 ? [[+e.r.v[k], +e.r.v[k + 1]]] : []));
+    const sub = (a, b) => [a[0] - b[0], a[1] - b[1]], len = (v) => Math.hypot(v[0], v[1]), cross = (a, b) => (a[0] * b[1] - a[1] * b[0]) / (len(a) * len(b));
+    const shape = async () => { const [n, o, i] = [await box('n1'), await box('o1'), await box('i1')]; return { vo: sub([o.x, o.y], [n.x, n.y]), vi: sub([i.x, i.y], [n.x, n.y]), o, i }; };       // the node and its two handles on screen
+    const lined = async () => { const s = await shape(); assert.ok(Math.abs(cross(s.vo, s.vi)) < 0.03 && s.vo[0] * s.vi[0] + s.vo[1] * s.vi[1] < 0, 'handles collinear, opposite ways: ' + JSON.stringify(s)); return s; };
+    const typeCase = async (save, shots) => {       // an open L: 3 nodes, selected in the Shape tool
+      await nodeClick('v0'); await hotWhen(1);
+      await menu('v0'); await pickItem('To curve'); await gripWhen(4);       // 3 nodes and the first one's handle
+      await nodeClick('n1'); await hotWhen(1); await gripWhen(5);
+      let items = await menu('n1'), tx = await texts(items);
+      assert.deepEqual(tx.slice(4), ['✓ Cusp', 'Smooth', 'Symmetrical'], 'To curve: the node is a Cusp, shown checked');
+      for (const k of [5, 6]) { assert.equal(await items.nth(k).isDisabled(), true); assert.match(await items.nth(k).getAttribute('title'), /No curve on either side/); }
+      assert.equal(await items.nth(4).isDisabled(), true); assert.match(await items.nth(4).getAttribute('title'), /Cusp already/);
+      await page.keyboard.press('Escape');
+      await handleDrag('o1', 40, 0);       // the segment after bends; the one before stays straight
+      const bent = await shape();
+      items = await menu('n1'); tx = await texts(items);
+      assert.deepEqual(await Promise.all([4, 5, 6].map((k) => items.nth(k).isDisabled())), [true, false, false], 'a curve on one side: Smooth and Symmetrical are allowed');
+      await pickItem('Smooth');
+      let s = await lined();
+      assert.ok(near(len(s.vo), len(bent.vo), 1.5) && near(s.i.x, bent.i.x, 1) && near(s.i.y, bent.i.y, 1), 'Smooth: lengths kept, the straight side stays');
+      await undo(); const cu = await shape(); assert.ok(near(cu.o.x, bent.o.x, 1) && near(cu.o.y, bent.o.y, 1), 'one Undo: the handles are back, and not collinear: ' + JSON.stringify([cu, bent]));
+      await menu('n1'); await pickItem('Smooth'); s = await lined();
+      await handleDrag('o1', 0, 35);       // Smooth: the other handle turns, its length stays
+      const s2 = await lined();
+      assert.ok(!near(s2.i.y, s.i.y, 3) && near(len(s2.vi), len(s.vi), 1.5), 'the other handle followed: ' + JSON.stringify([s, s2]));
+      items = await menu('n1'); tx = await texts(items); assert.deepEqual(tx.slice(4), ['Cusp', '✓ Smooth', 'Symmetrical']);
+      await pickItem('Symmetrical'); s = await lined();
+      assert.ok(near(len(s.vo), len(s.vi), 1.5), 'Symmetrical: equal lengths: ' + JSON.stringify(s));
+      await handleDrag('i1', -12, 22); s = await lined();
+      assert.ok(near(len(s.vo), len(s.vi), 1.5), 'a Symmetrical node mirrors the other handle');
+      if (shots) {
+        await shotBoth('shape-nodetype');
+        await page.setViewportSize({ width: 1024, height: 768 }); await frames();
+        await page.locator('[data-testid=canvas]').getByRole('button', { name: 'Fit', exact: true }).click(); await frames();
+        await page.screenshot({ path: `${shotDir}/s12-shape-nodetype-1024.png` });
+        await page.setViewportSize({ width: 1440, height: 900 }); await frames();
+      }
+      items = await menu('n1'); await pickItem('Cusp');
+      const c0 = await shape(); await handleDrag('o1', 0, -25); const c1 = await shape();
+      assert.ok(near(c1.i.x, c0.i.x, 1) && near(c1.i.y, c0.i.y, 1) && !near(c1.o.y, c0.o.y, 5), 'Cusp: the other handle stays');
+      assert.deepEqual((await texts(await menu('n1'))).slice(4), ['✓ Cusp', 'Smooth', 'Symmetrical']); await page.keyboard.press('Escape');
+      await undo(); await undo();       // the drag, then Cusp
+      assert.deepEqual((await texts(await menu('n1'))).slice(4), ['Cusp', 'Smooth', '✓ Symmetrical'], 'Undo x2: Symmetrical again'); await page.keyboard.press('Escape');
+      const doc = await save(), sp = doc.entities.find((x) => x.type === 'SPLINE'), P = sp && ctl(sp);       // saved as DXF and read back
+      assert.ok(P?.length === 7, 'one SPLINE of 2 cubics: ' + JSON.stringify(P));
+      const [vi, vo] = [sub(P[2], P[3]), sub(P[4], P[3])];
+      assert.ok(Math.abs(cross(vi, vo)) < 1e-6 && near(len(vi), len(vo), 1e-6) && len(vo) > 1, 'the saved handles are collinear and equal: ' + JSON.stringify(P));
+    };
+    // Drawings: save, then open the saved DXF again: the node still reads Symmetrical
+    const raw = newDoc(4);
+    addEntities(raw, dxfPoly([[20, 30], [80, 30], [80, 70]]));
+    await openGrips(writeDxf(raw), 'shape-types.dxf');
+    await click(50, 30); await frames(); await typeCmd('shape'); await gripWhen(3);
+    let saved = '';
+    await typeCase(async () => { saved = (await downloaded(() => page.keyboard.press('Control+s'))).text; return readDxf(saved); }, true);
+    await closeTabs(/./);
+    await openGrips(saved, 'shape-types-reload.dxf');
+    await click(24, 30); await frames(); await typeCmd('shape'); await gripWhen(3);       // the curve left the line y = 30 (its far node's handle turned), but not near its first node
+    await nodeClick('n1'); await hotWhen(1);
+    assert.deepEqual((await texts(await menu('n1'))).slice(4), ['Cusp', 'Smooth', '✓ Symmetrical'], 'reloaded: read back from the handles');
+    await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
+    await closeTabs(/./);
+    // Layouts
+    await freshLayoutWithPlate();
+    await typeCmd('polyline'); for (const p of ['50,600', '150,600', '150,700']) await typeCmd(p);
+    await typeCmd('');
+    await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click(); await click(75, 600); await frames(); await gripWhen(5);
+    await page.locator('[data-tool=shape]').click(); await gripWhen(3);
+    await typeCase(async () => readDxf((await downloaded(async () => { await menuItem('File', 'Export DXF…'); await t('export-dxf-go').click(); })).text), false);
+    await page.keyboard.press('Escape');
+    // Compare (the grips go to the source drawing)
+    const cmp = newDoc(4); addEntities(cmp, dxfPoly([[20, 30], [80, 30], [80, 70]]));
+    await openGrips(writeDxf(cmp), 'shape-types-cmp.dxf'); await typeCmd('compare');
+    await typeCmd('shape'); await page.keyboard.press('Control+a'); await gripWhen(3);
+    await typeCase(async () => {
+      await page.locator('.dtab', { hasText: 'shape-types-cmp.dxf' }).click(); await frames();
+      const doc = await savedDoc();
+      await page.locator('.dtab', { hasText: 'Compare' }).click(); await frames();
+      return doc;
+    }, false);
+    await page.keyboard.press('Escape');
+    await closeTabs(/./);
+  });
+
+  await step('TODO 139e2b: Shape tool add node / Delete / Break / Join on Bezier splines: one Undo each, a spline and a polyline join, saved DXF and reload hold the curve; Drawings, Layouts, Compare', async () => {
+    await menuItem('View', 'Theme: light');
+    const undo = async () => { await page.evaluate(() => document.activeElement && document.activeElement.blur()); await page.keyboard.press('Control+z'); await frames(); };
+    const del = async () => { await page.evaluate(() => document.activeElement && document.activeElement.blur()); await page.keyboard.press('Delete'); await frames(); };
+    const hotWhen = (n) => page.waitForFunction((k) => document.querySelectorAll('[data-testid=grip-hot]').length === k, n);
+    const all = () => page.locator('[data-testid=grip], [data-testid=grip-hot]').evaluateAll((g) => g.map((x) => x.dataset.grip));
+    const gid = async (k) => (k.includes(':') ? k : (await all()).find((x) => x.endsWith(':' + k)));
+    const box = async (k) => gripBox(await gid(k));
+    const left = async (k) => { const ids = (await all()).filter((x) => x.endsWith(':' + k)), bs = await Promise.all(ids.map(gripBox)); return ids[bs.findIndex((b) => b.x === Math.min(...bs.map((c) => c.x)))]; };       // the object on the left of two
+    const nodeClick = async (k, shift = false) => { const a = await box(k); if (shift) await page.keyboard.down('Shift'); try { await page.mouse.click(a.x, a.y); } finally { if (shift) await page.keyboard.up('Shift'); } await frames(); };
+    const handleDrag = async (k, dx, dy) => { const a = await box(k); await page.mouse.move(a.x, a.y); await page.mouse.down(); await page.mouse.move(a.x + dx, a.y + dy, { steps: 6 }); await page.mouse.up(); await frames(); };
+    const menu = async (k) => { const p = await box(k); await page.mouse.click(p.x, p.y, { button: 'right' }); await t('ctx-menu').waitFor(); };
+    const pickItem = async (name) => { await page.locator('[data-testid=ctx-menu] .mi', { hasText: name }).first().click(); await frames(); };
+    const ctl = (e) => e.r.c.flatMap((c, k) => (c === 10 ? [[+e.r.v[k], +e.r.v[k + 1]]] : []));       // a SPLINE's control points
+    const rel = (a, b, c) => [(b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]), (c[0] - a[0]) * (b[0] - a[0]) + (c[1] - a[1]) * (b[1] - a[1])];       // cross and dot of a→b with a→c
+    const spCase = async (save, shots) => {       // an open L polyline A (left) and a 2-vertex polyline B (right), both selected in the Shape tool
+      const splines = async () => (await save()).entities.filter((x) => x.type === 'SPLINE'), total = async () => (await save()).entities.length, n0 = await total();
+      const a0 = await left('v0');
+      await nodeClick(a0); await hotWhen(1); await menu(a0); await pickItem('To curve');       // A is a spline of 2 cubics
+      await handleDrag('o0', 0, -40);
+      const P = ctl((await splines())[0]); let Q; assert.equal(P.length, 7, 'To curve: 2 cubics');
+      // Join nodes: the spline's end n2 and the polyline's first vertex: one spline of 3 cubics, the polyline gone
+      await nodeClick('n2'); await nodeClick('v0', true); await hotWhen(2); await menu('n2'); await pickItem('Join nodes');
+      let S = await splines();
+      assert.equal(S.length, 1); assert.equal(ctl(S[0]).length, 10, 'Join: 2 + 1 cubics'); assert.equal(await total(), n0 - 1, 'the polyline is part of it');
+      await undo(); assert.equal(ctl((await splines())[0]).length, 7, 'one Undo'); assert.equal(await total(), n0);
+      // Join nodes on the two ends of the spline: Close, a straight cubic bridges the ends
+      await nodeClick('n0'); await nodeClick('n2', true); await hotWhen(2); await menu('n2'); await pickItem('Join nodes');
+      S = await splines();
+      assert.ok(ctl(S[0]).length === 10 && (+S[0].r.v[S[0].r.c.indexOf(70)] & 1), 'Close: a closed spline of 3 cubics');
+      await undo(); assert.equal(ctl((await splines())[0]).length, 7, 'one Undo: open again');
+      // Delete: n1 goes, its two segments are one cubic with the outer handles; then the end node of a 2-node curve takes the object with it
+      await nodeClick('n1'); await hotWhen(1); await del();
+      Q = ctl((await splines())[0]);
+      assert.equal(Q.length, 4, 'Delete: one cubic'); assert.deepEqual(Q, [P[0], P[1], P[5], P[6]], 'the outer handles are kept');
+      await nodeClick('n0'); await hotWhen(1); await del();
+      assert.equal((await splines()).length, 0, 'fewer than 2 nodes left: the spline goes'); assert.equal(await total(), n0 - 1);
+      await undo(); assert.equal(ctl((await splines())[0]).length, 4, 'one Undo: the spline is back');
+      await undo(); assert.equal(ctl((await splines())[0]).length, 7, 'one Undo: both segments'); await frames();
+      // Break at node: two splines, one Undo
+      await nodeClick('n1'); await hotWhen(1); await menu('n1'); await pickItem('Break at node');
+      S = await splines();
+      assert.equal(S.length, 2, 'Break: two splines'); assert.deepEqual(S.map((s) => ctl(s).length), [4, 4]); assert.equal(await total(), n0 + 1);
+      assert.deepEqual([...ctl(S[0]), ...ctl(S[1]).slice(1)], P, 'the two halves hold the control points as they were');
+      await undo(); assert.equal((await splines()).length, 1, 'one Undo: one spline');
+      // add node: a double-click in the middle of the straight segment n1 - n2 (it selects the spline alone)
+      const [m1, m2] = [await box('n1'), await box('n2')];
+      await page.mouse.dblclick((m1.x + m2.x) / 2, (m1.y + m2.y) / 2); await frames(); await hotWhen(1);
+      Q = ctl((await splines())[0]);
+      assert.equal(Q.length, 10, 'a node added: 3 cubics'); assert.deepEqual(Q.slice(0, 4).map((q) => q.map((v) => +v.toFixed(4))), P.slice(0, 4).map((q) => q.map((v) => +v.toFixed(4))), 'the bent segment is untouched');
+      const [cr, dt] = rel(Q[3], Q[9], Q[6]); assert.ok(Math.abs(cr) < 1e-6 && dt > 0 && dt < Math.hypot(Q[9][0] - Q[3][0], Q[9][1] - Q[3][1]) ** 2, 'the new node sits on the old straight segment: ' + JSON.stringify([cr, dt]));
+      assert.equal((await all()).filter((x) => /:[io]\d$/.test(x)).length, 2, 'the new node shows its two handles'); assert.equal(await total(), n0);
+      if (shots) {
+        await shotBoth('shape-splinenode');
+        await page.setViewportSize({ width: 1024, height: 768 }); await frames();
+        await page.locator('[data-testid=canvas]').getByRole('button', { name: 'Fit', exact: true }).click(); await frames();
+        await page.screenshot({ path: `${shotDir}/s12-shape-splinenode-1024.png` });
+        await page.setViewportSize({ width: 1440, height: 900 }); await frames();
+      }
+      await undo(); assert.equal(ctl((await splines())[0]).length, 7, 'one Undo: the 2 cubics');
+    };
+    // Drawings: save, reload, the curve is still there
+    const raw = newDoc(4);
+    addEntities(raw, dxfPoly([[20, 30], [80, 30], [80, 70]], { layer: 'CUT' }), dxfPoly([[110, 30], [150, 30]]));
+    await openGrips(writeDxf(raw), 'shape-spline.dxf');
+    await click(50, 30); await click(130, 30, { shift: true }); await frames(); await typeCmd('shape'); await gripWhen(5);
+    await spCase(async () => savedDoc(), true);
+    await page.evaluate(() => document.activeElement && document.activeElement.blur()); await page.keyboard.press('Control+a'); await frames();       // B joins the selection again
+    await page.waitForFunction(() => [...document.querySelectorAll('[data-grip]')].some((x) => x.dataset.grip.startsWith('1:')));
+    await nodeClick('n2'); await nodeClick('v0', true); await hotWhen(2); await menu('n2'); await pickItem('Join nodes');
+    const saved = (await downloaded(() => page.keyboard.press('Control+s'))).text;
+    await page.keyboard.press('Escape'); await closeTabs(/./);
+    await openGrips(saved, 'shape-spline-reload.dxf');
+    await click(24, 30); await frames(); await typeCmd('shape'); await gripWhen(4);
+    assert.deepEqual((await all()).map((x) => x.split(':')[1]).sort(), ['n0', 'n1', 'n2', 'n3'], 'reloaded: one spline of 4 nodes, the joint n2');
+    await nodeClick('n2'); await hotWhen(1); await menu('n2');
+    assert.equal(await page.locator('[data-testid=ctx-menu] .mi', { hasText: 'Break at node' }).first().isDisabled(), false, 'the joint is an inner node');
+    await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
+    await closeTabs(/./);
+    // Layouts
+    await freshLayoutWithPlate();
+    await typeCmd('polyline'); for (const p of ['50,600', '150,600', '150,700']) await typeCmd(p);
+    await typeCmd('');
+    await typeCmd('polyline'); for (const p of ['200,600', '300,600']) await typeCmd(p);
+    await typeCmd('');
+    await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click(); await click(75, 600); await click(250, 600, { shift: true }); await frames();
+    await page.locator('[data-tool=shape]').click(); await gripWhen(5);
+    await spCase(async () => readDxf((await downloaded(async () => { await menuItem('File', 'Export DXF…'); await t('export-dxf-go').click(); })).text), false);
+    await page.keyboard.press('Escape');
+    // Compare (the grips go to the source drawing)
+    const cmp = newDoc(4); addEntities(cmp, dxfPoly([[20, 30], [80, 30], [80, 70]]), dxfPoly([[110, 30], [150, 30]]));
+    await openGrips(writeDxf(cmp), 'shape-spline-cmp.dxf'); await typeCmd('compare');
+    await typeCmd('shape'); await page.keyboard.press('Control+a'); await gripWhen(5);
+    await spCase(async () => {
+      await page.locator('.dtab', { hasText: 'shape-spline-cmp.dxf' }).click(); await frames();
+      const doc = await savedDoc();
+      await page.locator('.dtab', { hasText: 'Compare' }).click(); await frames();
+      return doc;
+    }, false);
+    await page.keyboard.press('Escape');
     await closeTabs(/./);
   });
 
@@ -18731,6 +19369,54 @@ try {
     };
     assert.match(await measureFrom([500.8, 680.9], [500.8, 699.4]), /^Distance 20 mm {3}ΔX 0 {3}ΔY 20 /, 'the gripper line\'s middle to the sheet top\'s middle');
     assert.doesNotMatch(await measureFrom([500.8, 20.9], [500.8, 0.6]), /^Distance 20 mm/, 'bottom gripper 0: no line to snap to');
+  });
+
+  await step('TODO 150: Layouts: hovering where two placed parts cross shows the intersection marker; a Line starts exactly there', async () => {
+    await closeTabs(/./);
+    const lay = newLayout('Cross 150'), plate = addEntities(newDoc(4), dxfPoly([[0, 0], [100, 0], [100, 60], [0, 60]], { closed: true }));
+    lay.parts.plate = makePart('plate', 'Plate', plate); lay.parts.other = makePart('other', 'Other', plate);
+    lay.placed = [{ partId: 'plate', x: 200.4321, y: 200.1234, rot: 0 }, { partId: 'other', x: 260.9876, y: 215.8765, rot: 0 }];      // A's right side crosses B's bottom at (300.4321, 215.8765), 14 mm from A's side middle
+    const want = [300.4321, 215.8765];
+    const snapOn = await t('tog-snap').getAttribute('aria-pressed'), orthoOn = await t('tog-ortho').getAttribute('aria-pressed');
+    const setChip = async (id, on) => { if (await t(id).getAttribute('aria-pressed') !== String(on)) await t(id).click(); };
+    await page.evaluate(() => {
+      window.__tags150 = []; window.__fill150 = CanvasRenderingContext2D.prototype.fillText;
+      CanvasRenderingContext2D.prototype.fillText = function (text, ...args) {
+        if (this.canvas.dataset.testid === 'drawing') window.__tags150.push(text);
+        return window.__fill150.call(this, text, ...args);
+      };
+    });
+    try {
+      await setChip('tog-snap', true); await setChip('tog-ortho', false);
+      await t('picker').setInputFiles({ name: 'cross-150-layout.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
+      await waitTab(page, 'cross-150-layout.dxf');
+      const hover = async () => {
+        const q = await at(...want);
+        await page.evaluate(() => { window.__tags150 = []; });
+        await page.mouse.move(q.x + 3, q.y - 2, { steps: 4 });
+        await page.waitForFunction(() => window.__tags150.includes('intersection'), null, { timeout: 5000 });       // the label of the part-to-part crossing
+        return q;
+      };
+      await page.locator('[data-tool=measure]').click();                   // Measure and the draw tools share the marker; Measure shows it on hover
+      await hover();
+      await page.screenshot({ path: `${shotDir}/todo150-light.png` });
+      await menuItem('View', 'Theme: dark'); await frames(); await hover();
+      await page.screenshot({ path: `${shotDir}/todo150-dark.png` });
+      await menuItem('View', 'Theme: light'); await frames();
+      await page.keyboard.press('Escape'); await page.locator('[data-tool=line]').click();
+      const q = await at(...want);
+      await page.mouse.move(q.x + 3, q.y - 2, { steps: 4 }); await frames();
+      await page.mouse.click(q.x + 3, q.y - 2);
+      const far = await at(420, 120); await page.mouse.move(far.x, far.y, { steps: 4 }); await page.mouse.click(far.x, far.y);
+      await page.keyboard.press('Escape');
+      const e = objectDoc(layoutFromRaw(await savedDoc())).raw.entities.at(-1), start = [10, 20].map((c) => fieldOf(e, c));
+      approx(start[0], want[0], 1e-6, 'the Line starts at the crossing: x'); approx(start[1], want[1], 1e-6, 'the Line starts at the crossing: y');
+    } finally {
+      await page.evaluate(() => { CanvasRenderingContext2D.prototype.fillText = window.__fill150; });
+      await setChip('tog-snap', snapOn === 'true'); await setChip('tog-ortho', orthoOn === 'true');
+      await page.keyboard.press('Escape');
+    }
+    await closeTabs(/./);
   });
 
   // ---- Compare drawings (TODO 41; mock-up R5d, Option B) ----
@@ -24758,6 +25444,71 @@ try {
     } finally { await scCtx.close(); }
   });
 
+  await step('TODO 134: extra keys for fixed commands: Alt+X deletes in one undo step, Alt+S saves, clash Remove, kept after reload', async () => {
+    const xCtx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    const p = await xCtx.newPage();
+    p.on('pageerror', (err) => errors.push(String(err)));
+    const dialog = p.getByRole('dialog', { name: 'Shortcuts', exact: true });
+    const plus = (name) => dialog.getByRole('button', { name: 'Add extra key to ' + name, exact: true });
+    const chips = (name) => dialog.locator(`tr[data-command=${name}] .sc-chip`);
+    const dlSave = async (press) => { const [dl] = await Promise.all([p.waitForEvent('download'), p.keyboard.press(press)]); return readDxf(readFileSync(await dl.path(), 'latin1')).entities.length; };
+    const open = async () => { await p.locator('[data-menu=Tools]').click(); await p.getByRole('menuitem', { name: 'Shortcuts…' }).click(); await dialog.waitFor(); };
+    const load = async () => {
+      await p.goto(URL_); await p.waitForSelector('[data-testid=count]', { state: 'attached' });
+      await p.locator('[data-testid=picker]').setInputFiles('fixtures/outline.dxf');
+      await p.waitForFunction(() => document.querySelector('.tabs').textContent.includes('outline.dxf'));
+    };
+    try {
+      await load(); await open();
+      await plus('Delete').click(); await p.keyboard.press('Alt+x');
+      assert.deepEqual(await chips('delete').allTextContents(), ['Alt+X×'], 'a fixed row takes an extra key; its main key stays locked');
+      assert.equal(await dialog.getByRole('button', { name: 'Delete key', exact: true }).isDisabled(), true);
+      await plus('Delete').click(); await p.keyboard.press('Alt+x');
+      await dialog.locator('.sc-status').filter({ hasText: /Alt\+X is already a key of Delete/ }).waitFor();
+      await plus('Delete').click(); await p.keyboard.press('Delete');
+      await dialog.locator('.sc-status').filter({ hasText: /Delete cannot be assigned to Delete\. Reserved for deleting/ }).waitFor();
+      await plus('Line').click(); await p.keyboard.press('Alt+z');
+      await dialog.locator('.sc-status').filter({ hasText: /Reserved for Snap/ }).waitFor();
+      await plus('Line').click(); await p.keyboard.press('Alt+x');
+      await dialog.locator('.sc-warning-line').filter({ hasText: /Key “Alt\+X” is used by Delete/ }).waitFor();
+      assert.equal(await dialog.getByRole('button', { name: 'Save', exact: true }).isDisabled(), true);
+      await dialog.getByRole('button', { name: 'Remove extra key Alt+X', exact: true }).click();
+      assert.equal(await chips('line').count(), 0); assert.equal(await dialog.getByRole('button', { name: 'Save', exact: true }).isDisabled(), false);
+      await plus('Save').click(); await p.keyboard.press('Alt+s');
+      await plus('Save As').click(); await p.keyboard.press('Control+Alt+s');
+      assert.deepEqual(await chips('save').allTextContents(), ['Alt+S×']); assert.deepEqual(await chips('saveas').allTextContents(), ['Ctrl+Alt+S×']);
+      await dialog.getByRole('searchbox').fill('Ctrl+Alt+S'); assert.equal(await dialog.locator('tr[data-command]:visible').count(), 1, 'search finds an extra key');
+      await dialog.getByRole('searchbox').fill('');
+      await plus('Line').click(); await p.keyboard.press('Alt+l');
+      await dialog.getByRole('button', { name: 'Remove extra key Alt+L from Line', exact: true }).click();
+      assert.equal(await chips('line').count(), 0);
+      await plus('Line').click(); await p.keyboard.press('Alt+x');       // a clash row in the shot
+      await dialog.getByRole('searchbox').fill('Alt+');
+      for (const theme of ['light', 'dark']) { await p.evaluate((th) => { document.documentElement.dataset.theme = th; }, theme); await p.screenshot({ path: `${shotDir}/134-extra-keys-${theme}.png` }); }
+      await p.setViewportSize({ width: 1024, height: 700 }); await p.screenshot({ path: `${shotDir}/134-extra-keys-1024.png` });
+      await p.setViewportSize({ width: 1440, height: 900 }); await p.evaluate(() => { document.documentElement.dataset.theme = 'light'; });
+      await dialog.getByRole('button', { name: 'Remove extra key Alt+X', exact: true }).click(); await dialog.getByRole('searchbox').fill('');
+      await dialog.getByRole('button', { name: 'Save', exact: true }).click(); await dialog.waitFor({ state: 'hidden' });
+      const stored = () => p.evaluate(async () => { const { idbStore } = await import('./idbstore.js'); return idbStore('project-d-shortcuts', 'settings', 'test').all(); });
+      assert.deepEqual(await stored(), [{ id: 'own', overrides: { delete: { extra: ['Alt+X'] }, save: { extra: ['Alt+S'] }, saveas: { extra: ['Ctrl+Alt+S'] } } }], 'only the differences');
+      const all = await dlSave('Control+s'); assert.ok(all > 0);
+      await p.keyboard.press('Control+a'); await p.keyboard.press('Alt+x');
+      assert.equal(await dlSave('Alt+s'), 0, 'Alt+X deleted the selection and Alt+S saved the file');
+      await p.keyboard.press('Control+z');
+      assert.equal(await dlSave('Alt+s'), all, 'one Ctrl+Z brings back all of it: the delete was one undo step');
+      await p.locator('[data-testid=cmd-echo]').click(); await p.locator('[data-testid=cmd-input]').fill('abc'); await p.keyboard.press('Home');
+      await p.keyboard.press('Alt+x');
+      await p.waitForFunction(() => document.querySelector('[data-testid=cmd-input]').value === 'bc');       // in a text field an extra Delete does what Delete does there
+      assert.equal(await dlSave('Alt+s'), all, 'an extra key of Save saves from a text field, as Ctrl+S does');
+      await p.keyboard.press('Escape');
+      await load(); await open();
+      assert.deepEqual(await chips('delete').allTextContents(), ['Alt+X×']); assert.deepEqual(await chips('saveas').allTextContents(), ['Ctrl+Alt+S×']);
+      await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+      assert.equal(await dlSave('Alt+s'), all, 'the extra keys work after a reload');
+      console.log('134: extra keys on fixed rows, clash Remove, Alt+X delete in one undo step, Alt+S save, kept after reload');
+    } finally { await xCtx.close(); }
+  });
+
   await step('TODO 253b: Export DXF Enter respects dialog focus and Cancel / Close', async () => {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const p = await context.newPage();
@@ -24948,7 +25699,7 @@ try {
       };
     }, [...Buffer.from(writeDxf(raw))]);
     const dialog = t('export-dxf-dialog'), open = async () => { await menuItem('File', 'Export DXF…'); await dialog.waitFor(); };
-    const clean = async () => assert.equal(await page.locator('.tabs .dtab.on .dirty').count(), 0);
+    const clean = async () => assert.equal(await page.locator('.tabs .dtab.on .dot').count(), 0);
     const written = () => page.evaluate(() => window.__exp109.wrote);
     try {
       await menuItem('File', 'Open…');
@@ -25048,6 +25799,61 @@ try {
     }
   });
 
+  await step('TODO 109b: Export DXF Layers and Text: an unticked layer and Curves leave no entity on it and no top-level TEXT; block text stays; the drawing stays clean', async () => {
+    await closeTabs(/./); await menuItem('View', 'Theme: light');
+    const raw = newDoc(4);
+    for (const [n, o] of [['Cut', { aci: 1 }], ['Notes', { aci: 3 }], ['Hid', { aci: 5, off: true }]]) addLayer(raw, n, o);
+    raw.blocks.B = { base: [0, 0], xref: false, entities: [dxfText(0, 0, 2, 'blk', { layer: '0' })] };
+    addEntities(raw, dxfLine(0, 0, 100, 0, { layer: 'Cut' }), dxfLine(0, 10, 100, 10, { layer: 'Notes' }), dxfLine(0, 20, 100, 20, { layer: 'Hid' }),
+      dxfText(5, 30, 5, 'Hi', { layer: 'Notes' }), dxfText(5, 40, 5, 'Gone', { layer: 'Cut' }), dxfInsert('B', 50, 50));
+    await page.evaluate((bytes) => {
+      window.__exp109b = { wrote: [] };
+      window.__TAURI__ = {
+        dialog: { open: async () => 'C:\\source\\curves.dxf', ask: async () => true, save: async () => 'C:\\out\\curves-export.dxf' },
+        fs: { readFile: async () => new Uint8Array(bytes), exists: async () => false, writeTextFile: async (path, text) => { window.__exp109b.wrote.push({ path, text }); } },
+      };
+    }, [...Buffer.from(writeDxf(raw))]);
+    const dialog = t('export-dxf-dialog'), open = async () => { await menuItem('File', 'Export DXF…'); await dialog.waitFor(); };
+    const layer = (n) => page.locator(`[data-testid=export-dxf-layer][data-layer="${n}"]`);
+    try {
+      await menuItem('File', 'Open…'); await waitTab(page, 'curves.dxf');
+      // the app keeps the document module-private: compare the drawn pixels before and after
+      const docJson = () => t('drawing').evaluate((el) => el.toDataURL());
+      const before = await docJson();
+      await open();
+      assert.deepEqual(await page.locator('[data-testid=export-dxf-layer]').evaluateAll((l) => l.map((b) => [b.dataset.layer, b.checked, b.disabled])),
+        [['Cut', true, false], ['Notes', true, false], ['Hid', false, false], ['0', true, true]], 'ticked = the visible layers; layer 0 is kept and cannot be unticked');
+      assert.equal(await t('export-dxf-text').evaluate((s) => s.value), 'text');
+      await layer('Cut').uncheck(); await t('export-dxf-text').selectOption('curves');
+      await page.screenshot({ path: `${shotDir}/export-dxf-layers-light.png` });
+      await t('export-dxf-cancel').click(); await dialog.waitFor({ state: 'detached' });
+      await menuItem('View', 'Theme: dark'); await open(); await layer('Cut').uncheck(); await t('export-dxf-text').selectOption('curves');
+      await page.screenshot({ path: `${shotDir}/export-dxf-layers-dark.png` });
+      await page.keyboard.press('Escape'); await dialog.waitFor({ state: 'detached' });
+      await menuItem('View', 'Theme: light'); await open();
+      await layer('Cut').uncheck(); await t('export-dxf-text').selectOption('curves');
+      await t('export-dxf-go').click(); await page.waitForFunction(() => window.__exp109b.wrote.length === 1);
+      const out = readDxf(await page.evaluate(() => window.__exp109b.wrote[0].text));
+      const top = out.entities.map((e) => e.type + ':' + e.layer);
+      assert.ok(!top.some((e) => /:(Cut|Hid)$/.test(e)), 'nothing on the unticked layers (Cut by hand, Hid by default): ' + top);
+      assert.ok(!top.some((e) => /^TEXT/.test(e)), 'no TEXT at the top level: ' + top);
+      assert.ok(top.filter((e) => e === 'LWPOLYLINE:Notes').length >= 2, 'Hi became outlines on its own layer: ' + top);
+      assert.ok(top.includes('LINE:Notes') && top.includes('INSERT:0'));
+      assert.equal(out.blocks.B.entities[0].type, 'TEXT', 'block text stays text');
+      await said(/Exported curves-export\.dxf.*Text as curves: 1 text made into outlines.*1 text in blocks, attributes or placed parts stays text/);
+      assert.equal(await page.locator('.tabs .dtab.on .dot').count(), 0, 'the open drawing stays clean');
+      assert.equal(await docJson(), before, 'the open drawing is unchanged after the export');
+      const doc = await page.evaluate(() => document.querySelector('.tabs .dtab.on .tname').textContent);
+      assert.equal(doc, 'curves.dxf');
+      for (const theme of ['light', 'dark']) assert.ok(readFileSync(`${shotDir}/export-dxf-layers-${theme}.png`).length > 1000);
+      console.log(`109b: Cut unticked + Curves: ${top.join(' ')}; screenshots ${shotDir}/export-dxf-layers-{light,dark}.png`);
+    } finally {
+      await page.evaluate(() => { delete window.__TAURI__; delete window.__exp109b; });
+      await page.keyboard.press('Escape');
+      await closeTabs(/./);
+    }
+  });
+
   await step('TODO 52: File → Export for cutter… asks for the tolerance (bad values refused), cancels cleanly, then writes lines / arcs / polylines only; screenshots light and dark', async () => {
     await closeTabs(/./);
     const d = newDoc(4); addEntities(d, [dxfPoly([[0, 0], [100, 0], [100, 60], [0, 60]], { closed: true }), dxfCircle(50, 30, 15), dxfText(10, 10, 5, 'HELLO')]);
@@ -25077,7 +25883,7 @@ try {
     await menuItem('File', 'Export for cutter…'); await shot('dark');
     await page.keyboard.press('Escape'); await dlg.waitFor({ state: 'detached' });
     await menuItem('View', 'Theme: light');
-    assert.deepEqual(await tabNames(), ['cut-plate.dxf']); assert.equal(await page.locator('.tabs .dtab.on .dirty').count(), 0, 'cancelled: the tab is untouched');
+    assert.deepEqual(await tabNames(), ['cut-plate.dxf']); assert.equal(await page.locator('.tabs .dtab.on .dot').count(), 0, 'cancelled: the tab is untouched');
 
     await page.evaluate(() => {
       window.__cut = { dlg: [], wrote: [] };
@@ -26495,7 +27301,7 @@ try {
     };
     const readable = (list, what) => { for (const q of list) { const d = (((q.angle - q.line) % 180) + 180) % 180; assert.ok((d < 1e-3 || 180 - d < 1e-3) && (q.angle <= 90 + 1e-3 || q.angle > 270 - 1e-3), `${what}: text at ${q.angle}, line at ${q.line}`); } };
     await click(150, 190);
-    await typeCmd('ro'); await typeCmd('30');
+    await typeCmd('ro'); await typeCmd('150,190'); await typeCmd('30');       // 156e2: a loose object turns as on a drawing: pivot, then angle
     text = await save();
     assert.ok(textsIn(text).some((q) => q.angle > 1), 'a dimension was turned');
     readable(textsIn(text), 'rotated'); keepsSide(text, 'rotated');
@@ -27069,6 +27875,308 @@ try {
     assert.ok(Math.abs(moved.params.v[0] - 180) < 1e-3 && Math.abs(moved.params.v[1] - 190) < 1e-3, 'Move carries the angle vertex with both source lines');
     await undo(); assert.ok(Math.abs(angleIn(await save()).params.v[1] - 150) < 1e-3, 'one Undo restores the lines and angle');
     await t('decimals').selectOption('2'); await page.locator('[data-tool=select]').click();
+  });
+
+  await step('TODO 156e1: Leader on a layout is a layout object (one Undo, Esc cancels); grips per point with the note following the end, Format → Dimension style restyles it, Move, Explode; saved and reopened as an object, placed parts untouched', async () => {
+    await freshLayoutWithPlate();
+    const n0 = await nParts(), undo = async () => { await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z'); };
+    const save = async () => (await downloaded(() => page.keyboard.press('Control+s'))).text;
+    const partsWhen = (n) => page.waitForFunction((k) => document.querySelectorAll('[data-group=parts] .part-hit').length === k, n, { timeout: 8000 });       // the count follows the edit by a frame
+    const ldrIn = (text) => Object.entries(readDxf(text).blocks).filter(([k]) => /^PD_LDR_/.test(k)).map(([k, b]) => ({ name: k, ...readLeader(k, b), types: b.entities.map((e) => e.type) }));
+    const partsIn = (text) => Object.values(layoutFromRaw(readDxf(text)).parts);
+    assert.equal(await page.locator('[data-tool=leader]').isEnabled(), true, 'the Leader button is on for a layout');
+    await typeCmd('le'); await said(/^Specify leader arrowhead location:$/);
+    await typeCmd('100,150'); await said(/^Specify next point:$/);
+    await page.keyboard.press('Escape'); await said(/Leader cancelled/);
+    assert.equal(await nParts(), n0, 'Esc mid-command adds nothing');
+    await typeCmd('100,150'); await typeCmd('150,190'); await said(/^Specify next point, or Enter to type the note:$/);
+    await typeCmd('200,190'); await t('text-editor').waitFor();
+    await page.keyboard.press('Escape'); await said(/Leader cancelled/);
+    assert.equal(await nParts(), n0, 'Esc in the note adds nothing');
+    await typeCmd('100,150'); await typeCmd('150,190'); await typeCmd('200,190'); await t('text-editor').waitFor();
+    await t('text-editor').fill('DEBURR'); await page.keyboard.press('Enter');
+    await said(/Leader placed on the layer Dimensions: DEBURR\. Ctrl\+Z takes it back/);
+    await partsWhen(n0 + 1); assert.equal(await nParts(), n0 + 1, 'the leader is one object');
+    assert.equal((await histLabels()).at(-1), 'Leader');
+    await undo(); await partsWhen(n0); assert.equal(await nParts(), n0, 'one Undo takes the leader away');
+    await page.keyboard.press('Control+y'); await partsWhen(n0 + 1); assert.equal(await nParts(), n0 + 1, 'Redo brings it back');
+    await page.keyboard.press('Escape');
+    let text = await save(), L = ldrIn(text);
+    assert.equal(L.length, 1); assert.deepEqual(L[0].lines, ['DEBURR']); assert.deepEqual(L[0].pts, [[100, 150], [150, 190], [200, 190]]);
+    assert.deepEqual(L[0].types, ['LINE', 'LINE', 'SOLID', 'TEXT']);
+    assert.equal(partsIn(text).filter((q) => !q.obj).length, 1, 'the placed part is still the only part');
+    await shotBoth('layout-leader-object');
+    await closeTabs(/./);
+    await t('picker').setInputFiles({ name: 'ldr-lay.dxf', mimeType: 'text/plain', buffer: Buffer.from(text, 'latin1') });
+    await waitTab(page, 'ldr-lay.dxf');
+    await partsWhen(n0 + 1); assert.equal(await nParts(), n0 + 1, 'the plate and the leader are back');
+    const reopened = partsIn(await save());       // the reopened tab itself, saved again
+    assert.equal(reopened.filter((q) => q.obj).length, 1, 'the leader reopens as an object, not a part'); assert.equal(reopened.filter((q) => !q.obj).length, 1, 'and the plate is still the one part');
+    // grips: one per point; the end drags, the note goes with it, one Undo per drag
+    await page.locator('[data-tool=select]').click(); await click(125, 170); await frames(); await gripWhen(3);
+    const grips = await page.locator('[data-testid=grip]').evaluateAll((g) => g.map((x) => x.dataset.grip));
+    const endId = grips.find((id) => id.endsWith(':v2')), tipId = grips.find((id) => id.endsWith(':v0'));
+    const gripTo = async (id, x, y) => {       // click the grip, then click the new place (a layout's grip runs are click, click)
+      const g = await gripBox(id); await page.mouse.click(g.x, g.y);
+      await page.waitForFunction(() => document.querySelectorAll('[data-testid=grip-hot]').length === 1);
+      await click(x, y); await frames();
+    };
+    await gripTo(endId, 220, 210);
+    const moved = await save(); L = ldrIn(moved)[0];
+    assert.ok(Math.abs(L.pts[2][0] - 220) < 1 && Math.abs(L.pts[2][1] - 210) < 1 && Math.abs(L.pts[0][0] - 100) < 1e-5, 'the end moved, the arrowhead did not: ' + JSON.stringify(L.pts));
+    const tx = readDxf(moved).blocks[L.name].entities.find((e) => e.type === 'TEXT');
+    assert.ok(Number(fieldOf(tx, tx.r.c.includes(11) ? 11 : 10)) > 220, 'the note went with the end');
+    assert.equal((await histLabels()).at(-1), 'Stretch leader');
+    await page.keyboard.press('Escape'); await click(125, 170); await frames(); await gripWhen(3);
+    await dragGripTo(tipId, 90, 140); await frames();       // and a real drag too
+    L = ldrIn(await save())[0]; assert.ok(Math.abs(L.pts[0][0] - 90) < 1, 'the arrowhead moved');
+    await undo(); await undo();
+    L = ldrIn(await save())[0]; assert.deepEqual(L.pts, [[100, 150], [150, 190], [200, 190]], 'each drag is one Undo step');
+    // Format → Dimension style restyles it (one Undo)
+    await page.keyboard.press('Escape'); await click(125, 170); await frames();
+    await openStyle(); await setStyle({ text: 2, arrow: 1 }); await t('ds-ok').click();
+    await said(/1 selected dimension restyled/);
+    L = ldrIn(await save())[0]; assert.ok(Math.abs(L.textH - 2) < 1e-5 && Math.abs(L.arrow - 1) < 1e-5, 'the leader took the style: ' + L.textH + ' / ' + L.arrow);
+    await undo(); L = ldrIn(await save())[0]; assert.ok(Math.abs(L.textH - 3.5) < 1e-5 && Math.abs(L.arrow - 2.5) < 1e-5, 'one Undo gives the old look back');
+    await openStyle(); await setStyle({ text: 3.5, arrow: 2.5 }); await t('ds-ok').click();       // the Standard style back for the next steps
+    // Move carries it (settled into its block), one Undo
+    await page.keyboard.press('Escape'); await click(125, 170); await frames();
+    await typeCmd('move'); await typeCmd('0,0'); await typeCmd('30,40');
+    L = ldrIn(await save()); assert.equal(L.length, 1);
+    assert.deepEqual(L[0].pts, [[130, 190], [180, 230], [230, 230]], 'Move put the placement into the points'); assert.deepEqual(L[0].lines, ['DEBURR']);
+    await undo(); assert.deepEqual(ldrIn(await save())[0].pts, [[100, 150], [150, 190], [200, 190]]);
+    // Explode: lines, arrowhead and note as separate objects, one Undo
+    await page.keyboard.press('Escape'); await click(125, 170); await frames();
+    await typeCmd('explode'); await said(/Explode: 1 leader exploded into lines, arrows and text/);
+    await partsWhen(n0 + 4); assert.equal(await nParts(), n0 + 4, 'LINE, LINE, SOLID, TEXT');
+    text = await save(); assert.equal(ldrIn(text).length, 0, 'no leader block is left');
+    await undo(); await partsWhen(n0 + 1); assert.equal(await nParts(), n0 + 1); assert.equal(ldrIn(await save()).length, 1);
+    await page.locator('[data-tool=select]').click();
+  });
+
+  await step('TODO 156e1b: layout leader select, panel, dblclick', async () => {
+    await freshLayoutWithPlate();
+    const n0 = await nParts(), undo = async () => { await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z'); };
+    const save = async () => (await downloaded(() => page.keyboard.press('Control+s'))).text;
+    const ldrIn = (text) => Object.entries(readDxf(text).blocks).filter(([k]) => /^PD_LDR_/.test(k)).map(([k, b]) => ({ name: k, ...readLeader(k, b) }));
+    await page.locator('[data-tool=select]').click();
+    await typeCmd('le'); await typeCmd('100,150'); await typeCmd('150,190'); await typeCmd('200,190'); await t('text-editor').waitFor();
+    await t('text-editor').fill('DEBURR'); await page.keyboard.press('Enter');
+    await said(/Leader placed on the layer Dimensions: DEBURR/);
+    assert.equal(await nParts(), n0 + 1);
+    await t('ldr-row').waitFor({ state: 'visible', timeout: 8000 });       // placed = selected, the Leader row is there
+    await page.waitForFunction(() => ['ldr-note', 'ldr-height', 'ldr-arrow'].map((id) => document.querySelector(`[data-testid=${id}]`).value).join('|') === 'DEBURR|3.5|2.5');
+    await shotBoth('layout-leader-row');
+    await t('ldr-height').fill('5'); await t('ldr-height').press('Enter');
+    await page.waitForFunction(() => document.querySelector('[data-testid=ldr-height]').value === '5' && document.querySelector('[data-testid=cmd-prompt]').textContent.includes('Leader text height'));
+    assert.equal((await histLabels()).at(-1), 'Leader text height');
+    assert.ok(Math.abs(ldrIn(await save())[0].textH - 5) < 1e-5, 'the row changed the text height');
+    await undo(); assert.ok(Math.abs(ldrIn(await save())[0].textH - 3.5) < 1e-5, 'one Undo restores it');
+    // double-click: the note is typed in place; Esc cancels with no step, Enter is one step
+    await page.locator('[data-tool=select]').click();       // (the Leader command repeats: back to Select)
+    const steps = await histLabels(), p = await at(125, 170);
+    await page.mouse.dblclick(p.x, p.y);
+    await page.waitForFunction(() => document.querySelector('[data-testid=text-editor]').value === 'DEBURR');       // the note opens as it is
+    await t('text-editor').fill('NOPE'); await page.keyboard.press('Escape');
+    assert.deepEqual(await histLabels(), steps, 'Esc adds no undo step'); assert.deepEqual(ldrIn(await save())[0].lines, ['DEBURR']);
+    await page.mouse.dblclick(p.x, p.y);
+    await t('text-editor').waitFor(); await t('text-editor').fill('BURR OFF'); await page.keyboard.press('Enter');
+    await said(/Leader note changed/);
+    assert.deepEqual(await histLabels(), [...steps.slice(0, -1), 'Leader note'], 'Enter is one step (it replaced the undone text-height step)');
+    assert.equal(await nParts(), n0 + 1, 'still one object');
+    const text = await save(); assert.deepEqual(ldrIn(text).map((x) => x.lines), [['BURR OFF']]);
+    await closeTabs(/./);
+    await t('picker').setInputFiles({ name: 'ldr-note.dxf', mimeType: 'text/plain', buffer: Buffer.from(text, 'latin1') });
+    await waitTab(page, 'ldr-note.dxf');
+    assert.deepEqual(ldrIn(await save()).map((x) => x.lines), [['BURR OFF']], 'the note is saved after reopening');
+    await page.locator('[data-tool=select]').click();
+  });
+
+  await step('TODO 156e1c: grip modes on a layout leader: Rotate, Scale, Mirror and Move act on it (one Undo each, settled in its block, saved and reopened), Copy is refused; a placed Part in the selection keeps Stretch', async () => {
+    await freshLayoutWithPlate();
+    const undo = async () => { await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z'); };
+    const save = async () => (await downloaded(() => page.keyboard.press('Control+s'))).text;
+    const ldrIn = (text) => Object.entries(readDxf(text).blocks).filter(([k]) => /^PD_LDR_/.test(k)).map(([k, b]) => ({ name: k, ...readLeader(k, b) }));
+    const hotGrip = async (id) => { const a = await gripBox(id); await page.mouse.click(a.x, a.y); await page.waitForFunction(() => document.querySelectorAll('[data-testid=grip-hot]').length === 1); };
+    const noHot = () => page.waitForFunction(() => document.querySelectorAll('[data-testid=grip-hot]').length === 0);
+    const gripId = (k) => page.locator('[data-testid=grip]').evaluateAll((g, s) => g.map((x) => x.dataset.grip).find((x) => x.endsWith(':' + s)), k);
+    const select = async () => { await page.keyboard.press('Escape'); await click(125, 170); await frames(); await gripWhen(3); };
+    const press = async (key, n = 1) => { for (let i = 0; i < n; i++) await page.keyboard.press(key); };
+    const hist = () => t('cmd-hist').textContent();
+    const leader = async () => ldrIn(await save())[0];
+    const pts = async (want, why) => { const L = await leader(); L.pts.forEach(([x, y], k) => assert.ok(near(x, want[k][0], 0.01) && near(y, want[k][1], 0.01), `${why}: ${JSON.stringify(L.pts)}`)); return L; };
+    const was = [[100, 150], [150, 190], [200, 190]];
+    await page.locator('[data-tool=select]').click();
+    await typeCmd('le'); await typeCmd('100,150'); await typeCmd('150,190'); await typeCmd('200,190'); await t('text-editor').waitFor();
+    await t('text-editor').fill('DEBURR'); await page.keyboard.press('Enter');
+    await said(/Leader placed on the layer Dimensions: DEBURR/);
+    await page.locator('[data-tool=select]').click();
+    const n1 = (await histLabels()).length;
+    // Rotate 90 about the arrowhead: typed angle; one Undo; settled in its block (the note stays upright)
+    await select(); await hotGrip(await gripId('v0')); await press(' ', 2);
+    await said(/^Specify rotation angle or/);
+    await typeCmd('90'); await noHot(); await frames();
+    let L = await pts([[100, 150], [60, 200], [60, 250]], 'rotated 90° about the arrowhead'); assert.deepEqual(L.lines, ['DEBURR']);
+    assert.equal((await histLabels()).at(-1), 'Rotate'); assert.equal((await histLabels()).length, n1 + 1);
+    await undo(); await frames(); await pts(was, 'one Undo turns it back');
+    // Scale 2 about the arrowhead: the note and arrowhead scale too
+    await select(); await hotGrip(await gripId('v0')); await press(' ', 3);
+    await said(/^Specify scale factor or/);
+    await typeCmd('2'); await noHot(); await frames();
+    L = await pts([[100, 150], [200, 230], [300, 230]], 'scaled 2 about the arrowhead'); assert.ok(near(L.textH, 7, 1e-5) && near(L.arrow, 5, 1e-5), `the note and the arrowhead scaled: ${L.textH} / ${L.arrow}`);
+    assert.equal((await histLabels()).at(-1), 'Scale');
+    await undo(); await frames(); await pts(was, 'one Undo scales it back');
+    // Mirror about the vertical line through the arrowhead: the note stays upright
+    await select(); await hotGrip(await gripId('v0')); await press(' ', 4);
+    await said(/^Specify second point or/);
+    await typeCmd('100,250'); await noHot(); await frames();
+    L = await pts([[100, 150], [50, 190], [0, 190]], 'mirrored about x = 100'); assert.deepEqual(L.lines, ['DEBURR']);
+    assert.equal((await histLabels()).at(-1), 'Mirror');
+    await undo(); await frames(); await pts(was, 'one Undo mirrors it back');
+    // Copy is refused (no slot for a copy yet): the run stays, Esc ends it, no step
+    const steps = await histLabels();
+    await select(); await hotGrip(await gripId('v0')); await press(' ');
+    await said(/^Specify move point or/);
+    await typeCmd('c'); await page.mouse.click((await at(300, 250)).x, (await at(300, 250)).y); await frames();
+    assert.match(await hist(), /A leader on a layout cannot be copied with a grip yet/);
+    await press('Escape'); await noHot(); await pts(was, 'no copy was made');
+    assert.deepEqual(await histLabels(), steps, 'no undo step');
+    // Move by a typed point (base = the hot grip): kept, saved and reopened at the new place
+    await select(); await hotGrip(await gripId('v0')); await press(' ');
+    await typeCmd('130,190'); await noHot(); await frames();
+    const moved = [[130, 190], [180, 230], [230, 230]];
+    await pts(moved, 'moved by 30,40'); assert.equal((await histLabels()).at(-1), 'Move');
+    await shotBoth('layout-leader-grip-move');
+    const text = await save();
+    await closeTabs(/./);
+    await t('picker').setInputFiles({ name: 'ldr-grip.dxf', mimeType: 'text/plain', buffer: Buffer.from(text, 'latin1') });
+    await waitTab(page, 'ldr-grip.dxf');
+    L = ldrIn(await save())[0]; L.pts.forEach(([x, y], k) => assert.ok(near(x, moved[k][0], 0.01) && near(y, moved[k][1], 0.01)), 'the moved leader reopens at its new place');
+    assert.deepEqual(L.lines, ['DEBURR']);
+    // a placed Part in the selection (Select all, the leader is selected too): the modes stay in Stretch with the note
+    await typeCmd('line'); await typeCmd('50,600'); await typeCmd('300,600'); await typeCmd(''); await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click();
+    await page.keyboard.press('Control+a'); await frames(); await gripWhen(3);
+    await hotGrip(await gripId('b')); await press(' ');
+    await said(/^Specify stretch point or/);
+    assert.match(await hist(), /take loose objects only here: use the ribbon command for Parts(?! and)/);
+    await press('Escape'); await noHot();
+    // a loose line plus the leader (it would stay put in a mode): refused the same way, nothing moves
+    await page.keyboard.press('Escape'); await typeCmd('line'); await typeCmd('50,260'); await typeCmd('300,260'); await typeCmd(''); await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click();
+    const w0 = await at(20, 140), w1 = await at(330, 280);
+    await page.mouse.move(w0.x, w0.y); await page.mouse.down(); await page.mouse.move(w1.x, w1.y, { steps: 5 }); await page.mouse.up(); await frames();
+    await said(/^2 parts selected/);
+    await hotGrip(await gripId('b')); await press(' ');
+    await said(/^Specify stretch point or/);
+    assert.match(await hist(), /take loose objects only here: use the ribbon command for Parts(?! and)/);
+    await press('Escape'); await noHot();
+    await closeTabs(/./);
+  });
+
+  await step('TODO 156e2: Fill, Eyedropper and Rotate on layout objects: fill, No fill, Eyedropper two targets, one Undo each, a placed part refused; Rotate with base point, angle and Reference, one Undo; saved, reopened and in the PDF', async () => {
+    await freshLayoutWithPlate();
+    const n0 = await nParts(), blur = () => page.evaluate(() => document.activeElement?.blur());
+    const undo = async () => { await blur(); await page.keyboard.press('Control+z'); };
+    const save = async () => (await downloaded(() => page.keyboard.press('Control+s'))).text;
+    const partsWhen = (n) => page.waitForFunction((k) => document.querySelectorAll('[data-group=parts] .part-hit').length === k, n, { timeout: 8000 });
+    const val = (e, c) => Number(e.r.v[e.r.c.indexOf(c)]);
+    const objs = (text) => readDxf(text).entities.filter((e) => e.type !== 'INSERT' && !['Sheet', 'Marks', 'Parts'].includes(e.layer));
+    const fills = (text) => objs(text).filter((e) => e.type === 'CIRCLE').map((e) => e.fill || null);       // the circles, in the order they were drawn
+    const swatch = (key) => page.locator(`[data-swatch-group=standard] [data-colour="${key}"]`);
+    const histSaid = (re) => page.waitForFunction((s) => new RegExp(s).test(document.querySelector('[data-testid=cmd-hist]').textContent), re.source);
+    const circle = async (x, y, r) => { await typeCmd('circle'); await typeCmd(`${x},${y}`); await typeCmd(String(r)); };
+    await circle(600, 500, 40); await circle(750, 500, 40); await circle(900, 500, 40);
+    await partsWhen(n0 + 3);
+    await page.locator('[data-tool=select]').click(); await page.keyboard.press('Escape');
+    await page.locator('[data-ribbon-tab=Home]').click();
+    const home = page.locator('[data-panel=Properties]');
+    await home.getByRole('button', { name: 'Fill', exact: true }).waitFor();
+    await page.waitForFunction(() => [...document.querySelectorAll('[data-panel=Properties] button')].filter((b) => ['Fill', 'Eyedropper'].includes(b.textContent.trim()) || ['Fill', 'Eyedropper'].includes(b.getAttribute('aria-label'))).every((b) => !b.disabled), null, { timeout: 8000 });
+    assert.equal(await home.getByRole('button', { name: 'Fill', exact: true }).isEnabled(), true, 'Fill is on for a layout');
+    assert.equal(await home.getByRole('button', { name: 'Eyedropper', exact: true }).isEnabled(), true, 'Eyedropper is on for a layout');
+    // Fill tool: one circle, one Undo
+    await swatch('aci:1').click();
+    await home.getByRole('button', { name: 'Fill', exact: true }).click();
+    await click(600, 500); await frames();
+    assert.deepEqual(fills(await save()), ['aci:1', null, null], 'the Fill tool filled the circle it clicked');
+    assert.equal((await histLabels()).at(-1), 'Fill colour');
+    await undo(); assert.deepEqual(fills(await save()), [null, null, null], 'one Undo takes the fill away');
+    await page.keyboard.press('Control+y'); assert.equal(fills(await save())[0], 'aci:1', 'Redo brings it back');
+    // a click on the placed part is refused with one line
+    const plate = await page.locator('[data-group=parts] .part-hit:not(.ob)').first().boundingBox();
+    await page.mouse.click(plate.x + plate.width / 2, plate.y + plate.height / 2); await frames();
+    await histSaid(/Fill and Eyedropper work on layout objects, not placed parts/);
+    await page.keyboard.press('Escape');
+    // Eyedropper: the filled circle is the source, two targets, one Undo per target
+    await home.getByRole('button', { name: 'Eyedropper', exact: true }).click();
+    await click(600, 500); await click(750, 500); await click(900, 500); await frames();
+    assert.deepEqual(fills(await save()), ['aci:1', 'aci:1', 'aci:1'], 'both targets took the fill');
+    await undo(); assert.deepEqual(fills(await save()), ['aci:1', 'aci:1', null], 'one Undo per Eyedropper target');
+    await click(900, 500); await frames();       // the tool is still on: the second target again
+    await page.keyboard.press('Escape'); await frames();
+    // a placed part as the Eyedropper source is refused too
+    await home.getByRole('button', { name: 'Eyedropper', exact: true }).click();
+    await page.mouse.click(plate.x + plate.width / 2, plate.y + plate.height / 2); await frames();
+    await histSaid(/not placed parts/);
+    await page.keyboard.press('Escape');
+    // No fill on the selected circle (the ribbon button), one Undo
+    await click(790, 500); await frames();       // the circle's edge
+    await t('no-fill').click();
+    assert.deepEqual(fills(await save()), ['aci:1', null, 'aci:1']);
+    assert.equal((await histLabels()).at(-1), 'No fill');
+    await undo(); assert.deepEqual(fills(await save()), ['aci:1', 'aci:1', 'aci:1'], 'No fill is one Undo');
+    await page.keyboard.press('Escape');
+    // Rotate: a line and a filled rectangle turn about a base point, one Undo; Reference; a placed part keeps its turn arrows
+    await typeCmd('line'); await typeCmd('300,300'); await typeCmd('400,300'); await typeCmd('');
+    await typeCmd('rect'); await typeCmd('300,450'); await typeCmd('100,40');
+    await partsWhen(n0 + 5);
+    await page.locator('[data-tool=select]').click(); await page.keyboard.press('Escape');
+    await click(350, 300); await frames();
+    await page.locator('[data-menu=Modify]').click();
+    assert.equal(await page.getByRole('menuitem', { name: /^Rotate/ }).isEnabled(), true, 'Modify > Rotate is on for a loose layout object');
+    await page.keyboard.press('Escape');
+    await typeCmd('rotate'); await said(/Pivot:/);
+    await typeCmd('300,300'); await said(/Angle:/); await typeCmd('90');
+    await said(/Selection rotated/);
+    assert.match((await histLabels()).at(-1), /^Rotate/);
+    let line = objs(await save()).find((e) => e.type === 'LINE');
+    assert.deepEqual([val(line, 10), val(line, 20), val(line, 11), val(line, 21)].map((v) => Math.round(v)), [300, 300, 300, 400], 'the line turned 90° about its base point');
+    await undo(); line = objs(await save()).find((e) => e.type === 'LINE');
+    assert.deepEqual([val(line, 10), val(line, 20), val(line, 11), val(line, 21)].map((v) => Math.round(v)), [300, 300, 400, 300], 'one Undo turns it back');
+    await page.keyboard.press('Escape');
+    await click(350, 300); await frames();
+    await typeCmd('rotate'); await typeCmd('300,300'); await typeCmd('r'); await typeCmd('0'); await typeCmd('45');       // Reference: 0 -> 45 is a turn of 45°
+    line = objs(await save()).find((e) => e.type === 'LINE');
+    assert.ok(Math.abs(val(line, 11) - (300 + 100 * Math.SQRT1_2)) < 1e-3 && Math.abs(val(line, 21) - (300 + 100 * Math.SQRT1_2)) < 1e-3, 'Reference turned it by 45°: ' + val(line, 11) + ',' + val(line, 21));
+    await page.keyboard.press('Escape');
+    // the rectangle: filled, then turned about its corner (the screenshot shows both)
+    await click(350, 450); await frames();
+    await swatch('aci:5').click();
+    await typeCmd('rotate'); await typeCmd('300,450'); await typeCmd('30'); await frames();
+    const pdfCount = objs(await save()).filter((e) => e.fill).length;
+    assert.equal(pdfCount, 4, 'three circles and the rectangle carry a fill');
+    await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click();
+    await shotBoth('layout-fill-rotate');
+    await page.setViewportSize({ width: 1024, height: 768 }); await page.waitForTimeout(250);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'the layout Home ribbon fits 1024 px');
+    await page.screenshot({ path: `${shotDir}/todo156e2-layout-1024.png` });
+    await page.setViewportSize({ width: 1440, height: 900 });
+    // only the placed part selected: Rotate keeps its turn arrows (Angle prompt); nothing selected: it cycles the nest rotation
+    await page.locator('[data-group=parts] .part-hit:not(.ob)').first().click({ force: true });
+    await typeCmd('rotate'); await said(/^Angle <0\.00>/);
+    await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
+    const nest0 = await t('rotate').inputValue(); await typeCmd('rotate');
+    await page.waitForFunction((v) => document.querySelector('[data-testid=rotate]').value !== v, nest0, { timeout: 5000 });       // nothing selected: Rotate still cycles the nest rotation
+    // saved and reopened: the fills and the turn are still there; the PDF carries the fill
+    const text = await save();
+    await closeTabs(/./);
+    await t('picker').setInputFiles({ name: 'fill-rot-lay.dxf', mimeType: 'text/plain', buffer: Buffer.from(text, 'latin1') });
+    await waitTab(page, 'fill-rot-lay.dxf'); await partsWhen(n0 + 5);
+    const back = await save();
+    assert.deepEqual(fills(back), ['aci:1', 'aci:1', 'aci:1'], 'the reopened layout keeps the fills');
+    assert.equal(objs(back).filter((e) => e.fill).length, 4);
+    await openPdf(); await t('pdf-black').uncheck();
+    const pdf = pdfText(await downloaded(() => t('pdf-go').click()));
+    assert.match(pdf, /1 0 0 rg/, 'the red fill is in the PDF'); assert.match(pdf, /0 0 1 rg/, 'and the blue one of the rectangle'); assert.match(pdf, /f\*/);
   });
 
   await step('TODO 156b fixes: Esc cancels a hot grip with 2 objects selected; Polyline snaps to its own first point on a layout; lock and group of objects survive save and reopen; the counts say parts only; Add to layout after objects starts the grid', async () => {
@@ -32903,6 +34011,64 @@ try {
     await closeTabs(/./);
   });
 
+  await step('TODO 352: a selected rotated layout part is a dashed outline of its own lines, no box line, at 1x and 8x; two selected = two outlines, no group box; orange in the gripper', async () => {
+    await closeTabs(/./);
+    await page.evaluate(() => { document.documentElement.dataset.theme = 'light'; });
+    const made = newLayout('Outline 352'), wedge = newDoc(4);               // a right triangle: its outline is not its box
+    addEntities(wedge, dxfLine(0, 0, 100, 0), dxfLine(100, 0, 100, 60), dxfLine(100, 60, 0, 0));
+    made.parts.wedge = makePart('wedge', 'Wedge', wedge, 1);
+    Object.assign(made.s, { sheetW: 1000, sheetH: 700, gripTop: 30, gripBottom: 0, gripLeft: 0, gripRight: 0 });
+    made.placed = [{ partId: 'wedge', x: 200, y: 300, rot: 30 }, { partId: 'wedge', x: 600, y: 300, rot: 30 }];
+    await t('picker').setInputFiles({ name: 'outline352.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(layoutRaw(made))) });
+    await waitTab(page, 'outline352.dxf');
+    await page.locator('[data-tool=select]').click(); await t('ptab-drawing').click();
+    const hit = (i) => page.locator(`[data-group=parts] [data-i="${i}"] .part-hit`);
+    /** What the tools layer draws: the outlines (tag, their sub-paths, screen width and dash), and any other line (a box, a union box). */
+    const tools = () => page.evaluate(() => {
+      const all = (sel) => [...document.querySelectorAll(`[data-group=tools] ${sel}`)], canvas = document.querySelector('[data-testid=drawing]');
+      const px = (el, v) => parseFloat(v) * (getComputedStyle(el).vectorEffect === 'non-scaling-stroke' ? 1 : Math.hypot(el.getScreenCTM().a, el.getScreenCTM().b));
+      return {         // above: the outline comes after the drawing canvas, so the part's own lines do not cover it
+        outlines: all('.sel-box').map((el) => { const cs = getComputedStyle(el); return { tag: el.tagName, moves: (el.getAttribute('d') || '').split('M').length - 1, width: px(el, cs.strokeWidth), dash: cs.strokeDasharray.split(/[ ,]+/).map((d) => px(el, d)), stroke: cs.stroke, mode: el.dataset.mode || '', above: !!(canvas.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING) }; }),
+        boxes: [...all('polygon'), ...all('rect')].filter((el) => !el.closest('.grip-sq, .pick-badge, .padlock') && getComputedStyle(el).stroke !== 'none').length,
+        grips: all('.grip-sq rect').length, arrows: all('.rot-arrow').length, pivot: all('.pivot').length, badges: all('.pick-badge').length,
+      };
+    });
+    const until = async (ok) => { let r = await tools(); for (let i = 0; i < 50 && !ok(r); i++) { await frames(); r = await tools(); } return r; };
+    const one = { tag: 'path', moves: 3, width: 1.6, dash: [6, 6], above: true };
+    await page.keyboard.press('Escape'); await hit(0).click({ force: true });         // Escape first: a second click on a selected part turns rotate mode on
+    const plain = await until((r) => r.outlines.length === 1 && Number.isFinite(r.outlines[0].width));
+    assert.deepEqual({ ...plain.outlines[0], stroke: undefined, mode: undefined }, { ...one, stroke: undefined, mode: undefined }, 'one selected: the wedge\'s three lines dashed 6 6 on screen: ' + JSON.stringify(plain));
+    assert.equal(plain.boxes, 0, 'and no box line'); assert.equal(plain.grips, 8, 'the resize squares stay');
+    await typeCmd('rotate');
+    const rot = await until((r) => r.outlines[0]?.mode === 'rotate' && r.arrows === 4);
+    assert.deepEqual({ ...rot.outlines[0], mode: undefined }, { ...plain.outlines[0], mode: undefined }, 'rotate mode draws the same outline');
+    assert.equal(rot.boxes, 0, 'rotate mode: no box line'); assert.equal(rot.pivot, 1, 'the turn arrows and the pivot stay');
+    const w0 = await page.locator('rect.sheet').evaluate((e) => e.getBoundingClientRect().width), cb = await t('canvas').boundingBox();
+    await page.mouse.move(cb.x + cb.width / 2, cb.y + cb.height / 2);
+    for (let i = 0; i < 40 && await page.locator('rect.sheet').evaluate((e) => e.getBoundingClientRect().width) < 8 * w0; i++) { await page.mouse.wheel(0, -300); await frames(); }
+    const big = await until((r) => r.outlines.length === 1 && Number.isFinite(r.outlines[0].width));
+    assert.deepEqual(big.outlines, rot.outlines, 'at 8x the outline keeps its screen width and dash'); assert.equal(big.boxes, 0, 'and still no box line at 8x');
+    await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
+    await typeCmd('fit'); await frames();
+    await hit(0).click({ force: true }); await hit(1).click({ force: true, modifiers: ['Shift'] });
+    const two = await until((r) => r.outlines.length === 2 && r.badges === 2);
+    assert.deepEqual(two.outlines.map((o) => o.tag + o.moves + o.above), ['path3true', 'path3true'], 'two selected: two outlines of their own lines, over the canvas');
+    assert.equal(two.boxes, 0, 'no group box and no part box'); assert.equal(two.grips, 8, 'the union grips stay');
+    await page.keyboard.press('Escape');
+    await hit(0).click({ force: true }); await hit(0).click({ force: true }); await until((r) => r.arrows === 4);       // the second click turns rotate mode on
+    const hb = await hit(0).boundingBox(); await page.mouse.move(hb.x + hb.width / 2, hb.y + hb.height / 2);
+    for (let i = 0; i < 3; i++) { await page.mouse.wheel(0, -300); await frames(); }
+    await page.screenshot({ path: `${shotDir}/352-rotated-part-light.png` });
+    await menuItem('View', 'Theme: dark'); await frames(); await page.screenshot({ path: `${shotDir}/352-rotated-part-dark.png` }); await menuItem('View', 'Theme: light');
+    await page.keyboard.press('Escape'); await page.keyboard.press('Escape'); await typeCmd('fit'); await frames();
+    await hit(0).click({ force: true });
+    await partTab(); await t('py').fill('620'); await t('py').press('Enter');
+    const grip = await until((r) => r.outlines.length === 1 && r.outlines[0].stroke !== plain.outlines[0].stroke);
+    assert.equal(grip.outlines[0].stroke, await page.evaluate(() => getComputedStyle(document.querySelector('.marks')).stroke), 'in the gripper the outline is orange (the mark colour)');
+    await closeTabs(/./);
+    assert.equal(await page.locator('.sel-box').count(), 0, 'no outline is left over once the layout is closed');
+  });
+
   const open97c = async (raw, name = 'break97c.dxf') => {
     await closeTabs(/./);
     await t('picker').setInputFiles({ name, mimeType: 'text/plain', buffer: Buffer.from(writeDxf(raw)) });
@@ -33800,6 +34966,118 @@ try {
     await page.locator('.dtab').filter({ has: page.locator('.tname', { hasText: /^compare97f2(?:-edited)*\.dxf$/ }) }).click();
     const doc = await savedDoc(); assert.equal(GR.shapeOf(doc.entities[0]).pts.length, 8); assert.deepEqual(doc.entities[1], before[1]);
     await key97c('Control+z'); assert.deepEqual((await savedDoc()).entities, before);
+    await closeTabs(/./); assert.deepEqual(errors, []);
+  });
+
+  await step('TODO 140a: Pen draws a 3-node SPLINE by clicks, Enter keeps it with one Undo, Esc cancels, click on node 1 closes; Drawings, Layouts, Compare', async () => {
+    const splines = async () => (await savedDoc()).entities.filter((e) => e.type === 'SPLINE');
+    const controls = (e) => e.r.c.filter((c) => c === 10).length;       // 3 per segment + 1
+    const snapOn = async () => { if (await t('tog-snap').getAttribute('aria-pressed') !== 'true') await t('tog-snap').click(); };
+    const rawDoc = () => { const r = newDoc(4); addEntities(r, dxfPoly([[0, 0], [300, 0], [300, 300], [0, 300]], { closed: true })); return r; };
+    const three = async () => { await click(100, 100); await click(200, 100); await click(200, 200); };
+    // Drawings
+    await open97c(rawDoc(), 'pen140a.dxf'); await snapOn();
+    const toolIsPen = () => page.waitForFunction(() => document.querySelector('[data-testid=tool-chip]').textContent === 'Tool: Pen');
+    await typeCmd('pen'); await toolIsPen();
+    await three();
+    assert.equal(await t('draw-preview').count(), 1, 'the path so far is previewed');
+    await key97c('Enter');
+    await page.waitForFunction(() => /Pen made on layer/.test(document.querySelector('[data-testid=cmd-hist]').textContent));       // the undo step is in once the made line shows (before the save below overwrites it)
+    let found = await splines(); assert.equal(found.length, 1); assert.equal(controls(found[0]), 7, '3 nodes: 2 straight cubics'); assert.equal(fieldOf(found[0], 70) & 1, 0, 'open');
+    assert.equal((await histLabels()).at(-1), 'Pen');
+    await key97c('Control+z'); assert.equal((await splines()).length, 0, 'one Undo takes the whole path');
+    await three(); await key97c('Escape');
+    assert.equal((await splines()).length, 0, 'Esc cancels the whole path: nothing made');
+    await key97c('Enter'); assert.equal((await splines()).length, 0);
+    await three(); await click(100, 100);                                // a click on node 1 closes
+    found = await splines(); assert.equal(found.length, 1); assert.equal(controls(found[0]), 10, '3 nodes closed: 3 segments'); assert.equal(fieldOf(found[0], 70) & 1, 1, 'closed');
+    await key97c('Control+z');
+    await click(100, 100); await click(200, 100); const dbl = await at(200, 200); await page.mouse.dblclick(dbl.x, dbl.y);       // double-click ends and keeps
+    found = await splines(); assert.equal(found.length, 1); assert.equal(controls(found[0]), 7, 'the double-click ends with 3 nodes: its 2nd click is the same point, not a 4th');
+    await key97c('Control+z');
+    await click(100, 100); await click(200, 100); await click(200, 200); const rc = await at(200, 200); await page.mouse.click(rc.x, rc.y, { button: 'right' });
+    found = await splines(); assert.equal(found.length, 1); assert.equal(controls(found[0]), 7, 'right-click ends and keeps');
+    await key97c('Control+z');
+    await click(100, 100); await key97c('Enter');
+    await page.waitForFunction(() => /needs two points/.test(document.querySelector('[data-testid=cmd-hist]').textContent)); assert.equal((await splines()).length, 0, 'one node makes nothing');
+    await key97c('Escape'); await key97c('Escape');
+    // Layouts
+    await freshLayoutWithPlate(); await snapOn();
+    const n0 = await nParts();
+    await typeCmd('pen'); await three(); await key97c('Enter');
+    assert.equal(await nParts(), n0 + 1, 'the path is one layout object'); assert.equal((await histLabels()).at(-1), 'Pen');
+    found = await splines(); assert.equal(found.length, 1); assert.equal(controls(found[0]), 7);
+    await key97c('Control+z'); assert.equal(await nParts(), n0, 'one Undo');
+    await three(); await key97c('Escape'); assert.equal(await nParts(), n0, 'Esc cancels');
+    await click(100, 100); await click(200, 100); await click(200, 200); await click(100, 100);
+    assert.equal(await nParts(), n0 + 1, 'a click on node 1 closes it'); found = await splines(); assert.equal(controls(found[0]), 10); assert.equal(fieldOf(found[0], 70) & 1, 1);
+    await key97c('Control+z');
+    await three(); const lrc = await at(200, 200); await page.mouse.click(lrc.x, lrc.y, { button: 'right' });
+    assert.equal(await nParts(), n0 + 1, 'right-click ends and keeps it on a layout too'); await key97c('Control+z'); await key97c('Escape'); await key97c('Escape');
+    // Compare (edits the linked drawing)
+    await open97f1(rawDoc(), 'compare140a.dxf'); await snapOn();
+    await typeCmd('compare'); await typeCmd('pen'); await toolIsPen();
+    await three(); await key97c('Enter');
+    const drawingTab = page.locator('.dtab').filter({ has: page.locator('.tname', { hasText: /^compare140a(?:-edited)*\.dxf$/ }) });
+    await drawingTab.click(); found = await splines(); assert.equal(found.length, 1, 'the spline is in the linked drawing'); assert.equal(controls(found[0]), 7);
+    await page.locator('.dtab').filter({ has: page.locator('.tname', { hasText: /^Compare$/ }) }).click(); await key97c('Control+z');
+    await drawingTab.click(); assert.equal((await splines()).length, 0, 'one Undo');
+    await closeTabs(/./); assert.deepEqual(errors, []);
+  });
+
+  await step('TODO 140b: Pen click-drag makes a Symmetrical curve node, Shift locks the handle angle, closing drag on node 1, one Undo; Drawings, Layouts, Compare', async () => {
+    const splines = async () => (await savedDoc()).entities.filter((e) => e.type === 'SPLINE');
+    const snapOn = async () => { if (await t('tog-snap').getAttribute('aria-pressed') !== 'true') await t('tog-snap').click(); };
+    const rawDoc = () => { const r = newDoc(4); addEntities(r, dxfPoly([[0, 0], [300, 0], [300, 300], [0, 300]], { closed: true })); return r; };
+    const nearTo = (p, x, y, tol, msg) => assert.ok(Math.abs(p[0] - x) <= tol && Math.abs(p[1] - y) <= tol, `${msg} ${p} != ${x},${y}`);
+    const down = async (x, y) => { const a = await at(x, y); await page.mouse.move(a.x, a.y); await page.mouse.down(); };
+    const moveTo = async (x, y) => { const b = await at(x, y); await page.mouse.move(b.x, b.y, { steps: 6 }); await frames(); };
+    const press = async (x, y, x1, y1, shift = false) => { await down(x, y); if (shift) await page.keyboard.down('Shift'); await moveTo(x1, y1); await page.mouse.up(); if (shift) await page.keyboard.up('Shift'); await frames(); };
+    const toolIsPen = () => page.waitForFunction(() => document.querySelector('[data-testid=tool-chip]').textContent === 'Tool: Pen');
+    const made = () => page.waitForFunction(() => /Pen made on layer/.test(document.querySelector('[data-testid=cmd-hist]').textContent));
+    const curve = async () => { const found = await splines(); assert.equal(found.length, 1); return { e: found[0], b: bezierOf(found[0]) }; };
+    // Drawings
+    await open97c(rawDoc(), 'pen140b.dxf'); await snapOn();
+    await typeCmd('pen'); await toolIsPen();
+    await click(100, 100); await down(200, 100); await moveTo(230, 140);
+    assert.equal(await t('pen-handles').count(), 1, 'the dragged node shows its handles'); assert.equal(await page.locator('.ovl .dr-handle').count(), 2);    await page.mouse.up(); await frames();
+    assert.equal(await t('pen-handles').count(), 0, 'the handles go when the button is released');
+    await click(200, 200); await key97c('Enter'); await made();
+    let { e, b } = await curve();
+    assert.equal(b.n, 2); assert.equal(nodeType(e, 'n1'), 'Symmetrical', 'a dragged node is Symmetrical'); nearTo(b.P[4], 230, 140, 1.5, 'out-handle follows the pointer'); nearTo(b.P[2], 2 * b.P[3][0] - b.P[4][0], 2 * b.P[3][1] - b.P[4][1], 0.01, 'in-handle mirrored');
+    const third = (a, c, k) => [a[0] + (c[0] - a[0]) * k, a[1] + (c[1] - a[1]) * k];
+    nearTo(b.P[1], ...third(b.P[0], b.P[3], 1 / 3), 0.01, 'a clicked node stays a corner: handle on the third');
+    assert.equal((await histLabels()).at(-1), 'Pen');
+    await key97c('Control+z'); assert.equal((await splines()).length, 0, 'one Undo takes the whole path');
+    await click(100, 100); await press(200, 100, 240, 120, true); await click(200, 200); await key97c('Enter'); await made();       // Shift: the handle keeps the node's row
+    ({ e, b } = await curve()); assert.ok(Math.abs(b.P[4][1] - b.P[3][1]) < 0.01 && b.P[4][0] > b.P[3][0] + 10, `Shift locks the handle angle: ${b.P[3]} -> ${b.P[4]}`); assert.equal(nodeType(e, 'n1'), 'Symmetrical');
+    await key97c('Control+z');
+    await click(100, 100); await click(200, 100); await click(200, 200); await press(100, 100, 80, 70);        // a drag on node 1 shapes the closing segment
+    ({ e, b } = await curve()); assert.equal(fieldOf(e, 70) & 1, 1, 'closed'); assert.equal(b.n, 3);
+    nearTo(b.P[8], 120, 130, 1.5, 'the closing in-handle mirrors the drag'); nearTo(b.P[1], ...third(b.P[0], b.P[3], 1 / 3), 0.01, 'node 1 keeps its first handle');
+    await key97c('Control+z'); assert.equal((await splines()).length, 0, 'one Undo');
+    await click(100, 100); await click(200, 100); await click(200, 200); await click(100, 100);       // a click on node 1 still closes
+    ({ e } = await curve()); assert.equal(fieldOf(e, 70) & 1, 1); nearTo(bezierOf(e).P[8], ...third(bezierOf(e).P[6], bezierOf(e).P[9], 2 / 3), 0.01, 'a plain close keeps the straight closing segment'); await key97c('Control+z');
+    await click(100, 100); await click(200, 100); await down(200, 200); await moveTo(230, 240); await page.keyboard.type('u'); await page.keyboard.press('Enter'); await moveTo(260, 260); await page.mouse.up(); await frames();       // 140b review Low 5: U with the button held drops the node and the drag
+    await key97c('Enter'); await made(); ({ e, b } = await curve()); assert.equal(b.n, 1, 'U dropped the dragged node'); nearTo(b.P[2], ...third(b.P[0], b.P[3], 2 / 3), 0.01, 'no handle written on the previous node'); await key97c('Control+z');
+    await key97c('Escape'); await key97c('Escape');
+    // Layouts
+    await freshLayoutWithPlate(); await snapOn();
+    const n0 = await nParts();
+    await typeCmd('pen'); await toolIsPen();
+    const rc = await at(100, 100); await page.mouse.click(rc.x, rc.y, { button: 'right' });
+    await t('ctx-menu').waitFor(); await key97c('Escape'); await t('ctx-menu').waitFor({ state: 'detached' });       // 140a review Low 1: with no node placed, a right-click on a layout opens its menu again
+    await click(100, 100); await press(200, 100, 230, 140); await click(200, 200); await key97c('Enter'); await made();
+    assert.equal(await nParts(), n0 + 1, 'one layout object'); ({ e } = await curve()); assert.equal(nodeType(e, 'n1'), 'Symmetrical');
+    await key97c('Control+z'); assert.equal(await nParts(), n0, 'one Undo'); await key97c('Escape'); await key97c('Escape');
+    // Compare (edits the linked drawing)
+    await open97f1(rawDoc(), 'compare140b.dxf'); await snapOn();
+    await typeCmd('compare'); await typeCmd('pen'); await toolIsPen();
+    await click(100, 100); await press(200, 100, 230, 140); await click(200, 200); await key97c('Enter'); await made();
+    const drawingTab = page.locator('.dtab').filter({ has: page.locator('.tname', { hasText: /^compare140b(?:-edited)*\.dxf$/ }) });
+    await drawingTab.click(); ({ e } = await curve()); assert.equal(nodeType(e, 'n1'), 'Symmetrical', 'the curve is in the linked drawing');
+    await page.locator('.dtab').filter({ has: page.locator('.tname', { hasText: /^Compare$/ }) }).click(); await key97c('Control+z');
+    await drawingTab.click(); assert.equal((await splines()).length, 0, 'one Undo');
     await closeTabs(/./); assert.deepEqual(errors, []);
   });
 
@@ -35171,11 +36449,22 @@ try {
     await closeTabs(/./); assert.deepEqual(errors, []);
     await open97c(layoutRaw(layout97i2()), 'running97lows3-rotate.dxf'); await key97c('Control+a');
     const parts = await selBoxes(), layoutSteps = (await histLabels()).length; assert.equal(parts.length, 3);
-    await typeCmd('rotate'); assert.match(await label97(/^Angle </), /^Angle </, 'rotate mode is on');
+    await page.locator('[data-menu=Modify]').click();
+    assert.equal(await page.getByRole('menuitem', { name: /^Rotate/ }).isEnabled(), true, 'Modify > Rotate is on for 3 loose layout objects selected together');
+    await page.keyboard.press('Escape');
+    await typeCmd('rotate'); assert.match(await label97(/^Pivot:/), /^Pivot:/, 'the Rotate command is on (156e2: loose objects turn as on a drawing, about a pivot)');
     await typeCmd('left');
     assert.doesNotMatch(await prompt(), /aligned/, 'layout rotate mode');
     assert.deepEqual(await selBoxes(), parts, 'layout rotate mode'); assert.equal((await histLabels()).length, layoutSteps, 'layout rotate mode');
     await key97c('Escape'); await closeTabs(/./); assert.deepEqual(errors, []);
+    await freshLayoutWithPlate();       // placed part: Rotate keeps its turn arrows (Angle prompt) and a typed word goes to that mode, not Align
+    await page.locator('[data-group=parts] .part-hit:not(.ob)').first().click({ force: true });
+    const placed = await selBoxes(), placedSteps = (await histLabels()).length;
+    await typeCmd('rotate'); assert.match(await label97(/^Angle </), /^Angle </, 'a placed part: Rotate asks for the angle');
+    await typeCmd('left');
+    await said(/^Unknown command: left/);       // the rotate mode took the word (an angle is expected): it is no Align
+    assert.deepEqual(await selBoxes(), placed, 'placed part rotate mode'); assert.equal((await histLabels()).length, placedSteps, 'placed part rotate mode');
+    await key97c('Escape'); assert.deepEqual(errors, []);
   });
 
   await step('TODO 97 Lows 3: on a layout with 3 parts selected, H at the Linear Dimension prompt forces the dimension and distributes nothing', async () => {
