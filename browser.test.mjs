@@ -28508,11 +28508,12 @@ try {
     await closeTabs(/./);
     // the later one locked, the earlier not: the earlier goes, the locked one stays
     const c3 = lineObj('d-c3', 20, 100), c4 = lineObj('d-c4', 20, 100);
-    await openLay('pf156e3d-c2', [c3, c4], [objectPlacement(c3), { ...objectPlacement(c4), lock: true }]);
+    await openLay('pf156e3d-c2', [c3, c4], [{ ...objectPlacement(c3), g: 'gx' },{ ...objectPlacement(c4), lock: true }]);
     await shows('preflight-duplicates-count', /^2$/);
     await t('preflight-duplicates-fix').click(); await frames();
     await shows('preflight-duplicates-count', /^0$/);
     assert.equal(await page.locator('[data-group=parts] .part-hit.ob').count(), 1, 'the locked line is the one left');
+    assert.deepEqual(layoutFromRaw(await savedDoc()).placed.map((p) => [p.g || null, !!p.lock]), [[null, true]], 'the locked later line stays (a saved file renumbers ids, so the earlier one carries group gx to tell them apart)');
     await closeTabs(/./);
     // (d) two stacked copies of a part with a gap inside it: the Gaps row counts it once (the part's own), with no Fix for it
     const raw = newDoc(4); addEntities(raw, [dxfLine(0, 0, 50, 25), dxfLine(50.005, 25, 100, 50)]);
@@ -28543,6 +28544,20 @@ try {
     await shows('preflight-gaps-count', /^1$/); await shows('preflight-duplicates-count', /^0$/);       // the gap is back, the line is not
     await undo(); await recheck();
     await shows('preflight-duplicates-count', /^2$/);
+    await closeTabs(/./);
+    // (g) TODO 156e3e: grouped A, its exact copy B, grouped partial overlap C, a line Z after: one Fix, B gone, C trimmed in its group and its draw place, one Undo brings all back
+    const g1 = lineObj('d-g1', 20, 100), g2 = lineObj('d-g2', 20, 100), g3 = lineObj('d-g3', 60, 140), g4 = lineObj('d-g4', 20, 100, 300);
+    await openLay('pf156e3e', [g1, g2, g3, g4], [{ ...objectPlacement(g1), g: 'g1' }, objectPlacement(g2), { ...objectPlacement(g3), g: 'g1' }, objectPlacement(g4)]);
+    await shows('preflight-duplicates-count', /^3$/);       // B, and C twice (over A and over B)
+    const ng = (await histLabels()).length;
+    await t('preflight-duplicates-fix').click(); await frames();
+    await shows('preflight-duplicates-count', /^0$/);
+    assert.equal((await histLabels()).length, ng + 1, 'one undo step for the whole click');
+    const after = layoutFromRaw(await savedDoc()).placed;
+    assert.deepEqual(after.map((p) => [p.g || null, p.x, p.y]), [['g1', 20, 200], ['g1', 100, 200], [null, 20, 300]], 'A, then C trimmed to 100..140 in its group and place, then Z');
+    await undo(); await recheck();
+    await shows('preflight-duplicates-count', /^3$/);
+    assert.equal(layoutFromRaw(await savedDoc()).placed.length, 4, 'one Undo restores all three');
     await closeTabs(/./);
   });
 

@@ -177,15 +177,17 @@ const OBJ_NAMES = { LINE: 'Line', ARC: 'Arc', CIRCLE: 'Circle', LWPOLYLINE: 'Pol
 export function objectCommit(lay, view, entities, newId, heir, blocks = view.raw.blocks) {       // heir: the entity of `view` whose group, lock and place a joined result takes; blocks: where a new INSERT's blocks are (the command's result)
   const have = new Set(entities), gone = new Set(), layers = layersOf(lay);
   for (const [e, i] of view.at) if (!have.has(e)) gone.add(i);
-  const oneAt = gone.has(view.at.get(heir)) ? view.at.get(heir) : gone.size === 1 ? [...gone][0] : -1, one = lay.placed[oneAt];       // split pieces inherit the source member's group and lock, as a single replacement does
-  let slot = oneAt -[...gone].filter((i) => i < oneAt).length;       // where oneAt lands once the gone ones are removed
-  const oneName = one && lay.parts[one.partId]?.name;
+  const perPiece = heir instanceof Map, heirOf = (e) => (perPiece ? heir.get(e) : heir);       // a Map (new entity -> the entity it came from): each piece takes its own source's group, lock and place
+  const atOf = (e) => { const a = view.at.get(heirOf(e)); return gone.has(a) ? a : !perPiece && gone.size === 1 ? [...gone][0] : -1; };       // split pieces inherit the source member's group and lock, as a single replacement does
+  const was = lay.placed, inserted = [], nameAt = new Map([...gone].map((i) => [i, lay.parts[was[i].partId]?.name]));       // names before the unused parts go
   lay.placed = lay.placed.filter((_, i) => !gone.has(i));
   const used = new Set(lay.placed.map((p) => p.partId));
   for (const [id, part] of Object.entries(lay.parts)) if (part.obj && !used.has(id)) delete lay.parts[id];
-  const names = new Set(Object.values(lay.parts).map((p) => p.name)), back = view.back?.get(oneAt);       // back: the part's own block names, as objectReplace
+  const names = new Set(Object.values(lay.parts).map((p) => p.name));
   for (const e of entities) {
     if (view.at.has(e)) continue;
+    const oneAt = atOf(e), one = was[oneAt], oneName = nameAt.get(oneAt), back = view.back?.get(oneAt);       // back: the part's own block names, as objectReplace
+    const base = oneAt - [...gone].filter((i) => i < oneAt).length;       // where oneAt lands once the gone ones are removed
     e.ps = false;
     const own = Object.create(null);       // a new block object keeps its blocks, under the part's own names
     if (e.type === 'INSERT') for (const [n, b] of Object.entries(blocksUsed(blocks, [e]))) own[back?.get(n) ?? n] = back ? { ...b, entities: b.entities.map((x) => retarget(x, back)) } : b;
@@ -195,7 +197,7 @@ export function objectCommit(lay, view, entities, newId, heir, blocks = view.raw
     if (!part) continue;
     if (one) Object.assign(pl, one.g ? { g: one.g } : {}, one.lock ? { lock: true } : {});
     names.add(part.name); lay.parts[part.id] = part;
-    if (one) lay.placed.splice(slot++, 0, pl); else lay.placed.push(pl);
+    if (one) { lay.placed.splice(base + inserted.filter((b) => b <= base).length, 0, pl); inserted.push(base); } else lay.placed.push(pl);
     bakedCache.set(part, new Map([[bakeKey(pl), kept]]));
   }
 }

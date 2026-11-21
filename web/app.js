@@ -13400,7 +13400,9 @@ function layFix(d, id) {
     const entOf = new Map(ents.map((e) => [v.at.get(e), e])), onPart = new Set([...layPreflight(d, id).covered || []].map((k) => entOf.get(placedNow[k].i)));
     const order = [...ents].sort((a, b) => locked(b) - locked(a) || v.at.get(a) - v.at.get(b));       // locked first: they stay, and the later unlocked copy goes
     const r = CL.removeDuplicates({ ...v.raw, entities: order }, (j) => !locked(order[j])), next = r.entities.filter((e) => !(onPart.has(e) && !locked(e)));
-    if (next.length !== ents.length || next.some((e) => !v.at.has(e))) { done = true; selectMany([]); layObjCommit(v, { entities: next, blocks: r.blocks }, 'Preflight Remove duplicates'); }
+    const heir = new Map();       // a trimmed piece takes its source's group, lock and draw place
+    for (const [j, ks] of r.indexes) for (const k of ks) if (!v.at.has(r.entities[k])) heir.set(r.entities[k], order[j]);
+    if (next.length !== ents.length || next.some((e) => !v.at.has(e))) { done = true; selectMany([]); layObjCommit(v, { entities: next, blocks: r.blocks, heir }, 'Preflight Remove duplicates'); }
   } else {
     const pairs = [];
     for (const e of ents) {
