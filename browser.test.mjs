@@ -8001,6 +8001,14 @@ try {
       return readDxf(readFileSync(await download.path(), 'utf8'));
     };
     const differences = () => q('cmp-diff').allTextContents();
+    // TODO 354: after Undo / Redo Compare clears the list and refills it in a later slice (cmpCalc), so a read right after the key can see []; poll like `until` (:34070), bounded
+    const diffsWait = async (ok) => {
+      let r = await differences();
+      for (let i = 0; i < 100 && !ok(r); i++) { await p.evaluate(() => new Promise((f) => requestAnimationFrame(() => requestAnimationFrame(f)))); r = await differences(); }
+      return r;
+    };
+    const diffsAre = async (want, msg) => assert.deepEqual(await diffsWait((r) => JSON.stringify(r) === JSON.stringify(want)), want, msg);
+    const diffsNot = async (want, msg) => assert.notDeepEqual(await diffsWait((r) => JSON.stringify(r) !== JSON.stringify(want)), want, msg);
     const history = async () => {
       await p.locator('[data-menu=Edit]').click(); await p.getByRole('menuitem', { name: 'Undo history…', exact: true }).click();
     };
@@ -8031,7 +8039,7 @@ try {
       await q('guide-position').fill('50'); await q('guide-add-v').click(); await dragGuide(50, 55);
       assert.equal(await guide(), 55);
       await p.keyboard.press('Control+z'); assert.equal(await guide(), 50, 'Ctrl+Z restores the guide');
-      assert.deepEqual(await differences(), beforeGuide); assert.equal(await tab('second-156c1-fixes').locator('.dot').count(), 0, 'guide Undo leaves drawing 2 clean');
+      await diffsAre(beforeGuide); assert.equal(await tab('second-156c1-fixes').locator('.dot').count(), 0, 'guide Undo leaves drawing 2 clean');
       await p.keyboard.press('Control+y'); assert.equal(await guide(), 55);
       await p.locator('[data-menu=Edit]').click(); await p.getByRole('menuitem', { name: 'Undo', exact: true }).click();
       assert.equal(await guide(), 50, 'Edit Undo shares the guide order');
@@ -8047,18 +8055,18 @@ try {
         await command('line'); await command('20,60'); await command('60,60'); await p.keyboard.press('Escape'); await p.keyboard.press('Escape');
       };
       await drawLine();
-      assert.notDeepEqual(await differences(), beforeNewLine);
+      await diffsNot(beforeNewLine);
       await p.keyboard.press('Control+z');
-      assert.deepEqual(await differences(), beforeNewLine, 'Undo takes the newest drawing step before older guide steps');
+      await diffsAre(beforeNewLine, 'Undo takes the newest drawing step before older guide steps');
       assert.equal(await guide(), 55);
-      await p.keyboard.press('Control+y'); assert.notDeepEqual(await differences(), beforeNewLine);
+      await p.keyboard.press('Control+y'); await diffsNot(beforeNewLine);
       await p.keyboard.press('Control+z'); await dragGuide(55, 60);
       await p.keyboard.press('Control+y');
-      assert.deepEqual(await differences(), beforeNewLine, 'a new guide edit clears the drawing redo');
+      await diffsAre(beforeNewLine, 'a new guide edit clears the drawing redo');
       assert.equal(await guide(), 60);
       await p.keyboard.press('Control+z'); await drawLine();
       await p.keyboard.press('Control+y'); assert.equal(await guide(), 55, 'a new drawing edit clears the old guide redo');
-      await p.keyboard.press('Control+z'); assert.deepEqual(await differences(), beforeNewLine);
+      await p.keyboard.press('Control+z'); await diffsAre(beforeNewLine);
       await history();
       assert.equal(await q('hist-row').filter({ hasText: 'Move guide' }).count(), 1, 'the abandoned guide redo stays discarded after Undo');
       await q('hist-close').click();
