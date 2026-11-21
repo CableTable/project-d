@@ -8709,7 +8709,7 @@ function drawOvl(paint = false) {
   if (ui.gripHint) {
     const gh = d && (d.lay ? gd : d), grips = gh && gripOn(gh) ? gripList(gh) : [];
     ui.gripHint.hidden = !grips.length;
-    ui.gripHint.textContent = state.tool === 'shape' ? 'Shape: click a node · Shift+click adds / removes · a box picks several · drag one to move them all · Delete removes · right-click breaks or joins · Esc ends' : grips.some((g) => g.rect) ? 'Grips: drag an edge to resize · Shift = keep proportions · Esc cancels' : 'Grips: drag, or click one then click the new place · type x,y · Shift = straight · Esc cancels';
+    ui.gripHint.textContent = state.tool === 'shape' ? 'Shape: click a node · Shift+click adds / removes · a box picks several · drag one to move them all · Delete removes · right-click breaks, joins, curves · Esc ends' : grips.some((g) => g.rect) ? 'Grips: drag an edge to resize · Shift = keep proportions · Esc cancels' : 'Grips: drag, or click one then click the new place · type x,y · Shift = straight · Esc cancels';
   }
   const t = ui.tip;
   for (const key of ['length', 'angle']) {
@@ -11287,11 +11287,18 @@ const dimGripsOk = (d) => !d.lay && (!d.vlay || !!d.layDim);
 /** Every grip of the selection: [{ e, id, kind, x, y }] (drawing units); kept while the selection and the drawing stay the same. */
 function gripList(d) {
   const ents = d.raw.entities, shape = state.tool === 'shape';
-  if (d.gripCache && d.gripCache.sel === d.sel && d.gripCache.ents === ents && d.gripCache.blocks === d.raw.blocks && d.gripCache.groups === d.raw.groups && d.gripCache.shape === shape) return d.gripCache.list;       // blocks: an edited dimension keeps its entity list
+  const keys = shape ? shapeKeys(d) : null;       // TODO 139e1: the handles of the selected nodes are listed too
+  if (d.gripCache && d.gripCache.sel === d.sel && d.gripCache.ents === ents && d.gripCache.blocks === d.raw.blocks && d.gripCache.groups === d.raw.groups && d.gripCache.shape === shape && d.gripCache.keys === keys) return d.gripCache.list;       // blocks: an edited dimension keeps its entity list
   const list = [], grouped = new Set();
   if (shape) {       // TODO 139a: the Shape tool lists the nodes of the selected objects (shape.js), no group, dimension or leader grips
-    for (const e of d.sel) { const ent = ents[e]; if (ent && !(d.lockedEnts && d.lockedEnts.has(ent))) for (const g of SHP.nodesOf(ent)) list.push({ e, ...g }); }
-    d.gripCache = { sel: d.sel, ents, blocks: d.raw.blocks, groups: d.raw.groups, shape, list: GR.capGrips(list) };
+    for (const e of d.sel) {
+      const ent = ents[e];
+      if (!ent || d.lockedEnts && d.lockedEnts.has(ent)) continue;
+      const nodes = SHP.nodesOf(ent);
+      for (const g of nodes) list.push({ e, ...g });
+      if (ent.type === 'SPLINE') for (const g of SHP.handlesOf(ent, nodes.filter((n) => keys.has(e + ':' + n.id)).map((n) => n.id))) list.push({ e, ...g });       // a Bezier curve's handles, on its selected nodes only
+    }
+    d.gripCache = { sel: d.sel, ents, blocks: d.raw.blocks, groups: d.raw.groups, shape, keys, list: GR.capGrips(list) };
     return d.gripCache.list;
   }
   for (const g of d.raw.groups || []) {
@@ -11313,7 +11320,7 @@ function gripList(d) {
     for (const g of GR.gripsOf(ent, attMode(d))) list.push({ e, ...g });
   }
   const shown = GR.capGrips(list);
-  d.gripCache = { sel: d.sel, ents, blocks: d.raw.blocks, groups: d.raw.groups, shape, list: shown };
+  d.gripCache = { sel: d.sel, ents, blocks: d.raw.blocks, groups: d.raw.groups, shape, keys, list: shown };
   return shown;
 }
 const sheetPx = (d, p) => { const [sx, sy] = toSheetPt(d, p), r = ui.canvas.getBoundingClientRect(); return [(sx - view.ox) * view.scale + r.left, (sy - view.oy) * view.scale + r.top]; };
@@ -11324,6 +11331,7 @@ function gripAt(d, cx, cy) {
 /** The point under the pointer for a grip: the snaps (the 0.01 mm grid when free), and Shift / ORTHO along X or Y from where the rubber band starts. */
 function gripPick(g, cx, cy, shift, hover) {
   const d = g.d, f = d.factor, p = toDrawing(d, cx, cy);
+  if (g.kind === 'handle') return p.length === 2 ? [Math.round(p[0] * f * 100) / 100 / f, Math.round(p[1] * f * 100) / 100 / f] : p;       // TODO 139e1: a Bezier handle goes where the pointer is: no snap, no tracking (grill R5)
   let q = snapPoint(d, p, g.hots ? g.skip : g.e);                // not to the shape(s) being dragged: the old place is going away
   const ref = g.mode || g.hots ? g.base : GR.refPoint(g.ent, g.id), base = ref && (g.mode || g.hots || !g.id.startsWith('e') && g.ent.type !== 'CIRCLE' && g.ent.type !== 'ARC') ? ref : null, straight = !!((shift || state.ortho) && base);       // a grip mode works from the hot grip itself
   const tq = trackPick(d, p, q, base, straight, hover);
@@ -11502,7 +11510,8 @@ function hotsOf(d) {
   return H && H.sel === d.sel && H.ents === d.raw.entities && H.map.size ? H.map : null;
 }
 /** TODO 139a: the Shape tool's selected nodes ('e:id' keys) on d, kept through edits and Undo while the same objects stay selected on the same tab. */
-const shapeKeys = (d) => { const N = state.nodes; return N && N.doc === curDoc() && N.selKey === [...d.sel].join() ? N.keys : new Set(); };
+const NO_KEYS = new Set();       // one set, so gripList's cache knows "no node selected" (139e1: handles show on the selected nodes)
+const shapeKeys = (d) => { const N = state.nodes; return N && N.doc === curDoc() && N.selKey === [...d.sel].join() ? N.keys : NO_KEYS; };
 function shapeSet(d, keys) {
   state.nodes = { doc: curDoc(), selKey: [...d.sel].join(), keys };
   note(`${keys.size} node${keys.size === 1 ? '' : 's'} selected`);
@@ -11513,7 +11522,7 @@ function shapeBox(d, a, b, add) {
   if (!d.sel.size) boxSelect(d, a, b, false, false);
   if (!gripOn(d)) return;
   const keys = new Set(add ? shapeKeys(d) : []);
-  for (const n of SHP.nodesIn(gripList(d), a, b)) keys.add(n.e + ':' + n.id);
+  for (const n of SHP.nodesIn(gripList(d), a, b)) keys.add(n.e + ':' + n.id);       // nodesIn skips the handles (139e1)
   shapeSet(d, keys);
 }
 /** TODO 139b2: the Delete key (or a double-click on a node) with the Shape tool removes the selected nodes (shape.js deleteNodes), one Undo step. False when no node is selected (Delete then deletes objects as ever);
@@ -11570,17 +11579,39 @@ function shapeReplace(d, out, label, heir) {
 }
 /** TODO 139c: the Shape tool's right-click with nodes selected (hot nodes, as Delete) shows Break at node and Join nodes (grill R7); one that cannot run is greyed with its why as the title. True when the menu opened. */
 function shapeMenu(e) {
-  const d = gripDoc(), m = d && state.tool === 'shape' && !state.grip && !d.layDim && gripOn(d) ? hotsOf(d) : null;
-  if (!m) return false;
-  const ents = d.raw.entities, by = new Map(), gs = [...m.values()].sort((a, b) => a.e - b.e), cuts = new Map();
+  const d = gripDoc(), on = d && state.tool === 'shape' && !state.grip && !d.layDim && gripOn(d), m = on ? hotsOf(d) : null;
+  if (!m && !(on && [...d.sel].some((i) => d.raw.entities[i]?.type === 'SPLINE' && !SHP.bezierOf(d.raw.entities[i])))) return false;       // 139e1: a spline that is not a Bezier curve has no nodes: its items open greyed with their why
+  const ents = d.raw.entities, by = new Map(), gs = m ? [...m.values()].sort((a, b) => a.e - b.e) : [], cuts = new Map();
   for (const g of gs) by.set(g.e, [...(by.get(g.e) || []), g.id]);
   for (const [i, ids] of by) { const r = !lockedEnt(d, i) && SHP.breakNodes(ents[i], ids); if (r) cuts.set(ents[i], r); }
   const node = (g) => ({ ent: ents[g.e], id: g.id });
   const join = gs.length !== 2 ? { why: 'Select exactly 2 end nodes' } : gs.some((g) => lockedEnt(d, g.e)) ? { why: 'An object is on a locked layer' } : SHP.joinNodes(node(gs[0]), node(gs[1]), { ends: closeEnds });
   const breakWhy = 'Break at node needs a node inside an open outline, or any node of a closed one (a line or an arc has end nodes only)';
+  const curve = new Map(), lined = new Map();       // TODO 139e1 To curve / To line (grill R1, R4): entity index → shape.js result
+  let curveWhy = 'Select a node first', lineWhy = curveWhy;
+  for (const i of m ? by.keys() : d.sel) {
+    const ent = ents[i];
+    if (!m && ent?.type !== 'SPLINE') continue;
+    if (lockedEnt(d, i)) { curveWhy = lineWhy = 'An object is on a locked layer'; continue; }
+    const c = SHP.toCurve(ent, by.get(i) || []), l = SHP.toLine(ent, by.get(i) || []);
+    if (c.ent) curve.set(i, c); else curveWhy = c.why;
+    if (l.ent) lined.set(i, l); else lineWhy = l.why;
+  }
+  const edit = (map, label) => () => { if (shapeEdit(d, new Map([...map].map(([i, r]) => [i, r.ent])), label, new Set([...map].flatMap(([i, r]) => (r.ids || by.get(i)).map((id) => i + ':' + id))))) note(`${label}: ${map.size} object${map.size === 1 ? '' : 's'}. Ctrl+Z takes it back`); };
   popMenu(e.clientX, e.clientY, [
     ['Break at node', () => { const n = [...cuts.values()].flat().length; if (shapeReplace(d, cuts, 'Break at node')) note(`Break at node: ${n} open polyline${n === 1 ? '' : 's'}. Ctrl+Z takes it back`); }, null, cuts.size > 0, null, cuts.size ? null : breakWhy],
-    ['Join nodes', () => { if (shapeReplace(d, new Map([[ents[gs[1].e], []], [ents[gs[0].e], [join.result]]]), join.label, ents[gs[0].e])) note(join.label === 'Close' ? 'Join nodes: the object is closed. Ctrl+Z takes it back' : 'Join nodes: 2 objects are 1 now. Ctrl+Z takes it back'); }, null, !join.why, null, join.why]]);
+    ['Join nodes', () => { if (shapeReplace(d, new Map([[ents[gs[1].e], []], [ents[gs[0].e], [join.result]]]), join.label, ents[gs[0].e])) note(join.label === 'Close' ? 'Join nodes: the object is closed. Ctrl+Z takes it back' : 'Join nodes: 2 objects are 1 now. Ctrl+Z takes it back'); }, null, !join.why, null, join.why],
+    ['To curve', edit(curve, 'To curve'), null, curve.size > 0, null, curve.size ? null : curveWhy],
+    ['To line', edit(lined, 'To line'), null, lined.size > 0, null, lined.size ? null : lineWhy]]);
+  return true;
+}
+/** TODO 139e1: these objects of d (Map entity index → what replaces it, same place, same group) change in ONE undo step, the same objects selected, `keys` the selected nodes. False when nothing changed. */
+function shapeEdit(d, next, label, keys) {
+  const sel = new Set(d.sel);
+  view.fitted = false;
+  if (d.vlay) { if (!layGripCommit(d, [...next].map(([i, n]) => [d.raw.entities[i], n]), label, sel)) { note('That would leave nothing of the shape, so it stays as it was'); return false; } }
+  else { if (!commit(d, { entities: d.raw.entities.map((x, k) => next.get(k) || x), blocks: d.raw.blocks }, label, sel)) return false; setSel(d, sel); }       // too nested: commit showed why
+  shapeSet(gripDoc() || d, keys);
   return true;
 }
 function gripDown(e) {
@@ -11605,11 +11636,11 @@ function gripDown(e) {
 function gripStart(d, hit, e) {
   clearTimeout(gripOptTimer);
   const key = hit.e + ':' + hit.id;
-  if (state.tool === 'shape' && !e.shiftKey && !shapeKeys(d).has(key)) shapeSet(d, new Set([key]));       // TODO 139a: a press on a node not selected selects it alone; on a selected one the drag moves them all
-  const map = hotsOf(d);
-  const hots = (!e.shiftKey || state.tool === 'shape') && map && map.size > 1 && map.has(key) ? [...map.values()] : null;       // a click on one of several hot grips: Stretch moves them all; the Shape tool's Shift+drag on a selected node too (139b2)
+  if (state.tool === 'shape' && !e.shiftKey && hit.kind !== 'handle' && !shapeKeys(d).has(key)) shapeSet(d, new Set([key]));       // TODO 139a: a press on a node not selected selects it alone; on a selected one the drag moves them all (a handle press leaves the nodes selected)
+  const map = hotsOf(d), bezier = state.tool === 'shape' && d.raw.entities[hit.e]?.type === 'SPLINE';       // TODO 139e1: a Bezier node or handle goes through shape.js dragNodes as hot grips do
+  const hots = (!e.shiftKey || state.tool === 'shape') && map && map.size > 1 && map.has(key) && hit.kind !== 'handle' ? [...map.values()] : bezier ? [hit] : null;       // a click on one of several hot grips: Stretch moves them all; the Shape tool's Shift+drag on a selected node too (139b2)
   if (!e.shiftKey) state.hots = null;                                // Shift: decided on release (gripUp: a click makes it hot, 155e3) or on the first move (a drag keeps proportions)
-  state.grip = { tog: e.shiftKey ? hit : null, hots, skip: hots && new Set(hots.map((x) => x.e)), ents: hots && new Map(hots.map((x) => [x.e, ldrPseudo(d, x.e) || d.raw.entities[x.e]])), nexts: null, d, e: hit.e, id: hit.id, ent: ldrPseudo(d, hit.e) || d.raw.entities[hit.e], next: null, to: null, label: null, hot: false, moved: false, px: [e.clientX, e.clientY], sel: new Set(d.sel), mode: 0, opt: 0, opts: hots || e.shiftKey || state.tool === 'shape' ? [] : GR.optionsOf(ldrPseudo(d, hit.e) || d.raw.entities[hit.e], hit.id), base: [hit.x, hit.y], pos: [hit.x, hit.y], copy: false, acc: d.raw, hist: [], baseAsk: false, ref: null };
+  state.grip = { tog: e.shiftKey ? hit : null, hots, skip: hots && new Set(hots.map((x) => x.e)), ents: hots && new Map(hots.map((x) => [x.e, ldrPseudo(d, x.e) || d.raw.entities[x.e]])), nexts: null, d, e: hit.e, id: hit.id, ent: ldrPseudo(d, hit.e) || d.raw.entities[hit.e], next: null, to: null, label: null, kind: hit.kind, hot: false, moved: false, px: [e.clientX, e.clientY], sel: new Set(d.sel), mode: 0, opt: 0, opts: hots || e.shiftKey || state.tool === 'shape' ? [] : GR.optionsOf(ldrPseudo(d, hit.e) || d.raw.entities[hit.e], hit.id), base: [hit.x, hit.y], pos: [hit.x, hit.y], copy: false, acc: d.raw, hist: [], baseAsk: false, ref: null };
   state.msg = null; renderCommand(); renderEdit(); paintOverlay();       // renderEdit: the Undo button is on in a run
 }
 // ---- 163a Grip options: the list a line / arc grip offers after 300 ms of rest (AutoCAD's multifunctional grips) ----
@@ -11660,6 +11691,7 @@ function gripUp(e) {
   if (!g || g.hot) return;
   if (g.moved) { gripPut(g, e); return; }
   if (state.tool === 'shape') {                                      // TODO 139a: a click selects the node alone, a Shift+click adds or removes it; no hot grip run
+    if (g.kind === 'handle') { gripCancel(); return; }               // TODO 139e1: a click on a handle changes nothing
     const key = g.e + ':' + g.id, keys = new Set(g.tog ? shapeKeys(g.d) : []);
     if (!(g.tog && keys.delete(key))) keys.add(key);
     gripCancel(); shapeSet(g.d, keys); return;
@@ -11682,7 +11714,7 @@ function gripCommit() {
   renderEdit();       // every end of the run, also one that changes nothing: the Undo button follows the run
   if (g.mode) { gripModeCommit(g); return; }
   if (!g.next) { note(g.to ? 'That would not change the shape (or leaves nothing of it), so it stays as it was' : 'Stretch cancelled'); renderCommand(); paintOverlay(); return; }
-  const d = g.d, label = g.nexts ? (state.tool === 'shape' ? 'Move nodes' : 'Stretch grips') : g.label, text = g.nexts ? GM.readout('MOVE', g.base, g.to, d.factor, drawingUnit()) : GR.readoutOf(g.ent, g.id, g.next, d.factor, drawingUnit());
+  const d = g.d, label = g.nexts ? (state.tool === 'shape' ? (g.kind === 'handle' ? 'Move handle' : 'Move nodes') : 'Stretch grips') : g.label, text = g.nexts ? GM.readout('MOVE', g.base, g.to, d.factor, drawingUnit()) : GR.readoutOf(g.ent, g.id, g.next, d.factor, drawingUnit());
   view.fitted = false;
   if (d.vlay) { if (!layGripCommit(d, g.nexts ? [...g.nexts].map(([i, n]) => [g.ents.get(i), n]) : [[g.ent, g.next]], label, g.sel)) { note('That would leave nothing of the shape, so it stays as it was'); paintOverlay(); return; } paintOverlay(); }
   else {
@@ -11815,15 +11847,16 @@ function gripModeOvl(d, out, grips, g, square) {
 /** Grips, and while one is dragged: the original as a dashed ghost, the new shape dashed, the hot grip, and the readout. Returns the readout tip or null. */
 function gripOvl(d, out, k, grips) {
   const g = state.grip;
-  const square = (p, hot, id, tri) => {
+  const square = (p, hot, id, tri, round) => {
     const [sx, sy] = toSheetPt(d, p), z = GR.gripSide(), cls = 'gr' + (hot ? ' hot' : state.gripHover === id ? ' hover' : ''), tid = hot ? 'grip-hot' : 'grip';
-    // 164a: an MTEXT's size grip is a triangle pointing at `tri` degrees (screen angle), the others a square
-    const sq = tri == null ? s('rect', { class: cls, x: -z / 2, y: -z / 2, width: z, height: z, 'data-grip': id, 'data-testid': tid })
+    // 164a: an MTEXT's size grip is a triangle pointing at `tri` degrees (screen angle), the others a square; 139e1: a Bezier handle is round
+    const sq = tri == null ? s('rect', { class: cls, x: -z / 2, y: -z / 2, width: z, height: z, ...(round ? { rx: z / 2 } : {}), 'data-grip': id, 'data-testid': tid })
       : s('path', { class: cls, d: `M${z * 0.7} 0L${-z * 0.5} ${-z * 0.6}L${-z * 0.5} ${z * 0.6}Z`, transform: `rotate(${tri})`, 'data-grip': id, 'data-testid': tid });
     // Screen coordinates keep small grips precise even far from the drawing origin.
     return s('g', { transform: `translate(${(sx - view.ox) / k} ${(sy - view.oy) / k})` }, sq,
       hot ? s('path', { class: 'gr-tick', d: 'M0 -14v-8M0 14v8M-14 0h-8M14 0h8' }) : null);
   };
+  const stem = (h, nodes) => { const n = nodes.find((k) => k.id === h.node); return s('path', { class: 'gr-spoke', d: `M${toSheetPt(d, [n.x, n.y]).join(' ')}L${toSheetPt(d, [h.x, h.y]).join(' ')}` }); };       // 139e1: the line from a node to its handle
   if (g && g.d === d && g.mode) return gripModeOvl(d, out, grips, g, square);
   if (g && g.d === d) {
     const targets = g.ents ? [...g.ents] : [[g.e, g.ent]];
@@ -11843,6 +11876,14 @@ function gripOvl(d, out, k, grips) {
     for (const [e, ent] of targets) for (const x of GR.gripsOf((g.nexts ? g.nexts.get(e) : g.next) || ent, attMode(d))) {
       const key = e + ':' + x.id, hot = hotKeys ? hotKeys.has(key) : x.id === g.id;
       (hot ? hotSq : cold).push(square([x.x, x.y], hot, hotKeys ? key : x.id, x.tri));
+    }
+    if (state.tool === 'shape') for (const [e, ent] of targets) {       // TODO 139e1: a Bezier curve's nodes and the handles of its selected nodes, as the changed curve has them
+      const cur = (g.nexts ? g.nexts.get(e) : g.next) || ent, nodes = cur.type === 'SPLINE' ? SHP.nodesOf(cur) : [], sel = shapeKeys(d);
+      for (const x of [...nodes, ...SHP.handlesOf(cur, nodes.filter((n) => sel.has(e + ':' + n.id)).map((n) => n.id))]) {
+        const hot = hotKeys ? hotKeys.has(e + ':' + x.id) : x.id === g.id;
+        if (x.kind === 'handle') out.push(stem(x, nodes));
+        (hot ? hotSq : cold).push(square([x.x, x.y], hot, e + ':' + x.id, null, x.kind === 'handle'));
+      }
     }
     grips.push(...cold, ...hotSq);
     if (g.next && g.to) { return { text: g.nexts ? GM.readout('MOVE', g.base, g.to, d.factor, drawingUnit()) : GR.readoutOf(g.ent, g.id, g.next, d.factor, drawingUnit()), px: g.cursor || sheetPx(d, [g.to[0], g.to[1]]) }; }
@@ -11870,7 +11911,8 @@ function gripOvl(d, out, k, grips) {
   for (const x of list) {
     const move = x.group && state.entityDrag?.d === d && x.group.members.every((i) => state.entityDrag.sel.has(i)) ? state.entityDrag : null;
     const dragged = x.kind === 'dim' && state.dimDrag?.moved && state.dimDrag.e === x.e && state.dimDrag.grip === x.id;       // the dimension grip being dragged is hot (red)
-    grips.push(square([x.x + (move?.dx || 0), x.y + (move?.dy || 0)], !!move || dragged || !!hots && hots.has(x.e + ':' + x.id), x.e + ':' + x.id, x.tri));
+    if (x.kind === 'handle') out.push(stem(x, list.filter((k) => k.e === x.e && k.kind === 'node')));
+    grips.push(square([x.x + (move?.dx || 0), x.y + (move?.dy || 0)], !!move || dragged || !!hots && hots.has(x.e + ':' + x.id), x.e + ':' + x.id, x.tri, x.kind === 'handle'));
     if (x.kind === 'centre') { const [sx, sy] = toSheetPt(d, [x.x, x.y]), px = (sx - view.ox) / k, py = (sy - view.oy) / k; grips.push(s('path', { class: 'gr-cross', d: `M${px - 12} ${py}h24M${px} ${py - 12}v24` })); }
   }
   return null;

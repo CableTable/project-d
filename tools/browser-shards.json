@@ -274,6 +274,7 @@
   "TODO 139b1: double-click adds a node, outline unchanged, one Undo": 2,
   "TODO 139b2: Delete removes a node, one Undo; Shift+drag moves the set": 5.5,
   "TODO 139c: Break at node and Join nodes from the Shape tool right-click, one Undo each": 9,
+  "TODO 139e1: Shape tool To curve / To line on Bezier splines: handles, one Undo each, a non-Bezier spline greyed; Drawings, Layouts, Compare": 20,
   "TODO 163a: hover a line / arc grip 300 ms -> the Grip options list (line end Stretch, Lengthen; arc mid Stretch, Radius; none on a line middle or arc centre); Lengthen typed 10 adds 10, Radius typed 40, Ctrl cycles, Esc closes the list first; one Undo each; light and dark": 16.57,
   "TODO 163a copies then Ctrl: a Ctrl-click copy in Stretch, then a Ctrl tap -> \"Lengthen makes no copies\", the run stays in Stretch and the copy is kept": 5.88,
   "TODO 163a: Grip options on a Compare snapshot (routes to the source) and on a layout object": 12.57,

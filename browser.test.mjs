@@ -16365,7 +16365,7 @@ try {
     // a right-click with a node selected offers both, Join greyed with its why
     await nodeClick('0:v1'); await hotWhen(1);
     let items = await menu();
-    assert.deepEqual(await items.allTextContents().then((a) => a.map((x) => x.replace(/\s+/g, ' ').trim())), ['Break at node', 'Join nodes']);
+    assert.deepEqual(await items.allTextContents().then((a) => a.map((x) => x.replace(/\s+/g, ' ').trim())), ['Break at node', 'Join nodes', 'To curve', 'To line']);       // 139e1 added the last two
     assert.equal(await items.nth(0).isDisabled(), false); assert.equal(await items.nth(1).isDisabled(), true);
     assert.equal(await items.nth(1).getAttribute('title'), 'Select exactly 2 end nodes', 'the greyed Join nodes says why');
     await page.keyboard.press('Escape');       // the menu closes; the shots open it again
@@ -16439,6 +16439,102 @@ try {
     await openGrips(writeDxf(cmp), 'shape-break-cmp.dxf'); await typeCmd('compare');
     await typeCmd('shape'); await page.keyboard.press('Control+a'); await gripWhen(2);
     await lineBreak();
+    await page.keyboard.press('Escape');
+    await closeTabs(/./);
+  });
+
+  await step('TODO 139e1: Shape tool To curve / To line on Bezier splines: handles, one Undo each, a non-Bezier spline greyed; Drawings, Layouts, Compare', async () => {
+    await menuItem('View', 'Theme: light');
+    const undo = async () => { await page.evaluate(() => document.activeElement && document.activeElement.blur()); await page.keyboard.press('Control+z'); await frames(); };
+    const hotWhen = (n) => page.waitForFunction((k) => document.querySelectorAll('[data-testid=grip-hot]').length === k, n);
+    const ids = async () => (await page.locator('[data-testid=grip], [data-testid=grip-hot]').evaluateAll((g) => g.map((x) => x.dataset.grip))).sort();
+    const nodeClick = async (id) => { const a = await gripBox(id); await page.mouse.click(a.x, a.y); await frames(); };
+    const nodeDrag = async (id, dx, dy) => { const a = await gripBox(id); await page.mouse.move(a.x, a.y); await page.mouse.down(); await page.mouse.move(a.x + dx, a.y + dy, { steps: 6 }); await page.mouse.up(); await frames(); };
+    const menu = async (id) => { const p = await gripBox(id); await page.mouse.click(p.x, p.y, { button: 'right' }); await t('ctx-menu').waitFor(); return page.locator('[data-testid=ctx-menu] .mi'); };
+    const pick = async (name) => { await page.locator('[data-testid=ctx-menu] .mi', { hasText: name }).first().click(); await frames(); };
+    const gid = (k) => page.locator('[data-testid=grip], [data-testid=grip-hot]').evaluateAll((g, s) => g.map((x) => x.dataset.grip).find((x) => x.endsWith(':' + s)), k);
+    const ctl = (e) => e.r.c.flatMap((c, k) => (c === 10 ? [[+e.r.v[k], +e.r.v[k + 1]]] : []));       // a SPLINE's control points
+    // Drawings: an open polyline on layer CUT: To curve from its first node, 3 nodes and that node's one handle show
+    const raw = newDoc(4);
+    addEntities(raw, dxfPoly([[20, 30], [80, 30], [80, 70]], { layer: 'CUT' }), entity('SPLINE', [[8, '0'], [70, 8], [71, 2], [72, 6], [73, 3], [74, 0], ...[0, 0, 0, 1, 1, 1].map((u) => [40, u]), [10, 100], [20, 30], [30, 0], [10, 120], [20, 70], [30, 0], [10, 140], [20, 30], [30, 0]]));
+    await openGrips(writeDxf(raw), 'shape-curve.dxf');
+    await click(50, 30); await frames(); await typeCmd('shape'); await gripWhen(3);
+    await nodeClick('0:v0'); await hotWhen(1);
+    let items = await menu('0:v0');
+    assert.deepEqual(await items.allTextContents().then((a) => a.map((x) => x.replace(/\s+/g, ' ').trim())), ['Break at node', 'Join nodes', 'To curve', 'To line']);
+    assert.equal(await items.nth(2).isDisabled(), false); assert.equal(await items.nth(3).isDisabled(), true);
+    assert.equal(await items.nth(3).getAttribute('title'), 'Not a Bezier curve', 'To line on a polyline says why');
+    await pick('To curve');
+    let e = entOf(await savedDoc(), 0), P = ctl(e);
+    assert.ok(e.type === 'SPLINE' && e.layer === 'CUT' && P.length === 7, 'one SPLINE of 2 cubics, layer kept: ' + e.type + P.length);
+    assert.deepEqual(P.slice(0, 4).map((q) => q.map((v) => +v.toFixed(4))), [[20, 30], [40, 30], [60, 30], [80, 30]], 'a line segment: handles at 1/3 and 2/3');
+    assert.deepEqual(await ids(), ['0:n0', '0:n1', '0:n2', '0:o0'], 'the nodes, and the first node\'s handle only'); await hotWhen(1);
+    items = await menu('0:n0');
+    assert.equal(await items.nth(2).isDisabled(), true); assert.match(await items.nth(2).getAttribute('title'), /Bezier curve already/);
+    assert.equal(await items.nth(3).isDisabled(), true); assert.match(await items.nth(3).getAttribute('title'), /straight already/, 'To line on a straight segment says why');
+    await page.keyboard.press('Escape');
+    // a handle drag: no snap, one Undo; the handle ends where the pointer let go, the nodes stay
+    const h0 = await gripBox('0:o0');
+    await nodeDrag('0:o0', 7, -40); await hotWhen(1);
+    const h1 = await gripBox('0:o0');
+    assert.ok(near(h1.x, h0.x + 7, 1.5) && near(h1.y, h0.y - 40, 1.5), `the handle followed the pointer: ${JSON.stringify([h0, h1])}`);
+    P = ctl(entOf(await savedDoc(), 0));
+    assert.ok(P[1][1] > 33 && P[1][0] > 40 && near(P[2][0], 60, 1e-6) && near(P[0][0], 20, 1e-6) && near(P[3][0], 80, 1e-6), 'only the handle moved: ' + JSON.stringify(P));
+    await shotBoth('shape-curve');
+    await page.setViewportSize({ width: 1024, height: 768 }); await frames(); await page.screenshot({ path: `${shotDir}/s12-shape-curve-1024.png` });
+    await page.setViewportSize({ width: 1440, height: 900 }); await frames();
+    // To line: its handles back on the chord; one Undo bends it again; the saved DXF read back is the SPLINE
+    items = await menu('0:n0'); assert.equal(await items.nth(3).isDisabled(), false);
+    await pick('To line');
+    P = ctl(entOf(await savedDoc(), 0));
+    assert.deepEqual(P.slice(0, 4).map((q) => q.map((v) => +v.toFixed(4))), [[20, 30], [40, 30], [60, 30], [80, 30]], 'To line: the handles are on the chord');
+    await undo(); e = entOf(await savedDoc(), 0);
+    assert.ok(e.type === 'SPLINE' && ctl(e)[1][1] > 33, 'one Undo bends it again; saved and read back it is the SPLINE');
+    await undo(); assert.ok(near(ctl(entOf(await savedDoc(), 0))[1][1], 30, 1e-6), 'one Undo puts the handle back');
+    await undo(); assert.equal(entOf(await savedDoc(), 0).type, 'LWPOLYLINE', 'one Undo: the polyline again');
+    await page.keyboard.press('Escape');
+    // a spline that is not a Bezier curve: no nodes, the right-click items grey with their why
+    await click(120, 50); await frames(); await typeCmd('shape'); await gripWhen(0);
+    const q = await at(120, 50); await page.mouse.click(q.x, q.y, { button: 'right' }); await t('ctx-menu').waitFor();
+    items = page.locator('[data-testid=ctx-menu] .mi');
+    for (const k of [2, 3]) { assert.equal(await items.nth(k).isDisabled(), true); assert.equal(await items.nth(k).getAttribute('title'), 'Not a Bezier curve'); }
+    await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
+    await closeTabs(/./);
+    // Layouts and Compare (Compare reaches the grips through editable(): its selected item's source): a line, To curve from its first node, a handle drag, To line, Undo
+    const lineCase = async (save) => {
+      const [a0, b0] = [await gripBox(await gid('a')), await gripBox(await gid('b'))];
+      await nodeClick(await gid('a')); await hotWhen(1);
+      await menu(await gid('a')); await pick('To curve'); await gripWhen(3);
+      assert.deepEqual((await ids()).map((x) => x.split(':')[1]), ['n0', 'n1', 'o0'], 'two nodes and the first one\'s handle');
+      const [n0, n1, o0] = [await gripBox(await gid('n0')), await gripBox(await gid('n1')), await gripBox(await gid('o0'))];
+      assert.ok(near(n0.x, a0.x, 1) && near(n1.x, b0.x, 1) && near(o0.x, a0.x + (b0.x - a0.x) / 3, 1.5), 'the same line, the handle at 1/3');
+      await nodeDrag(await gid('o0'), 0, -40);
+      const o1 = await gripBox(await gid('o0'));
+      assert.ok(near(o1.y, o0.y - 40, 2) && near((await gripBox(await gid('n0'))).y, n0.y, 1) && near((await gripBox(await gid('n1'))).y, n1.y, 1), 'the handle moved, both nodes stayed');
+      await menu(await gid('n0')); await pick('To line');
+      assert.ok(near((await gripBox(await gid('o0'))).y, o0.y, 1.5), 'To line: the handle is back on the chord');
+      await undo();
+      assert.ok(near((await gripBox(await gid('o0'))).y, o0.y - 40, 2), 'one Undo: bent again');
+      const sp = (await save()).entities.find((x) => x.type === 'SPLINE'), pts = sp && ctl(sp);       // saved as DXF and read back
+      assert.ok(pts?.length === 4 && Math.abs(pts[1][1] - pts[0][1]) > 1 && near(pts[2][1], pts[3][1], 1e-6), 'the saved DXF holds the bent SPLINE: ' + JSON.stringify(pts));
+      await undo(); await undo(); await gripWhen(2);
+      assert.ok(await gid('a') && await gid('b'), 'Undo x3: the line with its 2 end nodes');
+    };
+    await freshLayoutWithPlate();
+    await typeCmd('line'); await typeCmd('50,600'); await typeCmd('300,600'); await typeCmd('');
+    await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click(); await click(175, 600); await frames(); await gripWhen(3);
+    await page.locator('[data-tool=shape]').click(); await gripWhen(2);
+    await lineCase(async () => readDxf((await downloaded(async () => { await menuItem('File', 'Export DXF…'); await t('export-dxf-go').click(); })).text));
+    await page.keyboard.press('Escape');
+    const cmp = newDoc(4); addEntities(cmp, dxfLine(20, 30, 120, 30));
+    await openGrips(writeDxf(cmp), 'shape-curve-cmp.dxf'); await typeCmd('compare');
+    await typeCmd('shape'); await page.keyboard.press('Control+a'); await gripWhen(2);
+    await lineCase(async () => {       // the Compare tab has no save: the source tab holds the edit
+      await page.locator('.dtab', { hasText: 'shape-curve-cmp.dxf' }).click(); await frames();
+      const doc = await savedDoc();
+      await page.locator('.dtab', { hasText: 'Compare' }).click(); await frames();
+      return doc;
+    });
     await page.keyboard.press('Escape');
     await closeTabs(/./);
   });

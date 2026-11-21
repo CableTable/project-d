@@ -9,20 +9,25 @@
 //   deleteNodes(ent, ids)       → { ent, label } with the polyline's nodes ids removed, a same-circle arc pair merged into one arc (TODO 139b2)
 //   breakNodes(ent, ids)        → the open polylines ent becomes when broken at these nodes, or null (TODO 139c, grill R8)
 //   joinNodes(a, b, opts)       → { result, label } or { why }: two end nodes ({ ent, id }) closed (one object) or joined at their midpoint (two) (TODO 139c, grill Q6 / R2)
+//   bezierOf(ent) / handlesOf(ent, ids) / toCurve(ent, ids) / toLine(ent, ids)  → Bezier SPLINEs: their nodes (ids 'n3') and handles ('o3' out of node 3, 'i3' into it), To curve, To line (TODO 139e1, grill-139e R1 / R3 / R4)
 // Where the app drives it (app.js; grep the name): gripList (the Shape tool lists nodes, not grips: gripAt hit-tests them), shapeKeys / shapeSet (the selected nodes),
 // hotsOf (they stand in for hot grips), gripUp (a click selects, Shift+click toggles), shapeBox (a box selects), gripStretchHots (dragNodes).
-import { gripsOf, shapeOf, insertVertex, removeVertex, convertToArc, get } from './grips.js';
+import { gripsOf, shapeOf, insertVertex, removeVertex, convertToArc, get, translate } from './grips.js';
 import { stretchGrips } from './stretch.js';
 import { pathOf, closest, geo, pointAt, subSeg, polyOf, rebuilt } from './modify.js';
-import { lwpoly } from './dxf-write.js';
+import { lwpoly, entity } from './dxf-write.js';
 import { classify, joinEntities } from './join.js';
 import { closeEntities } from './closeline.js';
+import { splineOf, spRecord } from './extend.js';
 
 const KIND = { LWPOLYLINE: 'vertex', LINE: 'end', ARC: 'end', CIRCLE: 'quad' };
 
-export const nodesOf = (ent) => (ent && KIND[ent.type] ? gripsOf(ent).filter((g) => g.kind === KIND[ent.type]) : []);
+export const nodesOf = (ent) => {
+  if (ent?.type === 'SPLINE') { const b = bezierOf(ent); return b ? Array.from({ length: b.closed ? b.n : b.n + 1 }, (_, i) => ({ id: 'n' + i, kind: 'node', x: b.P[3 * i][0], y: b.P[3 * i][1] })) : []; }
+  return ent && KIND[ent.type] ? gripsOf(ent).filter((g) => g.kind === KIND[ent.type]) : [];
+};
 
-export const nodesIn = (nodes, a, b) => nodes.filter((n) => n.x >= Math.min(a[0], b[0]) && n.x <= Math.max(a[0], b[0]) && n.y >= Math.min(a[1], b[1]) && n.y <= Math.max(a[1], b[1]));
+export const nodesIn = (nodes, a, b) => nodes.filter((n) => n.kind !== 'handle' && n.x >= Math.min(a[0], b[0]) && n.x <= Math.max(a[0], b[0]) && n.y >= Math.min(a[1], b[1]) && n.y <= Math.max(a[1], b[1]));
 
 /** Does moving these nodes move the object whole? */
 function whole(ent, nodes) {
@@ -30,7 +35,7 @@ function whole(ent, nodes) {
   return ent.type === 'CIRCLE' ? ids.size >= 2 : nodesOf(ent).every((n) => ids.has(n.id));
 }
 
-export const dragNodes = (ent, nodes, dx, dy) => stretchGrips(ent, nodes, dx, dy, false, whole(ent, nodes));
+export const dragNodes = (ent, nodes, dx, dy) => (ent.type === 'SPLINE' ? dragBezier(ent, nodes, dx, dy) : stretchGrips(ent, nodes, dx, dy, false, whole(ent, nodes)));
 
 /** A circle as four quarter arcs from quadrant 0 anticlockwise, so its quadrant nodes stay nodes. */
 const quarters = (c, r) => [0, 1, 2, 3].map((i) => ({ a: [c[0] + r * Math.cos(i * Math.PI / 2), c[1] + r * Math.sin(i * Math.PI / 2)], b: [c[0] + r * Math.cos((i + 1) * Math.PI / 2), c[1] + r * Math.sin((i + 1) * Math.PI / 2)], bulge: Math.tan(Math.PI / 8) }));
@@ -41,7 +46,7 @@ const quarters = (c, r) => [0, 1, 2, 3].map((i) => ({ a: [c[0] + r * Math.cos(i 
  * with its layer, colour, line type and lineweight (dxf-write.js lwpoly); a polyline keeps its record (grips.js insertVertex, then each half's bulge).
  */
 export function addNode(ent, p, tol = Infinity) {
-  if (!nodesOf(ent).length || !p) return null;
+  if (!nodesOf(ent).length || !p || ent.type === 'SPLINE') return null;       // a node on a Bezier spline: 139e2
   const sh = shapeOf(ent), path = sh.t === 'circle' ? { closed: true, segs: quarters(sh.c, sh.r) } : pathOf(sh), hit = closest(path, p);
   const i = hit.index, f = hit.u - i, s = path.segs[i];
   if (!(hit.d <= tol) || f < 1e-9 || f > 1 - 1e-9) return null;
@@ -102,4 +107,100 @@ export function joinNodes(a, b, opts = {}) {
   const moved = [[a, p], [b, q]].map(([x, k]) => (Math.hypot(m[0] - k.x, m[1] - k.y) < 1e-12 ? x.ent : dragNodes(x.ent, [k], m[0] - k.x, m[1] - k.y).ent));
   const r = joinEntities(moved);
   return r.result ? { result: r.result, label: 'Join nodes' } : { why: r.skipped[0]?.reason ?? 'nothing joined' };
+}
+
+// ---- TODO 139e1: Bezier SPLINEs (grill-139e R1 / R3 / R4): a degree-3 SPLINE in piecewise-Bezier form, control points P = node, handle, handle, node, handle, handle, node, ... ----
+const near = (a, b) => Math.abs(a - b) <= 1e-9 * Math.max(1, Math.abs(a), Math.abs(b));
+
+/** ent as a Bezier curve: { P: [[x, y, z], …] (3n + 1 control points), n: segments, closed }; null for any other SPLINE (fit points, weights, another degree or knots), a mirrored or tilted one, or another kind. */
+export function bezierOf(ent) {
+  if (ent?.type !== 'SPLINE' || !ent.r || !flat(ent)) return null;
+  const s = splineOf(ent.r), { P, U } = s;
+  if (s.p !== 3 || s.F.length || P.length < 4 || (P.length - 1) % 3 || U.length !== P.length + 4 || s.W?.some((w) => !near(w, 1))) return null;
+  const n = (P.length - 1) / 3, runs = [];
+  for (const u of U) if (runs.length && near(runs.at(-1)[0], u)) runs.at(-1)[1]++; else runs.push([u, 1]);
+  if (runs.length !== n + 1 || runs.some(([, m], i) => m !== (i === 0 || i === n ? 4 : 3))) return null;       // clamped ends, every inner knot x3
+  const closed = !!((get(ent.r, 70) ?? 0) & 1) && near(P[0][0], P[3 * n][0]) && near(P[0][1], P[3 * n][1]);
+  return { P, n, closed };
+}
+
+/** The handles of these nodes ('n3') of a Bezier spline: { id: 'o3' (out, on the segment after) | 'i3' (in, on the one before), kind: 'handle', node, x, y }; an open curve's ends have one. */
+export function handlesOf(ent, ids) {
+  const b = bezierOf(ent), out = [];
+  if (!b) return out;
+  for (const id of new Set(ids)) {
+    const i = +id.slice(1), at = (k) => ({ kind: 'handle', node: id, x: b.P[k][0], y: b.P[k][1] });
+    if (id[0] !== 'n' || !(i >= 0 && i < (b.closed ? b.n : b.n + 1))) continue;
+    if (i < b.n) out.push({ id: 'o' + i, ...at(3 * i + 1) });
+    if (i > 0 || b.closed) out.push({ id: 'i' + i, ...at(i ? 3 * i - 1 : 3 * b.n - 1) });
+  }
+  return out;
+}
+
+/** Move these nodes and handles of a Bezier spline by (dx, dy): a node takes its two handles along, a handle moves alone; every node moves the curve whole. */
+function dragBezier(ent, nodes, dx, dy) {
+  const b = bezierOf(ent), ids = new Set(nodes.map((g) => g.id));
+  if (!b || !(dx || dy)) return { ent, label: null, part: false };
+  if (nodesOf(ent).every((g) => ids.has(g.id))) return { ent: translate(ent, dx, dy), label: 'Move', part: false };
+  const { P, n, closed } = b, last = 3 * n, idx = new Set(), mark = (k) => { idx.add(k); if (closed && (k === 0 || k === last)) { idx.add(0); idx.add(last); } };       // a closed curve's first point is also its last
+  for (const g of nodes) {
+    const i = +g.id.slice(1), before = i ? 3 * i - 1 : last - 1;
+    if (g.id[0] === 'n') { mark(3 * i); if (i < n) mark(3 * i + 1); if (i > 0 || closed) mark(before); }
+    else mark(g.id[0] === 'o' ? 3 * i + 1 : before);
+  }
+  const Q = P.map((p, k) => (idx.has(k) ? [p[0] + dx, p[1] + dy, ...p.slice(2)] : p));
+  return { ent: spRecord(ent, { ...splineOf(ent.r), P: Q }), label: nodes.every((g) => g.id[0] !== 'n') ? 'Move handle' : 'Move node', part: false };
+}
+
+/** A segment as cubic Beziers [[p0, h1, h2, p1], …]: a line one with its handles at 1/3 and 2/3; an arc one per quarter turn or less, handles 4/3 tan(θ/4) r along the tangents. */
+function cubics(s) {
+  const g = geo(s), a = [s.a[0], s.a[1]], b = [s.b[0], s.b[1]];
+  if (g.line) return [[a, [a[0] + (b[0] - a[0]) / 3, a[1] + (b[1] - a[1]) / 3], [a[0] + (b[0] - a[0]) * 2 / 3, a[1] + (b[1] - a[1]) * 2 / 3], b]];
+  const k = Math.max(1, Math.ceil(Math.abs(g.sw) / (Math.PI / 2) - 1e-9)), th = g.sw / k, h = 4 / 3 * Math.tan(th / 4) * g.r;
+  const P = (t) => [g.c[0] + g.r * Math.cos(t), g.c[1] + g.r * Math.sin(t)];
+  return Array.from({ length: k }, (_, j) => {
+    const t0 = g.a0 + th * j, t1 = t0 + th, p0 = P(t0), p1 = P(t1);
+    return [j ? p0 : a, [p0[0] - h * Math.sin(t0), p0[1] + h * Math.cos(t0)], [p1[0] + h * Math.sin(t1), p1[1] - h * Math.cos(t1)], j === k - 1 ? b : p1];
+  });
+}
+
+/**
+ * TODO 139e1 To curve (grill R1 / R4): the whole object (a polyline, line, arc or circle) becomes one Bezier SPLINE with its layer, colour, line type and lineweight, closed when it was;
+ * every line a straight cubic (handles at 1/3 and 2/3), every arc its closest cubics, so the outline stays. Needs a segment after one of the nodes ids.
+ * { ent, label, ids: where those nodes are now } or { why }.
+ */
+export function toCurve(ent, ids) {
+  if (ent?.type === 'SPLINE') return { why: bezierOf(ent) ? 'That segment is a Bezier curve already: drag its handles to bend it' : 'Not a Bezier curve' };
+  if (!nodesOf(ent).length) return { why: 'This object has no nodes' };
+  if (!flat(ent)) return { why: 'A mirrored or tilted object stays as it is' };
+  if (ent.type === 'LWPOLYLINE' && ent.r.c.some((c, k) => [40, 41, 43].includes(c) && +ent.r.v[k])) return { why: 'A polyline with width stays a polyline' };
+  const sh = shapeOf(ent), { closed, segs } = sh.t === 'circle' ? { closed: true, segs: quarters(sh.c, sh.r) } : pathOf(sh), m = segs.length;
+  const idx = (id) => (ent.type === 'LWPOLYLINE' || ent.type === 'CIRCLE' ? +id.slice(1) : id === 'a' ? 0 : m), want = [...new Set(ids)].map(idx);
+  if (!want.some((k) => k < m)) return { why: 'To curve needs a segment after the node: this is the last node of an open outline' };
+  const P = [], first = [];
+  for (const s of segs) { first.push(P.length ? (P.length - 1) / 3 : 0); for (const c of cubics(s)) P.push(...(P.length ? c.slice(1) : c)); }
+  const count = (P.length - 1) / 3;
+  if (closed) P[P.length - 1] = P[0];
+  first.push(count);
+  const U = [0, 0, 0, 0, ...Array.from({ length: count - 1 }, (_, i) => [i + 1, i + 1, i + 1]).flat(), ...Array(4).fill(count)];
+  const out = entity('SPLINE', [[70, closed ? 9 : 8], [71, 3], [72, U.length], [73, P.length], [74, 0], ...U.map((u) => [40, u]), ...P.flatMap((p) => [[10, p[0]], [20, p[1]], [30, 0]])], ent);
+  return { ent: out, label: 'To curve', ids: want.filter((k) => k <= m).map((k) => 'n' + first[k]) };
+}
+
+/** TODO 139e1 To line (grill R4): the segment after each of these nodes ids ('n3') of a Bezier spline gets its handles on its chord, at 1/3 and 2/3 (it stays a SPLINE). { ent, label } or { why } (not a Bezier curve, no segment after, or all straight already). */
+export function toLine(ent, ids) {
+  const b = bezierOf(ent);
+  if (!b) return { why: 'Not a Bezier curve' };
+  const ks = [...new Set(ids)].map((id) => +id.slice(1)).filter((k) => k < b.n);
+  if (!ks.length) return { why: 'To line needs a segment after the node: this is the last node of an open curve' };
+  const Q = b.P.slice();
+  let changed = false;
+  for (const k of ks) {
+    const [a, c1, c2, d] = b.P.slice(3 * k, 3 * k + 4), len = Math.hypot(d[0] - a[0], d[1] - a[1]);
+    const off = (p) => (len ? Math.abs((p[0] - a[0]) * (d[1] - a[1]) - (p[1] - a[1]) * (d[0] - a[0])) / len : Math.hypot(p[0] - a[0], p[1] - a[1]));
+    if (off(c1) <= 1e-9 * (1 + len) && off(c2) <= 1e-9 * (1 + len)) continue;       // its handles are on the chord already
+    Q[3 * k + 1] = [a[0] + (d[0] - a[0]) / 3, a[1] + (d[1] - a[1]) / 3, ...a.slice(2)]; Q[3 * k + 2] = [a[0] + (d[0] - a[0]) * 2 / 3, a[1] + (d[1] - a[1]) * 2 / 3, ...a.slice(2)];
+    changed = true;
+  }
+  return changed ? { ent: spRecord(ent, { ...splineOf(ent.r), P: Q }), label: 'To line' } : { why: 'That segment is straight already' };
 }

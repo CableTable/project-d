@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import * as SH from './web/shape.js';
 import * as GR from './web/grips.js';
 import * as MO from './web/modify.js';
-import { line, circle, arc, lwpoly, ellipse } from './web/dxf-write.js';
+import { line, circle, arc, lwpoly, ellipse, entity } from './web/dxf-write.js';
 
 const near = (a, b, e = 1e-6) => assert.ok(Math.abs(a - b) < e, `${a} vs ${b}`);
 const nodes = (ent, ...ids) => SH.nodesOf(ent).filter((n) => ids.includes(n.id));
@@ -211,4 +211,82 @@ test('joinNodes: two objects — both ends move to their midpoint, then the join
 test('joinNodes: refused with its why — an inner node, a closed object, a circle', () => {
   const p = lwpoly([[0, 0], [10, 0], [10, 10]]);
   for (const [x, y] of [[ends(p, 'v1'), ends(line(0, 0, 1, 1), 'a')], [ends(lwpoly([[0, 0], [10, 0], [10, 5]], { closed: true }), 'v0'), ends(p, 'v0')], [ends(circle(0, 0, 5), 'q0'), ends(p, 'v0')]]) assert.match(SH.joinNodes(x, y).why, /end nodes/);
+});
+
+// ---- TODO 139e1: Bezier splines
+const cubicAt = (b, k, t) => [0, 1].map((i) => { const [p0, p1, p2, p3] = b.P.slice(3 * k, 3 * k + 4).map((p) => p[i]), u = 1 - t; return u * u * u * p0 + 3 * u * u * t * p1 + 3 * u * t * t * p2 + t * t * t * p3; });
+const spl = (c, v) => entity('SPLINE', [[70, 8], ...c.map((k, i) => [k, v[i]])]);
+
+test('toCurve: a circle becomes a closed Bezier spline of 4 cubics on the same circle, layer kept', () => {
+  const r = SH.toCurve(circle(5, 7, 10, { layer: 'CUT', aci: 3 }), ['q1']);
+  assert.equal(r.ent.type, 'SPLINE'); assert.equal(r.ent.layer, 'CUT'); assert.equal(r.ent.aci, 3);
+  const b = SH.bezierOf(r.ent);
+  assert.ok(b.closed && b.n === 4, JSON.stringify(b?.n));
+  assert.deepEqual(SH.nodesOf(r.ent).map((n) => [Math.round(n.x), Math.round(n.y)]), [[15, 7], [5, 17], [-5, 7], [5, -3]], 'the quadrants stay the nodes');
+  for (let k = 0; k < 4; k++) for (const t of [0.25, 0.5, 0.8]) { const [x, y] = cubicAt(b, k, t); near(Math.hypot(x - 5, y - 7), 10, 3e-3); }
+  assert.deepEqual(r.ids, ['n1'], 'the clicked quadrant is node 1 still');
+});
+
+test('toCurve: a polyline keeps its outline — lines are straight cubics (handles at 1/3, 2/3), an arc its closest cubic; closed stays closed', () => {
+  const p = lwpoly([[0, 0], [10, 0, Math.tan(Math.PI / 8)], [10, 10]], { closed: true });
+  const r = SH.toCurve(p, ['v0']), b = SH.bezierOf(r.ent);
+  assert.ok(b.closed && b.n === 3);
+  assert.deepEqual(b.P.slice(0, 4).map((q) => [+q[0].toFixed(6), +q[1].toFixed(6)]), [[0, 0], [3.333333, 0], [6.666667, 0], [10, 0]]);
+  const mid = cubicAt(b, 1, 0.5), g = MO.geo(MO.pathOf(GR.shapeOf(p)).segs[1]);       // the arc from (10,0) to (10,10): bulge tan(22.5°) = a quarter turn
+  near(Math.hypot(mid[0] - g.c[0], mid[1] - g.c[1]), g.r, 1e-3);
+});
+
+test('toCurve: a long arc is split in cubics of at most a quarter turn; a line gives one segment; the last node of an open object has no segment after', () => {
+  const a = SH.toCurve(arc(0, 0, 10, 0, 270), ['a']);
+  assert.equal(SH.bezierOf(a.ent).n, 3);
+  const l = line(0, 0, 10, 0);
+  assert.equal(SH.bezierOf(SH.toCurve(l, ['a']).ent).n, 1);
+  assert.match(SH.toCurve(l, ['b']).why, /segment after/);
+  assert.match(SH.toCurve(lwpoly([[0, 0], [5, 5], [9, 1]]), ['v2']).why, /segment after/);
+  assert.ok(SH.toCurve(lwpoly([[0, 0], [5, 5], [9, 1]]), ['v2', 'v1']).ent, 'one node with a segment after is enough');
+  assert.match(SH.toCurve(lwpoly([[0, 0], [5, 5]], { width: 2 }), ['v0']).why, /width/);
+});
+
+test('Bezier nodes: the segment ends; handles only on the nodes asked for; other splines have no nodes (Not a Bezier curve)', () => {
+  const s = SH.toCurve(lwpoly([[0, 0], [10, 0], [10, 10]]), ['v0']).ent;
+  assert.deepEqual(SH.nodesOf(s).map((n) => n.id), ['n0', 'n1', 'n2']);
+  assert.deepEqual(SH.handlesOf(s, ['n1']).map((h) => h.id), ['o1', 'i1']);
+  assert.deepEqual(SH.handlesOf(s, ['n0']).map((h) => h.id), ['o0'], 'an open curve start has one handle');
+  assert.deepEqual(SH.handlesOf(s, ['n2']).map((h) => h.id), ['i2']);
+  assert.deepEqual(SH.handlesOf(s, []), []);
+  assert.deepEqual(SH.nodesIn([...SH.nodesOf(s), ...SH.handlesOf(s, ['n1'])], [-1, -1], [11, 11]).map((n) => n.id), ['n0', 'n1', 'n2'], 'a box picks nodes, not handles');
+  const quad = spl([71, 72, 73, 74, 40, 40, 40, 40, 40, 40, 10, 20, 10, 20, 10, 20], [2, 6, 3, 0, 0, 0, 0, 1, 1, 1, 0, 0, 5, 5, 10, 0]);
+  assert.deepEqual(SH.nodesOf(quad), []);
+  assert.equal(SH.toCurve(quad, ['n0']).why, 'Not a Bezier curve'); assert.equal(SH.toLine(quad, ['n0']).why, 'Not a Bezier curve');
+});
+
+test('dragNodes on a Bezier spline: a node takes its handles, a handle moves alone, every node moves it whole; a closed curve wraps', () => {
+  const s = SH.toCurve(lwpoly([[0, 0], [30, 0], [30, 30]]), ['v0']).ent, P = (e) => SH.bezierOf(e).P.map((q) => q.slice(0, 2).map((v) => +v.toFixed(6) + 0));
+  const was = P(s), pick = (ent, ...ids) => [...SH.nodesOf(ent), ...SH.handlesOf(ent, ['n0', 'n1', 'n2'])].filter((g) => ids.includes(g.id));
+  const n1 = SH.dragNodes(s, pick(s, 'n1'), 1, 2);
+  assert.equal(n1.label, 'Move node');
+  assert.deepEqual(P(n1.ent).map((q, k) => [q[0] - was[k][0], q[1] - was[k][1]]), [[0, 0], [0, 0], [1, 2], [1, 2], [1, 2], [0, 0], [0, 0]], 'node 1 and both its handles');
+  const h = SH.dragNodes(s, pick(s, 'o1'), 4, -3);
+  assert.equal(h.label, 'Move handle');
+  assert.deepEqual(P(h.ent).map((q, k) => [q[0] - was[k][0], q[1] - was[k][1]]), [[0, 0], [0, 0], [0, 0], [0, 0], [4, -3], [0, 0], [0, 0]]);
+  assert.deepEqual(P(SH.dragNodes(s, SH.nodesOf(s), 2, 1).ent), was.map((q) => [q[0] + 2, q[1] + 1]), 'all nodes: whole');
+  assert.equal(SH.dragNodes(s, pick(s, 'n1'), 0, 0).ent, s, 'no move, same object');
+  const c = SH.toCurve(circle(0, 0, 10), ['q0']).ent, cp = (e) => SH.bezierOf(e).P, c0 = cp(c);
+  const m = cp(SH.dragNodes(c, [...SH.nodesOf(c), ...SH.handlesOf(c, ['n0'])].filter((g) => g.id === 'n0'), 1, 1).ent);
+  const r6 = (q) => q.slice(0, 2).map((v) => +v.toFixed(6) + 0);
+  assert.deepEqual([m[0], m[12], m[1], m[11]].map(r6), [0, 12, 1, 11].map((k) => r6([c0[k][0] + 1, c0[k][1] + 1])), 'closed: the first point is the last, both its handles move');
+  assert.ok(SH.bezierOf(SH.dragNodes(c, SH.handlesOf(c, ['n0']).filter((g) => g.id === 'i0'), 1, 0).ent).closed, 'still closed');
+});
+
+test('toLine: the segment after the node gets its handles on the chord; a straight one and a last node say why', () => {
+  const s = SH.toCurve(lwpoly([[0, 0], [30, 0], [30, 30]]), ['v0']).ent;
+  assert.match(SH.toLine(s, ['n0']).why, /straight already/, 'a fresh line segment is straight');
+  const bent = SH.dragNodes(s, SH.handlesOf(s, ['n1']).filter((g) => g.id === 'o1'), 5, 8).ent;
+  assert.match(SH.toLine(bent, ['n2']).why, /segment after/);
+  assert.match(SH.toLine(bent, ['n0']).why, /straight already/, 'another segment');
+  const r = SH.toLine(bent, ['n1']);
+  assert.equal(r.ent.type, 'SPLINE'); assert.equal(r.label, 'To line');
+  assert.deepEqual(SH.bezierOf(r.ent).P.map((q) => q.slice(0, 2).map((v) => +v.toFixed(6) + 0)), SH.bezierOf(s).P.map((q) => q.slice(0, 2).map((v) => +v.toFixed(6) + 0)), 'back on the chord, at 1/3 and 2/3');
+  assert.match(SH.toLine(r.ent, ['n1']).why, /straight already/);
+  assert.match(SH.toCurve(s, ['n0']).why, /Bezier curve already/);
 });
