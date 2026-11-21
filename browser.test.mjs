@@ -16365,7 +16365,7 @@ try {
     // a right-click with a node selected offers both, Join greyed with its why
     await nodeClick('0:v1'); await hotWhen(1);
     let items = await menu();
-    assert.deepEqual(await items.allTextContents().then((a) => a.map((x) => x.replace(/\s+/g, ' ').trim())), ['Break at node', 'Join nodes', 'To curve', 'To line']);       // 139e1 added the last two
+    assert.deepEqual(await items.allTextContents().then((a) => a.map((x) => x.replace(/\s+/g, ' ').trim())), ['Break at node', 'Join nodes', 'To curve', 'To line', 'Cusp', 'Smooth', 'Symmetrical']);       // 139e1 added To curve / To line, 139e2a the node types
     assert.equal(await items.nth(0).isDisabled(), false); assert.equal(await items.nth(1).isDisabled(), true);
     assert.equal(await items.nth(1).getAttribute('title'), 'Select exactly 2 end nodes', 'the greyed Join nodes says why');
     await page.keyboard.press('Escape');       // the menu closes; the shots open it again
@@ -16461,7 +16461,7 @@ try {
     await click(50, 30); await frames(); await typeCmd('shape'); await gripWhen(3);
     await nodeClick('0:v0'); await hotWhen(1);
     let items = await menu('0:v0');
-    assert.deepEqual(await items.allTextContents().then((a) => a.map((x) => x.replace(/\s+/g, ' ').trim())), ['Break at node', 'Join nodes', 'To curve', 'To line']);
+    assert.deepEqual(await items.allTextContents().then((a) => a.map((x) => x.replace(/\s+/g, ' ').trim())), ['Break at node', 'Join nodes', 'To curve', 'To line', 'Cusp', 'Smooth', 'Symmetrical']);       // 139e2a: the node types follow, greyed on a polyline
     assert.equal(await items.nth(2).isDisabled(), false); assert.equal(await items.nth(3).isDisabled(), true);
     assert.equal(await items.nth(3).getAttribute('title'), 'Not a Bezier curve', 'To line on a polyline says why');
     await pick('To curve');
@@ -16537,6 +16537,101 @@ try {
       await page.locator('.dtab', { hasText: 'Compare' }).click(); await frames();
       return doc;
     });
+    await page.keyboard.press('Escape');
+    await closeTabs(/./);
+  });
+
+  await step('TODO 139e2a: Shape tool node types Cusp / Smooth / Symmetrical: handles follow a handle drag, one Undo each, saved DXF holds the shape; Drawings, Layouts, Compare', async () => {
+    await menuItem('View', 'Theme: light');
+    const undo = async () => { await page.evaluate(() => document.activeElement && document.activeElement.blur()); await page.keyboard.press('Control+z'); await frames(); };
+    const hotWhen = (n) => page.waitForFunction((k) => document.querySelectorAll('[data-testid=grip-hot]').length === k, n);
+    const gid = (k) => page.locator('[data-testid=grip], [data-testid=grip-hot]').evaluateAll((g, s) => g.map((x) => x.dataset.grip).find((x) => x.endsWith(':' + s)), k);
+    const box = async (k) => gripBox(await gid(k));
+    const nodeClick = async (k) => { const a = await box(k); await page.mouse.click(a.x, a.y); await frames(); };
+    const handleDrag = async (k, dx, dy) => { const a = await box(k); await page.mouse.move(a.x, a.y); await page.mouse.down(); await page.mouse.move(a.x + dx, a.y + dy, { steps: 6 }); await page.mouse.up(); await frames(); };
+    const menu = async (k) => { const p = await box(k); await page.mouse.click(p.x, p.y, { button: 'right' }); await t('ctx-menu').waitFor(); return page.locator('[data-testid=ctx-menu] .mi'); };
+    const texts = async (items) => (await items.allTextContents()).map((x) => x.replace(/\s+/g, ' ').trim());
+    const pickItem = async (name) => { await page.locator('[data-testid=ctx-menu] .mi', { hasText: name }).first().click(); await frames(); };
+    const ctl = (e) => e.r.c.flatMap((c, k) => (c === 10 ? [[+e.r.v[k], +e.r.v[k + 1]]] : []));
+    const sub = (a, b) => [a[0] - b[0], a[1] - b[1]], len = (v) => Math.hypot(v[0], v[1]), cross = (a, b) => (a[0] * b[1] - a[1] * b[0]) / (len(a) * len(b));
+    const shape = async () => { const [n, o, i] = [await box('n1'), await box('o1'), await box('i1')]; return { vo: sub([o.x, o.y], [n.x, n.y]), vi: sub([i.x, i.y], [n.x, n.y]), o, i }; };       // the node and its two handles on screen
+    const lined = async () => { const s = await shape(); assert.ok(Math.abs(cross(s.vo, s.vi)) < 0.03 && s.vo[0] * s.vi[0] + s.vo[1] * s.vi[1] < 0, 'handles collinear, opposite ways: ' + JSON.stringify(s)); return s; };
+    const typeCase = async (save, shots) => {       // an open L: 3 nodes, selected in the Shape tool
+      await nodeClick('v0'); await hotWhen(1);
+      await menu('v0'); await pickItem('To curve'); await gripWhen(4);       // 3 nodes and the first one's handle
+      await nodeClick('n1'); await hotWhen(1); await gripWhen(5);
+      let items = await menu('n1'), tx = await texts(items);
+      assert.deepEqual(tx.slice(4), ['✓ Cusp', 'Smooth', 'Symmetrical'], 'To curve: the node is a Cusp, shown checked');
+      for (const k of [5, 6]) { assert.equal(await items.nth(k).isDisabled(), true); assert.match(await items.nth(k).getAttribute('title'), /No curve on either side/); }
+      assert.equal(await items.nth(4).isDisabled(), true); assert.match(await items.nth(4).getAttribute('title'), /Cusp already/);
+      await page.keyboard.press('Escape');
+      await handleDrag('o1', 40, 0);       // the segment after bends; the one before stays straight
+      const bent = await shape();
+      items = await menu('n1'); tx = await texts(items);
+      assert.deepEqual(await Promise.all([4, 5, 6].map((k) => items.nth(k).isDisabled())), [true, false, false], 'a curve on one side: Smooth and Symmetrical are allowed');
+      await pickItem('Smooth');
+      let s = await lined();
+      assert.ok(near(len(s.vo), len(bent.vo), 1.5) && near(s.i.x, bent.i.x, 1) && near(s.i.y, bent.i.y, 1), 'Smooth: lengths kept, the straight side stays');
+      await undo(); const cu = await shape(); assert.ok(near(cu.o.x, bent.o.x, 1) && near(cu.o.y, bent.o.y, 1), 'one Undo: the handles are back, and not collinear: ' + JSON.stringify([cu, bent]));
+      await menu('n1'); await pickItem('Smooth'); s = await lined();
+      await handleDrag('o1', 0, 35);       // Smooth: the other handle turns, its length stays
+      const s2 = await lined();
+      assert.ok(!near(s2.i.y, s.i.y, 3) && near(len(s2.vi), len(s.vi), 1.5), 'the other handle followed: ' + JSON.stringify([s, s2]));
+      items = await menu('n1'); tx = await texts(items); assert.deepEqual(tx.slice(4), ['Cusp', '✓ Smooth', 'Symmetrical']);
+      await pickItem('Symmetrical'); s = await lined();
+      assert.ok(near(len(s.vo), len(s.vi), 1.5), 'Symmetrical: equal lengths: ' + JSON.stringify(s));
+      await handleDrag('i1', -12, 22); s = await lined();
+      assert.ok(near(len(s.vo), len(s.vi), 1.5), 'a Symmetrical node mirrors the other handle');
+      if (shots) {
+        await shotBoth('shape-nodetype');
+        await page.setViewportSize({ width: 1024, height: 768 }); await frames();
+        await page.locator('[data-testid=canvas]').getByRole('button', { name: 'Fit', exact: true }).click(); await frames();
+        await page.screenshot({ path: `${shotDir}/s12-shape-nodetype-1024.png` });
+        await page.setViewportSize({ width: 1440, height: 900 }); await frames();
+      }
+      items = await menu('n1'); await pickItem('Cusp');
+      const c0 = await shape(); await handleDrag('o1', 0, -25); const c1 = await shape();
+      assert.ok(near(c1.i.x, c0.i.x, 1) && near(c1.i.y, c0.i.y, 1) && !near(c1.o.y, c0.o.y, 5), 'Cusp: the other handle stays');
+      assert.deepEqual((await texts(await menu('n1'))).slice(4), ['✓ Cusp', 'Smooth', 'Symmetrical']); await page.keyboard.press('Escape');
+      await undo(); await undo();       // the drag, then Cusp
+      assert.deepEqual((await texts(await menu('n1'))).slice(4), ['Cusp', 'Smooth', '✓ Symmetrical'], 'Undo x2: Symmetrical again'); await page.keyboard.press('Escape');
+      const doc = await save(), sp = doc.entities.find((x) => x.type === 'SPLINE'), P = sp && ctl(sp);       // saved as DXF and read back
+      assert.ok(P?.length === 7, 'one SPLINE of 2 cubics: ' + JSON.stringify(P));
+      const [vi, vo] = [sub(P[2], P[3]), sub(P[4], P[3])];
+      assert.ok(Math.abs(cross(vi, vo)) < 1e-6 && near(len(vi), len(vo), 1e-6) && len(vo) > 1, 'the saved handles are collinear and equal: ' + JSON.stringify(P));
+    };
+    // Drawings: save, then open the saved DXF again: the node still reads Symmetrical
+    const raw = newDoc(4);
+    addEntities(raw, dxfPoly([[20, 30], [80, 30], [80, 70]]));
+    await openGrips(writeDxf(raw), 'shape-types.dxf');
+    await click(50, 30); await frames(); await typeCmd('shape'); await gripWhen(3);
+    let saved = '';
+    await typeCase(async () => { saved = (await downloaded(() => page.keyboard.press('Control+s'))).text; return readDxf(saved); }, true);
+    await closeTabs(/./);
+    await openGrips(saved, 'shape-types-reload.dxf');
+    await click(24, 30); await frames(); await typeCmd('shape'); await gripWhen(3);       // the curve left the line y = 30 (its far node's handle turned), but not near its first node
+    await nodeClick('n1'); await hotWhen(1);
+    assert.deepEqual((await texts(await menu('n1'))).slice(4), ['Cusp', 'Smooth', '✓ Symmetrical'], 'reloaded: read back from the handles');
+    await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
+    await closeTabs(/./);
+    // Layouts
+    await freshLayoutWithPlate();
+    await typeCmd('polyline'); for (const p of ['50,600', '150,600', '150,700']) await typeCmd(p);
+    await typeCmd('');
+    await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click(); await click(75, 600); await frames(); await gripWhen(5);
+    await page.locator('[data-tool=shape]').click(); await gripWhen(3);
+    await typeCase(async () => readDxf((await downloaded(async () => { await menuItem('File', 'Export DXF…'); await t('export-dxf-go').click(); })).text), false);
+    await page.keyboard.press('Escape');
+    // Compare (the grips go to the source drawing)
+    const cmp = newDoc(4); addEntities(cmp, dxfPoly([[20, 30], [80, 30], [80, 70]]));
+    await openGrips(writeDxf(cmp), 'shape-types-cmp.dxf'); await typeCmd('compare');
+    await typeCmd('shape'); await page.keyboard.press('Control+a'); await gripWhen(3);
+    await typeCase(async () => {
+      await page.locator('.dtab', { hasText: 'shape-types-cmp.dxf' }).click(); await frames();
+      const doc = await savedDoc();
+      await page.locator('.dtab', { hasText: 'Compare' }).click(); await frames();
+      return doc;
+    }, false);
     await page.keyboard.press('Escape');
     await closeTabs(/./);
   });

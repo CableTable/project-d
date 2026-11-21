@@ -11589,20 +11589,29 @@ function shapeMenu(e) {
   const breakWhy = 'Break at node needs a node inside an open outline, or any node of a closed one (a line or an arc has end nodes only)';
   const curve = new Map(), lined = new Map();       // TODO 139e1 To curve / To line (grill R1, R4): entity index → shape.js result
   let curveWhy = 'Select a node first', lineWhy = curveWhy;
+  const NODE_TYPES = ['Cusp', 'Smooth', 'Symmetrical'], typed = Object.fromEntries(NODE_TYPES.map((t) => [t, { map: new Map(), why: curveWhy }])), have = new Set();
   for (const i of m ? by.keys() : d.sel) {
     const ent = ents[i];
     if (!m && ent?.type !== 'SPLINE') continue;
-    if (lockedEnt(d, i)) { curveWhy = lineWhy = 'An object is on a locked layer'; continue; }
+    if (lockedEnt(d, i)) { curveWhy = lineWhy = 'An object is on a locked layer'; for (const t of NODE_TYPES) typed[t].why = curveWhy; continue; }
     const c = SHP.toCurve(ent, by.get(i) || []), l = SHP.toLine(ent, by.get(i) || []);
     if (c.ent) curve.set(i, c); else curveWhy = c.why;
     if (l.ent) lined.set(i, l); else lineWhy = l.why;
+    for (const t of NODE_TYPES) {       // TODO 139e2a Cusp / Smooth / Symmetrical (grill R5): the type of each selected node, and the object each could become
+      const r = SHP.setNodeType(ent, by.get(i) || [], t), me = typed[t];
+      if (r.ent) me.map.set(i, r); else me.why = r.why;
+      for (const id of by.get(i) || []) have.add(SHP.nodeType(ent, id));
+    }
   }
+  have.delete(null);
   const edit = (map, label) => () => { if (shapeEdit(d, new Map([...map].map(([i, r]) => [i, r.ent])), label, new Set([...map].flatMap(([i, r]) => (r.ids || by.get(i)).map((id) => i + ':' + id))))) note(`${label}: ${map.size} object${map.size === 1 ? '' : 's'}. Ctrl+Z takes it back`); };
   popMenu(e.clientX, e.clientY, [
     ['Break at node', () => { const n = [...cuts.values()].flat().length; if (shapeReplace(d, cuts, 'Break at node')) note(`Break at node: ${n} open polyline${n === 1 ? '' : 's'}. Ctrl+Z takes it back`); }, null, cuts.size > 0, null, cuts.size ? null : breakWhy],
     ['Join nodes', () => { if (shapeReplace(d, new Map([[ents[gs[1].e], []], [ents[gs[0].e], [join.result]]]), join.label, ents[gs[0].e])) note(join.label === 'Close' ? 'Join nodes: the object is closed. Ctrl+Z takes it back' : 'Join nodes: 2 objects are 1 now. Ctrl+Z takes it back'); }, null, !join.why, null, join.why],
     ['To curve', edit(curve, 'To curve'), null, curve.size > 0, null, curve.size ? null : curveWhy],
-    ['To line', edit(lined, 'To line'), null, lined.size > 0, null, lined.size ? null : lineWhy]]);
+    ['To line', edit(lined, 'To line'), null, lined.size > 0, null, lined.size ? null : lineWhy],
+    '-',
+    ...NODE_TYPES.map((t) => [((have.size === 1 && have.has(t)) ? '✓ ' : '  ') + t, edit(typed[t].map, `${t} node`), null, typed[t].map.size > 0, null, typed[t].map.size ? null : typed[t].why])]);
   return true;
 }
 /** TODO 139e1: these objects of d (Map entity index → what replaces it, same place, same group) change in ONE undo step, the same objects selected, `keys` the selected nodes. False when nothing changed. */

@@ -10,6 +10,7 @@
 //   breakNodes(ent, ids)        → the open polylines ent becomes when broken at these nodes, or null (TODO 139c, grill R8)
 //   joinNodes(a, b, opts)       → { result, label } or { why }: two end nodes ({ ent, id }) closed (one object) or joined at their midpoint (two) (TODO 139c, grill Q6 / R2)
 //   bezierOf(ent) / handlesOf(ent, ids) / toCurve(ent, ids) / toLine(ent, ids)  → Bezier SPLINEs: their nodes (ids 'n3') and handles ('o3' out of node 3, 'i3' into it), To curve, To line (TODO 139e1, grill-139e R1 / R3 / R4)
+//   nodeType(ent, id) / setNodeType(ent, ids, type)  → a Bezier node's type Cusp / Smooth / Symmetrical, read back from its handles, and the spline with those nodes changed to a type (TODO 139e2a, R5)
 // Where the app drives it (app.js; grep the name): gripList (the Shape tool lists nodes, not grips: gripAt hit-tests them), shapeKeys / shapeSet (the selected nodes),
 // hotsOf (they stand in for hot grips), gripUp (a click selects, Shift+click toggles), shapeBox (a box selects), gripStretchHots (dragNodes).
 import { gripsOf, shapeOf, insertVertex, removeVertex, convertToArc, get, translate } from './grips.js';
