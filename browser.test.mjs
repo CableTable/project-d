@@ -15834,18 +15834,24 @@ try {
     await page.keyboard.press('Control+a'); await frames(); await gripWhen(3);
     await hotGrip(await gid('b')); await press(' ');
     await mode('STRETCH');
-    assert.match(await t('cmd-hist').textContent(), /take loose objects only here: use the ribbon command for Parts and dimensions/);
+    assert.match(await t('cmd-hist').textContent(), /take loose objects only here: use the ribbon command for Parts(?! and)/);
     await press('Escape'); await noHot();
-    // a layout dimension with the line (a loose object too) stays in STRETCH with the same note
+    // a layout dimension with the line (a loose object too): Move works (156e1c), both go, one Undo
     await typeCmd('dli'); await typeCmd('50,600'); await typeCmd('300,600'); await typeCmd('175,640');
     await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click();
     const w0 = await at(30, 570), w1 = await at(330, 680);       // a window round the line and its dimension (not the plate)
     await page.mouse.move(w0.x, w0.y); await page.mouse.down(); await page.mouse.move(w1.x, w1.y, { steps: 5 }); await page.mouse.up(); await frames();
     assert.match(await prompt(), /^2 parts selected/);
+    const dimA = async () => { const raw = readDxf((await downloaded(() => page.keyboard.press('Control+s'))).text), [nm, b] = Object.entries(raw.blocks).find(([k]) => /^PD_DIM/.test(k)); return readDim(nm, b).params.a; };
     await hotGrip(await gid('b')); await press(' ');
-    await mode('STRETCH');
-    assert.match(await t('cmd-hist').textContent(), /take loose objects only here/);
-    await press('Escape'); await noHot();
+    await mode('MOVE');
+    const mv = await at(360, 600); await page.mouse.move(mv.x, mv.y); await frames(); await page.mouse.click(mv.x, mv.y); await noHot(); await frames();
+    const dm = await dimA();
+    assert.ok(near(dm[0], 110, 1) && near(dm[1], 600, 1), `the dimension went with the line: ${dm}`);
+    assert.equal((await labelsNow()).at(-1), 'Move');
+    await undo(); await frames();
+    const dm0 = await dimA();
+    assert.ok(near(dm0[0], 50, 1e-3) && near(dm0[1], 600, 1e-3), `one Undo took both back: ${dm0}`);
     await typeCmd('d'); await page.keyboard.press('Escape');
     await closeTabs(/./);
   });
@@ -27984,6 +27990,77 @@ try {
     await waitTab(page, 'ldr-note.dxf');
     assert.deepEqual(ldrIn(await save()).map((x) => x.lines), [['BURR OFF']], 'the note is saved after reopening');
     await page.locator('[data-tool=select]').click();
+  });
+
+  await step('TODO 156e1c: grip modes on a layout leader: Rotate, Scale, Mirror and Move act on it (one Undo each, settled in its block, saved and reopened), Copy is refused; a placed Part in the selection keeps Stretch', async () => {
+    await freshLayoutWithPlate();
+    const undo = async () => { await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z'); };
+    const save = async () => (await downloaded(() => page.keyboard.press('Control+s'))).text;
+    const ldrIn = (text) => Object.entries(readDxf(text).blocks).filter(([k]) => /^PD_LDR_/.test(k)).map(([k, b]) => ({ name: k, ...readLeader(k, b) }));
+    const hotGrip = async (id) => { const a = await gripBox(id); await page.mouse.click(a.x, a.y); await page.waitForFunction(() => document.querySelectorAll('[data-testid=grip-hot]').length === 1); };
+    const noHot = () => page.waitForFunction(() => document.querySelectorAll('[data-testid=grip-hot]').length === 0);
+    const gripId = (k) => page.locator('[data-testid=grip]').evaluateAll((g, s) => g.map((x) => x.dataset.grip).find((x) => x.endsWith(':' + s)), k);
+    const select = async () => { await page.keyboard.press('Escape'); await click(125, 170); await frames(); await gripWhen(3); };
+    const press = async (key, n = 1) => { for (let i = 0; i < n; i++) await page.keyboard.press(key); };
+    const hist = () => t('cmd-hist').textContent();
+    const leader = async () => ldrIn(await save())[0];
+    const pts = async (want, why) => { const L = await leader(); L.pts.forEach(([x, y], k) => assert.ok(near(x, want[k][0], 0.01) && near(y, want[k][1], 0.01), `${why}: ${JSON.stringify(L.pts)}`)); return L; };
+    const was = [[100, 150], [150, 190], [200, 190]];
+    await page.locator('[data-tool=select]').click();
+    await typeCmd('le'); await typeCmd('100,150'); await typeCmd('150,190'); await typeCmd('200,190'); await t('text-editor').waitFor();
+    await t('text-editor').fill('DEBURR'); await page.keyboard.press('Enter');
+    await said(/Leader placed on the layer Dimensions: DEBURR/);
+    await page.locator('[data-tool=select]').click();
+    const n1 = (await histLabels()).length;
+    // Rotate 90 about the arrowhead: typed angle; one Undo; settled in its block (the note stays upright)
+    await select(); await hotGrip(await gripId('v0')); await press(' ', 2);
+    await said(/^Specify rotation angle or/);
+    await typeCmd('90'); await noHot(); await frames();
+    let L = await pts([[100, 150], [60, 200], [60, 250]], 'rotated 90° about the arrowhead'); assert.deepEqual(L.lines, ['DEBURR']);
+    assert.equal((await histLabels()).at(-1), 'Rotate'); assert.equal((await histLabels()).length, n1 + 1);
+    await undo(); await frames(); await pts(was, 'one Undo turns it back');
+    // Scale 2 about the arrowhead: the note and arrowhead scale too
+    await select(); await hotGrip(await gripId('v0')); await press(' ', 3);
+    await said(/^Specify scale factor or/);
+    await typeCmd('2'); await noHot(); await frames();
+    L = await pts([[100, 150], [200, 230], [300, 230]], 'scaled 2 about the arrowhead'); assert.ok(near(L.textH, 7, 1e-5) && near(L.arrow, 5, 1e-5), `the note and the arrowhead scaled: ${L.textH} / ${L.arrow}`);
+    assert.equal((await histLabels()).at(-1), 'Scale');
+    await undo(); await frames(); await pts(was, 'one Undo scales it back');
+    // Mirror about the vertical line through the arrowhead: the note stays upright
+    await select(); await hotGrip(await gripId('v0')); await press(' ', 4);
+    await said(/^Specify second point or/);
+    await typeCmd('100,250'); await noHot(); await frames();
+    L = await pts([[100, 150], [50, 190], [0, 190]], 'mirrored about x = 100'); assert.deepEqual(L.lines, ['DEBURR']);
+    assert.equal((await histLabels()).at(-1), 'Mirror');
+    await undo(); await frames(); await pts(was, 'one Undo mirrors it back');
+    // Copy is refused (no slot for a copy yet): the run stays, Esc ends it, no step
+    const steps = await histLabels();
+    await select(); await hotGrip(await gripId('v0')); await press(' ');
+    await said(/^Specify move point or/);
+    await typeCmd('c'); await page.mouse.click((await at(300, 250)).x, (await at(300, 250)).y); await frames();
+    assert.match(await hist(), /A leader on a layout cannot be copied with a grip yet/);
+    await press('Escape'); await noHot(); await pts(was, 'no copy was made');
+    assert.deepEqual(await histLabels(), steps, 'no undo step');
+    // Move by a typed point (base = the hot grip): kept, saved and reopened at the new place
+    await select(); await hotGrip(await gripId('v0')); await press(' ');
+    await typeCmd('130,190'); await noHot(); await frames();
+    const moved = [[130, 190], [180, 230], [230, 230]];
+    await pts(moved, 'moved by 30,40'); assert.equal((await histLabels()).at(-1), 'Move');
+    await shotBoth('layout-leader-grip-move');
+    const text = await save();
+    await closeTabs(/./);
+    await t('picker').setInputFiles({ name: 'ldr-grip.dxf', mimeType: 'text/plain', buffer: Buffer.from(text, 'latin1') });
+    await waitTab(page, 'ldr-grip.dxf');
+    L = ldrIn(await save())[0]; L.pts.forEach(([x, y], k) => assert.ok(near(x, moved[k][0], 0.01) && near(y, moved[k][1], 0.01)), 'the moved leader reopens at its new place');
+    assert.deepEqual(L.lines, ['DEBURR']);
+    // a placed Part in the selection (Select all, the leader is selected too): the modes stay in Stretch with the note
+    await typeCmd('line'); await typeCmd('50,600'); await typeCmd('300,600'); await typeCmd(''); await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click();
+    await page.keyboard.press('Control+a'); await frames(); await gripWhen(3);
+    await hotGrip(await gripId('b')); await press(' ');
+    await said(/^Specify stretch point or/);
+    assert.match(await hist(), /take loose objects only here: use the ribbon command for Parts(?! and)/);
+    await press('Escape'); await noHot();
+    await closeTabs(/./);
   });
 
   await step('TODO 156e2: Fill, Eyedropper and Rotate on layout objects: fill, No fill, Eyedropper two targets, one Undo each, a placed part refused; Rotate with base point, angle and Reference, one Undo; saved, reopened and in the PDF', async () => {

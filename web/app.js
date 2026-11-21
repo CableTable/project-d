@@ -74,7 +74,7 @@ import { layoutSnap, placedSnap, layoutCandidates, layoutReference, layoutTangen
 import { nearestObject } from './tangent.js';
 import * as LD from './layoutdoc.js';
 import { labelGaps } from './pdf-source.js';
-import { isDimPart, isSettled, dimNoun } from './layoutdim.js';
+import { isDimPart, isSettled, dimNoun, insertPlacement } from './layoutdim.js';
 import { dropPart } from './dropin.js';
 import { copySnapshot, copyPlacedSnapshot, drawingFromPlaced, pasteSnapshot, partFromSnapshot } from './clipboard.js';
 import * as PL from './place.js';
@@ -7279,6 +7279,16 @@ function layLdrReplace(v, n, label) {
   pushLay(d, snap, '', label); touch(d); update();
   return true;
 }
+/** A grip mode (Move, Rotate, Scale, Mirror) on a layout's selected leader or dimension (v: layDimDoc; res: what the mode made of its little drawing, its INSERT first): the block it made replaces the old, the INSERT's offset / turn / scale
+ * become the placement, and update() settles that into the block (settleDims), as after a ribbon command; one undo step. False when the block cannot be built. */
+function layDimModeCommit(v, res, label) {
+  const d = v.vlay, snap = laySnap(d.lay), { p, part } = v.layDim, ins = res.entities[0], old = part.raw.entities[0], pl = d.lay.placed[p.i];
+  const name = String(ins.r.v[ins.r.c.indexOf(2)]).trim(), same = { ...old, r: { ...old.r, v: old.r.v.map((x, k) => (old.r.c[k] === 2 ? name : x)) } };       // the old INSERT (at the identity) under the block's new name
+  if (!res.blocks[name] || !LD.replaceDim(d.lay, pl, same, { [name]: res.blocks[name] }, () => 'o' + uid(), new Set(Object.values(d.lay.parts).map((q) => q.name)))) return false;
+  Object.assign(pl, insertPlacement(d.lay.parts[pl.partId], ins));
+  pushLay(d, snap, '', label); touch(d); update();
+  return true;
+}
 function restoreBg(d, st) {
   if (st.mm != null && d.bg) d.bg.mm = st.mm;
   if (st.pos && d.bg) [d.bg.x, d.bg.y] = st.pos;
@@ -11514,7 +11524,7 @@ function gripCycle() {
 }
 /** Mode i (Space / Enter cycle it, the right-click menu picks it). */
 function gripModeTo(g, i) {
-  if (curLay() && selItems().some((x) => x.p.src !== 'loose' || !x.part.obj || isDimPart(x.part))) { note('Grip Move / Rotate / Scale / Mirror take loose objects only here: use the ribbon command for Parts and dimensions'); return; }       // they act on the loose objects of the selection, not on a Part
+  if (curLay() && selItems().some((x) => x.p.src !== 'loose' || !x.part.obj)) { note('Grip Move / Rotate / Scale / Mirror take loose objects only here: use the ribbon command for Parts'); return; }       // they act on the loose objects of the selection (a dimension or leader too, 156e1c), not on a Part
   g.mode = i; g.opt = 0; g.move = null; g.res = null; g.err = null; g.next = null; g.val = null; g.to = null; g.ref = null; g.baseAsk = false; g.cursorPreview = false; g.cursorInput = null;
   if (g.cursor) gripAim(g, gripPick(g, g.cursor[0], g.cursor[1], false));
   state.msg = null; ui.cmdUI.message(GM.header(GM.MODES[g.mode])); renderCommand(); paintOverlay();
@@ -11581,6 +11591,7 @@ function gripPut(g, e) {
 function gripCopy(g, ctrl) {
   if (ctrl && !g.copy) { g.copy = true; if (g.mode) gripModeRun(g); }       // Ctrl at a pick: this pick copies and the run is multiple from here on
   const d = g.d, M = GM.MODES[g.mode];
+  if (d.layDim) { note('A leader on a layout cannot be copied with a grip yet'); return; }       // its little drawing has no slot for a copy (gripExit commits through layObjCommit)
   if (!g.mode && (g.nexts ? [...g.nexts.values()].some((x) => x.type === 'LEADER') : ldrPseudo(d, g.e))) { note('A leader cannot be copied with Stretch yet'); return; }
   const next = g.mode ? g.res : g.next && { entities: [...g.acc.entities, ...(g.nexts ? g.nexts.values() : [g.next])], blocks: g.acc.blocks };
   if (!next) { note(g.err || 'That would not change anything, so no copy is made'); gripRefresh(g); return; }
@@ -11954,7 +11965,8 @@ function gripModeCommit(g) {
   if (!g.res) { note(g.err || (g.to ? 'That would not change anything, so it stays as it was' : `${label} cancelled`)); renderCommand(); paintOverlay(); return; }
   if (moveLocked(d, g.sel)) { paintOverlay(); return; }
   view.fitted = false;
-  if (d.vlay) { if (!layGripCommit(d, [...g.sel].map((i) => [d.raw.entities[i], g.res.entities[i]]), label, g.sel)) { note('That would leave nothing of the shape, so it stays as it was'); paintOverlay(); return; } paintOverlay(); }
+  if (d.layDim) { if (!layDimModeCommit(d, g.res, label)) { note('That would leave nothing of the shape, so it stays as it was'); paintOverlay(); return; } paintOverlay(); }       // a layout's selected leader or dimension (156e1c), as gripCommit
+  else if (d.vlay) { if (!layGripCommit(d, [...g.sel].map((i) => [d.raw.entities[i], g.res.entities[i]]), label, g.sel)) { note('That would leave nothing of the shape, so it stays as it was'); paintOverlay(); return; } paintOverlay(); }
   else { if (!commit(d, M === 'MIRROR' ? g.res : followDimensions(d.raw, g.res, d.factor), label, g.sel)) { paintOverlay(); return; } setSel(d, g.sel); }
   const left = g.res.skipped || [];
   note(`${label}: ${GM.readout(M, g.base, g.val, d.factor, drawingUnit())}` + (left.length ? `; ${left.length} left out (${[...new Set(left)].join('; ')})` : '') + '. Ctrl+Z takes it back');

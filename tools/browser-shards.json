@@ -513,6 +513,7 @@
   "TODO 156b2c2b: on a layout, Angle Dimension picks two lines (one Undo, Esc cancels), refuses placed parts; saves and reopens as a dimension object; a line grip updates the angle and Move carries it": 11.82,
   "TODO 156e1: Leader on a layout is a layout object (one Undo, Esc cancels); grips per point with the note following the end, Format → Dimension style restyles it, Move, Explode; saved and reopened as an object, placed parts untouched": 4.5,
   "TODO 156e1b: layout leader select, panel, dblclick": 4,
+  "TODO 156e1c: grip modes on a layout leader: Rotate, Scale, Mirror and Move act on it (one Undo each, settled in its block, saved and reopened), Copy is refused; a placed Part in the selection keeps Stretch": 8,
   "TODO 156e2: Fill, Eyedropper and Rotate on layout objects: fill, No fill, Eyedropper two targets, one Undo each, a placed part refused; Rotate with base point, angle and Reference, one Undo; saved, reopened and in the PDF": 5,
   "TODO 156b fixes: Esc cancels a hot grip with 2 objects selected; Polyline snaps to its own first point on a layout; lock and group of objects survive save and reopen; the counts say parts only; Add to layout after objects starts the grid": 10.29,
   "TODO 156b review: layout ribbon Line and Rotate are enabled; ribbon and menu Rotate turn a placed part": 4.32,

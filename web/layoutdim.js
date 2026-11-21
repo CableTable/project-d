@@ -29,6 +29,12 @@ export function placeMatrix(part, p) {
   const a = co * sx, b = si * sx, c = -si * sy, d = co * sy;
   return [a, b, c, d, p.x - a * b0 - c * b1, p.y - b * b0 - d * b1];
 }
+/** The placement { x, y, rot, sc, mirrorX, mirrorY } that puts `part`'s block where the INSERT `ins` puts it (a grip mode's result for a dimension or leader that lay at the identity; TODO 156e1c). */
+export function insertPlacement(part, ins) {
+  const at = (c, k) => { const i = ins.r.c.indexOf(c); return i < 0 ? k : +ins.r.v[i]; }, sx = at(41, 1), sy = at(42, 1);
+  const pl = { rot: at(50, 0), sc: Math.abs(sx), mirrorX: sx < 0, mirrorY: sy < 0 }, m = placeMatrix(part, { ...pl, x: 0, y: 0 });       // m[4], m[5]: where the part's corner goes for x = y = 0
+  return { ...pl, x: at(10, 0) - m[4], y: at(20, 0) - m[5] };
+}
 /** Is the placement the identity (the part lies where it is drawn)? */
 export const isSettled = (part, p) => !p.rot && (p.sc || 1) === 1 && !p.mirrorX && !p.mirrorY && Math.abs(p.x - part.box[0]) < 1e-9 && Math.abs(p.y - part.box[1]) < 1e-9;
 

@@ -525,4 +525,60 @@ test('explodeDims: a leader becomes its lines, arrowhead and note as objects; no
   assert.ok(Object.values(lay.parts).every((part) => !isDimPart(part)));
 });
 
+// ---- TODO 156e1c: a grip mode (gripmode.js) on a layout's selected dimension or leader: its block and INSERT, then the placement (insertPlacement), then settleDims ----
+import * as GM from './web/gripmode.js';
+import { insertPlacement } from './web/layoutdim.js';
+/** What app.js layDimModeCommit does with a grip mode's result, on a layout holding only that dimension / leader. */
+function gripMode(lay, p, mode, base, v) {
+  const part = lay.parts[p.partId], res = GM.apply(part.raw, new Set([0]), mode, base, v), ins = res.entities[0], old = part.raw.entities[0];
+  const name = String(ins.r.v[ins.r.c.indexOf(2)]).trim(), same = { ...old, r: { ...old.r, v: old.r.v.map((x, k) => (old.r.c[k] === 2 ? name : x)) } };
+  assert.ok(LD.replaceDim(lay, p, same, { [name]: res.blocks[name] }, newId, new Set(Object.values(lay.parts).map((q) => q.name))));
+  Object.assign(p, insertPlacement(lay.parts[p.partId], ins));
+  LD.settleDims(lay, newId);
+  assert.ok(isDimPart(lay.parts[p.partId]));
+  const q = lay.parts[p.partId];
+  assert.ok(!p.rot && (p.sc || 1) === 1 && !p.mirrorX && !p.mirrorY && Math.abs(p.x - q.box[0]) < 1e-9, 'settled again: the placement is the identity');
+  return q;
+}
+const same = (pts, want, label) => pts.forEach(([x, y], k) => { near(x, want[k][0], 1e-4); near(y, want[k][1], 1e-4); });
+
+test('grip modes on a leader: Move, Rotate, Scale and Mirror about a base leave it settled, at the new place, note kept', () => {
+  const pts = [[0, 0], [30, 30], [60, 30]];
+  for (const [mode, base, v, want] of [
+    ['MOVE', [0, 0], [10, 20], [[10, 20], [40, 50], [70, 50]]],
+    ['ROTATE', [0, 0], 90, [[0, 0], [-30, 30], [-30, 60]]],
+    ['ROTATE', [30, 30], 90, [[60, 0], [30, 30], [30, 60]]],
+    ['SCALE', [0, 0], 2, [[0, 0], [60, 60], [120, 60]]],
+    ['MIRROR', [0, 0], [0, 1], [[0, 0], [-30, 30], [-60, 30]]],
+  ]) {
+    const lay = layoutWith(), p = addLeader(lay, 'k1', pts);
+    gripMode(lay, p, mode, base, v);
+    same(ldrOf(lay, p).pts, want, mode);
+    assert.deepEqual(ldrOf(lay, p).lines, ['DEBURR'], mode);
+  }
+  const lay = layoutWith(), p = addLeader(lay, 'k1', pts);
+  gripMode(lay, p, 'SCALE', [0, 0], 2);
+  near(ldrOf(lay, p).textH, 7); near(ldrOf(lay, p).arrow, 5);
+});
+
+test('grip modes on a linear dimension: Move, Rotate 90 (H becomes V), Scale (new label), Mirror (label kept) leave it settled', () => {
+  const make = () => { const lay = layoutWith(); return [lay, addDim(lay, 'd1', [0, 0], [100, 0], 10, 'PD_DIM_H1', 'linear', 'h')]; };
+  let [lay, p] = make();
+  gripMode(lay, p, 'MOVE', [0, 0], [50, 20]);
+  same([dimOf(lay, p).params.a, dimOf(lay, p).params.b], [[50, 20], [150, 20]]);
+  assert.equal(labelOf(lay, p), '100.00');
+  [lay, p] = make();
+  gripMode(lay, p, 'ROTATE', [0, 0], 90);
+  assert.match(dimName(lay.parts[p.partId]), /^PD_DIM_V\d+$/);
+  same([dimOf(lay, p).params.a, dimOf(lay, p).params.b], [[0, 0], [0, 100]]);
+  [lay, p] = make();
+  gripMode(lay, p, 'SCALE', [0, 0], 2);
+  assert.equal(labelOf(lay, p), '200.00');
+  same([dimOf(lay, p).params.a, dimOf(lay, p).params.b], [[0, 0], [200, 0]]);
+  [lay, p] = make();
+  gripMode(lay, p, 'MIRROR', [50, 0], [50, 1]);
+  assert.equal(labelOf(lay, p), '100.00');
+  assert.deepEqual([dimOf(lay, p).params.a[0], dimOf(lay, p).params.b[0]].sort((x, y) => x - y).map(Math.round), [0, 100]);
+});
+
 console.log(n + ' tests');
