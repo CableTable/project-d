@@ -2,7 +2,7 @@
 export function codexWindow([used, resets], now = Date.now()) {
   return resets == null || resets * 1000 <= now ? [0, null] : [used, resets];
 }
-export const resetLabel = (resets, format) => resets == null ? 'Reset' : 'Resets ' + format(resets);
+export const resetLabel = (resets, format) => resets == null ? 'Reset' : 'resets ' + format(resets);
 // [used %, reset in seconds or null] of one limits.csv row; a limited account's 5h row has a blank reset (Date.parse('') is NaN, and formatting NaN throws).
 export function windowReading(agent, r) {
   const reading = [Number(r.used_pct), r.resets ? Date.parse(r.resets) / 1000 : null];
@@ -16,21 +16,28 @@ export function isTodayIst(iso, now = Date.now()) {
   return Number.isFinite(t) && istDay(t) === istDay(now);
 }
 
-// The status strip's chips from the `breaks` ({ rows: [{ account, from, to }] }), `forhim` ({ open }) and `ci` ({ status, conclusion, sha, updated }) docs: [{ cls, text }].
-// A missing doc gives no chip; `hm` formats a time (ms) as HH:MM in IST.
-export function stripChips({ breaks, forhim, ci } = {}, now = Date.now(), hm = String) {
-  const chips = [];
+// The breaks ({ rows: [{ account, from, to }] }) that are on now: [{ account, to (ms) }]; unreadable rows are skipped.
+export function activeBreaks(breaks, now = Date.now()) {
+  const out = [];
   for (const b of Array.isArray(breaks?.rows) ? breaks.rows : []) {
     if (!b || typeof b !== 'object') continue;
     const from = Date.parse(b.from), to = Date.parse(b.to);
-    if (from <= now && now <= to) chips.push({ cls: 'muted', text: b.account + ' break till ' + hm(to) });
+    if (from <= now && now <= to) out.push({ account: b.account, to });
   }
-  if (Number(forhim?.open) > 0) chips.push({ cls: 'accent', text: 'for you: ' + Number(forhim.open) });
+  return out;
+}
+
+// The status strip's items from the `breaks`, `forhim` ({ open }) and `ci` ({ status, conclusion, sha, updated }) docs: [{ cls, text, plain? }].
+// A break is a plain muted line (plain), the rest are chips. A missing doc gives nothing.
+export function stripChips({ breaks, forhim, ci } = {}, now = Date.now()) {
+  const chips = activeBreaks(breaks, now).map((b) => ({ cls: 'muted', text: b.account + ' on break', plain: true }));
+  if (Number(forhim?.open) > 0) chips.push({ cls: 'info', text: Number(forhim.open) + ' for him' });
   const sha = String(ci?.sha || '').slice(0, 7);
   if (ci?.status && ci.status !== 'completed' && ci.status !== 'none') {
     const at = Date.parse(ci.updated), min = Math.max(0, Math.round((now - at) / 60000));
     chips.push({ cls: 'warn', text: 'CI running' + (Number.isFinite(at) ? ' · ' + (min >= 60 ? Math.floor(min / 60) + ' h' : min + ' min') + ' ago' : '') });
-  } else if (ci?.status === 'completed' && ci.conclusion === 'cancelled') chips.push({ cls: 'muted', text: 'CI cancelled ' + sha });
+  } else if (ci?.status === 'completed' && ci.conclusion === 'success') chips.push({ cls: 'ok', text: 'CI green' });
+  else if (ci?.status === 'completed' && ci.conclusion === 'cancelled') chips.push({ cls: 'muted', text: 'CI cancelled ' + sha });
   else if (ci?.status === 'completed' && /^(failure|timed_out|startup_failure)$/.test(ci.conclusion)) chips.push({ cls: 'bad', text: 'CI red ' + sha });
   return chips;
 }

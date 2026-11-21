@@ -12,3 +12,9 @@ export function dailyTokens(rows, agents, days = 7) {
   }
   return out;
 }
+
+// The y-axis step for 3 gridlines above zero: the smallest 1 / 2 / 3 / 5 x 10^k that holds `max` in 3 steps, at least 1 (axis 0, 3M, 6M, 9M).
+export function niceStep(max) {
+  const raw = Math.max(3, max) / 3, p = 10 ** Math.floor(Math.log10(raw));
+  return [1, 2, 3, 5, 10].find((m) => m * p >= raw - 1e-9) * p;
+}

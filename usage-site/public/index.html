@@ -11,42 +11,39 @@
 <link rel="stylesheet" href="./app.css">
 </head>
 <body>
-<p id="message" role="status" aria-live="polite">Sign in to see usage.</p>
-
 <div class="ud">
   <header class="ud-head">
-    <h1 id="top">Usage</h1>
+    <div class="ud-top">
+      <h1 id="top">Usage</h1>
+      <nav class="page-tabs" aria-label="Page" hidden>
+        <button type="button" data-tab="usage" aria-pressed="true" aria-controls="usage">Usage</button>
+        <button type="button" data-tab="todo" aria-pressed="false" aria-controls="todo">Todo</button>
+        <button type="button" data-tab="tickets" aria-pressed="false" aria-controls="tickets">Tickets</button>
+        <button type="button" data-tab="queue" aria-pressed="false" aria-controls="queue">Queue</button>
+      </nav>
+      <div class="ud-actions"><button id="signin" type="button">Sign in with Google</button><button id="refresh" type="button" disabled>Refresh</button></div>
+    </div>
+    <p class="ud-muted ud-sub"><span id="message" role="status" aria-live="polite">Sign in to see usage.</span> <span id="last-update">Last update: ?</span> <span id="offline" class="ud-chip bad" hidden>PC offline</span> <button id="signout" type="button" hidden>Sign out</button></p>
     <p id="rook-stuck" role="status" hidden></p>
-    <nav class="page-tabs" aria-label="Page" hidden>
-      <button type="button" data-tab="usage" aria-pressed="true" aria-controls="usage">Usage</button>
-      <button type="button" data-tab="todo" aria-pressed="false" aria-controls="todo">TODO</button>
-      <button type="button" data-tab="tickets" aria-pressed="false" aria-controls="tickets">Tickets</button>
-      <button type="button" data-tab="queue" aria-pressed="false" aria-controls="queue">Queue</button>
-    </nav>
-    <div class="ud-agent"><div><button id="signin" type="button">Sign in with Google</button><button id="signout" type="button" hidden>Sign out</button></div>
-      <button id="refresh" type="button" disabled>Update now</button></div>
-    <p class="ud-muted" aria-live="polite"><span id="last-update">Last update: ?</span> <span id="offline" class="ud-chip bad" hidden>PC offline</span></p>
     <p id="last-error" class="ud-muted" role="status" hidden></p>
   </header>
 
   <main id="dashboard" class="ud-sec" hidden>
   <div id="usage" class="ud-sec" data-page>
     <div class="ud-strip" id="strip" aria-label="Status"></div>
-    <p class="ud-muted">Readings as of <span id="asof">—</span>. On each week bar the hatched part is the forecast to the reset; red marks the account's daily cap.</p>
   <div class="ud-main">
-    <section class="ud-sec" id="limits">
-      <h2>Limits now</h2>
+    <section class="ud-sec" id="limits" aria-label="Limits now">
       <div class="ud-col" id="agents"></div>
     </section>
     <div class="ud-col">
-      <section class="ud-sec" id="work">
-        <h2>Work</h2>
-        <div class="ud-sec" id="work-list"></div>
+      <section class="ud-card" id="work" aria-label="Work">
+        <div class="ud-work" id="work-list"></div>
       </section>
-      <div class="ud-card">
-        <div><h3>Tokens per day</h3><p class="ud-muted">Last 7 days in IST. Input + output + cache creation; cache reads excluded.</p></div>
+      <div class="ud-card" id="tokens">
+        <h2>Tokens per day</h2>
         <div class="ud-chart" id="token-chart"></div>
         <div class="legend" id="token-legend" aria-label="Agents"></div>
+        <p class="ud-muted" id="token-note"></p>
       </div>
     </div>
   </div>
