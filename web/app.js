@@ -50,7 +50,7 @@ import * as GR from './grips.js';
 import * as SHP from './shape.js';
 import { stretchGrips, stretchEntities, stretchSelection, stretchPlacements } from './stretch.js';
 import * as GM from './gripmode.js';
-import { followDimensions, driveLine, driveDimension, dimensionEntry } from './linked-dimensions.js';
+import { followDimensions, linkedLine, driveLine, driveDimension, dimensionEntry } from './linked-dimensions.js';
 import * as MD from './modify.js';
 import * as AR from './array.js';
 import { movePoint, movePrompt } from './move.js';
@@ -11522,9 +11522,17 @@ function gripCycle() {
   if (g.copy) { gripExit(); return; }                                // Enter ends a multiple run
   gripModeTo(g, GM.cycle(g.mode));
 }
+/** A layout selection of loose objects plus a leader or a dimension that would stay put in a grip mode: the mode moves the objects' drawing only, a dimension follows just when it is linked to a selected line (followDims).
+ * shortcut: "linked" is linkedLine's (one line under both ends), so a dimension on a circle or polyline vertex counts as stranded; upgrade with a followDimensions dry run. */
+function strandedDims() {
+  const all = selItems(), isDim = (x) => isDimPart(x.part), dims = all.filter(isDim);
+  if (!dims.length || dims.length === all.length) return false;       // alone, a dimension or leader goes through layDimModeCommit
+  const lay = curLay(), view = LD.linkView(lay), raw = { header: {}, layers: view.layers, ltypes: {}, blocks: view.blocks, entities: view.entities }, picked = new Set(all.map((x) => x.p.i));
+  return dims.some((x) => { const hit = linkedLine(raw, view.at.indexOf(x.p.i)); return !hit || !picked.has(view.at[hit.i]); });
+}
 /** Mode i (Space / Enter cycle it, the right-click menu picks it). */
 function gripModeTo(g, i) {
-  if (curLay() && selItems().some((x) => x.p.src !== 'loose' || !x.part.obj)) { note('Grip Move / Rotate / Scale / Mirror take loose objects only here: use the ribbon command for Parts'); return; }       // they act on the loose objects of the selection (a dimension or leader too, 156e1c), not on a Part
+  if (curLay() && (selItems().some((x) => x.p.src !== 'loose' || !x.part.obj) || strandedDims())) { note('Grip Move / Rotate / Scale / Mirror take loose objects only here: use the ribbon command for Parts'); return; }       // they act on the loose objects of the selection (a dimension or leader too, 156e1c), not on a Part
   g.mode = i; g.opt = 0; g.move = null; g.res = null; g.err = null; g.next = null; g.val = null; g.to = null; g.ref = null; g.baseAsk = false; g.cursorPreview = false; g.cursorInput = null;
   if (g.cursor) gripAim(g, gripPick(g, g.cursor[0], g.cursor[1], false));
   state.msg = null; ui.cmdUI.message(GM.header(GM.MODES[g.mode])); renderCommand(); paintOverlay();

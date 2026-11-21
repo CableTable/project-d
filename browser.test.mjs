@@ -28060,6 +28060,15 @@ try {
     await said(/^Specify stretch point or/);
     assert.match(await hist(), /take loose objects only here: use the ribbon command for Parts(?! and)/);
     await press('Escape'); await noHot();
+    // a loose line plus the leader (it would stay put in a mode): refused the same way, nothing moves
+    await page.keyboard.press('Escape'); await typeCmd('line'); await typeCmd('50,260'); await typeCmd('300,260'); await typeCmd(''); await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click();
+    const w0 = await at(20, 140), w1 = await at(330, 280);
+    await page.mouse.move(w0.x, w0.y); await page.mouse.down(); await page.mouse.move(w1.x, w1.y, { steps: 5 }); await page.mouse.up(); await frames();
+    await said(/^2 parts selected/);
+    await hotGrip(await gripId('b')); await press(' ');
+    await said(/^Specify stretch point or/);
+    assert.match(await hist(), /take loose objects only here: use the ribbon command for Parts(?! and)/);
+    await press('Escape'); await noHot();
     await closeTabs(/./);
   });
 
