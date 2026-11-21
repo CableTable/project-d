@@ -5953,7 +5953,7 @@ function attachCanvasEvents() {
   });
   c.addEventListener('click', (e) => { const gh = e.target.closest && e.target.closest('[data-gap]'); if (gh && !state.setlen && state.tool !== 'measure') pickGap(gh.dataset.gap); });
   c.addEventListener('mousedown', (e) => { if (curLay() && e.button === 0 && e.detail === 2) { textDblClick(e); if (state.text.ed?.dim) e.preventDefault(); } });       // layout selection rebuilds its SVG before dblclick can fire
-  c.addEventListener('dblclick', (e) => { if (state.dimHot) { state.dimHot.g.cancelled = true; state.dimHot = state.dimDrag = null; paintOverlay(); } if (!balDbl(e)) textDblClick(e); });       // the double-click on a dimension's text edits it: its first click did not leave a hot grip (345b2)
+  c.addEventListener('dblclick', (e) => { if (state.dimHot) { state.dimHot.g.cancelled = true; state.dimHot = state.dimDrag = null; paintOverlay(); } if (!balDbl(e) && !shapeDblClick(e)) textDblClick(e); });       // the double-click on a dimension's text edits it: its first click did not leave a hot grip (345b2)
   c.addEventListener('mousedown', (e) => { if (e.button === 0 && state.tool === 'text' && !e.target.closest('.texted, .zoombox, .contourpanel')) e.preventDefault(); });      // the click places a text: it must not take the focus from the box it opens
   c.addEventListener('pointercancel', () => { if (state.drawingRotate) state.drawingRotate.drag = null; if (state.grip && !state.grip.hot) gripCancel(); state.entityDrag = null; state.balDrag = null; if (state.text.drag) textDragEnd(true); if (gdrag) cancelGuideDrag(); if (pdrag) cancelPlacedDrag(); drag = null; lrub = null; lmod = null; state.dimDrag = null; hideRubber(); paintOverlay(); end(); });
   c.addEventListener('auxclick', (e) => e.preventDefault());
@@ -11514,6 +11514,25 @@ function shapeBox(d, a, b, add) {
   const keys = new Set(add ? shapeKeys(d) : []);
   for (const n of SHP.nodesIn(gripList(d), a, b)) keys.add(n.e + ':' + n.id);
   shapeSet(d, keys);
+}
+/** TODO 139b1: a double-click with the Shape tool on a selected object's outline (not on a node) adds a node there (shape.js addNode), one Undo step; the new node is the one selected. */
+function shapeDblClick(e) {
+  const d = gripDoc();
+  if (state.tool !== 'shape' || state.grip || !d || !gripOn(d) || gripAt(d, e.clientX, e.clientY)) return false;
+  const p = toDrawing(d, e.clientX, e.clientY);
+  for (const i of d.sel) {
+    const ent = d.raw.entities[i], r = !lockedEnt(d, i) && SHP.addNode(ent, p, pickTol(d));
+    if (!r) continue;
+    const sel = new Set(d.sel);
+    view.fitted = false;
+    if (d.vlay) { if (!layGripCommit(d, [[ent, r.ent]], r.label, sel)) return true; }
+    else { if (!commit(d, { entities: d.raw.entities.map((x, k) => (k === i ? r.ent : x)), blocks: d.raw.blocks }, r.label, sel)) return true; setSel(d, sel); }       // too nested: commit showed why
+    const node = SHP.nodesOf(r.ent).reduce((a, b) => (Math.hypot(b.x - p[0], b.y - p[1]) < Math.hypot(a.x - p[0], a.y - p[1]) ? b : a));       // the nearest node to the click is the new one: it sits on the outline's nearest point
+    shapeSet(gripDoc() || d, new Set([i + ':' + node.id]));
+    note(`${r.label}${ent.type === 'LWPOLYLINE' ? '' : `: the ${ent.type.toLowerCase()} is a polyline now`}. Ctrl+Z takes it back`);
+    return true;
+  }
+  return false;
 }
 function gripDown(e) {
   ctrlTap = false;                                                   // Ctrl held for a Ctrl-click is not a tap (163a)

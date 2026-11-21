@@ -271,6 +271,7 @@
   "TODO 155e2: grip Copy (several copies, one Undo, U, Enter / Esc end), Base point, Reference in Rotate / Scale, Ctrl copies, Esc at the base prompt, and the same on a layout": 58,
   "TODO 155e3: Shift-click makes several hot grips (again = cold), Stretch moves them all, the right-click grip menu, and the same on a layout": 38.58,
   "TODO 139a: Shape tool selects and drags nodes": 4.5,
+  "TODO 139b1: double-click adds a node, outline unchanged, one Undo": 2,
   "TODO 163a: hover a line / arc grip 300 ms -> the Grip options list (line end Stretch, Lengthen; arc mid Stretch, Radius; none on a line middle or arc centre); Lengthen typed 10 adds 10, Radius typed 40, Ctrl cycles, Esc closes the list first; one Undo each; light and dark": 16.57,
   "TODO 163a copies then Ctrl: a Ctrl-click copy in Stretch, then a Ctrl tap -> \"Lengthen makes no copies\", the run stays in Stretch and the copy is kept": 5.88,
   "TODO 163a: Grip options on a Compare snapshot (routes to the source) and on a layout object": 12.57,

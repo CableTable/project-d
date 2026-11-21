@@ -16229,6 +16229,48 @@ try {
     await closeTabs(/./);
   });
 
+  await step('TODO 139b1: double-click adds a node, outline unchanged, one Undo', async () => {
+    const undo = async () => { await page.evaluate(() => document.activeElement && document.activeElement.blur()); await page.keyboard.press('Control+z'); await frames(); };
+    const gid = (k) => page.locator('[data-testid=grip], [data-testid=grip-hot]').evaluateAll((g, s) => g.map((x) => x.dataset.grip).find((x) => x.endsWith(':' + s)), k);
+    const midDbl = async () => { const a = await gripBox(await gid('a')), b = await gripBox(await gid('b')); await page.mouse.dblclick((a.x + b.x) / 2, (a.y + b.y) / 2); await frames(); };       // the middle of a line's two end nodes
+    // Drawings: a line becomes a 3-node open polyline on the same line; a circle a closed polyline of arcs on the same circle; one Undo each
+    const raw = newDoc(4); addEntities(raw, dxfLine(20, 30, 80, 30), dxfCircle(160, 60, 20));
+    await openGrips(writeDxf(raw), 'shape-add.dxf');
+    await click(50, 30); await frames(); await typeCmd('shape'); await gripWhen(2);
+    const p = await at(50, 30); await page.mouse.dblclick(p.x, p.y); await gripWhen(3);
+    let e = entOf(await savedDoc(), 0);
+    assert.equal(e.type, 'LWPOLYLINE');
+    const vs = GR.lwVertices(e.r);
+    assert.ok(vs.length === 3 && vs.every((v) => near(v.y, 30, 1e-5) && !v.b) && near(vs[0].x, 20, 1e-5) && near(vs[2].x, 80, 1e-5) && near(vs[1].x, 50, 1), 'the same line: ' + JSON.stringify(vs));
+    assert.equal(await page.locator('[data-testid=grip-hot]').count(), 1, 'the new node is selected');
+    await undo(); assert.equal(entOf(await savedDoc(), 0).type, 'LINE');
+    const q = await at(160 + 20 * Math.SQRT1_2, 60 + 20 * Math.SQRT1_2); await page.mouse.dblclick(q.x, q.y); await gripWhen(5);
+    e = entOf(await savedDoc(), 1);
+    const cv = GR.lwVertices(e.r);
+    assert.ok(e.type === 'LWPOLYLINE' && (GR.get(e.r, 70) & 1) && cv.length === 5, 'a closed polyline of 5 nodes');
+    assert.ok(cv.every((v) => near(Math.hypot(v.x - 160, v.y - 60), 20, 1e-5) && v.b > 0) && near(cv.reduce((s, v) => s + 4 * Math.atan(v.b), 0), 2 * Math.PI, 1e-5), 'the same circle (saved to 6 decimals): ' + JSON.stringify(cv));
+    await undo(); assert.equal(entOf(await savedDoc(), 1).type, 'CIRCLE');
+    await page.keyboard.press('Escape');
+    // Layouts: a layout line gets a node, one Undo
+    await freshLayoutWithPlate();
+    await typeCmd('line'); await typeCmd('50,600'); await typeCmd('300,600'); await typeCmd('');
+    await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click(); await click(175, 600); await frames(); await gripWhen(3);
+    await page.locator('[data-tool=shape]').click(); await gripWhen(2);
+    await midDbl(); await gripWhen(3);
+    await undo(); await gripWhen(2);
+    assert.ok(await gid('a') && await gid('b'), 'one Undo: the line with its 2 end nodes');
+    await page.keyboard.press('Escape');
+    // Compare: after cmpEdit, a node added and one Undo
+    const cmp = newDoc(4); addEntities(cmp, dxfLine(20, 30, 120, 30));
+    await openGrips(writeDxf(cmp), 'shape-add-cmp.dxf'); await typeCmd('compare');
+    await typeCmd('shape'); await page.keyboard.press('Control+a'); await gripWhen(2);
+    await midDbl(); await gripWhen(3);
+    await undo(); await gripWhen(2);
+    assert.ok(await gid('a') && await gid('b'), 'one Undo: the Compare line with its 2 end nodes');
+    await page.keyboard.press('Escape');
+    await closeTabs(/./);
+  });
+
   // ---- TODO 163a: Grip options, the hover list on a line / arc grip ----
   const g163 = {
     list: async () => { await t('ctx-menu').waitFor(); return page.locator('[data-testid=ctx-menu] .mi').allTextContents(); },

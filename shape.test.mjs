@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as SH from './web/shape.js';
 import * as GR from './web/grips.js';
+import * as MO from './web/modify.js';
 import { line, circle, arc, lwpoly, ellipse } from './web/dxf-write.js';
 
 const near = (a, b, e = 1e-6) => assert.ok(Math.abs(a - b) < e, `${a} vs ${b}`);
@@ -52,4 +53,56 @@ test('dragNodes: circle — one quadrant sets the radius, two or more move the c
   near(GR.get(one.r, 40), 8); near(GR.get(one.r, 10), 0);
   const two = SH.dragNodes(c, nodes(c, 'q0', 'q2'), 3, 4).ent;
   near(GR.get(two.r, 40), 5); near(GR.get(two.r, 10), 3); near(GR.get(two.r, 20), 4);
+});
+
+// TODO 139b1 add a node: the outline is the same both ways (every sampled point of one lies on the other)
+const samples = (ent) => MO.pathOf(GR.shapeOf(ent)).segs.flatMap((s) => [0, 0.25, 0.5, 0.75].map((f) => MO.pointAt(MO.geo(s), f)));
+function sameOutline(a, b) {
+  for (const [x, y] of [[a, b], [b, a]]) for (const p of samples(x)) near(MO.closest(MO.pathOf(GR.shapeOf(y)), p).d, 0);
+}
+const props = { layer: 'CUT', aci: 3, lt: 'DASHED', lw: 35 };
+
+test('addNode: a line becomes a 2-segment open polyline, the node at the click, props kept', () => {
+  const l = line(0, 0, 10, 0, props), r = SH.addNode(l, [4, 0.5]);
+  assert.equal(r.ent.type, 'LWPOLYLINE'); assert.equal(r.label, 'Add node');
+  assert.deepEqual(pts(r.ent), [[0, 0], [4, 0], [10, 0]]);
+  assert.equal(GR.shapeOf(r.ent).closed, false);
+  for (const k of Object.keys(props)) assert.equal(r.ent[k], props[k], k);
+  sameOutline(l, r.ent);
+});
+
+test('addNode: a circle becomes a closed polyline of arcs (its quadrants and the click are nodes), outline unchanged', () => {
+  const c = circle(2, 1, 5, props), r = SH.addNode(c, [2 + 5 * Math.cos(0.5), 1 + 5 * Math.sin(0.5)]);
+  assert.equal(r.ent.type, 'LWPOLYLINE'); assert.equal(GR.shapeOf(r.ent).closed, true);
+  assert.equal(SH.nodesOf(r.ent).length, 5);
+  assert.ok(GR.lwVertices(r.ent.r).every((v) => v.b > 0), 'every segment an arc');
+  assert.equal(r.ent.layer, 'CUT');
+  sameOutline(c, r.ent);
+});
+
+test('addNode: an arc becomes an open polyline of two arcs, outline unchanged', () => {
+  const a = arc(0, 0, 10, 0, 90, props), r = SH.addNode(a, [Math.SQRT1_2 * 11, Math.SQRT1_2 * 11]);
+  assert.deepEqual(pts(r.ent), [[10, 0], [7.071068, 7.071068], [0, 10]]);
+  assert.equal(GR.shapeOf(r.ent).closed, false);
+  sameOutline(a, r.ent);
+});
+
+test('addNode: a polyline — a straight segment stays straight, a bulged one splits into two arcs of its circle', () => {
+  const p = lwpoly([[0, 0], [10, 0, 1], [10, 10], [0, 10]], { closed: true, ...props });
+  const straight = SH.addNode(p, [5, -1]).ent;
+  assert.deepEqual(pts(straight), [[0, 0], [5, 0], [10, 0], [10, 10], [0, 10]]);
+  assert.deepEqual(GR.lwVertices(straight.r).map((v) => v.b), [0, 0, 1, 0, 0]);
+  sameOutline(p, straight);
+  const bulged = SH.addNode(p, [15, 5]).ent;       // the half circle from (10, 0) to (10, 10) through (15, 5)
+  assert.deepEqual(pts(bulged)[2], [15, 5]);
+  GR.lwVertices(bulged.r).slice(1, 3).forEach((v) => near(v.b, Math.tan(Math.PI / 8)));
+  assert.equal(bulged.layer, 'CUT');
+  sameOutline(p, bulged);
+});
+
+test('addNode: refused on a node, beyond tol, and on kinds with no nodes', () => {
+  assert.equal(SH.addNode(line(0, 0, 10, 0), [0, 0]), null);
+  assert.equal(SH.addNode(line(0, 0, 10, 0), [5, 3], 1), null);
+  assert.ok(SH.addNode(line(0, 0, 10, 0), [5, 0.5], 1));
+  assert.equal(SH.addNode(ellipse(0, 0, 10, 0, 0.5), [10, 0]), null);
 });
