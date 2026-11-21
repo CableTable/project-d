@@ -13337,15 +13337,42 @@ function removeDuplicates() {
   note(`Removed redundant geometry from ${r.count} entities. Ctrl+Z brings it back`);
 }
 
+/** The tab Preflight checks: a drawing, or the open layout. */
+const pfDoc = () => editable() || (curLay() ? curDoc() : null);
+/** What a Preflight run was made of: a drawing's entities, or (text) a layout's placements and sheet. */
+const pfSource = (d) => (d.lay ? JSON.stringify([d.lay.placed, d.lay.s.sheetW, d.lay.s.sheetH]) : d.raw.entities);
+const pfLocked = (lay, p) => !!p.lock || !!(lay.parts[p.partId].obj && LD.layersOf(lay)[lay.parts[p.partId].raw.entities[0]?.layer]?.flags & 4);
+/** Preflight of the open layout (TODO 156e3a): the six checks on each loose object's own raw (one object at a time, no cross-object checks;
+ * tolerance and stroke width follow the placement's scale), and "off the sheet" on every placement. Offenders are indexes into placedNow. Only Hairline is a Fix. */
+function layPreflight(d, check) {
+  const lay = d.lay, { sheetW, sheetH } = lay.s;
+  const rows = CL.preflight(newDoc(4), { tolerance: state.gapMm, sheetW, sheetH, check }).map((r) => ({ ...r, fix: r.id === 'wide' ? r.fix : undefined })), by = Object.fromEntries(rows.map((r) => [r.id, r]));
+  placedNow.forEach((p, k) => {
+    const part = lay.parts[p.partId];
+    if (part.obj && p.src === 'loose' && check !== 'offsheet') for (const r of CL.preflight(part.raw, { factor: p.sc || 1, tolerance: state.gapMm, check })) if (r.id !== 'offsheet' && r.count) { by[r.id].offenders.push(k); by[r.id].count += r.count; }
+    if (by.offsheet && PL.offSheet(part, p, sheetW, sheetH)) { by.offsheet.offenders.push(k); by.offsheet.count++; }
+  });
+  return rows;
+}
+/** Preflight's Hairline Fix on a layout: the unlocked loose objects among `offenders` (placedNow indexes) become hairline objects (objectReplace: new part ids), one undo step. */
+function layHairline(d, offenders) {
+  const v = layObjDoc(d), at = new Map(v.raw.entities.map((e, i) => [v.at.get(e), i]));
+  const mine = offenders.filter((k) => placedNow[k].src === 'loose' && !pfLocked(d.lay, placedNow[k]) && at.has(placedNow[k].i)).map((k) => at.get(placedNow[k].i));
+  if (!mine.length) return;
+  const r = CL.hairline(v.raw, mine);
+  return layGripCommit({ ...v, raw: { ...v.raw, blocks: r.blocks } }, mine.map((i) => [v.raw.entities[i], r.entities[i]]), 'Preflight Hairline');
+}
+
 function showPreflight() {
-  if (!editable()) { note('Preflight works on a drawing tab: open a drawing first'); return; }
+  const d = pfDoc();
+  if (!d) { note('Preflight works on a drawing or layout tab: open one first'); return; }
   ui.cmdUI.close();
   if (!ui.preflight) {
     ui.preflight = h('section', { class: 'pop preflightpanel', role: 'dialog', 'aria-modal': 'false', 'aria-label': 'Preflight', 'data-testid': 'preflight' });
     ui.canvas.append(ui.preflight);
   }
   ui.preflight.hidden = false;
-  editable().preflightOpen = true;
+  d.preflightOpen = true;
   recheckPreflight();
 }
 function closePreflight() {
@@ -13353,26 +13380,33 @@ function closePreflight() {
   ui.preflight.hidden = true;
 }
 function recheckPreflight(check) {
-  const d = editable();
+  const d = pfDoc();
   if (!d || !ui.preflight || ui.preflight.hidden) return;
   let fresh;
-  try { fresh = CL.preflight(d.raw, { factor: d.factor, tolerance: state.gapMm, check }); } catch (e) { if (!(e instanceof DrawingError)) throw e; note('Preflight: ' + e.message); if (!check) { ui.preflight.hidden = true; d.preflightOpen = false; } return null; }       // the first walk failed: no strip, no walk again on every render
+  try { fresh = d.lay ? layPreflight(d, check) : CL.preflight(d.raw, { factor: d.factor, tolerance: state.gapMm, check }); } catch (e) { if (!(e instanceof DrawingError)) throw e; note('Preflight: ' + e.message); if (!check) { ui.preflight.hidden = true; d.preflightOpen = false; } return null; }       // the first walk failed: no strip, no walk again on every render
   const rows = check ? ui.preflightRows.map((r) => fresh.find((f) => f.id === r.id) || r) : fresh;
   ui.preflightRows = rows;
-  if (!check) { ui.preflightDoc = d; ui.preflightSource = d.raw.entities; }
+  if (!check) { ui.preflightDoc = d; ui.preflightSource = pfSource(d); }
   const duplicates = fresh.find((r) => r.id === 'duplicates');
-  if (duplicates) { d.duplicates = { source: d.raw.entities, count: duplicates.count }; renderEdit(); }
+  if (duplicates && !d.lay) { d.duplicates = { source: d.raw.entities, count: duplicates.count }; renderEdit(); }
   const button = (label, id, fn, disabled = false) => h('button', { class: 'btn sm', type: 'button', 'data-testid': id, disabled, onclick: fn }, label);
   const select = (id) => {
     const fresh = recheckPreflight(id);
     if (!fresh) return;
     setTool('select');
+    if (d.lay) {
+      const offenders = fresh.offenders.filter((k) => !pfLocked(d.lay, placedNow[k]));
+      selectMany(offenders); update();
+      note(`Preflight: ${fresh.label} · ${offenders.length} placement${offenders.length === 1 ? '' : 's'} selected` + (offenders.length < fresh.offenders.length ? ' (locked skipped)' : ''));
+      return;
+    }
     const offenders = fresh.offenders.filter((i) => !lockedEnt(d, i));
     setSel(d, new Set(offenders));
     note(`Preflight: ${fresh.label} · ${offenders.length} entities selected` + (offenders.length < fresh.offenders.length ? ' (locked layers skipped)' : ''));
   };
   const fix = (id) => {
-    if (id === 'duplicates') removeDuplicates();
+    if (d.lay) layHairline(d, layPreflight(d, 'wide')[0].offenders);
+    else if (id === 'duplicates') removeDuplicates();
     else if (id === 'gaps') joinTinyGaps(true);
     else {
       let wide;
@@ -13383,7 +13417,7 @@ function recheckPreflight(check) {
     recheckPreflight(id);
   };
   ui.preflightNote = h('p', { class: 'lbl', 'data-testid': 'preflight-note' },
-    (ui.preflightSource !== d.raw.entities ? 'Drawing changed · Recheck for other counts.' : 'Whole drawing · checked just now.') + ' Cut layer: name contains “cut” (any case).');
+    (ui.preflightSource !== pfSource(d) ? (d.lay ? 'Layout' : 'Drawing') + ' changed · Recheck for other counts.' : d.lay ? 'Whole layout · checked just now.' : 'Whole drawing · checked just now.') + ' Cut layer: name contains “cut” (any case).');
   ui.preflight.replaceChildren(
     h('div', { class: 'pfhead' }, h('strong', {}, 'Preflight'), h('span', { class: 'chip', 'data-testid': 'preflight-flagged' }, `${rows.filter((r) => r.count).length} checks flagged`)),
     h('div', { class: 'pfbody' }, ui.preflightNote,
@@ -13415,10 +13449,10 @@ function renderEdit() {
   renderBalloons();
   const d = editable() || curDoc(), on = !!editable(), L = state.setlen;
   if (ui.preflight) {
-    ui.preflight.hidden = !on || !d.preflightOpen;
+    ui.preflight.hidden = !(on || d?.lay) || !d.preflightOpen;
     if (!ui.preflight.hidden) {
       if (ui.preflightDoc !== d) recheckPreflight();
-      else if (ui.preflightSource !== d.raw.entities) ui.preflightNote.textContent = 'Drawing changed · Recheck for current counts. Cut layer: name contains “cut” (any case).';
+      else if (ui.preflightSource !== pfSource(d)) ui.preflightNote.textContent = (d.lay ? 'Layout' : 'Drawing') + ' changed · Recheck for current counts. Cut layer: name contains “cut” (any case).';
     }
   }
   const selected = curLay() ? selIdxs().length > 0 : !!d?.sel?.size;

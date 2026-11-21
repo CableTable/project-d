@@ -515,6 +515,7 @@
   "TODO 156e1b: layout leader select, panel, dblclick": 4,
   "TODO 156e1c: grip modes on a layout leader: Rotate, Scale, Mirror and Move act on it (one Undo each, settled in its block, saved and reopened), Copy is refused; a placed Part in the selection keeps Stretch": 8,
   "TODO 156e2: Fill, Eyedropper and Rotate on layout objects: fill, No fill, Eyedropper two targets, one Undo each, a placed part refused; Rotate with base point, angle and Reference, one Undo; saved, reopened and in the PDF": 5,
+  "TODO 156e3a: Preflight on a layout: a loose object with a wide stroke and a part past the sheet edge give a wide row and an offsheet row; Select picks the loose object, Fix (Hairline) is one Undo; Recheck: wide gone, offsheet stays": 5,
   "TODO 156b fixes: Esc cancels a hot grip with 2 objects selected; Polyline snaps to its own first point on a layout; lock and group of objects survive save and reopen; the counts say parts only; Add to layout after objects starts the grid": 10.29,
   "TODO 156b review: layout ribbon Line and Rotate are enabled; ribbon and menu Rotate turn a placed part": 4.32,
   "TODO 156 merge: switching from layout Draw to an empty Compare has no editable target": 2.86,

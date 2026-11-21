@@ -28179,6 +28179,40 @@ try {
     assert.match(pdf, /1 0 0 rg/, 'the red fill is in the PDF'); assert.match(pdf, /0 0 1 rg/, 'and the blue one of the rectangle'); assert.match(pdf, /f\*/);
   });
 
+  await step('TODO 156e3a: Preflight on a layout: a loose object with a wide stroke and a part past the sheet edge give a wide row and an offsheet row; Select picks the loose object, Fix (Hairline) is one Undo; Recheck: wide gone, offsheet stays', async () => {
+    await freshLayoutWithPlate();
+    await partTab(); await t('px').fill('5000'); await t('px').press('Enter');
+    await typeCmd('line'); await typeCmd('300,300'); await typeCmd('400,300'); await typeCmd('');
+    await page.locator('[data-tool=select]').click(); await page.keyboard.press('Escape');
+    await click(350, 300); await frames();
+    await t('prop-width').locator('[data-width="2"]').click(); await frames();
+    await page.keyboard.press('Escape');
+    await menuItem('Tools', 'Preflight…');
+    assert.equal(await t('preflight').isVisible(), true, 'Preflight opens on a layout tab');
+    assert.equal(await t('preflight').locator('.pfrow:not(.pfcols)').count(), 6);
+    const shows = (id, re) => page.waitForFunction(([i, s]) => new RegExp(s).test(document.querySelector(`[data-testid=${i}]`)?.textContent || ''), [id, re.source], { timeout: 8000 });
+    await shows('preflight-wide-count', /^1$/); await shows('preflight-offsheet-count', /^1$/); await shows('preflight-gaps-count', /^0$/);
+    assert.equal(await t('preflight-offsheet-fix').count(), 0, 'off the sheet is report only');
+    assert.equal(await t('preflight-wide-fix').isEnabled(), true);
+    await shotBoth('layout-preflight');
+    await t('preflight-wide-select').click(); await frames();
+    await shows('cmd-prompt', /Lines wider than hairline · 1 placement selected/);       // the loose object only, not the placed part
+    assert.equal(await page.locator('[data-group=tools] .sel-box').count(), 1, 'and the selection box is on it');
+    assert.equal(await t('preflight').isVisible(), true, 'Select keeps the panel open');
+    const n = (await histLabels()).length;
+    await t('preflight-wide-fix').click(); await frames();
+    await shows('preflight-wide-count', /^0$/);       // Hairline took the wide stroke away
+    assert.equal((await histLabels()).at(-1), 'Preflight Hairline');
+    assert.equal((await histLabels()).length, n + 1, 'one undo step');
+    await t('preflight-recheck').click(); await frames();
+    await shows('preflight-wide-count', /^0$/); await shows('preflight-offsheet-count', /^1$/);       // the part past the sheet edge stays reported
+    await shows('preflight-note', /Whole layout/);
+    await page.keyboard.press('Control+z'); await frames();
+    await shows('preflight-note', /Layout changed/);
+    await t('preflight-recheck').click(); await shows('preflight-wide-count', /^1$/);       // one Undo brings the wide stroke back
+    await t('preflight-close').click(); assert.equal(await t('preflight').isVisible(), false);
+  });
+
   await step('TODO 156b fixes: Esc cancels a hot grip with 2 objects selected; Polyline snaps to its own first point on a layout; lock and group of objects survive save and reopen; the counts say parts only; Add to layout after objects starts the grid', async () => {
     await freshLayoutWithPlate();
     const n0 = await nParts(), blur = () => page.evaluate(() => document.activeElement?.blur());
