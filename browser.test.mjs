@@ -10152,6 +10152,9 @@ try {
     assert.deepEqual([dr.scrolls, dr.all, dr.n], [false, true, 22], 'drawing: ' + JSON.stringify(dr));
     const cut = await page.evaluate(() => [...document.querySelectorAll('.ribbon-group')].filter((g) => ['Modify', 'Copy'].includes(g.dataset.panel) && g.offsetWidth).map((g) => ({ g: g.dataset.panel, right: Math.round(g.getBoundingClientRect().right), over: g.scrollWidth - g.clientWidth })).filter((x) => x.right > innerWidth || x.over > 1));
     assert.deepEqual(cut, [], 'no ribbon group is cut off at 1024 px');
+    const edges = await page.evaluate(() => [...document.querySelectorAll('.ribbon-group')].filter((g) => ['Modify', 'Copy'].includes(g.dataset.panel) && g.offsetWidth).map((g) => g.dataset.panel + ' right ' + Math.round(g.getBoundingClientRect().right) + ' of ' + innerWidth));
+    console.log('ribbon edges', edges.join('; '));
+    assert.ok(await page.evaluate(() => [...document.querySelectorAll('.ribbon-group')].filter((g) => ['Modify', 'Copy'].includes(g.dataset.panel) && g.offsetWidth).every((g) => g.getBoundingClientRect().right <= innerWidth - 6)), 'at least 6 px spare in each group: ' + edges.join('; '));
     await shotBoth('small-drawing');
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.waitForTimeout(150);
