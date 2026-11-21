@@ -190,7 +190,7 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Placed part**: One positioned, rotated, mirrored or uniformly scaled copy of a part on a layout sheet. Its placement scale is saved in the INSERT; typing W or H in the Part tab scales both sides together. Where: `DECISIONS.md`, Placed part: X, Y, W, H, Angle and Tools on Layouts. Avoid: The library part itself.
 
-**Preflight**: An optional drawing check for duplicates, open cut paths, tiny gaps, off-sheet parts, wide lines and live text that warns without blocking export. Where: `DECISIONS.md`, Cleanup / Preflight placement and Preflight: warn, not block.
+**Preflight**: An optional drawing or layout check for duplicates, open cut paths, tiny gaps, off-sheet parts, wide lines and live text that warns without blocking export. Where: `DECISIONS.md`, Cleanup / Preflight placement and Preflight: warn, not block.
 
 **Properties**: The panel for inspecting or changing selected objects' layer, colour, line type, outline width and supported shape values. Where: `TODO.md`, item 24; `DECISIONS.md`, Line width.
 
