@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { layoutSnap, layoutTangentObject, layoutCandidates, gripperLines, partEdgeSnap } from './web/layoutsnap.js';
 import { makePart } from './web/layoutdoc.js';
-import { newDoc, addEntities, rect, circle } from './web/dxf-write.js';
+import { newDoc, addEntities, rect, circle, arc } from './web/dxf-write.js';
 import { snapTypes } from './web/snap.js';
 
 const raw = newDoc(4);
@@ -68,6 +68,29 @@ test('TODO 348: the gripper lines are end / mid / nearest targets (y up, top lin
   const c = layoutCandidates(parts, [], 400, 300, 300, 280.2, 0.5, undefined, null, true, grip);
   assert.equal(c.object, 'gripper'); assert.equal(c.e, 0);
   assert.deepEqual(c.candidates.map((q) => q.kind).sort(), ['end', 'end', 'mid', 'near']);
+});
+
+test('TODO 150: intersection where placed parts cross, a part crosses the sheet edge or a gripper line (kind intersection, exact point)', () => {
+  const A = { partId: 'p', x: 100, y: 100 }, B = { partId: 'p', x: 150, y: 110 };       // 80 × 40 bars: x 100…180 / 150…230, y 100…140 / 110…150
+  at(snap([A, B], 180.1, 110.1), 180, 110, 'intersection');
+  at(snap([A, B], 149.9, 140.1), 150, 140, 'intersection');
+  at(snap([{ partId: 'p', x: 150, y: 100, rot: 90 }, { partId: 'p', x: 100, y: 130 }], 150.1, 130.1), 150, 130, 'intersection');   // A turned: x 110…150, y 100…180
+  const C = { partId: 'p', x: 144, y: 110 };                                           // its left side x = 144 cuts A's circle (centre (140, 120), r 8) at y = 120 ± √48
+  at(snap([A, C], 144.05, 120 + Math.sqrt(48) + 0.05), 144, 120 + Math.sqrt(48), 'intersection');
+  const qraw = newDoc(4), rraw = newDoc(4);
+  addEntities(qraw, [arc(0, 0, 10, 0, 90)]); addEntities(rraw, [rect(0, 0, 5, 10)]);   // a quarter arc (r 20 mm, centre at its box corner) and a 10 × 20 mm bar
+  const qp = { q: makePart('q', 'Q', qraw, 2), r: makePart('r', 'R', rraw, 2) }, y17 = 100 + Math.sqrt(300);
+  for (const [q, bx] of [[{ partId: 'q', x: 100, y: 100 }, 110], [{ partId: 'q', x: 100, y: 100, mirrorX: true }, 90]])   // a mirror turns the arc's sweep round (it lands left of x 100)
+    at(layoutSnap(qp, [q, { partId: 'r', x: bx, y: 100 }], 400, 300, bx + 0.05, y17 + 0.05, 0.5), bx, y17, 'intersection');
+  at(snap([{ partId: 'p', x: -20, y: 100 }], 0.1, 100.1), 0, 100, 'intersection');       // over the left sheet edge
+  const grip = { gripTop: 20, gripRight: 0, gripBottom: 0, gripLeft: 0 };
+  at(layoutSnap(parts, [{ partId: 'p', x: 100, y: 250 }], 400, 300, 100.1, 280.1, 0.5, undefined, null, grip), 100, 280, 'intersection');
+  assert.equal(snap([A, { ...B, y: 200 }], 180.1, 110.1, 0.5)?.kind, 'near', 'apart: A\'s own side only');
+  const c = layoutCandidates(parts, [A, B], 400, 300, 180.1, 110.1, 0.5, undefined, null, true).candidates;
+  assert.ok(c.some((q) => q.kind === 'intersection' && Math.abs(q.x - 180) < 1e-8 && Math.abs(q.y - 110) < 1e-8), 'Tab lists the crossing');
+  const e = layoutCandidates(parts, [{ partId: 'p', x: -20, y: 100 }], 400, 300, 0.1, 100.3, 0.5, undefined, null, true);
+  assert.ok(e.object.partId && e.candidates.some((q) => q.kind === 'intersection' && Math.abs(q.x) < 1e-8 && Math.abs(q.y - 100) < 1e-8), 'the part\'s Tab list has its crossing with the sheet edge');
+  assert.equal(layoutSnap(parts, [A, B], 400, 300, 180.1, 110.1, 0.5, snapTypes({ intersection: false })).kind, 'near', 'tick off: no crossing');
 });
 
 test('TODO 348: a part\'s nearest outer edge on an axis, from its real (turned) outline', () => {
