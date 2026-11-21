@@ -27871,6 +27871,81 @@ try {
     await t('decimals').selectOption('2'); await page.locator('[data-tool=select]').click();
   });
 
+  await step('TODO 156e1: Leader on a layout is a layout object (one Undo, Esc cancels); grips per point with the note following the end, Format → Dimension style restyles it, Move, Explode; saved and reopened as an object, placed parts untouched', async () => {
+    await freshLayoutWithPlate();
+    const n0 = await nParts(), undo = async () => { await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z'); };
+    const save = async () => (await downloaded(() => page.keyboard.press('Control+s'))).text;
+    const ldrIn = (text) => Object.entries(readDxf(text).blocks).filter(([k]) => /^PD_LDR_/.test(k)).map(([k, b]) => ({ name: k, ...readLeader(k, b), types: b.entities.map((e) => e.type) }));
+    const partsIn = (text) => Object.values(layoutFromRaw(readDxf(text)).parts);
+    assert.equal(await page.locator('[data-tool=leader]').isEnabled(), true, 'the Leader button is on for a layout');
+    await typeCmd('le'); await said(/^Specify leader arrowhead location:$/);
+    await typeCmd('100,150'); await said(/^Specify next point:$/);
+    await page.keyboard.press('Escape'); await said(/Leader cancelled/);
+    assert.equal(await nParts(), n0, 'Esc mid-command adds nothing');
+    await typeCmd('100,150'); await typeCmd('150,190'); await said(/^Specify next point, or Enter to type the note:$/);
+    await typeCmd('200,190'); await t('text-editor').waitFor();
+    await page.keyboard.press('Escape'); await said(/Leader cancelled/);
+    assert.equal(await nParts(), n0, 'Esc in the note adds nothing');
+    await typeCmd('100,150'); await typeCmd('150,190'); await typeCmd('200,190'); await t('text-editor').waitFor();
+    await t('text-editor').fill('DEBURR'); await page.keyboard.press('Enter');
+    await said(/Leader placed on the layer Dimensions: DEBURR\. Ctrl\+Z takes it back/);
+    assert.equal(await nParts(), n0 + 1, 'the leader is one object');
+    assert.equal((await histLabels()).at(-1), 'Leader');
+    await undo(); assert.equal(await nParts(), n0, 'one Undo takes the leader away');
+    await page.keyboard.press('Control+y'); assert.equal(await nParts(), n0 + 1, 'Redo brings it back');
+    await page.keyboard.press('Escape');
+    let text = await save(), L = ldrIn(text);
+    assert.equal(L.length, 1); assert.deepEqual(L[0].lines, ['DEBURR']); assert.deepEqual(L[0].pts, [[100, 150], [150, 190], [200, 190]]);
+    assert.deepEqual(L[0].types, ['LINE', 'LINE', 'SOLID', 'TEXT']);
+    assert.equal(partsIn(text).filter((q) => !q.obj).length, 1, 'the placed part is still the only part');
+    await shotBoth('layout-leader-object');
+    await closeTabs(/./);
+    await t('picker').setInputFiles({ name: 'ldr-lay.dxf', mimeType: 'text/plain', buffer: Buffer.from(text, 'latin1') });
+    await waitTab(page, 'ldr-lay.dxf');
+    assert.equal(await nParts(), n0 + 1, 'the plate and the leader are back');
+    assert.equal(partsIn(text).filter((q) => q.obj).length, 1, 'the leader reopens as an object, not a part');
+    // grips: one per point; the end drags, the note goes with it, one Undo per drag
+    await page.locator('[data-tool=select]').click(); await click(125, 170); await frames(); await gripWhen(3);
+    const grips = await page.locator('[data-testid=grip]').evaluateAll((g) => g.map((x) => x.dataset.grip));
+    const endId = grips.find((id) => id.endsWith(':v2')), tipId = grips.find((id) => id.endsWith(':v0'));
+    const gripTo = async (id, x, y) => {       // click the grip, then click the new place (a layout's grip runs are click, click)
+      const g = await gripBox(id); await page.mouse.click(g.x, g.y);
+      await page.waitForFunction(() => document.querySelectorAll('[data-testid=grip-hot]').length === 1);
+      await click(x, y); await frames();
+    };
+    await gripTo(endId, 220, 210);
+    const moved = await save(); L = ldrIn(moved)[0];
+    assert.ok(Math.abs(L.pts[2][0] - 220) < 1 && Math.abs(L.pts[2][1] - 210) < 1 && Math.abs(L.pts[0][0] - 100) < 1e-5, 'the end moved, the arrowhead did not: ' + JSON.stringify(L.pts));
+    const tx = readDxf(moved).blocks[L.name].entities.find((e) => e.type === 'TEXT');
+    assert.ok(Number(fieldOf(tx, tx.r.c.includes(11) ? 11 : 10)) > 220, 'the note went with the end');
+    assert.equal((await histLabels()).at(-1), 'Stretch leader');
+    await page.keyboard.press('Escape'); await click(125, 170); await frames(); await gripWhen(3);
+    await dragGripTo(tipId, 90, 140); await frames();       // and a real drag too
+    L = ldrIn(await save())[0]; assert.ok(Math.abs(L.pts[0][0] - 90) < 1, 'the arrowhead moved');
+    await undo(); await undo();
+    L = ldrIn(await save())[0]; assert.deepEqual(L.pts, [[100, 150], [150, 190], [200, 190]], 'each drag is one Undo step');
+    // Format → Dimension style restyles it (one Undo)
+    await page.keyboard.press('Escape'); await click(125, 170); await frames();
+    await openStyle(); await setStyle({ text: 2, arrow: 1 }); await t('ds-ok').click();
+    await said(/1 selected dimension restyled/);
+    L = ldrIn(await save())[0]; assert.ok(Math.abs(L.textH - 2) < 1e-5 && Math.abs(L.arrow - 1) < 1e-5, 'the leader took the style: ' + L.textH + ' / ' + L.arrow);
+    await undo(); L = ldrIn(await save())[0]; assert.ok(Math.abs(L.textH - 3.5) < 1e-5 && Math.abs(L.arrow - 2.5) < 1e-5, 'one Undo gives the old look back');
+    await openStyle(); await setStyle({ text: 3.5, arrow: 2.5 }); await t('ds-ok').click();       // the Standard style back for the next steps
+    // Move carries it (settled into its block), one Undo
+    await page.keyboard.press('Escape'); await click(125, 170); await frames();
+    await typeCmd('move'); await typeCmd('0,0'); await typeCmd('30,40');
+    L = ldrIn(await save()); assert.equal(L.length, 1);
+    assert.deepEqual(L[0].pts, [[130, 190], [180, 230], [230, 230]], 'Move put the placement into the points'); assert.deepEqual(L[0].lines, ['DEBURR']);
+    await undo(); assert.deepEqual(ldrIn(await save())[0].pts, [[100, 150], [150, 190], [200, 190]]);
+    // Explode: lines, arrowhead and note as separate objects, one Undo
+    await page.keyboard.press('Escape'); await click(125, 170); await frames();
+    await typeCmd('explode'); await said(/Explode: 1 dimension exploded into lines, arrows and text/);
+    assert.equal(await nParts(), n0 + 4, 'LINE, LINE, SOLID, TEXT');
+    text = await save(); assert.equal(ldrIn(text).length, 0, 'no leader block is left');
+    await undo(); assert.equal(await nParts(), n0 + 1); assert.equal(ldrIn(await save()).length, 1);
+    await page.locator('[data-tool=select]').click();
+  });
+
   await step('TODO 156b fixes: Esc cancels a hot grip with 2 objects selected; Polyline snaps to its own first point on a layout; lock and group of objects survive save and reopen; the counts say parts only; Add to layout after objects starts the grid', async () => {
     await freshLayoutWithPlate();
     const n0 = await nParts(), blur = () => page.evaluate(() => document.activeElement?.blur());

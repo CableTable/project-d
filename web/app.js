@@ -796,7 +796,7 @@ function ribbonButton(label, svg, action, { small = false, enabled = () => true,
 function ribbonTool(id, small = false) {
   const t = TOOLS.find((t) => t.id === id);
   const b = ribbonButton(id === 'divide' ? 'Divide / Measure points' : t.label, t.svg, () => id === 'nest' ? openNestDialog() : id === 'step' ? DO.step() : id === 'rotate' ? (curLay() && !selectedPlaced() ? note('Rotate: select a part first (Align is in the dropdown)') : DO.rotate()) : startButtonTool(id),
-    { small, enabled: () => id === 'step' || id === 'nest' ? !!curLay() : id === 'measure' ? !!measureTarget() : id === 'dimension' ? !!dimTarget() : DR.KINDS.includes(id) || id === 'text' ? !!curDoc() : !!editable() || (id === 'contour' && !!curLay()) || (id === 'rotate' && !!curLay()) || (LAY_MODS.includes(id) && !!curLay()), pressed: () => state.tool === id, command: id, description: t.description });
+    { small, enabled: () => id === 'step' || id === 'nest' ? !!curLay() : id === 'measure' ? !!measureTarget() : id === 'dimension' || id === 'leader' ? !!dimTarget() : DR.KINDS.includes(id) || id === 'text' ? !!curDoc() : !!editable() || (id === 'contour' && !!curLay()) || (id === 'rotate' && !!curLay()) || (LAY_MODS.includes(id) && !!curLay()), pressed: () => state.tool === id, command: id, description: t.description });
   if (id === 'dimension') {
     b.append(h('span', { class: 'flyout', title: 'Dimension types', 'aria-label': 'Dimension types' }, '▾'));
     b.setAttribute('aria-haspopup', 'menu');
@@ -4902,7 +4902,7 @@ const DO = {
   },
   fill: () => startColourTool('fill'), eyedropper: () => startColourTool('eyedropper'), readout: () => toggleReadout(),
   dimension: () => { if (cmpDoc() && !cmpEdit()) return; if (!dimTarget()) { note('Dimensions work on a drawing tab or a layout: open one first'); return; } state.dimType = 'aligned'; paintDimButton(); setTool('dimension'); },       // D is the Aligned dimension
-  leader: () => { if (cmpDoc() && !cmpEdit()) return; if (editable()) setTool('leader'); else note('Leaders work on a drawing tab: open a drawing first'); },
+  leader: () => { if (cmpDoc() && !cmpEdit()) return; if (dimTarget()) setTool('leader'); else note('Leaders work on a drawing tab or a layout: open one first'); },
   dimstyle: () => showDimStyle(),
   nudge: () => ui.cmdUI.openNudge(String(state.nudge), setNudgeText),
   step: () => { setPtab('step'); docker.folds['step-panel'] = false; applySectionFold(ui.stepSec); rememberDocker(); setTool('step'); ui.stepSec.scrollIntoView({ block: 'nearest' }); },
@@ -4940,7 +4940,7 @@ function runCommand(cmd) {
   const n = cmd.name, label = n[0].toUpperCase() + n.slice(1), lay = curLay();
   if (!ui.startScreen.hidden && !['open', 'compare', 'nexttab', 'previoustab', 'closetab'].includes(n)) { note('Open or start a drawing first'); return; }
   if (cmd.where === 'layout' && !lay) { note(`${label} is on a layout tab: New layout, or Add to layout`); return; }
-  if (cmd.where === 'draw' && lay && cmd.cat !== 'Draw' && n !== 'textoutlines' && n !== 'combine' && n !== 'explode' && n !== 'dimension' && !DIM_OF[n] && !LAY_MODS.includes(TOOL_OF[n] || n)) { note(`${label} works on a drawing tab: open a drawing first`); return; }
+  if (cmd.where === 'draw' && lay && cmd.cat !== 'Draw' && n !== 'textoutlines' && n !== 'combine' && n !== 'explode' && n !== 'dimension' && n !== 'leader' && !DIM_OF[n] && !LAY_MODS.includes(TOOL_OF[n] || n)) { note(`${label} works on a drawing tab: open a drawing first`); return; }
   if (DIM_OF[n]) { if (cmpDoc() && !cmpEdit()) return; if (dimTarget()) setDimType(DIM_OF[n]); else note('Dimensions work on a drawing tab or a layout: open one first'); }
   else if (DO[n]) DO[n]();
   else setTool(TOOL_OF[n] || n);
@@ -5911,7 +5911,7 @@ function attachCanvasEvents() {
     const act = state.setlen || (state.tool === 'measure' ? state.meas : null);
     if (d && act && act.pts.length < 2) { act.hover = pickPoint(d, toDrawing(d, e.clientX, e.clientY), act.pts, e.shiftKey, true); paintOverlay(); }
     if (d && state.dim && dimTarget()) dimHover(d, toDrawing(d, e.clientX, e.clientY), e.shiftKey);
-    if (d && state.ldr && editable()) ldrHover(d, toDrawing(d, e.clientX, e.clientY), e.shiftKey);
+    if (d && state.ldr && dimTarget()) ldrHover(d, toDrawing(d, e.clientX, e.clientY), e.shiftKey);
     if (d && state.bal && editable()) balHover(d, toDrawing(d, e.clientX, e.clientY), e.shiftKey);
     if ((d || curLay()) && state.tool === 'text' && !textEditing()) { state.text.hover = textPick(d || curDoc(), e.clientX, e.clientY); paintOverlay(); }
     const mx = view.ox + p.x / view.scale, my = view.oy + p.y / view.scale;
@@ -6640,7 +6640,7 @@ const measureTarget = () => curLay() || cmpDoc() ? curDoc() : editable();
 /** The tab the Dimension tool works on: a drawing tab, or a layout (its objects are in mm; the dimension becomes a layout object, TODO 156b2c1). */
 const dimTarget = () => { const d = curDoc(); if (d?.lay) { d.factor = 1; return d; } return editable(); };
 /** The tab a point tool's pick lands on (Measure also works on a layout or Compare, Dimension on a layout). */
-const pointTarget = () => state.tool === 'measure' ? measureTarget() : state.tool === 'dimension' ? dimTarget() : editable();
+const pointTarget = () => state.tool === 'measure' ? measureTarget() : state.tool === 'dimension' || state.tool === 'leader' ? dimTarget() : editable();
 const drawBox = (fl) => fl.boxes[spaceOf(fl) ? 'paper' : 'model'];
 const fmtSize = (v) => String(+Number(v).toFixed(2));
 /** fl + hid (TODO 319b): the drawn items of this state and the entities hidden one by one they were made with; Undo / Redo reuse them (see drawnOf). */
@@ -7268,6 +7268,13 @@ function layGripCommit(v, pairs, label, keepSel) {
   touch(d); update();
   return true;
 }
+/** A grip edit of a layout's selected leader (v: layDimDoc; n: the LEADER pseudo with its new points): its block is rebuilt in place (the note follows the last point), one undo step. False when the block cannot be built. */
+function layLdrReplace(v, n, label) {
+  const d = v.vlay, snap = laySnap(d.lay), { p, part } = v.layDim, next = LR.replace(part.raw, n.name, n.model);
+  if (!next || !LD.replaceDim(d.lay, d.lay.placed[p.i], part.raw.entities[0], { [n.name]: next.blocks[n.name] }, () => 'o' + uid(), new Set(Object.values(d.lay.parts).map((q) => q.name)))) return false;
+  pushLay(d, snap, '', label); touch(d); update();
+  return true;
+}
 function restoreBg(d, st) {
   if (st.mm != null && d.bg) d.bg.mm = st.mm;
   if (st.pos && d.bg) [d.bg.x, d.bg.y] = st.pos;
@@ -7837,10 +7844,21 @@ const saveDimStyles = () => { try { localStorage.setItem(DS_SAVED, JSON.stringif
 const curDimStyle = () => state.dimStyles.presets[state.dimStyles.cur];
 const fix2 = (v) => Number(v).toFixed(2);
 
+/** On a layout (TODO 156e1): the selected leaders take the style's text height and arrow size, one undo step; how many. (Layout dimensions are not restyled here yet.) */
+function layLeadersStyle(d) {
+  const look = dimNew(d), snap = laySnap(d.lay), names = new Set(Object.values(d.lay.parts).map((q) => q.name));
+  let k = 0;
+  for (const x of selItems()) {
+    const o = x.p.src === 'loose' && x.part.obj && LR.ofEntity(x.part.raw, 0), nl = o && LR.replace(x.part.raw, o.name, { ...o.model, textH: look.textH, arrow: look.arrow });
+    if (nl && LD.replaceDim(d.lay, d.lay.placed[x.p.i], x.part.raw.entities[0], { [o.name]: nl.blocks[o.name] }, () => 'o' + uid(), names)) k++;
+  }
+  if (k) { pushLay(d, snap, '', 'Dimension style'); touch(d); update(); }
+  return k;
+}
 /** The selected dimensions rebuilt in the current style (one undo step); how many, or null when commit refused. */
 function applyDimStyleToSelected() {
   const d = editable();
-  if (!d) return 0;
+  if (!d) return curLay() ? layLeadersStyle(dimTarget()) : 0;
   const look = dimNew(d), blocks = { ...d.raw.blocks };
   let k = 0;
   for (const e of d.sel) {
@@ -8427,13 +8445,13 @@ const newLdr = () => ({ pts: [], hover: null, cursor: null });
 /** What the command line asks for next. */
 function ldrPrompt() {
   const L = state.ldr;
-  if (!editable()) return 'Leader: open a drawing tab first';
+  if (!dimTarget()) return 'Leader: open a drawing tab or a layout first';
   return L ? ['Specify leader arrowhead location:', 'Specify next point:', 'Specify next point, or Enter to type the note:'][L.pts.length] : null;
 }
 /** The leader being drawn, with the pointer as its last point, as a preview drawing (lines and arrowhead; no note yet), or null. */
 function ldrPreview(d) {
   const L = state.ldr, q = L && (typedAt() || L.hover || L.cursor);
-  if (!d || !editable() || !L || !L.pts.length || !q || textEditing()) return null;       // (no preview while the note is typed)
+  if (!d || !dimTarget() || !L || !L.pts.length || !q || textEditing()) return null;       // (no preview while the note is typed)
   const look = dimNew(d), g = LR.geometry({ pts: [...L.pts, [q[0], q[1]]], lines: [''], textH: look.textH, arrow: look.arrow });
   return g && { lines: g.lines, arrows: g.arrows, text: null };
 }
@@ -8444,7 +8462,7 @@ function ldrHover(d, p, shift) {
 }
 function ldrPoint(d, p, shift = false, typed = false) {
   const L = state.ldr;
-  if (!L || !editable()) return;
+  if (!L || !dimTarget()) return;
   const q = typed ? p : pickPoint(d, p, L.pts, shift), last = L.pts[L.pts.length - 1];
   if (last && Math.hypot(q[0] - last[0], q[1] - last[1]) < 1e-9) { note('Leader: that is the same point again, pick another'); return; }
   L.pts.push([q[0], q[1]]); L.hover = null;
@@ -8461,9 +8479,15 @@ function ldrNoteOpen(d) {
 }
 /** The typed note becomes the leader: one undo step, selected. */
 function ldrAdd(d, m) {
-  const b = LR.build(m, LR.freeName(d.raw.blocks));
+  const names = d.lay ? LD.dimensionNames(d.lay) : null, b = LR.build(m, names ? Ed.freeNameWithPrefix(names.taken, 'PD_LDR_') : LR.freeName(d.raw.blocks));
   if (state.ldr) { state.ldr.pts = []; state.ldr.hover = null; }
   if (!b) return;
+  if (d.lay) {                                                    // a layout object holding the leader's block, as a dimension is (TODO 156e1)
+    names.taken.add(b.name.toLowerCase());
+    layObjectsAdd(d, 'Leader', [b.insert], { [b.name]: b.block }, names);
+    note(`Leader placed on the layer ${Ed.DIM_LAYER}: ${m.lines.join(' / ')}. Ctrl+Z takes it back`);
+    return;
+  }
   const idx = d.raw.entities.length;
   view.fitted = false;
   if (!commit(d, Ed.addDimension(d.raw, b), 'Add leader')) return;
@@ -8912,7 +8936,7 @@ function cursorTool() {
     const valueMode = m.p1 && ['rotate', 'scale'].includes(m.kind) && (!m.ref || m.ref.step === 'new') ? m.kind === 'rotate' ? 'angle' : m.ref ? 'length' : 'factor' : null;
     return { kind: m.kind, A: m, mod: true, point: true, valueMode, stage: m.stage + ':' + (m.ref?.step || ''), d, f, pts: points.map(mm), hover: mm(m.kind === 'offset' ? m.p : m.cur) };
   }
-  const drawing = editable();
+  const drawing = state.ldr ? dimTarget() : editable();
   if (drawing && !textEditing() && (state.ldr || state.bal || state.tool === 'text')) {
     const A = state.ldr || state.bal || state.text, kind = state.ldr ? 'leader' : state.bal ? 'balloon' : 'text', f = drawing.factor;
     const mm = (q) => q && q.slice(0, 2).map((v) => v * f);
@@ -11346,7 +11370,7 @@ function layDimDoc(d) {
   const s = layDimSel();
   if (!s) return null;
   let v = dimViews.get(d);
-  if (v?.raw !== s.part.raw) dimViews.set(d, v = { raw: s.part.raw, factor: 1, sel: new Set([0]), vlay: d, hid: null, locked: null });       // kept while the dimension stays the same: gripList's cache follows `sel`
+  if (v?.raw !== s.part.raw) dimViews.set(d, v = { raw: s.part.raw, fl: s.part.fl, off: s.part.off, factor: 1, sel: new Set([0]), vlay: d, hid: null, locked: null, at: { get: () => v.layDim.p.i } });       // (at: the one object's slot, for a leader's grip run: the base leaves it out) kept while the dimension stays the same: gripList's cache follows `sel`
   v.layDim = s;
   return v;
 }
@@ -11801,7 +11825,8 @@ function gripCommit() {
   if (!g.next) { note(g.to ? 'That would not change the shape (or leaves nothing of it), so it stays as it was' : 'Stretch cancelled'); renderCommand(); paintOverlay(); return; }
   const d = g.d, label = g.nexts ? (state.tool === 'shape' ? (g.kind === 'handle' ? 'Move handle' : 'Move nodes') : 'Stretch grips') : g.label, text = g.nexts ? GM.readout('MOVE', g.base, g.to, d.factor, drawingUnit()) : GR.readoutOf(g.ent, g.id, g.next, d.factor, drawingUnit());
   view.fitted = false;
-  if (d.vlay) { if (!layGripCommit(d, g.nexts ? [...g.nexts].map(([i, n]) => [g.ents.get(i), n]) : [[g.ent, g.next]], label, g.sel)) { note('That would leave nothing of the shape, so it stays as it was'); paintOverlay(); return; } paintOverlay(); }
+  if (d.layDim) { if (!layLdrReplace(d, g.nexts ? [...g.nexts.values()][0] : g.next, label)) { note('That would leave nothing of the shape, so it stays as it was'); paintOverlay(); return; } paintOverlay(); }       // a layout's selected leader (TODO 156e1)
+  else if (d.vlay) { if (!layGripCommit(d, g.nexts ? [...g.nexts].map(([i, n]) => [g.ents.get(i), n]) : [[g.ent, g.next]], label, g.sel)) { note('That would leave nothing of the shape, so it stays as it was'); paintOverlay(); return; } paintOverlay(); }
   else {
     if (!commit(d, g.nexts ? gripHotsRaw(g) : g.next.type === 'LEADER' ? LR.replace(d.raw, g.next.name, g.next.model) : dimsOnGrip(d, g, followDimensions(d.raw, { entities: d.raw.entities.map((x, i) => (i === g.e ? g.next : x)), blocks: d.raw.blocks }, d.factor)), label, g.sel)) { paintOverlay(); return; }       // too nested: commit showed why
     setSel(d, g.sel);

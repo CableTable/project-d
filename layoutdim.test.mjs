@@ -445,4 +445,65 @@ test('explodeDims: a copy sharing the part keeps its dimension', () => {
   assert.ok(isDimPart(lay.parts[lay.placed.at(-1).partId]));
 });
 
+// ---- TODO 156e1: a leader on a layout is a layout object, kept like a dimension ----
+import * as LR from './web/leader.js';
+function addLeader(lay, id, pts, name = 'PD_LDR_1', textH = 3.5, arrow = 2.5) {
+  const b = LR.build({ pts, lines: ['DEBURR'], textH, arrow }, name);
+  const part = LD.objectPart(id, id, b.insert, LD.layersOf(lay), {}, { [name]: b.block });
+  lay.parts[id] = part; lay.placed.push(LD.objectPlacement(part));
+  return lay.placed.at(-1);
+}
+const ldrOf = (lay, p) => { const part = lay.parts[p.partId]; return LR.read(dimName(part), part.raw.blocks[dimName(part)]); };
+
+test('a leader object is a dimension-like part; saves in the layout file and reopens as an object with the same points and note', () => {
+  const lay = layoutWith(), p = addLeader(lay, 'k1', [[10, 10], [40, 40], [70, 40]]);
+  assert.ok(isDimPart(lay.parts[p.partId]));
+  const raw = LD.layoutRaw(lay), text = writeDxf(raw), back = LD.layoutFromRaw(readDxf(text), 'L');
+  assert.ok(raw.blocks.PD_LDR_1, 'the block is in the file');
+  const objs = Object.values(back.parts).filter((q) => q.obj);
+  assert.equal(objs.length, 1);
+  assert.ok(isDimPart(objs[0]));
+  const r = ldrOf(back, back.placed[0]);
+  assert.deepEqual({ ...r, arrow: 0 }, { pts: [[10, 10], [40, 40], [70, 40]], lines: ['DEBURR'], textH: 3.5, arrow: 0 });
+  near(r.arrow, 2.5, 1e-4);
+});
+
+test('Move bakes into the leader points (name and note stay); Scale scales the note height and arrow; Mirror keeps the note upright beside the last point', () => {
+  const lay = layoutWith(), p = addLeader(lay, 'k1', [[0, 0], [30, 30], [60, 30]]);
+  p.x += 10; p.y += 20;
+  assert.equal(LD.settleDims(lay, newId), true);
+  assert.equal(dimName(lay.parts[p.partId]), 'PD_LDR_1');
+  assert.deepEqual(ldrOf(lay, p).pts, [[10, 20], [40, 50], [70, 50]]);
+  assert.equal(ldrOf(lay, p).lines[0], 'DEBURR');
+  p.sc = 2; LD.settleDims(lay, newId);
+  const s = ldrOf(lay, p);
+  near(s.textH, 7); near(s.arrow, 5);
+  assert.equal(p.sc, undefined);
+  p.mirrorX = true; LD.settleDims(lay, newId);
+  const m = ldrOf(lay, p), part = lay.parts[p.partId], tx = part.raw.blocks[dimName(part)].entities.find((e) => e.type === 'TEXT');
+  assert.ok(m.pts[2][0] < m.pts[1][0], 'the last segment now runs left');
+  assert.equal(m.lines[0], 'DEBURR');
+  assert.ok(!tx.r.c.includes(50) || Math.abs(+tx.r.v[tx.r.c.indexOf(50)]) < 1e-9, 'the note is not turned');
+});
+
+test('settleDims gives a leader whose block name another object has a free PD_LDR_ name', () => {
+  const lay = layoutWith();
+  addLeader(lay, 'k1', [[0, 0], [30, 30], [60, 30]]);
+  const q = addLeader(lay, 'k2', [[0, 100], [30, 130], [60, 130]]);       // same block name: a leader pasted from another layout
+  assert.equal(LD.settleDims(lay, newId), true);
+  assert.match(dimName(lay.parts[q.partId]), /^PD_LDR_\d+$/);
+  assert.notEqual(dimName(lay.parts[q.partId]), 'PD_LDR_1');
+  assert.deepEqual(ldrOf(lay, q).pts, [[0, 100], [30, 130], [60, 130]]);
+});
+
+test('explodeDims: a leader becomes its lines, arrowhead and note as objects; no leader part is left', () => {
+  const lay = layoutWith();
+  addLine(lay, 'l1', [0, 0], [10, 0]);
+  addLeader(lay, 'k1', [[0, 0], [30, 30], [60, 30]]);
+  assert.equal(LD.explodeDims(lay, [1], newId), 1);
+  const kinds = lay.placed.map((q) => lay.parts[q.partId].raw.entities[0].type);
+  assert.deepEqual(kinds, ['LINE', 'LINE', 'LINE', 'SOLID', 'TEXT']);
+  assert.ok(Object.values(lay.parts).every((part) => !isDimPart(part)));
+});
+
 console.log(n + ' tests');
