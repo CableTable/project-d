@@ -37989,6 +37989,23 @@ try {
     assert.deepEqual(errors, []);
   });
 
+  await step('TODO lowsD55f: on a Layout tab, Arc Continue needs the line still at its spot: a copy elsewhere + the original deleted, or the line taken back with Ctrl+Z, says "No line or arc to continue."; a copy in place + the original deleted still continues', async () => {
+    const noLine = async (what) => { await typeCmd('arc'); await key97c('Enter'); assert.match(await said346(), /No line or arc to continue\./, what); await prompt346(start347, what + ': the prompt stays'); await stop346(); };
+    const copyAndDelete = async (to) => {
+      await click346(120, 60); await typeCmd('co'); await typeCmd('0,0'); await typeCmd(to); await stop346();
+      await click346(120, 60); await key97c('Delete');                                                         // the original goes (Delete = Erase)
+    };
+    const lineOnLayout = async () => { await freshLayoutWithPlate(); await typeCmd('l'); await typeCmd('100,60'); await typeCmd('140,60'); await stop346(); };
+    await lineOnLayout(); await copyAndDelete('0,40');
+    await noLine('a copy elsewhere, the original deleted');
+    await lineOnLayout(); await copyAndDelete('0,0');
+    await typeCmd('arc'); await key97c('Enter'); await prompt346(end347c, 'a copy in place, the original deleted: Continue still starts from the line'); await stop346();
+    await lineOnLayout(); await key97c('Control+z');
+    await noLine('the line taken back with Ctrl+Z');
+    await arcBack347(); await closeTabs(/./);
+    assert.deepEqual(errors, []);
+  });
+
   await step('TODO 347c: screenshots, light and dark (the Arc flyout open on a Start, Centre, End button)', async () => {
     await open97c(doc97f2(dxfLine(10, 10, 300, 10)), 'arc347c-shot.dxf');
     await t('arc-flyout').click(); await pickArc347('Start, Centre, End'); await stop346();

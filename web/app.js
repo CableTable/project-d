@@ -8742,7 +8742,10 @@ function layObjectsAdd(d, label, ents, blocks = {}, dimNames) {
 function layDrawCommit(d, kind, shapes, attrs) {
   const made = layObjectsAdd(d, DR.LABELS[kind], shapes.map((sh) => DR.toEntity(sh, attrs, 1)));
   note(`${DR.LABELS[kind]} made on layer ${attrs.layer}` + (shapes.length > 1 ? ` (${shapes.length} lines)` : '') + '. Ctrl+Z takes it back');
-  return made && (() => d.lay.placed.some((p) => p.partId === made.partId)); // undo copies placements (laySnap), so match by partId
+  if (!made) return made;
+  const was = { ...made };                                          // the spot as made: a move edits the placement in place, so keep a copy of its numbers
+  const same = (p) => ['partId', 'x', 'y', 'rot', 'mirrorX', 'mirrorY'].every((k) => p[k] === was[k]) && (p.sc || 1) === (was.sc || 1);
+  return () => d.lay.placed.some(same);                             // undo copies placements (laySnap), so no identity; a Copy elsewhere keeps the partId but not the spot, so partId alone is not enough
 }
 function drawCommit(d, kind, shapes) {
   const layer = curLayerName(d), shape = shapes[shapes.length - 1];
