@@ -4948,13 +4948,18 @@ const DO = {
   shortcuts: () => showShortcuts(),
   closetab: () => closeTab(curDoc()), nexttab: () => cycleTab(1), previoustab: () => cycleTab(-1),
 };
+/** A command that cannot start here says why (note) → true. Shared by the command bar and an extra key. */
+function commandBlocked(cmd) {
+  const n = cmd.name, label = n[0].toUpperCase() + n.slice(1), lay = curLay();
+  if (!ui.startScreen.hidden && !['open', 'compare', 'nexttab', 'previoustab', 'closetab'].includes(n)) { note('Open or start a drawing first'); return true; }
+  if (cmd.where === 'layout' && !lay) { note(`${label} is on a layout tab: New layout, or Add to layout`); return true; }
+  if (cmd.where === 'draw' && lay && cmd.cat !== 'Draw' && n !== 'textoutlines' && n !== 'combine' && n !== 'explode' && n !== 'dimension' && n !== 'leader' && !DIM_OF[n] && !LAY_MODS.includes(TOOL_OF[n] || n)) { note(`${label} works on a drawing tab: open a drawing first`); return true; }
+  return false;
+}
 /** A command of the table started by its name (typed in the bar, a history line, Space on the drawing). */
 function runCommand(cmd) {
-  if (!cmd) return;
-  const n = cmd.name, label = n[0].toUpperCase() + n.slice(1), lay = curLay();
-  if (!ui.startScreen.hidden && !['open', 'compare', 'nexttab', 'previoustab', 'closetab'].includes(n)) { note('Open or start a drawing first'); return; }
-  if (cmd.where === 'layout' && !lay) { note(`${label} is on a layout tab: New layout, or Add to layout`); return; }
-  if (cmd.where === 'draw' && lay && cmd.cat !== 'Draw' && n !== 'textoutlines' && n !== 'combine' && n !== 'explode' && n !== 'dimension' && n !== 'leader' && !DIM_OF[n] && !LAY_MODS.includes(TOOL_OF[n] || n)) { note(`${label} works on a drawing tab: open a drawing first`); return; }
+  if (!cmd || commandBlocked(cmd)) return;
+  const n = cmd.name;
   if (DIM_OF[n]) { if (cmpDoc() && !cmpEdit()) return; if (dimTarget()) setDimType(DIM_OF[n]); else note('Dimensions work on a drawing tab or a layout: open one first'); }
   else if (DO[n]) DO[n]();
   else setTool(TOOL_OF[n] || n);
@@ -12138,17 +12143,15 @@ function gripOvl(d, out, k, grips) {
   }
   return null;
 }
-/** Keys on a layout tab: undo / redo, and for the selected placed part Delete, Ctrl+D and the arrow keys. → true when the key was used. */
+/** Keys on a layout tab: undo / redo, and for the selected placed part Ctrl+D and the arrow keys (Delete: deleteKey). → true when the key was used. */
 function layoutKey(e, mod, k) {
   if (!curLay()) return false;
   if (layModLive() && e.key === 'Enter') { e.preventDefault(); modEnter(curDoc()); return true; }
   if (sheetSelOn() && !(mod && !e.altKey && (k === 'z' || k === 'y'))) return false;      // the sheet is selected: the arrow keys and Delete are not for the part behind it
-  if (mod && !e.altKey && k === 'z') { e.preventDefault(); if (e.shiftKey) redoLay(); else undoLay(); return true; }
-  if (mod && !e.altKey && !e.shiftKey && k === 'y') { e.preventDefault(); redoLay(); return true; }
-  if (e.key === 'Delete' && !mod && balSelItem(curDoc())) { e.preventDefault(); balDelete(); return true; }       // a selected balloon goes first, then the part
+  if (mod && !e.altKey && k === 'z') { e.preventDefault(); undoKey(e.shiftKey); return true; }
+  if (mod && !e.altKey && !e.shiftKey && k === 'y') { e.preventDefault(); undoKey(true); return true; }
   if (!selectedPlaced()) return false;
   if (mod && !e.altKey && !e.shiftKey && k === 'd') { e.preventDefault(); duplicate(); return true; }
-  if (e.key === 'Delete' && !mod) { e.preventDefault(); deletePlaced(); return true; }
   const dir = { ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down' }[e.key];
   if (dir && !mod && !e.altKey) { e.preventDefault(); nudgeSel(dir, e.shiftKey); return true; }
   return false;
@@ -12196,6 +12199,27 @@ function startQuickSelect() {
     } });
 }
 
+/** Ctrl+Z / Ctrl+Y: a grip run's own, a compare tab's, a layout's, else the drawing's. Run by the main key and by an extra key. */
+function undoKey(forward) {
+  const d = editable();
+  if (state.grip || cmpDoc()) undoCurrent(forward);
+  else if (curLay()) { if (forward) redoLay(); else undoLay(); }
+  else if (d) { if (forward) redo(d); else undo(d); }
+}
+/** Delete: nodes of the Shape tool, a selected balloon, then the layout's part or the drawing's objects; a compare tab asks to edit. A layout with the sheet selected does nothing (as layoutKey). → true when the key was used. */
+function deleteKey(shape = true) {
+  if (shape && shapeDelete()) return true;
+  if (curLay()) {
+    if (sheetSelOn()) return false;
+    if (balSelItem(curDoc())) { balDelete(); return true; }       // a selected balloon goes first, then the part
+    if (!selectedPlaced()) return false;
+    deletePlaced(); return true;
+  }
+  if (!editable()) { if (!cmpDoc()) return false; cmpEdit(); return true; }
+  deleteSelection(); return true;
+}
+/** What the main key of each fixed command runs: the extra keys run the same (and never set the last command for Space). */
+const FIXED_RUN = { copy: copySelection, paste: pasteSelection, pasteorig: pasteInPlace, undo: () => undoKey(false), redo: () => undoKey(true), delete: () => deleteKey() };
 /** The command whose extra key this keydown is, if any. */
 const extraCommand = (e) => { const key = SC.eventKey(e); return key ? ownCommands.find((c) => c.extra.includes(key)) : null; };
 const FIELD_EDIT = { delete: 'forwardDelete', undo: 'undo', redo: 'redo', copy: 'copy' };       // what Delete, Ctrl+Z, Ctrl+Y, Ctrl+C do in a text field
@@ -12270,11 +12294,11 @@ function editKey(e) {
   const own = ownCommands.find((c) => c.key && c.key === key && !SC.fixedKey(c.name)) || (ext && !SC.fixedKey(ext.name) ? ext : null);
   if (key === 'Ctrl+C' || key === 'Ctrl+V' || key === 'Ctrl+Shift+V') {
     if (inField || e.target?.isContentEditable) return;
-    e.preventDefault(); if (key === 'Ctrl+C') copySelection(); else if (key === 'Ctrl+Shift+V') pasteInPlace(); else pasteSelection(); return;
+    e.preventDefault(); FIXED_RUN[key === 'Ctrl+C' ? 'copy' : key === 'Ctrl+Shift+V' ? 'pasteorig' : 'paste'](); return;
   }
   if (ext && SC.fixedKey(ext.name) && ext.name !== 'save' && ext.name !== 'saveas') {
     if (inField || e.target?.isContentEditable) { const how = FIELD_EDIT[ext.name]; if (how) { e.preventDefault(); document.execCommand(how); } return; }       // in text: what the main key does there
-    e.preventDefault(); if (ext.name === 'copy') copySelection(); else runCommand(ext); return;       // Copy's main key is the clipboard Ctrl+C, not the Copy tool
+    e.preventDefault(); if (ext.name === 'copy' || !commandBlocked(ext)) FIXED_RUN[ext.name](); return;       // what the main key runs, without the last-command memory; Copy's main key is the clipboard Ctrl+C, not the Copy tool
   }
   if (own && (!inField || own.name === 'properties' || (e.target === ui.cmd && /^F\d+$/.test(key)))) { e.preventDefault(); runCommand(own); return; }       // Function keys also work while typing a command.
   if (inField || e.target?.isContentEditable) return;
@@ -12283,23 +12307,21 @@ function editKey(e) {
   if (seed != null) { e.preventDefault(); ui.cmdUI.open(seed); return; }       // a letter or digit typed on the drawing starts the command bar
   if (state.grip && (e.key === 'Enter' || e.key === ' ') && !mod && !e.altKey && !dialog && !(e.target.closest && e.target.closest('button, a'))) { e.preventDefault(); gripCycle(); return; }       // Space / Enter on a hot grip: the next grip mode
   if ((e.key === 'Enter' || e.key === ' ') && !mod && !e.altKey && !dialog && dimAutoLive() && !(e.target.closest && e.target.closest('button, a'))) { e.preventDefault(); dimAutoEnd(); return; }       // Automatic dimension repeats until Enter, Space or Esc
-  if (state.grip && mod && !e.altKey && (k === 'y' || k === 'z')) { e.preventDefault(); undoCurrent(k === 'y' || e.shiftKey); return; }       // in a grip run Undo / Redo are the run's own (see undoCurrent)
-  if (e.key === 'Delete' && !mod && !e.altKey && shapeDelete()) { e.preventDefault(); return; }       // TODO 139b2: nodes selected in the Shape tool; else the objects go as today
+  if (state.grip && mod && !e.altKey && (k === 'y' || k === 'z')) { e.preventDefault(); undoKey(k === 'y' || e.shiftKey); return; }       // in a grip run Undo / Redo are the run's own (see undoCurrent)
+  if (e.key === 'Delete' && !mod) { if (deleteKey(!e.altKey)) e.preventDefault(); return; }       // TODO 139b2: nodes selected in the Shape tool; else the objects go as today
   if (cmpKey(e, mod)) return;
   if (!mod && !e.altKey && drawKey(e, k)) return;
   if (e.key === ' ' && !mod && !e.altKey && !e.shiftKey && !dialog && !activeCmd() && !(e.target.closest && e.target.closest('button, a'))) { e.preventDefault(); ui.cmdUI.repeat(); return; }       // Space is Enter: the last command again
   if (!curLay() && mod && !e.altKey && !e.shiftKey && k === 'd') { e.preventDefault(); duplicate(); return; }
   if (layoutKey(e, mod, k)) return;
-  if (!d) { if (cmpDoc() && e.key === 'Delete') { e.preventDefault(); cmpEdit(); } return; }
+  if (!d) return;
   const dir = { ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down' }[e.key];
   if (dir && !mod && !e.altKey && state.tool === 'select' && !state.grip && !state.entityDrag) { e.preventDefault(); nudgeDrawing(d, dir, e.shiftKey); return; }
   if (e.key === 'Enter' && state.meas && state.meas.pts.length === 2) { e.preventDefault(); keepMeasure(); return; }
   if (e.key === 'Enter' && state.ldr && state.ldr.pts.length === 2) { e.preventDefault(); ldrNoteOpen(d); return; }
   if (modLive() && e.key === 'Enter') { e.preventDefault(); modEnter(d); return; }
   if (state.txoWait && e.key === 'Enter') { e.preventDefault(); state.txoWait = false; textToOutlines(); return; }       // "Select text ... then press Enter"
-  if (e.key === 'Delete' && !mod) { e.preventDefault(); deleteSelection(); }
-  else if (mod && !e.altKey && k === 'z') { e.preventDefault(); if (e.shiftKey) redo(d); else undo(d); }
-  else if (mod && !e.altKey && k === 'y') { e.preventDefault(); redo(d); }
+  if (mod && !e.altKey && (k === 'z' || k === 'y')) { e.preventDefault(); undoKey(k === 'y' || e.shiftKey); }
 }
 
 function buildDrawingSection() {
@@ -14058,7 +14080,7 @@ function cmpManual(c) {
 /** Arrow keys nudge the selected snapshot by the shared step. */
 function cmpKey(e, mod) {
   const d = cmpDoc(), c = d && d.cmp, item = c && cmpSelected(c), dir = { ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down' }[e.key];
-  if (c && mod && !e.altKey && ['z', 'y'].includes(e.key.toLowerCase())) { e.preventDefault(); undoCurrent(e.key.toLowerCase() === 'y' || e.shiftKey); return true; }
+  if (c && mod && !e.altKey && ['z', 'y'].includes(e.key.toLowerCase())) { e.preventDefault(); undoKey(e.key.toLowerCase() === 'y' || e.shiftKey); return true; }
   if (!c || state.tool !== 'select' || !item?.visible || !dir || mod || e.altKey) return false;
   e.preventDefault();
   const manual = cmpManual(c), [dx, dy] = PL.nudgeVector(dir, state.nudge, e.shiftKey);

@@ -25594,6 +25594,7 @@ try {
     const dialog = p.getByRole('dialog', { name: 'Shortcuts', exact: true });
     const plus = (name) => dialog.getByRole('button', { name: 'Add extra key to ' + name, exact: true });
     const chips = (name) => dialog.locator(`tr[data-command=${name}] .sc-chip`);
+    const chipsOf = async (name, text) => (await p.waitForFunction(([n, s]) => { const c = [...document.querySelectorAll(`tr[data-command=${n}] .sc-chip`)].map((x) => x.textContent); return (s ? c.some((x) => x.includes(s)) : !c.length) ? c : false; }, [name, text])).jsonValue();       // waits for the chip text ('' = no chip), then the chips
     const dlSave = async (press) => { const [dl] = await Promise.all([p.waitForEvent('download'), p.keyboard.press(press)]); return readDxf(readFileSync(await dl.path(), 'latin1')).entities.length; };
     const open = async () => { await p.locator('[data-menu=Tools]').click(); await p.getByRole('menuitem', { name: 'Shortcuts…' }).click(); await dialog.waitFor(); };
     const load = async () => {
@@ -25604,7 +25605,7 @@ try {
     try {
       await load(); await open();
       await plus('Delete').click(); await p.keyboard.press('Alt+x');
-      assert.deepEqual(await chips('delete').allTextContents(), ['Alt+X×'], 'a fixed row takes an extra key; its main key stays locked');
+      assert.deepEqual(await chipsOf('delete', 'Alt+X'), ['Alt+X×'], 'a fixed row takes an extra key; its main key stays locked');
       assert.equal(await dialog.getByRole('button', { name: 'Delete key', exact: true }).isDisabled(), true);
       await plus('Delete').click(); await p.keyboard.press('Alt+x');
       await dialog.locator('.sc-status').filter({ hasText: /Alt\+X is already a key of Delete/ }).waitFor();
@@ -25616,15 +25617,15 @@ try {
       await dialog.locator('.sc-warning-line').filter({ hasText: /Key “Alt\+X” is used by Delete/ }).waitFor();
       assert.equal(await dialog.getByRole('button', { name: 'Save', exact: true }).isDisabled(), true);
       await dialog.getByRole('button', { name: 'Remove extra key Alt+X', exact: true }).click();
-      assert.equal(await chips('line').count(), 0); assert.equal(await dialog.getByRole('button', { name: 'Save', exact: true }).isDisabled(), false);
+      assert.deepEqual(await chipsOf('line', ''), []); assert.equal(await dialog.getByRole('button', { name: 'Save', exact: true }).isDisabled(), false);
       await plus('Save').click(); await p.keyboard.press('Alt+s');
       await plus('Save As').click(); await p.keyboard.press('Control+Alt+s');
-      assert.deepEqual(await chips('save').allTextContents(), ['Alt+S×']); assert.deepEqual(await chips('saveas').allTextContents(), ['Ctrl+Alt+S×']);
+      assert.deepEqual(await chipsOf('save', 'Alt+S'), ['Alt+S×']); assert.deepEqual(await chipsOf('saveas', 'Ctrl+Alt+S'), ['Ctrl+Alt+S×']);
       await dialog.getByRole('searchbox').fill('Ctrl+Alt+S'); assert.equal(await dialog.locator('tr[data-command]:visible').count(), 1, 'search finds an extra key');
       await dialog.getByRole('searchbox').fill('');
       await plus('Line').click(); await p.keyboard.press('Alt+l');
       await dialog.getByRole('button', { name: 'Remove extra key Alt+L from Line', exact: true }).click();
-      assert.equal(await chips('line').count(), 0);
+      assert.deepEqual(await chipsOf('line', ''), []);
       await plus('Line').click(); await p.keyboard.press('Alt+x');       // a clash row in the shot
       await dialog.getByRole('searchbox').fill('Alt+');
       for (const theme of ['light', 'dark']) { await p.evaluate((th) => { document.documentElement.dataset.theme = th; }, theme); await p.screenshot({ path: `${shotDir}/134-extra-keys-${theme}.png` }); }
@@ -25639,16 +25640,31 @@ try {
       assert.equal(await dlSave('Alt+s'), 0, 'Alt+X deleted the selection and Alt+S saved the file');
       await p.keyboard.press('Control+z');
       assert.equal(await dlSave('Alt+s'), all, 'one Ctrl+Z brings back all of it: the delete was one undo step');
+      await p.keyboard.press('Control+a'); await p.keyboard.press('Alt+x'); await p.keyboard.press('Control+z');       // no Save or Select all between the extra key and Space: either would be the last command
+      const cv = await p.locator('[data-testid=canvas]').boundingBox();       // a box round the drawing selects it again
+      await p.mouse.move(cv.x + 4, cv.y + 4); await p.mouse.down(); await p.mouse.move(cv.x + cv.width - 4, cv.y + cv.height - 4, { steps: 4 }); await p.mouse.up();
+      await p.keyboard.press(' ');
+      assert.equal(await dlSave('Alt+s'), all, 'Space after an extra Delete key does not run Delete again (the built-in key sets no last command)');
       await p.locator('[data-testid=cmd-echo]').click(); await p.locator('[data-testid=cmd-input]').fill('abc'); await p.keyboard.press('Home');
       await p.keyboard.press('Alt+x');
       await p.waitForFunction(() => document.querySelector('[data-testid=cmd-input]').value === 'bc');       // in a text field an extra Delete does what Delete does there
       assert.equal(await dlSave('Alt+s'), all, 'an extra key of Save saves from a text field, as Ctrl+S does');
       await p.keyboard.press('Escape');
       await load(); await open();
-      assert.deepEqual(await chips('delete').allTextContents(), ['Alt+X×']); assert.deepEqual(await chips('saveas').allTextContents(), ['Ctrl+Alt+S×']);
+      assert.deepEqual(await chipsOf('delete', 'Alt+X'), ['Alt+X×']); assert.deepEqual(await chipsOf('saveas', 'Ctrl+Alt+S'), ['Ctrl+Alt+S×']);
       await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
       assert.equal(await dlSave('Alt+s'), all, 'the extra keys work after a reload');
-      console.log('134: extra keys on fixed rows, clash Remove, Alt+X delete in one undo step, Alt+S save, kept after reload');
+      await p.locator('[data-menu=Layout]').click(); await p.getByRole('menuitem', { name: 'Add to layout', exact: true }).click(); await p.locator('[data-ribbon-tab=Layout]').click(); await p.locator('[data-testid=sheet-select]').click();
+      const parts = p.locator('[data-group=parts] > [data-i]');
+      await p.waitForFunction(() => document.querySelectorAll('[data-testid=sheet-handle]').length === 4);
+      const onSheet = await parts.count(); assert.ok(onSheet > 0);       // the drawing's objects are placed one by one
+      await p.keyboard.press('Alt+x');
+      assert.equal(await parts.count(), onSheet, 'sheet selected: an extra Delete key leaves the parts, as Delete does');
+      await p.keyboard.press('Control+a');       // Select all still works with the sheet selected, and takes the selection off the sheet
+      await p.waitForFunction(() => document.querySelectorAll('[data-testid=sheet-handle]').length === 0);
+      await p.keyboard.press('Alt+x');
+      await p.waitForFunction(() => document.querySelectorAll('[data-group=parts] > [data-i]').length === 0);
+      console.log('134: extra keys on fixed rows, clash Remove, Alt+X delete in one undo step, Space does not repeat it, sheet selected keeps the part, Alt+S save, kept after reload');
     } finally { await xCtx.close(); }
   });
 
