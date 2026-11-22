@@ -1,4 +1,4 @@
-// T76 / T78 / P13: node tools/perf-interact.mjs <file.dxf|spline:900|big:20000> [draw|edit|commit|cmp|layers|selection|resize|lay:<parts>] [port=5184]
+// T76 / T78 / P13: node tools/perf-interact.mjs <file.dxf|spline:900|big:20000> [draw|edit|commit|dim|insert|rotate|cmp|layers|selection|resize|lay:<parts>] [port=5184]
 // Counts are for the drawing canvas; timings include instrumentation and depend on the machine.
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
@@ -133,7 +133,7 @@ export async function interact(page, buffer, name = 'spline.dxf') {
 // P13: the Layout, Compare and drawing-tab edit steps of the lag audit. Counts are asserted by the browser test; the ms are for people.
 const openFile = async (page, name, buffer, entities) => {
   await page.locator('[data-testid=picker]').setInputFiles({ name, mimeType: 'text/plain', buffer });
-  await page.waitForFunction((n) => document.querySelector('.tabs .dtab.on .tname')?.textContent === n, name, { timeout: 120000 });
+  await page.waitForFunction((n) => document.querySelector('.tabs .dtab.on .tname')?.textContent === n, name, { timeout: 120000 });       // ?.: before the first tab opens there is none (TODO 356)
   await page.waitForFunction((n) => Number(document.querySelector('[data-testid=entities]').textContent.replace(/\D/g, '')) === n, entities, { timeout: 120000 });
 };
 const menu = async (page, top, item) => { await page.locator(`[data-menu=${top}]`).click(); await page.getByRole('menuitem', { name: item, exact: true }).click({ timeout: 120000 }); };
@@ -373,6 +373,47 @@ async function interactCommit(page, buffer, name) {
   } finally { await stop(); }
 }
 
+/** TODO 356: one commit of each kind on the big drawing: `insert` Moves an INSERT, `rotate` turns a LINE, `dim` places an aligned dimension (the click that makes it). */
+async function interactAction(page, buffer, name, which) {
+  const doc = readDxf(decodeDxf(buffer)), fl = flatten(doc), { frame, count, run, results, stop } = await instrument(page);
+  const [x0, y0, x1, y1] = fl.boxes.model, off = startHidden(fl), type = which === 'insert' ? 'INSERT' : 'LINE';
+  let it, best = Infinity;                                       // the visible item of that entity type nearest the middle
+  for (const c of fl.items) {
+    if (doc.entities[c.e].type !== type || !itemVisible(c, off)) continue;
+    const d = Math.hypot((c.b[0] + c.b[2] - x0 - x1) / 2, (c.b[1] + c.b[3] - y0 - y1) / 2);
+    if (d < best) { best = d; it = c; }
+  }
+  assert.ok(it, `the drawing needs a visible ${type}`);
+  const pick = [0, 1].map((i) => (it.b[i] + it.b[i + 2]) / 2 * unitFactor(fl.units));       // a block's circle: its middle is the insertion point, where its two lines cross
+  try {
+    await openFile(page, name, buffer, doc.entities.length);
+    await fitView(page, frame);
+    const { x, y } = await page.locator('rect.sheet').evaluate((el, [x, y]) => {
+      const b = el.getBoundingClientRect(), k = b.width / Number(el.getAttribute('width'));
+      return { x: b.x + x * k, y: b.y + (Number(el.getAttribute('height')) - y) * k };
+    }, pick);
+    await page.waitForTimeout(3000); await frame();               // the open's own idle work (pick index slices) is not the action's
+    const entities = await count();
+    if (which === 'dim') {
+      await page.locator('[data-tool=dimension]').first().click();
+      for (const [dx, dy] of [[-60, -40], [60, -40]]) { await page.mouse.move(x + dx, y + dy); await frame(); await page.mouse.click(x + dx, y + dy); await frame(); }
+      await page.mouse.move(x, y - 100); await frame();
+      await run('Dimension placed', () => page.mouse.click(x, y - 100));
+      assert.equal(await count(), entities + 1, 'the dimension is one more entity');
+    } else {
+      await page.mouse.click(x, y); await frame();
+      assert.match(await page.getByTestId('sel-count').textContent(), /^1 selected$/);
+      if (which === 'rotate') await menu(page, 'Modify', 'Rotate'); else await page.locator('[data-tool=move]').first().click();
+      await page.mouse.click(x, y);
+      await page.mouse.move(x + 100, y + 80); await frame();
+      await run(which === 'rotate' ? 'Rotate one LINE commit' : 'Move one INSERT commit', () => page.mouse.click(x + 100, y + 80));
+      assert.equal(await count(), entities);
+    }
+    await page.waitForTimeout(1500);
+  } finally { await stop(); }
+  return results;
+}
+
 /** Measure both eyes on the same layer, after opening and warming the drawings. */
 async function interactLayers(page, buffer, name) {
   const raw = readDxf(decodeDxf(buffer)), { frame, run, results, stop } = await instrument(page);
@@ -478,7 +519,7 @@ async function interactResize(page, buffer, name) {
 
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
   const input = process.argv[2], rest = process.argv.slice(3), port = Number(rest.find((a) => /^\d+$/.test(a))) || 5184, mode = rest.find((a) => !/^\d+$/.test(a)) || 'draw';
-  if (!input || !/^(draw|edit|commit|cmp|layers|selection|resize|lay:\d+)$/.test(mode)) { console.error('usage: node tools/perf-interact.mjs <file.dxf|spline:900|big:20000> [draw|edit|commit|cmp|layers|selection|resize|lay:<parts>] [port]'); process.exit(1); }
+  if (!input || !/^(draw|edit|commit|dim|insert|rotate|cmp|layers|selection|resize|lay:\d+)$/.test(mode)) { console.error('usage: node tools/perf-interact.mjs <file.dxf|spline:900|big:20000> [draw|edit|commit|dim|insert|rotate|cmp|layers|selection|resize|lay:<parts>] [port]'); process.exit(1); }
   const big = input.startsWith('big:') && bigDoc(Number(input.slice(4)));
   if (big && mode === 'layers') {
     addLayer(big, 'Toggle', { aci: 3 });
@@ -500,6 +541,7 @@ if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.m
     const results = mode === 'draw' ? await interact(page, buffer, name)
       : mode === 'edit' ? await interactEdit(page, buffer, name)
         : mode === 'commit' ? await interactCommit(page, buffer, name)
+          : ['dim', 'insert', 'rotate'].includes(mode) ? await interactAction(page, buffer, name, mode)
           : mode === 'cmp' ? await interactCompare(page, buffer, name)
             : mode === 'layers' ? await interactLayers(page, buffer, name)
               : mode === 'selection' ? await interactSelection(page, buffer, name)
