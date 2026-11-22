@@ -107,6 +107,11 @@ test('line types: dashes, gaps and dots become a canvas dash list', () => {
   assert.deepEqual(D.dashArray([3, 1, -2]), [4, 2]);                  // two dashes in a row are one
   assert.equal(D.dashArray([]), null);
   assert.equal(D.dashArray([5]), null);                              // no gap: a solid line
+  const same = [7, 4];
+  assert.equal(D.dotDash(same, 1.2), same);                           // no dot: untouched
+  assert.deepEqual(D.dotDash([0, 4], 1.2), [1.2, 2.8]);               // TODO 334b: a zero-length dot is invisible with a butt cap: a line width long, the period kept
+  assert.deepEqual(D.dotDash([6, 2, 0, 2], 0.5), [6, 2, 0.5, 1.5]);   // a dot inside a dash-dot list
+  assert.deepEqual(D.dotDash([0, 1], 3), [3, 0]);                     // gap shorter than the dot: never negative
   const tables = g([0, 'TABLE'], [2, 'LTYPE']) + '\n' + g([0, 'LTYPE'], [2, 'DASHED'], [73, 2], [40, 3], [49, 2], [49, -1]) + '\n' + g([0, 'ENDTAB']);
   const fl = lay(dxf([g([0, 'LINE'], [8, '0'], [6, 'DASHED'], [48, 2], [10, 0], [20, 0], [11, 10], [21, 0])], { tables, header: g([9, '$LTSCALE'], [40, 5]) }));
   assert.deepEqual(fl.items[0].dash, [20, 10]);                       // × $LTSCALE × its own scale

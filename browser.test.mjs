@@ -13527,6 +13527,50 @@ try {
       await t('ptab-drawing').click(); await closeTabs(/./);
     }
   });
+  await step('TODO 334b: an applied outer contour (Dotted and Solid, upright and turned 30°) stays painted while zooming in until no vertex is on screen', async () => {
+    const drawing = t('drawing');
+    const settle = async () => { await page.waitForFunction(() => { const c = document.querySelector('[data-testid=drawing]'); return c.dataset.snap === '' && c.dataset.chunk === ''; }, null, { timeout: 20000 }); await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))); };
+    const green = () => drawing.evaluate((c) => {       // the Contour layer's own green (ink on the light sheet, bright on the dark one), as the canvas holds it
+      const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data, at = [];
+      for (let i = 0; i < d.length; i += 4) if (d[i + 3] > 128 && d[i + 1] > 100 && d[i] < 80 && d[i + 2] < 80) at.push(i / 4);
+      const mid = at[at.length >> 1];
+      return { n: at.length, x: mid % c.width, y: Math.floor(mid / c.width), w: c.width, h: c.height };
+    });
+    for (const [style, rot] of [[2, 0], [2, 30], [0, 30]]) {
+      await closeTabs(/./);
+      const raw = newDoc(4), lay = newLayout('334b'), name = `334b-${style}-${rot}.dxf`;
+      addEntities(raw, ...[[0, 0, 100, 0], [100, 0, 100, 60], [100, 60, 0, 60], [0, 60, 0, 0]].map((q) => dxfLine(...q, { aci: 7 })));
+      lay.parts.p = makePart('p', 'Plate', raw, 1);
+      lay.placed = [{ partId: 'p', x: 300, y: 300, rot, mirrorX: false, mirrorY: false }];
+      await t('picker').setInputFiles({ name, mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(layoutRaw(lay)), 'latin1') });
+      await waitTab(page, name);
+      await page.keyboard.press('Escape'); await page.keyboard.press('Control+a');
+      await page.locator('[data-ribbon-tab=Home]').click();
+      await typeCmd('contour');
+      await t('contour-steps').fill('1'); await t('contour-steps').press('Enter');
+      await t('contour-outside').click(); await t('contour-sharp').click();
+      await t('contour-dist').fill('10'); await t('contour-dist').press('Enter');
+      await page.locator('.ctstyle').nth(style).click();
+      await t('contour-apply').click(); await t('contour-close').click();
+      assert.equal(await nParts(), 2, 'the part and its contour');
+      await page.locator('[data-tool=select]').click(); await page.keyboard.press('Escape');
+      await page.getByTestId('canvas').getByRole('button', { name: 'Fit', exact: true }).click(); await settle();
+      const b = await drawing.boundingBox(), label = `${['Solid', 'Dashed', 'Dotted'][style]} contour, part turned ${rot}°`;
+      let r = await green(), last = -1, same = 0, wheels = 0;
+      assert.ok(r.n > 50, `${label}: painted when the whole layout is in view (${r.n} px)`);
+      for (; wheels < 40 && same < 3; wheels++) {       // each wheel turn aims at a pixel of the contour, so the line crosses the view and its corners drift away
+        await page.mouse.move(b.x + r.x * b.width / r.w, b.y + r.y * b.height / r.h);
+        await page.mouse.wheel(0, -300); await settle();
+        r = await green();
+        assert.ok(r.n > 0, `${label}: still painted after zoom step ${wheels + 1} (${await t('zoom').textContent()})`);
+        same = r.n === last ? same + 1 : 0; last = r.n;
+      }
+      const pct = Number((await t('zoom').textContent()).replace(/\D/g, ''));
+      assert.ok(pct >= 10000, `${label}: zoomed in to ${pct}%, a view of about a millimetre inside a 120 mm contour: no corner on screen`);
+      if (style === 2 && rot === 0) await shotBoth('todo334b-zoomed');
+    }
+    await closeTabs(/./);
+  });
   await step('TODO 335 / 336: a contoured part turns by hand on the second click (its contour with it, one Undo); Ungroup keeps each contour attached, one Undo each', async () => {
     await closeTabs(/./);
     const errs0 = errors.length;

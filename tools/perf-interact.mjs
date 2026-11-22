@@ -133,7 +133,7 @@ export async function interact(page, buffer, name = 'spline.dxf') {
 // P13: the Layout, Compare and drawing-tab edit steps of the lag audit. Counts are asserted by the browser test; the ms are for people.
 const openFile = async (page, name, buffer, entities) => {
   await page.locator('[data-testid=picker]').setInputFiles({ name, mimeType: 'text/plain', buffer });
-  await page.waitForFunction((n) => document.querySelector('.tabs .dtab.on .tname').textContent === n, name, { timeout: 120000 });
+  await page.waitForFunction((n) => document.querySelector('.tabs .dtab.on .tname')?.textContent === n, name, { timeout: 120000 });
   await page.waitForFunction((n) => Number(document.querySelector('[data-testid=entities]').textContent.replace(/\D/g, '')) === n, entities, { timeout: 120000 });
 };
 const menu = async (page, top, item) => { await page.locator(`[data-menu=${top}]`).click(); await page.getByRole('menuitem', { name: item, exact: true }).click({ timeout: 120000 }); };

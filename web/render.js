@@ -1,6 +1,6 @@
 // render.js — draws a flattened drawing (drawing.js) on a <canvas> laid over the sheet.
 // Ported from Project R's viewer: strokes batched by colour/width/dash, text, hatches, ACI 7 flipped for the sheet.
-import { mmul, mscale, mapply, opsBox, CAP, fontOfStyle, strokeWidth } from './drawing.js';
+import { mmul, mscale, mapply, opsBox, CAP, fontOfStyle, strokeWidth, dotDash } from './drawing.js';
 import { placement, shownItems, itemVisible, spaceOf } from './doc.js';
 import { paintMode } from './wireframe.js';
 import { viewOrigin } from './view-origin.js';
@@ -130,7 +130,7 @@ export function drawContour(c, loops, T, dpr, col, dash) {
   c.save();
   c.setTransform(1, 0, 0, 1, 0, 0);
   c.strokeStyle = col;
-  c.globalAlpha = .65; c.lineWidth = 1.8 * dpr; c.setLineDash(dash.map((x) => x * dpr)); c.lineJoin = 'round';
+  c.globalAlpha = .65; c.lineWidth = 1.8 * dpr; c.setLineDash(dotDash(dash.map((x) => x * dpr), c.lineWidth)); c.lineJoin = 'round';
   for (const pts of loops) {
     c.beginPath();
     pts.forEach((q, i) => { const [x, y] = mapply(T, q[0], q[1]); if (i) c.lineTo(x, y); else c.moveTo(x, y); });
@@ -191,7 +191,7 @@ function* paintItems(c, fl, off, T, k, vr, dpr, col, sheetBg, hide, factor, wire
         run = 1;
         flush();
         if (due?.()) yield;       // 322c: the strokes so far are on the canvas, the next run starts from its own style
-        c.strokeStyle = css; c.lineWidth = lw; c.setLineDash(dash === it.dpx && dash ? dash.map((x) => x * dpr / kk) : dash || []);
+        c.strokeStyle = css; c.lineWidth = lw; c.setLineDash(dash === it.dpx && dash ? dash.map((x) => x * dpr / kk) : dash ? dotDash(dash, lw) : []);
         c.lineCap = cap = nextCap; c.lineJoin = join = nextJoin; c.miterLimit = 10;
         c.beginPath(); open = true; pc = css; pw = lw; pd = dash;
       }
@@ -382,7 +382,7 @@ function drawHatch(c, it, kk, dpr, colOf, origin, pxPerUnit) {
     const n0 = Math.floor(Math.min(...across)), n1 = Math.ceil(Math.max(...across));
     if (n1 - n0 > 4000) { tint = true; continue; }
     const len = f.dash ? f.dash.reduce((a, x) => a + x, 0) : 0, dashed = len * kk > 4 * dpr;
-    c.setLineDash(dashed ? f.dash : []);
+    c.setLineDash(dashed ? dotDash(f.dash, dpr / kk) : []);
     if (!dashed) c.beginPath();
     for (let n = n0; n <= n1; n++) {
       const px = f.bx + n * f.ox, py = f.by + n * f.oy;
