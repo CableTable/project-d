@@ -621,6 +621,27 @@ try {
       console.log('TODO 268 proof: all three kinds, deep copies, names, views, fresh Undo, autosave, live sources, source close, and PDF exclusion pass');
     } finally { await ctx.close(); }
   });
+  await step('TODO 253c2: zoomToBox leaves the view (and its history) alone when the view is no bigger than its rulers', async () => {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    try {
+      const p = await ctx.newPage(), q = (id) => p.getByTestId(id), faults = [];
+      p.on('pageerror', (e) => faults.push(String(e)));
+      await p.route('**/app.js', (route) => route.fulfill({ contentType: 'text/javascript', body: readFileSync('web/app.js', 'utf8') + `
+        window.t253 = { zoom: (b, pad) => zoomToBox(b, pad), hide: () => { ui.canvas.style.display = 'none'; }, read: () => ({ ...view, hist: structuredClone(curDoc().viewHist || []), rulers: state.rulers }) };` }));
+      await p.goto(URL_ + '?autosave=86400000'); await q('count').waitFor({ state: 'attached' });
+      const raw = newDoc(4); addEntities(raw, [dxfLine(0, 0, 120, 80)]);
+      await q('picker').setInputFiles({ name: '253c2.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(raw)) });
+      await waitTab(p, '253c2.dxf');
+      await p.evaluate(() => window.t253.zoom([0, 0, 50, 50], 5));
+      const good = await p.evaluate(() => window.t253.read());
+      assert.ok(good.scale > 0 && good.hist.length > 0, 'a normal zoom to a box sets the scale and a history step');
+      await p.evaluate(() => window.t253.hide());                                                            // the canvas measures 0: no wider than the ruler
+      assert.equal((await p.evaluate(() => window.t253.read())).rulers, true, 'the rulers are on');
+      await p.evaluate(() => window.t253.zoom([0, 0, 1000, 1000], 0));
+      assert.deepEqual(await p.evaluate(() => window.t253.read()), good, 'the view and its history are unchanged: no negative scale');
+      assert.deepEqual(faults, []);
+    } finally { await ctx.close(); }
+  });
   await step('TODO 304: drawings and PDF sheet tabs keep their own pan, zoom and Zoom Previous', async () => {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     try {
@@ -25573,6 +25594,7 @@ try {
     const dialog = p.getByRole('dialog', { name: 'Shortcuts', exact: true });
     const plus = (name) => dialog.getByRole('button', { name: 'Add extra key to ' + name, exact: true });
     const chips = (name) => dialog.locator(`tr[data-command=${name}] .sc-chip`);
+    const chipsOf = async (name, text) => (await p.waitForFunction(([n, s]) => { const c = [...document.querySelectorAll(`tr[data-command=${n}] .sc-chip`)].map((x) => x.textContent); return (s ? c.some((x) => x.includes(s)) : !c.length) ? c : false; }, [name, text])).jsonValue();       // waits for the chip text ('' = no chip), then the chips
     const dlSave = async (press) => { const [dl] = await Promise.all([p.waitForEvent('download'), p.keyboard.press(press)]); return readDxf(readFileSync(await dl.path(), 'latin1')).entities.length; };
     const open = async () => { await p.locator('[data-menu=Tools]').click(); await p.getByRole('menuitem', { name: 'Shortcuts…' }).click(); await dialog.waitFor(); };
     const load = async () => {
@@ -25583,7 +25605,7 @@ try {
     try {
       await load(); await open();
       await plus('Delete').click(); await p.keyboard.press('Alt+x');
-      assert.deepEqual(await chips('delete').allTextContents(), ['Alt+X×'], 'a fixed row takes an extra key; its main key stays locked');
+      assert.deepEqual(await chipsOf('delete', 'Alt+X'), ['Alt+X×'], 'a fixed row takes an extra key; its main key stays locked');
       assert.equal(await dialog.getByRole('button', { name: 'Delete key', exact: true }).isDisabled(), true);
       await plus('Delete').click(); await p.keyboard.press('Alt+x');
       await dialog.locator('.sc-status').filter({ hasText: /Alt\+X is already a key of Delete/ }).waitFor();
@@ -25595,15 +25617,15 @@ try {
       await dialog.locator('.sc-warning-line').filter({ hasText: /Key “Alt\+X” is used by Delete/ }).waitFor();
       assert.equal(await dialog.getByRole('button', { name: 'Save', exact: true }).isDisabled(), true);
       await dialog.getByRole('button', { name: 'Remove extra key Alt+X', exact: true }).click();
-      assert.equal(await chips('line').count(), 0); assert.equal(await dialog.getByRole('button', { name: 'Save', exact: true }).isDisabled(), false);
+      assert.deepEqual(await chipsOf('line', ''), []); assert.equal(await dialog.getByRole('button', { name: 'Save', exact: true }).isDisabled(), false);
       await plus('Save').click(); await p.keyboard.press('Alt+s');
       await plus('Save As').click(); await p.keyboard.press('Control+Alt+s');
-      assert.deepEqual(await chips('save').allTextContents(), ['Alt+S×']); assert.deepEqual(await chips('saveas').allTextContents(), ['Ctrl+Alt+S×']);
+      assert.deepEqual(await chipsOf('save', 'Alt+S'), ['Alt+S×']); assert.deepEqual(await chipsOf('saveas', 'Ctrl+Alt+S'), ['Ctrl+Alt+S×']);
       await dialog.getByRole('searchbox').fill('Ctrl+Alt+S'); assert.equal(await dialog.locator('tr[data-command]:visible').count(), 1, 'search finds an extra key');
       await dialog.getByRole('searchbox').fill('');
       await plus('Line').click(); await p.keyboard.press('Alt+l');
       await dialog.getByRole('button', { name: 'Remove extra key Alt+L from Line', exact: true }).click();
-      assert.equal(await chips('line').count(), 0);
+      assert.deepEqual(await chipsOf('line', ''), []);
       await plus('Line').click(); await p.keyboard.press('Alt+x');       // a clash row in the shot
       await dialog.getByRole('searchbox').fill('Alt+');
       for (const theme of ['light', 'dark']) { await p.evaluate((th) => { document.documentElement.dataset.theme = th; }, theme); await p.screenshot({ path: `${shotDir}/134-extra-keys-${theme}.png` }); }
@@ -25618,16 +25640,31 @@ try {
       assert.equal(await dlSave('Alt+s'), 0, 'Alt+X deleted the selection and Alt+S saved the file');
       await p.keyboard.press('Control+z');
       assert.equal(await dlSave('Alt+s'), all, 'one Ctrl+Z brings back all of it: the delete was one undo step');
+      await p.keyboard.press('Control+a'); await p.keyboard.press('Alt+x'); await p.keyboard.press('Control+z');       // no Save or Select all between the extra key and Space: either would be the last command
+      const cv = await p.locator('[data-testid=canvas]').boundingBox();       // a box round the drawing selects it again
+      await p.mouse.move(cv.x + 4, cv.y + 4); await p.mouse.down(); await p.mouse.move(cv.x + cv.width - 4, cv.y + cv.height - 4, { steps: 4 }); await p.mouse.up();
+      await p.keyboard.press(' ');
+      assert.equal(await dlSave('Alt+s'), all, 'Space after an extra Delete key does not run Delete again (the built-in key sets no last command)');
       await p.locator('[data-testid=cmd-echo]').click(); await p.locator('[data-testid=cmd-input]').fill('abc'); await p.keyboard.press('Home');
       await p.keyboard.press('Alt+x');
       await p.waitForFunction(() => document.querySelector('[data-testid=cmd-input]').value === 'bc');       // in a text field an extra Delete does what Delete does there
       assert.equal(await dlSave('Alt+s'), all, 'an extra key of Save saves from a text field, as Ctrl+S does');
       await p.keyboard.press('Escape');
       await load(); await open();
-      assert.deepEqual(await chips('delete').allTextContents(), ['Alt+X×']); assert.deepEqual(await chips('saveas').allTextContents(), ['Ctrl+Alt+S×']);
+      assert.deepEqual(await chipsOf('delete', 'Alt+X'), ['Alt+X×']); assert.deepEqual(await chipsOf('saveas', 'Ctrl+Alt+S'), ['Ctrl+Alt+S×']);
       await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
       assert.equal(await dlSave('Alt+s'), all, 'the extra keys work after a reload');
-      console.log('134: extra keys on fixed rows, clash Remove, Alt+X delete in one undo step, Alt+S save, kept after reload');
+      await p.locator('[data-menu=Layout]').click(); await p.getByRole('menuitem', { name: 'Add to layout', exact: true }).click(); await p.locator('[data-ribbon-tab=Layout]').click(); await p.locator('[data-testid=sheet-select]').click();
+      const parts = p.locator('[data-group=parts] > [data-i]');
+      await p.waitForFunction(() => document.querySelectorAll('[data-testid=sheet-handle]').length === 4);
+      const onSheet = await parts.count(); assert.ok(onSheet > 0);       // the drawing's objects are placed one by one
+      await p.keyboard.press('Alt+x');
+      assert.equal(await parts.count(), onSheet, 'sheet selected: an extra Delete key leaves the parts, as Delete does');
+      await p.keyboard.press('Control+a');       // Select all still works with the sheet selected, and takes the selection off the sheet
+      await p.waitForFunction(() => document.querySelectorAll('[data-testid=sheet-handle]').length === 0);
+      await p.keyboard.press('Alt+x');
+      await p.waitForFunction(() => document.querySelectorAll('[data-group=parts] > [data-i]').length === 0);
+      console.log('134: extra keys on fixed rows, clash Remove, Alt+X delete in one undo step, Space does not repeat it, sheet selected keeps the part, Alt+S save, kept after reload');
     } finally { await xCtx.close(); }
   });
 
@@ -37420,6 +37457,20 @@ try {
       await group.getByRole('button', { name: 'Circle', exact: true }).waitFor();
       await t('circle-ribbon-flyout').click();
       assert.deepEqual(await flyoutItems(), items, kind + ': ribbon');
+      await page.keyboard.press('Escape');
+      const rb = await page.locator('.ribbon-body [data-panel=Draw]').getByRole('button', { name: 'Circle', exact: true }).boundingBox();   // ribbon button: press and hold 450 ms
+      await page.mouse.move(rb.x + rb.width / 2, rb.y + rb.height / 2); await page.mouse.down(); await page.waitForTimeout(650);
+      assert.deepEqual(await flyoutItems(), items, kind + ': ribbon hold');
+      await page.mouse.up();
+      assert.equal(await page.locator('.ctxmenu .mi').count(), items.length, kind + ': the ribbon hold release keeps the flyout open');
+      const idle = await page.getByTestId('cmd-prompt').textContent();
+      assert.doesNotMatch(idle, /^Specify /, kind + ': the ribbon hold release starts no Circle command');
+      await page.keyboard.press('Escape');
+      await page.locator('.ribbon-body [data-panel=Draw]').getByRole('button', { name: 'Circle', exact: true }).click({ button: 'right' });
+      await page.locator('.ctxmenu .mi').first().waitFor();
+      assert.deepEqual(await flyoutItems(), items, kind + ': ribbon right-click');
+      await page.keyboard.press('Escape');
+      await t('circle-ribbon-flyout').click();
       await pick('3-Point'); await prompt346(first3p346, kind + ': ribbon pick');
       await stop346();
       assert.equal(await (await home()).getByRole('button', { name: 'Circle', exact: true }).locator('svg circle').count(), 4, kind + ': the ribbon icon shows the mode too');
@@ -37838,6 +37889,20 @@ try {
       await b.waitFor();
       await t('arc-ribbon-flyout').click();
       assert.deepEqual(await flyoutItems(), modes347c, kind + ': ribbon');
+      await page.keyboard.press('Escape');
+      const rb = await (await homeArc347()).boundingBox();                               // ribbon button: press and hold 450 ms
+      await page.mouse.move(rb.x + rb.width / 2, rb.y + rb.height / 2); await page.mouse.down(); await page.waitForTimeout(650);
+      assert.deepEqual(await flyoutItems(), modes347c, kind + ': ribbon hold');
+      await page.mouse.up();
+      assert.equal(await page.locator('.ctxmenu .mi').count(), modes347c.length, kind + ': the ribbon hold release keeps the flyout open');
+      const idle = await page.getByTestId('cmd-prompt').textContent();
+      assert.doesNotMatch(idle, /^Specify /, kind + ': the ribbon hold release starts no Arc command');
+      await page.keyboard.press('Escape');
+      await (await homeArc347()).click({ button: 'right' });
+      await page.locator('.ctxmenu .mi').first().waitFor();
+      assert.deepEqual(await flyoutItems(), modes347c, kind + ': ribbon right-click');
+      await page.keyboard.press('Escape');
+      await t('arc-ribbon-flyout').click();
       await pickArc347('Start, End, Radius'); await prompt346(start347, kind + ': ribbon pick');
       await stop346();
       assert.equal(await (await homeArc347()).locator('svg circle').count(), 2, kind + ': the ribbon icon shows the mode too');
@@ -37901,6 +37966,9 @@ try {
       await typeCmd('150,200'); assert.match(await said346(), /Arc made on layer/, kind);                    // heading south from (200,250): the same circle on, so a start at the wrong end would refuse or bend the wrong way
       await stop346();
       await key97c('Control+z');                                                                                 // one Undo takes back the last arc only
+      await typeCmd('arc'); await key97c('Enter');
+      assert.match(await said346(), /No line or arc to continue\./, kind + ': the arc Ctrl+Z took back is not continued'); await prompt346(start347, kind + ': the prompt stays');
+      await stop346();
       if (kind === 'Layouts') assert.equal(await nParts(), n0 + 8, kind + ': three lines, four arcs and a circle');
       else {
         const arcs = await arcsOf347(kind); assert.equal(arcs.length, 4, kind);
@@ -37908,6 +37976,33 @@ try {
       }
       await arcBack347(); await closeTabs(/./);
     }
+    assert.deepEqual(errors, []);
+  });
+
+  await step('TODO lowsD55e: on a Layout tab, an unrelated edit (a dimension) made and taken back with Ctrl+Z leaves Arc Continue on the line (Undo copies the placements)', async () => {
+    await freshLayoutWithPlate();
+    await typeCmd('l'); await typeCmd('100,60'); await typeCmd('140,60'); await stop346();
+    await typeCmd('dli'); await typeCmd('100,150'); await typeCmd('300,150'); await typeCmd('200,190'); await stop346();   // a dimension: it does not become the last shape drawn
+    await key97c('Control+z');
+    await typeCmd('arc'); await key97c('Enter'); await prompt346(end347c, 'Continue still starts from the line');
+    await stop346(); await arcBack347(); await closeTabs(/./);
+    assert.deepEqual(errors, []);
+  });
+
+  await step('TODO lowsD55f: on a Layout tab, Arc Continue needs the line still at its spot: a copy elsewhere + the original deleted, or the line taken back with Ctrl+Z, says "No line or arc to continue."; a copy in place + the original deleted still continues', async () => {
+    const noLine = async (what) => { await typeCmd('arc'); await key97c('Enter'); assert.match(await said346(), /No line or arc to continue\./, what); await prompt346(start347, what + ': the prompt stays'); await stop346(); };
+    const copyAndDelete = async (to) => {
+      await click346(120, 60); await typeCmd('co'); await typeCmd('0,0'); await typeCmd(to); await stop346();
+      await click346(120, 60); await key97c('Delete');                                                         // the original goes (Delete = Erase)
+    };
+    const lineOnLayout = async () => { await freshLayoutWithPlate(); await typeCmd('l'); await typeCmd('100,60'); await typeCmd('140,60'); await stop346(); };
+    await lineOnLayout(); await copyAndDelete('0,40');
+    await noLine('a copy elsewhere, the original deleted');
+    await lineOnLayout(); await copyAndDelete('0,0');
+    await typeCmd('arc'); await key97c('Enter'); await prompt346(end347c, 'a copy in place, the original deleted: Continue still starts from the line'); await stop346();
+    await lineOnLayout(); await key97c('Control+z');
+    await noLine('the line taken back with Ctrl+Z');
+    await arcBack347(); await closeTabs(/./);
     assert.deepEqual(errors, []);
   });
 

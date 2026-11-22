@@ -1017,6 +1017,10 @@ test('345b3 pickGrip: the full 8.5 px hit, the nearer of two plain grips, the ha
   assert.equal(GR.pickGrip([[D, 2.8], [A, 3]]), A, 'a dimension grip ties with the other object: the other wins');
   assert.equal(GR.pickGrip([[A, 3], [D, 2.8]]), A, 'either order');
   assert.equal(GR.pickGrip([[A, 3], [D, 1]]), D, 'a clearly nearer dimension grip wins');
+  assert.equal(GR.pickGrip([[D, 8.4], [A, 8.8]]), D, 'lowsD55e: no plain grip past 8.5 px, so the tie never reaches 8.8');
+  assert.equal(GR.pickGrip([[A, 8.8], [D, 8.4]]), D, 'either order');
+  assert.equal(GR.pickGrip([[D, 8.0], [A, 8.3]]), A, 'lowsD55e: inside 8.5 px the half-pixel tie still goes to the plain grip');
+  assert.equal(GR.pickGrip([[A, 8.5]]), null, 'lowsD55e: 8.5 px exactly is not hit');
 });
 
 console.log(n + ' grips tests passed');

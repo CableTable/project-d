@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { readFileSync } from 'node:fs';
-import { readTiff } from './web/tiff.js';
+import { readTiff, tiffDpi } from './web/tiff.js';
 import { makeTiff, TWO_PAGES, G4_PAGE } from './tools/make-tiff-fixture.mjs';
 
 const gray = (page, x, y) => { const i = (y * page.w + x) * 4; return [...page.rgba.subarray(i, i + 4)]; };
@@ -39,4 +39,10 @@ test('TODO 138: a page that cannot be decoded is reported with its number, the o
   assert.deepEqual(pages[0], { n: 1, error: 'compression 34712 not supported' });
   assert.deepEqual([pages[1].n, pages[1].w, pages[1].dpi, gray(pages[1], 3, 3)], [2, 254, [254, 254], [77, 77, 77, 255]]);
   assert.throws(() => readTiff(new TextEncoder().encode('not a tiff at all')), /not a TIFF file/);
+});
+
+test('TODO 138: a resolution of Infinity, NaN, 0 or a negative number uses the 96 dpi fallback (lowsD55c)', () => {
+  assert.deepEqual(tiffDpi({ t282: [Infinity], t283: [NaN] }), [96, 96]);
+  assert.deepEqual(tiffDpi({ t282: [-Infinity], t283: [0] }), [96, 96]);
+  assert.deepEqual(tiffDpi({ t282: [150], t283: [-5] }), [150, 96], 'a good axis is kept');
 });
