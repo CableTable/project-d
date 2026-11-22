@@ -37979,6 +37979,16 @@ try {
     assert.deepEqual(errors, []);
   });
 
+  await step('TODO lowsD55e: on a Layout tab, an unrelated edit (a dimension) made and taken back with Ctrl+Z leaves Arc Continue on the line (Undo copies the placements)', async () => {
+    await freshLayoutWithPlate();
+    await typeCmd('l'); await typeCmd('100,60'); await typeCmd('140,60'); await stop346();
+    await typeCmd('dli'); await typeCmd('100,150'); await typeCmd('300,150'); await typeCmd('200,190'); await stop346();   // a dimension: it does not become the last shape drawn
+    await key97c('Control+z');
+    await typeCmd('arc'); await key97c('Enter'); await prompt346(end347c, 'Continue still starts from the line');
+    await stop346(); await arcBack347(); await closeTabs(/./);
+    assert.deepEqual(errors, []);
+  });
+
   await step('TODO 347c: screenshots, light and dark (the Arc flyout open on a Start, Centre, End button)', async () => {
     await open97c(doc97f2(dxfLine(10, 10, 300, 10)), 'arc347c-shot.dxf');
     await t('arc-flyout').click(); await pickArc347('Start, Centre, End'); await stop346();

@@ -8742,7 +8742,7 @@ function layObjectsAdd(d, label, ents, blocks = {}, dimNames) {
 function layDrawCommit(d, kind, shapes, attrs) {
   const made = layObjectsAdd(d, DR.LABELS[kind], shapes.map((sh) => DR.toEntity(sh, attrs, 1)));
   note(`${DR.LABELS[kind]} made on layer ${attrs.layer}` + (shapes.length > 1 ? ` (${shapes.length} lines)` : '') + '. Ctrl+Z takes it back');
-  return made && (() => d.lay.placed.includes(made));
+  return made && (() => d.lay.placed.some((p) => p.partId === made.partId)); // undo copies placements (laySnap), so match by partId
 }
 function drawCommit(d, kind, shapes) {
   const layer = curLayerName(d), shape = shapes[shapes.length - 1];
