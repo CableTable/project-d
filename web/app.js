@@ -21,7 +21,7 @@ import { cyclePick } from './selection-cycle.js';
 import { SNAP_NAME, snapTypes, lineSnaps, preferSnap } from './snap.js';
 import { pushView, popView } from './viewhist.js';
 import { restoreView } from './doc-view.js';
-import { zoomScale } from './zoom-level.js';
+import { zoomScale, zoomLabel } from './zoom-level.js';
 import * as UF from './unitfix.js';
 import * as DU from './units.js';
 import * as CL from './cleanup.js';
@@ -1849,7 +1849,7 @@ function buildZoomLevel() {
     input.blur();       // focus to the body, so Space does not reopen the editor
   };
   const apply = (value) => {
-    const scale = zoomScale(value);
+    const scale = zoomScale(value, zoomFloor());
     if (scale === null) {
       input.setAttribute('aria-invalid', 'true');
       input.classList.remove('invalid');
@@ -5365,7 +5365,7 @@ function applyView(gesture = false) {
   ui.grips.setAttribute('viewBox', `0 0 ${w} ${ch}`);
   ui.svg.setAttribute('preserveAspectRatio', 'none');
   // 100% = real size on a 96 dpi screen (3.78 px per mm)
-  ui.pct.textContent = Math.round(view.scale / (96 / 25.4) * 100) + '%';
+  ui.pct.textContent = zoomLabel(view.scale);
   ui.fitBtn.classList.toggle('on', view.fitted);
   drawTools();
   drawSheetSel();
@@ -5717,23 +5717,31 @@ function paintEditable(c, d, base, marks, part, afterBase, due) {
   return drawn;
 }
 
-function fit(gesture = false) {
+/** What Fit shows on this tab (the box r in mm, its padding P, the room w2 x h2 in px and the scale), worked out without touching the view; null when there is no room yet. */
+function fitFrame() {
   const { w, h: ch } = canvasSize();
   // the sheet and, if one is open, the drawing; room for the dimension lines around
   const d = curDoc(), part = partView(d), lay = !!(d && d.lay), cb = cmpBox(d);
   const r = cb ? boxOnSheet(cb, state.sheetH) : part ? boxOnSheet(viewBox(d), state.sheetH) : lay ? fitRect(state.sheetW, state.sheetH, null) : boxOnSheet([0, 0, 200, 120], state.sheetH), P = lay ? 80 : 30;
   const bw = r[2] - r[0] + 2 * P, bh = r[3] - r[1] + 2 * P - (lay ? 10 : 0);
   const R = state.rulers ? RULER : 0, w2 = w - R, h2 = ch - R;                  // the rulers cover the top and left edge of the canvas: fit into what is left
-  if (w2 <= 0 || h2 <= 0) return;                                                // no room yet (canvas hidden or being laid out): a negative scale made a negative SVG viewBox; the next resize fits
-  view.scale = Math.min(w2 / bw, h2 / bh);
-  view.ox = r[0] - P - (w2 / view.scale - bw) / 2 - R / view.scale;
-  view.oy = r[1] - P - (h2 / view.scale - bh) / 2 - R / view.scale;
+  if (w2 <= 0 || h2 <= 0) return null;                                           // no room yet (canvas hidden or being laid out): a negative scale made a negative SVG viewBox; the next resize fits
+  return { r, P, bw, bh, R, w2, h2, scale: Math.min(w2 / bw, h2 / bh) };
+}
+function fit(gesture = false) {
+  const f = fitFrame();
+  if (!f) return;
+  view.scale = f.scale;
+  view.ox = f.r[0] - f.P - (f.w2 / view.scale - f.bw) / 2 - f.R / view.scale;
+  view.oy = f.r[1] - f.P - (f.h2 / view.scale - f.bh) / 2 - f.R / view.scale;
   view.fitted = true;
   applyView(gesture === true);
 }
+/** The smallest zoom (px per mm) this tab allows (TODO 357): 0.05, or a tenth of its Fit on a huge drawing, so the wheel can always go back out to Fit and past it. */
+const zoomFloor = () => { const f = fitFrame(); return f ? Math.min(0.05, f.scale / 10) : 0.05; };
 
 function zoomAt(factor, px, py, gesture = false) {
-  const next = Math.min(1000, Math.max(0.05, view.scale * factor));
+  const next = Math.min(1000, Math.max(zoomFloor(), view.scale * factor));
   const mx = view.ox + px / view.scale, my = view.oy + py / view.scale;
   view.scale = next;
   view.ox = mx - px / next; view.oy = my - py / next;
@@ -13906,7 +13914,7 @@ function zoomToBox(b, pad) {
   const { w, h: ch } = canvasSize(), R = state.rulers ? RULER : 0, bw = b[2] - b[0] + 2 * pad, bh = b[3] - b[1] + 2 * pad;
   if (w - R <= 0 || ch - R <= 0) return;                            // a view no bigger than its rulers: no negative scale (253c2)
   markView();
-  view.scale = Math.min(40, (w - R) / bw, (ch - R) / bh);
+  view.scale = Math.max(zoomFloor(), Math.min(40, (w - R) / bw, (ch - R) / bh));
   view.ox = (b[0] + b[2]) / 2 - (w + R) / 2 / view.scale;
   view.oy = state.sheetH - (b[1] + b[3]) / 2 - (ch + R) / 2 / view.scale;
   view.fitted = false;

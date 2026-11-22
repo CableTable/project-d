@@ -585,6 +585,7 @@
   "fix72: Esc during a Zoom Window drag cancels only the zoom and keeps the pending polyline": 3.46,
   "TODO 74: Zoom Window drags a box (Esc cancels); Zoom Selection fits the selection and is greyed with none; Zoom Previous goes back twice": 3.82,
   "TODO 74: Zoom Selection on a layout fits the selected parts; Zoom Previous keeps at most 10": 7.56,
+  "TODO 357: a huge drawing zooms out below 1% and back in; the label never shows 0% (Drawings, Layout, Compare)": 5,
   "TODO 70: line first point": 10.14,
   "TODO 70: line next point": 10.15,
   "TODO 70: polyline first point": 10.55,

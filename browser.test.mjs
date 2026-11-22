@@ -32625,6 +32625,64 @@ try {
     await closeTabs(/./);
   });
 
+  await step('TODO 357: a huge drawing zooms out below 1% and back in; the label never shows 0% (Drawings, Layout, Compare)', async () => {
+    const hugeDoc = () => { const doc = newDoc(4); addEntities(doc, dxfLine(0, 0, 1e8, 1e8)); return writeDxf(doc); };
+    const wheel = async (dy) => { const b = await t('canvas').boundingBox(); await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2); await page.mouse.wheel(0, dy); await frames(); };
+    const width = async () => (await viewBox())[2];
+    const label = () => t('zoom').textContent();
+    const below1 = (text, what) => assert.match(text, /^0\.\d*[1-9]\d*%$/, `${what}: ${text}`);       // under 1%, never "0%"
+    const exercise = async (tab, typed) => {
+      await page.locator('.zoombox').getByRole('button', { name: 'Fit', exact: true }).click(); await frames();
+      const w0 = await width(); below1(await label(), `${tab} Fit`);
+      for (let i = 0; i < 3; i++) await wheel(400);
+      const w1 = await width(); assert.ok(w1 > w0 * 3, `${tab}: three wheel steps out zoom out (not stuck): ${w0} -> ${w1}`);
+      for (let i = 0; i < 3; i++) await wheel(-400);
+      const w2 = await width(); assert.ok(w2 < w1 / 3, `${tab}: three wheel steps in zoom in: ${w1} -> ${w2}`);
+      await t('zoom').click(); await t('zoom-input').fill(typed); await t('zoom-input').press('Enter');
+      assert.equal(await label(), typed, `${tab}: the typed level is reached`);
+      return typed;
+    };
+    const selectionZoom = async (tab, typed) => {
+      await typeCmd('zs');
+      const wz = await width(); below1(await label(), `${tab} Zoom Selection`);
+      await wheel(400); assert.ok(await width() > wz * 1.5, `${tab}: the wheel zooms out after Zoom Selection`);
+      await wheel(-400); await wheel(-400); assert.ok(await width() < wz, `${tab}: and in`);
+      await t('zoom').click(); await t('zoom-input').fill(typed); await t('zoom-input').press('Enter');
+      await typeCmd('zs'); await typeCmd('zp');
+      assert.equal(await label(), typed, `${tab}: Zoom Previous goes back to the level typed, below 1%`);
+      const wp = await width(); await wheel(400); const wo = await width(); assert.ok(wo > wp * 1.5, `${tab}: the wheel zooms out after Zoom Previous`);
+      await wheel(-400); await wheel(-400); assert.ok(await width() < wo / 1.5, `${tab}: and in`);
+    };
+    await openGrips(hugeDoc(), 'huge357.dxf');
+    await exercise('Drawings', '0.001%');
+    await typeCmd('all');
+    await selectionZoom('Drawings', '0.001%');
+    await page.screenshot({ path: `${shotDir}/todo357-drawings.png` });
+    // a layout: a sheet of the largest size
+    await openGrips();
+    await t('add-to-layout').click();
+    await page.waitForFunction(() => /layout/.test(document.querySelector('.tabs .dtab.on .tname')?.textContent));
+    await t('apply').click();
+    await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Escape');
+    for (const key of ['sheetW', 'sheetH']) { const c = panelControl(page, page.locator(`[data-key=${key}]`)); await layoutTab(); await c.fill('100000'); await c.blur(); }    await exercise('Layout', '0.05%');
+    await page.locator('.zoombox').getByRole('button', { name: 'Fit', exact: true }).click(); await frames();       // the part sits at the bottom of the 100000 mm sheet
+    const wf = await width();
+    await typeCmd('all'); await typeCmd('zs'); assert.ok(await width() < wf, 'Zoom Selection on the placed parts zooms in from Fit');
+    await typeCmd('zp');
+    await wheel(400); await wheel(-400);
+    await page.screenshot({ path: `${shotDir}/todo357-layout.png` });
+    await closeTabs(/./);
+    // Compare
+    for (const name of ['huge357-a.dxf', 'huge357-b.dxf']) { await t('picker').setInputFiles({ name, mimeType: 'text/plain', buffer: Buffer.from(hugeDoc()) }); await waitTab(page, name); }
+    await page.locator('.tabs .dtab', { hasText: 'huge357-a' }).click();
+    await menuItem('File', 'Compare drawings…'); await waitTab(page, 'Compare');
+    await exercise('Compare', '0.001%');
+    await t('cmp-name-1').click(); await page.locator('[data-tool=select]').click(); await typeCmd('all');
+    await selectionZoom('Compare', '0.001%');
+    await page.screenshot({ path: `${shotDir}/todo357-compare.png` });
+    await closeTabs(/./);
+  });
+
   // Each point prompt runs all three existing coordinate forms through the command bar.
   const forms70 = ['relative', 'polar', 'relative polar'];
   const point70 = (p, last, form) => {
