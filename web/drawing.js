@@ -282,7 +282,7 @@ export function dashArray(pattern) {
 }
 
 /** A dash list with each zero-length dot made lw long (a butt cap paints a zero-length dash as nothing, TODO 334b), the gap after it shortened by the same, so the period stays. */
-export const dotDash = (d, lw) => d.some((x, i) => !(i % 2) && !x) ? d.map((x, i) => i % 2 ? (d[i - 1] ? x : Math.max(x - lw, 0)) : x || lw) : d;
+export const dotDash = (d, lw, cap = 'butt') => cap === 'butt' && d.some((x, i) => !(i % 2) && !x) ? d.map((x, i) => i % 2 ? (d[i - 1] ? x : Math.max(x - lw, 0)) : x || lw) : d;
 
 /** Screen-pixel dashes for a line type named but not defined in the file. */
 function namedDash(name) {

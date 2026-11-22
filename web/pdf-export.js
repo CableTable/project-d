@@ -492,7 +492,7 @@ function drawPage(src, o, plan, p, artBox) {
       const w = strokeWidth(it, F, mscale(fl.mats[it.m])) * ws;
       let dash = it.dash && it.dash.reduce((a, x) => a + x, 0) * sc >= 0.3 ? it.dash.map((x) => x * sc) : it.dpx ? it.dpx.map((x) => x * 0.3) : null;
       if (dash && dash.reduce((a, x) => a + x, 0) < 0.3) dash = null;
-      if (dash) dash = dotDash(dash, w);
+      if (dash) dash = dotDash(dash, w, it.cap);
       page.strokeColor(inkOf(it.css)); page.lineWidth(w); page.dash(dash || []); page.lineEnds(it.cap, it.join);
       trace(page, it.ops, M); page.stroke();
     } else if (it.k === 'p') {

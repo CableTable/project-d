@@ -13562,12 +13562,50 @@ try {
         await page.mouse.move(b.x + r.x * b.width / r.w, b.y + r.y * b.height / r.h);
         await page.mouse.wheel(0, -300); await settle();
         r = await green();
-        assert.ok(r.n > 0, `${label}: still painted after zoom step ${wheels + 1} (${await t('zoom').textContent()})`);
+        assert.ok(r.n > 50, `${label}: still painted after zoom step ${wheels + 1} (${await t('zoom').textContent()})`);
         same = r.n === last ? same + 1 : 0; last = r.n;
       }
       const pct = Number((await t('zoom').textContent()).replace(/\D/g, ''));
       assert.ok(pct >= 10000, `${label}: zoomed in to ${pct}%, a view of about a millimetre inside a 120 mm contour: no corner on screen`);
       if (style === 2 && rot === 0) await shotBoth('todo334b-zoomed');
+    }
+    await closeTabs(/./);
+  });
+  await step('TODO 334c: a 2-step, round-cornered Solid outer contour stays painted while zooming in until no vertex is on screen (his own case)', async () => {
+    const drawing = t('drawing');
+    const settle = async () => { await page.waitForFunction(() => { const c = document.querySelector('[data-testid=drawing]'); return c.dataset.snap === '' && c.dataset.chunk === ''; }, null, { timeout: 20000 }); await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))); };
+    const green = () => drawing.evaluate((c) => {
+      const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data, at = [];
+      for (let i = 0; i < d.length; i += 4) if (d[i + 3] > 128 && d[i + 1] > 100 && d[i] < 80 && d[i + 2] < 80) at.push(i / 4);
+      const mid = at[at.length >> 1];
+      return { n: at.length, x: mid % c.width, y: Math.floor(mid / c.width), w: c.width, h: c.height };
+    });
+    await closeTabs(/./);
+    const raw = newDoc(4), lay = newLayout('334c'), name = '334c.dxf';
+    addEntities(raw, ...[[0, 0, 100, 0], [100, 0, 100, 60], [100, 60, 0, 60], [0, 60, 0, 0]].map((q) => dxfLine(...q, { aci: 7 })));
+    lay.parts.p = makePart('p', 'Plate', raw, 1);
+    lay.placed = [{ partId: 'p', x: 300, y: 300, rot: 0, mirrorX: false, mirrorY: false }];
+    await t('picker').setInputFiles({ name, mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(layoutRaw(lay)), 'latin1') });
+    await waitTab(page, name);
+    await page.keyboard.press('Escape'); await page.keyboard.press('Control+a');
+    await page.locator('[data-ribbon-tab=Home]').click();
+    await typeCmd('contour');
+    await t('contour-steps').fill('2'); await t('contour-steps').press('Enter');
+    await t('contour-outside').click(); await t('contour-rounded').click();
+    await t('contour-dist').fill('10'); await t('contour-dist').press('Enter');
+    await page.locator('.ctstyle').nth(0).click();
+    await t('contour-apply').click(); await t('contour-close').click();
+    await page.locator('[data-tool=select]').click(); await page.keyboard.press('Escape');
+    await page.getByTestId('canvas').getByRole('button', { name: 'Fit', exact: true }).click(); await settle();
+    const b = await drawing.boundingBox();
+    let r = await green(), wheels = 0;
+    assert.ok(r.n > 50, `painted when the whole layout is in view (${r.n} px)`);
+    for (; wheels < 40; wheels++) {
+      await page.mouse.move(b.x + r.x * b.width / r.w, b.y + r.y * b.height / r.h);
+      await page.mouse.wheel(0, -300); await settle();
+      r = await green();
+      assert.ok(r.n > 50, `Solid 2-step round contour: still painted after zoom step ${wheels + 1} (${await t('zoom').textContent()})`);
+      if (Number((await t('zoom').textContent()).replace(/\D/g, '')) >= 10000) break;
     }
     await closeTabs(/./);
   });

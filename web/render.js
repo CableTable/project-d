@@ -191,7 +191,7 @@ function* paintItems(c, fl, off, T, k, vr, dpr, col, sheetBg, hide, factor, wire
         run = 1;
         flush();
         if (due?.()) yield;       // 322c: the strokes so far are on the canvas, the next run starts from its own style
-        c.strokeStyle = css; c.lineWidth = lw; c.setLineDash(dash === it.dpx && dash ? dash.map((x) => x * dpr / kk) : dash ? dotDash(dash, lw) : []);
+        c.strokeStyle = css; c.lineWidth = lw; c.setLineDash(dash === it.dpx && dash ? dash.map((x) => x * dpr / kk) : dash ? dotDash(dash, lw, nextCap) : []);
         c.lineCap = cap = nextCap; c.lineJoin = join = nextJoin; c.miterLimit = 10;
         c.beginPath(); open = true; pc = css; pw = lw; pd = dash;
       }
