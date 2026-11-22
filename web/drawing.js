@@ -641,7 +641,7 @@ export function flatten(doc, hidden = new Set()) {
   for (const v of vports) boxes.paper = unionBox(boxes.paper, [v.cx - v.w / 2, v.cy - v.h / 2, v.cx + v.w / 2, v.cy + v.h / 2]);
   for (const it of items) layers[it.L[0]].n++;
   for (const l of layers) delete l.lt;
-  return { units, layers, items, insertions, mats, vports, boxes, left, truncated, endsEarly: !!doc.endsEarly };
+  return { units, layers, items, insertions, mats, vports, boxes, left, truncated, endsEarly: !!doc.endsEarly, visits };
 }
 
 const PLAIN_EDIT_TYPES = new Set(['LINE', 'POINT', 'CIRCLE', 'ARC', 'ELLIPSE', 'LWPOLYLINE', 'POLYLINE', 'SPLINE',
@@ -670,6 +670,7 @@ function newBlocks(before, after) {
 function joinDrawn(fl, sub, entityOf) {
   const layers = fl.layers.map((l) => ({ ...l, n: 0 })), layerAt = new Map(layers.map((l, i) => [l.name, i]));
   const lmap = sub.layers.map((l) => layerAt.get(l.name) ?? (layers.push({ ...l, n: 0 }), layerAt.set(l.name, layers.length - 1), layers.length - 1));
+  // shortcut: a moved INSERT's old matrices stay unused in the array (the old drawing, Undo, still points at them); a full draw (open, a block edit) drops them, upgrade if a long run of moves shows memory
   const mats = sub.mats.length > 1 ? fl.mats.concat(sub.mats.slice(1)) : fl.mats, mo = fl.mats.length - 1;      // matrix 0 is the identity in both
   const made = sub.items.map((it) => ({ ...it, e: entityOf(it.e), m: it.m ? it.m + mo : 0, L: it.L.map((l) => lmap[l]) }));
   return { layers, mats, made };
@@ -697,12 +698,12 @@ function appendEntities(before, after, fl, hidden) {
   }
   if (holes && old.some((e) => e.fill)) return null;       // a new closed outline may be a hole of an old filled one
   const sub = flatten({ ...after, entities: tail }, hidden);
-  if (sub.truncated || fl.items.length + sub.items.length >= MAX_ITEMS || fl.mats.length + sub.mats.length > MAX_MATS) return null;
+  if (sub.truncated || fl.items.length + sub.items.length >= MAX_ITEMS || fl.mats.length + sub.mats.length > MAX_MATS || fl.visits + sub.visits > MAX_VISITS) return null;       // past a limit only the full draw says so (its error, its truncation)
   const { layers, mats, made } = joinDrawn(fl, sub, (e) => old.length + e), at = fl.items.length;
   const items = fl.items.concat(made), left = { ...fl.left };
   for (const [type, n] of Object.entries(sub.left)) left[type] = (left[type] || 0) + n;
   const insertions = fl.insertions.concat(sub.insertions.map((v) => ({ ...v, start: v.start + at, end: v.end + at })));
-  return { ...fl, items, layers, mats, left, insertions, boxes: boxesOf(fl, layers, items) };
+  return { ...fl, items, layers, mats, left, insertions, boxes: boxesOf(fl, layers, items), visits: fl.visits + sub.visits };
 }
 
 /**
@@ -795,7 +796,7 @@ function patchEntities(before, after, fl, hidden) {
   if (offsets) offsets[pos] = items.length;
   let insertions = offsets ? fl.insertions.map((v) => ({ ...v, start: offsets[v.start], end: offsets[v.end] })) : fl.insertions;
   if (moves.size && !(insertions = movedInsertions(fl, sub, edits, moves))) return null;
-  return { ...fl, items, layers, mats: joined?.mats || fl.mats, boxes: boxesOf(fl, layers, items), insertions };
+  return { ...fl, items, layers, mats: joined?.mats || fl.mats, boxes: boxesOf(fl, layers, items), insertions, visits: fl.visits - removed };       // a moved INSERT walks the same block as before: the same visits
 }
 
 /** A filled arrowhead at `tip`, pointing away from `from`. */
@@ -1182,13 +1183,14 @@ const gridSize = (pieces, snaps, items) => Math.min(512, Math.max(1, Math.ceil(M
  * TODO 322d: the earlier index's grid (prev.ix) with only what the edit changed taken out and put in, instead of a grid built from scratch.
  * The kept pieces and snaps moved to new numbers (`keep`): the cells are renumbered in place (the earlier index is spent), removed ones drop out,
  * new ones are added. The result is the fresh grid: null (the caller builds one, nothing touched) when more than a tenth of the items changed,
- * the kept ones changed order, the insertion snaps moved, or the grid size or the drawing's extent would differ from a fresh build's.
+ * the kept ones changed order, or the grid size or the drawing's extent would differ from a fresh build's.
  */
 function patchGrid(prev, keep, fl, paper, ix) {
   const o = prev.ix, { pieces, snaps, head } = ix;
-  if (!o.G || o.head !== head || gridSize(pieces, snaps, fl.items) !== o.G) return null;
-  for (let k = 0; k < head; k++) if (o.snaps[k].x !== snaps[k].x || o.snaps[k].y !== snaps[k].y) return null;
-  for (let k = 0; k < head; k++) keep.s[k] = k;
+  if (!o.G || gridSize(pieces, snaps, fl.items) !== o.G) return null;
+  const now = new Map();                       // the insertion snaps at the front: those still the same (place and item) stay, a moved or new INSERT's is taken out / put in (TODO 356)
+  for (let k = 0; k < head; k++) now.set(`${snaps[k].x},${snaps[k].y},${snaps[k].it}`, k);
+  for (let k = 0; k < o.head; k++) keep.s[k] = now.get(`${o.snaps[k].x},${o.snaps[k].y},${o.snaps[k].it}`) ?? -1;
   for (const m of [keep.p, keep.s]) for (let k = 0, last = -1; k < m.length; k++) if (m[k] >= 0) { if (m[k] <= last) return null; last = m[k]; }
   const gone = prev.fl.items.filter((it, i) => !keep.old[i] && !!it.ps === !!paper), added = fl.items.filter((it, i) => !keep.used[i] && !!it.ps === !!paper);
   if ((gone.length + added.length) * 10 > fl.items.length) return null;
@@ -1198,10 +1200,10 @@ function patchGrid(prev, keep, fl, paper, ix) {
   const inside = (a, b, c, d) => a >= o.x0 && b >= o.y0 && c <= o.x1 && d <= o.y1, onEdge = (a, b, c, d) => a <= o.x0 || b <= o.y0 || c >= o.x1 || d >= o.y1;
   if (!added.every((it) => inside(...it.b))) return null;
   for (let n = 0; n < pieces.length; n++) if (!hadP[n] && !inside(...pbox(pieces[n]))) return null;
-  for (let n = head; n < snaps.length; n++) if (!hadS[n] && !inside(snaps[n].x, snaps[n].y, snaps[n].x, snaps[n].y)) return null;
+  for (let n = 0; n < snaps.length; n++) if (!hadS[n] && !inside(snaps[n].x, snaps[n].y, snaps[n].x, snaps[n].y)) return null;
   let touched = gone.some((it) => onEdge(...it.b));
   for (let k = 0; !touched && k < keep.p.length; k++) if (keep.p[k] < 0 && onEdge(...pbox(o.pieces[k]))) touched = true;
-  for (let k = head; !touched && k < keep.s.length; k++) if (keep.s[k] < 0 && onEdge(o.snaps[k].x, o.snaps[k].y, o.snaps[k].x, o.snaps[k].y)) touched = true;
+  for (let k = 0; !touched && k < keep.s.length; k++) if (keep.s[k] < 0 && onEdge(o.snaps[k].x, o.snaps[k].y, o.snaps[k].x, o.snaps[k].y)) touched = true;
   if (touched && extent(pieces, snaps, fl.items, paper).some((v, i) => v !== [o.x0, o.y0, o.x1, o.y1][i])) return null;
   const remap = (cells, m) => {
     for (const [key, list] of cells) {

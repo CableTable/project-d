@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { flatten, flattenEdit, pickAt, pickIndex, readDxf } from './web/drawing.js';
+import { flatten, flattenEdit, MAX_VISITS, pickAt, pickIndex, readDxf } from './web/drawing.js';
 import { addBlock, addEntities, addLayer, circle, insert, line, newDoc, writeDxf } from './web/dxf-write.js';
 import { addDimension, makeDimension, moveEntities, removeEntities } from './web/edit.js';
+import { bigDoc } from './tools/gen-big-dxf.mjs';
 
 function drawing() {
   const raw = newDoc(4);
@@ -132,6 +133,9 @@ test('356 fallbacks: a new block an old INSERT named, a changed block, an added 
   assert.deepEqual(seen(drawn), seen(flatten(lateBlock)));
   assert.ok(drawn.items.every((it) => !was.items.includes(it)));
   fallsBack(raw, { ...raw, entities: [...raw.entities, { ...raw.entities[0], fill: 'aci:1' }] });
+  const full = flatten(raw), next = { ...raw, ...dimension(raw) }, near = flattenEdit(raw, next, { ...full, visits: MAX_VISITS - 1 }, new Set());       // the visit budget is the whole drawing's: only a full draw can say it ran out
+  assert.ok(near.items.every((it) => !full.items.includes(it)));
+  assert.ok(flattenEdit(raw, next, { ...full, visits: MAX_VISITS - 1000 }, new Set()).items[0] === full.items[0], 'with room left it patches');
 });
 
 test('356 the pick index after a patch hits what a fresh one does, at 3 points', () => {
@@ -145,5 +149,19 @@ test('356 the pick index after a patch hits what a fresh one does, at 3 points',
       assert.deepEqual(b.snap, a.snap, `snap at ${x}, ${y}`);
     }
     assert.ok(pickAt(fresh, ...points[0], 0.5).ent, 'the first point is on a line');
+  }
+});
+
+test('356 on a bigger drawing the pick grid is patched (a new insertion snap, a moved one) and equals a fresh grid', () => {
+  const raw = readDxf(writeDxf(bigDoc(6000))), fl = flatten(raw);
+  const at = raw.entities.findIndex((e, i) => e.type === 'INSERT' && i > 3000), spent = () => ({ ix: pickIndex(fl, false), fl });
+  for (const next of [{ ...raw, ...addDimension(raw, makeDimension([100, 100], [180, 100], 1, raw.blocks)) }, { ...raw, ...moveEntities(raw, new Set([at]), 5, -2) }]) {
+    const drawn = flattenEdit(raw, next, fl, new Set());
+    assert.equal(drawn.items[0], fl.items[0], 'patched');
+    const prev = spent(), patched = pickIndex(drawn, false, undefined, undefined, prev), fresh = pickIndex(drawn, false);
+    assert.equal(prev.ix.sc, patched.sc, 'the old grid was patched in place, not built again');
+    assert.deepEqual(patched.sc, fresh.sc);
+    assert.deepEqual(patched.pc, fresh.pc);
+    assert.deepEqual([patched.G, patched.head, patched.snaps.length, patched.pieces.length], [fresh.G, fresh.head, fresh.snaps.length, fresh.pieces.length]);
   }
 });
