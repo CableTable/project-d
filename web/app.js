@@ -8697,10 +8697,11 @@ function drawApply(r) {
   state.msg = r.msg || null; renderCommand(); paintOverlay();
 }
 /** Enter / Esc / right-click: the tool ends what it has (a line or polyline keeps it) and the acquired points go. */
-function drawFinish() { state.draw.cursorInput = null; trackClear(); state.draw.cont = lastDrawn.get(state.drawDoc) || null; drawApply(DR.toolFinish(state.draw)); }
+function drawFinish() { state.draw.cursorInput = null; trackClear(); state.draw.cont = contFrom(state.drawDoc); drawApply(DR.toolFinish(state.draw)); }
 /** Esc in the Pen: the whole path goes, nothing is made. */
 function drawCancel() { state.penDrag = null; state.draw.cursorInput = null; trackClear(); drawApply(DR.toolCancel(state.draw)); }
-const lastDrawn = new WeakMap();                                    // tab document → the last shape drawn in it (mm): where the Arc's Continue starts (347c)
+const lastDrawn = new WeakMap();                                    // tab document → { shape (mm), live() }: the last shape drawn in it, where the Arc's Continue starts (347c)
+const contFrom = (d) => { const l = lastDrawn.get(d); return l && l.live() ? l.shape : null; };       // null once Undo or Erase took that shape out
 /** Shift+right-click while a tool asks for a point (TODO 72): Enter, Cancel, Close and Undo last point where they apply, then the snap types. → false when no such tool is on */
 function toolMenu(e) {
   const T = drawLive() ? state.draw : null;
@@ -8724,25 +8725,29 @@ function layObjectsAdd(d, label, ents, blocks = {}, dimNames) {
   pushLay(d, null, '', label);
   if (Object.keys(blocks).length && !LD.layersOf(lay)[Ed.DIM_LAYER]) { lay.layers = { ...LD.layersOf(lay) }; addLayer(lay, Ed.DIM_LAYER, { aci: 5, tc: 0x0f766e }); }       // (a dimension's layer, as Ed.addDimension makes it)
   const layers = LD.layersOf(lay);
+  let last = null;                                                    // the last placement made: where the Arc's Continue checks it is still there
   for (const e of ents) {
     const part = LD.objectPart('o' + uid(), LD.nextName(label, names), e, layers, {}, blocks);
     if (!part) continue;
-    names.add(part.name); lay.parts[part.id] = part; lay.placed.push(LD.objectPlacement(part));
+    names.add(part.name); lay.parts[part.id] = part; lay.placed.push(last = LD.objectPlacement(part));
   }
   touch(); update(false, dimNames);
+  return last;
 }
 function layDrawCommit(d, kind, shapes, attrs) {
-  layObjectsAdd(d, DR.LABELS[kind], shapes.map((sh) => DR.toEntity(sh, attrs, 1)));
+  const made = layObjectsAdd(d, DR.LABELS[kind], shapes.map((sh) => DR.toEntity(sh, attrs, 1)));
   note(`${DR.LABELS[kind]} made on layer ${attrs.layer}` + (shapes.length > 1 ? ` (${shapes.length} lines)` : '') + '. Ctrl+Z takes it back');
+  return made && (() => d.lay.placed.includes(made));
 }
 function drawCommit(d, kind, shapes) {
-  lastDrawn.set(d, shapes[shapes.length - 1]);
-  const layer = curLayerName(d);
+  const layer = curLayerName(d), shape = shapes[shapes.length - 1];
   const attrs = currentColour === 'bylayer' ? { layer } : PR.withColour({ layer }, currentColour);
-  if (d.lay) { view.fitted = false; layDrawCommit(d, kind, shapes, attrs); return; }
+  if (d.lay) { view.fitted = false; const live = layDrawCommit(d, kind, shapes, attrs); if (live) lastDrawn.set(d, { shape, live }); return; }
   const ents = shapes.map((sh) => DR.toEntity(sh, attrs, d.factor));
   view.fitted = false;                                              // the view stays where it is while he draws
   if (!commit(d, { entities: [...d.raw.entities, ...ents], blocks: d.raw.blocks, layers: layersWith(d.raw, layer) }, DR.LABELS[kind])) { const msg = state.msg; setTool('select'); note(msg); return; }       // too nested: commit showed why; the command ends
+  const ent = ents[ents.length - 1];
+  lastDrawn.set(d, { shape, live: () => d.raw.entities.includes(ent) });
   note(`${DR.LABELS[kind]} made on layer ${layer}` + (shapes.length > 1 ? ` (${shapes.length} lines)` : '') + '. Ctrl+Z takes it back');
 }
 /** The command line while a drawing tool is on: typed points, lengths and words. Returns true when it took the text. */
@@ -8751,7 +8756,7 @@ function drawTyped(raw) {
   const T = state.draw, word = raw.trim().toLowerCase();
   T.cursorInput = null;
   if (word && !DR.toolBusy(T) && !DR.toolWords(T).has(word)) { const cmd = CB.resolve(word, 'draw', ownCommands); if (cmd && (TOOL_OF[cmd.name] || cmd.name) !== T.kind) { runCommand(cmd); return true; } }       // a command typed between two shapes
-  state.msg = null; T.cont = lastDrawn.get(state.drawDoc) || null;
+  state.msg = null; T.cont = contFrom(state.drawDoc);
   drawApply(DR.toolType(T, raw, drawingUnit()));
   return true;
 }
@@ -13873,8 +13878,9 @@ function renderCompare() {
 
 /** Centres the view on a box (mm, y up) with room round it. */
 function zoomToBox(b, pad) {
-  markView();
   const { w, h: ch } = canvasSize(), R = state.rulers ? RULER : 0, bw = b[2] - b[0] + 2 * pad, bh = b[3] - b[1] + 2 * pad;
+  if (w - R <= 0 || ch - R <= 0) return;                            // a view no bigger than its rulers: no negative scale (253c2)
+  markView();
   view.scale = Math.min(40, (w - R) / bw, (ch - R) / bh);
   view.ox = (b[0] + b[2]) / 2 - (w + R) / 2 / view.scale;
   view.oy = state.sheetH - (b[1] + b[3]) / 2 - (ch + R) / 2 / view.scale;

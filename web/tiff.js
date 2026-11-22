@@ -17,7 +17,7 @@ async function inflateStrips(buf, ifd) {
 /** [x, y] dpi from the resolution tags 282 / 283 (unit 296: inch or cm); no tag (or no unit): 96 dpi. */
 export function tiffDpi(ifd) {
   const unit = ifd.t296?.[0] ?? 2;
-  const dpi = (res) => (res > 0 && unit !== 1 ? (unit === 3 ? res * 2.54 : res) : 96);
+  const dpi = (res) => (Number.isFinite(res) && res > 0 && unit !== 1 ? (unit === 3 ? res * 2.54 : res) : 96);
   return [dpi(ifd.t282?.[0]), dpi(ifd.t283?.[0])];
 }
 

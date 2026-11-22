@@ -775,6 +775,7 @@
   "TODO 347b: screenshots, light and dark (a Ctrl-turned Start, End, Angle preview)": 2.5,
   "TODO 347c: the Arc button shows and starts the last mode (pd-arcmode); the flyout opens from its triangle, a hold or a right-click, from the ribbon and from Draw > Arc >, with the 11 modes; typed ARC and Space always start 3-Point: Drawings, Layouts, Compare": 6,
   "TODO 347c: the remembered Arc mode survives a reload (pd-arcmode): the button shows it and starts it": 2.5,
+  "TODO 253c2: zoomToBox leaves the view (and its history) alone when the view is no bigger than its rulers": 2,
   "TODO 347c: Enter at the ARC first prompt continues from the last line or arc, tangent to it, asking only the end point (a Ctrl click makes no turn); a circle or nothing last says \"No line or arc to continue.\" and the prompt stays; the flyout's Continue: Drawings, Layouts, Compare": 5,
   "TODO 347c: screenshots, light and dark (the Arc flyout open on a Start, Centre, End button)": 2
 }

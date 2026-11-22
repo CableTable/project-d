@@ -621,6 +621,27 @@ try {
       console.log('TODO 268 proof: all three kinds, deep copies, names, views, fresh Undo, autosave, live sources, source close, and PDF exclusion pass');
     } finally { await ctx.close(); }
   });
+  await step('TODO 253c2: zoomToBox leaves the view (and its history) alone when the view is no bigger than its rulers', async () => {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    try {
+      const p = await ctx.newPage(), q = (id) => p.getByTestId(id), faults = [];
+      p.on('pageerror', (e) => faults.push(String(e)));
+      await p.route('**/app.js', (route) => route.fulfill({ contentType: 'text/javascript', body: readFileSync('web/app.js', 'utf8') + `
+        window.t253 = { zoom: (b, pad) => zoomToBox(b, pad), hide: () => { ui.canvas.style.display = 'none'; }, read: () => ({ ...view, hist: structuredClone(curDoc().viewHist || []), rulers: state.rulers }) };` }));
+      await p.goto(URL_ + '?autosave=86400000'); await q('count').waitFor({ state: 'attached' });
+      const raw = newDoc(4); addEntities(raw, [dxfLine(0, 0, 120, 80)]);
+      await q('picker').setInputFiles({ name: '253c2.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(raw)) });
+      await waitTab(p, '253c2.dxf');
+      await p.evaluate(() => window.t253.zoom([0, 0, 50, 50], 5));
+      const good = await p.evaluate(() => window.t253.read());
+      assert.ok(good.scale > 0 && good.hist.length > 0, 'a normal zoom to a box sets the scale and a history step');
+      await p.evaluate(() => window.t253.hide());                                                            // the canvas measures 0: no wider than the ruler
+      assert.equal((await p.evaluate(() => window.t253.read())).rulers, true, 'the rulers are on');
+      await p.evaluate(() => window.t253.zoom([0, 0, 1000, 1000], 0));
+      assert.deepEqual(await p.evaluate(() => window.t253.read()), good, 'the view and its history are unchanged: no negative scale');
+      assert.deepEqual(faults, []);
+    } finally { await ctx.close(); }
+  });
   await step('TODO 304: drawings and PDF sheet tabs keep their own pan, zoom and Zoom Previous', async () => {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     try {
@@ -37929,6 +37950,9 @@ try {
       await typeCmd('150,200'); assert.match(await said346(), /Arc made on layer/, kind);                    // heading south from (200,250): the same circle on, so a start at the wrong end would refuse or bend the wrong way
       await stop346();
       await key97c('Control+z');                                                                                 // one Undo takes back the last arc only
+      await typeCmd('arc'); await key97c('Enter');
+      assert.match(await said346(), /No line or arc to continue\./, kind + ': the arc Ctrl+Z took back is not continued'); await prompt346(start347, kind + ': the prompt stays');
+      await stop346();
       if (kind === 'Layouts') assert.equal(await nParts(), n0 + 8, kind + ': three lines, four arcs and a circle');
       else {
         const arcs = await arcsOf347(kind); assert.equal(arcs.length, 4, kind);
