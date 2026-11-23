@@ -625,7 +625,7 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
     8b. ✅ (built S56: King `3b756d2` (cherry-pick of `f1b0b2c`), rv-8b ship, Lows `runs56/lows.txt`; 8a fix round 3 `762a2f3` fixed the docker-tabs red) Delete an empty layer (grill Q3, Q4, Q13): a delete button per row, only for an empty layer that is not 0, Defpoints or current; disabled button says why; one undo; all 3 tabs.
 9. Title block with the revision table (grill `rook-hq/runs56/grill-9.md`).
     9a. ✅ (built S56: King `694010c` + fixes `e26937d` (King), `d6c2693` (Bishop); rv-9afix2 ship, Lows `runs56/lows.txt`; unit 1451/0) Title block on a Layouts sheet: insert button, ATTDEF fields, auto values, edit via the attribute dialog with Reset, DXF save / reopen keeps block + ATTRIB values; one undo; a second press selects.
-    9b. Revision rows (Q4) + Add revision (Q5) in the attribute dialog, one undo, DXF round trip.
+    9b. ✅ (built S56: Bishop `b9fa6dd` (cherry-pick `48b4e0a`); rv-9b2 ship, Lows `runs56/lows.txt`; unit 1451/0) Revision rows (Q4) + Add revision (Q5) in the attribute dialog, one undo, DXF round trip.
     9c. PDF one source (Q8): a sheet with the block prints the block and no strip; Drawings / Compare strip reads the same field names; all 3 tabs print.
 10. The 3D viewer ported from Project R (mock-up "3D viewer").
 
