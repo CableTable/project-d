@@ -4585,14 +4585,20 @@ function addedName(d, l) {
   clearInvalid(input);
   return input;
 }
-/** A file layer or an empty layer added by hand uses the same picker. */
+/** The colour swatch of a layer row: a file layer, an empty layer added by hand and a layout's object layer use the same picker (a layout through its own layer table). */
 function addedSwatch(d, l) {
   return h('button', { class: 'swatch pick', type: 'button', style: 'background:' + l.color,
     'aria-label': 'Layer colour', 'data-testid': 'layer-colour', title: 'Layer colour', onclick: async (e) => {
       e.stopPropagation();
-      const def = d.raw.layers[l.name] || { aci: 7, tc: null }, rgb = await pickColour(parseHex(layerCss(def)));
+      const def = (d.lay ? LD.layersOf(d.lay) : d.raw.layers)[l.name] || { aci: 7, tc: null }, rgb = await pickColour(parseHex(layerCss(def)));
       if (!rgb) return;
       const next = PR.withColour(def, rgbKey(rgb));
+      if (d.lay) {       // a layout: its layer table, and the objects on the layer drawn again
+        pushLay(d, null, '', 'Layer colour → ' + l.name);
+        changeLayoutLayer(d, l.name, { def: next });
+        usedColour(rgbKey(rgb));
+        return;
+      }
       const keep = new Set(d.sel);
       if (!commit(d, { ...snapshotOf(d), layers: { ...d.raw.layers, [l.name]: next } }, 'Layer colour → ' + l.name)) return;
       setSel(d, keep);
@@ -4635,10 +4641,11 @@ function layoutLayerRows(d, query) {
       d.lay.layers = { ...LD.layersOf(d.lay), [l.name]: { ...def, flags: (def.flags || 0) ^ 4 } }; d.dirty = true; update();
     });
     const row = h('div', { class: 'or layer' + (l.cur ? ' cur current' : '') + (hidden ? ' dim hidden-layer' : ''), role: 'treeitem', 'aria-level': '2', 'data-layer-name': l.name, style: 'padding-left:20px' },
-      h('span', { class: 'swatch osw', style: 'background:' + l.color }),
-      !l.count && d.addedLayers?.has(l.name) ? addedName(d, l) : h('span', { class: 'onm nm' }, l.name), l.cur ? h('span', { class: 'chp', 'data-testid': 'layer-current' }, 'current') : null, h('span', { class: 'ocnt lbl mono' }, l.count), vis, lock);
+      l.lay ? addedSwatch(d, l) : h('span', { class: 'swatch osw', style: 'background:' + l.color }),
+      !l.count && d.addedLayers?.has(l.name) ? addedName(d, l) : h('span', { class: 'onm nm', title: l.lay && !Ed.fixedLayer(l.name) ? 'Double-click to rename' : null }, l.name), l.cur ? h('span', { class: 'chp', 'data-testid': 'layer-current' }, 'current') : null, h('span', { class: 'ocnt lbl mono' }, l.count), vis, lock);
     row.addEventListener('click', (e) => {
-      e.stopPropagation(); if (!l.lay || e.target.closest('input')) return;
+      e.stopPropagation(); if (!l.lay || e.target.closest('input, .swatch')) return;
+      if (e.detail === 2 && e.target.closest('.nm')) { startLayerRename(l.name, null, e.target.closest('.nm')); return; }       // a double-click on the name (the first click made it current)
       d.curLayer = l.name; renderLayers(); renderCommand(); renderEdit(); note(`Current layer: ${l.name}. New shapes and text go on it`);
     });
     return row;
@@ -4805,7 +4812,7 @@ function renderObjects(reveal = false) {
     else vis.disabled = true;
     rows.push(h('div', { class: 'or layer' + (l.cur ? ' cur current' : '') + (l.hidden ? ' dim hidden-layer' : ''), 'data-layer': l.name, 'data-layer-name': l.name, 'data-file-layer': l.index >= 0 ? l.index : null, role: 'treeitem', 'aria-level': '1', 'aria-expanded': String(l.open) },
       h('span', { class: 'otw', 'data-act': 'expand' }, oIcon(l.open ? CHEV_DOWN : CHEV_RIGHT, 12)), source || !item ? addedSwatch(source || d, { ...l, color: colour }) : h('span', { class: 'swatch osw', style: 'background:' + colour }),
-      !item && meta?.added ? addedName(d, l) : h('span', { class: 'onm nm' }, l.name), l.cur ? h('span', { class: 'chp', 'data-testid': 'layer-current' }, h('span', { 'data-testid': 'obj-current' }, 'current')) : null,
+      !item && meta?.added ? addedName(d, l) : h('span', { class: 'onm nm', title: l.index >= 0 && !Ed.fixedLayer(l.name) && (!item || source) ? 'Double-click to rename' : null }, l.name), l.cur ? h('span', { class: 'chp', 'data-testid': 'layer-current' }, h('span', { 'data-testid': 'obj-current' }, 'current')) : null,
       meta?.chip ? h('span', { class: 'chp', 'data-testid': 'layer-new' }, meta.chip) : null, h('span', { class: 'ocnt lbl mono' }, l.count), vis, objBtn('lock', l.locked, l.locked ? 'Unlock' : 'Lock', l.locked ? ICONS.lock : ICONS.unlock, l.locked ? ' lk' : '')));
     for (const r of l.rows) {
       const blockOpen = r.block && om.openB.has(r.e);
@@ -4875,6 +4882,10 @@ function objClick(e) {
   if (act && act.dataset.act === 'more') { om.show.set(act.dataset.layer, (om.show.get(act.dataset.layer) || OB.CAP) + OB.CAP); renderObjects(); return; }
   if (row.dataset.layer && !row.dataset.e) {
     const name = row.dataset.layer, idx = d.fl.layers.findIndex((l) => l.name === name);
+    if (e.detail === 2 && !act && e.target.closest('.nm') && idx >= 0) {       // a double-click on the name: the first click made it current and flipped it open: put that back, then type the new name
+      flip(om.open, name); renderObjects(); startLayerRename(name, item);
+      return;
+    }
     if (act && act.dataset.act === 'vis') { if (item) cmpToggleLayer(tab, item.id, idx); else toggleLayerVis(d, idx); }
     else if (act && act.dataset.act === 'lock') toggleLayerLock(d, name);
     else {
@@ -4941,21 +4952,56 @@ function showAllHidden(d) {
   layersChanged(d); paintOverlay(); renderLayers(); applyHidden(); renderStatus();
   note('All layers and objects are shown');
 }
-async function renameLayerNow(d, name) {
-  if (name === '0') { note('Layer 0 cannot be renamed'); return; }
-  const to = await askName({ title: 'Rename layer', label: 'Name', value: name, ok: 'Rename', validate: (v) => Ed.layerNameProblem(v, allLayerNames(d), name) });
+/** Why `to` cannot be the new name of layer `name` of `d` (a drawing or a layout), or ''. A layout's table also keeps Sheet, Marks and Parts for itself. */
+const layerRenameProblem = (d, name, to) => Ed.layerNameProblem(to, d.lay ? [...Object.keys(LD.layersOf(d.lay)), ...LD.RESERVED_LAYERS] : allLayerNames(d), name);
+/** Layer `name` is renamed to `to` (asked for with a dialog when not given): the entities on it, the layer table, what is hidden, locked or current by its name, in ONE undo step. `d` is the drawing or layout tab itself (Compare: its source). */
+async function renameLayerNow(d, name, to) {
+  if (Ed.fixedLayer(name)) { note(`Layer ${name} cannot be renamed`); return; }
+  to ??= await askName({ title: 'Rename layer', label: 'Name', value: name, ok: 'Rename', validate: (v) => layerRenameProblem(d, name, v) });
   if (!to || to === name) return;
-  const wasOff = d.off.has(d.fl.layers.findIndex((l) => l.name === name)), hid = hidIdx(d), lk = d.locked;
-  if (!commit(d, OB.renameLayer(d.raw, name, to), `Rename layer ${name} → ${to}`)) return;
-  const i = d.fl.layers.findIndex((l) => l.name === to);
-  if (wasOff && i >= 0) d.off.add(i);                                      // restore() keeps hidden layers by name: this one has a new name
-  d.hid = new Set([...(hid || [])].map((k) => d.raw.entities[k])); d.hidC = null;       // the renamed entities are new objects, at the same numbers
-  d.fl = flatten(d.raw, d.hid);
-  if (lk && lk.delete(name)) lk.add(to);
-  if (d.curLayer === name) d.curLayer = to;
-  if (d.addedLayers && d.addedLayers.delete(name)) d.addedLayers.add(to);
-  layersChanged(d); paintOverlay(); renderLayers(); renderStatus();
+  if (d.lay) {
+    pushLay(d, null, '', `Rename layer ${name} → ${to}`);
+    changeLayoutLayer(d, name, { to });
+  } else {
+    if (!commit(d, { ...OB.renameLayer(d.raw, name, to), renamed: [name, to] }, `Rename layer ${name} → ${to}`)) return;
+    layersChanged(d); paintOverlay(); renderLayers(); renderStatus();
+  }
   note(`Layer ${name} is now ${to}. Ctrl+Z takes it back`);
+}
+/** A layout layer changes (renamed to `to` and / or new properties `def`); the caller has pushed the undo step. */
+function changeLayoutLayer(d, name, change) {
+  const ids = LD.changeLayer(d.lay, name, change, () => 'o' + uid()), to = change.to ?? name;
+  if (d.hiddenParts) for (const [old, id] of ids) if (d.hiddenParts.delete(old)) d.hiddenParts.add(id);
+  if (d.curLayer === name) d.curLayer = to;
+  if (d.addedLayers?.delete(name)) d.addedLayers.add(to);
+  touch(d); update();
+}
+/** A layer's name typed over in its row (double-click): Enter keeps it, Esc or a click away cancels; a refused name says why (note + red field) and the field stays. */
+function renameField(span, d, name) {
+  const input = h('input', { class: 'fld lname', type: 'text', value: name, 'aria-label': 'Layer name', 'data-testid': 'layer-rename', spellcheck: 'false', maxlength: 255 });
+  let done = false;
+  const end = () => { done = true; input.replaceWith(span); };
+  input.addEventListener('keydown', (e) => {
+    e.stopPropagation();
+    if (e.key === 'Escape') end();
+    else if (e.key === 'Enter') {
+      const v = input.value.trim(), why = layerRenameProblem(d, name, v);
+      if (why && v !== name) { flagInvalid(input, true); note(why); return; }
+      end(); if (v !== name) renameLayerNow(d, name, v);
+    }
+  });
+  input.addEventListener('input', () => flagInvalid(input, false));
+  input.addEventListener('blur', () => { if (!done) end(); });
+  span.replaceWith(input); input.focus(); input.select();
+}
+/** Starts renaming layer `name` in its row (Layers panel double-click); false (a note says why) for layer 0, Defpoints, or a Compare snapshot with no source drawing. */
+function startLayerRename(name, item, span) {
+  const d = item ? cmpEdit('rename a layer') : curDoc();
+  if (!d || !(d.lay || d.raw)) return false;
+  if (Ed.fixedLayer(name)) { note(`Layer ${name} cannot be renamed`); return false; }
+  span ||= [...ui.objTree.querySelectorAll('.or.layer[data-layer-name]')].find((r) => r.dataset.layerName === name)?.querySelector('.nm');       // a layout's rows pass theirs: its own Dimensions row has the same name
+  if (span) renameField(span, d, name);
+  return !!span;
 }
 function moveToLayerMenu(d, x, y) {
   popMenu(x, y, [...new Set(allLayerNames(d))].map((n) => [n, () => propSet('layer', n)]));
@@ -4983,7 +5029,7 @@ function objMenu(e) {
       ['Select', () => objSelect(d, l ? l.ents : [], false), '', !!(l && l.ents.length)],
       ['Zoom to', () => objZoom(d, l ? l.ents : []), '', !!(l && l.ents.length)],
       sep, [hidden ? 'Show' : 'Hide', () => item ? cmpToggleLayer(tab, item.id, idx) : toggleLayerVis(d, idx), '', idx >= 0], [locked ? 'Unlock' : 'Lock', () => toggleLayerLock(d, name)],
-      sep, ['Rename…', () => renameLayerNow(d, name), '', name !== '0'],
+      sep, ['Rename…', () => renameLayerNow(d, name), '', !Ed.fixedLayer(name)],
       sep, ['Show all hidden', () => showAllHidden(d), '', d.off.size > 0 || hid.size > 0]]);
     return;
   }
@@ -7497,7 +7543,7 @@ function commit(d, next, label, keepSel) {       // keepSel (a grip edit's objec
       cached = null;
     }
   }
-  pushHistory(d, { ...snapshotOf(d), fl: oldFl, ...keepSel && { sel: [...keepSel], grip: true } }, label); d.newLayer = null;
+  pushHistory(d, { ...snapshotOf(d), fl: oldFl, ...keepSel && { sel: [...keepSel], grip: true }, ...next.renamed && { renamed: [...next.renamed].reverse() } }, label); d.newLayer = null;       // renamed [from, to]: Undo renames it back
   restore(d, next, fl, names, index);
   return true;
 }
@@ -7561,7 +7607,12 @@ function restore(d, st, drawn, layerNames, index) {
   const was = d.cnt?.entities === d.raw.entities && d.cnt.counts === d.counts && d.cnt.n === d.entities ? d.cnt : null, prevIx = Ed.prevIndex(index, d.ed, d.fl, d.edPrev);       // before the entity list and fl change: the counts and the pick index are patched from these
   d.raw.groups = st.groups || followGroups(d.raw.groups, d.raw.entities, st.entities);       // Undo / Redo bring the groups back; an edit follows its entities
   d.raw.entities = st.entities; d.raw.blocks = st.blocks;
-  const names = layerNames || [...d.off].map((i) => d.fl.layers[i] && d.fl.layers[i].name);
+  const ren = st.renamed;       // [from, to]: a layer rename (or its Undo / Redo): everything that holds the name by name follows it
+  const names = (layerNames || [...d.off].map((i) => d.fl.layers[i] && d.fl.layers[i].name)).map((n) => (ren && n === ren[0] ? ren[1] : n));
+  if (ren && d.hid?.size) {       // the renamed entities are new objects, at the same numbers
+    const kept = new Set(); before.entities.forEach((e, i) => { if (d.hid.has(e)) kept.add(st.entities[i]); });
+    d.hid = kept; d.hidC = null; drawn = null;
+  }
   let fl;
   try { fl = drawn || flatten(d.raw, d.hid); } catch (e) {
     if (!(e instanceof DrawingError)) throw e;
@@ -7571,6 +7622,12 @@ function restore(d, st, drawn, layerNames, index) {
     note(e.message); return false;
   }
   restoreBg(d, st);
+  if (ren) {
+    if (d.locked?.delete(ren[0])) d.locked.add(ren[1]);
+    if (d.addedLayers?.delete(ren[0])) d.addedLayers.add(ren[1]);
+    if (d.curLayer === ren[0]) d.curLayer = ren[1];
+    for (const tab of state.docs) if (tab.cmp) tab.cmp.items = tab.cmp.items.map((x) => (cmpSourceTab(x) === d ? { ...x, fl: { ...x.fl, layers: x.fl.layers.map((l) => (l.name === ren[0] ? { ...l, name: ren[1] } : l)) } } : x));       // Compare's snapshots keep their hidden layers by name
+  }
   d.off = new Set(fl.layers.map((l, i) => (names.includes(l.name) ? i : -1)).filter((i) => i >= 0));      // layer numbers can shift: keep them by name
   if (index) { index.fl = fl; index.items = fl.items; }
   const c = patchedCounts(was, d.raw, fl);
@@ -7609,6 +7666,7 @@ function dropLinePoint(d) {
 function stepHist(d, dir, snapshot = d.lay ? laySnap(d.lay) : snapshotOf(d)) {
   const cur = { ...snapshot, ...(!d.lay && { sel: [...(d.sel || [])] }) }, st = (d.lay ? layHist(d) : d.hist)[dir](cur);
   cur.blSize = st?.blSize;
+  if (st?.renamed) cur.renamed = [...st.renamed].reverse();       // the other way (Redo of an Undo, Undo of a Redo) renames back
   if (d.lay && dir === 'undo' && layHist(d).labels().future[0]?.startsWith('Paste ')) cur.lsel = [];       // Redo of a paste leaves no selection, as on a drawing.
   if (st?.grip) { cur.grip = true; if (d.lay) cur.lsel = st.lsel; else cur.sel = st.sel; }
   else { delete cur.grip; if (!d.lay) delete cur.sel; }

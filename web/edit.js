@@ -1847,10 +1847,16 @@ export function newLayerName(names) {
   return 'Layer' + i;
 }
 
-/** '' when name can be a layer's name, else why not: empty, a character a DXF layer name can't hold, too long, or taken (other than by `own`). */
+/** Layers 0 and Defpoints keep their names (AutoCAD's rule, in any case). */
+export const fixedLayer = (name) => ['0', 'defpoints'].includes(String(name).trim().toLowerCase());
+
+/** '' when name can be a layer's name, else why not: empty, a character a DXF layer name can't hold, too long, or taken (other than by `own`).
+ *  `own` (a rename): 0 and Defpoints are neither renamed nor taken as the new name. */
 export function layerNameProblem(name, names, own = null) {
   const n = String(name).trim();
+  if (own != null && fixedLayer(own)) return `Layer ${own} cannot be renamed`;
   if (!n) return 'A layer needs a name';
+  if (own != null && fixedLayer(n)) return `The layer name "${n}" is kept for the file's own layer`;
   if (n.length > 255) return 'A layer name can be 255 characters at most';
   if (/[<>/\\":;?*|,=`]/.test(n)) return 'A layer name can\'t hold < > / \ " : ; ? * | , = or `';
   const low = n.toLowerCase();

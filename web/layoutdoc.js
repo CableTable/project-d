@@ -24,6 +24,7 @@ import { isDimPart, dimName, isSettled, bakeBlock, turnedTag, freeBlockName } fr
 import { cleanGuides } from './guides.js';
 import { TITLE_BLOCK } from './pdf-export.js';
 import { colourKey, withColour, widthKey, withWidth } from './props.js';
+import { renameLayer } from './objects.js';
 
 export const LAYOUT_BLOCK = 'PD_LAYOUT';
 const CHUNK = 200;
@@ -266,6 +267,22 @@ export function objectReplace(lay, view, ent, next, newId) {
   lay.parts[part.id] = part; lay.placed[i] = pl;
   bakedCache.set(part, new Map([[bakeKey(pl), kept]]));
   return true;
+}
+
+/** The layout's layer `name` is renamed to `to` and / or gets the properties `def` (Layers panel, TODO 8a): a new layer table (an undo snapshot keeps the old one), and each object that uses the layer
+ * is made again under a new id (its drawn colour follows; objectSig() sees it through the id), in the same slot. Returns Map(old id → new id) of the objects made again. */
+export function changeLayer(lay, name, { to = name, def } = {}, newId) {
+  const table = Object.fromEntries(Object.entries(layersOf(lay)).map(([k, v]) => [k === name ? to : k, k === name && def ? def : v]));
+  const ids = new Map(), parts = { ...lay.parts };
+  for (const [id, part] of Object.entries(lay.parts)) {
+    if (!part.obj || ![...part.raw.entities, ...Object.values(part.raw.blocks || {}).flatMap((b) => b.entities || [])].some((e) => e.layer === name)) continue;
+    const next = renameLayer({ entities: part.raw.entities, blocks: part.raw.blocks || {}, layers: {} }, name, to), made = objectPart(newId(), part.name, next.entities[0], table, part.raw.header, next.blocks);
+    if (!made) continue;
+    delete parts[id]; parts[made.id] = made; ids.set(id, made.id);
+  }
+  lay.layers = table; lay.parts = parts;
+  lay.placed = lay.placed.map((p) => (ids.has(p.partId) ? { ...p, partId: ids.get(p.partId) } : p));
+  return ids;
 }
 
 // ---------------------------------------------------------------- dimensions on a layout (TODO 156b2c1; layoutdim.js)

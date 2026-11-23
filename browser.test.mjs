@@ -18831,6 +18831,149 @@ try {
     } finally { await p.close(); }
   });
 
+  await step('TODO 8a: rename and colour any layer in Drawings, Layouts and Compare; 0 not renamable; taken name refused; one undo each; saved in the DXF', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
+    const p = await context.newPage(), q = (id) => panelControl(p, p.getByTestId(id));
+    p.on('pageerror', (e) => errors.push(String(e)));
+    p.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
+    const make = () => {
+      const raw = newDoc(4); addLayer(raw, 'Plate', { aci: 1 }); addLayer(raw, 'Notes', { aci: 3 });
+      addEntities(raw, dxfPoly([[10, 20], [70, 20], [70, 80], [10, 80]], { closed: true, layer: 'Plate' }), dxfLine(20, 30, 60, 30, { layer: 'Notes' }), dxfLine(0, 0, 5, 5, { layer: '0' }));
+      return raw;
+    };
+    const open = async (name, text = writeDxf(make())) => { await q('picker').setInputFiles({ name, mimeType: 'text/plain', buffer: Buffer.from(text) }); await waitTab(p, name); };
+    const tab = (name) => p.locator('.dtab').filter({ has: p.locator('.tname', { hasText: name.replace(/\.dxf$/, '') }) });
+    const row = (n) => p.locator(`.layer[data-layer-name="${n}"]`);
+    const fileNames = async () => (await p.locator('[data-file-layer] .nm').allTextContents()).sort();
+    const heard = (re) => p.waitForFunction((s) => new RegExp(s).test(document.querySelector('[data-testid=cmd-prompt]').textContent), re.source);
+    const rename = async (from, to) => { await row(from).locator('.nm').dblclick(); await q('layer-rename').fill(to); await q('layer-rename').press('Enter'); };
+    const refused = async (from, to, why) => {
+      await row(from).locator('.nm').dblclick(); await q('layer-rename').fill(to); await q('layer-rename').press('Enter');
+      assert.equal(await q('layer-rename').getAttribute('aria-invalid'), 'true', `${to}: the field is flagged and stays`);
+      await heard(why);
+      await q('layer-rename').press('Escape'); assert.equal(await q('layer-rename').count(), 0, 'Esc cancels');
+    };
+    const colour = async (n, hex) => { await row(n).locator('[data-testid=layer-colour]').click(); await q('colour-hex').fill(hex); await q('colour-ok').click(); };
+    const swatch = (n) => row(n).locator('[data-testid=layer-colour]').evaluate((el) => getComputedStyle(el).backgroundColor);
+    const saved = async () => { const [download] = await Promise.all([p.waitForEvent('download'), q('save').click()]); return readDxf(readFileSync(await download.path(), 'utf8')); };
+    const count = (raw, layer) => raw.entities.filter((e) => e.layer === layer).length;
+    const dock = (id) => q('ptab-' + id).click();
+    const shots = async (kind) => {
+      for (const theme of ['light', 'dark']) {
+        await p.locator('[data-menu=View]').click(); await p.getByRole('menuitemcheckbox', { name: new RegExp('Theme: ' + theme) }).click();
+        await p.screenshot({ path: `${shotDir}/todo8a-${kind}-${theme}.png` });
+      }
+      await p.locator('[data-menu=View]').click(); await p.getByRole('menuitemcheckbox', { name: /Theme: light/ }).click();
+    };
+    const point = (x, y) => p.evaluate(([x, y]) => {
+      const sheet = document.querySelector('rect.sheet'), b = sheet.getBoundingClientRect(), sc = b.width / +sheet.getAttribute('width');
+      return { x: b.x + x * sc, y: b.y + (+sheet.getAttribute('height') - y) * sc };
+    }, [x, y]);
+    const tint = async (x, y) => {       // the mean colour of the painted pixels around a drawing point
+      await p.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+      const a = await point(x - 2, y + 2), b = await point(x + 2, y - 2);
+      return q('drawing').evaluate((c, { a, b }) => {
+        const box = c.getBoundingClientRect(), scale = c.width / box.width;
+        const px = c.getContext('2d').getImageData(Math.round((a.x - box.x) * scale), Math.round((a.y - box.y) * scale), Math.max(1, Math.round((b.x - a.x) * scale)), Math.max(1, Math.round((b.y - a.y) * scale))).data;
+        const sum = [0, 0, 0]; let n = 0;
+        for (let i = 0; i < px.length; i += 4) if (px[i + 3] > 60) { n++; for (let k = 0; k < 3; k++) sum[k] += px[i + k]; }
+        return n ? sum.map((v) => v / n) : null;
+      }, { a, b });
+    };
+    try {
+      await p.goto(URL_); await p.locator('[data-tool=select]').waitFor();
+      // ---- Drawings
+      await open('one-8a.dxf'); await dock('objects');
+      assert.deepEqual(await fileNames(), ['0', 'Notes', 'Plate']);
+      assert.equal(await row('Notes').locator('.nm').getAttribute('title'), 'Double-click to rename');
+      await rename('Notes', 'Marks');
+      assert.deepEqual(await fileNames(), ['0', 'Marks', 'Plate'], 'the panel follows the rename');
+      await heard(/^Layer Notes is now Marks/);
+      let out = await saved();
+      assert.equal(count(out, 'Marks'), 1); assert.equal(count(out, 'Notes'), 0); assert.ok(out.layers.Marks && !out.layers.Notes, 'the LAYER table has the new name only');
+      await p.keyboard.press('Control+z');
+      assert.deepEqual(await fileNames(), ['0', 'Notes', 'Plate'], 'one Undo takes the whole rename back');
+      out = await saved(); assert.equal(count(out, 'Notes'), 1); assert.equal(count(out, 'Marks'), 0); assert.ok(out.layers.Notes);
+      await p.keyboard.press('Control+y');
+      assert.deepEqual(await fileNames(), ['0', 'Marks', 'Plate'], 'Redo renames again');
+      await p.keyboard.press('Control+z');
+      await row('Notes').locator('[data-act=vis]').click();       // hidden by name: the rename and its Undo keep it hidden
+      await rename('Notes', 'Marks'); assert.match(await row('Marks').getAttribute('class'), /hidden-layer/);
+      await p.keyboard.press('Control+z'); assert.match(await row('Notes').getAttribute('class'), /hidden-layer/);
+      await row('Notes').locator('[data-act=vis]').click();
+      // 0 and Defpoints keep their names; a taken, empty or illegal name is refused with a note and a red field
+      await row('0').locator('.nm').dblclick();
+      assert.equal(await q('layer-rename').count(), 0); await heard(/^Layer 0 cannot be renamed/);
+      await refused('Plate', 'NOTES', /already there/);
+      await refused('Plate', 'Defpoints', /kept for/);
+      await refused('Plate', '0', /kept for/);
+      await refused('Plate', 'a/b', /can't hold/);
+      assert.deepEqual(await fileNames(), ['0', 'Notes', 'Plate'], 'nothing changed');
+      // colour: the swatch of any layer; ByLayer objects repaint; one Undo
+      const before = await tint(40, 20), plateBefore = await swatch('Plate');
+      await colour('Plate', '#10c040');
+      assert.notEqual(await swatch('Plate'), plateBefore, 'the row swatch follows');
+      const after = await tint(40, 20);
+      assert.ok(before && after && after[1] > after[0] + 40 && after[1] > after[2] + 40 && !(before[1] > before[0] + 40), `the Plate outline repaints green: ${before} -> ${after}`);
+      assert.equal((await saved()).layers.Plate.tc & 0xffffff, 0x10c040, 'the colour is saved in the LAYER table');
+      await p.keyboard.press('Control+z');
+      assert.equal(await swatch('Plate'), plateBefore, 'one Undo takes the colour back');
+      await colour('0', '#2030c0'); assert.equal((await saved()).layers['0'].tc & 0xffffff, 0x2030c0, 'layer 0 takes a colour too'); await p.keyboard.press('Control+z');
+      await shots('drawings');
+      // ---- Layouts
+      const lay = newLayout('Lay8a'); lay.layers = newDoc(4).layers; addLayer(lay, 'A', { aci: 1 }); addLayer(lay, 'B', { aci: 5 });
+      lay.parts.a = objectPart('a', 'Line a', dxfLine(100, 100, 250, 100, { layer: 'A' }), lay.layers);
+      lay.parts.b = objectPart('b', 'Line b', dxfLine(100, 150, 250, 150, { layer: 'B' }), lay.layers);
+      lay.placed = [objectPlacement(lay.parts.a), objectPlacement(lay.parts.b)];
+      await open('lay8a.dxf', writeDxf(layoutRaw(lay))); await dock('objects');
+      await row('Parts').locator('.nm').dblclick(); assert.equal(await q('layer-rename').count(), 0, 'Parts is ours: no field');
+      await rename('A', 'Cut');
+      assert.equal(await row('A').count(), 0); assert.equal(await row('Cut').count(), 1);
+      out = await saved();
+      assert.equal(count(out, 'Cut'), 1); assert.equal(count(out, 'A'), 0); assert.ok(out.layers.Cut && !out.layers.A, 'the layout file has the new name');
+      await p.keyboard.press('Control+z');
+      assert.equal(await row('A').count(), 1); assert.equal(await row('Cut').count(), 0, 'one Undo');
+      await refused('A', 'b', /already there/); await refused('A', 'Marks', /already there/); await refused('A', 'Sheet', /already there/);
+      const redB = await swatch('B');
+      await colour('B', '#ff8010');
+      assert.notEqual(await swatch('B'), redB, 'the row swatch follows');
+      out = await saved(); assert.equal(out.layers.B.tc & 0xffffff, 0xff8010, 'the layout file has the colour');
+      await p.keyboard.press('Control+z'); assert.equal(await swatch('B'), redB, 'one Undo');
+      await shots('layouts');
+      // ---- Compare
+      await open('cmp1-8a.dxf');       // Compare lists the open drawing and the first other one: snapshot 2 is one-8a.dxf
+      await tab('cmp1-8a').click();
+      await p.locator('[data-menu=File]').click(); await p.getByRole('menuitem', { name: 'Compare drawings…', exact: true }).click();
+      await dock('drawing'); await p.getByTestId('cmp-name-2').filter({ hasText: 'one-8a.dxf' }).waitFor(); await q('cmp-name-2').click(); await dock('objects');
+      assert.deepEqual(await fileNames(), ['0', 'Notes', 'Plate'], 'the picked snapshot lists its layers');
+      await row('Notes').locator('[data-act=vis]').click();       // hidden in this snapshot only
+      await rename('Notes', 'Marks');
+      assert.deepEqual(await fileNames(), ['0', 'Marks', 'Plate']);
+      assert.match(await row('Marks').getAttribute('class'), /hidden-layer/, 'the snapshot keeps it hidden under the new name');
+      await colour('Plate', '#10c040');
+      await tab('one-8a').click();
+      out = await saved();
+      assert.ok(out.layers.Marks && !out.layers.Notes && count(out, 'Marks') === 1, 'the source drawing is renamed');
+      assert.equal(out.layers.Plate.tc & 0xffffff, 0x10c040, 'and recoloured');
+      await dock('objects'); assert.deepEqual(await fileNames(), ['0', 'Marks', 'Plate']);
+      await tab('Compare').click();
+      await p.keyboard.press('Control+z'); await p.keyboard.press('Control+z');
+      assert.deepEqual(await fileNames(), ['0', 'Notes', 'Plate'], 'two edits, two Undos');
+      assert.match(await row('Notes').getAttribute('class'), /hidden-layer/, 'still hidden by name after the Undo');
+      await refused('Plate', 'Notes', /already there/);
+      await row('0').locator('.nm').dblclick(); await heard(/^Layer 0 cannot be renamed/);
+      await shots('compare');
+      // a snapshot with no source drawing: a plain swatch, no rename
+      await dock('drawing');
+      p.once('dialog', (d) => d.accept()); await tab('one-8a').locator('.x').click(); await tab('one-8a').waitFor({ state: 'detached' });
+      await tab('Compare').click(); await dock('drawing'); await q('cmp-name-2').click(); await dock('objects');
+      assert.equal(await p.locator('[data-file-layer] [data-testid=layer-colour]').count(), 0, 'no source: a plain swatch');
+      await row('Notes').locator('.nm').dblclick();
+      assert.equal(await q('layer-rename').count(), 0); await heard(/^Open one-8a\.dxf to rename a layer$/);
+      assert.equal(await row('Notes').locator('.nm').getAttribute('title'), null);
+    } finally { await context.close(); }
+  });
+
   await step('TODO 187: Layout object Properties', async () => {
     await closeTabs(/./);
     const { lay } = block186(), partRaw = newDoc(4);

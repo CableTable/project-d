@@ -418,6 +418,28 @@ test('layout objects (TODO 156b3b): a grip edit keeps the object (slot, name, gr
   assert.deepEqual(lay.parts.n1.box, [0, 0, 100, 50], 'the first one is untouched'); assert.equal(lay.parts.n2.name, 'Line 2'); assert.equal(lay.placed[1].partId, 'n2');
 });
 
+test('TODO 8a: changeLayer renames / recolours a layout layer: new table, its objects made again (new ids, same slots, group and lock), the others untouched, saved under the new name', () => {
+  const lay = LD.newLayout('Objs'), layers = LD.layersOf(lay);
+  addLayer(lay, 'A', { aci: 1 }); addLayer(lay, 'B', { aci: 5 });
+  const mk = (id, ent, extra) => { const o = LD.objectPart(id, id, ent, layers); lay.parts[id] = o; lay.placed.push({ ...LD.objectPlacement(o), ...extra }); };
+  mk('a', line(0, 0, 100, 0, { layer: 'A' }), { g: 'g1', lock: true }); mk('b', line(0, 20, 100, 20, { layer: 'B' }));
+  lay.placed.push({ ...lay.placed[0], y: 50 });                           // a copy of a: the same part
+  const old = LD.layersOf(lay), before = lay.parts.b, redTc = 0xff8000;
+  const ids = LD.changeLayer(lay, 'A', { to: 'Renamed', def: { ...layers.A, aci: 7, tc: redTc } }, (() => { let k = 0; return () => 'n' + ++k; })());
+  assert.deepEqual([...ids], [['a', 'n1']]);
+  assert.notEqual(lay.layers, old, 'a new table, so an undo snapshot keeps the old one'); assert.ok(old.A && !old.Renamed);
+  assert.deepEqual(Object.keys(lay.layers), ['0', 'Renamed', 'B'], 'the order is kept');
+  assert.equal(lay.layers.Renamed.tc, redTc);
+  assert.deepEqual(lay.placed.map((p) => p.partId), ['n1', 'b', 'n1'], 'both places of the shared part follow');
+  assert.equal(lay.placed[0].g, 'g1'); assert.equal(lay.placed[0].lock, true);
+  assert.equal(lay.parts.b, before, 'an object on another layer is not made again'); assert.equal(lay.parts.a, undefined);
+  assert.equal(lay.parts.n1.raw.entities[0].layer, 'Renamed'); assert.equal(lay.parts.n1.name, 'a'); assert.deepEqual(lay.parts.n1.box, [0, 0, 100, 0]);
+  assert.equal(lay.parts.n1.fl.layers.find((l) => l.name === 'Renamed').css.toLowerCase(), '#ff8000', 'its drawn colour follows');
+  const back = readDxf(writeDxf(LD.layoutRaw(lay)));
+  assert.equal(back.layers.Renamed.tc & 0xffffff, redTc); assert.ok(!back.layers.A);
+  assert.equal(back.entities.filter((e) => e.layer === 'Renamed').length, 2); assert.equal(back.entities.filter((e) => e.layer === 'A').length, 0);
+});
+
 test('layout objects (TODO 156b fixes): group and lock survive save and reopen; a trim to one piece keeps group, lock and name; an old layout without them opens', () => {
   const lay = LD.newLayout('Objs'), layers = LD.layersOf(lay);
   const mk = (id, ent, extra) => { const o = LD.objectPart(id, id, ent, layers); lay.parts[id] = o; lay.placed.push({ ...LD.objectPlacement(o), ...extra }); };

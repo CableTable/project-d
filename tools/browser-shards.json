@@ -319,6 +319,7 @@
   "TODO 193d1 pick another shape after grip Undo in every tab": 11.59,
   "TODO 189 read-only look": 12.53,
   "TODO 188 layer list follows rename": 0.29,
+  "TODO 8a: rename and colour any layer in Drawings, Layouts and Compare; 0 not renamable; taken name refused; one undo each; saved in the DXF": 3,
   "TODO 187: Layout object Properties": 9.54,
   "Properties: View / Ctrl+1 toggle the whole docker; the Properties tab asks for a selection": 2.9,
   "Properties: a line shows its layer, colour, line type and length; the ends are read only; a new length is one labelled undo step": 3.18,

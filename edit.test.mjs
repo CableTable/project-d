@@ -1458,6 +1458,16 @@ test('layerNameProblem: empty, bad characters, too long, taken', () => {
   assert.equal(E.layerNameProblem('CUT', names, 'Cut'), '', 'its own name in another case is fine');
 });
 
+test('TODO 8a: layerNameProblem on a rename refuses 0 and Defpoints (any case) as source and target; a new layer may still be named 0', () => {
+  const names = ['0', 'Cut'];
+  assert.match(E.layerNameProblem('Out', names, '0'), /Layer 0 cannot be renamed/);
+  assert.match(E.layerNameProblem('Out', names, 'DEFPOINTS'), /cannot be renamed/);
+  assert.match(E.layerNameProblem('Defpoints', names, 'Cut'), /kept for/);
+  assert.match(E.layerNameProblem('0', names, 'Cut'), /kept for/);
+  assert.equal(E.layerNameProblem('0', [], null), '', 'no source: a trace layer name is not a rename');
+  assert.ok(E.fixedLayer(' defPoints ') && E.fixedLayer('0') && !E.fixedLayer('00') && !E.fixedLayer('Cut'));
+});
+
 test('findGaps skips annotation entity types but not lines on layers named Text, DIM and the like (TODO 99)', () => {
   const annotations = ['TEXT', 'MTEXT', 'ATTRIB', 'ATTDEF', 'DIMENSION', 'HATCH', 'LEADER', 'MLEADER', 'MULTILEADER'];
   const layers = ['Text-cut', 'DIM-OUTLINE', 'Dimensions', 'A-ANNO-DIMS', 'hatches', 'Arrows', 'Cut', 'outline'];
