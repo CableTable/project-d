@@ -9051,8 +9051,7 @@ try {
       await typeCmd('10,120'); await typeCmd('70,130'); await p.keyboard.press('Escape');  // above every page
       await p.locator('[data-tool=select]').click();
       await menu();
-      await prompt('Saved pages.pdf: 2 pages');
-      assert.equal(await q('cmd-prompt').textContent(), 'Saved pages.pdf: 2 pages. 1 objects outside the pages not saved');
+      await prompt('Saved pages.pdf: 2 pages. 1 objects outside the pages not saved');
       await p.screenshot({ path: shotDir + '/358b-pdf-pages-light.png' });
       await p.locator('[data-menu=View]').click(); await p.getByRole('menuitemcheckbox', { name: /Theme: dark/ }).click();
       await p.screenshot({ path: shotDir + '/358b-pdf-pages-dark.png' });
