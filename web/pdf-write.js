@@ -91,6 +91,8 @@ export class Page {
   fillColor(c) { const k = c.join(); if (this.st.fill !== k) { this.cmds.push(['rg', ...c]); this.st.fill = k; } }
   /** mm. */
   lineWidth(w) { if (this.st.width !== w) { this.cmds.push(['w', w]); this.st.width = w; } }
+  /** Every stroke at 0.05 mm (Export's Line weights off, TODO 109d1): only the width commands change, fills, text and pictures stay. */
+  hairlines() { this.cmds = this.cmds.map((c) => c[0] === 'w' ? ['w', 0.05] : c); return this; }
   lineEnds(cap = 'butt', join = 'miter') {
     const J = Math.max(0, ['butt', 'round', 'square'].indexOf(cap)), j = Math.max(0, ['miter', 'round', 'bevel'].indexOf(join));
     if (this.st.cap === J && this.st.join === j) return;

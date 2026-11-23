@@ -584,6 +584,7 @@ select.fld { font-family: var(--sans); }
 .qs-row { display: grid; grid-template-columns: 100px minmax(0, 1fr); gap: 12px; align-items: start; }
 .qs-row > span { padding-top: 6px; }
 .qs-row .fld { width: 100%; }
+.qs-row > input[type=checkbox] { justify-self: start; margin: 7px 0 0; }
 .qselect-dialog select[size] { height: 150px; padding: 4px; }
 .qselect-dialog fieldset { border: 1px solid var(--line); padding: 10px; display: grid; gap: 10px; }
 .qselect-dialog fieldset label, .qs-check { display: flex; gap: 8px; align-items: center; }

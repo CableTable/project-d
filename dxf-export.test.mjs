@@ -401,3 +401,36 @@ test('TODO 109b: unticked layers leave their entities out; an INSERT on a ticked
   assert.deepEqual(Object.keys(saved.layers).sort(), ['0', 'Gone', 'Inner', 'Keep'], 'Inner stays (used in a kept block); unused unticked Dead and Cut go; a ticked layer stays even when empty');
   assert.equal(back(doc, { skipLayers: [] }).entities.length, 6, 'nothing unticked: everything is written');
 });
+
+/** TODO 109d1: one normal line, one code-60 line, one line on an off layer, one on a frozen layer, a block holding a code-60 line. */
+const hiddenDoc = () => {
+  const doc = W.newDoc(4);
+  W.addLayer(doc, 'Off', { aci: 3, off: true }); W.addLayer(doc, 'Ice', { aci: 5, frozen: true });
+  W.addBlock(doc, 'blk', [W.line(0, 0, 1, 1, { hidden: true })]);
+  W.addEntities(doc, W.line(0, 0, 10, 0), W.line(0, 5, 10, 5, { hidden: true }), W.line(0, 9, 10, 9, { layer: 'Off' }), W.line(0, 12, 10, 12, { layer: 'Ice' }), W.insert('blk', 3, 3));
+  return doc;
+};
+
+test('TODO 109d1: flatten keeps code-60 objects and treats off / frozen layers as on only with { hidden: true }; the default is unchanged', () => {
+  const doc = hiddenDoc(), paths = (fl) => fl.items.filter((it) => it.k === 'p').length;
+  assert.equal(paths(flatten(doc)), 3, 'default: the code-60 line and the one in the block are not drawn');
+  assert.deepEqual(flatten(doc, new Set(), {}), flatten(doc), 'an empty options object changes nothing');
+  assert.deepEqual(flatten(doc).layers.map((l) => [l.name, l.on]), [['0', true], ['Off', false], ['Ice', false]]);
+  const all = flatten(doc, new Set(), { hidden: true });
+  assert.equal(paths(all), 5, 'with the option: both code-60 lines are drawn');
+  assert.deepEqual(all.layers.map((l) => [l.name, l.on]), [['0', true], ['Off', true], ['Ice', true]], 'off / frozen layers count as on');
+});
+
+test('TODO 109d1: DXF Hidden objects: default output is byte-identical, hidden: false drops the top-level code-60 objects from the copy only', () => {
+  const doc = hiddenDoc(), before = structuredClone(doc), plain = W.writeDxf(doc);
+  assert.equal(W.writeDxf(doc, { hidden: true }), plain, 'ticked = the default output, byte for byte');
+  assert.equal(W.writeDxf(doc, { hidden: true, units: 'mm', scale: 1 }), W.writeDxf(doc, { units: 'mm', scale: 1 }));
+  assert.equal(back(doc).entities.filter((e) => e.hidden).length, 1, 'the code-60 line is in the default copy');
+  const off = back(doc, { hidden: false });
+  assert.deepEqual(off.entities.map((e) => e.type + ':' + e.layer + ':' + e.hidden), ['LINE:0:false', 'LINE:Off:false', 'LINE:Ice:false', 'INSERT:0:false'], 'the code-60 line is gone, the off / frozen layers\' objects stay');
+  assert.equal(off.layers.Off.off, true); assert.equal(off.layers.Ice.frozen, true);
+  assert.equal(off.blocks.blk.entities.length, 1, 'a block keeps its own code-60 line (top level only)');
+  const scaled = back(doc, { hidden: false, scale: 2 });
+  assert.equal(scaled.entities.length, 4); near(get(scaled.entities[1], 11), 20);
+  assert.deepEqual(structuredClone(doc), before, 'the open drawing is a copy that is never touched');
+});

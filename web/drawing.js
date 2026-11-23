@@ -434,7 +434,8 @@ export function* primeSplines(doc) {
   }
 }
 
-export function flatten(doc, hidden = new Set()) {
+/** opts.hidden (TODO 109d1, Export's Hidden objects): keep code-60 (hidden) objects and count off / frozen layers as on. Only the export copy asks. */
+export function flatten(doc, hidden = new Set(), opts = {}) {
   const H = doc.header, units = UNITS[num(H.$INSUNITS)] || '';
   const ltscale = num(H.$LTSCALE, 1) || 1;
   const metric = num(H.$MEASUREMENT, -1) === 1 || ['mm', 'cm', 'm', 'dm', 'km'].includes(units);
@@ -444,7 +445,7 @@ export function flatten(doc, hidden = new Set()) {
   const layerOf = (name) => {
     if (layerAt.has(name)) return layerAt.get(name);
     const l = doc.layers[name] || { aci: 7, tc: null, lt: 'CONTINUOUS', lw: -3 };
-    layers.push({ name, css: l.tc != null ? rgbCss(l.tc) : ACI[l.aci] || '#ffffff', on: !(l.off || l.frozen), lt: (l.lt || '').toUpperCase(), lw: l.lw >= 0 ? l.lw : 25, n: 0 });
+    layers.push({ name, css: l.tc != null ? rgbCss(l.tc) : ACI[l.aci] || '#ffffff', on: opts.hidden || !(l.off || l.frozen), lt: (l.lt || '').toUpperCase(), lw: l.lw >= 0 ? l.lw : 25, n: 0 });
     layerAt.set(name, layers.length - 1);
     return layers.length - 1;
   };
@@ -469,7 +470,7 @@ export function flatten(doc, hidden = new Set()) {
       const e = ents[ei];
       if (truncated) return;
       if (++visits > MAX_VISITS) throw new DrawingError('Too many nested blocks to draw this file');
-      if (e.hidden) continue;
+      if (e.hidden && !opts.hidden) continue;
       const top = depth === 0 ? ei : ctx.ei;                  // the top-level entity this comes from (a block's contents: its INSERT)
       const own = e.layer === '0' && ctx.layer != null ? ctx.layer : layerOf(e.layer);
       const lay = layers[own];

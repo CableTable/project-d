@@ -4183,9 +4183,9 @@ function exportLayerRows(d) {
  * Export DXF's Text: Curves (TODO 109b): `raw` (what Save writes) with its top-level TEXT / MTEXT outlined by the Text to outlines maths, on a copy.
  * A font that cannot load leaves that text as text. → { raw, note } (the note for the save report)
  */
-async function exportCurves(raw, d, skip) {
+async function exportCurves(raw, d, skip, hidden = false) {
   const lay = !!d.lay, fontOf = (it) => it.font || fontForStyle(raw.styles, it.st), keyOf = (it) => fontOf(it) + (it.bold ? ':b' : '');
-  const items = flatten(raw).items.filter((it) => it.k === 't'), fonts = new Map(), lost = new Map();
+  const items = flatten(raw, undefined, { hidden }).items.filter((it) => it.k === 't'), fonts = new Map(), lost = new Map();
   const own = items.filter((it) => /^M?TEXT$/.test(raw.entities[it.e]?.type) && !skip.has(String(raw.entities[it.e].layer ?? '0').toLowerCase()));
   for (const item of own) for (const run of TO.outlineItem(item, raw.entities[item.e]).runs || [item]) {
     const it = { ...item, ...run }, key = keyOf(it);
@@ -4210,28 +4210,32 @@ async function exportCurves(raw, d, skip) {
  * (flatten → partSource for a drawing's extents, the sheet for a layout → planPdf 'sheet' → build) at Scale, then svg-write. Units: the file's unit → mm or in;
  * a drawing with no conversion is written as mm. → the SVG text.
  */
-async function exportSvg(raw, d, { units, scale, precision, skipLayers }) {
-  return pageToSvg(await exportPage(raw, d, { scale, skipLayers }), { unit: units === 'in' ? 'in' : 'mm', precision });
+async function exportSvg(raw, d, { units, scale, precision, skipLayers, lineWeights, hidden }) {
+  return pageToSvg(await exportPage(raw, d, { scale, skipLayers, lineWeights, hidden }), { unit: units === 'in' ? 'in' : 'mm', precision });
 }
 
-/** The Page (mm) both SVG and PNG replay: see exportSvg. */
-async function exportPage(raw, d, { scale, skipLayers }) {
+/**
+ * The Page (mm) both SVG and PNG replay: see exportSvg. lineWeights false: every stroke 0.05 mm (TODO 109d1). hidden true: code-60 objects are drawn too
+ * (flatten's `hidden` option); a layer that is off / frozen is still drawn only when its Layers tick is on.
+ */
+async function exportPage(raw, d, { scale, skipLayers, lineWeights = true, hidden = false }) {
   raw = withoutLayers(raw, skipLayers);
-  const fl = flatten(raw), mmPer = d.lay ? 1 : { 1: 25.4, 2: 304.8, 4: 1, 5: 10, 6: 1000 }[+d.raw.header?.$INSUNITS] || 1, factor = mmPer * scale;
+  const fl = flatten(raw, undefined, { hidden }), mmPer = d.lay ? 1 : { 1: 25.4, 2: 304.8, 4: 1, 5: 10, 6: 1000 }[+d.raw.header?.$INSUNITS] || 1, factor = mmPer * scale;
   const own = { name: d.name, fl, factor, off: new Set(), hide: [] };
   let src = d.lay ? { ...own, sheetW: d.lay.s.sheetW * scale, sheetH: d.lay.s.sheetH * scale, hide: ['Sheet'] } : partSource(own, 0);
   if (src && !d.lay && !(src.sheetW > 0 && src.sheetH > 0)) src = partSource(own, 1);        // flat as one line: a 1 mm border gives the page an area
   if (!src) throw new Error('nothing to export: no shown objects');
   src.pics = fl.items.some((it) => it.k === 'i') ? await pdfPictures(src) : new Map();
-  return planPdf(src, { page: 'sheet', separate: false, mirror: false, negative: false, black: false, strip: false, titleBlock: { enabled: false } }).build(0);
+  const page = planPdf(src, { page: 'sheet', separate: false, mirror: false, negative: false, black: false, strip: false, titleBlock: { enabled: false } }).build(0);
+  return lineWeights ? page : page.hairlines();
 }
 
 /**
  * Export's PNG (TODO 109c2): the Page replayed by paintPage on an offscreen canvas at `dpi` (capped, see png-size.js).
  * background 'transparent' leaves the paper and the page border unpainted. → { blob (null when the canvas could not make one), dpi, capped }
  */
-async function exportPng(raw, d, { scale, skipLayers, dpi, background }) {
-  const page = await exportPage(raw, d, { scale, skipLayers }), size = pngSize(page.w, page.h, dpi), canvas = document.createElement('canvas');
+async function exportPng(raw, d, { scale, skipLayers, dpi, background, lineWeights, hidden }) {
+  const page = await exportPage(raw, d, { scale, skipLayers, lineWeights, hidden }), size = pngSize(page.w, page.h, dpi), canvas = document.createElement('canvas');
   const dpr = window.devicePixelRatio || 1, none = 'rgba(0,0,0,0)';       // paintPage multiplies its box and scale by the device ratio: ask for px / dpr so the canvas is exactly w × h
   paintPage(canvas, page, { width: size.w / dpr, height: size.h / dpr }, { paper: background === 'white' ? '#ffffff' : none, film: '#000000', line: none },
     { s: size.dpi / 25.4 / dpr, ox: 0, oy: 0 });
@@ -4264,6 +4268,9 @@ function exportDxf() {
   const text = h('select', { class: 'fld', 'data-testid': 'export-dxf-text' }, h('option', { value: 'text' }, 'Text'), h('option', { value: 'curves' }, 'Curves'));
   const ticks = exportLayerRows(d).map(([layer, on]) => h('input', { type: 'checkbox', checked: on || layer === '0', disabled: layer === '0', 'aria-label': 'Layer ' + layer, 'data-testid': 'export-dxf-layer', 'data-layer': layer }));
   const layers = h('div', { class: 'export-dxf-layers', 'data-testid': 'export-dxf-layers' }, ticks.map((box) => h('label', null, box, box.dataset.layer + (box.dataset.layer === '0' ? ' (always kept)' : ''))));
+  const lineWeights = h('input', { type: 'checkbox', checked: true, 'data-testid': 'export-line-weights' });
+  const hiddenObjects = h('input', { type: 'checkbox', checked: true, 'data-testid': 'export-hidden-objects' });       // on for DXF; showFormat flips it for SVG / PNG until the user has set it here
+  let hiddenSet = false; hiddenObjects.addEventListener('change', () => { hiddenSet = true; });
   const err = h('div', { class: 'pd-bad', role: 'alert', hidden: true, 'data-testid': 'export-dxf-err' });
   const validate = () => {
     const problems = [
@@ -4282,7 +4289,7 @@ function exportDxf() {
   const go = async () => {
     const bad = validate(); if (bad) { bad.focus(); validate(); return; }
     const skipLayers = ticks.filter((box) => !box.checked).map((box) => box.dataset.layer), curves = text.value === 'curves', svg = fmt.value === 'svg', png = fmt.value === 'png';       // read now: finish() removes the dialog
-    const ext = fmt.value, want = svg || png ? named(name.value.trim(), ext) : dxfName(name.value.trim()), settings = { units: units.value || undefined, scale: +scale.value, precision: +precision.value, escapeUnicode: true, skipLayers, dpi: +dpi.value, background: bg.value };
+    const ext = fmt.value, want = svg || png ? named(name.value.trim(), ext) : dxfName(name.value.trim()), settings = { units: units.value || undefined, scale: +scale.value, precision: +precision.value, escapeUnicode: true, skipLayers, dpi: +dpi.value, background: bg.value, lineWeights: lineWeights.checked, hidden: hiddenObjects.checked };
     finish();
     try {
       const t = window.__TAURI__;
@@ -4296,7 +4303,7 @@ function exportDxf() {
         destination = path;
         written = path.split(/[\\/]/).pop();
       }
-      const saved = rawForSave(d), skip = new Set(skipLayers.map((n) => n.toLowerCase())), made = curves ? await exportCurves(saved, d, skip) : null;
+      const saved = rawForSave(d), skip = new Set(skipLayers.map((n) => n.toLowerCase())), made = curves ? await exportCurves(saved, d, skip, (svg || png) && settings.hidden) : null;
       if (png) {
         const pic = await exportPng(made ? made.raw : saved, d, settings);
         if (!pic.blob) { note('PNG not written: this size could not be drawn. Lower the DPI or the Scale'); return; }
@@ -4315,10 +4322,11 @@ function exportDxf() {
     } catch (e) { note('Export failed: ' + (e?.message || e)); }
   };
   const row = (label, input) => h('label', { class: 'qs-row' }, h('span', null, label), input);
-  const unitsRow = row('Units', units), precisionRow = row('Precision', precision), dpiRow = row('DPI', dpi), bgRow = row('Background', bg);
-  const showFormat = () => {         // Units / Precision are for DXF and SVG; DPI / Background for PNG
+  const unitsRow = row('Units', units), precisionRow = row('Precision', precision), dpiRow = row('DPI', dpi), bgRow = row('Background', bg), weightsRow = row('Line weights', lineWeights);
+  const showFormat = () => {         // Units / Precision are for DXF and SVG; DPI / Background for PNG; Line weights for SVG and PNG
     const png = fmt.value === 'png';
-    for (const [r, shown] of [[unitsRow, !png], [precisionRow, !png], [dpiRow, png], [bgRow, png]]) r.style.display = shown ? '' : 'none';
+    for (const [r, shown] of [[unitsRow, !png], [precisionRow, !png], [dpiRow, png], [bgRow, png], [weightsRow, fmt.value !== 'dxf']]) r.style.display = shown ? '' : 'none';
+    if (!hiddenSet) hiddenObjects.checked = fmt.value === 'dxf';
     validate();
   };
   fmt.addEventListener('change', () => { name.value = named(name.value, fmt.value); showFormat(); });
@@ -4329,7 +4337,7 @@ function exportDxf() {
     h('div', { class: 'row between' }, h('strong', null, 'Export'), close),
     h('span', { class: 'lbl' }, 'Write a DXF, SVG or PNG copy with export settings.'),
     row('Format', fmt), row('File name', name), unitsRow, row('Scale', scale), precisionRow, dpiRow, bgRow, row('Text', text),
-    h('div', { class: 'qs-row' }, h('span', null, 'Layers'), layers),
+    h('div', { class: 'qs-row' }, h('span', null, 'Layers'), layers), weightsRow, row('Hidden objects', hiddenObjects),
     h('span', { class: 'lbl' }, 'Scale is applied about 0,0. Precision sets decimal places for coordinates and lengths.'), err,
     h('div', { class: 'row' }, h('span', { class: 'lbl', style: 'flex:1' }, 'Next: native file picker'),
       cancel,

@@ -26721,6 +26721,72 @@ try {
     }
   });
 
+  await step('TODO 109d1: Export… Line weights and Hidden objects: SVG widths 0.5 / 0.05, a hidden line only with the tick, DXF keeps code 60 by default, the ticks in Layouts, the drawing unchanged', async () => {
+    await closeTabs(/./); await menuItem('View', 'Theme: light');
+    const raw = newDoc(4); addLayer(raw, 'Cut', { aci: 1 });
+    addEntities(raw, dxfLine(0, 0, 100, 0, { layer: 'Cut', lw: 50 }), dxfLine(0, 10, 100, 10, { layer: 'Cut', hidden: true }));
+    await svgFake([...Buffer.from(writeDxf(raw))], 'w109d1.dxf');
+    const widths = (svg) => [...svg.matchAll(/stroke-width="([\d.]+)"/g)].map((m) => m[1]);
+    const ticks = async () => [await t('export-line-weights').isVisible(), await t('export-line-weights').isChecked(), await t('export-hidden-objects').isChecked()];
+    const dxfTexts = [];
+    try {
+      await menuItem('File', 'Open…'); await waitTab(page, 'w109d1.dxf');
+      const before = await t('drawing').evaluate((el) => el.toDataURL());
+      await menuItem('File', 'Export…'); await svgDialog.waitFor();
+      assert.deepEqual(await ticks(), [false, true, true], 'DXF: Line weights hidden, Hidden objects ticked');
+      await t('export-format').selectOption('svg'); assert.deepEqual(await ticks(), [true, true, false], 'SVG: Line weights shown and ticked, Hidden objects unticked');
+      await t('export-format').selectOption('png'); assert.deepEqual(await ticks(), [true, true, false], 'PNG: the same');
+      await t('export-hidden-objects').check(); await t('export-format').selectOption('dxf');
+      assert.equal((await ticks())[2], true); await t('export-format').selectOption('svg');
+      assert.equal((await ticks())[2], true, 'once the user set it, the Format does not flip it');
+      await t('export-hidden-objects').uncheck(); await t('export-format').selectOption('dxf');
+      assert.equal((await ticks())[2], false, 'set by the user: it stays unticked for DXF');
+      await t('export-format').selectOption('svg');
+      await page.screenshot({ path: `${shotDir}/export-109d1-light.png` });
+      await t('export-dxf-cancel').click(); await svgDialog.waitFor({ state: 'detached' });
+      await menuItem('View', 'Theme: dark'); await svgOpen();
+      await page.screenshot({ path: `${shotDir}/export-109d1-dark.png` });
+      const size = page.viewportSize(); await page.setViewportSize({ width: 1024, height: 700 });
+      await page.screenshot({ path: `${shotDir}/export-109d1-1024-dark.png` }); await page.setViewportSize(size);
+      await page.keyboard.press('Escape'); await svgDialog.waitFor({ state: 'detached' });
+      await menuItem('View', 'Theme: light');
+      await svgOpen(); await t('export-dxf-go').click();                                  // the defaults: widths as today, the code-60 line left out
+      const normal = (await svgWrote(1)).text;
+      assert.deepEqual(widths(normal), ['0.5'], 'Line weights on: the 0.50 mm line; Hidden objects off: no second line');
+      await svgOpen(); await t('export-line-weights').uncheck(); await t('export-dxf-go').click();
+      assert.deepEqual(widths((await svgWrote(2)).text), ['0.05'], 'Line weights off: every stroke 0.05 mm');
+      await svgOpen(); await t('export-hidden-objects').check(); await t('export-dxf-go').click();
+      assert.deepEqual(widths((await svgWrote(3)).text), ['0.5', '0.25'], 'Hidden objects on: the code-60 line is drawn as well');
+      assert.equal(await page.locator('.tabs .dtab.on .dot').count(), 0, 'the open drawing stays clean');
+      await menuItem('File', 'Export…'); await svgDialog.waitFor();                       // Format DXF: the default keeps code 60
+      assert.equal((await ticks())[2], true, 'not remembered: DXF is ticked again');
+      await t('export-dxf-go').click(); dxfTexts.push((await svgWrote(4)).text);
+      await menuItem('File', 'Export…'); await svgDialog.waitFor(); await t('export-hidden-objects').uncheck(); await t('export-dxf-go').click(); dxfTexts.push((await svgWrote(5)).text);
+      assert.deepEqual([readDxf(dxfTexts[0]).entities.length, readDxf(dxfTexts[0]).entities.filter((e) => e.hidden).length], [2, 1], 'DXF default: the code-60 line is kept');
+      assert.deepEqual([readDxf(dxfTexts[1]).entities.length, readDxf(dxfTexts[1]).entities.filter((e) => e.hidden).length], [1, 0], 'DXF Hidden objects off: the code-60 line is dropped');
+      assert.equal(await t('drawing').evaluate((el) => el.toDataURL()), before, 'the open drawing is unchanged after the exports');
+      // Layouts: the same two ticks
+      await page.evaluate(() => { delete window.__TAURI__; });                              // the browser download path
+      await closeTabs(/./);
+      const part = newDoc(4); addEntities(part, dxfLine(0, 0, 80, 0), dxfLine(0, 0, 0, 40));
+      const lay = newLayout('Weights layout'); lay.parts.a = makePart('a', 'Bracket', part); lay.placed.push({ partId: 'a', x: 50, y: 50, rot: 0 });
+      await t('picker').setInputFiles({ name: 'w109d1-layout.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
+      await waitTab(page, 'w109d1-layout.dxf'); await t('size-strip').waitFor();
+      const layBefore = await t('drawing').evaluate((el) => el.toDataURL());
+      await svgOpen(); assert.deepEqual(await ticks(), [true, true, false], 'Layouts: the ticks are there');
+      await t('export-line-weights').uncheck();
+      const hair = await downloaded(async () => { await t('export-dxf-go').click(); });
+      assert.ok(widths(hair.text).length >= 2 && widths(hair.text).every((w) => w === '0.05'), 'Layouts: every stroke 0.05 mm: ' + widths(hair.text));
+      assert.equal(await t('drawing').evaluate((el) => el.toDataURL()), layBefore, 'the layout is unchanged');
+      for (const shot of ['light', 'dark', '1024-dark']) assert.ok(readFileSync(`${shotDir}/export-109d1-${shot}.png`).length > 1000);
+      console.log(`109d1: SVG widths ${widths(normal)} / hairline / +hidden; DXF entities ${readDxf(dxfTexts[0]).entities.length} -> ${readDxf(dxfTexts[1]).entities.length}; screenshots ${shotDir}/export-109d1-{light,dark,1024-dark}.png`);
+    } finally {
+      await page.evaluate(() => { delete window.__TAURI__; delete window.__exp109c; });
+      await page.keyboard.press('Escape');
+      await closeTabs(/./);
+    }
+  });
+
   await step('TODO 52: File → Export for cutter… asks for the tolerance (bad values refused), cancels cleanly, then writes lines / arcs / polylines only; screenshots light and dark', async () => {
     await closeTabs(/./);
     const d = newDoc(4); addEntities(d, [dxfPoly([[0, 0], [100, 0], [100, 60], [0, 60]], { closed: true }), dxfCircle(50, 30, 15), dxfText(10, 10, 5, 'HELLO')]);

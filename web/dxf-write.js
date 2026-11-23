@@ -4,7 +4,7 @@
 //   writeDxf(doc, opts) → string, CRLF lines.   opts: { escapeUnicode: true writes non-ASCII as \U+XXXX (R2000's own way); extents: [x0, y0, x1, y1] of model space, when the caller has them (flatten is slow on a big file) }
 //   unwritable(doc) → [{ type, count }]: what writeDxf leaves out (warn before overwriting a file)
 //   writeDxfWithReport(doc, opts) → { text, pictures: [{ name, px }], tables, skipped }: opts.name is the final DXF file name; pictures: false skips IMAGEs when the caller cannot write PNGs
-//   Export opts: units ('mm', 'in', 'unitless'), scale (> 0), precision (0–8), skipLayers (names left out, layer 0 never: withoutLayers); transforms a deep copy.
+//   Export opts: units ('mm', 'in', 'unitless'), scale (> 0), precision (0–8), skipLayers (names left out, layer 0 never: withoutLayers), hidden: false (code-60 objects left out: withoutHidden); transforms a deep copy.
 //
 // The document (drawing.js): { header: { $NAME: string | [x, y] }, layers: { NAME: { aci, tc, off, frozen, lt, lw } },
 //   ltypes: { NAME: { pattern: [dash, gap, …] } }, blocks: { NAME: { base: [x, y], xref, entities } }, entities, groups (groups.js) }
@@ -310,14 +310,27 @@ export function withoutLayers(doc, names) {
   const gone = new Set();
   doc.entities.forEach((e, i) => { if (skip.has(layerOf(e))) gone.add(i); });
   if (!gone.size) return doc;
+  const { entities, blocks, groups } = withoutEntities(doc, gone);
+  const used = new Set(entities.map(layerOf));
+  for (const name of usedBlocks(blocks, entities)) for (const e of blocks[name]?.entities || []) used.add(layerOf(e));
+  const layers = Object.fromEntries(Object.entries(doc.layers || {}).filter(([n]) => !skip.has(n.toLowerCase()) || used.has(n.toLowerCase())));
+  return { ...doc, entities, blocks, layers, groups };
+}
+
+/** Entities `gone` (indexes) out of the copy: their blocks, the PD_LAYOUT block and the group members go with them. */
+function withoutEntities(doc, gone) {
   const { entities, blocks } = removeEntities(doc, gone), indexes = new Map();
   let k = 0;
   doc.entities.forEach((_, i) => { if (!gone.has(i)) indexes.set(i, [k++]); });
   delete blocks.PD_LAYOUT;
-  const used = new Set(entities.map(layerOf));
-  for (const name of usedBlocks(blocks, entities)) for (const e of blocks[name]?.entities || []) used.add(layerOf(e));
-  const layers = Object.fromEntries(Object.entries(doc.layers || {}).filter(([n]) => !skip.has(n.toLowerCase()) || used.has(n.toLowerCase())));
-  return { ...doc, entities, blocks, layers, groups: remap(doc.groups, indexes) };
+  return { entities, blocks, groups: remap(doc.groups, indexes) };
+}
+
+/** Export's Hidden objects off (TODO 109d1): the top-level code-60 entities are left out of the copy (layers stay: the 109b ticks decide those). */
+export function withoutHidden(doc) {
+  const gone = new Set();
+  doc.entities.forEach((e, i) => { if (e.hidden) gone.add(i); });
+  return gone.size ? { ...doc, ...withoutEntities(doc, gone) } : doc;
 }
 
 const drain = (steps) => { let r; while (!(r = steps.next()).done); return r.value; };
@@ -334,8 +347,9 @@ export function* writeDxfSteps(doc, opts = {}) {
   const factor = (unitChange ? mm[source] / (units === 'in' ? 25.4 : 1) : 1) * scale;
   if (!Number.isFinite(factor) || factor <= 0) throw new Error('Cannot convert these drawing units or scale');
   // Only export options need a deep copy; ordinary Save keeps its existing fast path.
-  if (units !== undefined || opts.scale !== undefined || opts.precision !== undefined || opts.skipLayers) doc = structuredClone(doc);
+  if (units !== undefined || opts.scale !== undefined || opts.precision !== undefined || opts.skipLayers || opts.hidden === false) doc = structuredClone(doc);
   if (opts.skipLayers?.length) doc = withoutLayers(doc, opts.skipLayers);
+  if (opts.hidden === false) doc = withoutHidden(doc);
   const prepared = prepareSave(doc, true, opts.pictures !== false);
   const unreadLabels = new Set();
   doc = prepared.doc;

@@ -93,3 +93,19 @@ test('a drawing through planPdf: its line and text are there, no NaN', () => {
   assert.match(s, />Hi &lt;&amp;&gt;<\/text>/);
   assert.doesNotMatch(s, /NaN|undefined/);
 });
+
+test('TODO 109d1: Line weights off draws every stroke at 0.05 mm; Hidden objects on draws the code-60 line (flatten option)', async () => {
+  const W = await import('./web/dxf-write.js');
+  const doc = W.newDoc(4); W.addEntities(doc, W.line(0, 0, 30, 0, { lw: 50 }), W.line(0, 10, 30, 10, { hidden: true }), W.text(1, 1, 2, 'Hi'));
+  const svg = (opts, flat) => {
+    const fl = D.flatten(D.readDxf(W.writeDxf(doc)), undefined, opts), src = X.partSource({ fl, factor: 1, off: new Set(), name: 'x', hide: [] }, 0);
+    const page = X.planPdf(src, { page: 'sheet', separate: false, mirror: false, negative: false, black: false, strip: false, titleBlock: { enabled: false } }).build(0);
+    return pageToSvg(flat ? page.hairlines() : page);
+  };
+  const widths = (s) => [...s.matchAll(/stroke-width="([\d.]+)"/g)].map((m) => m[1]);
+  assert.deepEqual(widths(svg()), ['0.5'], 'on: the 0.50 mm line keeps its width; the code-60 line is not drawn');
+  assert.deepEqual(widths(svg(undefined, true)), ['0.05'], 'off: hairline');
+  assert.match(svg(undefined, true), />Hi<\/text>/, 'text is untouched');
+  assert.deepEqual(widths(svg({ hidden: true })), ['0.5', '0.25'], 'Hidden objects on: the code-60 line is drawn too (Default weight 0.25)');
+  assert.deepEqual(widths(svg({ hidden: true }, true)), ['0.05', '0.05']);
+});

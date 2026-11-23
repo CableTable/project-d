@@ -83,6 +83,8 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Export DXF**: Writes a separate DXF copy with chosen export settings (units, scale, precision, layers, text as text or curves); the open drawing and its saved state are unchanged. Where: `DECISIONS.md`, Export DXF settings; `TODO.md`, item 109. Avoid: Save, Save as.
 
+**Hidden objects**: Objects with DXF code 60 = 1 (invisible), and the objects of off or frozen layers. The Export dialog's Hidden objects tick keeps them (DXF default on) or leaves them out (SVG / PNG default off, as Save as PDF and AutoCAD's plot do). Where: `DECISIONS.md`, Export line weights and hidden objects (TODO 109d1); `web/drawing.js`, `flatten` option `hidden`. Avoid: Invisible, Off layers.
+
 **Export format**: DXF, SVG (and PNG, TODO 109c2) chosen in the Export dialog's Format list; Save as PDF stays its own command. Where: `DECISIONS.md`, Export format; `TODO.md`, item 109. Avoid: File type.
 
 **Dimension**: A saved measurement callout with lines, arrows and a value that does not count toward a part's size. Where: `DECISIONS.md`, Kept dimensions and sizes and More dimension types. Avoid: Driving constraint.
