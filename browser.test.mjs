@@ -27769,6 +27769,13 @@ try {
     for (let i = 0; i < 3; i++) { await add().click(); await frames(); }
     assert.equal(await add().isDisabled(), true, 'all 5 rows full: Add revision is disabled');
     assert.equal(await add().getAttribute('title'), 'All 5 revision rows are full', 'with the reason');
+    // clearing a row by typing re-enables Add revision, filling it again disables it
+    await row('REV5_DATE').click(); await field('Value').fill('');
+    assert.equal(await add().isDisabled(), true, 'a row with only its date cleared is not empty');
+    await row('REV5_REV').click(); await field('Value').fill('');
+    assert.equal(await add().isEnabled(), true, 'a typed clear of row 5 re-enables Add revision');
+    await field('Value').fill('E');
+    assert.equal(await add().isDisabled(), true, 'filling the last row disables it again');
     await row('REV5_REV').locator('td').nth(2).filter({ hasText: /^E$/ }).waitFor();       // the last row is filled in the list too
     for (const theme of ['light', 'dark']) {
       await page.evaluate((th) => { document.documentElement.dataset.theme = th; }, theme); await frames();
@@ -27784,6 +27791,20 @@ try {
     assert.equal(await dialog.locator('tbody tr').count(), 1);
     assert.equal(await add().count(), 0, 'no Add revision on a plain block');
     assert.equal(await dialog.getByTestId('attribute-reset').count(), 0);
+    await button('Cancel').click();
+    // a 9a-era title block (no REVn_* rows): Add revision does not throw; the title REV is still written
+    const old = newLayout('Sheet 9a-era'); old.s.sheetW = 420; old.s.sheetH = 297;
+    const odoc = newDoc(4);
+    addBlock(odoc, 'PD_TITLE', [dxfLine(0, 0, 60, 0), entity('ATTDEF', [[10, 5], [20, 5], [40, 6], [2, 'REV'], [3, 'Rev'], [1, ''], [70, 0]])]);
+    const oins = dxfInsert('PD_TITLE', 50, 200); oins.kids = [entity('ATTRIB', [[10, 55], [20, 205], [40, 6], [2, 'REV'], [1, ''], [70, 0]]).r];
+    old.parts.p = objectPart('p', 'PD_TITLE', oins, layersOf(old), {}, odoc.blocks); old.placed = [objectPlacement(old.parts.p)];
+    await open('title-9a-era.dxf', layoutRaw(old));
+    await page.locator('[data-tool=select]').click();
+    await dbl(80, 200);
+    assert.equal(await add().count(), 1, 'the 9a-era title block still offers Add revision');
+    await add().click(); await frames();
+    assert.equal(await dialog.getByRole('status').filter({ hasText: /\S/ }).count(), 0, 'no error in the dialog status');
+    await row('REV').locator('td').nth(2).filter({ hasText: /^A$/ }).waitFor();       // the title REV changed
     await button('Cancel').click();
     await closeTabs(/./);
   });
