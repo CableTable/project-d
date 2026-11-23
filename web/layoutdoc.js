@@ -24,7 +24,7 @@ import { isDimPart, dimName, isSettled, bakeBlock, turnedTag, freeBlockName } fr
 import { cleanGuides } from './guides.js';
 import { TITLE_BLOCK } from './pdf-export.js';
 import { colourKey, withColour, widthKey, withWidth } from './props.js';
-import { renameLayer } from './objects.js';
+import { renameLayer, layerUseMap } from './objects.js';
 
 export const LAYOUT_BLOCK = 'PD_LAYOUT';
 const CHUNK = 200;
@@ -267,6 +267,17 @@ export function objectReplace(lay, view, ent, next, newId) {
   lay.parts[part.id] = part; lay.placed[i] = pl;
   bakedCache.set(part, new Map([[bakeKey(pl), kept]]));
   return true;
+}
+
+/** What uses each layer of the layout's table (objects.js layerUseMap): the placed layout objects, each placement counted (a placed part's own layers are inside the part, not in the table). */
+export function layerUseMapOf(lay) {
+  const total = new Map();
+  for (const p of lay.placed) {
+    const part = lay.parts[p.partId];
+    if (!part?.obj) continue;
+    for (const [k, u] of layerUseMap(part.raw)) { const t = total.get(k) || total.set(k, { count: 0, nested: false }).get(k); t.count += u.count; t.nested ||= u.nested; }
+  }
+  return total;
 }
 
 /** The layout's layer `name` is renamed to `to` and / or gets the properties `def` (Layers panel, TODO 8a): a new layer table (an undo snapshot keeps the old one), and each object that uses the layer

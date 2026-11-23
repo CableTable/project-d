@@ -10,6 +10,7 @@ import * as GR from './web/grips.js';
 import * as TX from './web/text.js';
 import { planPdf, readTitleBlock, withTitleBlock } from './web/pdf-export.js';
 import { isDimPart } from './web/layoutdim.js';
+import { layerDeleteProblem } from './web/edit.js';
 
 const near = (a, b, t = 1e-6) => assert.ok(Math.abs(a - b) <= t, a + ' != ' + b);
 let n = 0;
@@ -438,6 +439,19 @@ test('TODO 8a: changeLayer renames / recolours a layout layer: new table, its ob
   const back = readDxf(writeDxf(LD.layoutRaw(lay)));
   assert.equal(back.layers.Renamed.tc & 0xffffff, redTc); assert.ok(!back.layers.A);
   assert.equal(back.entities.filter((e) => e.layer === 'Renamed').length, 2); assert.equal(back.entities.filter((e) => e.layer === 'A').length, 0);
+});
+
+test('TODO 8b: layerUseMapOf counts each placed layout object on its layer (a copy counts again); an object taken off the sheet or a layer with none is free', () => {
+  const lay = LD.newLayout('Objs'), layers = LD.layersOf(lay);
+  addLayer(lay, 'A', { aci: 1 }); addLayer(lay, 'B', { aci: 5 }); addLayer(lay, 'Spare', { aci: 3 });
+  const mk = (id, ent) => { const o = LD.objectPart(id, id, ent, layers); lay.parts[id] = o; lay.placed.push(LD.objectPlacement(o)); };
+  mk('a', line(0, 0, 100, 0, { layer: 'A' })); mk('b', line(0, 20, 100, 20, { layer: 'B' }));
+  lay.placed.push({ ...lay.placed[0], y: 50 });                           // a copy of a: the same part
+  lay.parts.gone = LD.objectPart('gone', 'gone', line(0, 40, 100, 40, { layer: 'Spare' }), layers);       // not placed: nothing on the sheet uses Spare
+  const uses = LD.layerUseMapOf(lay);
+  assert.deepEqual(uses.get('a'), { count: 2, nested: false }); assert.deepEqual(uses.get('b'), { count: 1, nested: false });
+  assert.equal(uses.get('spare'), undefined);
+  assert.equal(layerDeleteProblem('Spare', '0', uses.get('spare')), ''); assert.equal(layerDeleteProblem('A', '0', uses.get('a')), 'Layer has 2 objects');
 });
 
 test('layout objects (TODO 156b fixes): group and lock survive save and reopen; a trim to one piece keeps group, lock and name; an old layout without them opens', () => {

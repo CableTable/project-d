@@ -137,6 +137,15 @@ export function boxOf(fl, ents) {
   return b;
 }
 
+/** What uses each layer (lower-case name → { count: objects on it, nested: a block's entity or a vertex / attribute record is on it }), for deleting a layer: one pass over the document. */
+export function layerUseMap({ entities, blocks = {} }) {
+  const uses = new Map(), at = (name) => { const k = String(name).trim().toLowerCase(); return uses.get(k) || (uses.set(k, { count: 0, nested: false }), uses.get(k)); };
+  const nest = (e) => { for (const k of e.kids || []) k.c.forEach((c, i) => { if (c === 8) at(k.v[i]).nested = true; }); };
+  for (const e of entities) { at(e.layer).count++; nest(e); }
+  for (const b of Object.values(blocks)) for (const e of b?.entities || []) { at(e.layer).nested = true; nest(e); }
+  return uses;
+}
+
 /** The document with a layer renamed: its table entry, every entity on it (also inside blocks). Nothing else changes. */
 export function renameLayer(raw, from, to) {
   // a POLYLINE's VERTEX and an INSERT's ATTRIB records carry their own layer (code 8)

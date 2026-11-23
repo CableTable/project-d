@@ -1850,6 +1850,17 @@ export function newLayerName(names) {
 /** Layers 0 and Defpoints keep their names (AutoCAD's rule, in any case). */
 export const fixedLayer = (name) => ['0', 'defpoints'].includes(String(name).trim().toLowerCase());
 
+/** '' when layer `name` can be deleted (Layers panel, TODO 8b), else why not: AutoCAD's rule (not 0, Defpoints or the current layer, nothing on it), and a layer only a block uses counts as used.
+ *  `use` is { count, nested } from layerUseMap; `cur` is the current layer's name. */
+export function layerDeleteProblem(name, cur, use = { count: 0, nested: false }) {
+  const low = String(name).trim().toLowerCase();
+  if (low === '0') return 'Layer 0 cannot be deleted';
+  if (low === 'defpoints') return 'Defpoints cannot be deleted';
+  if (low === String(cur).trim().toLowerCase()) return 'Current layer';
+  if (use.count) return `Layer has ${use.count} object${use.count === 1 ? '' : 's'}`;
+  return use.nested ? 'Layer is used inside blocks' : '';
+}
+
 /** '' when name can be a layer's name, else why not: empty, a character a DXF layer name can't hold, too long, or taken (other than by `own`).
  *  `own` (a rename): 0 and Defpoints are neither renamed nor taken as the new name. */
 export function layerNameProblem(name, names, own = null) {

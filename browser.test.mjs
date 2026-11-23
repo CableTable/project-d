@@ -18987,6 +18987,107 @@ try {
     } finally { await context.close(); }
   });
 
+  await step('TODO 8b: delete an empty layer in Drawings, Layouts and Compare; used, current, 0, Defpoints and fixed rows refused with why; one undo', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
+    const p = await context.newPage(), q = (id) => panelControl(p, p.getByTestId(id));
+    p.on('pageerror', (e) => errors.push(String(e)));
+    p.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
+    const make = () => {
+      const raw = newDoc(4); addLayer(raw, 'Plate', { aci: 1 }); addLayer(raw, 'Notes', { aci: 3 }); addLayer(raw, 'Defpoints', { aci: 7 }); addLayer(raw, 'Inner', { aci: 5 });
+      addBlock(raw, 'B8b', [dxfLine(0, 0, 10, 0, { layer: 'Inner' })]);
+      addEntities(raw, dxfPoly([[10, 20], [70, 20], [70, 80], [10, 80]], { closed: true, layer: 'Plate' }), dxfLine(20, 30, 60, 30, { layer: 'Notes' }), dxfLine(0, 0, 5, 5, { layer: '0' }), dxfLine(0, 90, 5, 95, { layer: 'Defpoints' }), dxfInsert('B8b', 30, 40));
+      return raw;
+    };
+    const open = async (name, text = writeDxf(make())) => { await q('picker').setInputFiles({ name, mimeType: 'text/plain', buffer: Buffer.from(text) }); await waitTab(p, name); };
+    const tab = (name) => p.locator('.dtab').filter({ has: p.locator('.tname', { hasText: name.replace(/\.dxf$/, '') }) });
+    const row = (n) => p.locator(`.layer[data-layer-name="${n}"]`);
+    const del = (n) => row(n).locator('[data-testid=layer-delete]');
+    const heard = (re) => p.waitForFunction((s) => new RegExp(s).test(document.querySelector('[data-testid=cmd-prompt]').textContent), re.source);
+    const saved = async () => { const [download] = await Promise.all([p.waitForEvent('download'), q('save').click()]); return readDxf(readFileSync(await download.path(), 'utf8')); };
+    const dock = (id) => q('ptab-' + id).click();
+    const why = async (n, text) => {       // waits for the button of row `n` to say `text` (its tooltip when off; '' = enabled), then asserts it
+      await p.waitForFunction(([n, t]) => { const b = document.querySelector(`.layer[data-layer-name="${n}"] [data-testid=layer-delete]`); return !!b && (t === '' ? !b.disabled : b.disabled && b.title === t); }, [n, text]).catch(() => {});
+      assert.equal(await del(n).count(), 1, `${n}: one delete button`);
+      assert.equal(await del(n).isDisabled(), text !== '', `${n}: ${text || 'enabled'}`);
+      if (text) assert.equal(await del(n).getAttribute('title'), text);
+    };
+    const gone = (n) => p.waitForFunction((n) => !document.querySelector(`.layer[data-layer-name="${n}"]`), n);
+    const labelIs = (n, act, label) => p.waitForFunction(([n, act, label]) => document.querySelector(`.layer[data-layer-name="${n}"] [data-act=${act}]`)?.getAttribute('aria-label') === label, [n, act, label]);
+    const shots = async (kind) => {
+      for (const theme of ['light', 'dark']) {
+        await p.locator('[data-menu=View]').click(); await p.getByRole('menuitemcheckbox', { name: new RegExp('Theme: ' + theme) }).click();
+        await p.screenshot({ path: `${shotDir}/todo8b-${kind}-${theme}.png` });
+      }
+      await p.locator('[data-menu=View]').click(); await p.getByRole('menuitemcheckbox', { name: /Theme: light/ }).click();
+    };
+    try {
+      await p.goto(URL_); await p.locator('[data-tool=select]').waitFor();
+      // ---- Drawings
+      await open('one-8b.dxf'); await dock('objects');
+      await why('Plate', 'Layer has 1 object'); await why('Notes', 'Layer has 1 object');
+      await why('0', 'Layer 0 cannot be deleted'); await why('Defpoints', 'Defpoints cannot be deleted');
+      await why('Inner', 'Layer is used inside blocks');
+      await row('Plate').click(); await why('Plate', 'Current layer');
+      await row('0').click(); await why('Plate', 'Layer has 1 object');
+      await q('layer-add').click(); await row('Layer1').waitFor(); await why('Layer1', 'Current layer');
+      await row('0').click(); await why('Layer1', '');
+      await row('Layer1').locator('[data-act=lock]').click(); await labelIs('Layer1', 'lock', 'Unlock');       // a locked empty layer can still go
+      let out = await saved(); assert.ok(out.layers.Layer1, 'the layer is in the LAYER table before the delete');
+      await shots('drawings');
+      await p.setViewportSize({ width: 1024, height: 768 }); await p.screenshot({ path: `${shotDir}/todo8b-drawings-1024.png` }); await p.setViewportSize({ width: 1440, height: 900 });
+      await del('Layer1').click(); await gone('Layer1'); await heard(/^Layer Layer1 is deleted/);
+      out = await saved(); assert.ok(!out.layers.Layer1, 'the saved DXF has no LAYER entry for it'); assert.ok(out.layers.Plate && out.layers.Notes, 'the others stay');
+      await p.keyboard.press('Control+z'); await row('Layer1').waitFor(); await labelIs('Layer1', 'lock', 'Unlock');
+      await why('Layer1', ''); out = await saved(); assert.ok(out.layers.Layer1, 'one Undo brings the layer back, still locked');
+      await p.keyboard.press('Control+y'); await gone('Layer1'); out = await saved(); assert.ok(!out.layers.Layer1, 'Redo deletes again');
+      await p.keyboard.press('Control+z'); await row('Layer1').waitFor();
+      await p.keyboard.press('Control+z'); await gone('Layer1');       // the second Undo is the + Add: the delete was one step
+      await p.keyboard.press('Control+y'); await row('Layer1').waitFor(); await why('Layer1', '');
+      // ---- Layouts
+      const lay = newLayout('Lay8b'); lay.layers = newDoc(4).layers; addLayer(lay, 'A', { aci: 1 });       // a reopened layout lists the layers with objects on them; an empty one is made with + Add
+      lay.parts.a = objectPart('a', 'Line a', dxfLine(100, 100, 250, 100, { layer: 'A' }), lay.layers);
+      lay.parts.z = objectPart('z', 'Line z', dxfLine(100, 200, 250, 200, { layer: '0' }), lay.layers);
+      lay.placed = [objectPlacement(lay.parts.a), objectPlacement(lay.parts.z)];
+      await open('lay8b.dxf', writeDxf(layoutRaw(lay))); await dock('objects');
+      await row('Parts').waitFor();
+      for (const n of ['Parts', 'Marks', 'Dimensions']) await why(n, `${n} is a fixed layer`);
+      await why('A', 'Layer has 1 object'); await why('0', 'Layer 0 cannot be deleted');
+      await q('layer-add').click(); await row('Layer1').waitFor(); await why('Layer1', 'Current layer');
+      await row('A').click(); await why('Layer1', ''); await why('A', 'Current layer');
+      await row('Layer1').locator('[data-act=vis]').click(); await labelIs('Layer1', 'vis', 'Show');       // hidden and locked: still deletable
+      await row('Layer1').locator('[data-act=lock]').click(); await labelIs('Layer1', 'lock', 'Unlock');
+      await why('Layer1', '');
+      out = await saved(); assert.ok(out.layers.Layer1, 'the layout file has the layer before the delete');
+      await del('Layer1').click(); await gone('Layer1'); await heard(/^Layer Layer1 is deleted/);
+      out = await saved(); assert.ok(!out.layers.Layer1 && out.layers.A, 'the layout file has no LAYER entry for it');
+      await p.keyboard.press('Control+z'); await row('Layer1').waitFor(); await labelIs('Layer1', 'vis', 'Show'); await labelIs('Layer1', 'lock', 'Unlock');
+      out = await saved(); assert.ok(out.layers.Layer1, 'one Undo brings it back, hidden and locked');
+      await p.keyboard.press('Control+y'); await gone('Layer1'); out = await saved(); assert.ok(!out.layers.Layer1, 'Redo deletes again');
+      await p.keyboard.press('Control+z'); await row('Layer1').waitFor();
+      await shots('layouts');
+      // ---- Compare
+      await open('cmp1-8b.dxf');       // Compare lists the open drawing and the first other one: snapshot 2 is one-8b.dxf
+      await tab('cmp1-8b').click();
+      await p.locator('[data-menu=File]').click(); await p.getByRole('menuitem', { name: 'Compare drawings…', exact: true }).click();
+      await dock('drawing'); await p.getByTestId('cmp-name-2').filter({ hasText: 'one-8b.dxf' }).waitFor(); await q('cmp-name-2').click(); await dock('objects');
+      await row('Plate').waitFor();
+      await why('Plate', 'Layer has 1 object'); await why('0', 'Layer 0 cannot be deleted'); await why('Defpoints', 'Defpoints cannot be deleted'); await why('Inner', 'Layer is used inside blocks');
+      await why('Layer1', '');       // the source's empty layer is listed too
+      await del('Layer1').click(); await gone('Layer1');
+      await tab('one-8b').click(); out = await saved(); assert.ok(!out.layers.Layer1 && out.layers.Plate, 'the source drawing lost the layer');
+      await dock('objects'); await gone('Layer1');
+      await tab('Compare').click(); await p.keyboard.press('Control+z'); await row('Layer1').waitFor(); await why('Layer1', '');
+      await shots('compare');
+      // a snapshot with no source drawing: the button says to open it
+      await dock('drawing');
+      p.once('dialog', (d) => d.accept()); await tab('one-8b').locator('.x').click(); await tab('one-8b').waitFor({ state: 'detached' });
+      await tab('Compare').click(); await dock('drawing'); await q('cmp-name-2').click(); await dock('objects');
+      await row('Notes').waitFor(); await why('Notes', '');
+      await del('Notes').click(); await heard(/^Open one-8b\.dxf to delete a layer$/);
+      assert.equal(await row('Notes').count(), 1, 'nothing changed');
+    } finally { await context.close(); }
+  });
+
   await step('TODO 187: Layout object Properties', async () => {
     await closeTabs(/./);
     const { lay } = block186(), partRaw = newDoc(4);

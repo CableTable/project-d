@@ -2487,6 +2487,7 @@ function layRestore(d, st, dirty = true) {
     if (d.curLayer === a) d.curLayer = b;
     if (d.addedLayers?.delete(a)) d.addedLayers.add(b);
   }
+  if (st.kept) layerKept(d, st.kept);       // a layer delete (or its Undo / Redo): its Layers + Add mark
   if (st.hid && d.hiddenParts) { d.hiddenParts.clear(); for (const id of st.hid) d.hiddenParts.add(id); }       // a layer rename or colour change: the layer's objects get new ids, the hidden ones follow
   gapSig = ''; syncFields();                                           // the extra-gap rows hold the old gap objects: rebuilt
   state.mode = 'select'; state.pivot = centrePivot(); state.rotCopy = false; pdrag = null; lastPush = { key: '', t: 0, d: null }; if (before !== JSON.stringify(LD.placedAll(d.lay))) { picksArr = []; state.sel = -1; d.stretchSelection = null; }
@@ -4624,6 +4625,7 @@ function renderLayers() {
 
 /** The layout's existing layer rows are siblings of its parts, never parents of them. */
 function layoutLayerRows(d, query) {
+  const uses = layerUsesOf(d);
   return layerRows().filter((l) => OB.nameMatches(l.name, query)).map((l) => {
     const def = l.lay && LD.layersOf(d.lay)[l.name], hidden = l.id ? !!state.hidden[l.id] : !!(def?.off || def?.frozen), locked = !!(def?.flags & 4);
     const vis = objBtn('vis', !hidden, hidden ? 'Show' : 'Hide', hidden ? EYE_OFF : EYE, ' vis live');
@@ -4648,7 +4650,7 @@ function layoutLayerRows(d, query) {
     });
     const row = h('div', { class: 'or layer' + (l.cur ? ' cur current' : '') + (hidden ? ' dim hidden-layer' : ''), role: 'treeitem', 'aria-level': '2', 'data-layer-name': l.name, style: 'padding-left:20px' },
       l.lay ? addedSwatch(d, l) : h('span', { class: 'swatch osw', style: 'background:' + l.color }),
-      !l.count && d.addedLayers?.has(l.name) ? addedName(d, l) : h('span', { class: 'onm nm', title: l.lay && !Ed.fixedLayer(l.name) ? 'Double-click to rename' : null }, l.name), l.cur ? h('span', { class: 'chp', 'data-testid': 'layer-current' }, 'current') : null, h('span', { class: 'ocnt lbl mono' }, l.count), vis, lock);
+      !l.count && d.addedLayers?.has(l.name) ? addedName(d, l) : h('span', { class: 'onm nm', title: l.lay && !Ed.fixedLayer(l.name) ? 'Double-click to rename' : null }, l.name), l.cur ? h('span', { class: 'chp', 'data-testid': 'layer-current' }, 'current') : null, h('span', { class: 'ocnt lbl mono' }, l.count), vis, lock, layerDelBtn(d, l.name, l.id ? `${l.name} is a fixed layer` : layerDeleteWhy(d, l.name, uses)));
     row.addEventListener('click', (e) => {
       e.stopPropagation(); if (!l.lay || e.target.closest('input, .swatch')) return;
       if (e.detail === 2 && e.target.closest('.nm')) { startLayerRename(l.name, null, e.target.closest('.nm')); return; }       // a double-click on the name (the first click made it current)
@@ -4680,6 +4682,7 @@ const OBJ_ICONS = {
   poly: '<path d="M4 18l4-10 6 6 6-10"/>', text: '<path d="M5 6h14M12 6v13M9 19h6"/>', block: '<rect x="4" y="4" width="16" height="16" rx="2"/><path d="M4 10h16M10 10v10"/>',
   other: '<circle cx="12" cy="12" r="2"/><path d="M12 4v4M12 16v4M4 12h4M16 12h4"/>',
 };
+const TRASH = '<path d="M4 7h16M10 11v6M14 11v6M5 7l1 13h12l1-13M9 7V4h6v3"/>';
 const CHEV_DOWN = '<path d="M6 9l6 6 6-6"/>', CHEV_RIGHT = '<path d="M9 6l6 6-6 6"/>';
 const oIcon = (inner, size = 14) => icon(inner, { size, width: 1.7, cap: 'round', join: 'round' });
 /** The tab's own list state (search, filter, what is open); the layout tab keeps it the same way. */
@@ -4719,7 +4722,7 @@ function setPtab(tab) {
 
 /** The tree for the tab that is open: a drawing's layers and objects, or a layout's parts. */
 function objOpts(d, om) {
-  return { factor: d.factor, off: d.off, hid: hidIdx(d) || new Set(), locked: d.locked || new Set(), curLayer: curLayerName(d), query: om.query, filter: om.filter, open: om.open, show: om.show, extra: layerRows().filter((l) => !l.bg).map((l) => l.name) };
+  return { factor: d.factor, off: d.off, hid: hidIdx(d) || new Set(), locked: d.locked || new Set(), curLayer: curLayerName(d), query: om.query, filter: om.filter, open: om.open, show: om.show, extra: [...layerRows().filter((l) => !l.bg).map((l) => l.name), ...[...(d.addedLayers || [])].filter((n) => d.raw.layers[n])] };       // the added layers again: a Compare snapshot lists its source's (layerRows is of the Compare tab)
 }
 function objBtn(act, on, label, inner, cls = '') {
   return h('button', { class: 'oa' + (on ? '' : ' off') + cls, type: 'button', 'data-act': act, 'aria-label': label, title: label }, oIcon(inner, 15));
@@ -4810,16 +4813,16 @@ function renderObjects(reveal = false) {
     if (again) tree = OB.buildTree(d.raw, d.fl, objOpts(d, om));
   }
   objLast = tree;
-  const layerMeta = new Map(layerRows().map((l) => [l.name, l]));
+  const layerMeta = new Map(layerRows().map((l) => [l.name, l])), target = item ? source : d, uses = target && layerUsesOf(target);       // target: the drawing the layer rows edit (Compare: the snapshot's source, if open)
   for (const l of tree.layers) {
-    const meta = layerMeta.get(l.name), colour = l.css ? ink(l.css, dark) : meta?.color || 'var(--partline)';
+    const meta = layerMeta.get(l.name), colour = l.css ? ink(l.css, dark) : meta?.color || (source ? ink(layerCss(source.raw.layers[l.name]), dark) : 'var(--partline)');
     const vis = objBtn('vis', !l.hidden, l.hidden ? 'Show' : 'Hide', l.hidden ? EYE_OFF : EYE, ' vis live');
     if (l.index >= 0) vis.dataset.layer = 'f' + l.index;
     else vis.disabled = true;
     rows.push(h('div', { class: 'or layer' + (l.cur ? ' cur current' : '') + (l.hidden ? ' dim hidden-layer' : ''), 'data-layer': l.name, 'data-layer-name': l.name, 'data-file-layer': l.index >= 0 ? l.index : null, role: 'treeitem', 'aria-level': '1', 'aria-expanded': String(l.open) },
       h('span', { class: 'otw', 'data-act': 'expand' }, oIcon(l.open ? CHEV_DOWN : CHEV_RIGHT, 12)), source || !item ? addedSwatch(source || d, { ...l, color: colour }) : h('span', { class: 'swatch osw', style: 'background:' + colour }),
       !item && meta?.added ? addedName(d, l) : h('span', { class: 'onm nm', title: l.index >= 0 && !Ed.fixedLayer(l.name) && (!item || source) ? 'Double-click to rename' : null }, l.name), l.cur ? h('span', { class: 'chp', 'data-testid': 'layer-current' }, h('span', { 'data-testid': 'obj-current' }, 'current')) : null,
-      meta?.chip ? h('span', { class: 'chp', 'data-testid': 'layer-new' }, meta.chip) : null, h('span', { class: 'ocnt lbl mono' }, l.count), vis, objBtn('lock', l.locked, l.locked ? 'Unlock' : 'Lock', l.locked ? ICONS.lock : ICONS.unlock, l.locked ? ' lk' : '')));
+      meta?.chip ? h('span', { class: 'chp', 'data-testid': 'layer-new' }, meta.chip) : null, h('span', { class: 'ocnt lbl mono' }, l.count), vis, objBtn('lock', l.locked, l.locked ? 'Unlock' : 'Lock', l.locked ? ICONS.lock : ICONS.unlock, l.locked ? ' lk' : ''), layerDelBtn(target, l.name, target ? layerDeleteWhy(target, l.name, uses) : '', item)));
     for (const r of l.rows) {
       const blockOpen = r.block && om.openB.has(r.e);
       const eye = objBtn('vis', !r.hidden, r.hidden ? 'Show' : 'Hide', r.hidden ? EYE_OFF : EYE);
@@ -5008,6 +5011,38 @@ function startLayerRename(name, item, span) {
   span ||= [...ui.objTree.querySelectorAll('.or.layer[data-layer-name]')].find((r) => r.dataset.layerName === name)?.querySelector('.nm');       // a layout's rows pass theirs: its own Dimensions row has the same name
   if (span) renameField(span, d, name);
   return !!span;
+}
+/** What uses each layer of `d` (a drawing or layout tab), and why layer `name` cannot be deleted ('' when it can): Ed.layerDeleteProblem. */
+const layerUsesOf = (d) => (d.lay ? LD.layerUseMapOf(d.lay) : OB.layerUseMap(d.raw));
+const layerDeleteWhy = (d, name, uses = layerUsesOf(d)) => Ed.layerDeleteProblem(name, curLayerName(d), uses.get(String(name).trim().toLowerCase()));
+/** A layer's lock and Layers + Add marks are kept by name outside the layer table: a delete (`kept`: { name, locked, added }) and its Undo / Redo take them away or bring them back with the layer. */
+function layerKept(d, kept) {
+  const here = !!(d.lay ? LD.layersOf(d.lay) : d.raw.layers)[kept.name];
+  for (const [set, on] of [[d.locked, kept.locked], [d.addedLayers, kept.added]]) if (set) { if (here && on) set.add(kept.name); else set.delete(kept.name); }
+}
+/** Layer `name` is deleted (Layers panel, TODO 8b): its table entry only, one undo step; a refused layer says why. `d` is the drawing or layout tab itself (Compare: its source). */
+function deleteLayerNow(d, name) {
+  const why = layerDeleteWhy(d, name);
+  if (why) { note(why); return; }
+  const kept = { name, locked: !!d.locked?.has(name), added: !!d.addedLayers?.has(name) };
+  if (d.lay) {
+    pushLay(d, { ...laySnap(d.lay), kept }, '', `Delete layer ${name}`);
+    d.lay.layers = Object.fromEntries(Object.entries(LD.layersOf(d.lay)).filter(([k]) => k !== name));       // a new table: the undo step keeps the old one
+    layerKept(d, kept); touch(d); update();
+  } else {
+    const keep = new Set(d.sel), layers = Object.fromEntries(Object.entries(d.raw.layers).filter(([k]) => k !== name));
+    if (!commit(d, { ...snapshotOf(d), layers, kept }, `Delete layer ${name}`)) return;
+    setSel(d, keep); renderLayers();
+  }
+  note(`Layer ${name} is deleted. Ctrl+Z brings it back`);
+}
+/** The delete button of a layer row: off, its tooltip the reason, when `why` is set. No `d` (a Compare snapshot with no source drawing): a click says to open it. */
+function layerDelBtn(d, name, why, item) {
+  const b = objBtn('del', !why, 'Delete layer', TRASH);
+  b.dataset.testid = 'layer-delete';
+  if (why) { b.disabled = true; b.title = why; return b; }
+  b.addEventListener('click', (e) => { e.stopPropagation(); const t = item ? cmpEdit('delete a layer') : d; if (t) deleteLayerNow(t, name); });
+  return b;
 }
 function moveToLayerMenu(d, x, y) {
   popMenu(x, y, [...new Set(allLayerNames(d))].map((n) => [n, () => propSet('layer', n)]));
@@ -7549,7 +7584,7 @@ function commit(d, next, label, keepSel) {       // keepSel (a grip edit's objec
       cached = null;
     }
   }
-  pushHistory(d, { ...snapshotOf(d), fl: oldFl, ...keepSel && { sel: [...keepSel], grip: true }, ...next.renamed && { renamed: [...next.renamed].reverse() } }, label); d.newLayer = null;       // renamed [from, to]: Undo renames it back
+  pushHistory(d, { ...snapshotOf(d), fl: oldFl, ...keepSel && { sel: [...keepSel], grip: true }, ...next.renamed && { renamed: [...next.renamed].reverse() }, ...next.kept && { kept: next.kept } }, label); d.newLayer = null;       // renamed [from, to]: Undo renames it back
   restore(d, next, fl, names, index);
   return true;
 }
@@ -7635,6 +7670,7 @@ function restore(d, st, drawn, layerNames, index) {
     for (const tab of state.docs) if (tab.cmp) tab.cmp.items = tab.cmp.items.map((x) => (cmpSourceTab(x) === d ? { ...x, fl: { ...x.fl, layers: x.fl.layers.map((l) => (l.name === ren[0] ? { ...l, name: ren[1] } : l)) } } : x));       // Compare's snapshots keep their hidden layers by name
   }
   d.off = new Set(fl.layers.map((l, i) => (names.includes(l.name) ? i : -1)).filter((i) => i >= 0));      // layer numbers can shift: keep them by name
+  if (st.kept) layerKept(d, st.kept);       // a layer delete, its Undo or Redo: the layer's lock and Layers + Add mark
   if (index) { index.fl = fl; index.items = fl.items; }
   const c = patchedCounts(was, d.raw, fl);
   Object.assign(d, { fl, counts: c.counts, entities: c.n, cnt: { entities: d.raw.entities, names: fl.layers.map((l) => l.name), space: spaceOf(fl), counts: c.counts, n: c.n }, edPrev: prevIx, box: drawingBoxMm(fl, d.factor), dirty: true, ed: index || null, outl: null, sel: new Set(), stretchSelection: null, hl: [] });
@@ -7673,6 +7709,7 @@ function stepHist(d, dir, snapshot = d.lay ? laySnap(d.lay) : snapshotOf(d)) {
   const cur = { ...snapshot, ...(!d.lay && { sel: [...(d.sel || [])] }) }, st = (d.lay ? layHist(d) : d.hist)[dir](cur);
   cur.blSize = st?.blSize;
   if (st?.renamed) cur.renamed = [...st.renamed].reverse();       // the other way (Redo of an Undo, Undo of a Redo) renames back
+  if (st?.kept) cur.kept = st.kept;       // a layer delete: the same layer's marks both ways
   if (d.lay && st?.hid) cur.hid = [...(d.hiddenParts || [])];
   if (d.lay && dir === 'undo' && layHist(d).labels().future[0]?.startsWith('Paste ')) cur.lsel = [];       // Redo of a paste leaves no selection, as on a drawing.
   if (st?.grip) { cur.grip = true; if (d.lay) cur.lsel = st.lsel; else cur.sel = st.sel; }
