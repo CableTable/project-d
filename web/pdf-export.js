@@ -8,10 +8,12 @@
 //   mirror (x flipped, emulsion down), negative (black page, white art), black (every colour prints black),
 //   separate (one page per layer / print colour), crop / reg marks on every page, strip (file, date, colour).
 import { Page, writePdf, winAnsi, textWidthEm } from './pdf-write.js';
-import { mmul, mapply, mscale, arcSweep, opsBox, strokeWidth } from './drawing.js';
+import { mmul, mapply, mscale, arcSweep, opsBox, strokeWidth, dotDash } from './drawing.js';
 import { shownItems, itemVisible } from './doc.js';
 import { markGeometry, EDGES, gripOf } from './layout.js';
 import { addBlock, text as dxfText } from './dxf-write.js';
+import { SHEET_KEYS } from './titleblock.js';
+import { PAGES_LAYER } from './pdf-read.js';
 
 export const PAPERS = { A4: [297, 210], A3: [420, 297], A2: [594, 420], A1: [841, 594], A0: [1189, 841] };   // landscape, mm
 export const PAGE_CAP = 60;                                          // a custom-scale PDF may not run to more pages than this (the dialog's page-button limit)
@@ -58,7 +60,7 @@ export const TITLE_BLOCK = 'PD_PDF_TITLE';
 /** Only typed strings are overrides; an empty string deliberately hides that field. */
 export function cleanTitleBlock(value) {
   const out = { enabled: value?.enabled !== false };
-  for (const key of TITLE_FIELDS) if (typeof value?.[key] === 'string') out[key] = value[key];
+  for (const key of [...TITLE_FIELDS, ...SHEET_KEYS]) if (typeof value?.[key] === 'string') out[key] = value[key];       // SHEET_KEYS: the fields of a Layouts sheet's title block (titleblock.js)
   return out;
 }
 
@@ -95,10 +97,10 @@ const trimNum = (n, d = 2) => String(Number(n.toFixed(d)));
 
 // ---------------------------------------------------------------- the plan
 
-/** The first of "base.pdf", "base (2).pdf", … that `taken(name)` (async) says is free: a batch never replaces a PDF that is already there. */
-export async function freePdfName(base, taken) {
-  let name = base + '.pdf', n = 2;
-  while (await taken(name)) name = `${base} (${n++}).pdf`;
+/** The first of "base.pdf", "base (2).pdf", … (any `ext`) that `taken(name)` (async) says is free: a batch never replaces a file that is already there. */
+export async function freeName(base, taken, ext = 'pdf') {
+  let name = `${base}.${ext}`, n = 2;
+  while (await taken(name)) name = `${base} (${n++}).${ext}`;
   return name;
 }
 
@@ -448,6 +450,69 @@ function drawSheetSize(page, src, M) {
   page.restore();
 }
 
+/** Items on a page: pictures first, under every line and text (TODO 305a); pics: px → { px, w, h, rgb, a } from pictures.js rawPixels. M0 sheet mm → page mm, ws its scale, org the sheet corner in drawing mm. */
+function drawItems(page, items, { fl, F, org, M0, ws, bg, inkOf, pics }) {
+  const fulls = new Map();
+  const fullFor = (m) => { let M = fulls.get(m); if (!M) { M = mmul(M0, mmul([F, 0, 0, F, -org[0], -org[1]], fl.mats[m])); fulls.set(m, M); } return M; };
+  for (const it of items) {
+    const img = it.k === 'i' && pics?.get(it.px);
+    if (img) page.image(mmul(fullFor(it.m), it.q), img);
+  }
+  page.lineWidth(0.25); page.dash([]);
+  for (const it of items) {
+    const M = fullFor(it.m), sc = mscale(M);
+    if (it.k === 'p' && !it.fill) {
+      const w = strokeWidth(it, F, mscale(fl.mats[it.m])) * ws;
+      let dash = it.dash && it.dash.reduce((a, x) => a + x, 0) * sc >= 0.3 ? it.dash.map((x) => x * sc) : it.dpx ? it.dpx.map((x) => x * 0.3) : null;
+      if (dash && dash.reduce((a, x) => a + x, 0) < 0.3) dash = null;
+      if (dash) dash = dotDash(dash, w, it.cap);
+      page.strokeColor(inkOf(it.css)); page.lineWidth(w); page.dash(dash || []); page.lineEnds(it.cap, it.join);
+      trace(page, it.ops, M); page.stroke();
+    } else if (it.k === 'p') {
+      page.fillColor(it.a != null && it.a < 1 ? mix(inkOf(it.css, it.exact), bg, it.a) : inkOf(it.css, it.exact));
+      trace(page, it.ops, M); page.fill(true);
+    } else if (it.k === 'w') {
+      page.fillColor(bg); trace(page, it.ops, M); page.fill(true);
+    } else if (it.k === 'n') {
+      page.fillColor(inkOf(it.css)); circle(page, M, it.x, it.y, 0.4 / (sc || 1)); page.fill();
+    } else if (it.k === 't') drawText(page, it, M, inkOf(it.css));
+    else if (it.k === 'h') drawHatch(page, it, M, inkOf(it.css), bg);
+  }
+}
+
+/** Is this item a PDF page picture (an IMAGE on layer "PDF pages", TODO 358a)? */
+export const isPagePicture = (fl, it) => it.k === 'i' && fl.layers[it.L[0]]?.name.toLowerCase() === PAGES_LAYER.toLowerCase();
+
+/** Does this source (exportSource's shape: fl, off) hold a shown PDF page picture, also one inside a layout part's block? A picture on a hidden layer is not a page. */
+export const hasPagePictures = (src) => !!src?.fl && shownItems(src.fl).some((it) => isPagePicture(src.fl, it) && itemVisible(it, src.off || new Set()));
+
+/**
+ * TODO 358b: the page pictures of a drawing as a PDF, one page per picture at its (turned) box, left to right as placed. Each page: the picture, then every
+ * other shown object whose box touches its frame, as vector, clipped at the page edge (so one across two pages is cut on each). src as planPdf's (fl, factor, off, name, pics).
+ * Returns { pages: [{ n, of, w, h, box }], outside (objects touching no page), build(i) → Page, bytes() → Uint8Array }.
+ * shortcut: "touches" is the object's box, so a diagonal line whose box only grazes a page's corner counts as on it (and draws nothing there); upgrade with a segment test if that matters.
+ */
+export function planPagesPdf(src) {
+  const { fl, factor: F } = src, off = src.off || new Set();
+  const hide = new Set((src.hide || []).map((s) => s.toLowerCase()));                  // a layout's Sheet and Marks layers are not artwork
+  const items = shownItems(fl).filter((it) => itemVisible(it, off) && !it.L.some((l) => hide.has(fl.layers[l].name.toLowerCase())));
+  const boxOf = (it) => it.b.map((v) => v * F);
+  const pics = items.filter((it) => isPagePicture(fl, it) && boxOf(it)[2] > boxOf(it)[0] && boxOf(it)[3] > boxOf(it)[1]).sort((a, b) => a.b[0] - b.b[0]);
+  const others = items.filter((it) => !isPagePicture(fl, it));
+  const touches = (it, f) => { const b = boxOf(it); return b[0] <= f[2] + 1e-9 && b[2] >= f[0] - 1e-9 && b[1] <= f[3] + 1e-9 && b[3] >= f[1] - 1e-9; };
+  const pages = pics.map((it, i) => { const box = boxOf(it); return { n: i + 1, of: pics.length, w: box[2] - box[0], h: box[3] - box[1], box, _it: it, _on: others.filter((o) => touches(o, box)) }; });
+  const inside = new Set(pages.flatMap((p) => p._on.map((o) => o.e)));
+  const outside = new Set(others.filter((o) => !inside.has(o.e)).map((o) => o.e)).size;
+  const build = (i) => {
+    const p = pages[i], page = new Page(p.w, p.h);
+    page.save(); page.rect(0, 0, p.w, p.h); page.clip();                               // an object across a page edge is cut here
+    drawItems(page, [p._it, ...p._on], { fl, F, org: [p.box[0], p.box[1]], M0: [1, 0, 0, 1, 0, 0], ws: 1, bg: WHITE, inkOf: (css, exact) => (exact ? rgbOf(css) : printInk(css)), pics: src.pics });
+    page.restore();
+    return page;
+  };
+  return { pages, outside, build, bytes: () => writePdf(pages.map((_, i) => build(i)), { title: src.name || 'Project D', subject: 'Scale 1 : 1' }) };
+}
+
 function drawPage(src, o, plan, p, artBox) {
   const { fl, factor: F, sheetW: W, sheetH: H } = src, org = src.origin || [0, 0];
   const g = p._g, geo = p._geo, custom = o.page === 'custom', tile = geo.tile, mg = geo.mg || marginsOf(o);
@@ -479,31 +544,7 @@ function drawPage(src, o, plan, p, artBox) {
     page.save(); page.rect(a[0], a[1], b[0] - a[0], b[1] - a[1]); page.clip();
   }
 
-  const fulls = new Map();
-  const fullFor = (m) => { let M = fulls.get(m); if (!M) { M = mmul(M0, mmul([F, 0, 0, F, -org[0], -org[1]], fl.mats[m])); fulls.set(m, M); } return M; };
-  for (const it of g.items) {                                                        // pictures first: under every line and text (TODO 305a); src.pics: px → { px, w, h, rgb, a } from pictures.js rawPixels
-    const img = it.k === 'i' && src.pics?.get(it.px);
-    if (img) page.image(mmul(fullFor(it.m), it.q), img);
-  }
-  page.lineWidth(0.25); page.dash([]);
-  for (const it of g.items) {
-    const M = fullFor(it.m), sc = mscale(M);
-    if (it.k === 'p' && !it.fill) {
-      const w = strokeWidth(it, F, mscale(fl.mats[it.m])) * ws;
-      let dash = it.dash && it.dash.reduce((a, x) => a + x, 0) * sc >= 0.3 ? it.dash.map((x) => x * sc) : it.dpx ? it.dpx.map((x) => x * 0.3) : null;
-      if (dash && dash.reduce((a, x) => a + x, 0) < 0.3) dash = null;
-      page.strokeColor(inkOf(it.css)); page.lineWidth(w); page.dash(dash || []); page.lineEnds(it.cap, it.join);
-      trace(page, it.ops, M); page.stroke();
-    } else if (it.k === 'p') {
-      page.fillColor(it.a != null && it.a < 1 ? mix(inkOf(it.css, it.exact), bg, it.a) : inkOf(it.css, it.exact));
-      trace(page, it.ops, M); page.fill(true);
-    } else if (it.k === 'w') {
-      page.fillColor(bg); trace(page, it.ops, M); page.fill(true);
-    } else if (it.k === 'n') {
-      page.fillColor(inkOf(it.css)); circle(page, M, it.x, it.y, 0.4 / (sc || 1)); page.fill();
-    } else if (it.k === 't') drawText(page, it, M, inkOf(it.css));
-    else if (it.k === 'h') drawHatch(page, it, M, inkOf(it.css), bg);
-  }
+  drawItems(page, g.items, { fl, F, org, M0, ws, bg, inkOf, pics: src.pics });
 
   // crop and registration marks round the art, the same on every page so the colours register
   page.lineEnds();

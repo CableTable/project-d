@@ -10,6 +10,7 @@ import * as GR from './web/grips.js';
 import * as TX from './web/text.js';
 import { planPdf, readTitleBlock, withTitleBlock } from './web/pdf-export.js';
 import { isDimPart } from './web/layoutdim.js';
+import { layerDeleteProblem } from './web/edit.js';
 
 const near = (a, b, t = 1e-6) => assert.ok(Math.abs(a - b) <= t, a + ' != ' + b);
 let n = 0;
@@ -416,6 +417,41 @@ test('layout objects (TODO 156b3b): a grip edit keeps the object (slot, name, gr
   v = LD.objectDoc(lay);
   assert.ok(LD.objectReplace(lay, v, v.raw.entities[1], line(0, 70, 30, 70), () => 'n2'));
   assert.deepEqual(lay.parts.n1.box, [0, 0, 100, 50], 'the first one is untouched'); assert.equal(lay.parts.n2.name, 'Line 2'); assert.equal(lay.placed[1].partId, 'n2');
+});
+
+test('TODO 8a: changeLayer renames / recolours a layout layer: new table, its objects made again (new ids, same slots, group and lock), the others untouched, saved under the new name', () => {
+  const lay = LD.newLayout('Objs'), layers = LD.layersOf(lay);
+  addLayer(lay, 'A', { aci: 1 }); addLayer(lay, 'B', { aci: 5 });
+  const mk = (id, ent, extra) => { const o = LD.objectPart(id, id, ent, layers); lay.parts[id] = o; lay.placed.push({ ...LD.objectPlacement(o), ...extra }); };
+  mk('a', line(0, 0, 100, 0, { layer: 'A' }), { g: 'g1', lock: true }); mk('b', line(0, 20, 100, 20, { layer: 'B' }));
+  lay.placed.push({ ...lay.placed[0], y: 50 });                           // a copy of a: the same part
+  const old = LD.layersOf(lay), before = lay.parts.b, redTc = 0xff8000;
+  const ids = LD.changeLayer(lay, 'A', { to: 'Renamed', def: { ...layers.A, aci: 7, tc: redTc } }, (() => { let k = 0; return () => 'n' + ++k; })());
+  assert.deepEqual([...ids], [['a', 'n1']]);
+  assert.notEqual(lay.layers, old, 'a new table, so an undo snapshot keeps the old one'); assert.ok(old.A && !old.Renamed);
+  assert.deepEqual(Object.keys(lay.layers), ['0', 'Renamed', 'B'], 'the order is kept');
+  assert.equal(lay.layers.Renamed.tc, redTc);
+  assert.deepEqual(lay.placed.map((p) => p.partId), ['n1', 'b', 'n1'], 'both places of the shared part follow');
+  assert.equal(lay.placed[0].g, 'g1'); assert.equal(lay.placed[0].lock, true);
+  assert.equal(lay.parts.b, before, 'an object on another layer is not made again'); assert.equal(lay.parts.a, undefined);
+  assert.equal(lay.parts.n1.raw.entities[0].layer, 'Renamed'); assert.equal(lay.parts.n1.name, 'a'); assert.deepEqual(lay.parts.n1.box, [0, 0, 100, 0]);
+  assert.equal(lay.parts.n1.fl.layers.find((l) => l.name === 'Renamed').css.toLowerCase(), '#ff8000', 'its drawn colour follows');
+  const back = readDxf(writeDxf(LD.layoutRaw(lay)));
+  assert.equal(back.layers.Renamed.tc & 0xffffff, redTc); assert.ok(!back.layers.A);
+  assert.equal(back.entities.filter((e) => e.layer === 'Renamed').length, 2); assert.equal(back.entities.filter((e) => e.layer === 'A').length, 0);
+});
+
+test('TODO 8b: layerUseMapOf counts each placed layout object on its layer (a copy counts again); an object taken off the sheet or a layer with none is free', () => {
+  const lay = LD.newLayout('Objs'), layers = LD.layersOf(lay);
+  addLayer(lay, 'A', { aci: 1 }); addLayer(lay, 'B', { aci: 5 }); addLayer(lay, 'Spare', { aci: 3 });
+  const mk = (id, ent) => { const o = LD.objectPart(id, id, ent, layers); lay.parts[id] = o; lay.placed.push(LD.objectPlacement(o)); };
+  mk('a', line(0, 0, 100, 0, { layer: 'A' })); mk('b', line(0, 20, 100, 20, { layer: 'B' }));
+  lay.placed.push({ ...lay.placed[0], y: 50 });                           // a copy of a: the same part
+  lay.parts.gone = LD.objectPart('gone', 'gone', line(0, 40, 100, 40, { layer: 'Spare' }), layers);       // not placed: nothing on the sheet uses Spare
+  const uses = LD.layerUseMapOf(lay);
+  assert.deepEqual(uses.get('a'), { count: 2, nested: false }); assert.deepEqual(uses.get('b'), { count: 1, nested: false });
+  assert.equal(uses.get('spare'), undefined);
+  assert.equal(layerDeleteProblem('Spare', '0', uses.get('spare')), ''); assert.equal(layerDeleteProblem('A', '0', uses.get('a')), 'Layer has 2 objects');
 });
 
 test('layout objects (TODO 156b fixes): group and lock survive save and reopen; a trim to one piece keeps group, lock and name; an old layout without them opens', () => {

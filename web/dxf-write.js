@@ -4,7 +4,7 @@
 //   writeDxf(doc, opts) → string, CRLF lines.   opts: { escapeUnicode: true writes non-ASCII as \U+XXXX (R2000's own way); extents: [x0, y0, x1, y1] of model space, when the caller has them (flatten is slow on a big file) }
 //   unwritable(doc) → [{ type, count }]: what writeDxf leaves out (warn before overwriting a file)
 //   writeDxfWithReport(doc, opts) → { text, pictures: [{ name, px }], tables, skipped }: opts.name is the final DXF file name; pictures: false skips IMAGEs when the caller cannot write PNGs
-//   Export opts: units ('mm', 'in', 'unitless'), scale (> 0), precision (0–8), skipLayers (names left out, layer 0 never: withoutLayers); transforms a deep copy.
+//   Export opts: units ('mm', 'in', 'unitless'), scale (> 0), precision (0–8), skipLayers (names left out, layer 0 never: withoutLayers), hidden: false (code-60 objects left out: withoutHidden); transforms a deep copy.
 //
 // The document (drawing.js): { header: { $NAME: string | [x, y] }, layers: { NAME: { aci, tc, off, frozen, lt, lw } },
 //   ltypes: { NAME: { pattern: [dash, gap, …] } }, blocks: { NAME: { base: [x, y], xref, entities } }, entities, groups (groups.js) }
@@ -310,17 +310,33 @@ export function withoutLayers(doc, names) {
   const gone = new Set();
   doc.entities.forEach((e, i) => { if (skip.has(layerOf(e))) gone.add(i); });
   if (!gone.size) return doc;
+  const { entities, blocks, groups } = withoutEntities(doc, gone);
+  const used = new Set(entities.map(layerOf));
+  for (const name of usedBlocks(blocks, entities)) for (const e of blocks[name]?.entities || []) used.add(layerOf(e));
+  const layers = Object.fromEntries(Object.entries(doc.layers || {}).filter(([n]) => !skip.has(n.toLowerCase()) || used.has(n.toLowerCase())));
+  return { ...doc, entities, blocks, layers, groups };
+}
+
+/** Entities `gone` (indexes) out of the copy: their blocks, the PD_LAYOUT block and the group members go with them. */
+function withoutEntities(doc, gone) {
   const { entities, blocks } = removeEntities(doc, gone), indexes = new Map();
   let k = 0;
   doc.entities.forEach((_, i) => { if (!gone.has(i)) indexes.set(i, [k++]); });
   delete blocks.PD_LAYOUT;
-  const used = new Set(entities.map(layerOf));
-  for (const name of usedBlocks(blocks, entities)) for (const e of blocks[name]?.entities || []) used.add(layerOf(e));
-  const layers = Object.fromEntries(Object.entries(doc.layers || {}).filter(([n]) => !skip.has(n.toLowerCase()) || used.has(n.toLowerCase())));
-  return { ...doc, entities, blocks, layers, groups: remap(doc.groups, indexes) };
+  return { entities, blocks, groups: remap(doc.groups, indexes) };
 }
 
-export function writeDxfWithReport(doc, opts = {}) {
+/** Export's Hidden objects off (TODO 109d1): the top-level code-60 entities are left out of the copy (layers stay: the 109b ticks decide those). */
+export function withoutHidden(doc) {
+  const gone = new Set();
+  doc.entities.forEach((e, i) => { if (e.hidden) gone.add(i); });
+  return gone.size ? { ...doc, ...withoutEntities(doc, gone) } : doc;
+}
+
+const drain = (steps) => { let r; while (!(r = steps.next()).done); return r.value; };
+export const writeDxfWithReport = (doc, opts = {}) => drain(writeDxfSteps(doc, opts));
+/** writeDxfWithReport as steps: it yields every 64 entities (TODO 237b: autosave runs the steps in idle slices) and returns what writeDxfWithReport returns. */
+export function* writeDxfSteps(doc, opts = {}) {
   const { units, scale = 1, precision = 6 } = opts;
   if (units !== undefined && !['mm', 'in', 'unitless'].includes(units)) throw new Error('Units must be mm or in (unitless drawings do not convert)');
   if (!Number.isFinite(scale) || scale <= 0) throw new Error('Scale must be a number above 0');
@@ -331,8 +347,9 @@ export function writeDxfWithReport(doc, opts = {}) {
   const factor = (unitChange ? mm[source] / (units === 'in' ? 25.4 : 1) : 1) * scale;
   if (!Number.isFinite(factor) || factor <= 0) throw new Error('Cannot convert these drawing units or scale');
   // Only export options need a deep copy; ordinary Save keeps its existing fast path.
-  if (units !== undefined || opts.scale !== undefined || opts.precision !== undefined || opts.skipLayers) doc = structuredClone(doc);
+  if (units !== undefined || opts.scale !== undefined || opts.precision !== undefined || opts.skipLayers || opts.hidden === false) doc = structuredClone(doc);
   if (opts.skipLayers?.length) doc = withoutLayers(doc, opts.skipLayers);
+  if (opts.hidden === false) doc = withoutHidden(doc);
   const prepared = prepareSave(doc, true, opts.pictures !== false);
   const unreadLabels = new Set();
   doc = prepared.doc;
@@ -412,11 +429,11 @@ export function writeDxfWithReport(doc, opts = {}) {
     doc.header.$MEASUREMENT = units === 'in' ? '0' : '1';
   }
   const ext = factor !== 1 && opts.extents ? opts.extents.map((n) => n * factor) : opts.extents;
-  return { ...writePreparedDxf(doc, { ...opts, extents: ext }), tables: prepared.tables, skipped: prepared.skipped,
+  return { ...(yield* writePreparedSteps(doc, { ...opts, extents: ext })), tables: prepared.tables, skipped: prepared.skipped,
     ...(unreadLabels.size ? { unreadLabels: [...unreadLabels] } : {}) };
 }
 
-function writePreparedDxf(doc, opts) {
+function* writePreparedSteps(doc, opts) {
   const esc = !!opts.escapeUnicode;
   const precision = opts.precision ?? 6;
   const colourFallbacks = new Map();
@@ -487,7 +504,7 @@ function writePreparedDxf(doc, opts) {
   const styleRec = new Map([...styles].map((n) => [n.toLowerCase(), handle()]));   // up front: a complex line type points at its text style
   const find = (n) => [...rec.keys()].find((k) => k.toLowerCase() === n.toLowerCase());
   const modelRec = rec.get(find('*Model_Space')), paperRec = rec.get(find('*Paper_Space'));
-  const images = [], pictures = [];
+  const images = [], pictures = [], picNo = [0, 0];                // picNo: the last -imgN / -pageN number
   let imageDict;
 
   // a group keeps the name it was read with; an unnamed or repeated one gets the next free *A<n>
@@ -531,7 +548,8 @@ function writePreparedDxf(doc, opts) {
       imageDict ||= handle();
       const get = (c) => +r.v[r.c.indexOf(c)] || 0;
       const def = handle(), reactor = handle();
-      const name = String(opts.name || 'drawing.dxf').split(/[\\/]/).pop().replace(/\.dxf$/i, '') + `-img${pictures.length + 1}.png`;
+      const page = p.layer === 'PDF pages';                 // TODO 358a: a PDF's page pictures (pdf-read.js PAGES_LAYER) are saved as -pageN.png
+      const name = String(opts.name || 'drawing.dxf').split(/[\\/]/).pop().replace(/\.dxf$/i, '') + `-${page ? 'page' : 'img'}${++picNo[+page]}.png`;
       pictures.push({ name, px: r.px });
       images.push({ def, reactor, image: h, name, w: get(13), h: get(23), u: Math.hypot(get(11), get(21), get(31)), v: Math.hypot(get(12), get(22), get(32)) });
       spec = spec.filter(([c]) => ![90, 70, 280, 281, 282, 283, 71, 91, 14, 24, 290].includes(c));
@@ -584,7 +602,7 @@ function writePreparedDxf(doc, opts) {
   // ENTITIES
   const entSec = [], entityHandles = [];
   { const o = out(entSec); o.s(0, 'SECTION').s(2, 'ENTITIES');
-    for (const [i, e] of doc.entities.entries()) entityHandles.push(ent(o, e, e.ps ? paperRec : modelRec, memberOf.get(i)));
+    for (const [i, e] of doc.entities.entries()) { entityHandles.push(ent(o, e, e.ps ? paperRec : modelRec, memberOf.get(i))); if (i % 64 === 63) yield; }
     o.s(0, 'ENDSEC'); }
 
   // TABLES

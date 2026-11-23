@@ -5,6 +5,7 @@
 //   readPdf(bytes, { page, pdfjs })   → { doc, paths, texts, pictures, stencils, pages, page, mm: [w, h] }   (the drawing, in mm; pictures are IMAGE entities)
 //   renderPdfPage(bytes, { page, dpi }) → { canvas, w, h, mmPerPx, pages }              (the page as a picture)
 //   renderPdfPages(bytes, { onPage }) → { canvas, w, h, mmPerPx, dpi, pages }          (every page side by side on one picture; pageLayout is the pure placement)
+//   renderPdfPictures(bytes, { onPage }) → { doc, pages, dpi }                           (every page its own IMAGE on layer "PDF pages"; pageLayouts / pagePlacement are the pure parts)
 //   pdfToDoc({ ops, text, view, rotate }, OPS) → { doc, paths, texts }                  (the pure part; rotate: the page's /Rotate)
 import { newDoc, addLayer, arc, lwpoly, text, entity } from './dxf-write.js';
 import { toRgba, encodePng } from './pictures.js';
@@ -13,6 +14,7 @@ import { fillHoles, edgeDist } from './fill.js';
 
 /** mm in one PDF point. */
 export const PT = 25.4 / 72;
+export const PAGES_LAYER = 'PDF pages';                // TODO 358a: the page pictures of a PDF opened as Pictures (dxf-write.js names their PNGs -pageN.png)
 const PICTURES = 'PDF pictures';                      // one layer for all the pictures, so one switch hides them
 const CAP = 0.7;                                      // a text's capitals are about 0.7 of its font size
 
@@ -357,6 +359,42 @@ export async function renderPdfPages(bytes, { onPage = () => {}, ...opts } = {})
       part.width = part.height = 0; pg.cleanup();                                   // the page's canvas is freed at once
     }
     return { canvas, w: lay.W, h: lay.H, mmPerPx: lay.mmPerPx, dpi: lay.dpi, pages: pages.length };
+  } finally { try { await pdf.destroy(); } catch { /* already gone */ } }
+}
+
+/** TODO 358a: one layout per page (maxSide / maxArea hold for each page on its own, 150 dpi unless that page is too big). `sizes` as pageLayout's. → [pageLayout([size])…] */
+export const pageLayouts = (sizes, opts) => sizes.map((s) => pageLayout([s], opts));
+
+/** TODO 358a: where each page picture's bottom-left goes in mm: left to right `gapMm` apart, top edges aligned (the tallest page's top is y = its height). `sizesMm` [[w, h]] → [{ x, y }]. */
+export function pagePlacement(sizesMm, gapMm = 10) {
+  const top = Math.max(...sizesMm.map((s) => s[1]));
+  let x = 0;
+  return sizesMm.map(([w, h]) => { const at = { x, y: top - h }; x += w + gapMm; return at; });
+}
+
+/** TODO 358a: every page of a PDF as its own IMAGE entity on layer "PDF pages" (true page size, pagePlacement), as a drawing document. One page is got, rendered and dropped at a time
+ *  (the PDF opened once); each page has its own pageLayout. `onPage(k, n)` runs before page k of n is drawn. → { doc, pages, dpi (the lowest page dpi) }. Browser only. */
+export async function renderPdfPictures(bytes, { onPage = () => {}, ...opts } = {}) {
+  const lib = await loadPdfjs();
+  const pdf = await lib.getDocument({ data: new Uint8Array(bytes), verbosity: 0 }).promise;
+  try {
+    const sizes = [];
+    for (let n = 1; n <= pdf.numPages; n++) { const pg = await pdf.getPage(n), v = pg.getViewport({ scale: 1 }); sizes.push([v.width, v.height]); pg.cleanup(); }
+    const lays = pageLayouts(sizes, opts), at = pagePlacement(sizes.map(([w, h]) => [w * PT, h * PT]));
+    const doc = newDoc();
+    addLayer(doc, PAGES_LAYER, { aci: 7 });
+    for (let i = 0; i < sizes.length; i++) {
+      onPage(i + 1, sizes.length);
+      const pg = await pdf.getPage(i + 1), lay = lays[i], cell = lay.cells[0], canvas = document.createElement('canvas');
+      canvas.width = cell.w; canvas.height = cell.h;
+      const c = canvas.getContext('2d');
+      c.fillStyle = '#ffffff'; c.fillRect(0, 0, cell.w, cell.h);
+      await pg.render({ canvasContext: c, viewport: pg.getViewport({ scale: lay.dpi / 72 }) }).promise;
+      const pic = entity('IMAGE', [[10, at[i].x], [20, at[i].y], [30, 0], [11, sizes[i][0] * PT / cell.w], [21, 0], [31, 0], [12, 0], [22, sizes[i][1] * PT / cell.h], [32, 0], [13, cell.w], [23, cell.h]], { layer: PAGES_LAYER });
+      pic.r.px = canvas.toDataURL('image/png'); doc.entities.push(pic);
+      canvas.width = canvas.height = 0; pg.cleanup();                                // the page's canvas is freed at once
+    }
+    return { doc, pages: sizes.length, dpi: Math.min(...lays.map((l) => l.dpi)) };
   } finally { try { await pdf.destroy(); } catch { /* already gone */ } }
 }
 

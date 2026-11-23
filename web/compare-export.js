@@ -1,7 +1,7 @@
 // Compare artwork in drawing mm, with the same visibility, placement and tint as its canvas.
 import { mmul, unionBox } from './drawing.js';
 import { shownItems, itemVisible } from './doc.js';
-import { partSource } from './pdf-export.js';
+import { partSource, isPagePicture } from './pdf-export.js';
 
 export function compareSource(drawings, tint) {
   const visible = drawings.filter((x) => x.visible);
@@ -13,7 +13,7 @@ export function compareSource(drawings, tint) {
     for (const it of shownItems(item.fl)) {
       if (!itemVisible(it, off)) continue;
       const b = it.b.map((v, i) => v * f + offset[i % 2]);
-      fl.items.push({ ...it, ps: 0, m: it.m + mi, L: it.L.map((l) => l + li), b, css: tint(item.colour) });
+      fl.items.push({ ...it, ps: 0, m: it.m + mi, L: it.L.map((l) => l + li), b, css: isPagePicture(item.fl, it) ? it.css : tint(item.colour) });       // TODO 358c2: a PDF page picture stays as it is, what is drawn over it is tinted
       fl.boxes.model = unionBox(fl.boxes.model, b);
     }
   }

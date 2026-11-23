@@ -8,14 +8,69 @@
 // Positions are on the grid (whole mm), the area's own corner is the origin. A part with a hole is packed as its outer outline (the hole
 // is not used by other parts). The packer is deterministic: the same job always gives the same result.
 //
-// A job:   { area: { x, y, w, h } (mm, y up: where parts may go), gap (mm), rotations: 'none' | 'flip' | 'all',
+// A try (optional, freeTry(seed, total)): job.angles (a degree per piece, that piece is tried at it alone) and job.order (the pieces' order), both by the piece's
+// place in the largest-first list; without them the run is as before.
+// A job:   { area: { x, y, w, h } (mm, y up: where parts may go), gap (mm), rotations: 'none' | 'flip' | 'all' | 'free' (free: as 'all'; nestrun.js adds the random tries),
 //            items: [{ id, count, poly: [[x, y], …] }]  poly: the part's outline in mm, its own lower-left corner is 0,0, y up,
 //            fixed: [poly in sheet mm, …]  (parts already on the sheet: kept clear of, never moved), cell (mm, optional) }
-// A placement: { partId, i (the piece's number within its part), rot (0 | 90 | 180 | 270, anticlockwise about the part's 0,0), x, y }
+// A placement: { partId, i (the piece's number within its part), rot (0 | 90 | 180 | 270, or any degree from a try; anticlockwise about the part's 0,0), x, y }
 //            — apply.js's placed part: (x, y) is where the part's own 0,0 lands on the sheet, so rotated outlines are shifted to stay in the area.
 
-export const ROTATIONS = { none: [0], flip: [0, 180], all: [0, 90, 180, 270] };
+export const ROTATIONS = { none: [0], flip: [0, 180], all: [0, 90, 180, 270], free: [0, 90, 180, 270] };   // free: one pack() is the "Every 90°" try; the random tries come from freeRun()
 export const MAX_PIECES = 1000;
+export const CACHE_MAX = 2048;
+
+/** A seeded random number generator (mulberry32): the same seed always gives the same numbers in [0, 1). */
+export function mulberry32(seed) {
+  let a = seed >>> 0;
+  return () => { a = (a + 0x6d2b79f5) >>> 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+}
+/**
+ * The try for a seed, for a job of `total` pieces: { angles, order } to hand to pack() (job.angles: a whole degree 0-359 per piece; job.order: the
+ * pieces' order, largest first with random swaps; both by the piece's place in the largest-first list). Seed 0 is the "Every 90°" run: { angles: null, order: null }.
+ */
+export function freeTry(seed, total) {
+  if (!seed) return { angles: null, order: null };
+  const rnd = mulberry32(seed), order = Array.from({ length: total }, (_, k) => k), angles = order.map(() => Math.floor(rnd() * 360));
+  for (let s = Math.ceil(total / 4); s > 0 && total > 1; s--) { const a = Math.floor(rnd() * total), b = Math.floor(rnd() * total); [order[a], order[b]] = [order[b], order[a]]; }
+  return { angles, order };
+}
+/** Is try `a` better than try `b` (each a pack() result plus its `seed`)? Higher usedPct; a tie goes to the lower seed, whichever arrived first. */
+export const betterTry = (a, b) => !b || a.usedPct > b.usedPct + 1e-9 || (Math.abs(a.usedPct - b.usedPct) <= 1e-9 && a.seed < b.seed);
+/**
+ * Free angles, one worker's share: worker k of K packs seeds k, k+K, k+2K, … (seed 0 = the "Every 90°" run, never cut by `until`; a random
+ * try still going at `until` (ms, Date.now's clock) is dropped). A generator: yields { type: 'step', seed, done, total, placements } as it packs
+ * and { type: 'best', result, tried } when a try beats this worker's best; returns { tried, best }.
+ */
+export function* freeRun(job, k, K, until, now = Date.now) {
+  const total = job.items.reduce((s, it) => s + Math.min(MAX_PIECES, Math.max(0, Math.floor(it.count) || 0)), 0);
+  let best = null, tried = 0;
+  for (let seed = k; ; seed += K) {
+    if (seed && now() >= until) break;
+    const g = packSteps({ ...job, ...freeTry(seed, total) });
+    let r, cut = false;
+    for (;;) {
+      r = g.next();
+      if (r.done) break;
+      if (seed && now() >= until) { cut = true; break; }
+      yield { type: 'step', seed, ...r.value };
+    }
+    if (cut) break;
+    tried++;
+    const res = { ...r.value, seed };
+    if (betterTry(res, best)) { best = res; yield { type: 'best', result: res, tried }; }
+  }
+  return { tried, best };
+}
+/** A least-recently-used map holding at most `cap` entries (the oldest goes first). */
+export function lru(cap = CACHE_MAX) {
+  const m = new Map();
+  return {
+    get(k) { if (!m.has(k)) return undefined; const v = m.get(k); m.delete(k); m.set(k, v); return v; },
+    set(k, v) { m.delete(k); m.set(k, v); if (m.size > cap) m.delete(m.keys().next().value); },
+    get size() { return m.size; },
+  };
+}
 
 // ---------------------------------------------------------------- outlines
 const EPS = 1e-6;
@@ -32,11 +87,15 @@ export function polyBox(p) {
   for (const [x, y] of p) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
   return [x0, y0, x1, y1];
 }
-/** The point turned by a multiple of 90° (exact, no rounding noise). */
+/** The point turned by `deg`: a multiple of 90° is exact (no rounding noise), any other angle uses cos / sin. */
 function turn(x, y, deg) {
-  switch (((deg % 360) + 360) % 360) { case 90: return [-y, x]; case 180: return [-x, -y]; case 270: return [y, -x]; default: return [x, y]; }
+  const d = ((deg % 360) + 360) % 360;
+  switch (d) {
+    case 0: return [x, y]; case 90: return [-y, x]; case 180: return [-x, -y]; case 270: return [y, -x];
+    default: { const th = d * Math.PI / 180, c = Math.cos(th), s = Math.sin(th); return [x * c - y * s, x * s + y * c]; }
+  }
 }
-/** The outline turned by `deg` (a multiple of 90°) about its 0,0 and then moved by (dx, dy). */
+/** The outline turned by `deg` (any angle) about its 0,0 and then moved by (dx, dy). */
 export const polyAt = (poly, deg, dx = 0, dy = 0) => poly.map(([x, y]) => { const [u, v] = turn(x, y, deg); return [u + dx, v + dy]; });
 
 function inside(p, x, y) {
@@ -203,13 +262,15 @@ export function* packSteps(job) {
     usedArea += polyArea(f);
   }
   // the pieces, largest first (a stable order: by area, then by the order the parts were given, then by piece number)
-  const pieces = [];
+  let pieces = [];
   items.forEach((it, n) => {
     const a = it.poly && it.poly.length >= 3 ? polyArea(it.poly) : 0;
     for (let i = 0; i < Math.min(MAX_PIECES, Math.max(0, Math.floor(it.count) || 0)); i++) pieces.push({ it, n, i, a });
   });
   pieces.sort((p, q) => q.a - p.a || p.n - q.n || p.i - q.i);
-  const placements = [], left = {}, cache = new Map(), noFit = new Set();
+  if (job.angles) pieces.forEach((pc, k) => { if (job.angles[k] != null) pc.deg = job.angles[k]; });     // a try's angle: that piece is tried at it alone
+  if (job.order && job.order.length === pieces.length) pieces = job.order.map((k) => pieces[k]);
+  const placements = [], left = {}, cache = lru();           // one cache for the masks (`id|deg`) and the no-fit marks (`\0id|deg`)
   const total = pieces.length;
   const variant = (it, deg) => {                          // the outline turned and moved to 0,0, with its mask and the shift that undid
     const key = it.id + '|' + deg;
@@ -225,11 +286,11 @@ export function* packSteps(job) {
     const it = pc.it;
     let best = null;
     if (pc.a > 0) {
-      for (const deg of rots) {
-        const nk = it.id + '|' + deg;
-        if (noFit.has(nk)) continue;
+      for (const deg of pc.deg != null ? [pc.deg] : rots) {
+        const nk = '\0' + it.id + '|' + deg;
+        if (cache.get(nk)) continue;
         const v = variant(it, deg);
-        if (v.w > area.w + EPS || v.h > area.h + EPS) { noFit.add(nk); continue; }
+        if (v.w > area.w + EPS || v.h > area.h + EPS) { cache.set(nk, true); continue; }
         if (!v.mask) v.mask = buildMask(v.pts, gap, C);
         const maxX = Math.floor((area.w - v.w) / C + 1e-9), maxY = Math.floor((area.h - v.h) / C + 1e-9), runs = v.mask;
         let found = null, cut = false;
@@ -247,7 +308,7 @@ export function* packSteps(job) {
           }
         }
         if (found) { if (!best || found.oy < best.oy || (found.oy === best.oy && found.ox < best.ox)) best = { ...found, v }; }
-        else if (!cut) noFit.add(nk);
+        else if (!cut) cache.set(nk, true);
       }
     }
     if (best) {

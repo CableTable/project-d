@@ -14,22 +14,25 @@ const sv = (tag, attrs, ...kids) => {
 };
 const fmt = (v) => String(Math.round(v * 10) / 10);
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
-const ROT_LABELS = [['none', '0° only'], ['flip', '0° + 180°'], ['all', 'Every 90°']];
+const ROT_LABELS = [['none', '0° only'], ['flip', '0° + 180°'], ['all', 'Every 90°'], ['free', 'Free angles']];
+const TIME_MIN = 5, TIME_MAX = 600;
 const KINDS = 4;
 
 /**
  * cfg: { layName, sheetW, sheetH, area: { x, y, w, h } (usable, y up), grips: { top, right, bottom, left }, gap,
  *        parts: [{ id, name, w, h, thumb, count, outline() → [[x, y], …] }], fixed: [[[x, y], …]] (parts already on the sheet, sheet mm),
  *        autoRun, onApply(result, counts), onNextSheet(result, left), note(text) }
- * settings (kept for the session): { rotations }.
+ * settings (kept for the session): { rotations, timeLimit (s, Free angles only) }.
  */
-const kept = { rotations: 'all' };
+export const kept = { rotations: 'all', timeLimit: 60 };
+/** The time limit typed in the field: a whole number of seconds, 5-600 (anything else: the default 60). */
+export const limitOf = (text) => { const n = parseInt(text, 10); return Number.isFinite(n) ? Math.max(TIME_MIN, Math.min(TIME_MAX, n)) : 60; };
 
 export function openNest(cfg) {
   if (document.querySelector('.nestdlg')) return;
   const counts = {};
   for (const p of cfg.parts) counts[p.id] = p.count;
-  let phase = 'idle', result = null, progress = { done: 0, total: 0, placements: [] }, run = null, t0 = 0, clock = 0;
+  let free = false, phase = 'idle', result = null, progress = { done: 0, total: 0, placements: [] }, run = null, t0 = 0, clock = 0;
   const polys = new Map();
   const polyOf = (id) => { if (!polys.has(id)) polys.set(id, cfg.parts.find((p) => p.id === id).outline()); return polys.get(id); };
   const kindOf = (id) => cfg.parts.findIndex((p) => p.id === id) % KINDS + 1;
@@ -60,9 +63,13 @@ export function openNest(cfg) {
   });
   const totals = h('span', { class: 'lbl', 'data-testid': 'nest-totals' });
   const setAll = h('button', { class: 'btn sm', type: 'button', 'data-testid': 'nest-all1', onclick: () => { for (const p of cfg.parts) counts[p.id] = 1; sync(); } }, 'Set all to 1');
+  const limitInput = h('input', { class: 'cnt mono', type: 'text', inputmode: 'numeric', value: String(kept.timeLimit), 'aria-label': 'Time limit in seconds', 'data-testid': 'nest-timelimit' });
+  const limitRow = h('div', { class: 'pd-row', 'data-testid': 'nest-limitrow', hidden: kept.rotations !== 'free' }, h('span', null, 'Time limit (s)'), h('span', { style: 'flex:1' }), limitInput);
+  limitInput.addEventListener('change', () => { kept.timeLimit = limitOf(limitInput.value); limitInput.value = String(kept.timeLimit); });
+  limitInput.addEventListener('focus', () => limitInput.select());
   const rotBtns = ROT_LABELS.map(([key, text]) => {
     const b = h('button', { class: 'seg' + (kept.rotations === key ? ' on' : ''), type: 'button', 'aria-pressed': kept.rotations === key ? 'true' : 'false', 'data-testid': `nest-rot-${key}`,
-      onclick: () => { kept.rotations = key; rotBtns.forEach((x) => { const on = x === b; x.classList.toggle('on', on); x.setAttribute('aria-pressed', on ? 'true' : 'false'); }); } }, text);
+      onclick: () => { kept.rotations = key; limitRow.hidden = key !== 'free'; rotBtns.forEach((x) => { const on = x === b; x.classList.toggle('on', on); x.setAttribute('aria-pressed', on ? 'true' : 'false'); }); } }, text);
     return b;
   });
   const left = h('div', { class: 'pd-left' },
@@ -73,6 +80,7 @@ export function openNest(cfg) {
     h('div', { class: 'pd-row' }, totals, h('span', { style: 'flex:1' }), setAll),
     h('div', { class: 'lbl sub' }, 'Rotations'),
     h('div', { class: 'mode', role: 'group', 'aria-label': 'Rotations' }, rotBtns),
+    limitRow,
     h('div', { class: 'pd-row' }, h('span', null, 'Gap between parts'), h('span', { style: 'flex:1' }), h('span', { class: 'mono', 'data-testid': 'nest-gap' }, `${fmt(cfg.gap)} mm`)),
     h('div', { class: 'lbl' }, 'From the layout\'s Gap X / Y. Change it on the Layout panel.'));
 
@@ -138,6 +146,7 @@ export function openNest(cfg) {
     resBox.classList.toggle('all', ok);
     const kids = [h('div', { class: 'pd-row' }, h('strong', { 'data-testid': 'nest-placed' }, `${result.placed} of ${result.total} placed${result.stopped ? ' (stopped)' : ''}`),
       h('span', { class: 'chip', 'data-testid': 'nest-pct' }, `${Math.round(result.usedPct)} % of the sheet used`))];
+    if (result.free) kids.push(h('div', { class: 'lbl', 'data-testid': 'nest-seeds' }, `Free angles: ${plural(result.free.tried, 'seed', 'seeds')} tried, the best is seed ${result.free.seed}${result.free.seed ? '' : ' (Every 90°)'}${result.free.stopped ? ', you stopped the search' : ''}.`));
     if (ok) kids.push(h('div', { class: 'lbl', 'data-testid': 'nest-left' }, 'Everything fits on this sheet.'));
     else {
       kids.push(h('div', { class: 'lbl', 'data-testid': 'nest-left' }, `Left over (${leftN}): `, left.flatMap((p, i) => [i ? ', ' : '', h('b', null, `${result.left[p.id]} × ${p.name}`)]),
@@ -154,13 +163,15 @@ export function openNest(cfg) {
     dlg.dataset.state = phase;
     dlg.classList.toggle('running', running);
     for (const r of rows) { r.input.disabled = running; r.minus.disabled = running; r.plus.disabled = running; }
-    setAll.disabled = running; rotBtns.forEach((b) => { b.disabled = running; });
+    setAll.disabled = running; limitInput.disabled = running; rotBtns.forEach((b) => { b.disabled = running; });
     preLabel.textContent = running ? 'Preview · placing…' : 'Preview · not applied yet';
     const canApply = phase === 'done' && result && result.placed > 0;
     apply.disabled = !canApply;
     if (running) {
-      const pct = progress.total ? Math.round((progress.done / progress.total) * 100) : 0;
-      stat.textContent = `Placing ${progress.done} of ${progress.total}…  ${((Date.now() - t0) / 1000).toFixed(1)} s`;
+      const secs = (Date.now() - t0) / 1000;
+      const pct = free ? Math.min(100, Math.round((secs / kept.timeLimit) * 100)) : progress.total ? Math.round((progress.done / progress.total) * 100) : 0;
+      stat.textContent = free ? `${progress.free ? `Best ${Math.round(progress.free.usedPct)} % · ${plural(progress.free.tried, 'seed', 'seeds')} tried` : `Seed 0: placing ${progress.done} of ${progress.total}`} · ${secs.toFixed(1)} of ${kept.timeLimit} s`
+        : `Placing ${progress.done} of ${progress.total}…  ${secs.toFixed(1)} s`;
       bar.firstChild.style.width = pct + '%'; bar.setAttribute('aria-valuenow', String(pct));
       foot.replaceChildren(stat, bar, h('span', { style: 'flex:1' }), stop, apply);
     } else if (phase === 'done') {
@@ -168,8 +179,8 @@ export function openNest(cfg) {
     } else {
       foot.replaceChildren(h('span', { class: 'lbl' }, total() ? 'Run packs the parts into a preview. The sheet is not changed until Apply.' : 'Set how many of each part, then Run.'), h('span', { style: 'flex:1' }), cancel, runBtn);
     }
-    runBtn.disabled = !total();
-    again.disabled = !total();
+    runBtn.disabled = running || !total();                // (the footer swaps them for Stop while a run is live)
+    again.disabled = running || !total();
   }
 
   /** Counts changed: the totals, the legend, and the Run button follow. */
@@ -182,16 +193,17 @@ export function openNest(cfg) {
   function start() {
     const items = cfg.parts.filter((p) => counts[p.id] > 0).map((p) => ({ id: p.id, count: counts[p.id], poly: polyOf(p.id) }));
     if (!items.length) return;
+    free = kept.rotations === 'free';
     phase = 'run'; result = null; progress = { done: 0, total: items.reduce((s, i) => s + i.count, 0), placements: [] }; t0 = Date.now();
     paintResult(); paintPreview([]); paintFooter();
     clearInterval(clock); clock = setInterval(() => { if (phase === 'run') paintFooter(); }, 200);
-    const job = { area: cfg.area, gap: cfg.gap, rotations: kept.rotations in ROTATIONS ? kept.rotations : 'all', items, fixed: cfg.fixed };
+    const job = { area: cfg.area, gap: cfg.gap, rotations: kept.rotations in ROTATIONS ? kept.rotations : 'all', items, fixed: cfg.fixed, timeLimit: kept.timeLimit };
     let lastDraw = 0;
     const me = run = startNest(job, (s) => {
       if (run !== me) return;
       progress = s;
       const now = performance.now();
-      if (now - lastDraw > 120) { lastDraw = now; paintPreview(s.placements); }
+      if (now - lastDraw > (free ? 250 : 120)) { lastDraw = now; paintPreview(s.placements); }   // Free angles: at most 4 repaints a second
       paintFooter();
     });
     me.done.then((r) => {

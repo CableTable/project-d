@@ -120,6 +120,19 @@ test('renameLayer: the table, the entities and the block contents', () => {
   assert.ok(blk.blocks.LOGO.entities.every((e) => e.layer === 'Zero'));
 });
 
+test('TODO 8b: layerUseMap counts the objects on each layer (any case) and marks a layer only a block or a polyline vertex uses', () => {
+  const P = [[0, 'SECTION'], [2, 'ENTITIES'], [0, 'POLYLINE'], [8, 'Cut'], [66, 1], [70, 0], [0, 'VERTEX'], [8, 'Vert'], [10, 0], [20, 0], [0, 'VERTEX'], [8, 'Vert'], [10, 5], [20, 0],
+    [0, 'SEQEND'], [8, 'Cut'], [0, 'ENDSEC']];
+  const poly = readDxf(P.map(([c, v]) => String(c).padStart(3) + '\n' + v).join('\n') + '\n  0\nEOF\n').entities[0];
+  const uses = O.layerUseMap({ entities: [poly, { layer: 'cut' }, { layer: 'Other' }], blocks: { B: { entities: [{ layer: 'Inner' }, { layer: 'Cut' }] }, Broken: null } });
+  assert.deepEqual(uses.get('cut'), { count: 2, nested: true }, 'two objects on it; a block uses it too');
+  assert.deepEqual(uses.get('other'), { count: 1, nested: false });
+  assert.deepEqual(uses.get('inner'), { count: 0, nested: true }, 'only inside a block: counts as used');
+  assert.deepEqual(uses.get('vert'), { count: 0, nested: true }, 'only on a polyline vertex: counts as used');
+  assert.equal(uses.get('spare'), undefined, 'an empty layer has no entry');
+  assert.equal(O.layerUseMap({ entities: [] }).size, 0, 'a document with no blocks');
+});
+
 test('partsTree: parts with their places; a search narrows; hidden parts are marked', () => {
   const lay = { parts: { a: { name: 'Plate', w: 10, h: 5 }, b: { name: 'Bracket', w: 4, h: 4 }, c: { name: 'Unused', w: 1, h: 1 } } };
   const placed = [{ partId: 'a', x: 0, y: 0, rot: 0, src: 'grid', i: 0 }, { partId: 'a', x: 20, y: 0, rot: 90, src: 'grid', i: 1 }, { partId: 'b', x: 5, y: 5, rot: 0, src: 'loose', i: 0, lock: true }];

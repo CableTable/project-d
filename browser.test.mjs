@@ -13,7 +13,7 @@ import { decode as decodeText } from './web/text.js';
 import { readOverride } from './web/dimension-text.js';
 import { stepRepeat } from './web/layout.js';
 import { readDxf, decodeDxf, flatten, mapply } from './web/drawing.js';
-import { readMeta, newLayout, makePart, layoutRaw, layoutFromRaw, gridOf, objectPart, objectPlacement, objectDoc } from './web/layoutdoc.js';
+import { readMeta, newLayout, makePart, layoutRaw, layoutFromRaw, gridOf, objectPart, objectPlacement, objectDoc, layersOf } from './web/layoutdoc.js';
 import { newDoc, addEntities, addLayer, addBlock, entity, insert as dxfInsert, text as dxfText, mtext as dxfMtext, roundRect, circle as dxfCircle, line as dxfLine, arc as dxfArc, ellipse as dxfEllipse, lwpoly as dxfPoly, point, writeDxf } from './web/dxf-write.js';
 import { placedBox, placedMat } from './web/apply.js';
 import * as GR from './web/grips.js';
@@ -26,7 +26,8 @@ import { bezierOf, nodeType } from './web/shape.js';
 import { COMMANDS, placeBar } from './web/cmdbar.js';
 import { SNAP_NAME } from './web/snap.js';
 import { Page, writePdf, winAnsi } from './web/pdf-write.js';
-import { tileGrid, PAPERS as PDF_PAPERS } from './web/pdf-export.js';
+import { tileGrid, readTitleBlock, PAPERS as PDF_PAPERS } from './web/pdf-export.js';
+import { titlePartOf, titleTexts } from './web/titleblock.js';
 import { bigDoc } from './tools/gen-big-dxf.mjs';
 import { makeTiff } from './tools/make-tiff-fixture.mjs';
 import { fillHatch, hatchKey } from './web/fill.js';
@@ -4434,7 +4435,7 @@ try {
     const raw = (text) => new TextEncoder().encode(text).buffer;      // the real commands answer with raw bytes (an ArrayBuffer)
     window.__TAURI__ = {
       core: { invoke: async (cmd, args) => {
-        if (cmd === 'dwg_bytes_to_dxf') { log.calls.push(`${cmd} ${args.name} ${Array.isArray(args.bytes) ? args.bytes.length : 'not an array'}`); return raw(dxf); }
+        if (cmd === 'dwg_bytes_to_dxf') { log.calls.push(`${cmd} ${args instanceof Uint8Array ? args.length : 'not raw'}`); return raw(dxf); }
         if (cmd !== 'dwg_to_dxf') return;
         log.calls.push(`${cmd} ${args.path}`);
         return raw(/lay/.test(args.path) ? layDxf : dxf);
@@ -4457,7 +4458,7 @@ try {
       await p.evaluate(() => { const dt = new DataTransfer(); dt.items.add(new File([new Uint8Array([65, 67, 49, 48])], 'dropped.dwg')); window.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true })); });
       await said(/^Opened dropped\.dwg: \d+ entities.*Converted from DWG by LibreDWG$/);
       assert.equal(await p.locator('.dtab.on .tname')?.textContent(), 'dropped.dwg');
-      assert.deepEqual(await p.evaluate(() => window.__dwg.calls), ['dwg_bytes_to_dxf dropped.dwg 4']);
+      assert.deepEqual(await p.evaluate(() => window.__dwg.calls), ['dwg_bytes_to_dxf 4']);
       assert.equal(await p.evaluate(() => localStorage.getItem('pd-recent')), null, 'a drop has no path, so Recent keeps nothing');
       await p.keyboard.press('Control+s');
       await p.waitForFunction(() => document.querySelector('.dtab.on .tname')?.textContent === 'dropped.dxf');
@@ -8708,7 +8709,7 @@ try {
         assert.equal(await p.locator('.dtab').count(), before + (choice === 'editable' ? 1 : 0));
         if (choice === 'editable') assert.deepEqual(await p.locator('.dtab .tname').allTextContents(), ['editable-one.dxf', 'editable-two.dxf']);
       }
-      assert.equal(picturesAsked, 2);
+      assert.equal(picturesAsked, 4, 'each picture-only PDF asks Background, then (No) Pictures');   // TODO 358a
     } finally { await context.close(); }
   });
 
@@ -8886,7 +8887,7 @@ try {
       await p.locator('[data-menu=View]').click(); await p.getByRole('menuitemcheckbox', { name: /Theme: dark/ }).click();
       await p.screenshot({ path: shotDir + '/305b-reopen-dark.png' });
       await p.evaluate(() => { window.__pics305.next = 'C:/jobs/final-export.dxf'; });
-      await menu('Export DXF…'); await q('export-dxf-name').fill('ignored-dialog-name.dxf');
+      await menu('Export…'); await q('export-dxf-name').fill('ignored-dialog-name.dxf');
       await q('export-dxf-scale').fill('2'); await q('export-dxf-units').selectOption('in'); await q('export-dxf-go').click();
       await prompt('Exported final-export.dxf');
       const exported = await p.evaluate(() => window.__pics305.files);
@@ -8911,6 +8912,322 @@ try {
         return n;
       }) > 100, 'a desktop open of a DXF without IMAGEs still draws');
     } finally { await context.close(); }
+  });
+
+  await step('TODO 358a: a PDF opened as Pictures is one IMAGE per page on "PDF pages"; a line drawn over page 1 is saved with -pageN.png and comes back on reopen', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    try {
+      const p = await context.newPage(), q = (id) => p.getByTestId(id);
+      p.on('pageerror', (e) => errors.push(String(e)));
+      const menu = async (name) => { await p.locator('[data-menu=File]').click(); await p.getByRole('menuitem', { name, exact: true }).click(); };
+      const prompt = (text) => p.waitForFunction((text) => document.querySelector('[data-testid=cmd-prompt]').textContent.startsWith(text), text);
+      const typeCmd = async (text) => { const i = q('cmd-input'); if (!(await i.isVisible())) { await q('cmd-echo').click(); await i.waitFor({ state: 'visible' }); } await i.fill(text); await i.press('Enter'); };
+      const whites = () => q('drawing').evaluate((c) => {                       // the page pictures are white paper: count it
+        const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let n = 0;
+        for (let i = 0; i < d.length; i += 4) if (d[i] > 250 && d[i + 1] > 250 && d[i + 2] > 250) n++;
+        return n;
+      });
+      await p.goto(URL_ + '?autosave=86400000'); await q('picker').waitFor({ state: 'attached' });
+      await p.evaluate(() => {
+        window.__pdfopenManual = true;
+        window.__pics358 = { files: {}, next: 'C:/jobs/pages.dxf' };
+        window.__TAURI__ = {
+          dialog: { save: async () => window.__pics358.next, open: async () => window.__pics358.next, ask: async () => true },
+          fs: {
+            exists: async () => false,
+            readFile: async (path) => { const b = window.__pics358.files[path]; if (!b) throw new Error('missing sibling'); return Uint8Array.from(b); },
+            writeFile: async (path, bytes) => { window.__pics358.files[path] = [...bytes]; },
+            writeTextFile: async (path, text) => { window.__pics358.files[path] = [...new TextEncoder().encode(text)]; },
+          },
+        };
+      });
+      const sheet = new Page(80, 50); sheet.rect(10, 10, 30, 20); sheet.stroke();
+      await q('picker').setInputFiles({ name: 'two-pages.pdf', mimeType: 'application/pdf', buffer: Buffer.from(writePdf([sheet, new Page(120, 90)])) });
+      await q('pdfopen-dialog').waitFor();
+      assert.deepEqual(await q('pdfopen-dialog').locator('.row.end button').allTextContents(), ['Background picture', 'Pictures (edit and save as PDF)', 'Editable drawing']);
+      await q('pdfopen-pictures').click();
+      await prompt('Opened two-pages.pdf as 2 page pictures'); await waitTab(p, 'two-pages.dxf');
+      assert.equal(await p.locator('.dtab.on').getAttribute('data-kind'), 'drawing');
+      await p.waitForFunction(() => document.querySelector('[data-testid=bg-name]').textContent === '');   // pictures, not a background
+      await q('ptab-objects').click();
+      await p.waitForFunction(() => document.querySelectorAll('.layer .nm').length === 2);
+      assert.deepEqual((await p.locator('.layer .nm').allTextContents()).sort(), ['0', 'PDF pages'].sort());
+      await q('ptab-drawing').click();
+      await p.locator('[data-tool=line]').click();
+      await typeCmd('10,60'); await typeCmd('70,70'); await p.keyboard.press('Escape');   // over page 1 (80 × 50 mm at x 0..80, y 40..90 under the taller page 2)
+      await p.screenshot({ path: shotDir + '/358a-pages-light.png' });
+      await p.locator('[data-menu=View]').click(); await p.getByRole('menuitemcheckbox', { name: /Theme: dark/ }).click();
+      await p.screenshot({ path: shotDir + '/358a-pages-dark.png' });
+      assert.ok(await whites() > 5000, 'both pages are drawn');
+      await p.locator('[data-tool=select]').click();                              // the status line shows the running command's prompt, not Saved
+      await menu('Save As…'); await prompt('Saved pages.dxf');
+      const saved = await p.evaluate(() => window.__pics358.files);
+      assert.deepEqual(Object.keys(saved).sort(), ['C:/jobs/pages-page1.png', 'C:/jobs/pages-page2.png', 'C:/jobs/pages.dxf']);
+      const raw = readDxf(Buffer.from(saved['C:/jobs/pages.dxf']).toString('utf8')), field = (e, c) => +e.r.v[e.r.c.indexOf(c)];
+      const images = raw.entities.filter((e) => e.type === 'IMAGE');
+      assert.deepEqual(images.map((e) => [e.layer, e.r.file]), [['PDF pages', 'pages-page1.png'], ['PDF pages', 'pages-page2.png']]);
+      const mm = images.map((e) => [Math.hypot(field(e, 11), field(e, 21)) * field(e, 13), Math.hypot(field(e, 12), field(e, 22)) * field(e, 23), field(e, 10), field(e, 20)].map((v) => Math.round(v * 10) / 10));
+      assert.deepEqual(mm, [[80, 50, 0, 40], [120, 90, 90, 0]], 'true page sizes, 10 mm apart, top edges aligned at y 90');
+      assert.equal(Buffer.from(saved['C:/jobs/pages-page1.png']).readUInt32BE(16), Math.ceil(80 / 25.4 * 150), 'page 1 at 150 dpi');
+      const lines = raw.entities.filter((e) => e.type === 'LINE');
+      assert.equal(lines.length, 1); assert.equal(lines[0].layer, '0', 'drawn over the pages, not on their layer');
+      await p.locator('.dtab.on .x').click(); await menu('Open…'); await prompt('Opened pages.dxf: 3 entities');
+      for (let i = 0; i < 80 && await whites() < 5000; i++) await p.waitForTimeout(100);
+      assert.ok(await whites() > 5000, 'the pages come back as pictures');
+      await q('ptab-objects').click();
+      await p.waitForFunction(() => document.querySelectorAll('.layer .nm').length === 2);
+      assert.deepEqual((await p.locator('.layer .nm').allTextContents()).sort(), ['0', 'PDF pages'].sort());
+    } finally { await context.close(); }
+  });
+
+  await step('TODO 358a: a picture-only PDF can open as page pictures, alone and in a batch; the picture is selectable and not a dimmed background', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    try {
+      const p = await context.newPage(), q = (id) => p.getByTestId(id);
+      p.on('pageerror', (e) => errors.push(String(e)));
+      await p.goto(URL_ + '?autosave=86400000'); await q('picker').waitFor({ state: 'attached' });
+      await p.evaluate(() => { window.__pdfopenManual = true; });
+      const asked = [], answers = [];                                              // the native questions, answered in turn: false = No, true = Yes
+      p.on('dialog', async (d) => { asked.push(d.message()); if (answers.shift()) await d.accept(); else await d.dismiss(); });
+      const picture = readFileSync('fixtures/text-only.pdf');
+      const file = (name) => ({ name, mimeType: 'application/pdf', buffer: picture });
+      answers.push(false, true);                                                    // not a background, yes pictures
+      await q('picker').setInputFiles(file('alone.pdf'));
+      await waitTab(p, 'alone.dxf');
+      assert.equal(asked.length, 2); assert.match(asked[0], /no vector lines.*background/); assert.match(asked[1], /no vector lines.*pictures/);
+      assert.equal(await p.locator('.dtab.on').getAttribute('data-kind'), 'drawing');
+      await p.waitForFunction(() => document.querySelector('[data-testid=bg-name]').textContent === '');   // a picture, not a background
+      await q('ptab-objects').click();
+      await p.waitForFunction(() => document.querySelectorAll('.layer .nm').length === 2);
+      assert.deepEqual((await p.locator('.layer .nm').allTextContents()).sort(), ['0', 'PDF pages'].sort());
+      await q('ptab-drawing').click();
+      await p.locator('[data-tool=select]').click();
+      const box = await q('drawing').boundingBox();
+      await p.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+      await p.waitForFunction(() => document.querySelector('[data-testid=sel-layer]').textContent.includes('PDF pages'));   // the click picked the page picture
+      const white = await q('drawing').evaluate((c) => { const d = c.getContext('2d').getImageData(c.width >> 1, c.height >> 1, 1, 1).data; return [d[0], d[1], d[2]]; });
+      assert.ok(Math.min(...white) > 240, 'the page picture is white paper, not dimmed: ' + white);
+      // a batch of two: the first answer (Pictures) is reused, so only the first file asks
+      asked.length = 0; answers.push(false, true);
+      await q('picker').setInputFiles([file('b-one.pdf'), file('b-two.pdf')]);
+      await waitTab(p, 'b-two.dxf');
+      assert.equal(asked.length, 2, 'the second picture-only PDF reuses the answer');
+      assert.ok(await p.locator('.dtab .tname').allTextContents().then((t) => t.includes('b-one.dxf') && t.includes('b-two.dxf')));
+    } finally { await context.close(); }
+  });
+
+  await step('TODO 358b: Save as PDF (pages) writes one PDF page per page picture with the line drawn across both; the line outside is counted, not saved', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    try {
+      const p = await context.newPage(), q = (id) => p.getByTestId(id);
+      p.on('pageerror', (e) => errors.push(String(e)));
+      const item = () => p.getByRole('menuitem', { name: 'Save as PDF (pages)', exact: true });
+      const menu = async () => { await p.locator('[data-menu=File]').click(); await item().click(); };
+      const prompt = (text) => p.waitForFunction((text) => document.querySelector('[data-testid=cmd-prompt]').textContent.startsWith(text), text);
+      const typeCmd = async (text) => { const i = q('cmd-input'); if (!(await i.isVisible())) { await q('cmd-echo').click(); await i.waitFor({ state: 'visible' }); } await i.fill(text); await i.press('Enter'); };
+      await p.goto(URL_ + '?autosave=86400000'); await q('picker').waitFor({ state: 'attached' });
+      await p.locator('[data-menu=File]').click();                                 // no PDF pages yet: greyed, with the reason
+      assert.ok(await item().isDisabled(), 'greyed in an empty drawing');
+      assert.equal(await item().getAttribute('title'), 'No PDF pages in this drawing');
+      await p.keyboard.press('Escape'); await p.mouse.click(5, 450);
+      await p.evaluate(() => {
+        window.__pdfopenManual = true;
+        window.__pages358b = { files: {} };
+        window.__TAURI__ = {
+          dialog: { save: async (o) => { window.__pages358b.def = o.defaultPath; return window.__pages358b.accept ? o.defaultPath : 'C:/jobs/pages.pdf'; }, open: async () => 'C:/jobs/pages.pdf', ask: async () => true },
+          fs: { exists: async () => false, readFile: async () => { throw new Error('missing'); }, writeFile: async (path, bytes) => { window.__pages358b.files[path] = [...bytes]; }, writeTextFile: async () => {} },
+        };
+      });
+      const sheet = new Page(80, 50); sheet.rect(10, 10, 30, 20); sheet.stroke();
+      await q('picker').setInputFiles({ name: 'two-pages.pdf', mimeType: 'application/pdf', buffer: Buffer.from(writePdf([sheet, new Page(120, 90)])) });
+      await q('pdfopen-dialog').waitFor(); await q('pdfopen-pictures').click();
+      await prompt('Opened two-pages.pdf as 2 page pictures'); await waitTab(p, 'two-pages.dxf');
+      await p.locator('[data-menu=File]').click();
+      assert.ok(await item().isEnabled(), 'enabled once the drawing holds page pictures');
+      assert.equal(await item().getAttribute('title'), null);
+      await p.keyboard.press('Escape'); await p.mouse.click(5, 450);
+      await p.locator('[data-tool=line]').click();                                  // page 1 is x 0..80, page 2 x 90..210, both under y 90
+      await typeCmd('60,60'); await typeCmd('130,60'); await p.keyboard.press('Escape');   // across both pages
+      await p.locator('[data-tool=line]').click();
+      await typeCmd('10,120'); await typeCmd('70,130'); await p.keyboard.press('Escape');  // above every page
+      await p.locator('[data-tool=select]').click();
+      await menu();
+      await prompt('Saved pages.pdf: 2 pages. 1 objects outside the pages not saved');
+      await p.screenshot({ path: shotDir + '/358b-pdf-pages-light.png' });
+      await p.locator('[data-menu=View]').click(); await p.getByRole('menuitemcheckbox', { name: /Theme: dark/ }).click();
+      await p.screenshot({ path: shotDir + '/358b-pdf-pages-dark.png' });
+      await p.setViewportSize({ width: 1024, height: 700 });
+      await p.screenshot({ path: shotDir + '/358b-pdf-pages-1024.png' });
+      const saved = await p.evaluate(() => window.__pages358b.files), bytes = Buffer.from(saved['C:/jobs/pages.pdf']), t = bytes.toString('latin1');
+      assert.deepEqual([...t.matchAll(/\/MediaBox \[0 0 ([\d.]+) ([\d.]+)\]/g)].map((m) => [Math.round(m[1] / 72 * 25.4), Math.round(m[2] / 72 * 25.4)]), [[80, 50], [120, 90]], 'a page per picture, at its size');
+      const streams = [...t.matchAll(/stream\n([\s\S]*?)endstream/g)].map((m) => m[1]).filter((s) => /^[\d.]+ 0 0 [\d.]+ 0 0 cm\n/.test(s));       // the page contents, not the picture bytes
+      assert.equal(streams.length, 2);
+      assert.ok(/\n60 20 m\n130 20 l\nS/.test(streams[0]), 'page 1 has the line from its own corner (y 60 - 40)');
+      assert.ok(/\n-30 60 m\n40 60 l\nS/.test(streams[1]), 'page 2 has the same line from its own corner (x 60 - 90, y 60 - 0): the page edge cuts it');
+      assert.ok(!/\n10 80 m/.test(streams[0]) && !/\n-80 120 m/.test(streams[1]), 'the line above the pages is in neither');
+      assert.equal(t.match(/\/Subtype \/Image/g).length, 2, 'each page has its picture');
+      await p.setViewportSize({ width: 1440, height: 900 });
+      await p.evaluate(() => { window.__pages358b.accept = true; window.__pages358b.files = {}; });   // accepting the default must not hit the opened two-pages.pdf
+      await menu();
+      await prompt('Saved two-pages-pages.pdf: 2 pages');
+      assert.deepEqual(await p.evaluate(() => Object.keys(window.__pages358b.files).map((k) => k.split('/').pop())), ['two-pages-pages.pdf']);
+    } finally { await context.close(); }
+  });
+
+  await step('TODO 358c1: Save as PDF (pages) on a Layouts tab: a page per page picture, each with its image, the line on page 1; a hidden layer is left out', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    try {
+      const p = await context.newPage(), q = (id) => p.getByTestId(id);
+      p.on('pageerror', (e) => errors.push(String(e)));
+      const item = () => p.getByRole('menuitem', { name: 'Save as PDF (pages)', exact: true });
+      const menu = async () => { await p.locator('[data-menu=File]').click(); await item().click(); };
+      const prompt = (text) => p.waitForFunction((text) => document.querySelector('[data-testid=cmd-prompt]').textContent.startsWith(text), text);
+      const typeCmd = async (text) => { const i = q('cmd-input'); if (!(await i.isVisible())) { await q('cmd-echo').click(); await i.waitFor({ state: 'visible' }); } await i.fill(text); await i.press('Enter'); };
+      const greyed = async () => { await p.locator('[data-menu=File]').click(); const g = await item().isDisabled(), title = await item().getAttribute('title'); await p.keyboard.press('Escape'); await p.mouse.click(5, 450); return [g, title]; };
+      await p.goto(URL_ + '?autosave=86400000'); await q('picker').waitFor({ state: 'attached' });
+      await p.evaluate(() => {
+        window.__pdfopenManual = true;
+        window.__pages358c = { files: {} };
+        window.__TAURI__ = {
+          dialog: { save: async () => 'C:/jobs/layout-pages.pdf', open: async () => 'C:/jobs/pages.pdf', ask: async () => true },
+          fs: { exists: async () => false, readFile: async () => { throw new Error('missing'); }, writeFile: async (path, bytes) => { window.__pages358c.files[path] = [...bytes]; }, writeTextFile: async () => {} },
+        };
+      });
+      const sheet = new Page(80, 50); sheet.rect(10, 10, 30, 20); sheet.stroke();
+      await q('picker').setInputFiles({ name: 'two-pages.pdf', mimeType: 'application/pdf', buffer: Buffer.from(writePdf([sheet, new Page(120, 90)])) });
+      await q('pdfopen-dialog').waitFor(); await q('pdfopen-pictures').click();
+      await prompt('Opened two-pages.pdf as 2 page pictures'); await waitTab(p, 'two-pages.dxf');
+      await p.locator('[data-tool=line]').click();                                  // over page 1 (x 0..80, y 40..90)
+      await typeCmd('10,60'); await typeCmd('70,70'); await p.keyboard.press('Escape');
+      await p.locator('[data-tool=select]').click();
+      await q('ptab-objects').click();                                              // hide "PDF pages" on the drawing: no page left, the item is greyed
+      await p.waitForFunction(() => document.querySelectorAll('.layer .nm').length === 2);
+      await p.locator('.or.layer', { hasText: 'PDF pages' }).locator('[data-act=vis]').click();
+      assert.deepEqual(await greyed(), [true, 'No PDF pages in this drawing'], 'the page pictures are hidden');
+      await p.locator('.or.layer', { hasText: 'PDF pages' }).locator('[data-act=vis]').click();
+      assert.deepEqual(await greyed(), [false, null], 'shown again');
+      await q('ptab-drawing').click();
+      await p.locator('[data-menu=Layout]').click(); await p.getByRole('menuitem', { name: /^Add to layout/ }).click();       // the drawing as the layout's part: a sheet's grid would repeat it, so one copy
+      await p.waitForFunction(() => document.querySelector('.tabs .dtab.on').dataset.kind === 'layout');
+      await q('ptab-step').click(); await q('fit-switch').click();
+      await p.locator('[data-key=rows]').fill('1'); await p.locator('[data-key=rows]').press('Enter');
+      await p.locator('[data-key=cols]').fill('1'); await p.locator('[data-key=cols]').press('Enter');
+      await q('ptab-drawing').click();
+      const saved = async () => {                                                   // Save as PDF (pages) on this tab: the page contents (not the picture bytes), the image count
+        await p.evaluate(() => { window.__pages358c.files = {}; });
+        await menu();
+        await p.waitForFunction(() => window.__pages358c.files['C:/jobs/layout-pages.pdf']);
+        const t = Buffer.from(await p.evaluate(() => window.__pages358c.files['C:/jobs/layout-pages.pdf'])).toString('latin1');
+        return { t, streams: [...t.matchAll(/stream\n([\s\S]*?)endstream/g)].map((m) => m[1]).filter((s) => /^[\d.]+ 0 0 [\d.]+ 0 0 cm\n/.test(s)), images: (t.match(/\/Subtype \/Image/g) || []).length };
+      };
+      const segs = (s) => (s.match(/\nS\n/g) || []).length;                         // strokes on a page: its clip is not stroked, a picture is an image
+      const one = await saved();
+      assert.deepEqual([...one.t.matchAll(/\/MediaBox \[0 0 ([\d.]+) ([\d.]+)\]/g)].map((m) => [Math.round(m[1] / 72 * 25.4), Math.round(m[2] / 72 * 25.4)]), [[80, 50], [120, 90]], 'a page per picture, at its size');
+      assert.equal(one.images, 2, 'each page holds its image, not only a frame');
+      assert.equal(one.streams.length, 2);
+      assert.deepEqual(one.streams.map(segs), [1, 0], 'the line is on page 1 only; the sheet and its marks are not artwork');
+      await p.screenshot({ path: shotDir + '/358c1-layout-pages-light.png' });
+      await p.locator('[data-menu=View]').click(); await p.getByRole('menuitemcheckbox', { name: /Theme: dark/ }).click();
+      await p.screenshot({ path: shotDir + '/358c1-layout-pages-dark.png' });
+      await p.setViewportSize({ width: 1024, height: 700 });
+      await p.screenshot({ path: shotDir + '/358c1-layout-pages-1024.png' });
+      await p.setViewportSize({ width: 1440, height: 900 });
+      // a layout object across the whole sheet reaches both pages; its layer hidden: it is left out (the layout branch passes the hidden layers)
+      const [W, H] = [await p.locator('[data-key=sheetW]').inputValue(), await p.locator('[data-key=sheetH]').inputValue()];
+      await p.locator('[data-tool=line]').click();
+      await typeCmd('0,0'); await typeCmd(W + ',' + H); await p.keyboard.press('Escape');
+      await p.locator('[data-tool=select]').click();
+      assert.deepEqual((await saved()).streams.map(segs), [2, 1], 'the layout object is on both pages');
+      await q('ptab-objects').click();
+      const layer0 = p.locator('.or.layer').filter({ has: p.locator('.nm', { hasText: /^0$/ }) });
+      await layer0.locator('[data-act=vis]').click();
+      assert.deepEqual((await saved()).streams.map(segs), [1, 0], 'a hidden layer is not saved');
+      await layer0.locator('[data-act=vis]').click();
+      assert.deepEqual((await saved()).streams.map(segs), [2, 1], 'shown again');
+    } finally { await context.close(); }
+  });
+
+  await step('TODO 358c1: Esc on a vector PDF\'s open ask is kept: a later picture-only PDF in the batch is asked again, not opened as pictures unasked', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    try {
+      const p = await context.newPage(), q = (id) => p.getByTestId(id);
+      p.on('pageerror', (e) => errors.push(String(e)));
+      await p.goto(URL_ + '?autosave=86400000'); await q('picker').waitFor({ state: 'attached' });
+      await p.evaluate(() => { window.__pdfopenManual = true; });
+      const asked = [], answers = [false, true, false, true];                       // each picture-only PDF: not a background, yes pictures
+      p.on('dialog', async (d) => { asked.push(d.message()); if (answers.shift()) await d.accept(); else await d.dismiss(); });
+      const file = (name, from) => ({ name, mimeType: 'application/pdf', buffer: readFileSync(from) });
+      await q('picker').setInputFiles([file('vec.pdf', 'fixtures/vector.pdf'), file('pic-a.pdf', 'fixtures/text-only.pdf'), file('pic-b.pdf', 'fixtures/text-only.pdf')]);
+      await q('pdfopen-dialog').waitFor(); await p.keyboard.press('Escape');
+      await waitTab(p, 'pic-b.dxf');
+      assert.equal(asked.length, 4, 'pic-a asks, and pic-b asks again: the Esc did not turn into Pictures');
+      assert.deepEqual((await p.locator('.dtab .tname').allTextContents()).sort(), ['pic-a.dxf', 'pic-b.dxf'], 'the Esc file is not opened');
+    } finally { await context.close(); }
+  });
+
+  await step('TODO 358c2: Save as PDF (pages) on a Compare view: a page per page picture at its size, each with its image, the lines in compare colours', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    try {
+      const p = await context.newPage(), q = (id) => p.getByTestId(id);
+      p.on('pageerror', (e) => errors.push(String(e)));
+      const fileMenu = async (name) => { await p.locator('[data-menu=File]').click(); await p.getByRole('menuitem', { name, exact: true }).click(); };
+      const prompt = (text) => p.waitForFunction((text) => document.querySelector('[data-testid=cmd-prompt]').textContent.startsWith(text), text);
+      const typeCmd = async (text) => { const i = q('cmd-input'); if (!(await i.isVisible())) { await q('cmd-echo').click(); await i.waitFor({ state: 'visible' }); } await i.fill(text); await i.press('Enter'); };
+      await p.goto(URL_ + '?autosave=86400000'); await q('picker').waitFor({ state: 'attached' });
+      await p.evaluate(() => {
+        window.__pdfopenManual = true;
+        window.__pics358c2 = { files: {}, next: '' };
+        window.__TAURI__ = {
+          dialog: { save: async () => window.__pics358c2.next, open: async () => window.__pics358c2.next, ask: async () => true },
+          fs: {
+            exists: async () => false,
+            readFile: async (path) => { const b = window.__pics358c2.files[path]; if (!b) throw new Error('missing'); return Uint8Array.from(b); },
+            writeFile: async (path, bytes) => { window.__pics358c2.files[path] = [...bytes]; },
+            writeTextFile: async (path, text) => { window.__pics358c2.files[path] = [...new TextEncoder().encode(text)]; },
+          },
+        };
+      });
+      const sheet = new Page(80, 50); sheet.rect(10, 10, 30, 20); sheet.stroke();
+      const pdf = { name: 'two-pages.pdf', mimeType: 'application/pdf', buffer: Buffer.from(writePdf([sheet, new Page(120, 90)])) };
+      for (const [file, from, to] of [['C:/jobs/a.dxf', '10,60', '70,70'], ['C:/jobs/b.dxf', '30,50', '90,80']]) {       // the same two page pictures, a line over page 1: moved in the second drawing
+        await q('picker').setInputFiles(pdf); await q('pdfopen-dialog').waitFor(); await q('pdfopen-pictures').click();
+        await prompt('Opened two-pages.pdf as 2 page pictures'); await waitTab(p, 'two-pages.dxf');
+        await p.locator('[data-tool=line]').click();
+        await typeCmd(from); await typeCmd(to); await p.keyboard.press('Escape');
+        await p.locator('[data-tool=select]').click();
+        await p.evaluate((file) => { window.__pics358c2.next = file; }, file);
+        await fileMenu('Save As…'); await prompt('Saved ' + file.split('/').pop());
+        await p.locator('.dtab.on .x').click();
+      }
+      for (const file of ['C:/jobs/a.dxf', 'C:/jobs/b.dxf']) {
+        await p.evaluate((file) => { window.__pics358c2.next = file; }, file);
+        await fileMenu('Open…'); await waitTab(p, file.split('/').pop());
+      }
+      await p.locator('.dtab', { hasText: 'a.dxf' }).click(); await fileMenu('Compare drawings…');
+      await p.waitForFunction(() => document.querySelector('.tabs .dtab.on').dataset.kind === 'compare');
+      await p.evaluate(() => { window.__pics358c2.next = 'C:/jobs/compare-pages.pdf'; });
+      await fileMenu('Save as PDF (pages)');
+      await prompt('Saved compare-pages.pdf: 4 pages');
+      await p.screenshot({ path: shotDir + '/358c2-compare-pages-light.png' });
+      await p.locator('[data-menu=View]').click(); await p.getByRole('menuitemcheckbox', { name: /Theme: dark/ }).click();
+      await p.screenshot({ path: shotDir + '/358c2-compare-pages-dark.png' });
+      await p.setViewportSize({ width: 1024, height: 700 });
+      await p.screenshot({ path: shotDir + '/358c2-compare-pages-1024.png' });
+      const t = Buffer.from(await p.evaluate(() => window.__pics358c2.files['C:/jobs/compare-pages.pdf'])).toString('latin1');
+      const streams = [...t.matchAll(/stream\n([\s\S]*?)endstream/g)].map((m) => m[1]).filter((s) => /^[\d.]+ 0 0 [\d.]+ 0 0 cm\n/.test(s));
+      assert.deepEqual([...t.matchAll(/\/MediaBox \[0 0 ([\d.]+) ([\d.]+)\]/g)].map((m) => [Math.round(m[1] / 72 * 25.4), Math.round(m[2] / 72 * 25.4)]), [[80, 50], [80, 50], [120, 90], [120, 90]], 'a page per picture of both drawings, at the picture\'s size (not the compare border box)');
+      assert.equal(streams.length, 4);
+      assert.ok(streams.every((s) => / Do Q\n/.test(s)), 'every page holds its picture, not only a frame');
+      assert.equal(t.match(/\/Subtype \/Image/g).length, 2, 'the two drawings share the same two picture files');
+      const RED = '0.776 0.157 0.157 RG', BLUE = '0.039 0.373 0.761 RG';
+      assert.deepEqual(streams.map((s) => [s.includes(RED), s.includes(BLUE)]), [[true, true], [true, true], [false, false], [false, false]], 'drawing 1\'s line in red, drawing 2\'s in blue, over page 1 of each; none over page 2');
+      await p.setViewportSize({ width: 1440, height: 900 });                         // Add file… reads the saved DXF with its -pageN.png too: a third drawing, two more pages
+      await p.evaluate(() => { window.__pics358c2.next = 'C:/jobs/a.dxf'; });
+      await q('ptab-drawing').click(); await q('cmp-add-file').click();
+      await prompt('Added snapshot: a.dxf');
+      await p.evaluate(() => { window.__pics358c2.next = 'C:/jobs/compare-pages.pdf'; });
+      await fileMenu('Save as PDF (pages)');
+      await prompt('Saved compare-pages.pdf: 6 pages');    } finally { await context.close(); }
   });
 
   await step('TODO 341: refused picture paths still save the DXF first, grant plain names, and warn "N picture(s) not saved"', async () => {
@@ -8951,7 +9268,7 @@ try {
       assert.match(await noteOf(/^Saved a\.\.b\.dxf.*2 picture\(s\) not saved/), /^Saved a\.\.b\.dxf.*2 picture\(s\) not saved/);
       // Export: the grant covers it too, and the note carries the count
       await p.evaluate(() => { window.__pics341.log.length = 0; window.__pics341.grants.length = 0; window.__pics341.next = 'C:/jobs/out.dxf'; });
-      await menu('Export DXF…'); await q('export-dxf-go').click(); assert.match(await noteOf(/^Exported out\.dxf.*2 picture\(s\) not saved/), /2 picture\(s\) not saved/);
+      await menu('Export…'); await q('export-dxf-go').click(); assert.match(await noteOf(/^Exported out\.dxf.*2 picture\(s\) not saved/), /2 picture\(s\) not saved/);
       assert.deepEqual(await p.evaluate(() => window.__pics341.grants), [{ path: 'C:/jobs/out.dxf', names: ['out-img1.png', 'out-img2.png'] }]);
       // a grant that throws carries on: the DXF is still written
       await p.evaluate(() => { window.__TAURI__.core.invoke = async () => { throw new Error('refused'); }; window.__pics341.log.length = 0; window.__pics341.next = 'C:/jobs/b.dxf'; });
@@ -12514,7 +12831,7 @@ try {
       };
       const exported = async () => {
         await p.evaluate(() => { window.pdfProbe = true; window.pdfProbeText = null; });
-        await p.locator('[data-menu=File]').click(); await p.getByRole('menuitem', { name: /^Export DXF/ }).click();
+        await p.locator('[data-menu=File]').click(); await p.getByRole('menuitem', { name: /^Export…/ }).click();
         await q('export-dxf-go').click(); await p.waitForFunction(() => window.pdfProbeText !== null);
         const text = await p.evaluate(() => { window.pdfProbe = false; return window.pdfProbeText; });
         return readDxf(text);
@@ -13526,6 +13843,88 @@ try {
       }
       await t('ptab-drawing').click(); await closeTabs(/./);
     }
+  });
+  await step('TODO 334b: an applied outer contour (Dotted and Solid, upright and turned 30°) stays painted while zooming in until no vertex is on screen', async () => {
+    const drawing = t('drawing');
+    const settle = async () => { await page.waitForFunction(() => { const c = document.querySelector('[data-testid=drawing]'); return c.dataset.snap === '' && c.dataset.chunk === ''; }, null, { timeout: 20000 }); await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))); };
+    const green = () => drawing.evaluate((c) => {       // the Contour layer's own green (ink on the light sheet, bright on the dark one), as the canvas holds it
+      const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data, at = [];
+      for (let i = 0; i < d.length; i += 4) if (d[i + 3] > 128 && d[i + 1] > 100 && d[i] < 80 && d[i + 2] < 80) at.push(i / 4);
+      const mid = at[at.length >> 1];
+      return { n: at.length, x: mid % c.width, y: Math.floor(mid / c.width), w: c.width, h: c.height };
+    });
+    for (const [style, rot] of [[2, 0], [2, 30], [0, 30]]) {
+      await closeTabs(/./);
+      const raw = newDoc(4), lay = newLayout('334b'), name = `334b-${style}-${rot}.dxf`;
+      addEntities(raw, ...[[0, 0, 100, 0], [100, 0, 100, 60], [100, 60, 0, 60], [0, 60, 0, 0]].map((q) => dxfLine(...q, { aci: 7 })));
+      lay.parts.p = makePart('p', 'Plate', raw, 1);
+      lay.placed = [{ partId: 'p', x: 300, y: 300, rot, mirrorX: false, mirrorY: false }];
+      await t('picker').setInputFiles({ name, mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(layoutRaw(lay)), 'latin1') });
+      await waitTab(page, name);
+      await page.keyboard.press('Escape'); await page.keyboard.press('Control+a');
+      await page.locator('[data-ribbon-tab=Home]').click();
+      await typeCmd('contour');
+      await t('contour-steps').fill('1'); await t('contour-steps').press('Enter');
+      await t('contour-outside').click(); await t('contour-sharp').click();
+      await t('contour-dist').fill('10'); await t('contour-dist').press('Enter');
+      await page.locator('.ctstyle').nth(style).click();
+      await t('contour-apply').click(); await t('contour-close').click();
+      assert.equal(await nParts(), 2, 'the part and its contour');
+      await page.locator('[data-tool=select]').click(); await page.keyboard.press('Escape');
+      await page.getByTestId('canvas').getByRole('button', { name: 'Fit', exact: true }).click(); await settle();
+      const b = await drawing.boundingBox(), label = `${['Solid', 'Dashed', 'Dotted'][style]} contour, part turned ${rot}°`;
+      let r = await green(), last = -1, same = 0, wheels = 0;
+      assert.ok(r.n > 50, `${label}: painted when the whole layout is in view (${r.n} px)`);
+      for (; wheels < 40 && same < 3; wheels++) {       // each wheel turn aims at a pixel of the contour, so the line crosses the view and its corners drift away
+        await page.mouse.move(b.x + r.x * b.width / r.w, b.y + r.y * b.height / r.h);
+        await page.mouse.wheel(0, -300); await settle();
+        r = await green();
+        assert.ok(r.n > 50, `${label}: still painted after zoom step ${wheels + 1} (${await t('zoom').textContent()})`);
+        same = r.n === last ? same + 1 : 0; last = r.n;
+      }
+      const pct = Number((await t('zoom').textContent()).replace(/\D/g, ''));
+      assert.ok(pct >= 10000, `${label}: zoomed in to ${pct}%, a view of about a millimetre inside a 120 mm contour: no corner on screen`);
+      if (style === 2 && rot === 0) await shotBoth('todo334b-zoomed');
+    }
+    await closeTabs(/./);
+  });
+  await step('TODO 334c: a 2-step, round-cornered Solid outer contour stays painted while zooming in until no vertex is on screen (his own case)', async () => {
+    const drawing = t('drawing');
+    const settle = async () => { await page.waitForFunction(() => { const c = document.querySelector('[data-testid=drawing]'); return c.dataset.snap === '' && c.dataset.chunk === ''; }, null, { timeout: 20000 }); await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))); };
+    const green = () => drawing.evaluate((c) => {
+      const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data, at = [];
+      for (let i = 0; i < d.length; i += 4) if (d[i + 3] > 128 && d[i + 1] > 100 && d[i] < 80 && d[i + 2] < 80) at.push(i / 4);
+      const mid = at[at.length >> 1];
+      return { n: at.length, x: mid % c.width, y: Math.floor(mid / c.width), w: c.width, h: c.height };
+    });
+    await closeTabs(/./);
+    const raw = newDoc(4), lay = newLayout('334c'), name = '334c.dxf';
+    addEntities(raw, ...[[0, 0, 100, 0], [100, 0, 100, 60], [100, 60, 0, 60], [0, 60, 0, 0]].map((q) => dxfLine(...q, { aci: 7 })));
+    lay.parts.p = makePart('p', 'Plate', raw, 1);
+    lay.placed = [{ partId: 'p', x: 300, y: 300, rot: 0, mirrorX: false, mirrorY: false }];
+    await t('picker').setInputFiles({ name, mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(layoutRaw(lay)), 'latin1') });
+    await waitTab(page, name);
+    await page.keyboard.press('Escape'); await page.keyboard.press('Control+a');
+    await page.locator('[data-ribbon-tab=Home]').click();
+    await typeCmd('contour');
+    await t('contour-steps').fill('2'); await t('contour-steps').press('Enter');
+    await t('contour-outside').click(); await t('contour-rounded').click();
+    await t('contour-dist').fill('10'); await t('contour-dist').press('Enter');
+    await page.locator('.ctstyle').nth(0).click();
+    await t('contour-apply').click(); await t('contour-close').click();
+    await page.locator('[data-tool=select]').click(); await page.keyboard.press('Escape');
+    await page.getByTestId('canvas').getByRole('button', { name: 'Fit', exact: true }).click(); await settle();
+    const b = await drawing.boundingBox();
+    let r = await green(), wheels = 0;
+    assert.ok(r.n > 50, `painted when the whole layout is in view (${r.n} px)`);
+    for (; wheels < 40; wheels++) {
+      await page.mouse.move(b.x + r.x * b.width / r.w, b.y + r.y * b.height / r.h);
+      await page.mouse.wheel(0, -300); await settle();
+      r = await green();
+      assert.ok(r.n > 50, `Solid 2-step round contour: still painted after zoom step ${wheels + 1} (${await t('zoom').textContent()})`);
+      if (Number((await t('zoom').textContent()).replace(/\D/g, '')) >= 10000) break;
+    }
+    await closeTabs(/./);
   });
   await step('TODO 335 / 336: a contoured part turns by hand on the second click (its contour with it, one Undo); Ungroup keeps each contour attached, one Undo each', async () => {
     await closeTabs(/./);
@@ -16569,7 +16968,7 @@ try {
     await typeCmd('line'); await typeCmd('50,600'); await typeCmd('300,600'); await typeCmd('');
     await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click(); await click(175, 600); await frames(); await gripWhen(3);
     await page.locator('[data-tool=shape]').click(); await gripWhen(2);
-    await lineCase(async () => readDxf((await downloaded(async () => { await menuItem('File', 'Export DXF…'); await t('export-dxf-go').click(); })).text));
+    await lineCase(async () => readDxf((await downloaded(async () => { await menuItem('File', 'Export…'); await t('export-dxf-go').click(); })).text));
     await page.keyboard.press('Escape');
     const cmp = newDoc(4); addEntities(cmp, dxfLine(20, 30, 120, 30));
     await openGrips(writeDxf(cmp), 'shape-curve-cmp.dxf'); await typeCmd('compare');
@@ -16663,7 +17062,7 @@ try {
     await typeCmd('');
     await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click(); await click(75, 600); await frames(); await gripWhen(5);
     await page.locator('[data-tool=shape]').click(); await gripWhen(3);
-    await typeCase(async () => readDxf((await downloaded(async () => { await menuItem('File', 'Export DXF…'); await t('export-dxf-go').click(); })).text), false);
+    await typeCase(async () => readDxf((await downloaded(async () => { await menuItem('File', 'Export…'); await t('export-dxf-go').click(); })).text), false);
     await page.keyboard.press('Escape');
     // Compare (the grips go to the source drawing)
     const cmp = newDoc(4); addEntities(cmp, dxfPoly([[20, 30], [80, 30], [80, 70]]));
@@ -16766,7 +17165,7 @@ try {
     await typeCmd('');
     await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click(); await click(75, 600); await click(250, 600, { shift: true }); await frames();
     await page.locator('[data-tool=shape]').click(); await gripWhen(5);
-    await spCase(async () => readDxf((await downloaded(async () => { await menuItem('File', 'Export DXF…'); await t('export-dxf-go').click(); })).text), false);
+    await spCase(async () => readDxf((await downloaded(async () => { await menuItem('File', 'Export…'); await t('export-dxf-go').click(); })).text), false);
     await page.keyboard.press('Escape');
     // Compare (the grips go to the source drawing)
     const cmp = newDoc(4); addEntities(cmp, dxfPoly([[20, 30], [80, 30], [80, 70]]), dxfPoly([[110, 30], [150, 30]]));
@@ -18431,6 +18830,263 @@ try {
       assert.deepEqual(errs, []);
       console.log('188 Layout layer list: in-place rename and recolour refresh Properties');
     } finally { await p.close(); }
+  });
+
+  await step('TODO 8a: rename and colour any layer in Drawings, Layouts and Compare; 0 not renamable; taken name refused; one undo each; saved in the DXF', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
+    const p = await context.newPage(), q = (id) => panelControl(p, p.getByTestId(id));
+    p.on('pageerror', (e) => errors.push(String(e)));
+    p.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
+    const make = () => {
+      const raw = newDoc(4); addLayer(raw, 'Plate', { aci: 1 }); addLayer(raw, 'Notes', { aci: 3 });
+      addEntities(raw, dxfPoly([[10, 20], [70, 20], [70, 80], [10, 80]], { closed: true, layer: 'Plate' }), dxfLine(20, 30, 60, 30, { layer: 'Notes' }), dxfLine(0, 0, 5, 5, { layer: '0' }));
+      return raw;
+    };
+    const open = async (name, text = writeDxf(make())) => { await q('picker').setInputFiles({ name, mimeType: 'text/plain', buffer: Buffer.from(text) }); await waitTab(p, name); };
+    const tab = (name) => p.locator('.dtab').filter({ has: p.locator('.tname', { hasText: name.replace(/\.dxf$/, '') }) });
+    const row = (n) => p.locator(`.layer[data-layer-name="${n}"]`);
+    const fileNames = async () => (await p.locator('[data-file-layer] .nm').allTextContents()).sort();
+    const namesAre = async (want) => { await p.waitForFunction((w) => JSON.stringify([...document.querySelectorAll('[data-file-layer] .nm')].map((e) => e.textContent).sort()) === w, JSON.stringify(want)).catch(() => {}); return fileNames(); };       // waits for the panel to show `want` (a miss falls through to the assert)
+    const heard = (re) => p.waitForFunction((s) => new RegExp(s).test(document.querySelector('[data-testid=cmd-prompt]').textContent), re.source);
+    const rename = async (from, to) => { await row(from).locator('.nm').dblclick(); await q('layer-rename').fill(to); await q('layer-rename').press('Enter'); };
+    const refused = async (from, to, why) => {
+      await row(from).locator('.nm').dblclick(); await q('layer-rename').fill(to); await q('layer-rename').press('Enter');
+      assert.equal(await q('layer-rename').getAttribute('aria-invalid'), 'true', `${to}: the field is flagged and stays`);
+      await heard(why);
+      await q('layer-rename').press('Escape'); assert.equal(await q('layer-rename').count(), 0, 'Esc cancels');
+    };
+    const colour = async (n, hex) => { await row(n).locator('[data-testid=layer-colour]').click(); await q('colour-hex').fill(hex); await q('colour-ok').click(); };
+    const swatch = (n) => row(n).locator('[data-testid=layer-colour]').evaluate((el) => getComputedStyle(el).backgroundColor);
+    const saved = async () => { const [download] = await Promise.all([p.waitForEvent('download'), q('save').click()]); return readDxf(readFileSync(await download.path(), 'utf8')); };
+    const count = (raw, layer) => raw.entities.filter((e) => e.layer === layer).length;
+    const dock = (id) => q('ptab-' + id).click();
+    const shots = async (kind) => {
+      for (const theme of ['light', 'dark']) {
+        await p.locator('[data-menu=View]').click(); await p.getByRole('menuitemcheckbox', { name: new RegExp('Theme: ' + theme) }).click();
+        await p.screenshot({ path: `${shotDir}/todo8a-${kind}-${theme}.png` });
+      }
+      await p.locator('[data-menu=View]').click(); await p.getByRole('menuitemcheckbox', { name: /Theme: light/ }).click();
+    };
+    const point = (x, y) => p.evaluate(([x, y]) => {
+      const sheet = document.querySelector('rect.sheet'), b = sheet.getBoundingClientRect(), sc = b.width / +sheet.getAttribute('width');
+      return { x: b.x + x * sc, y: b.y + (+sheet.getAttribute('height') - y) * sc };
+    }, [x, y]);
+    const tint = async (x, y) => {       // the mean colour of the painted pixels around a drawing point
+      await p.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+      const a = await point(x - 2, y + 2), b = await point(x + 2, y - 2);
+      return q('drawing').evaluate((c, { a, b }) => {
+        const box = c.getBoundingClientRect(), scale = c.width / box.width;
+        const px = c.getContext('2d').getImageData(Math.round((a.x - box.x) * scale), Math.round((a.y - box.y) * scale), Math.max(1, Math.round((b.x - a.x) * scale)), Math.max(1, Math.round((b.y - a.y) * scale))).data;
+        const sum = [0, 0, 0]; let n = 0;
+        for (let i = 0; i < px.length; i += 4) if (px[i + 3] > 60) { n++; for (let k = 0; k < 3; k++) sum[k] += px[i + k]; }
+        return n ? sum.map((v) => v / n) : null;
+      }, { a, b });
+    };
+    try {
+      await p.goto(URL_); await p.locator('[data-tool=select]').waitFor();
+      // ---- Drawings
+      await open('one-8a.dxf'); await dock('objects');
+      assert.deepEqual(await fileNames(), ['0', 'Notes', 'Plate']);
+      assert.equal(await row('Notes').locator('.nm').getAttribute('title'), 'Double-click to rename');
+      await rename('Notes', 'Marks');
+      assert.deepEqual(await namesAre(['0', 'Marks', 'Plate']), ['0', 'Marks', 'Plate'], 'the panel follows the rename');
+      await heard(/^Layer Notes is now Marks/);
+      let out = await saved();
+      assert.equal(count(out, 'Marks'), 1); assert.equal(count(out, 'Notes'), 0); assert.ok(out.layers.Marks && !out.layers.Notes, 'the LAYER table has the new name only');
+      await p.keyboard.press('Control+z');
+      assert.deepEqual(await namesAre(['0', 'Notes', 'Plate']), ['0', 'Notes', 'Plate'], 'one Undo takes the whole rename back');
+      out = await saved(); assert.equal(count(out, 'Notes'), 1); assert.equal(count(out, 'Marks'), 0); assert.ok(out.layers.Notes);
+      await p.keyboard.press('Control+y');
+      assert.deepEqual(await namesAre(['0', 'Marks', 'Plate']), ['0', 'Marks', 'Plate'], 'Redo renames again');
+      await p.keyboard.press('Control+z');
+      await row('Notes').locator('[data-act=vis]').click();       // hidden by name: the rename and its Undo keep it hidden
+      await rename('Notes', 'Marks'); await row('Marks').waitFor(); assert.match(await row('Marks').getAttribute('class'), /hidden-layer/);
+      await p.keyboard.press('Control+z'); await row('Notes').waitFor(); assert.match(await row('Notes').getAttribute('class'), /hidden-layer/);
+      await row('Notes').locator('[data-act=vis]').click();
+      // 0 and Defpoints keep their names; a taken, empty or illegal name is refused with a note and a red field
+      await row('0').locator('.nm').dblclick();
+      assert.equal(await q('layer-rename').count(), 0); await heard(/^Layer 0 cannot be renamed/);
+      await refused('Plate', 'NOTES', /already there/);
+      await refused('Plate', 'Defpoints', /kept for/);
+      await refused('Plate', '0', /kept for/);
+      await refused('Plate', 'a/b', /can't hold/);
+      assert.deepEqual(await fileNames(), ['0', 'Notes', 'Plate'], 'nothing changed');
+      // colour: the swatch of any layer; ByLayer objects repaint; one Undo
+      const before = await tint(40, 20), plateBefore = await swatch('Plate');
+      await colour('Plate', '#10c040');
+      assert.notEqual(await swatch('Plate'), plateBefore, 'the row swatch follows');
+      const after = await tint(40, 20);
+      assert.ok(before && after && after[1] > after[0] + 40 && after[1] > after[2] + 40 && !(before[1] > before[0] + 40), `the Plate outline repaints green: ${before} -> ${after}`);
+      assert.equal((await saved()).layers.Plate.tc & 0xffffff, 0x10c040, 'the colour is saved in the LAYER table');
+      await p.keyboard.press('Control+z');
+      assert.equal(await swatch('Plate'), plateBefore, 'one Undo takes the colour back');
+      await colour('0', '#2030c0'); assert.equal((await saved()).layers['0'].tc & 0xffffff, 0x2030c0, 'layer 0 takes a colour too'); await p.keyboard.press('Control+z');
+      await shots('drawings');
+      // ---- Layouts
+      const lay = newLayout('Lay8a'); lay.layers = newDoc(4).layers; addLayer(lay, 'A', { aci: 1 }); addLayer(lay, 'B', { aci: 5 });
+      lay.parts.a = objectPart('a', 'Line a', dxfLine(100, 100, 250, 100, { layer: 'A' }), lay.layers);
+      lay.parts.b = objectPart('b', 'Line b', dxfLine(100, 150, 250, 150, { layer: 'B' }), lay.layers);
+      lay.placed = [objectPlacement(lay.parts.a), objectPlacement(lay.parts.b)];
+      await open('lay8a.dxf', writeDxf(layoutRaw(lay))); await dock('objects');
+      await row('Parts').locator('.nm').dblclick(); assert.equal(await q('layer-rename').count(), 0, 'Parts is ours: no field');
+      await rename('A', 'Cut');
+      assert.equal(await row('A').count(), 0); assert.equal(await row('Cut').count(), 1);
+      out = await saved();
+      assert.equal(count(out, 'Cut'), 1); assert.equal(count(out, 'A'), 0); assert.ok(out.layers.Cut && !out.layers.A, 'the layout file has the new name');
+      await p.keyboard.press('Control+z'); await row('A').waitFor();
+      assert.equal(await row('A').count(), 1); assert.equal(await row('Cut').count(), 0, 'one Undo');
+      const curIs = (n) => p.waitForFunction((n) => document.querySelector('.layer.current .nm')?.textContent === n, n);       // the current layer follows the rename, Undo and Redo
+      await row('A').click(); await rename('A', 'Cut'); await curIs('Cut');
+      await p.keyboard.press('Control+z'); await curIs('A');
+      await p.keyboard.press('Control+y'); await curIs('Cut');
+      await p.keyboard.press('Control+z');
+      await refused('A', 'b', /already there/); await refused('A', 'Marks', /already there/); await refused('A', 'Sheet', /already there/);
+      const redB = await swatch('B');
+      await colour('B', '#ff8010');
+      assert.notEqual(await swatch('B'), redB, 'the row swatch follows');
+      out = await saved(); assert.equal(out.layers.B.tc & 0xffffff, 0xff8010, 'the layout file has the colour');
+      await p.keyboard.press('Control+z'); await p.waitForFunction((c) => { const e = document.querySelector('.layer[data-layer-name="B"] [data-testid=layer-colour]'); return e && getComputedStyle(e).backgroundColor === c; }, redB); assert.equal(await swatch('B'), redB, 'one Undo');
+      const partB = p.locator('.or[data-part]').filter({ hasText: 'Object 2' }), dimmed = (on) => p.waitForFunction((on) => [...document.querySelectorAll('.or[data-part]')].find((r) => r.textContent.includes('Object 2'))?.classList.contains('dim') === on, on);
+      await partB.locator('[data-act=vis]').click(); await dimmed(true);       // a hidden object stays hidden through a layer colour change, its Undo and Redo
+      await colour('B', '#ff8010'); await dimmed(true);
+      await p.keyboard.press('Control+z'); await dimmed(true); assert.equal(await swatch('B'), redB, 'Undo of the colour');
+      await p.keyboard.press('Control+y'); await dimmed(true); assert.notEqual(await swatch('B'), redB, 'Redo of the colour');
+      await p.keyboard.press('Control+z'); await dimmed(true);
+      await partB.locator('[data-act=vis]').click(); await dimmed(false);
+      await shots('layouts');
+      // ---- Compare
+      await open('cmp1-8a.dxf');       // Compare lists the open drawing and the first other one: snapshot 2 is one-8a.dxf
+      await tab('cmp1-8a').click();
+      await p.locator('[data-menu=File]').click(); await p.getByRole('menuitem', { name: 'Compare drawings…', exact: true }).click();
+      await dock('drawing'); await p.getByTestId('cmp-name-2').filter({ hasText: 'one-8a.dxf' }).waitFor(); await q('cmp-name-2').click(); await dock('objects');
+      assert.deepEqual(await fileNames(), ['0', 'Notes', 'Plate'], 'the picked snapshot lists its layers');
+      await row('Notes').locator('[data-act=vis]').click();       // hidden in this snapshot only
+      await rename('Notes', 'Marks');
+      assert.deepEqual(await fileNames(), ['0', 'Marks', 'Plate']);
+      assert.match(await row('Marks').getAttribute('class'), /hidden-layer/, 'the snapshot keeps it hidden under the new name');
+      await colour('Plate', '#10c040');
+      await tab('one-8a').click();
+      out = await saved();
+      assert.ok(out.layers.Marks && !out.layers.Notes && count(out, 'Marks') === 1, 'the source drawing is renamed');
+      assert.equal(out.layers.Plate.tc & 0xffffff, 0x10c040, 'and recoloured');
+      await dock('objects'); assert.deepEqual(await fileNames(), ['0', 'Marks', 'Plate']);
+      await tab('Compare').click();
+      await p.keyboard.press('Control+z'); await p.keyboard.press('Control+z');
+      assert.deepEqual(await fileNames(), ['0', 'Notes', 'Plate'], 'two edits, two Undos');
+      assert.match(await row('Notes').getAttribute('class'), /hidden-layer/, 'still hidden by name after the Undo');
+      await refused('Plate', 'Notes', /already there/);
+      await row('0').locator('.nm').dblclick(); await heard(/^Layer 0 cannot be renamed/);
+      await shots('compare');
+      // a snapshot with no source drawing: a plain swatch, no rename
+      await dock('drawing');
+      p.once('dialog', (d) => d.accept()); await tab('one-8a').locator('.x').click(); await tab('one-8a').waitFor({ state: 'detached' });
+      await tab('Compare').click(); await dock('drawing'); await q('cmp-name-2').click(); await dock('objects');
+      assert.equal(await p.locator('[data-file-layer] [data-testid=layer-colour]').count(), 0, 'no source: a plain swatch');
+      await row('Notes').locator('.nm').dblclick();
+      assert.equal(await q('layer-rename').count(), 0); await heard(/^Open one-8a\.dxf to rename a layer$/);
+      assert.equal(await row('Notes').locator('.nm').getAttribute('title'), null);
+    } finally { await context.close(); }
+  });
+
+  await step('TODO 8b: delete an empty layer in Drawings, Layouts and Compare; used, current, 0, Defpoints and fixed rows refused with why; one undo', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
+    const p = await context.newPage(), q = (id) => panelControl(p, p.getByTestId(id));
+    p.on('pageerror', (e) => errors.push(String(e)));
+    p.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
+    const make = () => {
+      const raw = newDoc(4); addLayer(raw, 'Plate', { aci: 1 }); addLayer(raw, 'Notes', { aci: 3 }); addLayer(raw, 'Defpoints', { aci: 7 }); addLayer(raw, 'Inner', { aci: 5 });
+      addBlock(raw, 'B8b', [dxfLine(0, 0, 10, 0, { layer: 'Inner' })]);
+      addEntities(raw, dxfPoly([[10, 20], [70, 20], [70, 80], [10, 80]], { closed: true, layer: 'Plate' }), dxfLine(20, 30, 60, 30, { layer: 'Notes' }), dxfLine(0, 0, 5, 5, { layer: '0' }), dxfLine(0, 90, 5, 95, { layer: 'Defpoints' }), dxfInsert('B8b', 30, 40));
+      return raw;
+    };
+    const open = async (name, text = writeDxf(make())) => { await q('picker').setInputFiles({ name, mimeType: 'text/plain', buffer: Buffer.from(text) }); await waitTab(p, name); };
+    const tab = (name) => p.locator('.dtab').filter({ has: p.locator('.tname', { hasText: name.replace(/\.dxf$/, '') }) });
+    const row = (n) => p.locator(`.layer[data-layer-name="${n}"]`);
+    const del = (n) => row(n).locator('[data-testid=layer-delete]');
+    const heard = (re) => p.waitForFunction((s) => new RegExp(s).test(document.querySelector('[data-testid=cmd-prompt]').textContent), re.source);
+    const saved = async () => { const [download] = await Promise.all([p.waitForEvent('download'), q('save').click()]); return readDxf(readFileSync(await download.path(), 'utf8')); };
+    const dock = (id) => q('ptab-' + id).click();
+    const why = async (n, text) => {       // waits for the button of row `n` to say `text` (its tooltip when off; '' = enabled), then asserts it
+      await p.waitForFunction(([n, t]) => { const b = document.querySelector(`.layer[data-layer-name="${n}"] [data-testid=layer-delete]`); return !!b && (t === '' ? !b.disabled : b.disabled && b.title === t); }, [n, text]).catch(() => {});
+      assert.equal(await del(n).count(), 1, `${n}: one delete button`);
+      assert.equal(await del(n).isDisabled(), text !== '', `${n}: ${text || 'enabled'}`);
+      if (text) assert.equal(await del(n).getAttribute('title'), text);
+    };
+    const gone = (n) => p.waitForFunction((n) => !document.querySelector(`.layer[data-layer-name="${n}"]`), n);
+    const labelIs = (n, act, label) => p.waitForFunction(([n, act, label]) => document.querySelector(`.layer[data-layer-name="${n}"] [data-act=${act}]`)?.getAttribute('aria-label') === label, [n, act, label]);
+    const shots = async (kind) => {
+      for (const theme of ['light', 'dark']) {
+        await p.locator('[data-menu=View]').click(); await p.getByRole('menuitemcheckbox', { name: new RegExp('Theme: ' + theme) }).click();
+        await p.screenshot({ path: `${shotDir}/todo8b-${kind}-${theme}.png` });
+      }
+      await p.locator('[data-menu=View]').click(); await p.getByRole('menuitemcheckbox', { name: /Theme: light/ }).click();
+    };
+    try {
+      await p.goto(URL_); await p.locator('[data-tool=select]').waitFor();
+      // ---- Drawings
+      await open('one-8b.dxf'); await dock('objects');
+      await why('Plate', 'Layer has 1 object'); await why('Notes', 'Layer has 1 object');
+      await why('0', 'Layer 0 cannot be deleted'); await why('Defpoints', 'Defpoints cannot be deleted');
+      await why('Inner', 'Layer is used inside blocks');
+      await row('Plate').click(); await why('Plate', 'Current layer');
+      await row('0').click(); await why('Plate', 'Layer has 1 object');
+      await q('layer-add').click(); await row('Layer1').waitFor(); await why('Layer1', 'Current layer');
+      await row('0').click(); await why('Layer1', '');
+      await row('Layer1').locator('[data-act=lock]').click(); await labelIs('Layer1', 'lock', 'Unlock');       // a locked empty layer can still go
+      let out = await saved(); assert.ok(out.layers.Layer1, 'the layer is in the LAYER table before the delete');
+      await shots('drawings');
+      await p.setViewportSize({ width: 1024, height: 768 }); await p.screenshot({ path: `${shotDir}/todo8b-drawings-1024.png` }); await p.setViewportSize({ width: 1440, height: 900 });
+      await del('Layer1').click(); await gone('Layer1'); await heard(/^Layer Layer1 is deleted/);
+      out = await saved(); assert.ok(!out.layers.Layer1, 'the saved DXF has no LAYER entry for it'); assert.ok(out.layers.Plate && out.layers.Notes, 'the others stay');
+      await p.keyboard.press('Control+z'); await row('Layer1').waitFor(); await labelIs('Layer1', 'lock', 'Unlock');
+      await why('Layer1', ''); out = await saved(); assert.ok(out.layers.Layer1, 'one Undo brings the layer back, still locked');
+      await p.keyboard.press('Control+y'); await gone('Layer1'); out = await saved(); assert.ok(!out.layers.Layer1, 'Redo deletes again');
+      await p.keyboard.press('Control+z'); await row('Layer1').waitFor();
+      await p.keyboard.press('Control+z'); await gone('Layer1');       // the second Undo is the + Add: the delete was one step
+      await p.keyboard.press('Control+y'); await row('Layer1').waitFor(); await why('Layer1', '');
+      // ---- Layouts
+      const lay = newLayout('Lay8b'); lay.layers = newDoc(4).layers; addLayer(lay, 'A', { aci: 1 });       // a reopened layout lists the layers with objects on them; an empty one is made with + Add
+      lay.parts.a = objectPart('a', 'Line a', dxfLine(100, 100, 250, 100, { layer: 'A' }), lay.layers);
+      lay.parts.z = objectPart('z', 'Line z', dxfLine(100, 200, 250, 200, { layer: '0' }), lay.layers);
+      lay.placed = [objectPlacement(lay.parts.a), objectPlacement(lay.parts.z)];
+      await open('lay8b.dxf', writeDxf(layoutRaw(lay))); await dock('objects');
+      await row('Parts').waitFor();
+      for (const n of ['Parts', 'Marks', 'Dimensions']) await why(n, `${n} is a fixed layer`);
+      await why('A', 'Layer has 1 object'); await why('0', 'Layer 0 cannot be deleted');
+      await q('layer-add').click(); await row('Layer1').waitFor(); await why('Layer1', 'Current layer');
+      await row('A').click(); await why('Layer1', ''); await why('A', 'Current layer');
+      await row('Layer1').locator('[data-act=vis]').click(); await labelIs('Layer1', 'vis', 'Show');       // hidden and locked: still deletable
+      await row('Layer1').locator('[data-act=lock]').click(); await labelIs('Layer1', 'lock', 'Unlock');
+      await why('Layer1', '');
+      out = await saved(); assert.ok(out.layers.Layer1, 'the layout file has the layer before the delete');
+      await del('Layer1').click(); await gone('Layer1'); await heard(/^Layer Layer1 is deleted/);
+      out = await saved(); assert.ok(!out.layers.Layer1 && out.layers.A, 'the layout file has no LAYER entry for it');
+      await p.keyboard.press('Control+z'); await row('Layer1').waitFor(); await labelIs('Layer1', 'vis', 'Show'); await labelIs('Layer1', 'lock', 'Unlock');
+      out = await saved(); assert.ok(out.layers.Layer1, 'one Undo brings it back, hidden and locked');
+      await p.keyboard.press('Control+y'); await gone('Layer1'); out = await saved(); assert.ok(!out.layers.Layer1, 'Redo deletes again');
+      await p.keyboard.press('Control+z'); await row('Layer1').waitFor();
+      await shots('layouts');
+      // ---- Compare
+      await open('cmp1-8b.dxf');       // Compare lists the open drawing and the first other one: snapshot 2 is one-8b.dxf
+      await tab('cmp1-8b').click();
+      await p.locator('[data-menu=File]').click(); await p.getByRole('menuitem', { name: 'Compare drawings…', exact: true }).click();
+      await dock('drawing'); await p.getByTestId('cmp-name-2').filter({ hasText: 'one-8b.dxf' }).waitFor(); await q('cmp-name-2').click(); await dock('objects');
+      await row('Plate').waitFor();
+      await why('Plate', 'Layer has 1 object'); await why('0', 'Layer 0 cannot be deleted'); await why('Defpoints', 'Defpoints cannot be deleted'); await why('Inner', 'Layer is used inside blocks');
+      await why('Layer1', '');       // the source's empty layer is listed too
+      await del('Layer1').click(); await gone('Layer1');
+      await tab('one-8b').click(); out = await saved(); assert.ok(!out.layers.Layer1 && out.layers.Plate, 'the source drawing lost the layer');
+      await dock('objects'); await gone('Layer1');
+      await tab('Compare').click(); await p.keyboard.press('Control+z'); await row('Layer1').waitFor(); await why('Layer1', '');
+      await shots('compare');
+      // a snapshot with no source drawing: the button says to open it
+      await dock('drawing');
+      p.once('dialog', (d) => d.accept()); await tab('one-8b').locator('.x').click(); await tab('one-8b').waitFor({ state: 'detached' });
+      await tab('Compare').click(); await dock('drawing'); await q('cmp-name-2').click(); await dock('objects');
+      await row('Notes').waitFor(); await why('Notes', '');
+      await del('Notes').click(); await heard(/^Open one-8b\.dxf to delete a layer$/);
+      assert.equal(await row('Notes').count(), 1, 'nothing changed');
+    } finally { await context.close(); }
   });
 
   await step('TODO 187: Layout object Properties', async () => {
@@ -24419,7 +25075,7 @@ try {
     assert.equal(await dlg.getAttribute('role'), 'dialog'); assert.equal(await dlg.getAttribute('aria-label'), 'Auto-nest'); assert.equal(await dlg.getAttribute('data-state'), 'idle');
     assert.match(await t('nest-sub').textContent(), /^Layout \d+ · sheet 1000 × 700 mm · gripper 0 mm · gap 5 mm$/);
     assert.equal(await t('nest-gap').textContent(), '5 mm');
-    assert.deepEqual(await page.locator('[data-testid^=nest-rot-]').allTextContents(), ['0° only', '0° + 180°', 'Every 90°']);
+    assert.deepEqual(await page.locator('[data-testid^=nest-rot-]').allTextContents(), ['0° only', '0° + 180°', 'Every 90°', 'Free angles']);
     assert.equal(await t('nest-rot-all').getAttribute('aria-pressed'), 'true');
     assert.match(await t('nest-row-0').textContent(), /Plate A/);
     assert.equal(await t('nest-count-0').inputValue(), '1'); assert.equal(await t('nest-count-1').inputValue(), '1');
@@ -24510,6 +25166,60 @@ try {
     assert.equal(await page.locator('[role=progressbar]').count(), 1);
     await t('nest-stop').click(); await nestDone();
     assert.match(await t('nest-placed').textContent(), /^\d+ of 1020 placed( \(stopped\))?$/);
+    await t('nest-cancel').click();
+  });
+
+  await step('TODO 267b: Auto-nest Free angles: a 5 s limit packs a preview and names the seeds tried, Stop keeps the best, Apply places it as one undo step; the 3 old choices are unchanged', async () => {
+    if (only) await nestLayout();
+    const reads = (id, re) => page.waitForFunction(([i, s]) => { const e = document.querySelector(`[data-testid=${i}]`); return !!e && new RegExp(s).test('value' in e ? e.value : e.textContent); }, [id, re.source], { timeout: 10000 });   // a waited read
+    const before = await sheetParts();
+    await t('nest').click();
+    assert.equal(await t('nest-limitrow').isHidden(), true, 'the time limit shows only with Free angles');
+    await t('nest-rot-free').click();
+    assert.equal(await t('nest-limitrow').isVisible(), true);
+    await reads('nest-timelimit', /^60$/);
+    await t('nest-timelimit').fill('1'); await t('nest-timelimit').press('Tab');
+    await reads('nest-timelimit', /^5$/);                           // at least 5 s
+    await t('nest-timelimit').fill('9999'); await t('nest-timelimit').press('Tab');
+    await reads('nest-timelimit', /^600$/);                         // at most 600 s
+    await t('nest-timelimit').fill('5'); await t('nest-timelimit').press('Tab');
+    await nestSetCount(0, 6); await nestSetCount(1, 4);
+    await t('nest-run').click();
+    assert.equal(await page.locator('[data-testid=nest-dialog]').getAttribute('data-state'), 'run');
+    assert.equal(await t('nest-timelimit').isDisabled(), true, 'no edits while the search runs');
+    await nestDone();                                               // the 5 s limit ends it
+    assert.ok(Number(await page.locator('[data-testid=nest-dialog]').getAttribute('data-ms')) >= 4900, 'the search ran to its limit');
+    await reads('nest-placed', /^10 of 10 placed$/);                // never worse than Every 90°
+    await reads('nest-seeds', /^Free angles: \d+ seeds? tried, the best is seed \d+( \(Every 90°\))?\.$/);
+    assert.equal(await nestPieces(), 10);
+    assert.equal(await sheetParts(), before, 'the preview is not on the sheet');
+    await nestShot('nest-free');
+    await page.setViewportSize({ width: 1024, height: 700 }); await page.waitForTimeout(250);
+    await page.screenshot({ path: `${shotDir}/r10-nest-free-1024.png` });
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await t('nest-again').click();                                  // Stop keeps the best so far
+    await page.waitForFunction(() => /^Best \d+ %/.test(document.querySelector('[data-testid=nest-status]').textContent), null, { timeout: 30000 });
+    assert.equal(await t('nest-again').count(), 0, 'no second run while one is live');
+    await t('nest-stop').click(); await nestDone();
+    await reads('nest-seeds', /you stopped the search\.$/);
+    await reads('nest-placed', /^10 of 10 placed$/);
+    assert.equal(await nestPieces(), 10);
+    await t('nest-apply').click();
+    assert.equal(await sheetParts(), before + 10);
+    await said(/Auto-nest: 10 parts placed/);
+    await page.keyboard.press('Control+z');
+    assert.equal(await sheetParts(), before, 'one undo takes them all off');
+    await t('nest').click();                                        // the choice and the limit are kept; the 3 old choices run as before
+    assert.equal(await t('nest-rot-free').getAttribute('aria-pressed'), 'true');
+    await reads('nest-timelimit', /^5$/);
+    for (const key of ['none', 'flip', 'all']) {
+      await t('nest-rot-' + key).click();
+      assert.equal(await t('nest-limitrow').isHidden(), true);
+      await nestSetCount(0, 6); await nestSetCount(1, 4);
+      await t('nest-run').or(t('nest-again')).first().click(); await nestDone();
+      await reads('nest-placed', /^\d+ of 10 placed$/);
+      assert.equal(await t('nest-seeds').count(), 0, key + ' has no seeds line');
+    }
     await t('nest-cancel').click();
   });
 
@@ -25687,7 +26397,7 @@ try {
         ['export-dxf-units', true, 1], ['export-dxf-go', true, 1],
       ]) {
         await p.locator('[data-menu=File]').click();
-        await p.getByRole('menuitem', { name: 'Export DXF…', exact: true }).click();
+        await p.getByRole('menuitem', { name: 'Export…', exact: true }).click();
         const dialog = p.getByTestId('export-dxf-dialog'); await dialog.waitFor();
         const before = await p.evaluate(() => window.__saveCalls);
         if (focus === 'outside') await p.evaluate(() => document.activeElement.blur());
@@ -25857,7 +26567,7 @@ try {
           writeTextFile: async (path, text) => { window.__exp109.wrote.push({ path, text }); } },
       };
     }, [...Buffer.from(writeDxf(raw))]);
-    const dialog = t('export-dxf-dialog'), open = async () => { await menuItem('File', 'Export DXF…'); await dialog.waitFor(); };
+    const dialog = t('export-dxf-dialog'), open = async () => { await menuItem('File', 'Export…'); await dialog.waitFor(); };
     const clean = async () => assert.equal(await page.locator('.tabs .dtab.on .dot').count(), 0);
     const written = () => page.evaluate(() => window.__exp109.wrote);
     try {
@@ -25936,7 +26646,7 @@ try {
       assert.equal(+readDxf((await written())[5].text).entities[0].r.v[readDxf((await written())[5].text).entities[0].r.c.indexOf(11)], 200);
       assert.equal(await page.locator('.tabs .dtab.on .tname')?.textContent(), 'Compare'); await clean();
       await closeTabs(/plate-edited/);
-      await menuItem('File', 'Export DXF…'); await said(/Open plate-edited.dxf to export DXF/);
+      await menuItem('File', 'Export…'); await said(/Open plate-edited.dxf to export DXF/);
       assert.equal(await dialog.count(), 0, 'a closed Compare source cannot open Export');
       assert.equal((await written()).length, 6, 'a closed Compare source writes nothing');
       await clean();
@@ -25972,7 +26682,7 @@ try {
         fs: { readFile: async () => new Uint8Array(bytes), exists: async () => false, writeTextFile: async (path, text) => { window.__exp109b.wrote.push({ path, text }); } },
       };
     }, [...Buffer.from(writeDxf(raw))]);
-    const dialog = t('export-dxf-dialog'), open = async () => { await menuItem('File', 'Export DXF…'); await dialog.waitFor(); };
+    const dialog = t('export-dxf-dialog'), open = async () => { await menuItem('File', 'Export…'); await dialog.waitFor(); };
     const layer = (n) => page.locator(`[data-testid=export-dxf-layer][data-layer="${n}"]`);
     try {
       await menuItem('File', 'Open…'); await waitTab(page, 'curves.dxf');
@@ -26008,6 +26718,428 @@ try {
       console.log(`109b: Cut unticked + Curves: ${top.join(' ')}; screenshots ${shotDir}/export-dxf-layers-{light,dark}.png`);
     } finally {
       await page.evaluate(() => { delete window.__TAURI__; delete window.__exp109b; });
+      await page.keyboard.press('Escape');
+      await closeTabs(/./);
+    }
+  });
+
+  // TODO 109c1: Export… with Format SVG, in Drawings, Layouts and Compare
+  const svgPaths = (svg) => (svg.match(/<path /g) || []).length;
+  const svgDialog = t('export-dxf-dialog');
+  const svgOpen = async () => { await menuItem('File', 'Export…'); await svgDialog.waitFor(); await t('export-format').selectOption('svg'); };
+  const svgFake = (bytes, opened) => page.evaluate(([b, name]) => {
+    window.__exp109c = { wrote: [], asked: [] };
+    window.__TAURI__ = {
+      dialog: { open: async () => 'C:\\source\\' + name, ask: async () => true, save: async (o) => { window.__exp109c.asked.push(o); return o.defaultPath; } },
+      fs: { readFile: async () => new Uint8Array(b), exists: async () => false, writeTextFile: async (path, text) => { window.__exp109c.wrote.push({ path, text }); } },
+    };
+  }, [bytes, opened]);
+  const svgField = (id, value) => page.waitForFunction(([i, v]) => document.querySelector(`[data-testid=${i}]`)?.value === v, [id, value]);
+  const svgWrote = async (n) => { await page.waitForFunction((k) => window.__exp109c.wrote.length === k, n); return page.evaluate((k) => window.__exp109c.wrote[k - 1], n); };
+  const svgDrawing = () => {
+    const raw = newDoc(4);
+    for (const [n, o] of [['Cut', { aci: 1 }], ['Notes', { aci: 3 }]]) addLayer(raw, n, o);
+    addEntities(raw, dxfLine(0, 0, 100, 0, { layer: 'Cut' }), dxfLine(0, 10, 100, 10, { layer: 'Notes' }), dxfText(5, 30, 5, 'Hi', { layer: 'Notes' }), dxfText(5, 40, 5, 'Gone', { layer: 'Cut' }));
+    return [...Buffer.from(writeDxf(raw))];
+  };
+
+  await step('TODO 109c1: Export… as SVG (Drawings): the drawing\'s paths and text, an unticked layer gives no element, Curves gives no <text>, inches / scale / precision, the drawing unchanged', async () => {
+    await closeTabs(/./); await menuItem('View', 'Theme: light');
+    await svgFake(svgDrawing(), 'svg-draw.dxf');
+    try {
+      await menuItem('File', 'Open…'); await waitTab(page, 'svg-draw.dxf');
+      const before = await t('drawing').evaluate((el) => el.toDataURL());
+      await menuItem('File', 'Export…'); await svgDialog.waitFor();
+      await svgField('export-format', 'dxf'); await svgField('export-dxf-name', 'svg-draw-export.dxf');
+      await t('export-format').selectOption('svg'); await svgField('export-dxf-name', 'svg-draw-export.svg');
+      for (const id of ['units', 'scale', 'precision', 'layers', 'text']) assert.equal(await t('export-dxf-' + id).isVisible(), true, id + ' stays for SVG');
+      await page.screenshot({ path: `${shotDir}/export-svg-light.png` });
+      await t('export-dxf-cancel').click(); await svgDialog.waitFor({ state: 'detached' });
+      await menuItem('View', 'Theme: dark'); await svgOpen();
+      await page.screenshot({ path: `${shotDir}/export-svg-dark.png` });
+      await page.keyboard.press('Escape'); await svgDialog.waitFor({ state: 'detached' });
+      await menuItem('View', 'Theme: light');
+      await svgOpen(); await t('export-dxf-go').click();                                // everything: both lines and both texts
+      const all = await svgWrote(1);
+      assert.equal(all.path, 'C:\\source\\svg-draw-export.svg');
+      assert.deepEqual(await page.evaluate(() => window.__exp109c.asked.map((o) => [o.defaultPath, o.filters[0].extensions])), [['C:\\source\\svg-draw-export.svg', ['svg']]]);
+      assert.match(all.text, /^<svg xmlns="http:\/\/www\.w3\.org\/2000\/svg" width="100mm" height="[\d.]+mm" viewBox="0 0 100 [\d.]+"/);
+      assert.equal(svgPaths(all.text), 2); assert.match(all.text, />Hi<\/text>/); assert.match(all.text, />Gone<\/text>/);
+      await said(/Exported svg-draw-export\.svg/);
+      await svgOpen(); await t('export-dxf-units').selectOption('in'); await t('export-dxf-scale').fill('2'); await t('export-dxf-precision').fill('2');
+      await page.locator('[data-testid=export-dxf-layer][data-layer="Cut"]').uncheck(); await t('export-dxf-go').click();
+      const part = (await svgWrote(2)).text;
+      assert.match(part, /width="7\.87in" height="[\d.]+in" viewBox="0 0 7\.87 /);   // 100 mm x 2 in inches, 2 decimals
+      assert.equal(svgPaths(part), 1, 'the Cut line is gone'); assert.doesNotMatch(part, /Gone/); assert.match(part, />Hi<\/text>/);
+      await svgOpen(); await t('export-dxf-text').selectOption('curves'); await t('export-dxf-go').click();
+      const curves = (await svgWrote(3)).text;
+      assert.doesNotMatch(curves, /<text/); assert.ok(svgPaths(curves) > 2, 'the letters are paths: ' + svgPaths(curves));
+      assert.equal(await page.locator('.tabs .dtab.on .dot').count(), 0, 'the open drawing stays clean');
+      assert.equal(await t('drawing').evaluate((el) => el.toDataURL()), before, 'the open drawing is unchanged after the exports');
+      const flat = newDoc(4); addEntities(flat, dxfLine(0, 0, 30, 0));                          // flat as one line: its box has no height
+      await t('picker').setInputFiles({ name: 'svg-flat.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(flat)) });
+      await waitTab(page, 'svg-flat.dxf'); await svgOpen(); await t('export-dxf-go').click();
+      assert.match((await svgWrote(4)).text, /width="32mm" height="2mm" viewBox="0 0 32 2"[\s\S]*<path d="M1 1 L31 1"/);
+      for (const theme of ['light', 'dark']) assert.ok(readFileSync(`${shotDir}/export-svg-${theme}.png`).length > 1000);
+      console.log(`109c1 Drawings: ${svgPaths(all.text)} paths, in / 2x: ${part.slice(0, 80).replace(/\n/g, ' ')}; curves ${svgPaths(curves)} paths; screenshots ${shotDir}/export-svg-{light,dark}.png`);
+    } finally {
+      await page.evaluate(() => { delete window.__TAURI__; delete window.__exp109c; });
+      await page.keyboard.press('Escape');
+      await closeTabs(/./);
+    }
+  });
+
+  await step('TODO 109c1: Export… as SVG (Layouts): the sheet is the page, the placed part is a path, an unticked Parts layer gives no element, the layout unchanged', async () => {
+    await closeTabs(/./);
+    const raw = newDoc(4); addEntities(raw, dxfLine(0, 0, 80, 0), dxfLine(0, 0, 0, 40));
+    const lay = newLayout('Svg layout'); lay.parts.a = makePart('a', 'Bracket', raw); lay.placed.push({ partId: 'a', x: 50, y: 50, rot: 0 });
+    await t('picker').setInputFiles({ name: 'svg-layout.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
+    await waitTab(page, 'svg-layout.dxf'); await t('size-strip').waitFor();
+    const before = await t('drawing').evaluate((el) => el.toDataURL());
+    try {
+      const out = await downloaded(async () => { await svgOpen(); await t('export-dxf-go').click(); });          // no native bridge: the browser download
+      assert.equal(out.name, 'svg-layout-export.svg');
+      assert.match(out.text, new RegExp(`^<svg xmlns="http://www\\.w3\\.org/2000/svg" width="${lay.s.sheetW}mm" height="${lay.s.sheetH}mm" viewBox="0 0 ${lay.s.sheetW} ${lay.s.sheetH}"`));
+      assert.ok(svgPaths(out.text) >= 2, 'the part is drawn: ' + svgPaths(out.text));
+      const none = await downloaded(async () => { await svgOpen(); await page.locator('[data-testid=export-dxf-layer][data-layer="Parts"]').uncheck(); await t('export-dxf-go').click(); });
+      assert.equal(svgPaths(none.text), 0, 'Parts unticked: no element');
+      assert.equal(await page.locator('.tabs .dtab.on .dot').count(), 0, 'the layout stays clean');
+      assert.equal(await t('drawing').evaluate((el) => el.toDataURL()), before, 'the layout is unchanged after the exports');
+      console.log(`109c1 Layouts: ${svgPaths(out.text)} paths, Parts unticked ${svgPaths(none.text)}`);
+    } finally {
+      await page.keyboard.press('Escape');
+      await closeTabs(/./);
+    }
+  });
+
+  await step('TODO 109c1: Export… as SVG (Compare): the compared drawing\'s paths, an unticked layer gives no element, Curves gives no <text>, the drawing unchanged', async () => {
+    await closeTabs(/./);
+    await t('picker').setInputFiles({ name: 'svg-cmp.dxf', mimeType: 'application/dxf', buffer: Buffer.from(svgDrawing()) });
+    await waitTab(page, 'svg-cmp.dxf');
+    await menuItem('File', 'Compare drawings…'); await t('cmp-name-1').waitFor();
+    try {
+      await waitTab(page, 'Compare');
+      const out = await downloaded(async () => { await svgOpen(); await t('export-dxf-go').click(); });
+      assert.equal(out.name, 'svg-cmp-export.svg'); assert.equal(svgPaths(out.text), 2); assert.match(out.text, />Hi<\/text>/);
+      const cut = await downloaded(async () => { await svgOpen(); await page.locator('[data-testid=export-dxf-layer][data-layer="Cut"]').uncheck(); await t('export-dxf-go').click(); });
+      assert.equal(svgPaths(cut.text), 1); assert.doesNotMatch(cut.text, /Gone/);
+      const curves = await downloaded(async () => { await svgOpen(); await t('export-dxf-text').selectOption('curves'); await t('export-dxf-go').click(); });
+      assert.doesNotMatch(curves.text, /<text/); assert.ok(svgPaths(curves.text) > 2);
+      await waitTab(page, 'Compare');
+      assert.equal(await page.locator('.tabs .dtab').filter({ hasText: 'svg-cmp.dxf' }).locator('.dot').count(), 0, 'the compared drawing stays clean');
+      console.log(`109c1 Compare: ${svgPaths(out.text)} paths, Cut unticked ${svgPaths(cut.text)}, Curves ${svgPaths(curves.text)}`);
+    } finally {
+      await page.keyboard.press('Escape');
+      await closeTabs(/./);
+    }
+  });
+
+  // TODO 109c2: Export… with Format PNG, in Drawings, Layouts and Compare
+  const pngOpen = async () => { await menuItem('File', 'Export…'); await svgDialog.waitFor(); await t('export-format').selectOption('png'); };
+  const pngMm = (svg) => svg.match(/width="([\d.]+)mm" height="([\d.]+)mm"/).slice(1).map(Number);
+  const pngSig = (buf) => assert.equal(buf.subarray(0, 8).toString('hex'), '89504e470d0a1a0a', 'a PNG signature');
+  /** The PNG's own size and pixels: the dark pixels (alpha > 0, red < 128) and the top-left pixel. */
+  const pngInfo = (buf) => page.evaluate(async (b) => {
+    const img = new Image(); img.src = URL.createObjectURL(new Blob([new Uint8Array(b)], { type: 'image/png' })); await img.decode();
+    const c = document.createElement('canvas'); c.width = img.naturalWidth; c.height = img.naturalHeight;
+    const g = c.getContext('2d'); g.drawImage(img, 0, 0);
+    const px = g.getImageData(0, 0, c.width, c.height).data; let dark = 0, inked = 0;
+    for (let i = 0; i < px.length; i += 4) { if (px[i + 3] > 0) inked++; if (px[i + 3] > 0 && px[i] < 128) dark++; }
+    return { w: img.naturalWidth, h: img.naturalHeight, corner: [...px.slice(0, 4)], dark, inked };
+  }, [...buf]);
+  const pngFake = (bytes, opened) => page.evaluate(([b, name]) => {
+    window.__exp109c2 = { wrote: [], asked: [], svgs: [] };
+    window.__TAURI__ = {
+      dialog: { open: async () => 'C:\\source\\' + name, ask: async () => true, save: async (o) => { window.__exp109c2.asked.push(o); return o.defaultPath; } },
+      fs: { readFile: async () => new Uint8Array(b), exists: async () => false, writeTextFile: async (path, text) => { window.__exp109c2.svgs.push(text); }, writeFile: async (path, data) => { window.__exp109c2.wrote.push({ path, bytes: [...data] }); } },
+    };
+  }, [bytes, opened]);
+  const pngWrote = async (n) => { await page.waitForFunction((k) => window.__exp109c2.wrote.length === k, n); return page.evaluate((k) => window.__exp109c2.wrote[k - 1], n); };
+
+  await step('TODO 109c2: Export… as PNG (Drawings): signature, size in px = inches x DPI, white / transparent background, DPI refused out of 72-1200, size cap note, a null toBlob writes no file, the drawing unchanged', async () => {
+    await closeTabs(/./); await menuItem('View', 'Theme: light');
+    await pngFake(svgDrawing(), 'png-draw.dxf');
+    try {
+      await menuItem('File', 'Open…'); await waitTab(page, 'png-draw.dxf');
+      const before = await t('drawing').evaluate((el) => el.toDataURL());
+      await svgOpen(); await t('export-dxf-go').click();                                  // the SVG gives the page size in mm
+      await page.waitForFunction(() => window.__exp109c2.svgs.length === 1);
+      const [svgW, svgH] = pngMm(await page.evaluate(() => window.__exp109c2.svgs[0]));
+      await menuItem('File', 'Export…'); await svgDialog.waitFor();
+      await t('export-format').selectOption('png'); await svgField('export-dxf-name', 'png-draw-export.png');
+      await svgField('export-dpi', '300'); await svgField('export-bg', 'white');
+      for (const id of ['export-dpi', 'export-bg', 'export-dxf-scale', 'export-dxf-layers', 'export-dxf-text']) assert.equal(await t(id).isVisible(), true, id + ' shown for PNG');
+      for (const id of ['units', 'precision']) assert.equal(await t('export-dxf-' + id).isVisible(), false, id + ' hidden for PNG');
+      await t('export-format').selectOption('dxf'); await svgField('export-dxf-name', 'png-draw-export.dxf');
+      assert.equal(await t('export-dpi').isVisible(), false); assert.equal(await t('export-dxf-units').isVisible(), true);
+      await t('export-format').selectOption('png');
+      await page.screenshot({ path: `${shotDir}/export-png-light.png` });
+      await t('export-dxf-cancel').click(); await svgDialog.waitFor({ state: 'detached' });
+      await menuItem('View', 'Theme: dark'); await pngOpen();
+      await page.screenshot({ path: `${shotDir}/export-png-dark.png` });
+      await page.keyboard.press('Escape'); await svgDialog.waitFor({ state: 'detached' });
+      await menuItem('View', 'Theme: light');
+      await pngOpen(); await t('export-dpi').fill('50');
+      await page.waitForFunction(() => /DPI must be a whole number from 72 to 1200/.test(document.querySelector('[data-testid=export-dxf-err]').textContent));
+      await t('export-dxf-go').click(); assert.equal(await svgDialog.isVisible(), true, 'a bad DPI keeps the dialog open');
+      await t('export-dpi').fill('1201'); assert.equal(await t('export-dxf-err').isVisible(), true);
+      await t('export-dpi').fill('100'); assert.equal(await t('export-dxf-err').isVisible(), false);
+      await t('export-dxf-go').click();
+      const white = await pngWrote(1); const wb = Buffer.from(white.bytes); pngSig(wb);
+      assert.equal(white.path, 'C:\\source\\png-draw-export.png');
+      assert.deepEqual(await page.evaluate(() => window.__exp109c2.asked.map((o) => [o.defaultPath, o.filters[0].extensions])), [['C:\\source\\png-draw-export.svg', ['svg']], ['C:\\source\\png-draw-export.png', ['png']]]);
+      await said(/Exported png-draw-export\.png/);
+      const wi = await pngInfo(wb);
+      assert.equal(wb.readUInt32BE(16), wi.w); assert.equal(wb.readUInt32BE(20), wi.h);
+      assert.ok(Math.abs(wi.w - svgW / 25.4 * 100) <= 1, `width ${svgW} mm at 100 dpi: ${wi.w}`);
+      assert.ok(Math.abs(wi.h - svgH / 25.4 * 100) <= 1, `height ${svgH} mm at 100 dpi: ${wi.h}`);
+      assert.deepEqual(wi.corner, [255, 255, 255, 255], 'white background'); assert.ok(wi.dark > 50, 'the lines and text are drawn: ' + wi.dark);
+      await pngOpen(); await t('export-bg').selectOption('transparent'); await t('export-dpi').fill('72'); await t('export-dxf-go').click();
+      const clear = await pngInfo(Buffer.from((await pngWrote(2)).bytes));
+      assert.equal(clear.corner[3], 0, 'transparent corner'); assert.ok(clear.dark > 20 && clear.inked < clear.w * clear.h, 'only the drawing is inked: ' + clear.inked);
+      assert.ok(Math.abs(clear.w - svgW / 25.4 * 72) <= 1 && Math.abs(clear.h - svgH / 25.4 * 72) <= 1, `size at 72 dpi: ${clear.w}x${clear.h}`);
+      await pngOpen(); await t('export-dxf-text').selectOption('curves'); await t('export-dpi').fill('72'); await t('export-dxf-go').click();
+      assert.ok((await pngInfo(Buffer.from((await pngWrote(3)).bytes))).dark > 20, 'Curves: still drawn');
+      assert.equal(await page.evaluate(() => window.__exp109c2.svgs.length), 1, 'only the SVG went through the text write');
+      // a canvas that makes no picture: a note, no file (never a blank one)
+      await page.evaluate(() => { window.__toBlob = HTMLCanvasElement.prototype.toBlob; HTMLCanvasElement.prototype.toBlob = function (cb) { cb(null); }; });
+      await pngOpen(); await t('export-dxf-go').click(); await said(/PNG not written/);
+      await page.evaluate(() => { HTMLCanvasElement.prototype.toBlob = window.__toBlob; });
+      assert.equal(await page.evaluate(() => window.__exp109c2.wrote.length), 3, 'a null toBlob writes no file');
+      assert.equal(await page.locator('.tabs .dtab.on .dot').count(), 0, 'the open drawing stays clean');
+      assert.equal(await t('drawing').evaluate((el) => el.toDataURL()), before, 'the open drawing is unchanged after the exports');
+      // the size cap: a flat line at Scale 20 is 602 mm wide: 1200 dpi would be 28000 px
+      const flat = newDoc(4); addEntities(flat, dxfLine(0, 0, 30, 0));
+      await t('picker').setInputFiles({ name: 'png-flat.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(flat)) });
+      await waitTab(page, 'png-flat.dxf'); await pngOpen(); await t('export-dxf-scale').fill('20'); await t('export-dpi').fill('1200'); await t('export-dxf-go').click();
+      const capped = Buffer.from((await pngWrote(4)).bytes), ci = await pngInfo(capped);
+      const said2 = (await said(/Exported png-flat-export\.png\. PNG at (\d+) dpi \(largest that fits\)/)).match(/PNG at (\d+) dpi/);
+      assert.ok(ci.w <= 16384 && ci.w > 16000, 'width under the side cap: ' + ci.w);
+      assert.ok(Math.abs(ci.w - 602 / 25.4 * Number(said2[1])) <= 1, `width ${ci.w} = 602 mm at ${said2[1]} dpi`);
+      for (const theme of ['light', 'dark']) assert.ok(readFileSync(`${shotDir}/export-png-${theme}.png`).length > 1000);
+      console.log(`109c2 Drawings: white ${wi.w}x${wi.h} corner ${wi.corner}, transparent corner alpha ${clear.corner[3]}, capped ${ci.w}x${ci.h} at ${said2[1]} dpi; screenshots ${shotDir}/export-png-{light,dark}.png`);
+    } finally {
+      await page.evaluate(() => { if (window.__toBlob) HTMLCanvasElement.prototype.toBlob = window.__toBlob; delete window.__TAURI__; delete window.__exp109c2; });
+      await page.keyboard.press('Escape');
+      await closeTabs(/./);
+    }
+  });
+
+  const pngDownload = async (setup) => { const out = await downloaded(async () => { await pngOpen(); await setup(); await t('export-dxf-go').click(); }); return { name: out.name, buf: Buffer.from(out.text, 'latin1') }; };
+
+  await step('TODO 109c2: Export… as PNG (Layouts): the sheet is the page, size in px = sheet inches x DPI, transparent corner, the layout unchanged', async () => {
+    await closeTabs(/./);
+    const raw = newDoc(4); addEntities(raw, dxfLine(0, 0, 80, 0), dxfLine(0, 0, 0, 40));
+    const lay = newLayout('Png layout'); lay.parts.a = makePart('a', 'Bracket', raw); lay.placed.push({ partId: 'a', x: 50, y: 50, rot: 0 });
+    await t('picker').setInputFiles({ name: 'png-layout.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
+    await waitTab(page, 'png-layout.dxf'); await t('size-strip').waitFor();
+    const before = await t('drawing').evaluate((el) => el.toDataURL());
+    try {
+      const white = await pngDownload(() => t('export-dpi').fill('72'));            // no native bridge: the browser download
+      assert.equal(white.name, 'png-layout-export.png'); pngSig(white.buf);
+      const wi = await pngInfo(white.buf);
+      assert.ok(Math.abs(wi.w - lay.s.sheetW / 25.4 * 72) <= 1 && Math.abs(wi.h - lay.s.sheetH / 25.4 * 72) <= 1, `${lay.s.sheetW}x${lay.s.sheetH} mm at 72 dpi: ${wi.w}x${wi.h}`);
+      assert.deepEqual(wi.corner, [255, 255, 255, 255]); assert.ok(wi.dark > 20, 'the part is drawn: ' + wi.dark);
+      const clear = await pngDownload(async () => { await t('export-bg').selectOption('transparent'); await t('export-dpi').fill('72'); });
+      const ci = await pngInfo(clear.buf);
+      assert.equal(ci.corner[3], 0, 'transparent corner'); assert.ok(ci.dark > 20);
+      const none = await pngDownload(async () => { await t('export-bg').selectOption('transparent'); await t('export-dpi').fill('72'); await page.locator('[data-testid=export-dxf-layer][data-layer="Parts"]').uncheck(); });
+      assert.equal((await pngInfo(none.buf)).inked, 0, 'Parts unticked: nothing drawn');
+      assert.equal(await page.locator('.tabs .dtab.on .dot').count(), 0, 'the layout stays clean');
+      assert.equal(await t('drawing').evaluate((el) => el.toDataURL()), before, 'the layout is unchanged after the exports');
+      console.log(`109c2 Layouts: ${wi.w}x${wi.h} for ${lay.s.sheetW}x${lay.s.sheetH} mm, dark ${wi.dark}, Parts unticked inked ${(await pngInfo(none.buf)).inked}`);
+    } finally {
+      await page.keyboard.press('Escape');
+      await closeTabs(/./);
+    }
+  });
+
+  await step('TODO 109c2: Export… as PNG (Compare): the compared drawing as a PNG, size in px = inches x DPI, transparent corner, the drawing unchanged', async () => {
+    await closeTabs(/./);
+    await t('picker').setInputFiles({ name: 'png-cmp.dxf', mimeType: 'application/dxf', buffer: Buffer.from(svgDrawing()) });
+    await waitTab(page, 'png-cmp.dxf');
+    await menuItem('File', 'Compare drawings…'); await t('cmp-name-1').waitFor();
+    try {
+      await waitTab(page, 'Compare');
+      const svg = await downloaded(async () => { await svgOpen(); await t('export-dxf-go').click(); });
+      const [w, h] = pngMm(svg.text);
+      const white = await pngDownload(() => t('export-dpi').fill('100'));
+      assert.equal(white.name, 'png-cmp-export.png'); pngSig(white.buf);
+      const wi = await pngInfo(white.buf);
+      assert.ok(Math.abs(wi.w - w / 25.4 * 100) <= 1 && Math.abs(wi.h - h / 25.4 * 100) <= 1, `${w}x${h} mm at 100 dpi: ${wi.w}x${wi.h}`);
+      assert.deepEqual(wi.corner, [255, 255, 255, 255]); assert.ok(wi.dark > 50, 'the lines and text are drawn: ' + wi.dark);
+      const clear = await pngDownload(async () => { await t('export-bg').selectOption('transparent'); await t('export-dpi').fill('100'); });
+      assert.equal((await pngInfo(clear.buf)).corner[3], 0, 'transparent corner');
+      await waitTab(page, 'Compare');
+      assert.equal(await page.locator('.tabs .dtab').filter({ hasText: 'png-cmp.dxf' }).locator('.dot').count(), 0, 'the compared drawing stays clean');
+      console.log(`109c2 Compare: ${wi.w}x${wi.h} for ${w}x${h} mm, dark ${wi.dark}`);
+    } finally {
+      await page.keyboard.press('Escape');
+      await closeTabs(/./);
+    }
+  });
+
+  await step('TODO 109d1: Export… Line weights and Hidden objects: SVG widths 0.5 / 0.05, a hidden line only with the tick, DXF keeps code 60 by default, the ticks in Layouts, the drawing unchanged', async () => {
+    await closeTabs(/./); await menuItem('View', 'Theme: light');
+    const raw = newDoc(4); addLayer(raw, 'Cut', { aci: 1 }); addLayer(raw, 'Off', { aci: 3, off: true });
+    addEntities(raw, dxfLine(0, 0, 100, 0, { layer: 'Cut', lw: 50 }), dxfLine(0, 10, 100, 10, { layer: 'Cut', hidden: true }), dxfLine(0, 20, 100, 20, { layer: 'Off' }));
+    await svgFake([...Buffer.from(writeDxf(raw))], 'w109d1.dxf');
+    const offIs = (on, why) => page.waitForFunction((v) => document.querySelector('[data-testid=export-dxf-layer][data-layer=Off]').checked === v, on, { timeout: 3000 }).catch(() => assert.fail(why));
+    const widths = (svg) => [...svg.matchAll(/stroke-width="([\d.]+)"/g)].map((m) => m[1]);
+    const ticks = async () => [await t('export-line-weights').isVisible(), await t('export-line-weights').isChecked(), await t('export-hidden-objects').isChecked()];
+    const dxfTexts = [];
+    try {
+      await menuItem('File', 'Open…'); await waitTab(page, 'w109d1.dxf');
+      const before = await t('drawing').evaluate((el) => el.toDataURL());
+      await menuItem('File', 'Export…'); await svgDialog.waitFor();
+      assert.deepEqual(await ticks(), [false, true, true], 'DXF: Line weights hidden, Hidden objects ticked');
+      await t('export-format').selectOption('svg'); assert.deepEqual(await ticks(), [true, true, false], 'SVG: Line weights shown and ticked, Hidden objects unticked');
+      await t('export-format').selectOption('png'); assert.deepEqual(await ticks(), [true, true, false], 'PNG: the same');
+      await offIs(false, 'SVG, Hidden objects off: the off layer starts unticked');
+      await t('export-hidden-objects').check();
+      await offIs(true, 'SVG, Hidden objects on: the untouched off layer is ticked too');
+      await t('export-format').selectOption('dxf');
+      await offIs(false, 'DXF: the off layer is unticked again');
+      assert.equal((await ticks())[2], true); await t('export-format').selectOption('svg');
+      assert.equal((await ticks())[2], true, 'once the user set it, the Format does not flip it');
+      await t('export-hidden-objects').uncheck(); await t('export-format').selectOption('dxf');
+      assert.equal((await ticks())[2], false, 'set by the user: it stays unticked for DXF');
+      await t('export-format').selectOption('svg');
+      await page.screenshot({ path: `${shotDir}/export-109d1-light.png` });
+      await t('export-dxf-cancel').click(); await svgDialog.waitFor({ state: 'detached' });
+      await menuItem('View', 'Theme: dark'); await svgOpen();
+      await page.screenshot({ path: `${shotDir}/export-109d1-dark.png` });
+      const size = page.viewportSize(); await page.setViewportSize({ width: 1024, height: 700 });
+      await page.screenshot({ path: `${shotDir}/export-109d1-1024-dark.png` }); await page.setViewportSize(size);
+      await page.keyboard.press('Escape'); await svgDialog.waitFor({ state: 'detached' });
+      await menuItem('View', 'Theme: light');
+      await svgOpen(); await t('export-dxf-go').click();                                  // the defaults: widths as today, the code-60 line left out
+      const normal = (await svgWrote(1)).text;
+      assert.deepEqual(widths(normal), ['0.5'], 'Line weights on: the 0.50 mm line; Hidden objects off: no second line');
+      await svgOpen(); await t('export-line-weights').uncheck(); await t('export-dxf-go').click();
+      assert.deepEqual(widths((await svgWrote(2)).text), ['0.05'], 'Line weights off: every stroke 0.05 mm');
+      await svgOpen(); await t('export-hidden-objects').check(); await t('export-dxf-go').click();
+      assert.deepEqual(widths((await svgWrote(3)).text), ['0.5', '0.25', '0.25'], 'Hidden objects on: the code-60 line and the off layer are drawn as well');
+      assert.equal(await page.locator('.tabs .dtab.on .dot').count(), 0, 'the open drawing stays clean');
+      await menuItem('File', 'Export…'); await svgDialog.waitFor();                       // Format DXF: the default keeps code 60
+      assert.equal((await ticks())[2], true, 'not remembered: DXF is ticked again');
+      await t('export-dxf-go').click(); dxfTexts.push((await svgWrote(4)).text);
+      await menuItem('File', 'Export…'); await svgDialog.waitFor(); await t('export-hidden-objects').uncheck(); await t('export-dxf-go').click(); dxfTexts.push((await svgWrote(5)).text);
+      assert.deepEqual([readDxf(dxfTexts[0]).entities.length, readDxf(dxfTexts[0]).entities.filter((e) => e.hidden).length], [2, 1], 'DXF default: the code-60 line is kept');
+      assert.deepEqual([readDxf(dxfTexts[1]).entities.length, readDxf(dxfTexts[1]).entities.filter((e) => e.hidden).length], [1, 0], 'DXF Hidden objects off: the code-60 line is dropped');
+      assert.equal(await t('drawing').evaluate((el) => el.toDataURL()), before, 'the open drawing is unchanged after the exports');
+      // Layouts: the same two ticks
+      await page.evaluate(() => { delete window.__TAURI__; });                              // the browser download path
+      await closeTabs(/./);
+      const part = newDoc(4); addEntities(part, dxfLine(0, 0, 80, 0), dxfLine(0, 0, 0, 40));
+      const lay = newLayout('Weights layout'); lay.parts.a = makePart('a', 'Bracket', part); lay.placed.push({ partId: 'a', x: 50, y: 50, rot: 0 });
+      await t('picker').setInputFiles({ name: 'w109d1-layout.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
+      await waitTab(page, 'w109d1-layout.dxf'); await t('size-strip').waitFor();
+      const layBefore = await t('drawing').evaluate((el) => el.toDataURL());
+      await svgOpen(); assert.deepEqual(await ticks(), [true, true, false], 'Layouts: the ticks are there');
+      await t('export-line-weights').uncheck();
+      const hair = await downloaded(async () => { await t('export-dxf-go').click(); });
+      assert.ok(widths(hair.text).length >= 2 && widths(hair.text).every((w) => w === '0.05'), 'Layouts: every stroke 0.05 mm: ' + widths(hair.text));
+      assert.equal(await t('drawing').evaluate((el) => el.toDataURL()), layBefore, 'the layout is unchanged');
+      for (const shot of ['light', 'dark', '1024-dark']) assert.ok(readFileSync(`${shotDir}/export-109d1-${shot}.png`).length > 1000);
+      console.log(`109d1: SVG widths ${widths(normal)} / hairline / +hidden; DXF entities ${readDxf(dxfTexts[0]).entities.length} -> ${readDxf(dxfTexts[1]).entities.length}; screenshots ${shotDir}/export-109d1-{light,dark,1024-dark}.png`);
+    } finally {
+      await page.evaluate(() => { delete window.__TAURI__; delete window.__exp109c; });
+      await page.keyboard.press('Escape');
+      await closeTabs(/./);
+    }
+  });
+
+  await step('TODO 109d2: Export… A folder at once: SVG and DXF for a folder (a .dwg and a .dxf with one name, a file already there, a bad file skipped and named, own units, no overwrite), the browser downloads, the open drawing unchanged', async () => {
+    await closeTabs(/./); await menuItem('View', 'Theme: light');
+    const bytesOf = (raw) => [...Buffer.from(writeDxf(raw))];
+    const layered = (units, lines) => { const raw = newDoc(units); addLayer(raw, 'Cut', { aci: 1 }); addLayer(raw, 'Off', { aci: 3, off: true }); addEntities(raw, ...lines.map(([y, layer]) => dxfLine(0, y, 100, y, { layer }))); return raw; };
+    const files = {
+      'C:\\source\\open109d2.dxf': bytesOf(layered(4, [[0, 'Cut']])),
+      'C:\\parts\\bracket.dxf': bytesOf(layered(4, [[0, 'Cut'], [20, 'Off']])),                 // the Off layer is off: left out unless Hidden objects is ticked
+      'C:\\parts\\bracket.dwg-converted': bytesOf(layered(4, [[0, 'Cut'], [10, 'Cut']])),
+      'C:\\parts\\plate.dxf': bytesOf(layered(1, [[0, 'Cut']])),                                // inches: its own unit
+      'C:\\parts\\bad.dxf': [...Buffer.from('this is not a drawing')],
+    };
+    await page.evaluate(([f]) => {
+      window.__exp109d2 = { wrote: [], opened: 0 };
+      const bytes = (p) => { if (!f[p]) throw new Error('no such file ' + p); return new Uint8Array(f[p]); };
+      window.__TAURI__ = {
+        dialog: { open: async (o) => (o && o.directory ? 'C:\\parts' : 'C:\\source\\open109d2.dxf'), ask: async () => true, save: async (o) => o.defaultPath },
+        core: { invoke: async (cmd, args) => { if (cmd === 'dwg_to_dxf' && args.path === 'C:\\parts\\bracket.dwg') return bytes('C:\\parts\\bracket.dwg-converted').buffer; throw new Error('unexpected ' + cmd); } },
+        fs: {
+          readDir: async () => ['bracket.dxf', 'bracket.dwg', 'plate.dxf', 'bad.dxf', 'notes.cdr'].map((name) => ({ name, isDirectory: false })),
+          readFile: async (p) => bytes(p),
+          exists: async (p) => p === 'C:\\parts\\plate-export.svg' || p === 'C:\\parts\\bracket-export.dxf',          // already there: never overwritten
+          writeTextFile: async (path, text) => { window.__exp109d2.wrote.push({ path, text }); },
+        },
+      };
+    }, [files]);
+    const wrote = () => page.evaluate(() => window.__exp109d2.wrote);
+    const shows = (id, re) => page.waitForFunction(([i, src]) => new RegExp(src).test(document.querySelector(`[data-testid=${i}]`)?.textContent || ''), [id, re.source], { timeout: 5000 });
+    const ended = (re) => page.waitForFunction((src) => new RegExp(src).test(document.querySelector('[data-testid=export-batch-end]')?.textContent || ''), re.source, { timeout: 20000 });
+    try {
+      await menuItem('File', 'Open…'); await waitTab(page, 'open109d2.dxf');
+      const before = await t('drawing').evaluate((el) => el.toDataURL());
+      await menuItem('File', 'Export…'); await svgDialog.waitFor();
+      assert.equal(await t('export-tab-one').getAttribute('aria-selected'), 'true', 'the one-file tab is first');
+      await t('export-tab-batch').click();
+      await shows('export-dxf-go', /^Export 0 files$/); assert.equal(await t('export-dxf-go').isDisabled(), true);
+      for (const id of ['export-dxf-name', 'export-dxf-units', 'export-dxf-layers']) assert.equal(await t(id).isVisible(), false, id + ' belongs to one file: hidden in a folder');
+      assert.deepEqual(await svgDialog.locator('.export-batch .pd-row').allTextContents().then((a) => a.map((x) => x.trim())), ['.dxf', '.dwg', '.cdr', 'Subfolders too']);
+      assert.deepEqual(await t('export-batch-save').locator('option').allTextContents(), ['Same folder as each file', 'Choose a folder…']);
+      await t('export-browse').click();
+      await page.waitForFunction(() => document.querySelectorAll('[data-testid=export-include]').length === 5);
+      await shows('export-dxf-go', /^Export 4 files$/);                                            // the .cdr is listed but not counted
+      assert.equal(await t('export-include').nth(3).isDisabled(), true, 'notes.cdr cannot be ticked');
+      assert.match((await t('export-status').allTextContents())[3], /CorelDRAW/);
+      await t('export-format').selectOption('svg');
+      await page.screenshot({ path: `${shotDir}/export-109d2-light.png` });
+      await t('export-dxf-go').click(); await ended(/^Exported \d+, skipped \d+/);
+      await shows('export-batch-end', /^Exported 3, skipped 1: bad\.dxf$/);                      // the bad file is skipped and named, the loop went on
+      const first = await wrote(), pathsOf = (p) => (first.find((w) => w.path === p)?.text.match(/<path /g) || []).length;
+      assert.deepEqual(first.map((w) => w.path).sort(), ['C:\\parts\\bracket-export (2).svg', 'C:\\parts\\bracket-export.svg', 'C:\\parts\\plate-export (2).svg'], 'one name each: a clash and a file already there get a free name');
+      assert.deepEqual([pathsOf('C:\\parts\\bracket-export.svg'), pathsOf('C:\\parts\\bracket-export (2).svg')], [2, 1], 'the .dwg stub gave two lines; the .dxf its visible layer only (the off layer is left out)');
+      assert.match(first.find((w) => w.path.includes('plate')).text, /^<svg [^>]*width="[\d.]+in"/, 'plate.dxf is in inches: its own unit');
+      assert.match(first.find((w) => w.path.includes('bracket-export.svg')).text, /^<svg [^>]*width="[\d.]+mm"/);
+      const statuses = await t('export-status').allTextContents();
+      assert.match(statuses[0], /^Failed: /); assert.deepEqual(statuses.slice(1), ['Done', 'Done', 'CorelDRAW: not built yet', 'Done'], 'bad.dxf, bracket.dwg, bracket.dxf, notes.cdr, plate.dxf');
+      await said(/Exported 3, skipped 1: bad\.dxf/);
+      await page.screenshot({ path: `${shotDir}/export-109d2-after-light.png` });
+      // DXF, Hidden objects ticked (the DXF default): every layer of each file
+      await t('export-format').selectOption('dxf');
+      await t('export-dxf-go').click(); await ended(/^Exported 3, skipped 1/);
+      const second = (await wrote()).slice(3);
+      assert.deepEqual(second.map((w) => w.path).sort(), ['C:\\parts\\bracket-export (2).dxf', 'C:\\parts\\bracket-export (3).dxf', 'C:\\parts\\plate-export.dxf'], 'bracket-export.dxf is already on disk: the next free names');
+      assert.equal(readDxf(second.find((w) => w.path.endsWith('(3).dxf')).text).entities.some((e) => e.layer === 'Off'), true, 'Hidden objects ticked: the off layer of bracket.dxf is exported');
+      await page.keyboard.press('Escape'); await svgDialog.waitFor({ state: 'detached' });
+      await menuItem('View', 'Theme: dark');
+      await menuItem('File', 'Export…'); await svgDialog.waitFor(); await t('export-tab-batch').click(); await t('export-format').selectOption('svg');
+      await page.screenshot({ path: `${shotDir}/export-109d2-dark.png` });
+      const size = page.viewportSize(); await page.setViewportSize({ width: 1024, height: 700 });
+      await page.screenshot({ path: `${shotDir}/export-109d2-1024-dark.png` }); await page.setViewportSize(size);
+      await page.keyboard.press('Escape'); await svgDialog.waitFor({ state: 'detached' });
+      await menuItem('View', 'Theme: light');
+      // the browser: no folder access, the files go to Downloads with distinct names
+      await page.evaluate(() => { delete window.__TAURI__; });
+      await menuItem('File', 'Export…'); await svgDialog.waitFor(); await t('export-tab-batch').click(); await t('export-format').selectOption('svg');
+      const got = [];
+      const onDl = async (dl) => got.push(dl.suggestedFilename());
+      page.on('download', onDl);
+      const one = { mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(layered(4, [[0, 'Cut']]))) };
+      await t('export-dirpicker').setInputFiles([{ name: 'dup.dxf', ...one }, { name: 'dup.dxf', ...one }]);
+      await page.waitForFunction(() => document.querySelectorAll('[data-testid=export-include]').length === 2);
+      await t('export-dxf-go').click(); await ended(/^Exported 2, skipped 0$/);
+      for (let i = 0; i < 100 && got.length < 2; i++) await page.waitForTimeout(100);
+      page.off('download', onDl);
+      assert.deepEqual(got.sort(), ['dup-export (2).svg', 'dup-export.svg'], 'two files with one name: two downloads');
+      await page.keyboard.press('Escape'); await svgDialog.waitFor({ state: 'detached' });
+      assert.equal(await t('drawing').evaluate((el) => el.toDataURL()), before, 'the open drawing is unchanged');
+      assert.equal(await page.locator('.tabs .dtab').count(), 1, 'no tab was opened for the files'); assert.equal(await page.locator('.tabs .dtab.on .dot').count(), 0, 'the open drawing stays clean');
+      for (const shot of ['light', 'after-light', 'dark', '1024-dark']) assert.ok(readFileSync(`${shotDir}/export-109d2-${shot}.png`).length > 1000);
+      console.log(`109d2: ${first.length} SVGs + ${second.length} DXFs, ${got.length} downloads; screenshots ${shotDir}/export-109d2-{light,after-light,dark,1024-dark}.png`);
+    } finally {
+      await page.evaluate(() => { delete window.__TAURI__; delete window.__exp109d2; });
       await page.keyboard.press('Escape');
       await closeTabs(/./);
     }
@@ -26466,6 +27598,194 @@ try {
       await page.evaluate(() => { CanvasRenderingContext2D.prototype.fillText = window.__editorFill; delete window.__editorFill; delete window.__editorTexts; });
       await page.keyboard.press('Escape'); await closeTabs(/./);
     }
+  });
+
+  const revEmpty = Object.fromEntries([1, 2, 3, 4, 5].flatMap((i) => ['REV', 'DATE', 'DESC', 'BY'].map((tag) => [`REV${i}_${tag}`, ''])));       // the 20 revision ATTRIBs of the title block (TODO 9b), empty
+  await step('TODO 9a: title block on a Layouts sheet', async () => {
+    await menuItem('View', 'Theme: light');
+    await closeTabs(/./);
+    mkdirSync('shots-9a', { recursive: true });
+    const dialog = page.getByTestId('attribute-dialog'), field = (name) => dialog.getByRole('textbox', { name, exact: true });
+    const row = (tag) => dialog.locator('tbody tr', { has: page.locator(`td:text-is("${tag}")`) });
+    const open = async (name, doc) => {
+      await closeTabs(/./);
+      await t('picker').setInputFiles({ name, mimeType: 'text/plain', buffer: Buffer.from(writeDxf(doc)) });
+      await waitTab(page, name);
+      await frames();
+    };
+    const dbl = async (x, y) => { const p = await at(x, y); await page.mouse.dblclick(p.x, p.y); await dialog.waitFor(); };
+    const undo = async () => { await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z'); await frames(); };
+    const saved = async () => { const doc = await savedDoc(), lay = layoutFromRaw(doc), part = lay && titlePartOf(lay); return { doc, lay, part, texts: part && titleTexts(part.raw.entities[0]), store: readTitleBlock(doc) }; };
+    const titleBtn = page.getByRole('button', { name: 'Title block', exact: true }), switchOn = () => t('pdf-title-block');
+    const setSwitch = async (on) => { await t('pdf-open').click(); await t('pdf-dialog').waitFor(); await t('pdf-page-check').check(); await switchOn().setChecked(on); await t('pdf-close').click(); await frames(); };
+    const autoDate = await page.evaluate(() => { const d = new Date(); return [d.getDate(), d.getMonth() + 1].map((n) => String(n).padStart(2, '0')).join('-') + '-' + d.getFullYear(); });
+    const sheet = newLayout('Sheet 9a'); sheet.s.sheetW = 420; sheet.s.sheetH = 297;
+    sheet.parts.l = objectPart('l', 'Line', dxfLine(20, 100, 120, 100), layersOf(sheet));       // a drawing on the sheet: with the title block off the PDF still has something to print
+    sheet.placed = [objectPlacement(sheet.parts.l)];
+    await open('title-9a.dxf', layoutRaw(sheet));
+    await page.locator('[data-ribbon-tab=Home]').click();
+    const history = await histLabels();
+    assert.equal((await saved()).part, undefined, 'a new sheet has no title block');
+    // insert: one undo step, auto values, bottom-right inside the sheet outline
+    await titleBtn.click(); await frames();
+    let s = await saved();
+    assert.ok(s.part, 'the button inserts the title block');
+    assert.deepEqual(s.part.box.map(Math.round), [270, 0, 420, 80], 'bottom-right on the sheet');
+    assert.deepEqual(s.texts, { TITLE: '', DRAWING_NO: '', REV: '', SCALE: '1:1', SHEET_SIZE: '420 x 297 mm', DATE: autoDate, DRAWN_BY: '', MATERIAL: '', FILE: 'title-9a.dxf', ...revEmpty });
+    assert.deepEqual((await histLabels()).slice(history.length), ['Title block'], 'one undo step');
+    assert.equal(s.part.raw.entities[0].kids.length, 29, 'INSERT + 9 field ATTRIBs + 20 revision ones');
+    assert.ok(Object.values(s.part.raw.blocks).some((b) => b.entities.filter((e) => e.type === 'ATTDEF').length === 29), 'the block has the 29 ATTDEFs');
+    await page.screenshot({ path: 'shots-9a/title-block-inserted-light.png' });
+    // a second press selects it, never a second one
+    await page.keyboard.press('Escape'); await titleBtn.click(); await frames();
+    await t('placed-name').filter({ hasText: /^Title block$/ }).waitFor({ state: 'attached' });       // pressed again: it is selected
+    s = await saved();
+    assert.equal(Object.values(s.lay.parts).filter((p) => titlePartOf({ parts: { p }, placed: [{ partId: p.id }] })).length, 1, 'still one title block');
+    assert.deepEqual((await histLabels()).slice(history.length), ['Title block'], 'selecting adds no step');
+    // double-click opens the attribute dialog; Reset per field; typed values go to the one settings store
+    await page.locator('[data-tool=select]').click();
+    await dbl(345, 22);
+    assert.equal(await dialog.getAttribute('aria-label'), 'Attribute editor');
+    assert.equal(await dialog.locator('tbody tr').count(), 29);
+    assert.equal(await dialog.getByTestId('attribute-reset').count(), 29, 'Reset on every field of the title block');
+    await field('Value').fill('Bracket'); await row('SCALE').click(); await field('Value').fill('1:2');
+    await row('REV').click(); await field('Value').fill('B');
+    await row('SCALE').getByTestId('attribute-reset').click();
+    await page.waitForFunction(() => document.querySelector('[data-testid=attribute-dialog] input[aria-label=Value]').value === '1:1');       // Reset puts the auto text back
+    await row('DATE').click(); await field('Value').fill('01-02-2027');
+    await page.screenshot({ path: 'shots-9a/title-block-dialog-light.png' });
+    await dialog.getByRole('button', { name: 'OK', exact: true }).click();
+    s = await saved();
+    assert.equal(s.texts.TITLE, 'Bracket'); assert.equal(s.texts.REV, 'B'); assert.equal(s.texts.SCALE, '1:1'); assert.equal(s.texts.DATE, '01-02-2027');
+    assert.deepEqual(s.store, { enabled: true, title: 'Bracket', rev: 'B', date: '01-02-2027' }, 'typed values only, in the tab settings');
+    assert.deepEqual((await histLabels()).slice(history.length), ['Title block', 'Attribute editor']);
+    await undo();
+    s = await saved();
+    assert.deepEqual([s.texts.TITLE, s.texts.REV, s.texts.DATE], ['', '', autoDate], 'one undo takes the whole edit back');
+    assert.equal(s.store, undefined, 'and the typed settings with it');
+    await page.keyboard.press('Control+y'); await frames();
+    assert.equal((await saved()).texts.TITLE, 'Bracket', 'redo brings it back');
+    // the Title block switch (PDF dialog) off hides the block, on shows it
+    const shown = () => page.locator('[data-group=parts] [data-i]').count();
+    const before = await shown();
+    await setSwitch(false);
+    assert.equal(await shown(), before - 1, 'switched off: the title block is not drawn');
+    assert.equal((await saved()).texts.TITLE, 'Bracket', 'the file keeps it');
+    await setSwitch(true);
+    assert.equal(await shown(), before);
+    // the dialog's switch has no undo step: undoing a move must not put the old switch back
+    const lineAt = await at(70, 100); await page.mouse.click(lineAt.x, lineAt.y); await page.keyboard.press('ArrowRight'); await frames();
+    const steps = (await histLabels()).length;
+    assert.ok(steps > history.length + 2, 'the move is a step');
+    await setSwitch(false);
+    await undo();
+    assert.equal(await shown(), before - 1, 'the switch stays off after the undo');
+    await setSwitch(true);
+    // save and reopen: block and every value stay; the file name is auto again, the typed date stays
+    const { doc } = await saved();
+    await open('title-9a-again.dxf', doc);
+    await page.locator('[data-ribbon-tab=Home]').click();
+    s = await saved();
+    assert.deepEqual(s.texts, { TITLE: 'Bracket', DRAWING_NO: '', REV: 'B', SCALE: '1:1', SHEET_SIZE: '420 x 297 mm', DATE: '01-02-2027', DRAWN_BY: '', MATERIAL: '', FILE: 'title-9a-again.dxf', ...revEmpty });
+    await page.locator('[data-tool=select]').click();
+    await dbl(345, 22);
+    await row('TITLE').locator('td').nth(2).filter({ hasText: /^Bracket$/ }).waitFor();       // the typed value came back from the file
+    await row('TITLE').getByTestId('attribute-reset').click(); await dialog.getByRole('button', { name: 'OK', exact: true }).click();
+    assert.equal((await saved()).texts.TITLE, '', 'Reset on the reopened block');
+    await titleBtn.click(); await frames();
+    await t('placed-name').filter({ hasText: /^Title block$/ }).waitFor({ state: 'attached' });       // a reopened sheet that has one selects it
+    // light and dark at 1024 px (a plain block's dialog, no Reset, is checked by TODO 155i3's row texts)
+    for (const theme of ['light', 'dark']) {
+      await page.evaluate((th) => { document.documentElement.dataset.theme = th; }, theme);
+      await page.setViewportSize({ width: 1024, height: 768 }); await frames();
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'the layout top bar fits 1024 px');
+      await page.screenshot({ path: `shots-9a/title-block-1024-${theme}.png` });
+    }
+    await page.evaluate(() => { document.documentElement.dataset.theme = 'light'; });
+    await page.setViewportSize({ width: 1440, height: 900 }); await frames();
+    await closeTabs(/./);
+  });
+
+  await step('TODO 9b: revision rows + Add revision', async () => {
+    await menuItem('View', 'Theme: light');
+    await closeTabs(/./);
+    mkdirSync('shots-9b', { recursive: true });
+    const dialog = page.getByTestId('attribute-dialog'), field = (name) => dialog.getByRole('textbox', { name, exact: true });
+    const row = (tag) => dialog.locator('tbody tr', { has: page.locator(`td:text-is("${tag}")`) });
+    const add = () => dialog.getByTestId('attribute-add-revision'), button = (name) => dialog.getByRole('button', { name, exact: true });
+    const open = async (name, doc) => {
+      await closeTabs(/./);
+      await t('picker').setInputFiles({ name, mimeType: 'text/plain', buffer: Buffer.from(writeDxf(doc)) });
+      await waitTab(page, name);
+      await frames();
+    };
+    const dbl = async (x, y) => { const p = await at(x, y); await page.mouse.dblclick(p.x, p.y); await dialog.waitFor(); };
+    const undo = async () => { await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z'); await frames(); };
+    const saved = async () => { const doc = await savedDoc(), lay = layoutFromRaw(doc), part = lay && titlePartOf(lay); return { doc, texts: part && titleTexts(part.raw.entities[0]), store: readTitleBlock(doc) }; };
+    const autoDate = await page.evaluate(() => { const d = new Date(); return [d.getDate(), d.getMonth() + 1].map((n) => String(n).padStart(2, '0')).join('-') + '-' + d.getFullYear(); });
+    const rows = (texts, n) => Array.from({ length: n }, (_, i) => `REV${i + 1}_REV` + '=' + texts[`REV${i + 1}_REV`] + ' ' + texts[`REV${i + 1}_DATE`]);
+    const sheet = newLayout('Sheet 9b'); sheet.s.sheetW = 420; sheet.s.sheetH = 297;
+    const plain = newDoc(4);
+    addBlock(plain, 'Plain', [dxfLine(0, 0, 60, 0), entity('ATTDEF', [[10, 5], [20, 5], [40, 6], [2, 'NOTE'], [3, 'Note'], [1, 'Default'], [70, 0]])]);
+    const pins = dxfInsert('Plain', 50, 200); pins.kids = [entity('ATTRIB', [[10, 55], [20, 205], [40, 6], [2, 'NOTE'], [1, 'Original'], [70, 0]]).r];
+    sheet.parts.p = objectPart('p', 'Plain', pins, layersOf(sheet), {}, plain.blocks); sheet.placed = [objectPlacement(sheet.parts.p)];
+    await open('title-9b.dxf', layoutRaw(sheet));
+    await page.locator('[data-ribbon-tab=Home]').click();
+    const history = await histLabels();
+    await page.getByRole('button', { name: 'Title block', exact: true }).click(); await frames();
+    await page.locator('[data-tool=select]').click();
+    // two revisions: one Apply step each, REV, DATE (today) and the title REV
+    await dbl(345, 22);
+    assert.equal(await add().count(), 1, 'the title block dialog has Add revision');
+    assert.equal(await add().isEnabled(), true);
+    await add().click(); await frames();
+    await add().click(); await frames();
+    await button('Cancel').click();
+    let s = await saved();
+    assert.deepEqual(rows(s.texts, 3), [`REV1_REV=A ${autoDate}`, `REV2_REV=B ${autoDate}`, 'REV3_REV= ']);
+    assert.equal(s.texts.REV, 'B', 'the title REV follows the last revision');
+    assert.deepEqual(s.store, { enabled: true, rev: 'B', r1Rev: 'A', r1Date: autoDate, r2Rev: 'B', r2Date: autoDate }, 'typed values in the one settings store; empty rows add none');
+    assert.deepEqual((await histLabels()).slice(history.length), ['Title block', 'Attribute editor', 'Attribute editor'], 'one undo step per Add revision');
+    // one Ctrl+Z removes only the last one
+    await undo();
+    s = await saved();
+    assert.deepEqual(rows(s.texts, 2), [`REV1_REV=A ${autoDate}`, 'REV2_REV= '], 'only revision B is gone');
+    assert.equal(s.texts.REV, 'A');
+    assert.deepEqual(s.store, { enabled: true, rev: 'A', r1Rev: 'A', r1Date: autoDate });
+    await page.keyboard.press('Control+y'); await frames();
+    assert.equal((await saved()).texts.REV2_REV, 'B', 'redo brings it back');
+    // a description and a name typed in the dialog; save and reopen keeps every row
+    await dbl(345, 22);
+    await row('REV1_DESC').click(); await field('Value').fill('First issue');
+    await row('REV2_BY').click(); await field('Value').fill('RR');
+    await button('OK').click();
+    await open('title-9b-again.dxf', (await saved()).doc);
+    await page.locator('[data-ribbon-tab=Home]').click();
+    s = await saved();
+    assert.deepEqual([s.texts.REV1_REV, s.texts.REV1_DATE, s.texts.REV1_DESC, s.texts.REV2_REV, s.texts.REV2_BY, s.texts.REV3_REV, s.texts.REV, s.texts.TITLE], ['A', autoDate, 'First issue', 'B', 'RR', '', 'B', ''], 'the file keeps every row, empty rows stay empty');
+    await page.locator('[data-tool=select]').click();
+    // the other three rows, then all 5 full: disabled with the reason
+    await dbl(345, 22);
+    for (let i = 0; i < 3; i++) { await add().click(); await frames(); }
+    assert.equal(await add().isDisabled(), true, 'all 5 rows full: Add revision is disabled');
+    assert.equal(await add().getAttribute('title'), 'All 5 revision rows are full', 'with the reason');
+    await row('REV5_REV').locator('td').nth(2).filter({ hasText: /^E$/ }).waitFor();       // the last row is filled in the list too
+    for (const theme of ['light', 'dark']) {
+      await page.evaluate((th) => { document.documentElement.dataset.theme = th; }, theme); await frames();
+      await page.screenshot({ path: `shots-9b/revision-dialog-${theme}.png` });
+    }
+    await page.evaluate(() => { document.documentElement.dataset.theme = 'light'; });
+    await button('Cancel').click();
+    s = await saved();
+    assert.deepEqual(rows(s.texts, 5), ['A', 'B', 'C', 'D', 'E'].map((c) => `REV${'ABCDE'.indexOf(c) + 1}_REV=${c} ${autoDate}`));
+    assert.equal(s.texts.REV, 'E');
+    // a plain block's attribute dialog has no Add revision (and no Reset)
+    await dbl(80, 200);
+    assert.equal(await dialog.locator('tbody tr').count(), 1);
+    assert.equal(await add().count(), 0, 'no Add revision on a plain block');
+    assert.equal(await dialog.getByTestId('attribute-reset').count(), 0);
+    await button('Cancel').click();
+    await closeTabs(/./);
   });
 
   await step('TODO 155i2a: Explode shows ATTDEF tags, BURST keeps both attribute values, loose tags move and snap; Layout and Compare parity', async () => {
@@ -32540,6 +33860,64 @@ try {
     for (let i = 0; i < 6; i++) { await typeCmd('zs'); await typeCmd('fit'); }       // twelve different views
     for (let i = 0; i < 10; i++) await typeCmd('zp');
     await typeCmd('zp'); assert.match(await zoomSaid(), /no earlier view/, 'ten steps back and no more');
+    await closeTabs(/./);
+  });
+
+  await step('TODO 357: a huge drawing zooms out below 1% and back in; the label never shows 0% (Drawings, Layout, Compare)', async () => {
+    const hugeDoc = () => { const doc = newDoc(4); addEntities(doc, dxfLine(0, 0, 1e8, 1e8)); return writeDxf(doc); };
+    const wheel = async (dy) => { const b = await t('canvas').boundingBox(); await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2); await page.mouse.wheel(0, dy); await frames(); };
+    const width = async () => (await viewBox())[2];
+    const label = () => t('zoom').textContent();
+    const below1 = (text, what) => assert.match(text, /^0\.\d*[1-9]\d*%$/, `${what}: ${text}`);       // under 1%, never "0%"
+    const exercise = async (tab, typed) => {
+      await page.locator('.zoombox').getByRole('button', { name: 'Fit', exact: true }).click(); await frames();
+      const w0 = await width(); below1(await label(), `${tab} Fit`);
+      for (let i = 0; i < 3; i++) await wheel(400);
+      const w1 = await width(); assert.ok(w1 > w0 * 3, `${tab}: three wheel steps out zoom out (not stuck): ${w0} -> ${w1}`);
+      for (let i = 0; i < 3; i++) await wheel(-400);
+      const w2 = await width(); assert.ok(w2 < w1 / 3, `${tab}: three wheel steps in zoom in: ${w1} -> ${w2}`);
+      await t('zoom').click(); await t('zoom-input').fill(typed); await t('zoom-input').press('Enter');
+      assert.equal(await label(), typed, `${tab}: the typed level is reached`);
+      return typed;
+    };
+    const selectionZoom = async (tab, typed) => {
+      await typeCmd('zs');
+      const wz = await width(); below1(await label(), `${tab} Zoom Selection`);
+      await wheel(400); assert.ok(await width() > wz * 1.5, `${tab}: the wheel zooms out after Zoom Selection`);
+      await wheel(-400); await wheel(-400); assert.ok(await width() < wz, `${tab}: and in`);
+      await t('zoom').click(); await t('zoom-input').fill(typed); await t('zoom-input').press('Enter');
+      await typeCmd('zs'); await typeCmd('zp');
+      assert.equal(await label(), typed, `${tab}: Zoom Previous goes back to the level typed, below 1%`);
+      const wp = await width(); await wheel(400); const wo = await width(); assert.ok(wo > wp * 1.5, `${tab}: the wheel zooms out after Zoom Previous`);
+      await wheel(-400); await wheel(-400); assert.ok(await width() < wo / 1.5, `${tab}: and in`);
+    };
+    await openGrips(hugeDoc(), 'huge357.dxf');
+    await exercise('Drawings', '0.001%');
+    await typeCmd('all');
+    await selectionZoom('Drawings', '0.001%');
+    await page.screenshot({ path: `${shotDir}/todo357-drawings.png` });
+    // a layout: a sheet of the largest size
+    await openGrips();
+    await t('add-to-layout').click();
+    await page.waitForFunction(() => /layout/.test(document.querySelector('.tabs .dtab.on .tname')?.textContent));
+    await t('apply').click();
+    await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Escape');
+    for (const key of ['sheetW', 'sheetH']) { const c = panelControl(page, page.locator(`[data-key=${key}]`)); await layoutTab(); await c.fill('100000'); await c.blur(); }    await exercise('Layout', '0.05%');
+    await page.locator('.zoombox').getByRole('button', { name: 'Fit', exact: true }).click(); await frames();       // the part sits at the bottom of the 100000 mm sheet
+    const wf = await width();
+    await typeCmd('all'); await typeCmd('zs'); assert.ok(await width() < wf, 'Zoom Selection on the placed parts zooms in from Fit');
+    await typeCmd('zp');
+    await wheel(400); await wheel(-400);
+    await page.screenshot({ path: `${shotDir}/todo357-layout.png` });
+    await closeTabs(/./);
+    // Compare
+    for (const name of ['huge357-a.dxf', 'huge357-b.dxf']) { await t('picker').setInputFiles({ name, mimeType: 'text/plain', buffer: Buffer.from(hugeDoc()) }); await waitTab(page, name); }
+    await page.locator('.tabs .dtab', { hasText: 'huge357-a' }).click();
+    await menuItem('File', 'Compare drawings…'); await waitTab(page, 'Compare');
+    await exercise('Compare', '0.001%');
+    await t('cmp-name-1').click(); await page.locator('[data-tool=select]').click(); await typeCmd('all');
+    await selectionZoom('Compare', '0.001%');
+    await page.screenshot({ path: `${shotDir}/todo357-compare.png` });
     await closeTabs(/./);
   });
 

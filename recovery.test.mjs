@@ -91,6 +91,16 @@ assert.equal(target.pdf.states.get(2).recovery.rid, 'sheet2'); assert.equal(targ
 assert.equal(target.pdf.states.get(2).name, 'source.dxf'); assert.equal(target.drawingUnit, 'inch');
 assert.equal(target.fromPdf, 'source.pdf');
 n++; console.log('ok TODO 271: restoring a PDF sheet keeps other sheets balloons and its own recovery id');
+// TODO 358a: a reopen matches the page pictures' names (drawing-pageN.png) as well as drawing-imgN.png, and gives each its pixels back
+const picRecover = runInNewContext(`${source}\nrecoverOne`, {
+  BAL, DU, PS, TextEncoder, console, state: {}, Ed: { createHistory: () => ({}) }, balOf: () => BAL.EMPTY, baseName: (name) => name,
+  readDrawing: async () => ({ ok: true, doc: { header: {}, entities: [{ type: 'IMAGE', r: { file: 'drawing-page1.png' } }, { type: 'IMAGE', r: { file: 'drawing-page2.png' } }, { type: 'IMAGE', r: { file: 'other.png' } }] } }),
+  flatten: () => ({}), preloadPictures: async () => {}, tabFields: (doc) => ({ doc }), addTab: (doc) => { restored = doc; },
+});
+const pagePics = [{ type: 'IMAGE', r: { px: 'one' } }, { type: 'IMAGE', r: { px: 'two' } }];
+assert.equal(await picRecover({ id: 'pg', kind: 'drawing', name: 'pages.dxf', dxf: '', pics: pagePics }), true);
+assert.deepEqual(restored.doc.entities.map((e) => e.r.px), ['one', 'two', undefined], 'the two page pictures get their pixels; the other file is left alone');
+n++; console.log('ok TODO 358a: recovery matches drawing-pageN.png');
 
 const pdfSource = readFileSync(new URL('./web/app.js', import.meta.url), 'utf8').match(/^async function openPdf\([^\r\n]*\) \{\r?\n[\s\S]*?^\}/m)?.[0];
 assert.ok(pdfSource, 'openPdf exists');

@@ -281,6 +281,9 @@ export function dashArray(pattern) {
   return out.some((x) => x > 0) && out.some((x, i) => i % 2 && x > 0) ? out : null;
 }
 
+/** A dash list with each zero-length dot made lw long (a butt cap paints a zero-length dash as nothing, TODO 334b), the gap after it shortened by the same, so the period stays. */
+export const dotDash = (d, lw, cap = 'butt') => cap === 'butt' && d.some((x, i) => !(i % 2) && !x) ? d.map((x, i) => i % 2 ? (d[i - 1] ? x : Math.max(x - lw, 0)) : x || lw) : d;
+
 /** Screen-pixel dashes for a line type named but not defined in the file. */
 function namedDash(name) {
   if (/CENT|CENTER/.test(name)) return [14, 3, 3, 3];
@@ -431,7 +434,8 @@ export function* primeSplines(doc) {
   }
 }
 
-export function flatten(doc, hidden = new Set()) {
+/** opts.hidden (TODO 109d1, Export's Hidden objects): keep code-60 (hidden) objects and count off / frozen layers as on. Only the export copy asks. */
+export function flatten(doc, hidden = new Set(), opts = {}) {
   const H = doc.header, units = UNITS[num(H.$INSUNITS)] || '';
   const ltscale = num(H.$LTSCALE, 1) || 1;
   const metric = num(H.$MEASUREMENT, -1) === 1 || ['mm', 'cm', 'm', 'dm', 'km'].includes(units);
@@ -441,7 +445,7 @@ export function flatten(doc, hidden = new Set()) {
   const layerOf = (name) => {
     if (layerAt.has(name)) return layerAt.get(name);
     const l = doc.layers[name] || { aci: 7, tc: null, lt: 'CONTINUOUS', lw: -3 };
-    layers.push({ name, css: l.tc != null ? rgbCss(l.tc) : ACI[l.aci] || '#ffffff', on: !(l.off || l.frozen), lt: (l.lt || '').toUpperCase(), lw: l.lw >= 0 ? l.lw : 25, n: 0 });
+    layers.push({ name, css: l.tc != null ? rgbCss(l.tc) : ACI[l.aci] || '#ffffff', on: opts.hidden || !(l.off || l.frozen), lt: (l.lt || '').toUpperCase(), lw: l.lw >= 0 ? l.lw : 25, n: 0 });
     layerAt.set(name, layers.length - 1);
     return layers.length - 1;
   };
@@ -466,7 +470,7 @@ export function flatten(doc, hidden = new Set()) {
       const e = ents[ei];
       if (truncated) return;
       if (++visits > MAX_VISITS) throw new DrawingError('Too many nested blocks to draw this file');
-      if (e.hidden) continue;
+      if (e.hidden && !opts.hidden) continue;
       const top = depth === 0 ? ei : ctx.ei;                  // the top-level entity this comes from (a block's contents: its INSERT)
       const own = e.layer === '0' && ctx.layer != null ? ctx.layer : layerOf(e.layer);
       const lay = layers[own];
@@ -638,7 +642,7 @@ export function flatten(doc, hidden = new Set()) {
   for (const v of vports) boxes.paper = unionBox(boxes.paper, [v.cx - v.w / 2, v.cy - v.h / 2, v.cx + v.w / 2, v.cy + v.h / 2]);
   for (const it of items) layers[it.L[0]].n++;
   for (const l of layers) delete l.lt;
-  return { units, layers, items, insertions, mats, vports, boxes, left, truncated, endsEarly: !!doc.endsEarly };
+  return { units, layers, items, insertions, mats, vports, boxes, left, truncated, endsEarly: !!doc.endsEarly, visits };
 }
 
 const PLAIN_EDIT_TYPES = new Set(['LINE', 'POINT', 'CIRCLE', 'ARC', 'ELLIPSE', 'LWPOLYLINE', 'POLYLINE', 'SPLINE',
@@ -649,15 +653,94 @@ export function flattenEdit(before, after, fl, hidden) {
   return patchEntities(before, after, fl, hidden) ?? flatten(after, hidden);
 }
 
+const BLOCK_REFS = new Set(['INSERT', 'DIMENSION', 'ACAD_TABLE']);
+const blockOf = (e) => String(e.r.v[e.r.c.indexOf(2)] ?? '').trim();
+
+/** Names only `after` has (new blocks, such as a dimension's); null when a block changed or went (every INSERT of it would draw again). */
+function newBlocks(before, after) {
+  if (before.blocks === after.blocks) return [];
+  if (Object.keys(before.blocks).some((name) => before.blocks[name] !== after.blocks[name])) return null;
+  const fresh = Object.keys(after.blocks).filter((name) => !Object.hasOwn(before.blocks, name));
+  if (!fresh.length) return fresh;
+  // an entity that named the block before it existed drew nothing; it would draw now
+  const names = new Set(fresh), dangling = (ents) => ents.some((e) => BLOCK_REFS.has(e.type) && names.has(blockOf(e)));
+  return dangling(before.entities) || Object.values(before.blocks).some((b) => dangling(b.entities)) ? null : fresh;
+}
+
+/** `fl` with the items drawn again in `sub` (a flatten of just those entities) taken in: the layers they bring, their matrices (after fl's) and their per-entity numbers via `entityOf`. */
+function joinDrawn(fl, sub, entityOf) {
+  const layers = fl.layers.map((l) => ({ ...l, n: 0 })), layerAt = new Map(layers.map((l, i) => [l.name, i]));
+  const lmap = sub.layers.map((l) => layerAt.get(l.name) ?? (layers.push({ ...l, n: 0 }), layerAt.set(l.name, layers.length - 1), layers.length - 1));
+  // shortcut: a moved INSERT's old matrices stay unused in the array (the old drawing, Undo, still points at them); a full draw (open, a block edit) drops them, upgrade if a long run of moves shows memory
+  const mats = sub.mats.length > 1 ? fl.mats.concat(sub.mats.slice(1)) : fl.mats, mo = fl.mats.length - 1;      // matrix 0 is the identity in both
+  const made = sub.items.map((it) => ({ ...it, e: entityOf(it.e), m: it.m ? it.m + mo : 0, L: it.L.map((l) => lmap[l]) }));
+  return { layers, mats, made };
+}
+
+function boxesOf(fl, layers, items) {
+  const boxes = { model: null, paper: null };
+  for (const it of items) {
+    layers[it.L[0]].n++;
+    if (it.L.every((l) => layers[l].on)) boxes[it.ps ? 'paper' : 'model'] = unionBox(boxes[it.ps ? 'paper' : 'model'], it.b);
+  }
+  for (const v of fl.vports) boxes.paper = unionBox(boxes.paper, [v.cx - v.w / 2, v.cy - v.h / 2, v.cx + v.w / 2, v.cy + v.h / 2]);
+  return boxes;
+}
+
+/** Entities only added at the end (a dimension: a new block and its INSERT): drawn alone, their items go after the old ones. null when that is not the same as a full draw. */
+function appendEntities(before, after, fl, hidden) {
+  const old = before.entities, next = after.entities;
+  for (let i = 0; i < old.length; i++) if (old[i] !== next[i]) return null;
+  const tail = next.slice(old.length);
+  let holes = false;
+  for (const e of tail) {
+    if (!(PLAIN_EDIT_TYPES.has(e.type) || e.type === 'INSERT') || e.flip || e.hidden || e.fill) return null;
+    holes ||= closedOutline(e);
+  }
+  if (holes && old.some((e) => e.fill)) return null;       // a new closed outline may be a hole of an old filled one
+  const sub = flatten({ ...after, entities: tail }, hidden);
+  if (sub.truncated || fl.items.length + sub.items.length >= MAX_ITEMS || fl.mats.length + sub.mats.length > MAX_MATS || fl.visits + sub.visits > MAX_VISITS) return null;       // past a limit only the full draw says so (its error, its truncation)
+  const { layers, mats, made } = joinDrawn(fl, sub, (e) => old.length + e), at = fl.items.length;
+  const items = fl.items.concat(made), left = { ...fl.left };
+  for (const [type, n] of Object.entries(sub.left)) left[type] = (left[type] || 0) + n;
+  const insertions = fl.insertions.concat(sub.insertions.map((v) => ({ ...v, start: v.start + at, end: v.end + at })));
+  return { ...fl, items, layers, mats, left, insertions, boxes: boxesOf(fl, layers, items), visits: fl.visits + sub.visits };
+}
+
+/**
+ * The INSERT ranges of `fl` after the INSERTs `moves` (Map entity index → { slot, from }: its place in `edits`, its first old item) were drawn again in `sub`.
+ * Their item counts are the same, so only each `p` changes; null when an empty range cannot be told from its neighbour's or the ranges do not line up.
+ */
+function movedInsertions(fl, sub, edits, moves) {
+  const owned = new Map([...moves.keys()].map((e) => [e, []])), made = new Map([...moves.keys()].map((e) => [e, []])), first = [];
+  for (const [k, v] of fl.insertions.entries()) {
+    if (v.start === v.end) { if (moves.has(fl.items[v.start]?.e) || moves.has(fl.items[v.start - 1]?.e)) return null; continue; }
+    owned.get(fl.items[v.start].e)?.push(k);
+  }
+  sub.items.forEach((it, i) => { first[it.e] ??= i; });
+  for (const v of sub.insertions) {
+    if (v.start === v.end) return null;
+    made.get(edits[sub.items[v.start].e])?.push(v);
+  }
+  const out = fl.insertions.slice();
+  for (const [e, { from, slot }] of moves) {
+    const was = owned.get(e), now = made.get(e);
+    if (was.length !== now.length) return null;
+    for (const [i, k] of was.entries()) {
+      const o = fl.insertions[k], n = now[i];
+      if (o.start - from !== n.start - first[slot] || o.end - from !== n.end - first[slot]) return null;
+      out[k] = { ...o, p: n.p };
+    }
+  }
+  return out;
+}
+
 function patchEntities(before, after, fl, hidden) {
   if (!fl || fl.truncated || hidden?.size || before.layers !== after.layers || before.ltypes !== after.ltypes || before.header !== after.header) return null;
-  if (before.blocks !== after.blocks) {
-    const names = Object.keys(after.blocks);
-    if (names.length !== Object.keys(before.blocks).length || names.some((name) => before.blocks[name] !== after.blocks[name])) return null;
-  }
+  if (!newBlocks(before, after)) return null;
   const old = before.entities, next = after.entities, deleting = next.length < old.length;
-  if (next.length > old.length) return null;
-  const edits = [], seenLayers = new Set();
+  if (next.length > old.length) return appendEntities(before, after, fl, hidden);
+  const edits = [], moves = new Map(), seenLayers = new Set();
   let checkHoles = false, j = 0;
   for (let i = 0; i < old.length; i++) {
     const e = old[i], replacement = next[j];
@@ -666,12 +749,16 @@ function patchEntities(before, after, fl, hidden) {
       j++;
       continue;
     }
-    if (!PLAIN_EDIT_TYPES.has(e.type) || e.flip || e.hidden || e.fill) return null;
+    if (!(PLAIN_EDIT_TYPES.has(e.type) || e.type === 'INSERT' && !deleting) || e.flip || e.hidden || e.fill) return null;
     if (deleting) {
       // Keep the first encounter of each layer in the same order, including layers introduced by a block.
       if (!seenLayers.has(e.layer) && (replacement?.layer !== e.layer || replacement?.hidden)) return null;
     } else {
       if (replacement.type !== e.type || replacement.layer !== e.layer || replacement.flip || replacement.hidden || replacement.fill) return null;
+      if (e.type === 'INSERT') {       // moved, turned or scaled: the same block, drawn again
+        if (blockOf(e) !== blockOf(replacement)) return null;
+        moves.set(i, { slot: edits.length, from: -1 });
+      }
       j++;
     }
     checkHoles ||= closedOutline(e) || (!deleting && closedOutline(replacement));
@@ -680,8 +767,10 @@ function patchEntities(before, after, fl, hidden) {
   if (j !== next.length || checkHoles && old.some((e) => e.fill)) return null;
   if (!edits.length) return fl;
 
-  const rebuilt = deleting ? [] : flatten({ ...after, entities: edits.map((i) => next[i]) }, hidden).items;
-  const layers = fl.layers.map((l) => ({ ...l, n: 0 })), layerAt = new Map(layers.map((l, i) => [l.name, i]));
+  const sub = deleting ? null : flatten({ ...after, entities: edits.map((i) => next[i]) }, hidden);
+  if (sub && (sub.truncated || fl.items.length + sub.items.length >= MAX_ITEMS || fl.mats.length + sub.mats.length > MAX_MATS)) return null;
+  const joined = sub && joinDrawn(fl, sub, (slot) => edits[slot]), rebuilt = joined?.made || [];
+  const layers = joined?.layers || fl.layers.map((l) => ({ ...l, n: 0 }));
   const items = [], offsets = deleting && fl.insertions.length ? new Uint32Array(fl.items.length + 1) : null;
   let pos = 0, patch = 0, removed = 0;
   const keep = () => {
@@ -699,20 +788,16 @@ function patchEntities(before, after, fl, hidden) {
     }
     if (deleting) removed++;
     else {
-      while (rebuilt[patch]?.e === slot) items.push({ ...rebuilt[patch++], e, L: [layerAt.get(next[e].layer)] });
-      if (pos - start !== items.length - out) return null;   // keep the cached INSERT ranges valid
+      while (rebuilt[patch]?.e === e) items.push(rebuilt[patch++]);
+      if (pos - start !== items.length - out || moves.has(e) && pos === start) return null;   // keep the cached INSERT ranges valid
+      if (moves.has(e)) moves.get(e).from = start;
     }
   }
   while (pos < fl.items.length) keep();
   if (offsets) offsets[pos] = items.length;
-  const insertions = offsets ? fl.insertions.map((v) => ({ ...v, start: offsets[v.start], end: offsets[v.end] })) : fl.insertions;
-  const boxes = { model: null, paper: null };
-  for (const it of items) {
-    layers[it.L[0]].n++;
-    if (it.L.every((l) => layers[l].on)) boxes[it.ps ? 'paper' : 'model'] = unionBox(boxes[it.ps ? 'paper' : 'model'], it.b);
-  }
-  for (const v of fl.vports) boxes.paper = unionBox(boxes.paper, [v.cx - v.w / 2, v.cy - v.h / 2, v.cx + v.w / 2, v.cy + v.h / 2]);
-  return { ...fl, items, layers, boxes, insertions };
+  let insertions = offsets ? fl.insertions.map((v) => ({ ...v, start: offsets[v.start], end: offsets[v.end] })) : fl.insertions;
+  if (moves.size && !(insertions = movedInsertions(fl, sub, edits, moves))) return null;
+  return { ...fl, items, layers, mats: joined?.mats || fl.mats, boxes: boxesOf(fl, layers, items), insertions, visits: fl.visits - removed };       // a moved INSERT walks the same block as before: the same visits
 }
 
 /** A filled arrowhead at `tip`, pointing away from `from`. */
@@ -1049,7 +1134,8 @@ function curveExtremes(points, closed, refine, period) {
  */
 function reuser(prev, fl, paper, frame, stored, snaps, stride) {
   const o = prev?.ix, of = prev?.fl;
-  if (!o?.stored || !o.pst || o.paper !== !!paper || o.frame !== frame || of.mats !== fl.mats) return null;
+  if (!o?.stored || !o.pst || o.paper !== !!paper || o.frame !== frame) return null;
+  if (of.mats !== fl.mats && !(fl.mats.length > of.mats.length && of.mats.every((m, i) => m === fl.mats[i]))) return null;       // an INSERT patch only adds matrices after the old ones (TODO 356)
   const at = new Map(), n = of.items.length, ps = o.pst, ss = o.sst;       // ps / ss: where each old item's run of pieces / snaps begins (and ends), in item order
   for (let i = 0; i < n; i++) { const k = of.items[i].ops ?? of.items[i].b; if (at.has(k)) return null; at.set(k, i); }       // text and points have no ops: an edit patch keeps their box (TODO 322d)
   const keep = { p: new Int32Array(o.stored.length).fill(-1), s: new Int32Array(o.snaps.length).fill(-1), old: new Uint8Array(n), used: new Uint8Array(fl.items.length) };       // where each kept piece / snap went (-1: removed) and which items matched, for patchGrid (TODO 322d)
@@ -1098,13 +1184,14 @@ const gridSize = (pieces, snaps, items) => Math.min(512, Math.max(1, Math.ceil(M
  * TODO 322d: the earlier index's grid (prev.ix) with only what the edit changed taken out and put in, instead of a grid built from scratch.
  * The kept pieces and snaps moved to new numbers (`keep`): the cells are renumbered in place (the earlier index is spent), removed ones drop out,
  * new ones are added. The result is the fresh grid: null (the caller builds one, nothing touched) when more than a tenth of the items changed,
- * the kept ones changed order, the insertion snaps moved, or the grid size or the drawing's extent would differ from a fresh build's.
+ * the kept ones changed order, or the grid size or the drawing's extent would differ from a fresh build's.
  */
 function patchGrid(prev, keep, fl, paper, ix) {
   const o = prev.ix, { pieces, snaps, head } = ix;
-  if (!o.G || o.head !== head || gridSize(pieces, snaps, fl.items) !== o.G) return null;
-  for (let k = 0; k < head; k++) if (o.snaps[k].x !== snaps[k].x || o.snaps[k].y !== snaps[k].y) return null;
-  for (let k = 0; k < head; k++) keep.s[k] = k;
+  if (!o.G || gridSize(pieces, snaps, fl.items) !== o.G) return null;
+  const now = new Map();                       // the insertion snaps at the front: those still the same (place and item) stay, a moved or new INSERT's is taken out / put in (TODO 356)
+  for (let k = 0; k < head; k++) now.set(`${snaps[k].x},${snaps[k].y},${snaps[k].it}`, k);
+  for (let k = 0; k < o.head; k++) keep.s[k] = now.get(`${o.snaps[k].x},${o.snaps[k].y},${o.snaps[k].it}`) ?? -1;
   for (const m of [keep.p, keep.s]) for (let k = 0, last = -1; k < m.length; k++) if (m[k] >= 0) { if (m[k] <= last) return null; last = m[k]; }
   const gone = prev.fl.items.filter((it, i) => !keep.old[i] && !!it.ps === !!paper), added = fl.items.filter((it, i) => !keep.used[i] && !!it.ps === !!paper);
   if ((gone.length + added.length) * 10 > fl.items.length) return null;
@@ -1114,10 +1201,10 @@ function patchGrid(prev, keep, fl, paper, ix) {
   const inside = (a, b, c, d) => a >= o.x0 && b >= o.y0 && c <= o.x1 && d <= o.y1, onEdge = (a, b, c, d) => a <= o.x0 || b <= o.y0 || c >= o.x1 || d >= o.y1;
   if (!added.every((it) => inside(...it.b))) return null;
   for (let n = 0; n < pieces.length; n++) if (!hadP[n] && !inside(...pbox(pieces[n]))) return null;
-  for (let n = head; n < snaps.length; n++) if (!hadS[n] && !inside(snaps[n].x, snaps[n].y, snaps[n].x, snaps[n].y)) return null;
+  for (let n = 0; n < snaps.length; n++) if (!hadS[n] && !inside(snaps[n].x, snaps[n].y, snaps[n].x, snaps[n].y)) return null;
   let touched = gone.some((it) => onEdge(...it.b));
   for (let k = 0; !touched && k < keep.p.length; k++) if (keep.p[k] < 0 && onEdge(...pbox(o.pieces[k]))) touched = true;
-  for (let k = head; !touched && k < keep.s.length; k++) if (keep.s[k] < 0 && onEdge(o.snaps[k].x, o.snaps[k].y, o.snaps[k].x, o.snaps[k].y)) touched = true;
+  for (let k = 0; !touched && k < keep.s.length; k++) if (keep.s[k] < 0 && onEdge(o.snaps[k].x, o.snaps[k].y, o.snaps[k].x, o.snaps[k].y)) touched = true;
   if (touched && extent(pieces, snaps, fl.items, paper).some((v, i) => v !== [o.x0, o.y0, o.x1, o.y1][i])) return null;
   const remap = (cells, m) => {
     for (const [key, list] of cells) {

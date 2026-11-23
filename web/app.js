@@ -21,7 +21,7 @@ import { cyclePick } from './selection-cycle.js';
 import { SNAP_NAME, snapTypes, lineSnaps, preferSnap } from './snap.js';
 import { pushView, popView } from './viewhist.js';
 import { restoreView } from './doc-view.js';
-import { zoomScale } from './zoom-level.js';
+import { zoomScale, zoomLabel } from './zoom-level.js';
 import * as UF from './unitfix.js';
 import * as DU from './units.js';
 import * as CL from './cleanup.js';
@@ -33,7 +33,7 @@ import { paintDrawing, paintDrawingSteps, paintMarks, drawMarks, drawContour, dr
 import { overlayBox } from './preview.js';
 import { snapPlace, snapUsable, heavy, sameBase, runChunks, blitCovers, panStrips, QUICK_PX, slice as timeSlice } from './perf.js';
 import { flatten, flattenEdit, patchWidths, primeSplines, unionBox, CAP, ACI, UNITS, mapply, mmul, pickIndex, arcSweep, DrawingError } from './drawing.js';
-import { writeDxf, writeDxfWithReport, saveReportNote, unwritable, addLayer, newDoc, lwpoly, point } from './dxf-write.js';
+import { writeDxf, writeDxfSteps, writeDxfWithReport, withoutLayers, saveReportNote, unwritable, addLayer, newDoc, lwpoly, point } from './dxf-write.js';
 import * as SH from './shaping.js';
 import { explodeSelection } from './explode.js';
 import { breakApart } from './breakapart.js';
@@ -91,7 +91,10 @@ import * as TK from './track.js';
 import { loadParts, savePart, removePart } from './partstore.js';
 import { baseName, saveDefault, withExt } from './savepath.js';
 import * as RC from './recovery.js';
-import { openExport } from './export.js';
+import { openExport, paintPage, today } from './export.js';
+import * as TB from './titleblock.js';
+import { batchFolder, batchOutDir, newBatch, outPath } from './batch-folder.js';
+import { pngSize } from './png-size.js';
 import { openNest } from './nestdlg.js';
 import { openTrace } from './tracedlg.js';
 import * as TR from './trace.js';
@@ -99,8 +102,9 @@ import * as TO from './textoutline.js';
 import { loadFont } from './fontload.js';
 import { fontForStyle, fontSubstitutions } from './fontsub.js';
 import { outlineOf } from './nestshape.js';
-import { partSource, readTitleBlock, withTitleBlock } from './pdf-export.js';
-import { readPdf, renderPdfPage, renderPdfPages, isPdf, pageLayout } from './pdf-read.js';
+import { partSource, readTitleBlock, withTitleBlock, planPagesPdf, hasPagePictures, planPdf } from './pdf-export.js';
+import { pageToSvg } from './svg-write.js';
+import { readPdf, renderPdfPage, renderPdfPages, renderPdfPictures, isPdf, pageLayout } from './pdf-read.js';
 import { readTiff } from './tiff.js';
 import { preloadPictures, rawPixels } from './pictures.js';
 import { panelWidth } from './docker.js';
@@ -368,7 +372,7 @@ const fmt = (n) => Number(n).toFixed(2);
 const partHid = (p) => {
   const d = curDoc(), part = d?.lay?.parts[p.partId];
   const layer = part?.obj && LD.layersOf(d.lay)[part.raw.entities[0]?.layer];
-  return !!(d?.hiddenParts?.has(p.partId) || layer?.off || layer?.frozen);
+  return !!(d?.hiddenParts?.has(p.partId) || layer?.off || layer?.frozen || (d?.titleBlock?.enabled === false && TB.isTitlePart(part)));       // the Title block switch (PDF dialog) off hides the sheet's title block too
 };
 const partSelectable = (p) => !state.hidden.parts && !partHid(p) && !p.lock;
 let cssCache = null;                // theme colours read from the page once per theme, not at every repaint
@@ -572,7 +576,8 @@ function buildStartScreen() {
 function buildMenus() {
   // an item: [text, action, shortcut hint (shown, and only a hint for a key that is really bound), enabled? (a function, asked when the menu opens)]
   const menus = {
-    File: () => [['Open…', openFile], ['New layout', newLayoutTab], ['Save', () => save(false), 'Ctrl+S'], ['Save As…', () => save(true), 'Ctrl+Shift+S'], ['Export DXF…', exportDxf], ['Export for cutter…', exportCutter], ['Compare drawings…', cmpStart], ['Import background…', () => ui.bgPicker.click()], ['Rotate background', rotateBackground], ['Trace bitmap…', traceBitmap], ['PDF / Print…', exportPdf],
+    File: (pages = hasPdfPages()) => [['Open…', openFile], ['New layout', newLayoutTab], ['Save', () => save(false), 'Ctrl+S'], ['Save As…', () => save(true), 'Ctrl+Shift+S'], ['Export…', exportDxf], ['Export for cutter…', exportCutter], ['Compare drawings…', cmpStart], ['Import background…', () => ui.bgPicker.click()], ['Rotate background', rotateBackground], ['Trace bitmap…', traceBitmap], ['PDF / Print…', exportPdf],
+      ['Save as PDF (pages)', savePdfPages, null, () => pages, pages ? null : 'No PDF pages in this drawing'],
       ...recentItems()],
     Edit: [['Undo', () => undoCurrent(), 'Ctrl+Z', () => ui.startScreen.hidden && (!!state.paste || !!state.grip || !!historyOf(curDoc())?.canUndo)],
       ['Redo', () => undoCurrent(true), 'Ctrl+Y', () => ui.startScreen.hidden && !!historyOf(curDoc())?.canRedo],
@@ -907,7 +912,8 @@ function ribbonContents(kind) {
   if (kind === 'layout') return [...groups,
     group('Parts', btn('Add to layout', '<rect x="3" y="5" width="12" height="14"/><path d="M18 9v8M14 13h8"/>', addToLayout),
       btn('Parts library', '<rect x="3" y="4" width="5" height="16"/><rect x="10" y="4" width="5" height="16"/><path d="M17 5l4 1-3 15-4-1z"/>', showLibrary, { command: 'library' }),
-      btn('Extract part…', '<rect x="3" y="3" width="10" height="10" stroke-dasharray="2 2"/><path d="M10 10l10 10M14 20h6v-6"/>', extractPart, { command: 'extract' })),
+      btn('Extract part…', '<rect x="3" y="3" width="10" height="10" stroke-dasharray="2 2"/><path d="M10 10l10 10M14 20h6v-6"/>', extractPart, { command: 'extract' }),
+      btn('Title block', '<rect x="3" y="4" width="18" height="16"/><path d="M11 20v-5h10M3 15h8M15 15v5"/>', titleBlockCommand, { description: 'One title block per sheet: a block with fields (title, drawing no., rev, scale, sheet size, date, drawn by, material, file). Pressed again it selects it' })),
     group('Step and repeat', ribbonTool('step'), ribbonTool('nest')), group('Modify', stack(ribbonTool('copy', true), ribbonTool('stretch', true)), ribbonTool('rotate'), ribbonTool('fillet', true), ribbonTool('contour'), ribbonTool('break'), ribbonTool('join'), stack(ribbonTool('shape', true), ribbonTool('close', true)), stack(ribbonTool('reverse', true), ribbonTool('lengthen', true))), group('Properties', stack(...colourBtns())), shaping()];
   if (kind === 'drawing') {
     groups.push(group('Modify', stack(ribbonTool('move', true), ribbonTool('rotate', true), ribbonTool('mirror', true)),
@@ -1332,10 +1338,32 @@ async function dwgBytes(name, path, buf) {
   note('Converting ' + name + '…');
   try {
     // both commands answer with the DXF's raw bytes (an ArrayBuffer): the reader decodes them with $DWGCODEPAGE
-    return path ? await t.core.invoke('dwg_to_dxf', { path }) : await t.core.invoke('dwg_bytes_to_dxf', { name, bytes: Array.from(new Uint8Array(buf)) });
+    return path ? await t.core.invoke('dwg_to_dxf', { path }) : await t.core.invoke('dwg_bytes_to_dxf', new Uint8Array(buf));
   } catch (err) {
     note(`${name}: could not convert this DWG (${String(err && err.message || err).trim().split(/\r?\n/).pop()})`); return null;
   }
+}
+/** A read DXF's pictures (TODO 358c2: Open and Compare's Add file… both): the sibling PNGs next to its path become the IMAGEs' pixels, then they are preloaded. */
+async function attachPictures(r, path) {
+  const t = window.__TAURI__;
+  if (path && t?.fs?.readFile) {
+    let attached = false;
+    for (const e of [...r.doc.entities, ...Object.values(r.doc.blocks).flatMap((b) => b.entities)]) {
+      const file = e.r?.file;
+      if (e.type !== 'IMAGE' || !file || !/^[^<>:"/\\|?*\x00-\x1f]+\.png$/i.test(file)) continue; // only a sibling PNG, never a file-supplied path
+      try {
+        const bytes = await t.fs.readFile(path.replace(/[^\\/]+$/, '') + file);
+        const reader = new FileReader();
+        e.r.px = await new Promise((resolve, reject) => {
+          reader.onload = () => resolve(reader.result); reader.onerror = () => reject(reader.error);
+          reader.readAsDataURL(new Blob([bytes], { type: 'image/png' }));
+        });
+        attached = true;
+      } catch { /* Missing or unreadable sibling: keep the undrawn IMAGE. */ }
+    }
+    if (attached) r.result = flatten(r.doc);
+  }
+  await preloadPictures(r.result.items);
 }
 /** Opens a file's bytes as a new tab (path: where it lives on disk, in the app). */
 async function openBytes(name, buf, path = null, batch = {}) {
@@ -1356,25 +1384,7 @@ async function openBytes(name, buf, path = null, batch = {}) {
   note('Reading ' + name + '…');
   const r = await readDrawing(buf instanceof ArrayBuffer ? buf : buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength));
   if (!r.ok) { note(name + ': ' + (r.sorry || 'could not read this drawing' + (r.error ? ' (' + r.error + ')' : ''))); return; }
-  const t = window.__TAURI__;
-  if (path && t?.fs?.readFile) {
-    let attached = false;
-    for (const e of [...r.doc.entities, ...Object.values(r.doc.blocks).flatMap((b) => b.entities)]) {
-      const file = e.r?.file;
-      if (e.type !== 'IMAGE' || !file || !/^[^<>:"/\\|?*\x00-\x1f]+\.png$/i.test(file)) continue; // only a sibling PNG, never a file-supplied path
-      try {
-        const bytes = await t.fs.readFile(path.replace(/[^\\/]+$/, '') + file);
-        const reader = new FileReader();
-        e.r.px = await new Promise((resolve, reject) => {
-          reader.onload = () => resolve(reader.result); reader.onerror = () => reject(reader.error);
-          reader.readAsDataURL(new Blob([bytes], { type: 'image/png' }));
-        });
-        attached = true;
-      } catch { /* Missing or unreadable sibling: keep the undrawn IMAGE. */ }
-    }
-    if (attached) r.result = flatten(r.doc);
-  }
-  await preloadPictures(r.result.items);
+  await attachPictures(r, path);
   const fl = r.result;
   if (!fl.items.length && !r.doc.entities.some((e) => e.type === 'IMAGE')) { note(name + (fl.truncated ? ': too big to show all of it, so nothing is drawn' : ': this drawing is empty')); return; }
   const subs = fontSubstitutions(r.doc.styles, fl.items);
@@ -1405,15 +1415,19 @@ async function openPdf(name, buf, path = null, copies = null, batch = {}) {
   if (copies && copies.some((c) => (c.pdfPages != null && c.pdfPages !== r.pages) || (c.pdfHash && hash && c.pdfHash !== hash) || (c.sheet ?? 1) > r.pages)) throw new Error('source PDF changed');
   if (!r.paths) {
     if (copies) throw new Error('source PDF has no vector lines');
+    if (batch.pdfOpen === 'pictures') { await openPdfPictures(name, bytes, path); return; }   // TODO 358a: the batch chose Pictures: a picture-only PDF goes in as pictures too
     const yes = batch.pdfOpen === 'background' || await confirmAsk(name + ' has no vector lines, only a picture (or text). Use it as a background picture instead?', 'Use as background');
-    if (yes) await importBackgroundPdf(name, bytes, true, path);
-    else note(name + ': no vector lines to open');
+    if (yes) { await importBackgroundPdf(name, bytes, true, path); return; }
+    // TODO 358a: not a background: offer its pages as pictures (the batch reuses this answer)
+    if (await confirmAsk(name + ' has no vector lines. Open its pages as pictures (edit and save as PDF) instead?', 'Pictures')) { if (batch.pdfOpen === undefined) batch.pdfOpen = 'pictures'; await openPdfPictures(name, bytes, path); return; }
+    note(name + ': no vector lines to open');
     return;
   }
   if (!copies) {
     if (batch.pdfOpen === undefined) batch.pdfOpen = await askPdfOpen(name);
     if (batch.pdfOpen === null) { note(name + ': not opened'); return; }
     if (batch.pdfOpen === 'background') { await importBackgroundPdf(name, bytes, true, path); return; }
+    if (batch.pdfOpen === 'pictures') { await openPdfPictures(name, bytes, path); return; }
   }
   const raw = r.doc, fl = flatten(raw);
   await preloadPictures(fl.items);
@@ -1424,20 +1438,34 @@ async function openPdf(name, buf, path = null, copies = null, batch = {}) {
   await balLoad(doc, path, name);
   return doc;
 }
+/** TODO 358a: every page of a PDF as its own picture (IMAGE on layer "PDF pages", true size, side by side) in a drawing tab of its own: draw over the pages with any tool. */
+async function openPdfPictures(name, bytes, path = null) {
+  try {
+    const r = await renderPdfPictures(bytes, { onPage: (k, n) => note(`Rendering page ${k} of ${n}`) });
+    const fl = flatten(r.doc);
+    await preloadPictures(fl.items);
+    const doc = { name: baseName(name) + '.dxf', path: null, openPath: path, dirty: false, curLayer: '0', ...tabFields(r.doc, fl) };
+    addTab(doc);
+    note(`Opened ${name} as ${r.pages} page ${r.pages === 1 ? 'picture' : 'pictures'} on layer PDF pages, true size` + (r.dpi < 150 ? ` (${r.dpi} dpi for the biggest)` : '') + `. Draw over them; Save writes ${baseName(name)}.dxf and its page pictures`);
+    await balLoad(doc, null, doc.name);
+  } catch (err) { note(name + ': could not draw this PDF (' + (err && err.message ? err.message : err) + ')'); }
+}
 /** One choice for the batch's vector PDFs; closing the dialog cancels their open. */
 function askPdfOpen(name) {
   return new Promise((resolve) => {
     const editable = h('button', { class: 'btn primary', type: 'button', 'data-testid': 'pdfopen-editable' }, 'Editable drawing');
     const background = h('button', { class: 'btn', type: 'button', 'data-testid': 'pdfopen-background' }, 'Background picture');
+    const pictures = h('button', { class: 'btn', type: 'button', 'data-testid': 'pdfopen-pictures' }, 'Pictures (edit and save as PDF)');
     const close = h('button', { class: 'btn', type: 'button', 'aria-label': 'Close' }, '×');
     const dlg = h('div', { class: 'pop-dialog', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Open PDF', 'data-testid': 'pdfopen-dialog' },
       h('div', { class: 'row' }, h('strong', null, name + ' has vector lines. Open it as:'), close),
-      h('div', { class: 'row end' }, background, editable));
+      h('div', { class: 'row end' }, background, pictures, editable));
     const back = h('div', { class: 'pop-back' }, dlg);
     const finish = (v) => { back.remove(); document.removeEventListener('keydown', onKey, true); resolve(v); };
     const onKey = (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish(null); } };
     editable.addEventListener('click', () => finish('editable'));
     background.addEventListener('click', () => finish('background'));
+    pictures.addEventListener('click', () => finish('pictures'));
     close.addEventListener('click', () => finish(null));
     back.addEventListener('click', (e) => { if (e.target === back) finish(null); });
     document.addEventListener('keydown', onKey, true);
@@ -1849,7 +1877,7 @@ function buildZoomLevel() {
     input.blur();       // focus to the body, so Space does not reopen the editor
   };
   const apply = (value) => {
-    const scale = zoomScale(value);
+    const scale = zoomScale(value, zoomFloor());
     if (scale === null) {
       input.setAttribute('aria-invalid', 'true');
       input.classList.remove('invalid');
@@ -2255,6 +2283,8 @@ function newLayoutTab() {
 }
 function openLayoutFile(lay, name, path, fontNote, titleBlock, dwg = false) {
   lay.name = name;
+  const tp = TB.titlePartOf(lay);
+  if (tp) titleBlock = TB.typedFromEnt(tp.raw.entities[0], TB.titleAuto(lay, name, today()), titleBlock, TB.FROM_FILE);       // a field changed in another CAD app is typed here (the date and file name stay auto unless the settings hold them)
   const doc = { name, path: dwg ? null : path, openPath: path, dirty: false, lay, titleBlock, fromFile: true, ...(dwg && { fromDwg: true }) };
   state.panel = 'main';
   addTab(doc);
@@ -2317,6 +2347,30 @@ function addToLayout() {
   note(`${part.name} (${fmtSize(part.w)} × ${fmtSize(part.h)} mm) added to ${t.name}: ` + (grid ? `${layout.count} fit on the sheet` : 'placed on the sheet, on whole mm. ' + SHIFT_HINT));
 }
 
+/** Title block (TODO 9a): one per sheet, bottom-right inside the grippers, as a layout block object with its ATTRIBs; pressed again it selects the block. One undo step. */
+function titleBlockCommand() {
+  const d = curDoc(), lay = d?.lay;
+  if (!lay) { note('Title block: open a layout first'); return; }
+  const have = TB.titlePartOf(lay);
+  if (have) {
+    if (partHid(lay.placed.find((p) => p.partId === have.id))) { note('The title block is switched off: turn on Title block in the PDF dialog to show it'); return; }
+    selectLoose(lay.placed.findIndex((p) => p.partId === have.id));
+    note('Title block selected: double-click it to edit its fields');
+    return;
+  }
+  const spot = TB.titleSpot(lay.s);
+  if (!spot) { note('Title block: the sheet is too small for it (150 × 80 mm inside the grippers)'); return; }
+  pushLay(d, withTb(laySnap(lay), d), '', 'Title block');
+  if (d.titleBlock?.enabled === false) d.titleBlock = { ...d.titleBlock, enabled: true };       // one switch: inserting turns it on
+  const blocks = { [TB.TITLE_NAME]: { base: [0, 0], xref: false, entities: TB.titleBlockEntities() } };
+  const ent = TB.titleInsert(...spot, TB.titleValues(d.titleBlock, TB.titleAuto(lay, d.name, today())));
+  const part = LD.objectPart('tb' + uid(), 'Title block', ent, LD.layersOf(lay), {}, blocks);
+  lay.parts[part.id] = part; lay.placed.push(LD.objectPlacement(part));
+  touch(d); update();
+  selectLoose(lay.placed.length - 1);
+  note('Title block added at the bottom right. Double-click it to edit its fields. Ctrl+Z takes it back');
+}
+
 /** Pick the part of the step-and-repeat grid: one of the layout's parts, or one from the library (it is added to the layout). */
 function pickGridPart(v) {
   const lay = curLay();
@@ -2373,7 +2427,8 @@ function openNestDialog(counts = null, autoRun = false) {
     return { id: part.id, name: part.name, w: part.w, h: part.h, thumb, count: counts ? (counts[part.id] || 0) : (inLayout ? 1 : 0), outline: () => outlineFor(part) };
   });
   const fixed = LD.placedAll(lay, null).filter((pl) => !lay.parts[pl.partId].obj).map((pl) => { const part = lay.parts[pl.partId]; return outlineFor(part).map(([u, v]) => PL.toSheet(pl, u, v)); });
-  const area = { x: s.gripLeft, y: s.gripBottom, w: s.sheetW - s.gripLeft - s.gripRight, h: s.sheetH - s.gripTop - s.gripBottom };
+  const strip = TB.sheetArea(lay).titleH;       // the sheet's title block keeps the strip along the bottom clear in a new nest
+  const area = { x: s.gripLeft, y: s.gripBottom + strip, w: s.sheetW - s.gripLeft - s.gripRight, h: s.sheetH - s.gripTop - s.gripBottom - strip };
   if (!(area.w > 0 && area.h > 0)) { note('Auto-nest: the grippers leave no room on the sheet'); return; }
   openNest({
     layName: d.name, sheetW: s.sheetW, sheetH: s.sheetH, area, grips: { top: s.gripTop, right: s.gripRight, bottom: s.gripBottom, left: s.gripLeft },
@@ -2441,6 +2496,7 @@ const centrePivot = () => ({ kind: 'centre', x: 0, y: 0 });
 const laySnap = (lay) => ({ sw: lay.s.sheetW, sh: lay.s.sheetH, s: structuredClone(lay.s), placed: lay.placed.map((p) => ({ ...p })), gridPart: lay.s.gridPart, parts: { ...lay.parts }, layers: LD.layersOf(lay), grids: structuredClone(lay.grids || {}),
   lsel: lay === (curLay() || {}) ? selIdxs().map((i) => placedNow[i]).filter((p) => p.src === 'loose').map((p) => p.i) : [],      // lsel: which loose parts were selected (undo brings the selection back)
   bl: state.docs.find((t) => t.lay === lay)?.balloons });      // bl: the tab's balloon set (immutable, so the reference is the snapshot)
+const withTb = (snap, d) => ({ ...snap, tb: d.titleBlock });      // tb: the tab's title block settings (replaced, never changed in place), kept only by the steps that change them (title insert, attribute edit): the PDF dialog's typing has no undo step, so other steps must not put the old text back
 const layHist = (d) => d.lhist || (d.lhist = Ed.createHistory());
 /** Keeps the layout as it is now for undo; the same key within 0.8 s (arrow key held down) keeps only the first. */
 function pushLay(d, snap, key = '', label) {
@@ -2455,7 +2511,15 @@ function layRestore(d, st, dirty = true) {
   const sized = st.sw != null && (st.sw !== d.lay.s.sheetW || st.sh !== d.lay.s.sheetH);
   if (sized) { d.lay.s.sheetW = st.sw; d.lay.s.sheetH = st.sh; syncFields(); }
   if ('bl' in st) d.balloons = st.bl;
+  if ('tb' in st) d.titleBlock = st.tb;
   d.lay.placed = st.placed; d.lay.parts = st.parts; if (st.layers) d.lay.layers = st.layers; if (st.grids) d.lay.grids = st.grids; Object.assign(d.lay.s, structuredClone(st.s));       // every setting (grippers, gaps, rows, marks, grid part, guides) comes back with the parts
+  if (st.renamed) {       // a layer rename (or its Undo / Redo): the current layer, Layers + Add names and hidden objects follow
+    const [a, b] = st.renamed;
+    if (d.curLayer === a) d.curLayer = b;
+    if (d.addedLayers?.delete(a)) d.addedLayers.add(b);
+  }
+  if (st.kept) layerKept(d, st.kept);       // a layer delete (or its Undo / Redo): its Layers + Add mark
+  if (st.hid && d.hiddenParts) { d.hiddenParts.clear(); for (const id of st.hid) d.hiddenParts.add(id); }       // a layer rename or colour change: the layer's objects get new ids, the hidden ones follow
   gapSig = ''; syncFields();                                           // the extra-gap rows hold the old gap objects: rebuilt
   state.mode = 'select'; state.pivot = centrePivot(); state.rotCopy = false; pdrag = null; lastPush = { key: '', t: 0, d: null }; if (before !== JSON.stringify(LD.placedAll(d.lay))) { picksArr = []; state.sel = -1; d.stretchSelection = null; }
   linkBase.delete(d.lay);                                              // an undo is not an edit the dimensions follow
@@ -3802,8 +3866,9 @@ function hideMenu() {
 // ---- PDF / Print (export.js is the dialog, pdf-export.js the pages) ----
 /** The layout without the parts hidden in the Objects tab (their places and the grid, if the grid is made of one): what print and PDF use. */
 function shownLayout(d) {
-  const hid = d.hiddenParts;
-  if (!hid || !hid.size) return d.lay;
+  const hid = new Set(d.hiddenParts), title = d.titleBlock?.enabled === false && TB.titlePartOf(d.lay);
+  if (title) hid.add(title.id);
+  if (!hid.size) return d.lay;
   return { ...d.lay, s: { ...d.lay.s, gridPart: hid.has(d.lay.s.gridPart) ? null : d.lay.s.gridPart }, placed: d.lay.placed.filter((p) => !hid.has(p.partId)) };
 }
 /** What the PDF is made from: the active tab's drawing (a layout's Sheet and Marks layers are not artwork), or null (nothing open yet). */
@@ -3819,7 +3884,7 @@ function exportSource(selectionOnly = false, cut = true) {
     const lay = shownLayout(d);
     if (!LD.placedAll(lay).length) return null;
     const { gripTop, gripRight, gripBottom, gripLeft } = lay.s, hasSelection = !!selectedPlaced();
-    const sheet = (l) => ({ name: d.name, path, fl: flatten(LD.layoutRaw(l)), factor: 1, off: new Set(), sheetW: d.lay.s.sheetW, sheetH: d.lay.s.sheetH, grippers: { gripTop, gripRight, gripBottom, gripLeft }, gaps: labelGaps(LD.gridOf(l), l.s.sheetH), hide: ['Sheet', 'Marks'], hasSelection });
+    const sheet = (l) => { const fl = flatten(LD.layoutRaw(l)), defs = LD.layersOf(l); return { name: d.name, path, fl, factor: 1, off: new Set(fl.layers.flatMap((x, i) => (defs[x.name]?.off || defs[x.name]?.frozen ? [i] : []))), sheetW: d.lay.s.sheetW, sheetH: d.lay.s.sheetH, grippers: { gripTop, gripRight, gripBottom, gripLeft }, gaps: labelGaps(LD.gridOf(l), l.s.sheetH), hide: ['Sheet', 'Marks'], hasSelection }; };
     if (!selectionOnly) return sheet(lay);
     const picked = selIdxs().map((i) => placedNow[i]).filter((p) => !(d.hiddenParts && d.hiddenParts.has(p.partId)));       // the selected parts only (a grid copy is placed loose, in the same place); hidden ones stay out
     if (!picked.length) return null;
@@ -3835,11 +3900,39 @@ function exportSource(selectionOnly = false, cut = true) {
   if (d.fl) return { name: d.name, path, fl, factor: d.factor, off: d.off, sheetW: state.sheetW, sheetH: state.sheetH, hide: [] };
   return null;
 }
+/** The drawing's pictures as raw pixels for the file (TODO 305a); no await when there are none. */
+async function pdfPictures(src) {
+  const pics = new Map();
+  for (const it of src?.fl?.items || []) if (it.k === 'i' && !pics.has(it.px)) { try { pics.set(it.px, { px: it.px, ...await rawPixels(it.px) }); } catch { /* that picture stays out of the file */ } }
+  return pics;
+}
+/** Does this tab hold a shown PDF page picture (TODO 358a: an IMAGE on layer "PDF pages", 358c1: on any tab, through a layout part's block, hidden layers out)? */
+const hasPdfPages = () => hasPagePictures(exportSource());
+/** TODO 358b: File > Save as PDF (pages): one PDF page per page picture (the picture, then what is drawn on it as vector); objects outside every page are counted, not saved. */
+async function savePdfPages() {
+  const d = curDoc(), src = exportSource();
+  const plan = hasPagePictures(src) && planPagesPdf({ ...src, pics: await pdfPictures(src) });
+  if (!plan || !plan.pages.length) { note('No PDF pages in this drawing'); return; }
+  const want = baseName(d.name) + '-pages.pdf', t = window.__TAURI__;
+  try {
+    const bytes = plan.bytes();
+    let name = want;
+    if (t && t.dialog && t.dialog.save && t.fs && t.fs.writeFile) {
+      let path = await t.dialog.save({ defaultPath: saveDefault(want, d.path || d.openPath), filters: [{ name: 'PDF', extensions: ['pdf'] }] });
+      if (!path) return;
+      path = await withExt(t, path, 'pdf');
+      if (!path) return;
+      if (d.openPath && pathKey(path) === pathKey(d.openPath)) { note('Pick another name: that is the opened file, and Save as PDF never writes over it'); return; }
+      await t.fs.writeFile(path, bytes);
+      name = path.split(/[\\/]/).pop();
+    } else download(name, bytes, 'application/pdf');
+    note(`Saved ${name}: ${plan.pages.length} ${plan.pages.length === 1 ? 'page' : 'pages'}` + (plan.outside ? `. ${plan.outside} objects outside the pages not saved` : ''));
+  } catch (e) { note('Save as PDF (pages) failed: ' + (e && e.message ? e.message : e)); }
+}
 async function exportPdf() {
-  const d = curDoc(), pics = new Map();               // the drawing's pictures as raw pixels for the file (TODO 305a); no await when there are none
-  for (const it of d?.fl?.items || []) if (it.k === 'i' && !pics.has(it.px)) { try { pics.set(it.px, { px: it.px, ...await rawPixels(it.px) }); } catch { /* that picture stays out of the file */ } }
+  const d = curDoc(), s = exportSource(), pics = s?.fl.items.some((it) => it.k === 'i') ? await pdfPictures(s) : new Map();         // no await without pictures
   openExport({ source: (selectionOnly, cut) => { const src = exportSource(selectionOnly, cut); return src && { ...src, titleBlock: d.titleBlock, pics }; }, sheet: () => ({ w: state.sheetW, h: state.sheetH }), readDrawing, note,
-    setTitleBlock: (value) => { d.titleBlock = value; d.dirty = true; renderTabs(); } });
+    setTitleBlock: (value) => { d.titleBlock = value; d.dirty = true; renderTabs(); if (d.lay && curDoc() === d) update(); } });       // a layout's title block follows the typed fields and the switch
 }
 
 const rawForSave = (d) => withTitleBlock(d.lay ? LD.layoutRaw(d.lay) : nativeDimensionOverrides(d.raw), d.titleBlock);
@@ -3868,6 +3961,18 @@ const dropCopiesNow = async (docs) => {
   for (let i = 0; autosaving && i < 100; i++) await new Promise((r) => setTimeout(r, 20));
   return Promise.all(docs.flatMap(PS.pageStates).map(dropCopy));
 };
+/** The steps of writeDxfSteps in idle slices of at most 8 ms (150k entities: 0.5 s in one task, TODO 237b); resolves with what they return, rejects with what they throw. */
+const writeIdle = (doc, opts) => new Promise((resolve, reject) => {
+  const steps = writeDxfSteps(doc, opts), slice = (deadline) => {
+    const start = performance.now();
+    try {
+      let r;
+      while (!(r = steps.next()).done) if (deadline.timeRemaining() < 1 || performance.now() - start > 8) return requestIdleCallback(slice, { timeout: 200 });
+      resolve(r.value.text);
+    } catch (e) { reject(e); }
+  };
+  requestIdleCallback(slice, { timeout: 200 });
+});
 /** One round: copy changed tabs and PDF sheets; drop copies that have been saved. */
 async function autosaveNow() {
   if (autosaving || dropping) return;
@@ -3886,7 +3991,8 @@ async function autosaveNow() {
         const balloons = d.balloons ? BAL.encode(balOf(d), { source: d.balName || d.name, pages: d.pdf ? d.pdf.pages : 1 }) : null, unit = d.drawingUnit || null;
         if (!page.lay && r.autoTab === tab && r.autoEnts === raw?.entities && r.autoBlocks === raw?.blocks && r.autoLayers === raw?.layers && r.autoGroups === raw?.groups && r.autoLtypes === raw?.ltypes && r.autoHeader === raw?.header && r.autoTitle === titleBlock && r.autoBalloons === balloons && r.autoUnit === unit) continue;        // a drawing's state is replaced at every change: same one, same tab index, same copy
         let dxf;
-        try { dxf = writeDxf(rawForSave({ ...page, raw: raw || newDoc(), titleBlock }), { escapeUnicode: true, extents: page.lay || !page.fl ? null : page.fl.boxes.model }); } catch (e) { console.warn('Autosave: could not write', page.name, e); continue; }
+        try { dxf = await writeIdle(rawForSave({ ...page, raw: raw || newDoc(), titleBlock }), { escapeUnicode: true, extents: page.lay || !page.fl ? null : page.fl.boxes.model }); } catch (e) { console.warn('Autosave: could not write', page.name, e); continue; }
+        if (dropping) return;                                                                          // the window closed while the slices ran: its copies are already dropped
         if (page.lay && r.hasCopy && r.autoTab === tab && r.autoDxf === dxf && r.autoBalloons === balloons && r.autoUnit === unit) continue;                    // a layout: the same text, balloons, unit and tab index as the last copy
         const name = n == null ? page.name : `${d.pdf.name} sheet ${n}`;
         await RC.saveCopy({ id: r.rid, name, path: page.path || null, openPath: d.openPath || null, pdfPages: d.pdf?.pages || null, pdfHash: d.pdf?.hash || null, kind: page.lay ? 'layout' : 'drawing', dxf, t: Date.now(),
@@ -3923,7 +4029,7 @@ async function recoverOne(c, target = null) {
     const r = await readDrawing(new TextEncoder().encode(c.dxf).buffer);
     if (!r.ok) return false;
     if (c.pics?.length) {
-      const images = r.doc.entities.filter((e) => e.type === 'IMAGE' && /^drawing-img\d+\.png$/.test(e.r.file));
+      const images = r.doc.entities.filter((e) => e.type === 'IMAGE' && /^drawing-(img|page)\d+\.png$/.test(e.r.file));
       if (images.length === c.pics.length) images.forEach((e, i) => { e.r.px = c.pics[i].r.px; });
       else r.doc.entities.push(...c.pics); // 305a recovery copies predate IMAGE output.
       r.result = flatten(r.doc); await preloadPictures(r.result.items);
@@ -4117,9 +4223,9 @@ function exportLayerRows(d) {
  * Export DXF's Text: Curves (TODO 109b): `raw` (what Save writes) with its top-level TEXT / MTEXT outlined by the Text to outlines maths, on a copy.
  * A font that cannot load leaves that text as text. → { raw, note } (the note for the save report)
  */
-async function exportCurves(raw, d, skip) {
+async function exportCurves(raw, d, skip, hidden = false) {
   const lay = !!d.lay, fontOf = (it) => it.font || fontForStyle(raw.styles, it.st), keyOf = (it) => fontOf(it) + (it.bold ? ':b' : '');
-  const items = flatten(raw).items.filter((it) => it.k === 't'), fonts = new Map(), lost = new Map();
+  const items = flatten(raw, undefined, { hidden }).items.filter((it) => it.k === 't'), fonts = new Map(), lost = new Map();
   const own = items.filter((it) => /^M?TEXT$/.test(raw.entities[it.e]?.type) && !skip.has(String(raw.entities[it.e].layer ?? '0').toLowerCase()));
   for (const item of own) for (const run of TO.outlineItem(item, raw.entities[item.e]).runs || [item]) {
     const it = { ...item, ...run }, key = keyOf(it);
@@ -4139,11 +4245,77 @@ async function exportCurves(raw, d, skip) {
   return { raw: r.raw, note: '. ' + [...said, ...r.notes].join('. ') };
 }
 
-/** Export the same content as Save, through the writer's copy-only settings. */
+/**
+ * Export's SVG (TODO 109c1): Export DXF's own copy (`raw`: Curves already outlined) less the unticked layers, put through the PDF / Print page path
+ * (flatten → partSource for a drawing's extents, the sheet for a layout → planPdf 'sheet' → build) at Scale, then svg-write. Units: the file's unit → mm or in;
+ * a drawing with no conversion is written as mm. → the SVG text.
+ */
+async function exportSvg(raw, d, { units, scale, precision, skipLayers, lineWeights, hidden }) {
+  return pageToSvg(await exportPage(raw, d, { scale, skipLayers, lineWeights, hidden }), { unit: units === 'in' ? 'in' : 'mm', precision });
+}
+
+/**
+ * The Page (mm) both SVG and PNG replay: see exportSvg. lineWeights false: every stroke 0.05 mm (TODO 109d1). hidden true: code-60 objects are drawn too
+ * (flatten's `hidden` option); a layer that is off / frozen is still drawn only when its Layers tick is on.
+ */
+async function exportPage(raw, d, { scale, skipLayers, lineWeights = true, hidden = false }) {
+  raw = withoutLayers(raw, skipLayers);
+  const fl = flatten(raw, undefined, { hidden }), mmPer = d.lay ? 1 : { 1: 25.4, 2: 304.8, 4: 1, 5: 10, 6: 1000 }[+d.raw.header?.$INSUNITS] || 1, factor = mmPer * scale;
+  const own = { name: d.name, fl, factor, off: new Set(), hide: [] };
+  let src = d.lay ? { ...own, sheetW: d.lay.s.sheetW * scale, sheetH: d.lay.s.sheetH * scale, hide: ['Sheet'] } : partSource(own, 0);
+  if (src && !d.lay && !(src.sheetW > 0 && src.sheetH > 0)) src = partSource(own, 1);        // flat as one line: a 1 mm border gives the page an area
+  if (!src) throw new Error('nothing to export: no shown objects');
+  src.pics = fl.items.some((it) => it.k === 'i') ? await pdfPictures(src) : new Map();
+  const page = planPdf(src, { page: 'sheet', separate: false, mirror: false, negative: false, black: false, strip: false, titleBlock: { enabled: false } }).build(0);
+  return lineWeights ? page : page.hairlines();
+}
+
+/**
+ * Export's PNG (TODO 109c2): the Page replayed by paintPage on an offscreen canvas at `dpi` (capped, see png-size.js).
+ * background 'transparent' leaves the paper and the page border unpainted. → { blob (null when the canvas could not make one), dpi, capped }
+ */
+async function exportPng(raw, d, { scale, skipLayers, dpi, background, lineWeights, hidden }) {
+  const page = await exportPage(raw, d, { scale, skipLayers, lineWeights, hidden }), size = pngSize(page.w, page.h, dpi), canvas = document.createElement('canvas');
+  const dpr = window.devicePixelRatio || 1, none = 'rgba(0,0,0,0)';       // paintPage multiplies its box and scale by the device ratio: ask for px / dpr so the canvas is exactly w × h
+  paintPage(canvas, page, { width: size.w / dpr, height: size.h / dpr }, { paper: background === 'white' ? '#ffffff' : none, film: '#000000', line: none },
+    { s: size.dpi / 25.4 / dpr, ox: 0, oy: 0 });
+  const blob = canvas.width === size.w && canvas.height === size.h ? await new Promise((ok) => canvas.toBlob(ok, 'image/png')) : null;
+  return { blob, dpi: size.dpi, capped: size.capped };
+}
+
+/**
+ * One Export of tab-like `d` in `fmt` (dxf | svg | png) with `settings` (units, scale, precision, skipLayers, dpi, background, lineWeights, hidden), written to `destination`
+ * (a path, in the app) or downloaded as `written`. Shared by the dialog's one file and its folder at once.
+ * → { said } the status text that follows "Exported <name>", or { fail } (nothing written: the PNG would be too big).
+ */
+async function exportWrite(d, fmt, curves, settings, written, destination) {
+  const t = window.__TAURI__, svg = fmt === 'svg', png = fmt === 'png', skip = new Set(settings.skipLayers.map((n) => n.toLowerCase()));
+  const saved = rawForSave(d), made = curves ? await exportCurves(saved, d, skip, (svg || png) && settings.hidden) : null, raw = made ? made.raw : saved, tail = made ? made.note : '';
+  if (png) {
+    const pic = await exportPng(raw, d, settings);
+    if (!pic.blob) return { fail: 'PNG not written: this size could not be drawn. Lower the DPI or the Scale' };
+    if (destination) await t.fs.writeFile(destination, new Uint8Array(await pic.blob.arrayBuffer())); else download(written, pic.blob, 'image/png');
+    return { said: (pic.capped ? `. PNG at ${pic.dpi} dpi (largest that fits)` : '') + tail };
+  }
+  if (svg) {
+    const picture = await exportSvg(raw, d, settings);
+    if (destination) await t.fs.writeTextFile(destination, picture); else download(written, picture, 'image/svg+xml');
+    return { said: tail };
+  }
+  return { said: saveReportNote(await writeDrawing(raw, written, destination, settings)) + tail };
+}
+
+/** The Units choice a file starts on: its own unit (in for inches, mm for the other known ones), no conversion for an unknown one ('' = another unit, 'unitless' = none). */
+const ownUnits = (sourceUnits) => [1, 2, 4, 5, 6].includes(sourceUnits) ? sourceUnits === 1 ? 'in' : 'mm' : sourceUnits ? '' : 'unitless';
+
+const exportBatch = newBatch();       // the dialog's A folder at once: the folder, ticks and files stay while the app runs
+const bufferOf = (b) => (b instanceof ArrayBuffer ? b : b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength));
+
+/** Export: the same content as Save through the writer's copy-only settings (Format DXF), or as an SVG picture (Format SVG). */
 function exportDxf() {
   const active = curDoc(), d = active?.cmp ? cmpEdit('export DXF') : active;
   if (active?.cmp && !d) return;
-  if (!d || (!d.raw && !d.lay)) { note('Export DXF: open a drawing first'); return; }
+  if (!d || (!d.raw && !d.lay)) { note('Export: open a drawing first'); return; }
   if (document.querySelector('[data-testid=export-dxf-dialog]')) return;
   const sourceUnits = +(d.lay ? 4 : d.raw.header?.$INSUNITS) || 0;
   const convertible = [1, 2, 4, 5, 6].includes(sourceUnits);
@@ -4151,67 +4323,151 @@ function exportDxf() {
   try { const v = localStorage.getItem('pd-export-dxf-precision'); if (v !== null && Number.isInteger(+v) && +v >= 0 && +v <= 8) remembered = +v; } catch { /* local settings may be unavailable */ }
   const field = (id, attrs) => h('input', { class: 'fld', 'data-testid': 'export-dxf-' + id, ...attrs });
   const name = field('name', { type: 'text', value: baseName(dxfName(d.name)) + '-export.dxf' });
+  const fmt = h('select', { class: 'fld', 'data-testid': 'export-format' }, h('option', { value: 'dxf' }, 'DXF'), h('option', { value: 'svg' }, 'SVG'), h('option', { value: 'png' }, 'PNG'));
+  const named = (n, ext) => n.replace(/\.(dxf|dwg|svg|png)$/i, '') + '.' + ext;       // the file name with the Format's extension
+  const dpi = h('input', { class: 'fld', type: 'text', inputmode: 'numeric', value: '300', 'data-testid': 'export-dpi' });
+  const bg = h('select', { class: 'fld', 'data-testid': 'export-bg' }, h('option', { value: 'white' }, 'White'), h('option', { value: 'transparent' }, 'Transparent'));
   const units = h('select', { class: 'fld', 'data-testid': 'export-dxf-units' }, convertible
     ? [h('option', { value: 'mm' }, 'mm'), h('option', { value: 'in' }, 'in')]
     : h('option', { value: sourceUnits ? '' : 'unitless' }, `${sourceUnits ? UNITS[sourceUnits] || 'Drawing units' : 'Unitless'} (no conversion)`));
-  units.value = convertible ? sourceUnits === 1 ? 'in' : 'mm' : sourceUnits ? '' : 'unitless';
+  units.value = ownUnits(sourceUnits);
   const scale = field('scale', { type: 'text', inputmode: 'decimal', value: '1' });
   const precision = field('precision', { type: 'text', inputmode: 'numeric', value: remembered });
   const text = h('select', { class: 'fld', 'data-testid': 'export-dxf-text' }, h('option', { value: 'text' }, 'Text'), h('option', { value: 'curves' }, 'Curves'));
   const ticks = exportLayerRows(d).map(([layer, on]) => h('input', { type: 'checkbox', checked: on || layer === '0', disabled: layer === '0', 'aria-label': 'Layer ' + layer, 'data-testid': 'export-dxf-layer', 'data-layer': layer }));
   const layers = h('div', { class: 'export-dxf-layers', 'data-testid': 'export-dxf-layers' }, ticks.map((box) => h('label', null, box, box.dataset.layer + (box.dataset.layer === '0' ? ' (always kept)' : ''))));
+  const lineWeights = h('input', { type: 'checkbox', checked: true, 'data-testid': 'export-line-weights' });
+  const hiddenObjects = h('input', { type: 'checkbox', checked: true, 'data-testid': 'export-hidden-objects' });       // on for DXF; showFormat flips it for SVG / PNG until the user has set it here
+  let hiddenSet = false, tab = 'one', busy = false;       // tab: 'one' (this file) | 'batch' (A folder at once)
+  const touched = new Set(), startOff = new Set(ticks.filter((box) => !box.checked && !(d.lay && /^(Parts|Marks)$/.test(box.dataset.layer))));
+  for (const box of ticks) box.addEventListener('change', () => touched.add(box));
+  const syncOff = () => { for (const box of startOff) if (!touched.has(box)) box.checked = fmt.value !== 'dxf' && hiddenObjects.checked; };   // SVG / PNG: Hidden objects on draws the file's off / frozen layers too
+  hiddenObjects.addEventListener('change', () => { hiddenSet = true; syncOff(); });
   const err = h('div', { class: 'pd-bad', role: 'alert', hidden: true, 'data-testid': 'export-dxf-err' });
   const validate = () => {
     const problems = [
-      [name, !name.value.trim() || /[<>:"/\\|?*\x00-\x1f]/.test(name.value) ? 'Type a file name without < > : " / \\ | ? *' : ''],
+      [name, tab === 'one' && (!name.value.trim() || /[<>:"/\\|?*\x00-\x1f]/.test(name.value)) ? 'Type a file name without < > : " / \\ | ? *' : ''],
       [scale, scaleFactor(scale.value) === null ? 'Scale must be a number above 0' : ''],
-      [precision, !/^\d$/.test(precision.value.trim()) || +precision.value > 8 ? 'Precision must be a whole number from 0 to 8' : ''],
+      [precision, fmt.value !== 'png' && (!/^\d$/.test(precision.value.trim()) || +precision.value > 8) ? 'Precision must be a whole number from 0 to 8' : ''],
+      [dpi, fmt.value === 'png' && (!/^\d{2,4}$/.test(dpi.value.trim()) || +dpi.value < 72 || +dpi.value > 1200) ? 'DPI must be a whole number from 72 to 1200' : ''],
     ];
     for (const [input, why] of problems) flagInvalid(input, !!why);
     const bad = problems.find(([, why]) => why);
     err.textContent = bad?.[1] || ''; err.hidden = !bad;
     return bad?.[0];
   };
-  for (const input of [name, scale, precision]) { clearInvalid(input); input.addEventListener('input', validate); }
+  for (const input of [name, scale, precision, dpi]) { clearInvalid(input); input.addEventListener('input', validate); }
   const finish = () => { back.remove(); document.removeEventListener('keydown', onKey, true); };
   const go = async () => {
     const bad = validate(); if (bad) { bad.focus(); validate(); return; }
-    const skipLayers = ticks.filter((box) => !box.checked).map((box) => box.dataset.layer), curves = text.value === 'curves';       // read now: finish() removes the dialog
-    const want = dxfName(name.value.trim()), settings = { units: units.value || undefined, scale: +scale.value, precision: +precision.value, escapeUnicode: true, skipLayers };
+    const skipLayers = ticks.filter((box) => !box.checked).map((box) => box.dataset.layer), curves = text.value === 'curves', svg = fmt.value === 'svg', png = fmt.value === 'png';       // read now: finish() removes the dialog
+    const ext = fmt.value, want = svg || png ? named(name.value.trim(), ext) : dxfName(name.value.trim()), settings = { units: units.value || undefined, scale: +scale.value, precision: +precision.value, escapeUnicode: true, skipLayers, dpi: +dpi.value, background: bg.value, lineWeights: lineWeights.checked, hidden: hiddenObjects.checked };
     finish();
     try {
       const t = window.__TAURI__;
-      try { localStorage.setItem('pd-export-dxf-precision', String(settings.precision)); } catch { /* local settings may be unavailable */ }
+      if (!png) try { localStorage.setItem('pd-export-dxf-precision', String(settings.precision)); } catch { /* local settings may be unavailable */ }
       let written = want, destination = null;
-      if (t && t.dialog?.save && t.fs?.writeTextFile) {
-        let path = await t.dialog.save({ defaultPath: saveDefault(want, d.path || d.openPath), filters: [{ name: 'DXF drawing', extensions: ['dxf'] }] });
+      if (t && t.dialog?.save && t.fs?.[png ? 'writeFile' : 'writeTextFile']) {
+        let path = await t.dialog.save({ defaultPath: saveDefault(want, d.path || d.openPath), filters: [{ name: png ? 'PNG picture' : svg ? 'SVG picture' : 'DXF drawing', extensions: [ext] }] });
         if (!path) return;
-        path = await withExt(t, path, 'dxf'); if (!path) return;
+        path = await withExt(t, path, ext); if (!path) return;
         if ([d.openPath, d.path].some((p) => p && pathKey(path) === pathKey(p))) { note('Pick another name: that is the drawing file, and Export never writes over it'); return; }
         destination = path;
         written = path.split(/[\\/]/).pop();
       }
-      const saved = rawForSave(d), skip = new Set(skipLayers.map((n) => n.toLowerCase())), made = curves ? await exportCurves(saved, d, skip) : null;
-      const report = await writeDrawing(made ? made.raw : saved, written, destination, settings);
-      note('Exported ' + written + saveReportNote(report) + (made ? made.note : ''));
+      const r = await exportWrite(d, ext, curves, settings, written, destination);
+      if (r.fail) note(r.fail); else note('Exported ' + written + r.said);
     } catch (e) { note('Export failed: ' + (e?.message || e)); }
   };
+  // A folder at once: every .dxf / .dwg in a folder, one file each with these settings (R3: its visible layers, or all of them with Hidden objects ticked; Units = its own)
+  const B = exportBatch, t0 = window.__TAURI__, inApp = !!(t0?.dialog?.open && t0.fs?.readDir && t0.fs.readFile);
+  const batchEnd = h('div', { class: 'lbl', role: 'status', hidden: true, 'data-testid': 'export-batch-end' });
+  const goBatch = async () => {
+    if (busy) return;
+    const bad = validate(); if (bad) { bad.focus(); return; }
+    const todo = B.all.filter((e) => e.include && B[e.type] && !e.na);
+    if (!todo.length) return;
+    const outDir = await batchOutDir(B, t0, inApp);
+    if (outDir === false) return;
+    const kind = fmt.value, curves = text.value === 'curves', hidden = hiddenObjects.checked;        // read now: the dialog may be closed while it runs
+    const common = { scale: +scale.value, precision: +precision.value, escapeUnicode: true, dpi: +dpi.value, background: bg.value, lineWeights: lineWeights.checked, hidden };
+    busy = true; batchEnd.textContent = ''; batchEnd.hidden = true; showTab();
+    const used = new Set(), skipped = []; let ok = 0;
+    for (const e of todo) {
+      const set = (pct, text, status = 'progress') => { e.status = { kind: status, pct, text }; batchFiles.renderList(); };
+      try {
+        set(10);
+        let buf = e.type === 'dwg' && e.path ? null : e.file ? await e.file.arrayBuffer() : await t0.fs.readFile(e.path);       // a .dwg on disk is converted from its path
+        if (e.type === 'dwg') { buf = await dwgBytes(e.name, e.path, buf && bufferOf(buf)); if (!buf) throw new Error('could not convert this DWG'); }
+        set(30);
+        const r = await readDrawing(bufferOf(buf));
+        if (!r.ok) throw new Error(r.sorry || r.error || 'could not read this drawing');
+        await attachPictures(r, e.path);
+        const doc = { name: e.name, path: e.path || null, ...tabFields(r.doc, r.result) };
+        set(55);
+        const settings = { ...common, units: ownUnits(+doc.raw.header?.$INSUNITS || 0) || undefined, skipLayers: hidden ? [] : exportLayerRows(doc).filter(([, on]) => !on).map(([layer]) => layer) };
+        const app = !!(e.path && t0.fs?.[kind === 'png' ? 'writeFile' : 'writeTextFile']);
+        const dest = await outPath(app ? outDir || e.dir : null, baseName(e.name) + '-export', kind, used, app ? (p) => t0.fs.exists(p) : async () => false);
+        const made = await exportWrite(doc, kind, curves, settings, dest.split(/[\\/]/).pop(), app ? dest : null);
+        if (made.fail) throw new Error(made.fail);
+        ok++; set(100, 'Done', 'done');
+      } catch (err) { skipped.push(e.rel); set(0, 'Failed: ' + (err?.message || String(err)), 'fail'); }
+    }
+    busy = false;
+    const said = `Exported ${ok}, skipped ${skipped.length}` + (skipped.length ? ': ' + skipped.join(', ') : '');
+    batchEnd.textContent = said; batchEnd.hidden = false; note(said);
+    showTab();
+  };
+  const goBtn = h('button', { class: 'btn primary', type: 'button', 'data-testid': 'export-dxf-go', onclick: () => (tab === 'one' ? go() : goBatch()) }, 'Export');
+  const hint = h('span', { class: 'lbl', style: 'flex:1' }, 'Next: native file picker');
+  const batchFiles = batchFolder({ B, t: t0, inApp, note, prefix: 'export', onChange: () => showTab(), onTick: () => showTab(),
+    unsupported: (type) => type === 'cdr' ? 'CorelDRAW: not built yet' : '',
+    empty: inApp ? 'No drawings here yet. Browse to a folder.' : 'No drawings yet. Browse to a folder (the files go to Downloads).' });
+  const batchBody = h('div', { class: 'pd-batch export-batch' }, batchFiles.folderRow, batchFiles.extRow, batchFiles.list,
+    h('label', { class: 'lbl pd-fl' }, 'Save to', batchFiles.saveTo), batchEnd);
+  const tabBtn = (id, text, testid) => {
+    const b = h('button', { class: 'pd-tab', role: 'tab', type: 'button', 'data-testid': testid }, text);
+    b.addEventListener('click', () => { if (!busy) { tab = id; showTab(); } });
+    return b;
+  };
+  const tabOne = tabBtn('one', d.lay ? 'This layout' : 'This drawing', 'export-tab-one'), tabBatch = tabBtn('batch', 'A folder at once', 'export-tab-batch');
   const row = (label, input) => h('label', { class: 'qs-row' }, h('span', null, label), input);
+  const nameRow = row('File name', name), layersRow = h('div', { class: 'qs-row' }, h('span', null, 'Layers'), layers);
+  const unitsRow = row('Units', units), precisionRow = row('Precision', precision), dpiRow = row('DPI', dpi), bgRow = row('Background', bg), weightsRow = row('Line weights', lineWeights);
+  const showFormat = () => {         // Units / Precision are for DXF and SVG (Units: one file only, a folder keeps each file's own); DPI / Background for PNG; Line weights for SVG and PNG
+    const png = fmt.value === 'png';
+    for (const [r, shown] of [[unitsRow, !png && tab === 'one'], [precisionRow, !png], [dpiRow, png], [bgRow, png], [weightsRow, fmt.value !== 'dxf']]) r.style.display = shown ? '' : 'none';
+    if (!hiddenSet) hiddenObjects.checked = fmt.value === 'dxf';
+    syncOff();
+    validate();
+  };
+  function showTab() {
+    const one = tab === 'one', n = B.all.filter((e) => e.include && B[e.type] && !e.na).length;
+    for (const [b, on] of [[tabOne, one], [tabBatch, !one]]) { b.classList.toggle('on', on); b.setAttribute('aria-selected', String(on)); }
+    for (const [r, shown] of [[nameRow, one], [layersRow, one], [batchBody, !one]]) r.style.display = shown ? '' : 'none';
+    dlg.classList.toggle('batch', !one);
+    goBtn.textContent = one ? 'Export' : `Export ${n} ${n === 1 ? 'file' : 'files'}`;
+    goBtn.disabled = busy || (!one && !n);
+    hint.textContent = one ? 'Next: native file picker' : '';
+    if (!one) batchFiles.renderList();
+    showFormat();
+  }
+  fmt.addEventListener('change', () => { name.value = named(name.value, fmt.value); showFormat(); });
   const cancel = h('button', { class: 'btn', type: 'button', 'data-testid': 'export-dxf-cancel', onclick: finish }, 'Cancel');
   const close = h('button', { class: 'btn sm', type: 'button', 'aria-label': 'Close', onclick: finish }, '×');
-  const dlg = h('div', { class: 'pop-dialog export-dxf-dialog', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Export DXF', 'data-testid': 'export-dxf-dialog' },
-    h('div', { class: 'row between' }, h('strong', null, 'Export DXF'), close),
-    h('span', { class: 'lbl' }, 'Write a DXF copy with export settings.'),
-    row('File name', name), row('Units', units), row('Scale', scale), row('Precision', precision), row('Text', text),
-    h('div', { class: 'qs-row' }, h('span', null, 'Layers'), layers),
+  const dlg = h('div', { class: 'pop-dialog export-dxf-dialog', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Export', 'data-testid': 'export-dxf-dialog' },
+    h('div', { class: 'row between' }, h('strong', null, 'Export'), close),
+    h('span', { class: 'lbl' }, 'Write a DXF, SVG or PNG copy with export settings.'),
+    h('div', { class: 'pd-tabs', role: 'tablist' }, tabOne, tabBatch), batchBody,
+    row('Format', fmt), nameRow, unitsRow, row('Scale', scale), precisionRow, dpiRow, bgRow, row('Text', text),
+    layersRow, weightsRow, row('Hidden objects', hiddenObjects),
     h('span', { class: 'lbl' }, 'Scale is applied about 0,0. Precision sets decimal places for coordinates and lengths.'), err,
-    h('div', { class: 'row' }, h('span', { class: 'lbl', style: 'flex:1' }, 'Next: native file picker'),
-      cancel,
-      h('button', { class: 'btn primary', type: 'button', 'data-testid': 'export-dxf-go', onclick: go }, 'Export')));
+    h('div', { class: 'row export-foot' }, hint, cancel, goBtn));
+  showTab();
   const back = h('div', { class: 'pop-back' }, dlg);
   const onKey = (e) => {
     if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish(); }
-    else if (e.key === 'Enter' && dlg.contains(document.activeElement)) {
+    else if (e.key === 'Enter' && tab === 'one' && dlg.contains(document.activeElement)) {
       e.preventDefault(); e.stopPropagation();
       if ([cancel, close].includes(document.activeElement)) finish(); else go();
     }
@@ -4368,14 +4624,20 @@ function addedName(d, l) {
   clearInvalid(input);
   return input;
 }
-/** A file layer or an empty layer added by hand uses the same picker. */
+/** The colour swatch of a layer row: a file layer, an empty layer added by hand and a layout's object layer use the same picker (a layout through its own layer table). */
 function addedSwatch(d, l) {
   return h('button', { class: 'swatch pick', type: 'button', style: 'background:' + l.color,
     'aria-label': 'Layer colour', 'data-testid': 'layer-colour', title: 'Layer colour', onclick: async (e) => {
       e.stopPropagation();
-      const def = d.raw.layers[l.name] || { aci: 7, tc: null }, rgb = await pickColour(parseHex(layerCss(def)));
+      const def = (d.lay ? LD.layersOf(d.lay) : d.raw.layers)[l.name] || { aci: 7, tc: null }, rgb = await pickColour(parseHex(layerCss(def)));
       if (!rgb) return;
       const next = PR.withColour(def, rgbKey(rgb));
+      if (d.lay) {       // a layout: its layer table, and the objects on the layer drawn again
+        pushLay(d, { ...laySnap(d.lay), hid: [...(d.hiddenParts || [])] }, '', 'Layer colour → ' + l.name);
+        changeLayoutLayer(d, l.name, { def: next });
+        usedColour(rgbKey(rgb));
+        return;
+      }
       const keep = new Set(d.sel);
       if (!commit(d, { ...snapshotOf(d), layers: { ...d.raw.layers, [l.name]: next } }, 'Layer colour → ' + l.name)) return;
       setSel(d, keep);
@@ -4395,6 +4657,7 @@ function renderLayers() {
 
 /** The layout's existing layer rows are siblings of its parts, never parents of them. */
 function layoutLayerRows(d, query) {
+  const uses = layerUsesOf(d);
   return layerRows().filter((l) => OB.nameMatches(l.name, query)).map((l) => {
     const def = l.lay && LD.layersOf(d.lay)[l.name], hidden = l.id ? !!state.hidden[l.id] : !!(def?.off || def?.frozen), locked = !!(def?.flags & 4);
     const vis = objBtn('vis', !hidden, hidden ? 'Show' : 'Hide', hidden ? EYE_OFF : EYE, ' vis live');
@@ -4418,10 +4681,11 @@ function layoutLayerRows(d, query) {
       d.lay.layers = { ...LD.layersOf(d.lay), [l.name]: { ...def, flags: (def.flags || 0) ^ 4 } }; d.dirty = true; update();
     });
     const row = h('div', { class: 'or layer' + (l.cur ? ' cur current' : '') + (hidden ? ' dim hidden-layer' : ''), role: 'treeitem', 'aria-level': '2', 'data-layer-name': l.name, style: 'padding-left:20px' },
-      h('span', { class: 'swatch osw', style: 'background:' + l.color }),
-      !l.count && d.addedLayers?.has(l.name) ? addedName(d, l) : h('span', { class: 'onm nm' }, l.name), l.cur ? h('span', { class: 'chp', 'data-testid': 'layer-current' }, 'current') : null, h('span', { class: 'ocnt lbl mono' }, l.count), vis, lock);
+      l.lay ? addedSwatch(d, l) : h('span', { class: 'swatch osw', style: 'background:' + l.color }),
+      !l.count && d.addedLayers?.has(l.name) ? addedName(d, l) : h('span', { class: 'onm nm', title: l.lay && !Ed.fixedLayer(l.name) ? 'Double-click to rename' : null }, l.name), l.cur ? h('span', { class: 'chp', 'data-testid': 'layer-current' }, 'current') : null, h('span', { class: 'ocnt lbl mono' }, l.count), vis, lock, layerDelBtn(d, l.name, l.id ? `${l.name} is a fixed layer` : layerDeleteWhy(d, l.name, uses)));
     row.addEventListener('click', (e) => {
-      e.stopPropagation(); if (!l.lay || e.target.closest('input')) return;
+      e.stopPropagation(); if (!l.lay || e.target.closest('input, .swatch')) return;
+      if (e.detail === 2 && e.target.closest('.nm')) { startLayerRename(l.name, null, e.target.closest('.nm')); return; }       // a double-click on the name (the first click made it current)
       d.curLayer = l.name; renderLayers(); renderCommand(); renderEdit(); note(`Current layer: ${l.name}. New shapes and text go on it`);
     });
     return row;
@@ -4450,6 +4714,7 @@ const OBJ_ICONS = {
   poly: '<path d="M4 18l4-10 6 6 6-10"/>', text: '<path d="M5 6h14M12 6v13M9 19h6"/>', block: '<rect x="4" y="4" width="16" height="16" rx="2"/><path d="M4 10h16M10 10v10"/>',
   other: '<circle cx="12" cy="12" r="2"/><path d="M12 4v4M12 16v4M4 12h4M16 12h4"/>',
 };
+const TRASH = '<path d="M4 7h16M10 11v6M14 11v6M5 7l1 13h12l1-13M9 7V4h6v3"/>';
 const CHEV_DOWN = '<path d="M6 9l6 6 6-6"/>', CHEV_RIGHT = '<path d="M9 6l6 6-6 6"/>';
 const oIcon = (inner, size = 14) => icon(inner, { size, width: 1.7, cap: 'round', join: 'round' });
 /** The tab's own list state (search, filter, what is open); the layout tab keeps it the same way. */
@@ -4489,7 +4754,7 @@ function setPtab(tab) {
 
 /** The tree for the tab that is open: a drawing's layers and objects, or a layout's parts. */
 function objOpts(d, om) {
-  return { factor: d.factor, off: d.off, hid: hidIdx(d) || new Set(), locked: d.locked || new Set(), curLayer: curLayerName(d), query: om.query, filter: om.filter, open: om.open, show: om.show, extra: layerRows().filter((l) => !l.bg).map((l) => l.name) };
+  return { factor: d.factor, off: d.off, hid: hidIdx(d) || new Set(), locked: d.locked || new Set(), curLayer: curLayerName(d), query: om.query, filter: om.filter, open: om.open, show: om.show, extra: [...layerRows().filter((l) => !l.bg).map((l) => l.name), ...[...(d.addedLayers || [])].filter((n) => d.raw.layers[n])] };       // the added layers again: a Compare snapshot lists its source's (layerRows is of the Compare tab)
 }
 function objBtn(act, on, label, inner, cls = '') {
   return h('button', { class: 'oa' + (on ? '' : ' off') + cls, type: 'button', 'data-act': act, 'aria-label': label, title: label }, oIcon(inner, 15));
@@ -4580,16 +4845,16 @@ function renderObjects(reveal = false) {
     if (again) tree = OB.buildTree(d.raw, d.fl, objOpts(d, om));
   }
   objLast = tree;
-  const layerMeta = new Map(layerRows().map((l) => [l.name, l]));
+  const layerMeta = new Map(layerRows().map((l) => [l.name, l])), target = item ? source : d, uses = target && layerUsesOf(target);       // target: the drawing the layer rows edit (Compare: the snapshot's source, if open)
   for (const l of tree.layers) {
-    const meta = layerMeta.get(l.name), colour = l.css ? ink(l.css, dark) : meta?.color || 'var(--partline)';
+    const meta = layerMeta.get(l.name), colour = l.css ? ink(l.css, dark) : meta?.color || (source ? ink(layerCss(source.raw.layers[l.name]), dark) : 'var(--partline)');
     const vis = objBtn('vis', !l.hidden, l.hidden ? 'Show' : 'Hide', l.hidden ? EYE_OFF : EYE, ' vis live');
     if (l.index >= 0) vis.dataset.layer = 'f' + l.index;
     else vis.disabled = true;
     rows.push(h('div', { class: 'or layer' + (l.cur ? ' cur current' : '') + (l.hidden ? ' dim hidden-layer' : ''), 'data-layer': l.name, 'data-layer-name': l.name, 'data-file-layer': l.index >= 0 ? l.index : null, role: 'treeitem', 'aria-level': '1', 'aria-expanded': String(l.open) },
       h('span', { class: 'otw', 'data-act': 'expand' }, oIcon(l.open ? CHEV_DOWN : CHEV_RIGHT, 12)), source || !item ? addedSwatch(source || d, { ...l, color: colour }) : h('span', { class: 'swatch osw', style: 'background:' + colour }),
-      !item && meta?.added ? addedName(d, l) : h('span', { class: 'onm nm' }, l.name), l.cur ? h('span', { class: 'chp', 'data-testid': 'layer-current' }, h('span', { 'data-testid': 'obj-current' }, 'current')) : null,
-      meta?.chip ? h('span', { class: 'chp', 'data-testid': 'layer-new' }, meta.chip) : null, h('span', { class: 'ocnt lbl mono' }, l.count), vis, objBtn('lock', l.locked, l.locked ? 'Unlock' : 'Lock', l.locked ? ICONS.lock : ICONS.unlock, l.locked ? ' lk' : '')));
+      !item && meta?.added ? addedName(d, l) : h('span', { class: 'onm nm', title: l.index >= 0 && !Ed.fixedLayer(l.name) && (!item || source) ? 'Double-click to rename' : null }, l.name), l.cur ? h('span', { class: 'chp', 'data-testid': 'layer-current' }, h('span', { 'data-testid': 'obj-current' }, 'current')) : null,
+      meta?.chip ? h('span', { class: 'chp', 'data-testid': 'layer-new' }, meta.chip) : null, h('span', { class: 'ocnt lbl mono' }, l.count), vis, objBtn('lock', l.locked, l.locked ? 'Unlock' : 'Lock', l.locked ? ICONS.lock : ICONS.unlock, l.locked ? ' lk' : ''), layerDelBtn(target, l.name, target ? layerDeleteWhy(target, l.name, uses) : '', item)));
     for (const r of l.rows) {
       const blockOpen = r.block && om.openB.has(r.e);
       const eye = objBtn('vis', !r.hidden, r.hidden ? 'Show' : 'Hide', r.hidden ? EYE_OFF : EYE);
@@ -4658,6 +4923,10 @@ function objClick(e) {
   if (act && act.dataset.act === 'more') { om.show.set(act.dataset.layer, (om.show.get(act.dataset.layer) || OB.CAP) + OB.CAP); renderObjects(); return; }
   if (row.dataset.layer && !row.dataset.e) {
     const name = row.dataset.layer, idx = d.fl.layers.findIndex((l) => l.name === name);
+    if (e.detail === 2 && !act && e.target.closest('.nm') && idx >= 0) {       // a double-click on the name: the first click made it current and flipped it open: put that back, then type the new name
+      flip(om.open, name); renderObjects(); startLayerRename(name, item);
+      return;
+    }
     if (act && act.dataset.act === 'vis') { if (item) cmpToggleLayer(tab, item.id, idx); else toggleLayerVis(d, idx); }
     else if (act && act.dataset.act === 'lock') toggleLayerLock(d, name);
     else {
@@ -4724,21 +4993,88 @@ function showAllHidden(d) {
   layersChanged(d); paintOverlay(); renderLayers(); applyHidden(); renderStatus();
   note('All layers and objects are shown');
 }
-async function renameLayerNow(d, name) {
-  if (name === '0') { note('Layer 0 cannot be renamed'); return; }
-  const to = await askName({ title: 'Rename layer', label: 'Name', value: name, ok: 'Rename', validate: (v) => Ed.layerNameProblem(v, allLayerNames(d), name) });
+/** Why `to` cannot be the new name of layer `name` of `d` (a drawing or a layout), or ''. A layout's table also keeps Sheet, Marks and Parts for itself. */
+const layerRenameProblem = (d, name, to) => Ed.layerNameProblem(to, d.lay ? [...Object.keys(LD.layersOf(d.lay)), ...LD.RESERVED_LAYERS] : allLayerNames(d), name);
+/** Layer `name` is renamed to `to` (asked for with a dialog when not given): the entities on it, the layer table, what is hidden, locked or current by its name, in ONE undo step. `d` is the drawing or layout tab itself (Compare: its source). */
+async function renameLayerNow(d, name, to) {
+  if (Ed.fixedLayer(name)) { note(`Layer ${name} cannot be renamed`); return; }
+  to ??= await askName({ title: 'Rename layer', label: 'Name', value: name, ok: 'Rename', validate: (v) => layerRenameProblem(d, name, v) });
   if (!to || to === name) return;
-  const wasOff = d.off.has(d.fl.layers.findIndex((l) => l.name === name)), hid = hidIdx(d), lk = d.locked;
-  if (!commit(d, OB.renameLayer(d.raw, name, to), `Rename layer ${name} → ${to}`)) return;
-  const i = d.fl.layers.findIndex((l) => l.name === to);
-  if (wasOff && i >= 0) d.off.add(i);                                      // restore() keeps hidden layers by name: this one has a new name
-  d.hid = new Set([...(hid || [])].map((k) => d.raw.entities[k])); d.hidC = null;       // the renamed entities are new objects, at the same numbers
-  d.fl = flatten(d.raw, d.hid);
-  if (lk && lk.delete(name)) lk.add(to);
-  if (d.curLayer === name) d.curLayer = to;
-  if (d.addedLayers && d.addedLayers.delete(name)) d.addedLayers.add(to);
-  layersChanged(d); paintOverlay(); renderLayers(); renderStatus();
+  if (d.lay) {
+    pushLay(d, { ...laySnap(d.lay), renamed: [to, name], hid: [...(d.hiddenParts || [])] }, '', `Rename layer ${name} → ${to}`);       // renamed [from, to] is the Undo direction; hid: the renamed layer's objects get new ids
+    changeLayoutLayer(d, name, { to });
+  } else {
+    if (!commit(d, { ...OB.renameLayer(d.raw, name, to), renamed: [name, to] }, `Rename layer ${name} → ${to}`)) return;
+    layersChanged(d); paintOverlay(); renderLayers(); renderStatus();
+  }
   note(`Layer ${name} is now ${to}. Ctrl+Z takes it back`);
+}
+/** A layout layer changes (renamed to `to` and / or new properties `def`); the caller has pushed the undo step. */
+function changeLayoutLayer(d, name, change) {
+  const ids = LD.changeLayer(d.lay, name, change, () => 'o' + uid()), to = change.to ?? name;
+  if (d.hiddenParts) for (const [old, id] of ids) if (d.hiddenParts.delete(old)) d.hiddenParts.add(id);
+  if (d.curLayer === name) d.curLayer = to;
+  if (d.addedLayers?.delete(name)) d.addedLayers.add(to);
+  touch(d); update();
+}
+/** A layer's name typed over in its row (double-click): Enter keeps it, Esc or a click away cancels; a refused name says why (note + red field) and the field stays. */
+function renameField(span, d, name) {
+  const input = h('input', { class: 'fld lname', type: 'text', value: name, 'aria-label': 'Layer name', 'data-testid': 'layer-rename', spellcheck: 'false', maxlength: 255 });
+  let done = false;
+  const end = () => { done = true; input.replaceWith(span); };
+  input.addEventListener('keydown', (e) => {
+    e.stopPropagation();
+    if (e.key === 'Escape') end();
+    else if (e.key === 'Enter') {
+      const v = input.value.trim(), why = layerRenameProblem(d, name, v);
+      if (why && v !== name) { flagInvalid(input, true); note(why); return; }
+      end(); if (v !== name) renameLayerNow(d, name, v);
+    }
+  });
+  input.addEventListener('input', () => flagInvalid(input, false));
+  input.addEventListener('blur', () => { if (!done) end(); });
+  span.replaceWith(input); input.focus(); input.select();
+}
+/** Starts renaming layer `name` in its row (Layers panel double-click); false (a note says why) for layer 0, Defpoints, or a Compare snapshot with no source drawing. */
+function startLayerRename(name, item, span) {
+  const d = item ? cmpEdit('rename a layer') : curDoc();
+  if (!d || !(d.lay || d.raw)) return false;
+  if (Ed.fixedLayer(name)) { note(`Layer ${name} cannot be renamed`); return false; }
+  span ||= [...ui.objTree.querySelectorAll('.or.layer[data-layer-name]')].find((r) => r.dataset.layerName === name)?.querySelector('.nm');       // a layout's rows pass theirs: its own Dimensions row has the same name
+  if (span) renameField(span, d, name);
+  return !!span;
+}
+/** What uses each layer of `d` (a drawing or layout tab), and why layer `name` cannot be deleted ('' when it can): Ed.layerDeleteProblem. */
+const layerUsesOf = (d) => (d.lay ? LD.layerUseMapOf(d.lay) : OB.layerUseMap(d.raw));
+const layerDeleteWhy = (d, name, uses = layerUsesOf(d)) => Ed.layerDeleteProblem(name, curLayerName(d), uses.get(String(name).trim().toLowerCase()));
+/** A layer's lock and Layers + Add marks are kept by name outside the layer table: a delete (`kept`: { name, locked, added }) and its Undo / Redo take them away or bring them back with the layer. */
+function layerKept(d, kept) {
+  const here = !!(d.lay ? LD.layersOf(d.lay) : d.raw.layers)[kept.name];
+  for (const [set, on] of [[d.locked, kept.locked], [d.addedLayers, kept.added]]) if (set) { if (here && on) set.add(kept.name); else set.delete(kept.name); }
+}
+/** Layer `name` is deleted (Layers panel, TODO 8b): its table entry only, one undo step; a refused layer says why. `d` is the drawing or layout tab itself (Compare: its source). */
+function deleteLayerNow(d, name) {
+  const why = layerDeleteWhy(d, name);
+  if (why) { note(why); return; }
+  const kept = { name, locked: !!d.locked?.has(name), added: !!d.addedLayers?.has(name) };
+  if (d.lay) {
+    pushLay(d, { ...laySnap(d.lay), kept }, '', `Delete layer ${name}`);
+    d.lay.layers = Object.fromEntries(Object.entries(LD.layersOf(d.lay)).filter(([k]) => k !== name));       // a new table: the undo step keeps the old one
+    layerKept(d, kept); touch(d); update();
+  } else {
+    const keep = new Set(d.sel), layers = Object.fromEntries(Object.entries(d.raw.layers).filter(([k]) => k !== name));
+    if (!commit(d, { ...snapshotOf(d), layers, kept }, `Delete layer ${name}`)) return;
+    setSel(d, keep); renderLayers();
+  }
+  note(`Layer ${name} is deleted. Ctrl+Z brings it back`);
+}
+/** The delete button of a layer row: off, its tooltip the reason, when `why` is set. No `d` (a Compare snapshot with no source drawing): a click says to open it. */
+function layerDelBtn(d, name, why, item) {
+  const b = objBtn('del', !why, 'Delete layer', TRASH);
+  b.dataset.testid = 'layer-delete';
+  if (why) { b.disabled = true; b.title = why; return b; }
+  b.addEventListener('click', (e) => { e.stopPropagation(); const t = item ? cmpEdit('delete a layer') : d; if (t) deleteLayerNow(t, name); });
+  return b;
 }
 function moveToLayerMenu(d, x, y) {
   popMenu(x, y, [...new Set(allLayerNames(d))].map((n) => [n, () => propSet('layer', n)]));
@@ -4766,7 +5102,7 @@ function objMenu(e) {
       ['Select', () => objSelect(d, l ? l.ents : [], false), '', !!(l && l.ents.length)],
       ['Zoom to', () => objZoom(d, l ? l.ents : []), '', !!(l && l.ents.length)],
       sep, [hidden ? 'Show' : 'Hide', () => item ? cmpToggleLayer(tab, item.id, idx) : toggleLayerVis(d, idx), '', idx >= 0], [locked ? 'Unlock' : 'Lock', () => toggleLayerLock(d, name)],
-      sep, ['Rename…', () => renameLayerNow(d, name), '', name !== '0'],
+      sep, ['Rename…', () => renameLayerNow(d, name), '', !Ed.fixedLayer(name)],
       sep, ['Show all hidden', () => showAllHidden(d), '', d.off.size > 0 || hid.size > 0]]);
     return;
   }
@@ -5235,12 +5571,12 @@ function partPathD(part) {
   if (pathDs.has(part.fl)) return pathDs.get(part.fl);
   let dd = '';
   for (const it of part.fl.items) {
-    const o = it.ops;
+    const o = it.ops, m = part.fl.mats?.[it.m], pt = (x, y) => (m ? mapply(m, x, y) : [x, y]).join(' ');       // a block's lines are in the block's own units: its INSERT matrix puts them where the part is
     for (let i = 0; o && i < o.length;) {
-      if (o[i] === 0 || o[i] === 1) { dd += (o[i] ? 'L' : 'M') + o[i + 1] + ' ' + o[i + 2]; i += 3; }
+      if (o[i] === 0 || o[i] === 1) { dd += (o[i] ? 'L' : 'M') + pt(o[i + 1], o[i + 2]); i += 3; }
       else if (o[i] === 2) {
         const [cx, cy, r, a0, a1, cw] = o.slice(i + 1, i + 7), [a, sw] = arcSweep(a0, a1, cw), n = Math.max(2, Math.ceil(Math.abs(sw) / (Math.PI / 18)));
-        for (let k = 0; k <= n; k++) dd += (k ? 'L' : 'M') + (cx + r * Math.cos(a + sw * k / n)) + ' ' + (cy + r * Math.sin(a + sw * k / n));
+        for (let k = 0; k <= n; k++) dd += (k ? 'L' : 'M') + pt(cx + r * Math.cos(a + sw * k / n), cy + r * Math.sin(a + sw * k / n));
         i += 7;
       } else i++;
     }
@@ -5365,7 +5701,7 @@ function applyView(gesture = false) {
   ui.grips.setAttribute('viewBox', `0 0 ${w} ${ch}`);
   ui.svg.setAttribute('preserveAspectRatio', 'none');
   // 100% = real size on a 96 dpi screen (3.78 px per mm)
-  ui.pct.textContent = Math.round(view.scale / (96 / 25.4) * 100) + '%';
+  ui.pct.textContent = zoomLabel(view.scale);
   ui.fitBtn.classList.toggle('on', view.fitted);
   drawTools();
   drawSheetSel();
@@ -5717,23 +6053,31 @@ function paintEditable(c, d, base, marks, part, afterBase, due) {
   return drawn;
 }
 
-function fit(gesture = false) {
+/** What Fit shows on this tab (the box r in mm, its padding P, the room w2 x h2 in px and the scale), worked out without touching the view; null when there is no room yet. */
+function fitFrame() {
   const { w, h: ch } = canvasSize();
   // the sheet and, if one is open, the drawing; room for the dimension lines around
   const d = curDoc(), part = partView(d), lay = !!(d && d.lay), cb = cmpBox(d);
   const r = cb ? boxOnSheet(cb, state.sheetH) : part ? boxOnSheet(viewBox(d), state.sheetH) : lay ? fitRect(state.sheetW, state.sheetH, null) : boxOnSheet([0, 0, 200, 120], state.sheetH), P = lay ? 80 : 30;
   const bw = r[2] - r[0] + 2 * P, bh = r[3] - r[1] + 2 * P - (lay ? 10 : 0);
   const R = state.rulers ? RULER : 0, w2 = w - R, h2 = ch - R;                  // the rulers cover the top and left edge of the canvas: fit into what is left
-  if (w2 <= 0 || h2 <= 0) return;                                                // no room yet (canvas hidden or being laid out): a negative scale made a negative SVG viewBox; the next resize fits
-  view.scale = Math.min(w2 / bw, h2 / bh);
-  view.ox = r[0] - P - (w2 / view.scale - bw) / 2 - R / view.scale;
-  view.oy = r[1] - P - (h2 / view.scale - bh) / 2 - R / view.scale;
+  if (w2 <= 0 || h2 <= 0) return null;                                           // no room yet (canvas hidden or being laid out): a negative scale made a negative SVG viewBox; the next resize fits
+  return { r, P, bw, bh, R, w2, h2, scale: Math.min(w2 / bw, h2 / bh) };
+}
+function fit(gesture = false) {
+  const f = fitFrame();
+  if (!f) return;
+  view.scale = f.scale;
+  view.ox = f.r[0] - f.P - (f.w2 / view.scale - f.bw) / 2 - f.R / view.scale;
+  view.oy = f.r[1] - f.P - (f.h2 / view.scale - f.bh) / 2 - f.R / view.scale;
   view.fitted = true;
   applyView(gesture === true);
 }
+/** The smallest zoom (px per mm) this tab allows (TODO 357): 0.05, or a tenth of its Fit on a huge drawing, so the wheel can always go back out to Fit and past it. */
+const zoomFloor = () => { const f = fitFrame(); return f ? Math.min(0.05, f.scale / 10) : 0.05; };
 
 function zoomAt(factor, px, py, gesture = false) {
-  const next = Math.min(1000, Math.max(0.05, view.scale * factor));
+  const next = Math.min(1000, Math.max(zoomFloor(), view.scale * factor));
   const mx = view.ox + px / view.scale, my = view.oy + py / view.scale;
   view.scale = next;
   view.ox = mx - px / next; view.oy = my - py / next;
@@ -6181,6 +6525,7 @@ function layDimsSettle(lay, names) {
 function update(refit = false, dimNames) {
   const lay = curLay();
   if (lay) layDimsSettle(lay, dimNames);
+  if (lay) { const d = curDoc(); LD.syncTitle(lay, d.titleBlock, d.name, today(), () => 'tb' + uid()); }       // the title block's auto fields (sheet size, date, file) stay live
   if (lay) LD.refreshAttributes(lay);
   layout = gridNow();
   for (let i = 0; i < 3 && pruneGaps(); i++) layout = gridNow();
@@ -7272,7 +7617,7 @@ function commit(d, next, label, keepSel) {       // keepSel (a grip edit's objec
       cached = null;
     }
   }
-  pushHistory(d, { ...snapshotOf(d), fl: oldFl, ...keepSel && { sel: [...keepSel], grip: true } }, label); d.newLayer = null;
+  pushHistory(d, { ...snapshotOf(d), fl: oldFl, ...keepSel && { sel: [...keepSel], grip: true }, ...next.renamed && { renamed: [...next.renamed].reverse() }, ...next.kept && { kept: next.kept } }, label); d.newLayer = null;       // renamed [from, to]: Undo renames it back
   restore(d, next, fl, names, index);
   return true;
 }
@@ -7336,7 +7681,12 @@ function restore(d, st, drawn, layerNames, index) {
   const was = d.cnt?.entities === d.raw.entities && d.cnt.counts === d.counts && d.cnt.n === d.entities ? d.cnt : null, prevIx = Ed.prevIndex(index, d.ed, d.fl, d.edPrev);       // before the entity list and fl change: the counts and the pick index are patched from these
   d.raw.groups = st.groups || followGroups(d.raw.groups, d.raw.entities, st.entities);       // Undo / Redo bring the groups back; an edit follows its entities
   d.raw.entities = st.entities; d.raw.blocks = st.blocks;
-  const names = layerNames || [...d.off].map((i) => d.fl.layers[i] && d.fl.layers[i].name);
+  const ren = st.renamed;       // [from, to]: a layer rename (or its Undo / Redo): everything that holds the name by name follows it
+  const names = (layerNames || [...d.off].map((i) => d.fl.layers[i] && d.fl.layers[i].name)).map((n) => (ren && n === ren[0] ? ren[1] : n));
+  if (ren && d.hid?.size) {       // the renamed entities are new objects, at the same numbers
+    const kept = new Set(); before.entities.forEach((e, i) => { if (d.hid.has(e)) kept.add(st.entities[i]); });
+    d.hid = kept; d.hidC = null; drawn = null;
+  }
   let fl;
   try { fl = drawn || flatten(d.raw, d.hid); } catch (e) {
     if (!(e instanceof DrawingError)) throw e;
@@ -7346,7 +7696,14 @@ function restore(d, st, drawn, layerNames, index) {
     note(e.message); return false;
   }
   restoreBg(d, st);
+  if (ren) {
+    if (d.locked?.delete(ren[0])) d.locked.add(ren[1]);
+    if (d.addedLayers?.delete(ren[0])) d.addedLayers.add(ren[1]);
+    if (d.curLayer === ren[0]) d.curLayer = ren[1];
+    for (const tab of state.docs) if (tab.cmp) tab.cmp.items = tab.cmp.items.map((x) => (cmpSourceTab(x) === d ? { ...x, fl: { ...x.fl, layers: x.fl.layers.map((l) => (l.name === ren[0] ? { ...l, name: ren[1] } : l)) } } : x));       // Compare's snapshots keep their hidden layers by name
+  }
   d.off = new Set(fl.layers.map((l, i) => (names.includes(l.name) ? i : -1)).filter((i) => i >= 0));      // layer numbers can shift: keep them by name
+  if (st.kept) layerKept(d, st.kept);       // a layer delete, its Undo or Redo: the layer's lock and Layers + Add mark
   if (index) { index.fl = fl; index.items = fl.items; }
   const c = patchedCounts(was, d.raw, fl);
   Object.assign(d, { fl, counts: c.counts, entities: c.n, cnt: { entities: d.raw.entities, names: fl.layers.map((l) => l.name), space: spaceOf(fl), counts: c.counts, n: c.n }, edPrev: prevIx, box: drawingBoxMm(fl, d.factor), dirty: true, ed: index || null, outl: null, sel: new Set(), stretchSelection: null, hl: [] });
@@ -7384,6 +7741,10 @@ function dropLinePoint(d) {
 function stepHist(d, dir, snapshot = d.lay ? laySnap(d.lay) : snapshotOf(d)) {
   const cur = { ...snapshot, ...(!d.lay && { sel: [...(d.sel || [])] }) }, st = (d.lay ? layHist(d) : d.hist)[dir](cur);
   cur.blSize = st?.blSize;
+  if (d.lay) { if (st && 'tb' in st) cur.tb = 'tb' in snapshot ? snapshot.tb : d.titleBlock; else delete cur.tb; }       // the other way of a title block step carries the settings too
+  if (st?.renamed) cur.renamed = [...st.renamed].reverse();       // the other way (Redo of an Undo, Undo of a Redo) renames back
+  if (st?.kept) cur.kept = st.kept;       // a layer delete: the same layer's marks both ways
+  if (d.lay && st?.hid) cur.hid = [...(d.hiddenParts || [])];
   if (d.lay && dir === 'undo' && layHist(d).labels().future[0]?.startsWith('Paste ')) cur.lsel = [];       // Redo of a paste leaves no selection, as on a drawing.
   if (st?.grip) { cur.grip = true; if (d.lay) cur.lsel = st.lsel; else cur.sel = st.sel; }
   else { delete cur.grip; if (!d.lay) delete cur.sel; }
@@ -11208,6 +11569,7 @@ function attributePick(e, command = false) {
   if (rows && !rows.length) { note('That block has no editable attributes.'); return true; }
   pdrag = null; state.drawingRotate = null; state.mode = 'select'; renderCommand();
   let loose = placed?.src === 'loose' ? placed.i : null;
+  const title = !!d.lay && TB.isTitlePart(part) && ent.type === 'INSERT', auto = title && TB.titleAuto(d.lay, d.name, today());       // the sheet's title block: typed fields go to the tab's settings, Reset puts a field back to auto
   openAttributes(ent, raw.blocks, (next) => {
     if (d.lay) {
       const g = startGesture(d, ent.type === 'ATTDEF' ? 'Edit Attribute Definition' : 'Attribute editor');
@@ -11220,13 +11582,14 @@ function attributePick(e, command = false) {
       // A wider value can change the reference corner; keep the geometry in place, including after reopening.
       const origin = mapply(placedMat(old, pl, 0), updated.box[0], updated.box[1]);
       gMark(g);
+      if (title) { g.snap.tb = d.titleBlock; d.titleBlock = TB.typedFromEnt(next, auto, d.titleBlock); }       // after gMark: the undo step keeps the old settings
       if (loose == null) loose = gLoose(g, slot);
       d.lay.parts[id] = { ...old, ...updated };
       d.lay.placed[loose] = { ...pl, partId: id, x: origin[0], y: -origin[1] };
       if (!shared) delete d.lay.parts[old.id];
       gCommit(g); update();
     } else if (!commit(d, { entities: d.raw.entities.map((x, i) => i === hit ? next : x), blocks: d.raw.blocks }, ent.type === 'ATTDEF' ? 'Edit Attribute Definition' : 'Attribute editor')) return;       // too nested: commit showed why
-  });
+  }, title ? TB.titleValues({}, auto) : null, title ? { next: (values) => TB.nextRevision(values, today()), reason: TB.REV_FULL } : null);
   return true;
 }
 
@@ -13814,6 +14177,7 @@ async function cmpLoad(d, name, buf, path = null) {
   else if (!/\.dxf$/i.test(name)) { note(name + ': Compare opens DXF drawings'); return; }
   const r = await readDrawing(buf instanceof ArrayBuffer ? buf : buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength));
   if (!r.ok) { note(name + ': ' + (r.sorry || 'could not read this drawing' + (r.error ? ' (' + r.error + ')' : ''))); return; }
+  await attachPictures(r, path);
   if (state.docs.includes(d)) cmpAdd(d, { name, raw: r.doc, fl: r.result, factor: unitFactor(r.result.units), off: startHidden(r.result) });
 }
 
@@ -13906,7 +14270,7 @@ function zoomToBox(b, pad) {
   const { w, h: ch } = canvasSize(), R = state.rulers ? RULER : 0, bw = b[2] - b[0] + 2 * pad, bh = b[3] - b[1] + 2 * pad;
   if (w - R <= 0 || ch - R <= 0) return;                            // a view no bigger than its rulers: no negative scale (253c2)
   markView();
-  view.scale = Math.min(40, (w - R) / bw, (ch - R) / bh);
+  view.scale = Math.max(zoomFloor(), Math.min(40, (w - R) / bw, (ch - R) / bh));
   view.ox = (b[0] + b[2]) / 2 - (w + R) / 2 / view.scale;
   view.oy = state.sheetH - (b[1] + b[3]) / 2 - (ch + R) / 2 / view.scale;
   view.fitted = false;

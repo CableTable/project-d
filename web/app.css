@@ -584,6 +584,7 @@ select.fld { font-family: var(--sans); }
 .qs-row { display: grid; grid-template-columns: 100px minmax(0, 1fr); gap: 12px; align-items: start; }
 .qs-row > span { padding-top: 6px; }
 .qs-row .fld { width: 100%; }
+.qs-row > input[type=checkbox] { justify-self: start; margin: 7px 0 0; }
 .qselect-dialog select[size] { height: 150px; padding: 4px; }
 .qselect-dialog fieldset { border: 1px solid var(--line); padding: 10px; display: grid; gap: 10px; }
 .qselect-dialog fieldset label, .qs-check { display: flex; gap: 8px; align-items: center; }
@@ -601,8 +602,15 @@ select.fld { font-family: var(--sans); }
 .attribute-list tbody tr { cursor: pointer; }
 .attribute-list tbody tr:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .cutdlg { width: min(580px, 100%); }
-.export-dxf-dialog { width: min(460px, 100%); }
+.export-dxf-dialog { width: min(460px, 100%); max-height: 100%; overflow-y: auto; }
+.export-dxf-dialog.batch { width: min(640px, 100%); }
 .export-dxf-dialog .fld { width: 100%; }
+.export-dxf-dialog .pd-tabs { padding: 0; flex-shrink: 0; }
+.export-dxf-dialog > * { flex-shrink: 0; }
+.export-dxf-dialog .export-foot { position: sticky; bottom: -16px; background: var(--panel); padding: 8px 0; margin-bottom: -16px; }
+.export-dxf-dialog .export-batch { flex: none; min-height: auto; padding: 0; overflow: visible; gap: 10px; }
+.export-dxf-dialog .export-batch .pd-list { max-height: 150px; }
+.export-dxf-dialog .pd-row .fld { width: auto; }
 .export-dxf-layers { max-height: 150px; overflow: auto; border: 1px solid var(--line); border-radius: var(--r); background: var(--field); padding: 6px 8px; display: grid; gap: 4px; }
 .export-dxf-layers label { display: flex; gap: 8px; align-items: center; overflow-wrap: anywhere; }
 .cutdlg .fld { width: 70px; }
@@ -1021,6 +1029,9 @@ button.cswatch, button.ribbon-swatch { padding: 0; cursor: pointer; }
 .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; opacity: .7; }
 .nestdlg .pd-footer .mono { white-space: nowrap; }
 .nestdlg .mode { align-self: flex-start; }
+.nestdlg .mode .seg { padding: 0 7px; }   /* four choices share the 340 px column */
+.nestdlg .pd-row[hidden] { display: none; }
+.nestdlg .pd-row .cnt { border-color: var(--line); background: var(--field); }
 .tracedlg { width: min(960px, 100%); height: min(660px, 100%); border-color: var(--sheetline); }
 .tracedlg .pd-left { width: 300px; gap: 10px; }
 .tracedlg .pd-right { overflow-y: auto; }
@@ -1072,6 +1083,8 @@ button.cswatch, button.ribbon-swatch { padding: 0; cursor: pointer; }
 .or.dim .onm, .or.dim .ocnt, .or.dim .oti, .or.dim .osw { opacity: .45; }
 .or.more { width: 100%; border: 0; background: none; color: var(--accenttext); font: inherit; font-size: 12px; cursor: pointer; }
 .onm { flex: 1; overflow: hidden; text-overflow: ellipsis; text-align: left; }
+.or.layer .onm.nm { flex: 0 1 auto; }       /* a layer name hugs its text: a double-click on it renames, one past it only makes the layer current (TODO 8a) */
+.or.layer .onm.nm + * { margin-left: auto; }
 .ocnt { font-family: var(--mono); font-size: 11px; color: var(--muted); }
 .osw { width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; display: block; }
 .otw { width: 14px; display: inline-flex; justify-content: center; color: var(--muted); flex-shrink: 0; }

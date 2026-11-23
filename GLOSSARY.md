@@ -8,6 +8,8 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **PDF-compatible Illustrator file**: An `.ai` saved with Illustrator's Create PDF Compatible File option. Open imports its PDF artwork as a drawing, with one layer per outline colour; Save writes a DXF. Where: `DECISIONS.md`, Illustrator and PDF colours (TODO 300).
 
+**Page picture**: One PDF page opened as a picture on the "PDF pages" layer, at its true page size, so it can be drawn over and saved back as a PDF page with Save as PDF (pages). A page picture on a hidden layer is not a page. Works on Drawings, Layouts and Compare. Where: `rook-hq/runs56/grill-358.md`, `grill-358c.md` (TODO 358). Avoid: background picture (that is the locked, dimmed one from Import background).
+
 **Start screen**: The page the desktop app shows when it starts with no file, or when the last tab closes: New drawing, New layout, Open, Compare and Recent files. It covers the current tab and is not a drawing tab; the house button at the left of the tab strip shows it again. Options "At start" turns it off. Where: `rook-hq/runs49/grill-307.md` (TODO 307). Avoid: Home, Welcome screen (Home is the first ribbon tab).
 
 **Context tab**: A ribbon tab shown for the current selection, such as Part when placed parts are selected on a layout. Where: `web/app.js`.
@@ -27,6 +29,8 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 **Backup_of_**: The DXF beside a saved drawing that holds its disk bytes from before the latest in-place Save, replaced on every Save. Where: `web/doc.js`, `web/app.js`; `DECISIONS.md`, TODO 308. Avoid: Autosave.
 
 **Background picture**: A dimmed, locked JPG, PNG or rendered PDF page beneath a drawing that can be scaled, rotated and measured but is left out of DXF Save and part PDF output. Where: `DECISIONS.md`, Background, Part PDF and Autosave and recovery.
+
+**Batch export**: The Export… dialog's tab A folder at once: every .dxf and .dwg in a folder (Subfolders too optional) exported to DXF, SVG or PNG with the dialog's Format, Text, Scale, Precision, Line weights and Hidden objects; each file keeps its own units and exports its visible layers (all of them with Hidden objects ticked), to `<name>-export.<ext>` beside the file or in a chosen folder. Never overwrites (a taken name gets `(2)`, `(3)`…); a file that fails is skipped and named in the end line. Where: `web/batch-folder.js` (shared with Save as PDF's A folder at once), `web/app.js`; `DECISIONS.md`, Batch export (TODO 109d2). Avoid: Publish.
 
 **Balloon**: A numbered inspection callout placed by hand on a drawing, PDF or picture, with its data saved in a separate balloon file. Where: `DECISIONS.md`, Inspection balloons. Avoid: Dimension.
 
@@ -80,6 +84,10 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 **Cutter export (Export for cutter)**: Writes a separate DXF copy containing only LINE, ARC and LWPOLYLINE, flattening curves to a chosen tolerance and leaving out text, fills and other unsupported objects. Where: `DECISIONS.md`, Cutter-safe DXF. Avoid: Normal Save.
 
 **Export DXF**: Writes a separate DXF copy with chosen export settings (units, scale, precision, layers, text as text or curves); the open drawing and its saved state are unchanged. Where: `DECISIONS.md`, Export DXF settings; `TODO.md`, item 109. Avoid: Save, Save as.
+
+**Hidden objects**: Objects with DXF code 60 = 1 (invisible), and the objects of off or frozen layers. The Export dialog's Hidden objects tick keeps them (DXF default on) or leaves them out (SVG / PNG default off, as Save as PDF and AutoCAD's plot do). Where: `DECISIONS.md`, Export line weights and hidden objects (TODO 109d1); `web/drawing.js`, `flatten` option `hidden`. Avoid: Invisible, Off layers.
+
+**Export format**: DXF, SVG (and PNG, TODO 109c2) chosen in the Export dialog's Format list; Save as PDF stays its own command. Where: `DECISIONS.md`, Export format; `TODO.md`, item 109. Avoid: File type.
 
 **Dimension**: A saved measurement callout with lines, arrows and a value that does not count toward a part's size. Where: `DECISIONS.md`, Kept dimensions and sizes and More dimension types. Avoid: Driving constraint.
 
@@ -448,6 +456,8 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 **Tokens used, running total**: The usage page's cumulative lines across 14 IST days for Rook, Bishop and Knight. Each day adds input + output + cache-creation tokens, excluding cache reads; Codex cached input is subtracted from input. Where: usage page, Usage. Avoid: Lifetime totals, usage-limit percentages or the per-session runs table.
 
 **Title block**: The optional 22 mm box at the bottom of a fitted/check PDF print. Its file name, scale, part / size / page, date and footnote can be edited in PDF / Print; Reset restores automatic text. Turning it off gives its space to the drawing. Settings belong to the file. Avoid: Job strip (the separate label on a 1:1 sheet or tile).
+
+**Title block (sheet)**: The block object a Layouts sheet carries (Home > Parts > Title block): one per sheet, bottom-right inside the grippers, with attributes for title, drawing no., revision, scale, sheet size, date, drawn by, material and file name. Scale, size, date and file name are automatic until typed; double-click edits them in the Attribute editor, where Reset puts one back to automatic. Typed values belong to the file, with the PDF Title block settings; the switch there hides it. Where: TODO 9a, `web/titleblock.js`. Avoid: Title block (the PDF strip), Block object (any block on a layout).
 
 **Swatch**: One square colour box. Left click sets the selected objects' fill colour, right click their line colour (CorelDRAW; TODO 295).
 

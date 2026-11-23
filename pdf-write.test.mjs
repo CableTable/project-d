@@ -382,10 +382,11 @@ test('a sheet over 200 in gets /UserUnit and a PDF 1.6 header with the same phys
   assert.ok(text(P.writePdf([small])).startsWith('%PDF-1.4\n'));
 });
 
-test('freePdfName: never a name that is taken (in this run or on disk)', async () => {
+test('freeName: never a name that is taken (in this run or on disk); PDF unless an extension is given', async () => {
   const onDisk = new Set(['bracket.pdf', 'bracket (2).pdf']);
-  assert.equal(await X.freePdfName('bracket', async (n) => onDisk.has(n)), 'bracket (3).pdf');
-  assert.equal(await X.freePdfName('other', async (n) => onDisk.has(n)), 'other.pdf');
+  assert.equal(await X.freeName('bracket', async (n) => onDisk.has(n)), 'bracket (3).pdf');
+  assert.equal(await X.freeName('other', async (n) => onDisk.has(n)), 'other.pdf');
+  assert.equal(await X.freeName('bracket', async (n) => onDisk.has(n), 'svg'), 'bracket.svg');
 });
 
 test('TODO 215a: scale text parses as 1:50 or 2%, nothing else; A2 and A1 exist', () => {

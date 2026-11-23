@@ -25,7 +25,7 @@ export function presetFor(w, h) {
 /** A gripper size from state: a number of mm, never negative. */
 export const gripOf = (o, edge) => Math.max(0, Number(o[GRIP_KEYS[edge]]) || 0);
 
-/** The area parts may use: each side keeps clear by its own gripper (no margin). */
+/** The area parts may use: each side keeps clear by its own gripper (no margin). The title block is an obstacle (o.occupied), not a strip: copies beside it stay. */
 export function usableArea(o) {
   const l = gripOf(o, 'left'), t = gripOf(o, 'top');
   return { x: l, y: t, w: o.sheetW - l - gripOf(o, 'right'), h: o.sheetH - t - gripOf(o, 'bottom') };

@@ -27,7 +27,7 @@ const W32 = [278, 278, 355, 556, 556, 889, 667, 191, 333, 333, 389, 584, 278, 33
   556, 556, 333, 500, 278, 556, 500, 722, 500, 500, 500, 334, 260, 334, 584];
 
 // Windows-1252's 0x80–0x9F, by Unicode
-const CP1252 = { 0x20ac: 0x80, 0x201a: 0x82, 0x192: 0x83, 0x201e: 0x84, 0x2026: 0x85, 0x2020: 0x86, 0x2021: 0x87, 0x2c6: 0x88, 0x2030: 0x89,
+export const CP1252 = { 0x20ac: 0x80, 0x201a: 0x82, 0x192: 0x83, 0x201e: 0x84, 0x2026: 0x85, 0x2020: 0x86, 0x2021: 0x87, 0x2c6: 0x88, 0x2030: 0x89,
   0x160: 0x8a, 0x2039: 0x8b, 0x152: 0x8c, 0x17d: 0x8e, 0x2018: 0x91, 0x2019: 0x92, 0x201c: 0x93, 0x201d: 0x94, 0x2022: 0x95, 0x2013: 0x96,
   0x2014: 0x97, 0x2dc: 0x98, 0x2122: 0x99, 0x161: 0x9a, 0x203a: 0x9b, 0x153: 0x9c, 0x17e: 0x9e, 0x178: 0x9f };
 // what the font does not have, said another way
@@ -91,6 +91,8 @@ export class Page {
   fillColor(c) { const k = c.join(); if (this.st.fill !== k) { this.cmds.push(['rg', ...c]); this.st.fill = k; } }
   /** mm. */
   lineWidth(w) { if (this.st.width !== w) { this.cmds.push(['w', w]); this.st.width = w; } }
+  /** Every stroke at 0.05 mm (Export's Line weights off, TODO 109d1): only the width commands change, fills, text and pictures stay. */
+  hairlines() { this.cmds = this.cmds.map((c) => c[0] === 'w' ? ['w', 0.05] : c); return this; }
   lineEnds(cap = 'butt', join = 'miter') {
     const J = Math.max(0, ['butt', 'round', 'square'].indexOf(cap)), j = Math.max(0, ['miter', 'round', 'bevel'].indexOf(join));
     if (this.st.cap === J && this.st.join === j) return;
