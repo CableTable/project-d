@@ -209,7 +209,7 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
 109. **In-depth export system like AutoCAD (formats, options, batch)** (L, ask, T26): see T26 in support/tickets.md. Grilled S38k (`runs38/grill-109.md`, DECISIONS "Export DXF settings").
     109a. ✅ (built, Knight `5b1a02b` + 7 fix rounds, last Opus `ac014d7`; review ship as is, 2 Lows) File -> Export DXF… dialog in every tab with Units (mm / in), Scale and Precision: pure writer options in `web/dxf-write.js` with unit tests (coordinates, sizes, radii, text heights, `$INSUNITS`, decimals), the open drawing unchanged; browser step.
     109b. ✅ (built, Bishop, 2026-11-21: `a69488f` + fix `96b71d9` -> `0f906aa`; suite `SUITE unit=0 browser=0`) (after 109a) Layers (ticked, default visible) and Text as Text / Curves (Text to outlines maths) in the same dialog; unit tests and browser step.
-    109c. SVG and PNG export: Format select in the Export… dialog (grill `rook-hq/runs56/grill-109c.md` + `grill-109c-regrill.md`, Rook S56e 2026-11-23), split:
+    109c. ✅ (built, King, Rook S56e 2026-11-23: 109c1 `31e5851` + 109c2 `91c1e6f`, both reviews ship, suite `SUITE unit=0 browser=0` on 91c1e6f; exe Save dialog for .svg / .png unchecked) SVG and PNG export: Format select in the Export… dialog (grill `rook-hq/runs56/grill-109c.md` + `grill-109c-regrill.md`, Rook S56e 2026-11-23), split:
       109c1. SVG: `web/svg-write.js` (Page -> SVG) fed by Export DXF's copy; same dialog in every tab; menu 'Export DXF…' -> 'Export…' (M).
       109c2. (after 109c1) PNG: DPI, background, size cap, bytes save (S-M).
     109d. (later) Line weights, hidden objects, batch export.
