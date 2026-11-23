@@ -450,6 +450,7 @@
   "Auto-nest: Run packs a preview (not on the sheet), Cancel leaves the sheet as it was, Apply puts the parts on as one undo step, Ctrl+Z takes them off": 1.23,
   "Auto-nest: too many for the sheet → left-overs listed (\"N × name\"); a rotations setting changes the run; the next sheet gets a layout tab with them": 3.87,
   "Auto-nest: Stop keeps what was placed so far; a run of 50 parts stays well under 10 s": 3.39,
+  "TODO 267b: Auto-nest Free angles: a 5 s limit packs a preview and names the seeds tried, Stop keeps the best, Apply places it as one undo step; the 3 old choices are unchanged": 13,
   "Auto-nest: with 2 or 12 library parts every row keeps its height; the parts list scrolls inside a max height": 1.26,
   "Closing with unsaved tabs: the exe's close request asks Save / Don't save / Cancel; a browser unload is warned; F5 and Ctrl+R are off in the exe": 0.46,
   "Audit 1: close → Don't save (or Save) deletes the recovery copies, so a reload offers nothing": 2.33,

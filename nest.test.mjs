@@ -6,7 +6,7 @@ import { placedMat, placedBox } from './web/apply.js';
 import { newDoc, addEntities, lwpoly, rect as dxfRect, line, circle as dxfCircle, text as dxfText } from './web/dxf-write.js';
 import * as LD from './web/layoutdoc.js';
 import { outlineOf, hull } from './web/nestshape.js';
-import { pack, packSteps, summary, polyAt, polyArea, polyBox, clear, edgeDistance, overlaps, ROTATIONS, freeTry, mulberry32, lru, CACHE_MAX } from './web/nest.js';
+import { pack, packSteps, summary, polyAt, polyArea, polyBox, clear, edgeDistance, overlaps, ROTATIONS, freeTry, mulberry32, lru, CACHE_MAX, betterTry, freeRun } from './web/nest.js';
 
 let n = 0;
 const t = (name, fn) => { fn(); n++; };
@@ -246,5 +246,46 @@ t('the cache holds at most 2048 entries, the oldest go first, a read keeps an en
   const d = lru(2); d.set('a', 1); d.set('b', 2); d.get('a'); d.set('c', 3);
   assert.equal(d.get('b'), undefined); assert.equal(d.get('a'), 1);
 });
+
+t('Free angles: the best try is the highest usedPct, a tie goes to the lower seed whichever came first', () => {
+  const a = { seed: 5, usedPct: 40 }, b = { seed: 2, usedPct: 40 }, c = { seed: 9, usedPct: 41 }, d = { seed: 0, usedPct: 39.9 };
+  assert.equal(betterTry(a, null), true);
+  assert.equal(betterTry(c, a), true); assert.equal(betterTry(a, c), false);
+  assert.equal(betterTry(b, a), true); assert.equal(betterTry(a, b), false, 'a tie: the lower seed');
+  assert.equal(betterTry({ seed: 3, usedPct: 40 + 1e-12 }, b), false, 'ulp noise is a tie, seed 2 stays');
+  assert.equal(betterTry(d, a), false);
+  for (const order of [[a, b, c, d], [d, c, b, a], [c, a, d, b]]) assert.equal(order.reduce((best, x) => (betterTry(x, best) ? x : best), null), c);
+  for (const order of [[a, b, d], [d, b, a], [b, d, a]]) assert.equal(order.reduce((best, x) => (betterTry(x, best) ? x : best), null), b);
+});
+
+t('Free angles: workers k of K try seeds k, k+K, …; seed 0 is never cut by the time limit; the best of all workers is the brute-force best', () => {
+  const items = [{ id: 'c', count: 5, poly: circle(30) }, { id: 'L', count: 4, poly: L }, { id: 'r', count: 5, poly: rect(50, 20) }], area = { x: 0, y: 30, w: 150, h: 100 }, job = { area, gap: 4, rotations: 'free', items }, total = 14;
+  // the limit is already past: worker 0 still packs seed 0 (= Every 90°) and nothing else, worker 1 packs nothing
+  const late = (k) => { const g = freeRun(job, k, 2, 0, () => 1); const out = []; let r; while (!(r = g.next()).done) out.push(r.value); return { out, ...r.value }; };
+  const w0 = late(0), w1 = late(1);
+  assert.equal(w0.tried, 1); assert.equal(w0.best.seed, 0); assert.deepEqual(w0.best.placements, pack({ area, gap: 4, rotations: 'all', items }).placements);
+  assert.deepEqual(w0.out.filter((m) => m.type === 'best').map((m) => m.tried), [1]); assert.ok(w0.out.some((m) => m.type === 'step' && m.seed === 0));
+  assert.equal(w1.tried, 0); assert.equal(w1.best, null);
+  // the clock runs out after ~60 steps: each worker's tried count says which seeds it finished
+  const run = (k, K) => { let steps = 0; const g = freeRun(job, k, K, 1, () => (steps > 60 ? 2 : 0)); let r; while (!(r = g.next()).done) { if (r.value.type === 'step') steps++; } return r.value; };
+  const K = 2, ws = [run(0, K), run(1, K)], seen = [];
+  assert.ok(ws.every((w) => w.tried > 1));
+  const all = ws.flatMap((w, k) => Array.from({ length: w.tried }, (_, i) => k + K * i));
+  for (const s of all) seen.push({ ...pack({ area, gap: 4, rotations: 'all', items, ...freeTry(s, total) }), seed: s });
+  assert.ok(new Set(seen.map((x) => x.usedPct.toFixed(6))).size > 1, 'the tries differ');
+  const want = seen.reduce((best, x) => (betterTry(x, best) ? x : best), null);
+  for (const order of [[ws[0].best, ws[1].best], [ws[1].best, ws[0].best]]) {
+    const got = order.reduce((best, x) => (betterTry(x, best) ? x : best), null);
+    assert.equal(got.seed, want.seed); assert.deepEqual(got.placements, want.placements);
+  }
+});
+
+{                                                   // Free angles: the dialog's kept settings (top-level await: t() does not wait)
+  const { kept, limitOf } = await import('./web/nestdlg.js');
+  assert.deepEqual(kept, { rotations: 'all', timeLimit: 60 }, 'the dialog keeps rotations and the time limit; the default stays Every 90°, 60 s');
+  assert.ok('free' in ROTATIONS);
+  assert.deepEqual(['1', '5', '60', '600', '9999', '-3', '12.7', 'abc', ''].map(limitOf), [5, 5, 60, 600, 600, 5, 12, 60, 60]);
+  n++;
+}
 
 console.log(`nest.test.mjs: ${n} tests passed`);
