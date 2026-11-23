@@ -1083,6 +1083,8 @@ button.cswatch, button.ribbon-swatch { padding: 0; cursor: pointer; }
 .or.dim .onm, .or.dim .ocnt, .or.dim .oti, .or.dim .osw { opacity: .45; }
 .or.more { width: 100%; border: 0; background: none; color: var(--accenttext); font: inherit; font-size: 12px; cursor: pointer; }
 .onm { flex: 1; overflow: hidden; text-overflow: ellipsis; text-align: left; }
+.or.layer .onm.nm { flex: 0 1 auto; }       /* a layer name hugs its text: a double-click on it renames, one past it only makes the layer current (TODO 8a) */
+.or.layer .onm.nm + * { margin-left: auto; }
 .ocnt { font-family: var(--mono); font-size: 11px; color: var(--muted); }
 .osw { width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; display: block; }
 .otw { width: 14px; display: inline-flex; justify-content: center; color: var(--muted); flex-shrink: 0; }
