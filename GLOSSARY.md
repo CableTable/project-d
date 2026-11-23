@@ -8,6 +8,8 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **PDF-compatible Illustrator file**: An `.ai` saved with Illustrator's Create PDF Compatible File option. Open imports its PDF artwork as a drawing, with one layer per outline colour; Save writes a DXF. Where: `DECISIONS.md`, Illustrator and PDF colours (TODO 300).
 
+**Page picture**: One PDF page opened as a picture on the "PDF pages" layer, at its true page size, so it can be drawn over and saved back as a PDF page with Save as PDF (pages). A page picture on a hidden layer is not a page. Works on Drawings, Layouts and Compare. Where: `rook-hq/runs56/grill-358.md`, `grill-358c.md` (TODO 358). Avoid: background picture (that is the locked, dimmed one from Import background).
+
 **Start screen**: The page the desktop app shows when it starts with no file, or when the last tab closes: New drawing, New layout, Open, Compare and Recent files. It covers the current tab and is not a drawing tab; the house button at the left of the tab strip shows it again. Options "At start" turns it off. Where: `rook-hq/runs49/grill-307.md` (TODO 307). Avoid: Home, Welcome screen (Home is the first ribbon tab).
 
 **Context tab**: A ribbon tab shown for the current selection, such as Part when placed parts are selected on a layout. Where: `web/app.js`.
