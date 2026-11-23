@@ -212,7 +212,9 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
     109c. ✅ (built, King, Rook S56e 2026-11-23: 109c1 `31e5851` + 109c2 `91c1e6f`, both reviews ship, suite `SUITE unit=0 browser=0` on 91c1e6f; exe Save dialog for .svg / .png unchecked) SVG and PNG export: Format select in the Export… dialog (grill `rook-hq/runs56/grill-109c.md` + `grill-109c-regrill.md`, Rook S56e 2026-11-23), split:
       109c1. SVG: `web/svg-write.js` (Page -> SVG) fed by Export DXF's copy; same dialog in every tab; menu 'Export DXF…' -> 'Export…' (M).
       109c2. (after 109c1) PNG: DPI, background, size cap, bytes save (S-M).
-    109d. (later) Line weights, hidden objects, batch export.
+    109d. Line weights, hidden objects, batch export (grill `rook-hq/runs56/grill-109d.md` + `grill-109d-regrill.md`, Rook S56f 2026-11-23), split:
+      109d1. ✅ (built, King, Rook S56f 2026-11-23: `8147300` + fix `e605dd0`, review ship after fix 1, suite `SUITE unit=0 browser=0` on e605dd0) Export… ticks: Line weights (off = 0.05 mm hairlines, SVG / PNG) and Hidden objects (code-60 + off / frozen layers; DXF default on, SVG / PNG off).
+      109d2. (after 109d1; King `42f90c2` in review) Batch: 'A folder at once' tab in Export…, PDF batch pattern, never overwrites, failures skipped and named.
 110. **Ribbon on top like AutoCAD** (L, ask, T27): see T27 in support/tickets.md. Grill first.
     110a. ✅ Theme: AutoCAD dark, CorelDRAW light (built, session 21).
     110b. ✅ Ribbon frame: Option A, per-kind tabs, remembered fold states, Home / View / Output (built, Knight).
