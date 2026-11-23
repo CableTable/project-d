@@ -16,7 +16,7 @@ for (const kind of ['drawing', 'layout']) {
   const autosaveNow = runInNewContext(`${source}\nautosaveNow`, {
     autosaving: false, dropping: false, state, PS, BAL, newDoc, balOf: (d) => d.balloons || BAL.EMPTY, uid: () => kind,
     rawForSave: (d) => d.raw,
-    writeDxf: () => { serializations++; return text; },
+    writeIdle: async () => { serializations++; return text; },          // TODO 237b: autosave writes in idle slices; the fake is the writer itself
     RC: { saveCopy: async (copy) => { writes.push(copy); } },
     dropCopy: async () => assert.fail('a dirty tab must keep its recovery copy'),
     console,
@@ -76,7 +76,7 @@ const drawing = { ...second, drawingUnit: 'inch', balloons: BAL.add(BAL.EMPTY, {
 const writes = [], state = { docs: [drawing] };
 const autosaveNow = runInNewContext(`${source}\nautosaveNow`, {
   autosaving: false, dropping: false, state, PS, BAL, newDoc, balOf: (d) => d.balloons || BAL.EMPTY, uid: () => 'pdf',
-  rawForSave: (d) => d.raw, writeDxf,
+  rawForSave: (d) => d.raw, writeIdle: async (doc, opts) => writeDxf(doc, opts),
   RC: { saveCopy: async (copy) => { writes.push(copy); } }, dropCopy: async () => assert.fail('dirty sheet'), console,
 });
 await autosaveNow(); assert.equal(writes.length, 2);

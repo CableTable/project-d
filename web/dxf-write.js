@@ -320,7 +320,10 @@ export function withoutLayers(doc, names) {
   return { ...doc, entities, blocks, layers, groups: remap(doc.groups, indexes) };
 }
 
-export function writeDxfWithReport(doc, opts = {}) {
+const drain = (steps) => { let r; while (!(r = steps.next()).done); return r.value; };
+export const writeDxfWithReport = (doc, opts = {}) => drain(writeDxfSteps(doc, opts));
+/** writeDxfWithReport as steps: it yields every 64 entities (TODO 237b: autosave runs the steps in idle slices) and returns what writeDxfWithReport returns. */
+export function* writeDxfSteps(doc, opts = {}) {
   const { units, scale = 1, precision = 6 } = opts;
   if (units !== undefined && !['mm', 'in', 'unitless'].includes(units)) throw new Error('Units must be mm or in (unitless drawings do not convert)');
   if (!Number.isFinite(scale) || scale <= 0) throw new Error('Scale must be a number above 0');
@@ -412,11 +415,11 @@ export function writeDxfWithReport(doc, opts = {}) {
     doc.header.$MEASUREMENT = units === 'in' ? '0' : '1';
   }
   const ext = factor !== 1 && opts.extents ? opts.extents.map((n) => n * factor) : opts.extents;
-  return { ...writePreparedDxf(doc, { ...opts, extents: ext }), tables: prepared.tables, skipped: prepared.skipped,
+  return { ...(yield* writePreparedSteps(doc, { ...opts, extents: ext })), tables: prepared.tables, skipped: prepared.skipped,
     ...(unreadLabels.size ? { unreadLabels: [...unreadLabels] } : {}) };
 }
 
-function writePreparedDxf(doc, opts) {
+function* writePreparedSteps(doc, opts) {
   const esc = !!opts.escapeUnicode;
   const precision = opts.precision ?? 6;
   const colourFallbacks = new Map();
@@ -584,7 +587,7 @@ function writePreparedDxf(doc, opts) {
   // ENTITIES
   const entSec = [], entityHandles = [];
   { const o = out(entSec); o.s(0, 'SECTION').s(2, 'ENTITIES');
-    for (const [i, e] of doc.entities.entries()) entityHandles.push(ent(o, e, e.ps ? paperRec : modelRec, memberOf.get(i)));
+    for (const [i, e] of doc.entities.entries()) { entityHandles.push(ent(o, e, e.ps ? paperRec : modelRec, memberOf.get(i))); if (i % 64 === 63) yield; }
     o.s(0, 'ENDSEC'); }
 
   // TABLES

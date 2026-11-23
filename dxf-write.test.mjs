@@ -460,3 +460,28 @@ test('TODO 312: a 100 000-vertex polyline writes without a stack overflow and ke
   const back = D.readDxf(text);
   assert.equal(back.entities[0].r.c.filter((c) => c === 10).length, 100000);
 });
+
+test('TODO 237b: autosave writes in steps, to the same bytes as writeDxf did before (pinned from 807e9f7), also after a structured clone', async () => {
+  const { createHash } = await import('node:crypto');
+  const { nativeDimensionOverrides } = await import('./web/dimension-dxf.js');
+  const { withTitleBlock } = await import('./web/pdf-export.js');
+  const small = W.newDoc(), big = W.newDoc();
+  W.addEntities(small, W.line(0, 0, 10, 5), W.circle(3, 3, 2, { layer: 'Round' }), W.text(1, 1, 2.5, 'Café 中'));
+  W.addLayer(big, 'Parts', { aci: 3 }); W.addBlock(big, 'BOX', [W.rect(0, 0, 4, 2)]);
+  W.addEntities(big, ...Array.from({ length: 150 }, (_, i) => (i % 3 ? W.line(i, 0, i + 1, 9, { layer: 'Parts' }) : W.insert('BOX', i, 5))));
+  const opts = { escapeUnicode: true, extents: null }, sha = (t) => createHash('sha256').update(t).digest('hex');
+  const pages = [[small, undefined, 'f345be2729ee3f85062217f6f4526ffbaed261030ad9b9efbb15f6d7d3b69184', 0], [big, { enabled: true, file: 'Drawing é', scale: '1:2' }, '3636941409fda9631ca91eebe1bf59ea51d7afa95a2084963f2b8519a4d4e1f4', 2]];
+  for (const [raw, titleBlock, pinned, slices] of pages) {
+    const input = withTitleBlock(nativeDimensionOverrides(raw), titleBlock);          // what the app's rawForSave builds
+    assert.equal(sha(W.writeDxf(input, opts)), pinned, 'writeDxf is byte-identical to before');
+    assert.equal(W.writeDxf(structuredClone(input), opts), W.writeDxf(input, opts), 'a structured clone of the input writes the same text');
+    const steps = W.writeDxfSteps(input, opts); let r, n = 0;
+    while (!(r = steps.next()).done) n++;
+    assert.equal(n >= slices, true, `${n} yields: the entity loop gives up the thread every 64 entities`);
+    assert.equal(sha(r.value.text), pinned, 'the steps return the same text');
+  }
+});
+
+test('TODO 237b: a throw inside the steps comes out of next(), like writeDxf throwing', () => {
+  assert.throws(() => W.writeDxfSteps(W.newDoc(), { scale: -1 }).next(), /Scale must be a number above 0/);
+});

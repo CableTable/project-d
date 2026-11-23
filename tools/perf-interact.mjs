@@ -66,7 +66,7 @@ async function instrument(page) {
     if (rec.change != null) r.inject = { longTasks: injected.length, longTotal: injected.reduce((a, b) => a + b, 0), longMax: Math.max(0, ...injected) };
     results.push(r);
     if (r.inject) console.log(`${action} inject (before the picker's change): long tasks ${r.inject.longTasks}, total/max ${r.inject.longTotal.toFixed(1)}/${r.inject.longMax.toFixed(1)} ms`);
-    console.log(`${action}: ${ms} ms; frames ${r.frames}; gaps median/p90/max ${r.gapMedian.toFixed(1)}/${r.gapP90.toFixed(1)}/${r.gapMax.toFixed(1)} ms; long tasks ${r.longTasks}, total/max ${r.longTotal.toFixed(1)}/${r.longMax.toFixed(1)} ms; lineTo ${r.lineTo}; full paints ${r.paints}${resized ? `; first picture: ${snap === '1' ? 'scaled' : 'full'}` : ''}`);
+    console.log(`${action}: ${ms} ms; frames ${r.frames}; gaps median/p90/max ${r.gapMedian.toFixed(1)}/${r.gapP90.toFixed(1)}/${r.gapMax.toFixed(1)} ms; long tasks ${r.longTasks}, total/max ${r.longTotal.toFixed(1)}/${r.longMax.toFixed(1)} ms${r.longTasks <= 12 ? ` (${rec.long.map((d) => d.toFixed(0)).join(' ')})` : ''}; lineTo ${r.lineTo}; full paints ${r.paints}${resized ? `; first picture: ${snap === '1' ? 'scaled' : 'full'}` : ''}`);
   };
   const stop = () => page.evaluate(() => { window.__perfInteract.stop(); delete window.__perfInteract; });
   return { frame, count, results, run, stop };
@@ -373,6 +373,32 @@ async function interactCommit(page, buffer, name) {
   } finally { await stop(); }
 }
 
+/** TODO 237b: one Delete makes the tab dirty; the page's autosave round (?autosave=4000) then runs inside the timed window. */
+async function interactAutosave(page, buffer, name) {
+  const doc = readDxf(decodeDxf(buffer)), fl = flatten(doc), { frame, run, results, stop } = await instrument(page);
+  const [x0, y0, x1, y1] = fl.boxes.model, centre = [(x0 + x1) / 2, (y0 + y1) / 2], off = startHidden(fl);
+  const it = fl.items.find((it) => doc.entities[it.e].type === 'LINE' && itemVisible(it, off) &&
+    Math.abs(it.b[0] - centre[0]) < (x1 - x0) / 10 && Math.abs(it.b[1] - centre[1]) < (y1 - y0) / 10);
+  assert.ok(it, 'the drawing needs a visible LINE near the centre');
+  const pick = [0, 1].map((i) => (it.b[i] + it.b[i + 2]) / 2 * unitFactor(fl.units));
+  try {
+    await openFile(page, name, buffer, doc.entities.length);
+    await fitView(page, frame);
+    const { x, y } = await page.locator('rect.sheet').evaluate((el, [x, y]) => {
+      const b = el.getBoundingClientRect(), k = b.width / Number(el.getAttribute('width'));
+      return { x: b.x + x * k, y: b.y + (Number(el.getAttribute('height')) - y) * k };
+    }, pick);
+    await page.mouse.click(x, y); await frame();
+    // The tick can fire right after the Delete, so the Delete is inside the window: its own long tasks are the 'commit' mode's 'Delete one object' row.
+    await run('Delete + autosave round', async () => { await page.keyboard.press('Delete'); await page.waitForTimeout(9000); });
+    console.log(`Autosave fixture: ${await page.locator('[data-testid=entities]').textContent()} entities after Delete`);
+    const copies = await page.evaluate(async () => (await (await import('./recovery.js')).loadCopies()).map((c) => c.dxf.length));
+    assert.equal(copies.length, 1, 'the autosave round kept one copy');
+    console.log(`Autosave copy: ${copies[0]} characters`);
+    return results;
+  } finally { await stop(); }
+}
+
 /** TODO 356: one commit of each kind on the big drawing: `insert` Moves an INSERT, `rotate` turns a LINE, `dim` places an aligned dimension (the click that makes it). */
 async function interactAction(page, buffer, name, which) {
   const doc = readDxf(decodeDxf(buffer)), fl = flatten(doc), { frame, count, run, results, stop } = await instrument(page);
@@ -519,7 +545,7 @@ async function interactResize(page, buffer, name) {
 
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
   const input = process.argv[2], rest = process.argv.slice(3), port = Number(rest.find((a) => /^\d+$/.test(a))) || 5184, mode = rest.find((a) => !/^\d+$/.test(a)) || 'draw';
-  if (!input || !/^(draw|edit|commit|dim|insert|rotate|cmp|layers|selection|resize|lay:\d+)$/.test(mode)) { console.error('usage: node tools/perf-interact.mjs <file.dxf|spline:900|big:20000> [draw|edit|commit|dim|insert|rotate|cmp|layers|selection|resize|lay:<parts>] [port]'); process.exit(1); }
+  if (!input || !/^(draw|edit|commit|dim|insert|rotate|cmp|layers|selection|resize|autosave|lay:\d+)$/.test(mode)) { console.error('usage: node tools/perf-interact.mjs <file.dxf|spline:900|big:20000> [draw|edit|commit|dim|insert|rotate|cmp|layers|selection|resize|autosave|lay:<parts>] [port]'); process.exit(1); }
   const big = input.startsWith('big:') && bigDoc(Number(input.slice(4)));
   if (big && mode === 'layers') {
     addLayer(big, 'Toggle', { aci: 3 });
@@ -535,7 +561,7 @@ if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.m
     }
     browser = await chromium.launch();
     const page = await (await browser.newContext({ viewport: { width: 1440, height: 900 } })).newPage();
-    await page.goto(`http://localhost:${port}/?autosave=86400000`);
+    await page.goto(`http://localhost:${port}/?autosave=${mode === 'autosave' ? 4000 : 86400000}`);
     await page.waitForSelector('[data-testid=count]', { state: 'attached' });
     const name = /^(spline|big):/.test(input) ? input.replace(':', '-') + '.dxf' : basename(input);
     const results = mode === 'draw' ? await interact(page, buffer, name)
@@ -546,6 +572,7 @@ if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.m
             : mode === 'layers' ? await interactLayers(page, buffer, name)
               : mode === 'selection' ? await interactSelection(page, buffer, name)
                 : mode === 'resize' ? await interactResize(page, buffer, name)
+                  : mode === 'autosave' ? await interactAutosave(page, buffer, name)
                   : await interactLayout(page, buffer, name, Number(mode.slice(4)));
     if (results) console.log(`\n${headlineTable(results)}`);
   } finally { await browser?.close(); server.kill(); }

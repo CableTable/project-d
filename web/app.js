@@ -33,7 +33,7 @@ import { paintDrawing, paintDrawingSteps, paintMarks, drawMarks, drawContour, dr
 import { overlayBox } from './preview.js';
 import { snapPlace, snapUsable, heavy, sameBase, runChunks, blitCovers, panStrips, QUICK_PX, slice as timeSlice } from './perf.js';
 import { flatten, flattenEdit, patchWidths, primeSplines, unionBox, CAP, ACI, UNITS, mapply, mmul, pickIndex, arcSweep, DrawingError } from './drawing.js';
-import { writeDxf, writeDxfWithReport, saveReportNote, unwritable, addLayer, newDoc, lwpoly, point } from './dxf-write.js';
+import { writeDxf, writeDxfSteps, writeDxfWithReport, saveReportNote, unwritable, addLayer, newDoc, lwpoly, point } from './dxf-write.js';
 import * as SH from './shaping.js';
 import { explodeSelection } from './explode.js';
 import { breakApart } from './breakapart.js';
@@ -3868,6 +3868,18 @@ const dropCopiesNow = async (docs) => {
   for (let i = 0; autosaving && i < 100; i++) await new Promise((r) => setTimeout(r, 20));
   return Promise.all(docs.flatMap(PS.pageStates).map(dropCopy));
 };
+/** The steps of writeDxfSteps in idle slices of at most 8 ms (150k entities: 0.5 s in one task, TODO 237b); resolves with what they return, rejects with what they throw. */
+const writeIdle = (doc, opts) => new Promise((resolve, reject) => {
+  const steps = writeDxfSteps(doc, opts), slice = (deadline) => {
+    const start = performance.now();
+    try {
+      let r;
+      while (!(r = steps.next()).done) if (deadline.timeRemaining() < 1 || performance.now() - start > 8) return requestIdleCallback(slice, { timeout: 200 });
+      resolve(r.value.text);
+    } catch (e) { reject(e); }
+  };
+  requestIdleCallback(slice, { timeout: 200 });
+});
 /** One round: copy changed tabs and PDF sheets; drop copies that have been saved. */
 async function autosaveNow() {
   if (autosaving || dropping) return;
@@ -3886,7 +3898,8 @@ async function autosaveNow() {
         const balloons = d.balloons ? BAL.encode(balOf(d), { source: d.balName || d.name, pages: d.pdf ? d.pdf.pages : 1 }) : null, unit = d.drawingUnit || null;
         if (!page.lay && r.autoTab === tab && r.autoEnts === raw?.entities && r.autoBlocks === raw?.blocks && r.autoLayers === raw?.layers && r.autoGroups === raw?.groups && r.autoLtypes === raw?.ltypes && r.autoHeader === raw?.header && r.autoTitle === titleBlock && r.autoBalloons === balloons && r.autoUnit === unit) continue;        // a drawing's state is replaced at every change: same one, same tab index, same copy
         let dxf;
-        try { dxf = writeDxf(rawForSave({ ...page, raw: raw || newDoc(), titleBlock }), { escapeUnicode: true, extents: page.lay || !page.fl ? null : page.fl.boxes.model }); } catch (e) { console.warn('Autosave: could not write', page.name, e); continue; }
+        try { dxf = await writeIdle(rawForSave({ ...page, raw: raw || newDoc(), titleBlock }), { escapeUnicode: true, extents: page.lay || !page.fl ? null : page.fl.boxes.model }); } catch (e) { console.warn('Autosave: could not write', page.name, e); continue; }
+        if (dropping) return;                                                                          // the window closed while the slices ran: its copies are already dropped
         if (page.lay && r.hasCopy && r.autoTab === tab && r.autoDxf === dxf && r.autoBalloons === balloons && r.autoUnit === unit) continue;                    // a layout: the same text, balloons, unit and tab index as the last copy
         const name = n == null ? page.name : `${d.pdf.name} sheet ${n}`;
         await RC.saveCopy({ id: r.rid, name, path: page.path || null, openPath: d.openPath || null, pdfPages: d.pdf?.pages || null, pdfHash: d.pdf?.hash || null, kind: page.lay ? 'layout' : 'drawing', dxf, t: Date.now(),
