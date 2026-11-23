@@ -1,9 +1,12 @@
 // nest.test.mjs — nest.js (the packer) and nestshape.js (a part's outline): node nest.test.mjs
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { placedMat, placedBox } from './web/apply.js';
 import { newDoc, addEntities, lwpoly, rect as dxfRect, line, circle as dxfCircle, text as dxfText } from './web/dxf-write.js';
 import * as LD from './web/layoutdoc.js';
 import { outlineOf, hull } from './web/nestshape.js';
-import { pack, packSteps, summary, polyAt, polyArea, polyBox, clear, edgeDistance, overlaps, ROTATIONS } from './web/nest.js';
+import { pack, packSteps, summary, polyAt, polyArea, polyBox, clear, edgeDistance, overlaps, ROTATIONS, freeTry, mulberry32, lru, CACHE_MAX } from './web/nest.js';
 
 let n = 0;
 const t = (name, fn) => { fn(); n++; };
@@ -186,6 +189,62 @@ t('a part narrower than one grid cell still marks a cell, so two of them are nev
   for (let i = 0; i < polys.length; i++) for (let j = i + 1; j < polys.length; j++) assert.ok(clear(polys[i], polys[j], 0), 'no overlap');
   const cells = new Set(r.placements.map((p) => Math.floor(p.x / 4) + ',' + Math.floor(p.y / 4)));
   assert.equal(cells.size, 6, 'one cell each');
+});
+
+// ---------------------------------------------------------------- 267a: any angle, seeded tries
+const hashOf = (jobs) => createHash('sha1').update(JSON.stringify(jobs.map((j) => { const r = pack(j); return [r.placements, r.placed, r.left, r.usedPct]; }))).digest('hex');
+const FIXTURES = (() => {
+  const mix = [{ id: 'c', count: 9, poly: circle(30) }, { id: 'L', count: 6, poly: L }, { id: 'r', count: 6, poly: rect(50, 20) }], mixArea = { x: 0, y: 30, w: 320, h: 250 };
+  return [
+    ...['none', 'flip', 'all'].flatMap((rotations) => [0, 4].map((gap) => ({ area: mixArea, gap, rotations, items: mix }))),
+    { area: { x: 0, y: 0, w: 80, h: 60 }, gap: 0, rotations: 'flip', items: [{ id: 'L', count: 2, poly: L }] },
+    { area: { x: 0, y: 0, w: 215, h: 100 }, gap: 5, rotations: 'none', items: [{ id: 'a', count: 13, poly: rect(50, 30) }] },
+  ];
+})();
+const BASE_HASH = '14717bdcbdd9e1abd34733c4f49b8c69c2e7874b';
+
+t('Every 90° / 0° + 180° / 0° only give byte-for-byte the placements of the base packer (hash pinned from base e1f6a2d)', () => {
+  assert.equal(hashOf(FIXTURES), BASE_HASH);
+});
+
+t('a piece at 37° keeps the gap to its neighbours and the sheet edge, and is placed at that angle', () => {
+  const items = [{ id: 'a', count: 4, poly: rect(50, 30) }, { id: 'L', count: 2, poly: L }], area = { x: 5, y: 7, w: 200, h: 150 };
+  for (const gap of [0, 5]) {
+    const r = pack({ area, gap, rotations: 'all', items, angles: [37, 37, 37, 37, 37, 37], order: null });
+    assert.equal(r.placed, 6); assert.ok(r.placements.every((p) => p.rot === 37));
+    check(r, items, area, gap);
+  }
+});
+
+t('apply.js placement and the dialog outline at 37° match the packer outline (R6)', () => {
+  const part = { w: 50, h: 30, box: [0, 0, 50, 30], factor: 1 }, pl = { partId: 'a', x: 40, y: 25, rot: 37 }, sheetH = 300;
+  const want = polyAt(rect(50, 30), 37, pl.x, pl.y), m = placedMat(part, pl, sheetH);
+  rect(50, 30).forEach(([u, v], k) => { near(m[0] * u + m[2] * v + m[4], want[k][0], 1e-9); near(m[1] * u + m[3] * v + m[5], sheetH - want[k][1], 1e-9); });
+  const bx = placedBox(part, pl), wb = polyBox(want);
+  bx.forEach((v, k) => near(v, wb[k], 1e-6));
+  assert.match(readFileSync(new URL('./web/nestdlg.js', import.meta.url), 'utf8'), /import \{[^}]*\bpolyAt\b[^}]*\} from '\.\/nest\.js'/);   // the dialog draws with this very polyAt
+});
+
+t('a seed gives one try: the same seed twice is the same result; seed 0 is the Every 90° run', () => {
+  const items = [{ id: 'c', count: 5, poly: circle(30) }, { id: 'L', count: 4, poly: L }, { id: 'r', count: 5, poly: rect(50, 20) }], area = { x: 0, y: 30, w: 300, h: 200 };
+  const total = 14, run = (seed) => pack({ area, gap: 4, rotations: 'all', items, ...freeTry(seed, total) });
+  assert.deepEqual(freeTry(7, total), freeTry(7, total));
+  assert.notDeepEqual(freeTry(7, total), freeTry(8, total));
+  assert.deepEqual(run(7), run(7)); assert.notDeepEqual(run(7).placements, run(8).placements);
+  assert.deepEqual(run(0), pack({ area, gap: 4, rotations: 'all', items }));
+  const f = freeTry(123, total);
+  assert.ok(f.angles.every((a) => Number.isInteger(a) && a >= 0 && a < 360)); assert.deepEqual([...f.order].sort((a, b) => a - b), Array.from({ length: total }, (_, k) => k));
+  check(run(7), items, area, 4);
+  assert.equal(mulberry32(1)(), mulberry32(1)());
+});
+
+t('the cache holds at most 2048 entries, the oldest go first, a read keeps an entry', () => {
+  assert.equal(CACHE_MAX, 2048);
+  const c = lru();
+  for (let k = 0; k < 5000; k++) { c.set('k' + k, k); if (k === 2100) c.get('k5'); assert.ok(c.size <= CACHE_MAX); }
+  assert.equal(c.size, CACHE_MAX); assert.equal(c.get('k0'), undefined); assert.equal(c.get('k4999'), 4999);
+  const d = lru(2); d.set('a', 1); d.set('b', 2); d.get('a'); d.set('c', 3);
+  assert.equal(d.get('b'), undefined); assert.equal(d.get('a'), 1);
 });
 
 console.log(`nest.test.mjs: ${n} tests passed`);
