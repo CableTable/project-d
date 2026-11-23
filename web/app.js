@@ -2359,7 +2359,7 @@ function titleBlockCommand() {
     return;
   }
   const spot = TB.titleSpot(lay.s);
-  if (!spot) { note('Title block: the sheet is too small for it (150 × 44 mm inside the grippers)'); return; }
+  if (!spot) { note('Title block: the sheet is too small for it (150 × 80 mm inside the grippers)'); return; }
   pushLay(d, withTb(laySnap(lay), d), '', 'Title block');
   if (d.titleBlock?.enabled === false) d.titleBlock = { ...d.titleBlock, enabled: true };       // one switch: inserting turns it on
   const blocks = { [TB.TITLE_NAME]: { base: [0, 0], xref: false, entities: TB.titleBlockEntities() } };
@@ -11589,7 +11589,7 @@ function attributePick(e, command = false) {
       if (!shared) delete d.lay.parts[old.id];
       gCommit(g); update();
     } else if (!commit(d, { entities: d.raw.entities.map((x, i) => i === hit ? next : x), blocks: d.raw.blocks }, ent.type === 'ATTDEF' ? 'Edit Attribute Definition' : 'Attribute editor')) return;       // too nested: commit showed why
-  }, title ? TB.titleValues({}, auto) : null);
+  }, title ? TB.titleValues({}, auto) : null, title ? { next: (values) => TB.nextRevision(values, today()), reason: TB.REV_FULL } : null);
   return true;
 }
 

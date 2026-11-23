@@ -27600,6 +27600,7 @@ try {
     }
   });
 
+  const revEmpty = Object.fromEntries([1, 2, 3, 4, 5].flatMap((i) => ['REV', 'DATE', 'DESC', 'BY'].map((tag) => [`REV${i}_${tag}`, ''])));       // the 20 revision ATTRIBs of the title block (TODO 9b), empty
   await step('TODO 9a: title block on a Layouts sheet', async () => {
     await menuItem('View', 'Theme: light');
     await closeTabs(/./);
@@ -27629,11 +27630,11 @@ try {
     await titleBtn.click(); await frames();
     let s = await saved();
     assert.ok(s.part, 'the button inserts the title block');
-    assert.deepEqual(s.part.box.map(Math.round), [270, 0, 420, 44], 'bottom-right on the sheet');
-    assert.deepEqual(s.texts, { TITLE: '', DRAWING_NO: '', REV: '', SCALE: '1:1', SHEET_SIZE: '420 x 297 mm', DATE: autoDate, DRAWN_BY: '', MATERIAL: '', FILE: 'title-9a.dxf' });
+    assert.deepEqual(s.part.box.map(Math.round), [270, 0, 420, 80], 'bottom-right on the sheet');
+    assert.deepEqual(s.texts, { TITLE: '', DRAWING_NO: '', REV: '', SCALE: '1:1', SHEET_SIZE: '420 x 297 mm', DATE: autoDate, DRAWN_BY: '', MATERIAL: '', FILE: 'title-9a.dxf', ...revEmpty });
     assert.deepEqual((await histLabels()).slice(history.length), ['Title block'], 'one undo step');
-    assert.equal(s.part.raw.entities[0].kids.length, 9, 'INSERT + 9 ATTRIBs');
-    assert.ok(Object.values(s.part.raw.blocks).some((b) => b.entities.filter((e) => e.type === 'ATTDEF').length === 9), 'the block has the 9 ATTDEFs');
+    assert.equal(s.part.raw.entities[0].kids.length, 29, 'INSERT + 9 field ATTRIBs + 20 revision ones');
+    assert.ok(Object.values(s.part.raw.blocks).some((b) => b.entities.filter((e) => e.type === 'ATTDEF').length === 29), 'the block has the 29 ATTDEFs');
     await page.screenshot({ path: 'shots-9a/title-block-inserted-light.png' });
     // a second press selects it, never a second one
     await page.keyboard.press('Escape'); await titleBtn.click(); await frames();
@@ -27645,8 +27646,8 @@ try {
     await page.locator('[data-tool=select]').click();
     await dbl(345, 22);
     assert.equal(await dialog.getAttribute('aria-label'), 'Attribute editor');
-    assert.equal(await dialog.locator('tbody tr').count(), 9);
-    assert.equal(await dialog.getByTestId('attribute-reset').count(), 9, 'Reset on every field of the title block');
+    assert.equal(await dialog.locator('tbody tr').count(), 29);
+    assert.equal(await dialog.getByTestId('attribute-reset').count(), 29, 'Reset on every field of the title block');
     await field('Value').fill('Bracket'); await row('SCALE').click(); await field('Value').fill('1:2');
     await row('REV').click(); await field('Value').fill('B');
     await row('SCALE').getByTestId('attribute-reset').click();
@@ -27685,7 +27686,7 @@ try {
     await open('title-9a-again.dxf', doc);
     await page.locator('[data-ribbon-tab=Home]').click();
     s = await saved();
-    assert.deepEqual(s.texts, { TITLE: 'Bracket', DRAWING_NO: '', REV: 'B', SCALE: '1:1', SHEET_SIZE: '420 x 297 mm', DATE: '01-02-2027', DRAWN_BY: '', MATERIAL: '', FILE: 'title-9a-again.dxf' });
+    assert.deepEqual(s.texts, { TITLE: 'Bracket', DRAWING_NO: '', REV: 'B', SCALE: '1:1', SHEET_SIZE: '420 x 297 mm', DATE: '01-02-2027', DRAWN_BY: '', MATERIAL: '', FILE: 'title-9a-again.dxf', ...revEmpty });
     await page.locator('[data-tool=select]').click();
     await dbl(345, 22);
     await row('TITLE').locator('td').nth(2).filter({ hasText: /^Bracket$/ }).waitFor();       // the typed value came back from the file
@@ -27702,6 +27703,88 @@ try {
     }
     await page.evaluate(() => { document.documentElement.dataset.theme = 'light'; });
     await page.setViewportSize({ width: 1440, height: 900 }); await frames();
+    await closeTabs(/./);
+  });
+
+  await step('TODO 9b: revision rows + Add revision', async () => {
+    await menuItem('View', 'Theme: light');
+    await closeTabs(/./);
+    mkdirSync('shots-9b', { recursive: true });
+    const dialog = page.getByTestId('attribute-dialog'), field = (name) => dialog.getByRole('textbox', { name, exact: true });
+    const row = (tag) => dialog.locator('tbody tr', { has: page.locator(`td:text-is("${tag}")`) });
+    const add = () => dialog.getByTestId('attribute-add-revision'), button = (name) => dialog.getByRole('button', { name, exact: true });
+    const open = async (name, doc) => {
+      await closeTabs(/./);
+      await t('picker').setInputFiles({ name, mimeType: 'text/plain', buffer: Buffer.from(writeDxf(doc)) });
+      await waitTab(page, name);
+      await frames();
+    };
+    const dbl = async (x, y) => { const p = await at(x, y); await page.mouse.dblclick(p.x, p.y); await dialog.waitFor(); };
+    const undo = async () => { await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z'); await frames(); };
+    const saved = async () => { const doc = await savedDoc(), lay = layoutFromRaw(doc), part = lay && titlePartOf(lay); return { doc, texts: part && titleTexts(part.raw.entities[0]), store: readTitleBlock(doc) }; };
+    const autoDate = await page.evaluate(() => { const d = new Date(); return [d.getDate(), d.getMonth() + 1].map((n) => String(n).padStart(2, '0')).join('-') + '-' + d.getFullYear(); });
+    const rows = (texts, n) => Array.from({ length: n }, (_, i) => `REV${i + 1}_REV` + '=' + texts[`REV${i + 1}_REV`] + ' ' + texts[`REV${i + 1}_DATE`]);
+    const sheet = newLayout('Sheet 9b'); sheet.s.sheetW = 420; sheet.s.sheetH = 297;
+    const plain = newDoc(4);
+    addBlock(plain, 'Plain', [dxfLine(0, 0, 60, 0), entity('ATTDEF', [[10, 5], [20, 5], [40, 6], [2, 'NOTE'], [3, 'Note'], [1, 'Default'], [70, 0]])]);
+    const pins = dxfInsert('Plain', 50, 200); pins.kids = [entity('ATTRIB', [[10, 55], [20, 205], [40, 6], [2, 'NOTE'], [1, 'Original'], [70, 0]]).r];
+    sheet.parts.p = objectPart('p', 'Plain', pins, layersOf(sheet), {}, plain.blocks); sheet.placed = [objectPlacement(sheet.parts.p)];
+    await open('title-9b.dxf', layoutRaw(sheet));
+    await page.locator('[data-ribbon-tab=Home]').click();
+    const history = await histLabels();
+    await page.getByRole('button', { name: 'Title block', exact: true }).click(); await frames();
+    await page.locator('[data-tool=select]').click();
+    // two revisions: one Apply step each, REV, DATE (today) and the title REV
+    await dbl(345, 22);
+    assert.equal(await add().count(), 1, 'the title block dialog has Add revision');
+    assert.equal(await add().isEnabled(), true);
+    await add().click(); await frames();
+    await add().click(); await frames();
+    await button('Cancel').click();
+    let s = await saved();
+    assert.deepEqual(rows(s.texts, 3), [`REV1_REV=A ${autoDate}`, `REV2_REV=B ${autoDate}`, 'REV3_REV= ']);
+    assert.equal(s.texts.REV, 'B', 'the title REV follows the last revision');
+    assert.deepEqual(s.store, { enabled: true, rev: 'B', r1Rev: 'A', r1Date: autoDate, r2Rev: 'B', r2Date: autoDate }, 'typed values in the one settings store; empty rows add none');
+    assert.deepEqual((await histLabels()).slice(history.length), ['Title block', 'Attribute editor', 'Attribute editor'], 'one undo step per Add revision');
+    // one Ctrl+Z removes only the last one
+    await undo();
+    s = await saved();
+    assert.deepEqual(rows(s.texts, 2), [`REV1_REV=A ${autoDate}`, 'REV2_REV= '], 'only revision B is gone');
+    assert.equal(s.texts.REV, 'A');
+    assert.deepEqual(s.store, { enabled: true, rev: 'A', r1Rev: 'A', r1Date: autoDate });
+    await page.keyboard.press('Control+y'); await frames();
+    assert.equal((await saved()).texts.REV2_REV, 'B', 'redo brings it back');
+    // a description and a name typed in the dialog; save and reopen keeps every row
+    await dbl(345, 22);
+    await row('REV1_DESC').click(); await field('Value').fill('First issue');
+    await row('REV2_BY').click(); await field('Value').fill('RR');
+    await button('OK').click();
+    await open('title-9b-again.dxf', (await saved()).doc);
+    await page.locator('[data-ribbon-tab=Home]').click();
+    s = await saved();
+    assert.deepEqual([s.texts.REV1_REV, s.texts.REV1_DATE, s.texts.REV1_DESC, s.texts.REV2_REV, s.texts.REV2_BY, s.texts.REV3_REV, s.texts.REV, s.texts.TITLE], ['A', autoDate, 'First issue', 'B', 'RR', '', 'B', ''], 'the file keeps every row, empty rows stay empty');
+    await page.locator('[data-tool=select]').click();
+    // the other three rows, then all 5 full: disabled with the reason
+    await dbl(345, 22);
+    for (let i = 0; i < 3; i++) { await add().click(); await frames(); }
+    assert.equal(await add().isDisabled(), true, 'all 5 rows full: Add revision is disabled');
+    assert.equal(await add().getAttribute('title'), 'All 5 revision rows are full', 'with the reason');
+    await row('REV5_REV').locator('td').nth(2).filter({ hasText: /^E$/ }).waitFor();       // the last row is filled in the list too
+    for (const theme of ['light', 'dark']) {
+      await page.evaluate((th) => { document.documentElement.dataset.theme = th; }, theme); await frames();
+      await page.screenshot({ path: `shots-9b/revision-dialog-${theme}.png` });
+    }
+    await page.evaluate(() => { document.documentElement.dataset.theme = 'light'; });
+    await button('Cancel').click();
+    s = await saved();
+    assert.deepEqual(rows(s.texts, 5), ['A', 'B', 'C', 'D', 'E'].map((c) => `REV${'ABCDE'.indexOf(c) + 1}_REV=${c} ${autoDate}`));
+    assert.equal(s.texts.REV, 'E');
+    // a plain block's attribute dialog has no Add revision (and no Reset)
+    await dbl(80, 200);
+    assert.equal(await dialog.locator('tbody tr').count(), 1);
+    assert.equal(await add().count(), 0, 'no Add revision on a plain block');
+    assert.equal(await dialog.getByTestId('attribute-reset').count(), 0);
+    await button('Cancel').click();
     await closeTabs(/./);
   });
 
