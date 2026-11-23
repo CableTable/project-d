@@ -1021,6 +1021,9 @@ button.cswatch, button.ribbon-swatch { padding: 0; cursor: pointer; }
 .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; opacity: .7; }
 .nestdlg .pd-footer .mono { white-space: nowrap; }
 .nestdlg .mode { align-self: flex-start; }
+.nestdlg .mode .seg { padding: 0 7px; }   /* four choices share the 340 px column */
+.nestdlg .pd-row[hidden] { display: none; }
+.nestdlg .pd-row .cnt { border-color: var(--line); background: var(--field); }
 .tracedlg { width: min(960px, 100%); height: min(660px, 100%); border-color: var(--sheetline); }
 .tracedlg .pd-left { width: 300px; gap: 10px; }
 .tracedlg .pd-right { overflow-y: auto; }

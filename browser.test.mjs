@@ -24501,7 +24501,7 @@ try {
     assert.equal(await dlg.getAttribute('role'), 'dialog'); assert.equal(await dlg.getAttribute('aria-label'), 'Auto-nest'); assert.equal(await dlg.getAttribute('data-state'), 'idle');
     assert.match(await t('nest-sub').textContent(), /^Layout \d+ · sheet 1000 × 700 mm · gripper 0 mm · gap 5 mm$/);
     assert.equal(await t('nest-gap').textContent(), '5 mm');
-    assert.deepEqual(await page.locator('[data-testid^=nest-rot-]').allTextContents(), ['0° only', '0° + 180°', 'Every 90°']);
+    assert.deepEqual(await page.locator('[data-testid^=nest-rot-]').allTextContents(), ['0° only', '0° + 180°', 'Every 90°', 'Free angles']);
     assert.equal(await t('nest-rot-all').getAttribute('aria-pressed'), 'true');
     assert.match(await t('nest-row-0').textContent(), /Plate A/);
     assert.equal(await t('nest-count-0').inputValue(), '1'); assert.equal(await t('nest-count-1').inputValue(), '1');
@@ -24592,6 +24592,59 @@ try {
     assert.equal(await page.locator('[role=progressbar]').count(), 1);
     await t('nest-stop').click(); await nestDone();
     assert.match(await t('nest-placed').textContent(), /^\d+ of 1020 placed( \(stopped\))?$/);
+    await t('nest-cancel').click();
+  });
+
+  await step('TODO 267b: Auto-nest Free angles: a 5 s limit packs a preview and names the seeds tried, Stop keeps the best, Apply places it as one undo step; the 3 old choices are unchanged', async () => {
+    if (only) await nestLayout();
+    const before = await sheetParts();
+    await t('nest').click();
+    assert.equal(await t('nest-limitrow').isHidden(), true, 'the time limit shows only with Free angles');
+    await t('nest-rot-free').click();
+    assert.equal(await t('nest-limitrow').isVisible(), true);
+    assert.equal(await t('nest-timelimit').inputValue(), '60');
+    await t('nest-timelimit').fill('1'); await t('nest-timelimit').press('Tab');
+    assert.equal(await t('nest-timelimit').inputValue(), '5', 'at least 5 s');
+    await t('nest-timelimit').fill('9999'); await t('nest-timelimit').press('Tab');
+    assert.equal(await t('nest-timelimit').inputValue(), '600', 'at most 600 s');
+    await t('nest-timelimit').fill('5'); await t('nest-timelimit').press('Tab');
+    await nestSetCount(0, 6); await nestSetCount(1, 4);
+    await t('nest-run').click();
+    assert.equal(await page.locator('[data-testid=nest-dialog]').getAttribute('data-state'), 'run');
+    assert.equal(await t('nest-timelimit').isDisabled(), true, 'no edits while the search runs');
+    await nestDone();                                               // the 5 s limit ends it
+    assert.ok(Number(await page.locator('[data-testid=nest-dialog]').getAttribute('data-ms')) >= 4900, 'the search ran to its limit');
+    assert.equal(await t('nest-placed').textContent(), '10 of 10 placed', 'never worse than Every 90°');
+    assert.match(await t('nest-seeds').textContent(), /^Free angles: \d+ seeds? tried, the best is seed \d+( \(Every 90°\))?\.$/);
+    assert.equal(await nestPieces(), 10);
+    assert.equal(await sheetParts(), before, 'the preview is not on the sheet');
+    await nestShot('nest-free');
+    await page.setViewportSize({ width: 1024, height: 700 }); await page.waitForTimeout(250);
+    await page.screenshot({ path: `${shotDir}/r10-nest-free-1024.png` });
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await t('nest-again').click();                                  // Stop keeps the best so far
+    await page.waitForFunction(() => /^Best \d+ %/.test(document.querySelector('[data-testid=nest-status]').textContent), null, { timeout: 30000 });
+    assert.equal(await t('nest-again').count(), 0, 'no second run while one is live');
+    await t('nest-stop').click(); await nestDone();
+    assert.match(await t('nest-seeds').textContent(), /you stopped the search\.$/);
+    assert.equal(await t('nest-placed').textContent(), '10 of 10 placed');
+    assert.equal(await nestPieces(), 10);
+    await t('nest-apply').click();
+    assert.equal(await sheetParts(), before + 10);
+    assert.match(await prompt(), /Auto-nest: 10 parts placed/);
+    await page.keyboard.press('Control+z');
+    assert.equal(await sheetParts(), before, 'one undo takes them all off');
+    await t('nest').click();                                        // the choice and the limit are kept; the 3 old choices run as before
+    assert.equal(await t('nest-rot-free').getAttribute('aria-pressed'), 'true');
+    assert.equal(await t('nest-timelimit').inputValue(), '5');
+    for (const key of ['none', 'flip', 'all']) {
+      await t('nest-rot-' + key).click();
+      assert.equal(await t('nest-limitrow').isHidden(), true);
+      await nestSetCount(0, 6); await nestSetCount(1, 4);
+      await t('nest-run').or(t('nest-again')).first().click(); await nestDone();
+      assert.match(await t('nest-placed').textContent(), /^\d+ of 10 placed$/, key);
+      assert.equal(await t('nest-seeds').count(), 0, key + ' has no seeds line');
+    }
     await t('nest-cancel').click();
   });
 

@@ -10,13 +10,13 @@
 //
 // A try (optional, freeTry(seed, total)): job.angles (a degree per piece, that piece is tried at it alone) and job.order (the pieces' order), both by the piece's
 // place in the largest-first list; without them the run is as before.
-// A job:   { area: { x, y, w, h } (mm, y up: where parts may go), gap (mm), rotations: 'none' | 'flip' | 'all',
+// A job:   { area: { x, y, w, h } (mm, y up: where parts may go), gap (mm), rotations: 'none' | 'flip' | 'all' | 'free' (free: as 'all'; nestrun.js adds the random tries),
 //            items: [{ id, count, poly: [[x, y], …] }]  poly: the part's outline in mm, its own lower-left corner is 0,0, y up,
 //            fixed: [poly in sheet mm, …]  (parts already on the sheet: kept clear of, never moved), cell (mm, optional) }
 // A placement: { partId, i (the piece's number within its part), rot (0 | 90 | 180 | 270, or any degree from a try; anticlockwise about the part's 0,0), x, y }
 //            — apply.js's placed part: (x, y) is where the part's own 0,0 lands on the sheet, so rotated outlines are shifted to stay in the area.
 
-export const ROTATIONS = { none: [0], flip: [0, 180], all: [0, 90, 180, 270] };
+export const ROTATIONS = { none: [0], flip: [0, 180], all: [0, 90, 180, 270], free: [0, 90, 180, 270] };   // free: one pack() is the "Every 90°" try; the random tries come from freeRun()
 export const MAX_PIECES = 1000;
 export const CACHE_MAX = 2048;
 
@@ -34,6 +34,33 @@ export function freeTry(seed, total) {
   const rnd = mulberry32(seed), order = Array.from({ length: total }, (_, k) => k), angles = order.map(() => Math.floor(rnd() * 360));
   for (let s = Math.ceil(total / 4); s > 0 && total > 1; s--) { const a = Math.floor(rnd() * total), b = Math.floor(rnd() * total); [order[a], order[b]] = [order[b], order[a]]; }
   return { angles, order };
+}
+/** Is try `a` better than try `b` (each a pack() result plus its `seed`)? Higher usedPct; a tie goes to the lower seed, whichever arrived first. */
+export const betterTry = (a, b) => !b || a.usedPct > b.usedPct + 1e-9 || (Math.abs(a.usedPct - b.usedPct) <= 1e-9 && a.seed < b.seed);
+/**
+ * Free angles, one worker's share: worker k of K packs seeds k, k+K, k+2K, … (seed 0 = the "Every 90°" run, never cut by `until`; a random
+ * try still going at `until` (ms, Date.now's clock) is dropped). A generator: yields { type: 'step', seed, done, total, placements } as it packs
+ * and { type: 'best', result, tried } when a try beats this worker's best; returns { tried, best }.
+ */
+export function* freeRun(job, k, K, until, now = Date.now) {
+  const total = job.items.reduce((s, it) => s + Math.min(MAX_PIECES, Math.max(0, Math.floor(it.count) || 0)), 0);
+  let best = null, tried = 0;
+  for (let seed = k; ; seed += K) {
+    if (seed && now() >= until) break;
+    const g = packSteps({ ...job, ...freeTry(seed, total) });
+    let r, cut = false;
+    for (;;) {
+      r = g.next();
+      if (r.done) break;
+      if (seed && now() >= until) { cut = true; break; }
+      yield { type: 'step', seed, ...r.value };
+    }
+    if (cut) break;
+    tried++;
+    const res = { ...r.value, seed };
+    if (betterTry(res, best)) { best = res; yield { type: 'best', result: res, tried }; }
+  }
+  return { tried, best };
 }
 /** A least-recently-used map holding at most `cap` entries (the oldest goes first). */
 export function lru(cap = CACHE_MAX) {
