@@ -8913,6 +8913,70 @@ try {
     } finally { await context.close(); }
   });
 
+  await step('TODO 358a: a PDF opened as Pictures is one IMAGE per page on "PDF pages"; a line drawn over page 1 is saved with -pageN.png and comes back on reopen', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    try {
+      const p = await context.newPage(), q = (id) => p.getByTestId(id);
+      p.on('pageerror', (e) => errors.push(String(e)));
+      const menu = async (name) => { await p.locator('[data-menu=File]').click(); await p.getByRole('menuitem', { name, exact: true }).click(); };
+      const prompt = (text) => p.waitForFunction((text) => document.querySelector('[data-testid=cmd-prompt]').textContent.startsWith(text), text);
+      const typeCmd = async (text) => { const i = q('cmd-input'); if (!(await i.isVisible())) { await q('cmd-echo').click(); await i.waitFor({ state: 'visible' }); } await i.fill(text); await i.press('Enter'); };
+      const whites = () => q('drawing').evaluate((c) => {                       // the page pictures are white paper: count it
+        const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let n = 0;
+        for (let i = 0; i < d.length; i += 4) if (d[i] > 250 && d[i + 1] > 250 && d[i + 2] > 250) n++;
+        return n;
+      });
+      await p.goto(URL_ + '?autosave=86400000'); await q('picker').waitFor({ state: 'attached' });
+      await p.evaluate(() => {
+        window.__pdfopenManual = true;
+        window.__pics358 = { files: {}, next: 'C:/jobs/pages.dxf' };
+        window.__TAURI__ = {
+          dialog: { save: async () => window.__pics358.next, open: async () => window.__pics358.next, ask: async () => true },
+          fs: {
+            exists: async () => false,
+            readFile: async (path) => { const b = window.__pics358.files[path]; if (!b) throw new Error('missing sibling'); return Uint8Array.from(b); },
+            writeFile: async (path, bytes) => { window.__pics358.files[path] = [...bytes]; },
+            writeTextFile: async (path, text) => { window.__pics358.files[path] = [...new TextEncoder().encode(text)]; },
+          },
+        };
+      });
+      const sheet = new Page(80, 50); sheet.rect(10, 10, 30, 20); sheet.stroke();
+      await q('picker').setInputFiles({ name: 'two-pages.pdf', mimeType: 'application/pdf', buffer: Buffer.from(writePdf([sheet, new Page(120, 90)])) });
+      await q('pdfopen-dialog').waitFor();
+      assert.deepEqual(await q('pdfopen-dialog').locator('.row.end button').allTextContents(), ['Background picture', 'Pictures (edit and save as PDF)', 'Editable drawing']);
+      await q('pdfopen-pictures').click();
+      await prompt('Opened two-pages.pdf as 2 page pictures'); await waitTab(p, 'two-pages.dxf');
+      assert.equal(await p.locator('.dtab.on').getAttribute('data-kind'), 'drawing');
+      await p.waitForFunction(() => document.querySelector('[data-testid=bg-name]').textContent === '');   // pictures, not a background
+      await q('ptab-objects').click();
+      assert.deepEqual((await p.locator('.layer .nm').allTextContents()).sort(), ['0', 'PDF pages'].sort());
+      await q('ptab-drawing').click();
+      await p.locator('[data-tool=line]').click();
+      await typeCmd('10,60'); await typeCmd('70,70'); await p.keyboard.press('Escape');   // over page 1 (80 × 50 mm at x 0..80, y 40..90 under the taller page 2)
+      await p.screenshot({ path: shotDir + '/358a-pages-light.png' });
+      await p.locator('[data-menu=View]').click(); await p.getByRole('menuitemcheckbox', { name: /Theme: dark/ }).click();
+      await p.screenshot({ path: shotDir + '/358a-pages-dark.png' });
+      assert.ok(await whites() > 5000, 'both pages are drawn');
+      await p.locator('[data-tool=select]').click();                              // the status line shows the running command's prompt, not Saved
+      await menu('Save As…'); await prompt('Saved pages.dxf');
+      const saved = await p.evaluate(() => window.__pics358.files);
+      assert.deepEqual(Object.keys(saved).sort(), ['C:/jobs/pages-page1.png', 'C:/jobs/pages-page2.png', 'C:/jobs/pages.dxf']);
+      const raw = readDxf(Buffer.from(saved['C:/jobs/pages.dxf']).toString('utf8')), field = (e, c) => +e.r.v[e.r.c.indexOf(c)];
+      const images = raw.entities.filter((e) => e.type === 'IMAGE');
+      assert.deepEqual(images.map((e) => [e.layer, e.r.file]), [['PDF pages', 'pages-page1.png'], ['PDF pages', 'pages-page2.png']]);
+      const mm = images.map((e) => [Math.hypot(field(e, 11), field(e, 21)) * field(e, 13), Math.hypot(field(e, 12), field(e, 22)) * field(e, 23), field(e, 10), field(e, 20)].map((v) => Math.round(v * 10) / 10));
+      assert.deepEqual(mm, [[80, 50, 0, 40], [120, 90, 90, 0]], 'true page sizes, 10 mm apart, top edges aligned at y 90');
+      assert.equal(Buffer.from(saved['C:/jobs/pages-page1.png']).readUInt32BE(16), Math.ceil(80 / 25.4 * 150), 'page 1 at 150 dpi');
+      const lines = raw.entities.filter((e) => e.type === 'LINE');
+      assert.equal(lines.length, 1); assert.equal(lines[0].layer, '0', 'drawn over the pages, not on their layer');
+      await p.locator('.dtab.on .x').click(); await menu('Open…'); await prompt('Opened pages.dxf: 3 entities');
+      for (let i = 0; i < 80 && await whites() < 5000; i++) await p.waitForTimeout(100);
+      assert.ok(await whites() > 5000, 'the pages come back as pictures');
+      await q('ptab-objects').click();
+      assert.deepEqual((await p.locator('.layer .nm').allTextContents()).sort(), ['0', 'PDF pages'].sort());
+    } finally { await context.close(); }
+  });
+
   await step('TODO 341: refused picture paths still save the DXF first, grant plain names, and warn "N picture(s) not saved"', async () => {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
     try {

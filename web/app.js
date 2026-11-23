@@ -100,7 +100,7 @@ import { loadFont } from './fontload.js';
 import { fontForStyle, fontSubstitutions } from './fontsub.js';
 import { outlineOf } from './nestshape.js';
 import { partSource, readTitleBlock, withTitleBlock } from './pdf-export.js';
-import { readPdf, renderPdfPage, renderPdfPages, isPdf, pageLayout } from './pdf-read.js';
+import { readPdf, renderPdfPage, renderPdfPages, renderPdfPictures, isPdf, pageLayout } from './pdf-read.js';
 import { readTiff } from './tiff.js';
 import { preloadPictures, rawPixels } from './pictures.js';
 import { panelWidth } from './docker.js';
@@ -1405,6 +1405,7 @@ async function openPdf(name, buf, path = null, copies = null, batch = {}) {
   if (copies && copies.some((c) => (c.pdfPages != null && c.pdfPages !== r.pages) || (c.pdfHash && hash && c.pdfHash !== hash) || (c.sheet ?? 1) > r.pages)) throw new Error('source PDF changed');
   if (!r.paths) {
     if (copies) throw new Error('source PDF has no vector lines');
+    if (batch.pdfOpen === 'pictures') { await openPdfPictures(name, bytes, path); return; }   // TODO 358a: the batch chose Pictures: a picture-only PDF goes in as pictures too
     const yes = batch.pdfOpen === 'background' || await confirmAsk(name + ' has no vector lines, only a picture (or text). Use it as a background picture instead?', 'Use as background');
     if (yes) await importBackgroundPdf(name, bytes, true, path);
     else note(name + ': no vector lines to open');
@@ -1414,6 +1415,7 @@ async function openPdf(name, buf, path = null, copies = null, batch = {}) {
     if (batch.pdfOpen === undefined) batch.pdfOpen = await askPdfOpen(name);
     if (batch.pdfOpen === null) { note(name + ': not opened'); return; }
     if (batch.pdfOpen === 'background') { await importBackgroundPdf(name, bytes, true, path); return; }
+    if (batch.pdfOpen === 'pictures') { await openPdfPictures(name, bytes, path); return; }
   }
   const raw = r.doc, fl = flatten(raw);
   await preloadPictures(fl.items);
@@ -1424,20 +1426,34 @@ async function openPdf(name, buf, path = null, copies = null, batch = {}) {
   await balLoad(doc, path, name);
   return doc;
 }
+/** TODO 358a: every page of a PDF as its own picture (IMAGE on layer "PDF pages", true size, side by side) in a drawing tab of its own: draw over the pages with any tool. */
+async function openPdfPictures(name, bytes, path = null) {
+  try {
+    const r = await renderPdfPictures(bytes, { onPage: (k, n) => note(`Rendering page ${k} of ${n}`) });
+    const fl = flatten(r.doc);
+    await preloadPictures(fl.items);
+    const doc = { name: baseName(name) + '.dxf', path: null, openPath: path, dirty: false, curLayer: '0', ...tabFields(r.doc, fl) };
+    addTab(doc);
+    note(`Opened ${name} as ${r.pages} page ${r.pages === 1 ? 'picture' : 'pictures'} on layer PDF pages, true size` + (r.dpi < 150 ? ` (${r.dpi} dpi for the biggest)` : '') + `. Draw over them; Save writes ${baseName(name)}.dxf and its page pictures`);
+    await balLoad(doc, null, doc.name);
+  } catch (err) { note(name + ': could not draw this PDF (' + (err && err.message ? err.message : err) + ')'); }
+}
 /** One choice for the batch's vector PDFs; closing the dialog cancels their open. */
 function askPdfOpen(name) {
   return new Promise((resolve) => {
     const editable = h('button', { class: 'btn primary', type: 'button', 'data-testid': 'pdfopen-editable' }, 'Editable drawing');
     const background = h('button', { class: 'btn', type: 'button', 'data-testid': 'pdfopen-background' }, 'Background picture');
+    const pictures = h('button', { class: 'btn', type: 'button', 'data-testid': 'pdfopen-pictures' }, 'Pictures (edit and save as PDF)');
     const close = h('button', { class: 'btn', type: 'button', 'aria-label': 'Close' }, '×');
     const dlg = h('div', { class: 'pop-dialog', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Open PDF', 'data-testid': 'pdfopen-dialog' },
       h('div', { class: 'row' }, h('strong', null, name + ' has vector lines. Open it as:'), close),
-      h('div', { class: 'row end' }, background, editable));
+      h('div', { class: 'row end' }, background, pictures, editable));
     const back = h('div', { class: 'pop-back' }, dlg);
     const finish = (v) => { back.remove(); document.removeEventListener('keydown', onKey, true); resolve(v); };
     const onKey = (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish(null); } };
     editable.addEventListener('click', () => finish('editable'));
     background.addEventListener('click', () => finish('background'));
+    pictures.addEventListener('click', () => finish('pictures'));
     close.addEventListener('click', () => finish(null));
     back.addEventListener('click', (e) => { if (e.target === back) finish(null); });
     document.addEventListener('keydown', onKey, true);
@@ -3936,7 +3952,7 @@ async function recoverOne(c, target = null) {
     const r = await readDrawing(new TextEncoder().encode(c.dxf).buffer);
     if (!r.ok) return false;
     if (c.pics?.length) {
-      const images = r.doc.entities.filter((e) => e.type === 'IMAGE' && /^drawing-img\d+\.png$/.test(e.r.file));
+      const images = r.doc.entities.filter((e) => e.type === 'IMAGE' && /^drawing-(img|page)\d+\.png$/.test(e.r.file));
       if (images.length === c.pics.length) images.forEach((e, i) => { e.r.px = c.pics[i].r.px; });
       else r.doc.entities.push(...c.pics); // 305a recovery copies predate IMAGE output.
       r.result = flatten(r.doc); await preloadPictures(r.result.items);

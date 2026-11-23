@@ -395,3 +395,20 @@ test('TODO 330: pageLayout puts pages left to right, 10 mm apart, tops aligned, 
   assert.equal(R.pageLayout([[4000, 4000]]).dpi, 144, '8333 px a side = 69 MP at 150 dpi: the area cap gives 8000 x 8000 = 64 MP at 144');
   assert.equal(R.pageLayout([[10000, 100]]).dpi, 117, 'the side cap: 16384 px / 138.9 in = 117.96: 117 dpi (118 would be 16389 px)');
 });
+
+test('TODO 358a: pageLayouts gives each page its own layout: a big page is lowered alone, the others keep 150 dpi', () => {
+  const sizes = [[595, 842], [20000, 100], [300, 200]], lim = { maxSide: 16384, maxArea: 64e6 };
+  const lays = R.pageLayouts(sizes, lim);
+  assert.equal(lays.length, 3);
+  for (const l of lays) assert.ok(l.cells.length === 1 && l.W <= lim.maxSide && l.H <= lim.maxSide && l.W * l.H <= lim.maxArea, `${l.dpi} dpi ${l.W}x${l.H}`);
+  assert.deepEqual(lays.map((l) => l.dpi), [150, 58, 150], 'the strip layout would have lowered all three to 58');
+  assert.ok(R.pageLayout(sizes).dpi < 150, 'one strip for the same pages is lowered for every page');
+  assert.equal(R.pageLayouts([[4000, 4000]], { maxArea: 1e6 })[0].dpi, 18, 'maxArea is the caller\'s, per page');
+});
+
+test('TODO 358a: pagePlacement puts pages left to right 10 mm apart with the top edges aligned', () => {
+  const at = R.pagePlacement([[210, 297], [297, 210], [100, 50]]);
+  assert.deepEqual(at, [{ x: 0, y: 0 }, { x: 220, y: 87 }, { x: 527, y: 247 }], 'bottom-left corners: the tallest page sits at y 0, every top is at 297');
+  assert.deepEqual(R.pagePlacement([[80, 50]], 5), [{ x: 0, y: 0 }]);
+  assert.equal(R.pagePlacement([[10, 10], [10, 10]], 5)[1].x, 15, 'gapMm is the gap between the right edge and the next left edge');
+});

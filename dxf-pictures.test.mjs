@@ -69,6 +69,15 @@ test('TODO 305b: rotated picture round trips as IMAGE / IMAGEDEF and a sibling P
   assert.equal(writeDxfWithReport(nested).pictures.length, 0, 'unresolved references do not invent PNG files');
 });
 
+test('TODO 358a: pictures on layer "PDF pages" are saved as <drawing>-pageN.png, numbered apart from -imgN.png, and read back by name', async () => {
+  const doc = newDoc(), px = await encodePng(2, 3, new Uint8Array(24).fill(255));
+  const pic = (layer, x) => { const e = entity('IMAGE', [[10, x], [20, 0], [30, 0], [11, 1], [21, 0], [31, 0], [12, 0], [22, 1], [32, 0], [13, 2], [23, 3]], { layer }); e.r.px = px; return e; };
+  doc.layers['PDF pages'] = doc.layers[0]; doc.entities = [pic('PDF pages', 0), pic('0', 50), pic('PDF pages', 100)];
+  const report = writeDxfWithReport(doc, { name: 'scan.dxf' });
+  assert.deepEqual(report.pictures.map((p) => p.name), ['scan-page1.png', 'scan-img1.png', 'scan-page2.png']);
+  assert.deepEqual(readDxf(report.text).entities.map((e) => [e.layer, e.r.file]), [['PDF pages', 'scan-page1.png'], ['0', 'scan-img1.png'], ['PDF pages', 'scan-page2.png']]);
+});
+
 test('TODO 305b: extracting a part skips pictures when sibling PNGs cannot be written', async () => {
   const doc = newDoc(), pic = entity('IMAGE', [[10, 0], [20, 0], [11, 1], [21, 0], [12, 0], [22, 1], [13, 2], [23, 3]]);
   pic.r.px = await encodePng(2, 3, new Uint8Array(24).fill(255));

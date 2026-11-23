@@ -490,7 +490,7 @@ function* writePreparedSteps(doc, opts) {
   const styleRec = new Map([...styles].map((n) => [n.toLowerCase(), handle()]));   // up front: a complex line type points at its text style
   const find = (n) => [...rec.keys()].find((k) => k.toLowerCase() === n.toLowerCase());
   const modelRec = rec.get(find('*Model_Space')), paperRec = rec.get(find('*Paper_Space'));
-  const images = [], pictures = [];
+  const images = [], pictures = [], picNo = [0, 0];                // picNo: the last -imgN / -pageN number
   let imageDict;
 
   // a group keeps the name it was read with; an unnamed or repeated one gets the next free *A<n>
@@ -534,7 +534,8 @@ function* writePreparedSteps(doc, opts) {
       imageDict ||= handle();
       const get = (c) => +r.v[r.c.indexOf(c)] || 0;
       const def = handle(), reactor = handle();
-      const name = String(opts.name || 'drawing.dxf').split(/[\\/]/).pop().replace(/\.dxf$/i, '') + `-img${pictures.length + 1}.png`;
+      const page = p.layer === 'PDF pages';                 // TODO 358a: a PDF's page pictures (pdf-read.js PAGES_LAYER) are saved as -pageN.png
+      const name = String(opts.name || 'drawing.dxf').split(/[\\/]/).pop().replace(/\.dxf$/i, '') + `-${page ? 'page' : 'img'}${++picNo[+page]}.png`;
       pictures.push({ name, px: r.px });
       images.push({ def, reactor, image: h, name, w: get(13), h: get(23), u: Math.hypot(get(11), get(21), get(31)), v: Math.hypot(get(12), get(22), get(32)) });
       spec = spec.filter(([c]) => ![90, 70, 280, 281, 282, 283, 71, 91, 14, 24, 290].includes(c));

@@ -783,5 +783,6 @@
   "TODO 347c: Enter at the ARC first prompt continues from the last line or arc, tangent to it, asking only the end point (a Ctrl click makes no turn); a circle or nothing last says \"No line or arc to continue.\" and the prompt stays; the flyout's Continue: Drawings, Layouts, Compare": 5,
   "TODO lowsD55e: on a Layout tab, an unrelated edit (a dimension) made and taken back with Ctrl+Z leaves Arc Continue on the line (Undo copies the placements)": 1.5,
   "TODO lowsD55f: on a Layout tab, Arc Continue needs the line still at its spot: a copy elsewhere + the original deleted, or the line taken back with Ctrl+Z, says \"No line or arc to continue.\"; a copy in place + the original deleted still continues": 3,
-  "TODO 347c: screenshots, light and dark (the Arc flyout open on a Start, Centre, End button)": 2
+  "TODO 347c: screenshots, light and dark (the Arc flyout open on a Start, Centre, End button)": 2,
+  "TODO 358a: a PDF opened as Pictures is one IMAGE per page on \"PDF pages\"; a line drawn over page 1 is saved with -pageN.png and comes back on reopen": 2
 }
