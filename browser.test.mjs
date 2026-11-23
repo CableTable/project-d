@@ -26723,9 +26723,10 @@ try {
 
   await step('TODO 109d1: Export… Line weights and Hidden objects: SVG widths 0.5 / 0.05, a hidden line only with the tick, DXF keeps code 60 by default, the ticks in Layouts, the drawing unchanged', async () => {
     await closeTabs(/./); await menuItem('View', 'Theme: light');
-    const raw = newDoc(4); addLayer(raw, 'Cut', { aci: 1 });
-    addEntities(raw, dxfLine(0, 0, 100, 0, { layer: 'Cut', lw: 50 }), dxfLine(0, 10, 100, 10, { layer: 'Cut', hidden: true }));
+    const raw = newDoc(4); addLayer(raw, 'Cut', { aci: 1 }); addLayer(raw, 'Off', { aci: 3, off: true });
+    addEntities(raw, dxfLine(0, 0, 100, 0, { layer: 'Cut', lw: 50 }), dxfLine(0, 10, 100, 10, { layer: 'Cut', hidden: true }), dxfLine(0, 20, 100, 20, { layer: 'Off' }));
     await svgFake([...Buffer.from(writeDxf(raw))], 'w109d1.dxf');
+    const offIs = (on, why) => page.waitForFunction((v) => document.querySelector('[data-testid=export-dxf-layer][data-layer=Off]').checked === v, on, { timeout: 3000 }).catch(() => assert.fail(why));
     const widths = (svg) => [...svg.matchAll(/stroke-width="([\d.]+)"/g)].map((m) => m[1]);
     const ticks = async () => [await t('export-line-weights').isVisible(), await t('export-line-weights').isChecked(), await t('export-hidden-objects').isChecked()];
     const dxfTexts = [];
@@ -26736,7 +26737,11 @@ try {
       assert.deepEqual(await ticks(), [false, true, true], 'DXF: Line weights hidden, Hidden objects ticked');
       await t('export-format').selectOption('svg'); assert.deepEqual(await ticks(), [true, true, false], 'SVG: Line weights shown and ticked, Hidden objects unticked');
       await t('export-format').selectOption('png'); assert.deepEqual(await ticks(), [true, true, false], 'PNG: the same');
-      await t('export-hidden-objects').check(); await t('export-format').selectOption('dxf');
+      await offIs(false, 'SVG, Hidden objects off: the off layer starts unticked');
+      await t('export-hidden-objects').check();
+      await offIs(true, 'SVG, Hidden objects on: the untouched off layer is ticked too');
+      await t('export-format').selectOption('dxf');
+      await offIs(false, 'DXF: the off layer is unticked again');
       assert.equal((await ticks())[2], true); await t('export-format').selectOption('svg');
       assert.equal((await ticks())[2], true, 'once the user set it, the Format does not flip it');
       await t('export-hidden-objects').uncheck(); await t('export-format').selectOption('dxf');
@@ -26756,7 +26761,7 @@ try {
       await svgOpen(); await t('export-line-weights').uncheck(); await t('export-dxf-go').click();
       assert.deepEqual(widths((await svgWrote(2)).text), ['0.05'], 'Line weights off: every stroke 0.05 mm');
       await svgOpen(); await t('export-hidden-objects').check(); await t('export-dxf-go').click();
-      assert.deepEqual(widths((await svgWrote(3)).text), ['0.5', '0.25'], 'Hidden objects on: the code-60 line is drawn as well');
+      assert.deepEqual(widths((await svgWrote(3)).text), ['0.5', '0.25', '0.25'], 'Hidden objects on: the code-60 line and the off layer are drawn as well');
       assert.equal(await page.locator('.tabs .dtab.on .dot').count(), 0, 'the open drawing stays clean');
       await menuItem('File', 'Export…'); await svgDialog.waitFor();                       // Format DXF: the default keeps code 60
       assert.equal((await ticks())[2], true, 'not remembered: DXF is ticked again');

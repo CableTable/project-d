@@ -4270,7 +4270,11 @@ function exportDxf() {
   const layers = h('div', { class: 'export-dxf-layers', 'data-testid': 'export-dxf-layers' }, ticks.map((box) => h('label', null, box, box.dataset.layer + (box.dataset.layer === '0' ? ' (always kept)' : ''))));
   const lineWeights = h('input', { type: 'checkbox', checked: true, 'data-testid': 'export-line-weights' });
   const hiddenObjects = h('input', { type: 'checkbox', checked: true, 'data-testid': 'export-hidden-objects' });       // on for DXF; showFormat flips it for SVG / PNG until the user has set it here
-  let hiddenSet = false; hiddenObjects.addEventListener('change', () => { hiddenSet = true; });
+  let hiddenSet = false;
+  const touched = new Set(), startOff = new Set(ticks.filter((box) => !box.checked && !(d.lay && /^(Parts|Marks)$/.test(box.dataset.layer))));
+  for (const box of ticks) box.addEventListener('change', () => touched.add(box));
+  const syncOff = () => { for (const box of startOff) if (!touched.has(box)) box.checked = fmt.value !== 'dxf' && hiddenObjects.checked; };   // SVG / PNG: Hidden objects on draws the file's off / frozen layers too
+  hiddenObjects.addEventListener('change', () => { hiddenSet = true; syncOff(); });
   const err = h('div', { class: 'pd-bad', role: 'alert', hidden: true, 'data-testid': 'export-dxf-err' });
   const validate = () => {
     const problems = [
@@ -4327,6 +4331,7 @@ function exportDxf() {
     const png = fmt.value === 'png';
     for (const [r, shown] of [[unitsRow, !png], [precisionRow, !png], [dpiRow, png], [bgRow, png], [weightsRow, fmt.value !== 'dxf']]) r.style.display = shown ? '' : 'none';
     if (!hiddenSet) hiddenObjects.checked = fmt.value === 'dxf';
+    syncOff();
     validate();
   };
   fmt.addEventListener('change', () => { name.value = named(name.value, fmt.value); showFormat(); });
