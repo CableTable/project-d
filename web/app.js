@@ -3884,7 +3884,7 @@ function exportSource(selectionOnly = false, cut = true) {
     const lay = shownLayout(d);
     if (!LD.placedAll(lay).length) return null;
     const { gripTop, gripRight, gripBottom, gripLeft } = lay.s, hasSelection = !!selectedPlaced();
-    const sheet = (l) => { const fl = flatten(LD.layoutRaw(l)), defs = LD.layersOf(l); return { name: d.name, path, fl, factor: 1, off: new Set(fl.layers.flatMap((x, i) => (defs[x.name]?.off || defs[x.name]?.frozen ? [i] : []))), sheetW: d.lay.s.sheetW, sheetH: d.lay.s.sheetH, grippers: { gripTop, gripRight, gripBottom, gripLeft }, gaps: labelGaps(LD.gridOf(l), l.s.sheetH), hide: ['Sheet', 'Marks'], hasSelection }; };
+    const sheet = (l) => { const fl = flatten(LD.layoutRaw(l)), defs = LD.layersOf(l); return { name: d.name, path, fl, factor: 1, off: new Set(fl.layers.flatMap((x, i) => (defs[x.name]?.off || defs[x.name]?.frozen ? [i] : []))), sheetW: d.lay.s.sheetW, sheetH: d.lay.s.sheetH, grippers: { gripTop, gripRight, gripBottom, gripLeft }, gaps: labelGaps(LD.gridOf(l), l.s.sheetH), hide: ['Sheet', 'Marks'], hasSelection, hasTitle: !!TB.titlePartOf(l) }; };
     if (!selectionOnly) return sheet(lay);
     const picked = selIdxs().map((i) => placedNow[i]).filter((p) => !(d.hiddenParts && d.hiddenParts.has(p.partId)));       // the selected parts only (a grid copy is placed loose, in the same place); hidden ones stay out
     if (!picked.length) return null;

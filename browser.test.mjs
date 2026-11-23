@@ -27788,6 +27788,53 @@ try {
     await closeTabs(/./);
   });
 
+  await step('TODO 9c: PDF title data from one source', async () => {
+    await menuItem('View', 'Theme: light');
+    await closeTabs(/./);
+    const dialog = page.getByTestId('attribute-dialog'), field = (name) => dialog.getByRole('textbox', { name, exact: true });
+    const row = (tag) => dialog.locator('tbody tr', { has: page.locator(`td:text-is("${tag}")`) });
+    const sheet = newLayout('Sheet 9c'); sheet.s.sheetW = 420; sheet.s.sheetH = 297;
+    sheet.parts.l = objectPart('l', 'Line', dxfLine(20, 100, 120, 100), layersOf(sheet));
+    sheet.placed = [objectPlacement(sheet.parts.l)];
+    await t('picker').setInputFiles({ name: 'title-9c.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(layoutRaw(sheet))) });
+    await waitTab(page, 'title-9c.dxf');
+    await frames();
+    await page.locator('[data-ribbon-tab=Home]').click();
+    // the check-print PDF, with the scale typed in the PDF dialog (the strip's own field)
+    const pdf = async (typed) => {
+      await t('pdf-open').click(); await t('pdf-dialog').waitFor(); await t('pdf-page-check').check();
+      if (typed) await t('pdf-title-scale').fill(typed);
+      const scaleField = await t('pdf-title-scale').inputValue();
+      const text = (await downloaded(() => t('pdf-go').click())).text;
+      return { text, scaleField };
+    };
+    let out = await pdf('1:7');
+    assert.ok(out.text.includes('(Check print: not to be used as film) Tj'), 'a sheet without the block keeps the strip');
+    assert.ok(out.text.includes('(1:7) Tj'), 'the strip shows the typed scale');
+    // the block: PDF prints it and no strip; the typed SCALE is the block's too
+    await page.getByRole('button', { name: 'Title block', exact: true }).click(); await frames();
+    await page.locator('[data-tool=select]').click();
+    const p = await at(345, 22); await page.mouse.dblclick(p.x, p.y); await dialog.waitFor();
+    await row('TITLE').click(); await field('Value').fill('Bracket');
+    await dialog.getByRole('button', { name: 'OK', exact: true }).click();
+    const texts = titleTexts(titlePartOf(layoutFromRaw(await savedDoc())).raw.entities[0]);
+    assert.equal(texts.SCALE, '1:7', 'the block has the SCALE typed in the PDF dialog');
+    out = await pdf();
+    assert.equal(out.text.includes('Check print'), false, 'with the block: no strip');
+    assert.ok(out.text.includes('(Bracket) Tj'), 'the block prints its text');
+    assert.ok(out.text.includes('(1:7) Tj'), 'the block prints the same SCALE');
+    assert.equal(out.scaleField, '1:7', 'the PDF dialog field shows the same value');
+    out = await pdf('1:9');       // typed in the PDF dialog now: the block follows, in the sheet and in this PDF
+    assert.ok(out.text.includes('(1:9) Tj') && !out.text.includes('(1:7) Tj'), 'the block prints the SCALE typed with the block there');
+    assert.equal(titleTexts(titlePartOf(layoutFromRaw(await savedDoc())).raw.entities[0]).SCALE, '1:9');
+    // Title block switch off: the block goes with it, still no strip
+    await t('pdf-open').click(); await t('pdf-dialog').waitFor(); await t('pdf-page-check').check(); await t('pdf-title-block').uncheck();
+    const off = (await downloaded(() => t('pdf-go').click())).text;
+    assert.ok(!off.includes('(Bracket) Tj') && !off.includes('Check print'), 'one switch: neither block nor strip');
+    await t('pdf-open').click(); await t('pdf-dialog').waitFor(); await t('pdf-title-block').check(); await t('pdf-close').click();
+    await closeTabs(/./);
+  });
+
   await step('TODO 155i2a: Explode shows ATTDEF tags, BURST keeps both attribute values, loose tags move and snap; Layout and Compare parity', async () => {
     await menuItem('View', 'Theme: light');
     await closeTabs(/./);

@@ -503,6 +503,7 @@
   "TODO 155i3: attribute double-click editors, Apply and OK Undo, Cancel, locked layer, EATTEDIT, Layout and Compare": 24.22,
   "TODO 9a: title block on a Layouts sheet": 3.5,
   "TODO 9b: revision rows + Add revision": 4,
+  "TODO 9c: PDF title data from one source": 5,
   "TODO 155i2a: Explode shows ATTDEF tags, BURST keeps both attribute values, loose tags move and snap; Layout and Compare parity": 16.9,
   "TODO 155i2b: ATTDISP Normal, ON and OFF, Enter, Esc and one Undo; Layout and Compare": 17.56,
   "TODO 155i1: Explode pattern hatches into clipped LINEs, keep the boundary, refuse solid hatches and undo once; Layout parity": 18.37,

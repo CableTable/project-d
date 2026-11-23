@@ -42,6 +42,15 @@ test('title block off releases exactly 22 mm; output has no labels, properties r
   assert.ok(hidden.pages[0].scale > plan.pages[0].scale);
 });
 
+test('TODO 9c: a sheet with its own title block gets no strip and no room kept for one', () => {
+  const raw = addEntities(newDoc(), line(0, 0, 100, 200)), source = { ...src, part: false, fl: flatten(raw), factor: 1, off: new Set() };
+  const options = { page: 'check', separate: false, titleBlock: { footnote: 'Shop proof' } };
+  const strip = planPdf(source, options), own = planPdf({ ...source, hasTitle: true }, options);
+  assert.ok(strip.build(0).cmds.some((c) => c[0] === 'T' && c[2] === 'Shop proof'), 'a sheet without the block keeps the strip');
+  assert.equal(own.build(0).cmds.some((c) => c[0] === 'T'), false, 'with the block: no strip text');
+  assert.ok(own.pages[0].scale > strip.pages[0].scale, 'the strip\'s room goes to the sheet');
+});
+
 test('TODO 253d: typed title-block text is converted to WinAnsi once: – “ ” € print as their own bytes, not ?', () => {
   const raw = addEntities(newDoc(), line(0, 0, 100, 200)), source = { ...src, fl: flatten(raw), factor: 1, off: new Set() };
   for (const field of ['date', 'footnote', 'file']) for (const typed of ['11–12 Nov “x” €5', 'Ref ‘A’ … •']) {
