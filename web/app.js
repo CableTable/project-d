@@ -33,7 +33,7 @@ import { paintDrawing, paintDrawingSteps, paintMarks, drawMarks, drawContour, dr
 import { overlayBox } from './preview.js';
 import { snapPlace, snapUsable, heavy, sameBase, runChunks, blitCovers, panStrips, QUICK_PX, slice as timeSlice } from './perf.js';
 import { flatten, flattenEdit, patchWidths, primeSplines, unionBox, CAP, ACI, UNITS, mapply, mmul, pickIndex, arcSweep, DrawingError } from './drawing.js';
-import { writeDxf, writeDxfSteps, writeDxfWithReport, saveReportNote, unwritable, addLayer, newDoc, lwpoly, point } from './dxf-write.js';
+import { writeDxf, writeDxfSteps, writeDxfWithReport, withoutLayers, saveReportNote, unwritable, addLayer, newDoc, lwpoly, point } from './dxf-write.js';
 import * as SH from './shaping.js';
 import { explodeSelection } from './explode.js';
 import { breakApart } from './breakapart.js';
@@ -99,7 +99,8 @@ import * as TO from './textoutline.js';
 import { loadFont } from './fontload.js';
 import { fontForStyle, fontSubstitutions } from './fontsub.js';
 import { outlineOf } from './nestshape.js';
-import { partSource, readTitleBlock, withTitleBlock, planPagesPdf, hasPagePictures } from './pdf-export.js';
+import { partSource, readTitleBlock, withTitleBlock, planPagesPdf, hasPagePictures, planPdf } from './pdf-export.js';
+import { pageToSvg } from './svg-write.js';
 import { readPdf, renderPdfPage, renderPdfPages, renderPdfPictures, isPdf, pageLayout } from './pdf-read.js';
 import { readTiff } from './tiff.js';
 import { preloadPictures, rawPixels } from './pictures.js';
@@ -572,7 +573,7 @@ function buildStartScreen() {
 function buildMenus() {
   // an item: [text, action, shortcut hint (shown, and only a hint for a key that is really bound), enabled? (a function, asked when the menu opens)]
   const menus = {
-    File: (pages = hasPdfPages()) => [['Open…', openFile], ['New layout', newLayoutTab], ['Save', () => save(false), 'Ctrl+S'], ['Save As…', () => save(true), 'Ctrl+Shift+S'], ['Export DXF…', exportDxf], ['Export for cutter…', exportCutter], ['Compare drawings…', cmpStart], ['Import background…', () => ui.bgPicker.click()], ['Rotate background', rotateBackground], ['Trace bitmap…', traceBitmap], ['PDF / Print…', exportPdf],
+    File: (pages = hasPdfPages()) => [['Open…', openFile], ['New layout', newLayoutTab], ['Save', () => save(false), 'Ctrl+S'], ['Save As…', () => save(true), 'Ctrl+Shift+S'], ['Export…', exportDxf], ['Export for cutter…', exportCutter], ['Compare drawings…', cmpStart], ['Import background…', () => ui.bgPicker.click()], ['Rotate background', rotateBackground], ['Trace bitmap…', traceBitmap], ['PDF / Print…', exportPdf],
       ['Save as PDF (pages)', savePdfPages, null, () => pages, pages ? null : 'No PDF pages in this drawing'],
       ...recentItems()],
     Edit: [['Undo', () => undoCurrent(), 'Ctrl+Z', () => ui.startScreen.hidden && (!!state.paste || !!state.grip || !!historyOf(curDoc())?.canUndo)],
@@ -4203,11 +4204,28 @@ async function exportCurves(raw, d, skip) {
   return { raw: r.raw, note: '. ' + [...said, ...r.notes].join('. ') };
 }
 
-/** Export the same content as Save, through the writer's copy-only settings. */
+/**
+ * Export's SVG (TODO 109c1): Export DXF's own copy (`raw`: Curves already outlined) less the unticked layers, put through the PDF / Print page path
+ * (flatten → partSource for a drawing's extents, the sheet for a layout → planPdf 'sheet' → build) at Scale, then svg-write. Units: the file's unit → mm or in;
+ * a drawing with no conversion is written as mm. → the SVG text.
+ */
+async function exportSvg(raw, d, { units, scale, precision, skipLayers }) {
+  raw = withoutLayers(raw, skipLayers);
+  const fl = flatten(raw), mmPer = d.lay ? 1 : { 1: 25.4, 2: 304.8, 4: 1, 5: 10, 6: 1000 }[+d.raw.header?.$INSUNITS] || 1, factor = mmPer * scale;
+  const own = { name: d.name, fl, factor, off: new Set(), hide: [] };
+  let src = d.lay ? { ...own, sheetW: d.lay.s.sheetW * scale, sheetH: d.lay.s.sheetH * scale, hide: ['Sheet'] } : partSource(own, 0);
+  if (src && !d.lay && !(src.sheetW > 0 && src.sheetH > 0)) src = partSource(own, 1);        // flat as one line: a 1 mm border gives the page an area
+  if (!src) throw new Error('nothing to export: no shown objects');
+  src.pics = fl.items.some((it) => it.k === 'i') ? await pdfPictures(src) : new Map();
+  const page = planPdf(src, { page: 'sheet', separate: false, mirror: false, negative: false, black: false, strip: false, titleBlock: { enabled: false } }).build(0);
+  return pageToSvg(page, { unit: units === 'in' ? 'in' : 'mm', precision });
+}
+
+/** Export: the same content as Save through the writer's copy-only settings (Format DXF), or as an SVG picture (Format SVG). */
 function exportDxf() {
   const active = curDoc(), d = active?.cmp ? cmpEdit('export DXF') : active;
   if (active?.cmp && !d) return;
-  if (!d || (!d.raw && !d.lay)) { note('Export DXF: open a drawing first'); return; }
+  if (!d || (!d.raw && !d.lay)) { note('Export: open a drawing first'); return; }
   if (document.querySelector('[data-testid=export-dxf-dialog]')) return;
   const sourceUnits = +(d.lay ? 4 : d.raw.header?.$INSUNITS) || 0;
   const convertible = [1, 2, 4, 5, 6].includes(sourceUnits);
@@ -4215,6 +4233,9 @@ function exportDxf() {
   try { const v = localStorage.getItem('pd-export-dxf-precision'); if (v !== null && Number.isInteger(+v) && +v >= 0 && +v <= 8) remembered = +v; } catch { /* local settings may be unavailable */ }
   const field = (id, attrs) => h('input', { class: 'fld', 'data-testid': 'export-dxf-' + id, ...attrs });
   const name = field('name', { type: 'text', value: baseName(dxfName(d.name)) + '-export.dxf' });
+  const fmt = h('select', { class: 'fld', 'data-testid': 'export-format' }, h('option', { value: 'dxf' }, 'DXF'), h('option', { value: 'svg' }, 'SVG'));
+  const named = (n, ext) => n.replace(/\.(dxf|dwg|svg)$/i, '') + '.' + ext;       // the file name with the Format's extension
+  fmt.addEventListener('change', () => { name.value = named(name.value, fmt.value); });
   const units = h('select', { class: 'fld', 'data-testid': 'export-dxf-units' }, convertible
     ? [h('option', { value: 'mm' }, 'mm'), h('option', { value: 'in' }, 'in')]
     : h('option', { value: sourceUnits ? '' : 'unitless' }, `${sourceUnits ? UNITS[sourceUnits] || 'Drawing units' : 'Unitless'} (no conversion)`));
@@ -4240,22 +4261,28 @@ function exportDxf() {
   const finish = () => { back.remove(); document.removeEventListener('keydown', onKey, true); };
   const go = async () => {
     const bad = validate(); if (bad) { bad.focus(); validate(); return; }
-    const skipLayers = ticks.filter((box) => !box.checked).map((box) => box.dataset.layer), curves = text.value === 'curves';       // read now: finish() removes the dialog
-    const want = dxfName(name.value.trim()), settings = { units: units.value || undefined, scale: +scale.value, precision: +precision.value, escapeUnicode: true, skipLayers };
+    const skipLayers = ticks.filter((box) => !box.checked).map((box) => box.dataset.layer), curves = text.value === 'curves', svg = fmt.value === 'svg';       // read now: finish() removes the dialog
+    const ext = svg ? 'svg' : 'dxf', want = svg ? named(name.value.trim(), 'svg') : dxfName(name.value.trim()), settings = { units: units.value || undefined, scale: +scale.value, precision: +precision.value, escapeUnicode: true, skipLayers };
     finish();
     try {
       const t = window.__TAURI__;
       try { localStorage.setItem('pd-export-dxf-precision', String(settings.precision)); } catch { /* local settings may be unavailable */ }
       let written = want, destination = null;
       if (t && t.dialog?.save && t.fs?.writeTextFile) {
-        let path = await t.dialog.save({ defaultPath: saveDefault(want, d.path || d.openPath), filters: [{ name: 'DXF drawing', extensions: ['dxf'] }] });
+        let path = await t.dialog.save({ defaultPath: saveDefault(want, d.path || d.openPath), filters: [{ name: svg ? 'SVG picture' : 'DXF drawing', extensions: [ext] }] });
         if (!path) return;
-        path = await withExt(t, path, 'dxf'); if (!path) return;
+        path = await withExt(t, path, ext); if (!path) return;
         if ([d.openPath, d.path].some((p) => p && pathKey(path) === pathKey(p))) { note('Pick another name: that is the drawing file, and Export never writes over it'); return; }
         destination = path;
         written = path.split(/[\\/]/).pop();
       }
       const saved = rawForSave(d), skip = new Set(skipLayers.map((n) => n.toLowerCase())), made = curves ? await exportCurves(saved, d, skip) : null;
+      if (svg) {
+        const picture = await exportSvg(made ? made.raw : saved, d, settings);
+        if (destination) await t.fs.writeTextFile(destination, picture); else download(written, picture, 'image/svg+xml');
+        note('Exported ' + written + (made ? made.note : ''));
+        return;
+      }
       const report = await writeDrawing(made ? made.raw : saved, written, destination, settings);
       note('Exported ' + written + saveReportNote(report) + (made ? made.note : ''));
     } catch (e) { note('Export failed: ' + (e?.message || e)); }
@@ -4263,10 +4290,10 @@ function exportDxf() {
   const row = (label, input) => h('label', { class: 'qs-row' }, h('span', null, label), input);
   const cancel = h('button', { class: 'btn', type: 'button', 'data-testid': 'export-dxf-cancel', onclick: finish }, 'Cancel');
   const close = h('button', { class: 'btn sm', type: 'button', 'aria-label': 'Close', onclick: finish }, '×');
-  const dlg = h('div', { class: 'pop-dialog export-dxf-dialog', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Export DXF', 'data-testid': 'export-dxf-dialog' },
-    h('div', { class: 'row between' }, h('strong', null, 'Export DXF'), close),
-    h('span', { class: 'lbl' }, 'Write a DXF copy with export settings.'),
-    row('File name', name), row('Units', units), row('Scale', scale), row('Precision', precision), row('Text', text),
+  const dlg = h('div', { class: 'pop-dialog export-dxf-dialog', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Export', 'data-testid': 'export-dxf-dialog' },
+    h('div', { class: 'row between' }, h('strong', null, 'Export'), close),
+    h('span', { class: 'lbl' }, 'Write a DXF or SVG copy with export settings.'),
+    row('Format', fmt), row('File name', name), row('Units', units), row('Scale', scale), row('Precision', precision), row('Text', text),
     h('div', { class: 'qs-row' }, h('span', null, 'Layers'), layers),
     h('span', { class: 'lbl' }, 'Scale is applied about 0,0. Precision sets decimal places for coordinates and lengths.'), err,
     h('div', { class: 'row' }, h('span', { class: 'lbl', style: 'flex:1' }, 'Next: native file picker'),

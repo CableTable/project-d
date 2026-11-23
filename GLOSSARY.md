@@ -83,6 +83,8 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Export DXF**: Writes a separate DXF copy with chosen export settings (units, scale, precision, layers, text as text or curves); the open drawing and its saved state are unchanged. Where: `DECISIONS.md`, Export DXF settings; `TODO.md`, item 109. Avoid: Save, Save as.
 
+**Export format**: DXF, SVG (and PNG, TODO 109c2) chosen in the Export dialog's Format list; Save as PDF stays its own command. Where: `DECISIONS.md`, Export format; `TODO.md`, item 109. Avoid: File type.
+
 **Dimension**: A saved measurement callout with lines, arrows and a value that does not count toward a part's size. Where: `DECISIONS.md`, Kept dimensions and sizes and More dimension types. Avoid: Driving constraint.
 
 **Dimension length entry**: Typing a plain number into a dimension's text to set the length of the one LINE it measures end to end; the line's second end moves and nothing else changes. Aligned dimensions set the true length; horizontal and vertical ones set only the width or height. Where: `TODO.md`, items 76a-76c. Avoid: Driving dimension, Parametric constraint.

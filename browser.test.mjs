@@ -8886,7 +8886,7 @@ try {
       await p.locator('[data-menu=View]').click(); await p.getByRole('menuitemcheckbox', { name: /Theme: dark/ }).click();
       await p.screenshot({ path: shotDir + '/305b-reopen-dark.png' });
       await p.evaluate(() => { window.__pics305.next = 'C:/jobs/final-export.dxf'; });
-      await menu('Export DXF…'); await q('export-dxf-name').fill('ignored-dialog-name.dxf');
+      await menu('Export…'); await q('export-dxf-name').fill('ignored-dialog-name.dxf');
       await q('export-dxf-scale').fill('2'); await q('export-dxf-units').selectOption('in'); await q('export-dxf-go').click();
       await prompt('Exported final-export.dxf');
       const exported = await p.evaluate(() => window.__pics305.files);
@@ -9267,7 +9267,7 @@ try {
       assert.match(await noteOf(/^Saved a\.\.b\.dxf.*2 picture\(s\) not saved/), /^Saved a\.\.b\.dxf.*2 picture\(s\) not saved/);
       // Export: the grant covers it too, and the note carries the count
       await p.evaluate(() => { window.__pics341.log.length = 0; window.__pics341.grants.length = 0; window.__pics341.next = 'C:/jobs/out.dxf'; });
-      await menu('Export DXF…'); await q('export-dxf-go').click(); assert.match(await noteOf(/^Exported out\.dxf.*2 picture\(s\) not saved/), /2 picture\(s\) not saved/);
+      await menu('Export…'); await q('export-dxf-go').click(); assert.match(await noteOf(/^Exported out\.dxf.*2 picture\(s\) not saved/), /2 picture\(s\) not saved/);
       assert.deepEqual(await p.evaluate(() => window.__pics341.grants), [{ path: 'C:/jobs/out.dxf', names: ['out-img1.png', 'out-img2.png'] }]);
       // a grant that throws carries on: the DXF is still written
       await p.evaluate(() => { window.__TAURI__.core.invoke = async () => { throw new Error('refused'); }; window.__pics341.log.length = 0; window.__pics341.next = 'C:/jobs/b.dxf'; });
@@ -12830,7 +12830,7 @@ try {
       };
       const exported = async () => {
         await p.evaluate(() => { window.pdfProbe = true; window.pdfProbeText = null; });
-        await p.locator('[data-menu=File]').click(); await p.getByRole('menuitem', { name: /^Export DXF/ }).click();
+        await p.locator('[data-menu=File]').click(); await p.getByRole('menuitem', { name: /^Export…/ }).click();
         await q('export-dxf-go').click(); await p.waitForFunction(() => window.pdfProbeText !== null);
         const text = await p.evaluate(() => { window.pdfProbe = false; return window.pdfProbeText; });
         return readDxf(text);
@@ -16967,7 +16967,7 @@ try {
     await typeCmd('line'); await typeCmd('50,600'); await typeCmd('300,600'); await typeCmd('');
     await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click(); await click(175, 600); await frames(); await gripWhen(3);
     await page.locator('[data-tool=shape]').click(); await gripWhen(2);
-    await lineCase(async () => readDxf((await downloaded(async () => { await menuItem('File', 'Export DXF…'); await t('export-dxf-go').click(); })).text));
+    await lineCase(async () => readDxf((await downloaded(async () => { await menuItem('File', 'Export…'); await t('export-dxf-go').click(); })).text));
     await page.keyboard.press('Escape');
     const cmp = newDoc(4); addEntities(cmp, dxfLine(20, 30, 120, 30));
     await openGrips(writeDxf(cmp), 'shape-curve-cmp.dxf'); await typeCmd('compare');
@@ -17061,7 +17061,7 @@ try {
     await typeCmd('');
     await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click(); await click(75, 600); await frames(); await gripWhen(5);
     await page.locator('[data-tool=shape]').click(); await gripWhen(3);
-    await typeCase(async () => readDxf((await downloaded(async () => { await menuItem('File', 'Export DXF…'); await t('export-dxf-go').click(); })).text), false);
+    await typeCase(async () => readDxf((await downloaded(async () => { await menuItem('File', 'Export…'); await t('export-dxf-go').click(); })).text), false);
     await page.keyboard.press('Escape');
     // Compare (the grips go to the source drawing)
     const cmp = newDoc(4); addEntities(cmp, dxfPoly([[20, 30], [80, 30], [80, 70]]));
@@ -17164,7 +17164,7 @@ try {
     await typeCmd('');
     await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click(); await click(75, 600); await click(250, 600, { shift: true }); await frames();
     await page.locator('[data-tool=shape]').click(); await gripWhen(5);
-    await spCase(async () => readDxf((await downloaded(async () => { await menuItem('File', 'Export DXF…'); await t('export-dxf-go').click(); })).text), false);
+    await spCase(async () => readDxf((await downloaded(async () => { await menuItem('File', 'Export…'); await t('export-dxf-go').click(); })).text), false);
     await page.keyboard.press('Escape');
     // Compare (the grips go to the source drawing)
     const cmp = newDoc(4); addEntities(cmp, dxfPoly([[20, 30], [80, 30], [80, 70]]), dxfPoly([[110, 30], [150, 30]]));
@@ -26139,7 +26139,7 @@ try {
         ['export-dxf-units', true, 1], ['export-dxf-go', true, 1],
       ]) {
         await p.locator('[data-menu=File]').click();
-        await p.getByRole('menuitem', { name: 'Export DXF…', exact: true }).click();
+        await p.getByRole('menuitem', { name: 'Export…', exact: true }).click();
         const dialog = p.getByTestId('export-dxf-dialog'); await dialog.waitFor();
         const before = await p.evaluate(() => window.__saveCalls);
         if (focus === 'outside') await p.evaluate(() => document.activeElement.blur());
@@ -26309,7 +26309,7 @@ try {
           writeTextFile: async (path, text) => { window.__exp109.wrote.push({ path, text }); } },
       };
     }, [...Buffer.from(writeDxf(raw))]);
-    const dialog = t('export-dxf-dialog'), open = async () => { await menuItem('File', 'Export DXF…'); await dialog.waitFor(); };
+    const dialog = t('export-dxf-dialog'), open = async () => { await menuItem('File', 'Export…'); await dialog.waitFor(); };
     const clean = async () => assert.equal(await page.locator('.tabs .dtab.on .dot').count(), 0);
     const written = () => page.evaluate(() => window.__exp109.wrote);
     try {
@@ -26388,7 +26388,7 @@ try {
       assert.equal(+readDxf((await written())[5].text).entities[0].r.v[readDxf((await written())[5].text).entities[0].r.c.indexOf(11)], 200);
       assert.equal(await page.locator('.tabs .dtab.on .tname')?.textContent(), 'Compare'); await clean();
       await closeTabs(/plate-edited/);
-      await menuItem('File', 'Export DXF…'); await said(/Open plate-edited.dxf to export DXF/);
+      await menuItem('File', 'Export…'); await said(/Open plate-edited.dxf to export DXF/);
       assert.equal(await dialog.count(), 0, 'a closed Compare source cannot open Export');
       assert.equal((await written()).length, 6, 'a closed Compare source writes nothing');
       await clean();
@@ -26424,7 +26424,7 @@ try {
         fs: { readFile: async () => new Uint8Array(bytes), exists: async () => false, writeTextFile: async (path, text) => { window.__exp109b.wrote.push({ path, text }); } },
       };
     }, [...Buffer.from(writeDxf(raw))]);
-    const dialog = t('export-dxf-dialog'), open = async () => { await menuItem('File', 'Export DXF…'); await dialog.waitFor(); };
+    const dialog = t('export-dxf-dialog'), open = async () => { await menuItem('File', 'Export…'); await dialog.waitFor(); };
     const layer = (n) => page.locator(`[data-testid=export-dxf-layer][data-layer="${n}"]`);
     try {
       await menuItem('File', 'Open…'); await waitTab(page, 'curves.dxf');
@@ -26460,6 +26460,117 @@ try {
       console.log(`109b: Cut unticked + Curves: ${top.join(' ')}; screenshots ${shotDir}/export-dxf-layers-{light,dark}.png`);
     } finally {
       await page.evaluate(() => { delete window.__TAURI__; delete window.__exp109b; });
+      await page.keyboard.press('Escape');
+      await closeTabs(/./);
+    }
+  });
+
+  // TODO 109c1: Export… with Format SVG, in Drawings, Layouts and Compare
+  const svgPaths = (svg) => (svg.match(/<path /g) || []).length;
+  const svgDialog = t('export-dxf-dialog');
+  const svgOpen = async () => { await menuItem('File', 'Export…'); await svgDialog.waitFor(); await t('export-format').selectOption('svg'); };
+  const svgFake = (bytes, opened) => page.evaluate(([b, name]) => {
+    window.__exp109c = { wrote: [], asked: [] };
+    window.__TAURI__ = {
+      dialog: { open: async () => 'C:\\source\\' + name, ask: async () => true, save: async (o) => { window.__exp109c.asked.push(o); return o.defaultPath; } },
+      fs: { readFile: async () => new Uint8Array(b), exists: async () => false, writeTextFile: async (path, text) => { window.__exp109c.wrote.push({ path, text }); } },
+    };
+  }, [bytes, opened]);
+  const svgField = (id, value) => page.waitForFunction(([i, v]) => document.querySelector(`[data-testid=${i}]`)?.value === v, [id, value]);
+  const svgWrote = async (n) => { await page.waitForFunction((k) => window.__exp109c.wrote.length === k, n); return page.evaluate((k) => window.__exp109c.wrote[k - 1], n); };
+  const svgDrawing = () => {
+    const raw = newDoc(4);
+    for (const [n, o] of [['Cut', { aci: 1 }], ['Notes', { aci: 3 }]]) addLayer(raw, n, o);
+    addEntities(raw, dxfLine(0, 0, 100, 0, { layer: 'Cut' }), dxfLine(0, 10, 100, 10, { layer: 'Notes' }), dxfText(5, 30, 5, 'Hi', { layer: 'Notes' }), dxfText(5, 40, 5, 'Gone', { layer: 'Cut' }));
+    return [...Buffer.from(writeDxf(raw))];
+  };
+
+  await step('TODO 109c1: Export… as SVG (Drawings): the drawing\'s paths and text, an unticked layer gives no element, Curves gives no <text>, inches / scale / precision, the drawing unchanged', async () => {
+    await closeTabs(/./); await menuItem('View', 'Theme: light');
+    await svgFake(svgDrawing(), 'svg-draw.dxf');
+    try {
+      await menuItem('File', 'Open…'); await waitTab(page, 'svg-draw.dxf');
+      const before = await t('drawing').evaluate((el) => el.toDataURL());
+      await menuItem('File', 'Export…'); await svgDialog.waitFor();
+      await svgField('export-format', 'dxf'); await svgField('export-dxf-name', 'svg-draw-export.dxf');
+      await t('export-format').selectOption('svg'); await svgField('export-dxf-name', 'svg-draw-export.svg');
+      for (const id of ['units', 'scale', 'precision', 'layers', 'text']) assert.equal(await t('export-dxf-' + id).isVisible(), true, id + ' stays for SVG');
+      await page.screenshot({ path: `${shotDir}/export-svg-light.png` });
+      await t('export-dxf-cancel').click(); await svgDialog.waitFor({ state: 'detached' });
+      await menuItem('View', 'Theme: dark'); await svgOpen();
+      await page.screenshot({ path: `${shotDir}/export-svg-dark.png` });
+      await page.keyboard.press('Escape'); await svgDialog.waitFor({ state: 'detached' });
+      await menuItem('View', 'Theme: light');
+      await svgOpen(); await t('export-dxf-go').click();                                // everything: both lines and both texts
+      const all = await svgWrote(1);
+      assert.equal(all.path, 'C:\\source\\svg-draw-export.svg');
+      assert.deepEqual(await page.evaluate(() => window.__exp109c.asked.map((o) => [o.defaultPath, o.filters[0].extensions])), [['C:\\source\\svg-draw-export.svg', ['svg']]]);
+      assert.match(all.text, /^<svg xmlns="http:\/\/www\.w3\.org\/2000\/svg" width="100mm" height="[\d.]+mm" viewBox="0 0 100 [\d.]+"/);
+      assert.equal(svgPaths(all.text), 2); assert.match(all.text, />Hi<\/text>/); assert.match(all.text, />Gone<\/text>/);
+      await said(/Exported svg-draw-export\.svg/);
+      await svgOpen(); await t('export-dxf-units').selectOption('in'); await t('export-dxf-scale').fill('2'); await t('export-dxf-precision').fill('2');
+      await page.locator('[data-testid=export-dxf-layer][data-layer="Cut"]').uncheck(); await t('export-dxf-go').click();
+      const part = (await svgWrote(2)).text;
+      assert.match(part, /width="7\.87in" height="[\d.]+in" viewBox="0 0 7\.87 /);   // 100 mm x 2 in inches, 2 decimals
+      assert.equal(svgPaths(part), 1, 'the Cut line is gone'); assert.doesNotMatch(part, /Gone/); assert.match(part, />Hi<\/text>/);
+      await svgOpen(); await t('export-dxf-text').selectOption('curves'); await t('export-dxf-go').click();
+      const curves = (await svgWrote(3)).text;
+      assert.doesNotMatch(curves, /<text/); assert.ok(svgPaths(curves) > 2, 'the letters are paths: ' + svgPaths(curves));
+      assert.equal(await page.locator('.tabs .dtab.on .dot').count(), 0, 'the open drawing stays clean');
+      assert.equal(await t('drawing').evaluate((el) => el.toDataURL()), before, 'the open drawing is unchanged after the exports');
+      const flat = newDoc(4); addEntities(flat, dxfLine(0, 0, 30, 0));                          // flat as one line: its box has no height
+      await t('picker').setInputFiles({ name: 'svg-flat.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(flat)) });
+      await waitTab(page, 'svg-flat.dxf'); await svgOpen(); await t('export-dxf-go').click();
+      assert.match((await svgWrote(4)).text, /width="32mm" height="2mm" viewBox="0 0 32 2"[\s\S]*<path d="M1 1 L31 1"/);
+      for (const theme of ['light', 'dark']) assert.ok(readFileSync(`${shotDir}/export-svg-${theme}.png`).length > 1000);
+      console.log(`109c1 Drawings: ${svgPaths(all.text)} paths, in / 2x: ${part.slice(0, 80).replace(/\n/g, ' ')}; curves ${svgPaths(curves)} paths; screenshots ${shotDir}/export-svg-{light,dark}.png`);
+    } finally {
+      await page.evaluate(() => { delete window.__TAURI__; delete window.__exp109c; });
+      await page.keyboard.press('Escape');
+      await closeTabs(/./);
+    }
+  });
+
+  await step('TODO 109c1: Export… as SVG (Layouts): the sheet is the page, the placed part is a path, an unticked Parts layer gives no element, the layout unchanged', async () => {
+    await closeTabs(/./);
+    const raw = newDoc(4); addEntities(raw, dxfLine(0, 0, 80, 0), dxfLine(0, 0, 0, 40));
+    const lay = newLayout('Svg layout'); lay.parts.a = makePart('a', 'Bracket', raw); lay.placed.push({ partId: 'a', x: 50, y: 50, rot: 0 });
+    await t('picker').setInputFiles({ name: 'svg-layout.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
+    await waitTab(page, 'svg-layout.dxf'); await t('size-strip').waitFor();
+    const before = await t('drawing').evaluate((el) => el.toDataURL());
+    try {
+      const out = await downloaded(async () => { await svgOpen(); await t('export-dxf-go').click(); });          // no native bridge: the browser download
+      assert.equal(out.name, 'svg-layout-export.svg');
+      assert.match(out.text, new RegExp(`^<svg xmlns="http://www\\.w3\\.org/2000/svg" width="${lay.s.sheetW}mm" height="${lay.s.sheetH}mm" viewBox="0 0 ${lay.s.sheetW} ${lay.s.sheetH}"`));
+      assert.ok(svgPaths(out.text) >= 2, 'the part is drawn: ' + svgPaths(out.text));
+      const none = await downloaded(async () => { await svgOpen(); await page.locator('[data-testid=export-dxf-layer][data-layer="Parts"]').uncheck(); await t('export-dxf-go').click(); });
+      assert.equal(svgPaths(none.text), 0, 'Parts unticked: no element');
+      assert.equal(await page.locator('.tabs .dtab.on .dot').count(), 0, 'the layout stays clean');
+      assert.equal(await t('drawing').evaluate((el) => el.toDataURL()), before, 'the layout is unchanged after the exports');
+      console.log(`109c1 Layouts: ${svgPaths(out.text)} paths, Parts unticked ${svgPaths(none.text)}`);
+    } finally {
+      await page.keyboard.press('Escape');
+      await closeTabs(/./);
+    }
+  });
+
+  await step('TODO 109c1: Export… as SVG (Compare): the compared drawing\'s paths, an unticked layer gives no element, Curves gives no <text>, the drawing unchanged', async () => {
+    await closeTabs(/./);
+    await t('picker').setInputFiles({ name: 'svg-cmp.dxf', mimeType: 'application/dxf', buffer: Buffer.from(svgDrawing()) });
+    await waitTab(page, 'svg-cmp.dxf');
+    await menuItem('File', 'Compare drawings…'); await t('cmp-name-1').waitFor();
+    try {
+      await waitTab(page, 'Compare');
+      const out = await downloaded(async () => { await svgOpen(); await t('export-dxf-go').click(); });
+      assert.equal(out.name, 'svg-cmp-export.svg'); assert.equal(svgPaths(out.text), 2); assert.match(out.text, />Hi<\/text>/);
+      const cut = await downloaded(async () => { await svgOpen(); await page.locator('[data-testid=export-dxf-layer][data-layer="Cut"]').uncheck(); await t('export-dxf-go').click(); });
+      assert.equal(svgPaths(cut.text), 1); assert.doesNotMatch(cut.text, /Gone/);
+      const curves = await downloaded(async () => { await svgOpen(); await t('export-dxf-text').selectOption('curves'); await t('export-dxf-go').click(); });
+      assert.doesNotMatch(curves.text, /<text/); assert.ok(svgPaths(curves.text) > 2);
+      await waitTab(page, 'Compare');
+      assert.equal(await page.locator('.tabs .dtab').filter({ hasText: 'svg-cmp.dxf' }).locator('.dot').count(), 0, 'the compared drawing stays clean');
+      console.log(`109c1 Compare: ${svgPaths(out.text)} paths, Cut unticked ${svgPaths(cut.text)}, Curves ${svgPaths(curves.text)}`);
+    } finally {
       await page.keyboard.press('Escape');
       await closeTabs(/./);
     }
