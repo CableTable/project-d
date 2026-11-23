@@ -25187,6 +25187,16 @@ try {
     await t('nest-run').click();
     assert.equal(await page.locator('[data-testid=nest-dialog]').getAttribute('data-state'), 'run');
     assert.equal(await t('nest-timelimit').isDisabled(), true, 'no edits while the search runs');
+    const stale = await page.evaluate(async () => {                 // 267L: a throttled step is still painted when the window ends (the preview never lags the newest step for long)
+      const d = document.querySelector('[data-testid=nest-dialog]'); let since = 0, worst = 0;
+      while (d.dataset.state === 'run') {
+        const painted = document.querySelector('[data-testid=nest-svg]')?.getAttribute('data-placed');
+        if (d.dataset.seen !== undefined && painted !== d.dataset.seen) { since = since || performance.now(); worst = Math.max(worst, performance.now() - since); } else since = 0;
+        await new Promise((r) => setTimeout(r, 40));
+      }
+      return worst;
+    });
+    assert.ok(stale < 600, 'the preview caught up with the newest step within the throttle window, lagged ' + Math.round(stale) + ' ms');
     await nestDone();                                               // the 5 s limit ends it
     assert.ok(Number(await page.locator('[data-testid=nest-dialog]').getAttribute('data-ms')) >= 4900, 'the search ran to its limit');
     await reads('nest-placed', /^10 of 10 placed$/);                // never worse than Every 90°
@@ -25201,7 +25211,7 @@ try {
     await page.waitForFunction(() => /^Best \d+ %/.test(document.querySelector('[data-testid=nest-status]').textContent), null, { timeout: 30000 });
     assert.equal(await t('nest-again').count(), 0, 'no second run while one is live');
     await t('nest-stop').click(); await nestDone();
-    await reads('nest-seeds', /you stopped the search\.$/);
+    await reads('nest-seeds', /^Free angles: at least \d+ seeds? tried, .*you stopped the search\.$/);
     await reads('nest-placed', /^10 of 10 placed$/);
     assert.equal(await nestPieces(), 10);
     await t('nest-apply').click();

@@ -32,7 +32,7 @@ export function openNest(cfg) {
   if (document.querySelector('.nestdlg')) return;
   const counts = {};
   for (const p of cfg.parts) counts[p.id] = p.count;
-  let free = false, phase = 'idle', result = null, progress = { done: 0, total: 0, placements: [] }, run = null, t0 = 0, clock = 0;
+  let free = false, phase = 'idle', result = null, progress = { done: 0, total: 0, placements: [] }, run = null, t0 = 0, clock = 0, trail = 0;
   const polys = new Map();
   const polyOf = (id) => { if (!polys.has(id)) polys.set(id, cfg.parts.find((p) => p.id === id).outline()); return polys.get(id); };
   const kindOf = (id) => cfg.parts.findIndex((p) => p.id === id) % KINDS + 1;
@@ -40,7 +40,7 @@ export function openNest(cfg) {
 
   const close = () => {
     if (run) { run.stop(); run = null; }
-    clearInterval(clock);
+    clearInterval(clock); clearTimeout(trail);
     document.removeEventListener('keydown', onKey, true);
     back.remove();
     if (prevFocus && prevFocus.focus) prevFocus.focus();
@@ -146,7 +146,7 @@ export function openNest(cfg) {
     resBox.classList.toggle('all', ok);
     const kids = [h('div', { class: 'pd-row' }, h('strong', { 'data-testid': 'nest-placed' }, `${result.placed} of ${result.total} placed${result.stopped ? ' (stopped)' : ''}`),
       h('span', { class: 'chip', 'data-testid': 'nest-pct' }, `${Math.round(result.usedPct)} % of the sheet used`))];
-    if (result.free) kids.push(h('div', { class: 'lbl', 'data-testid': 'nest-seeds' }, `Free angles: ${plural(result.free.tried, 'seed', 'seeds')} tried, the best is seed ${result.free.seed}${result.free.seed ? '' : ' (Every 90°)'}${result.free.stopped ? ', you stopped the search' : ''}.`));
+    if (result.free) kids.push(h('div', { class: 'lbl', 'data-testid': 'nest-seeds' }, `Free angles: ${result.free.stopped ? 'at least ' : ''}${plural(result.free.tried, 'seed', 'seeds')} tried, the best is seed ${result.free.seed}${result.free.seed ? '' : ' (Every 90°)'}${result.free.stopped ? ', you stopped the search' : ''}.`));
     if (ok) kids.push(h('div', { class: 'lbl', 'data-testid': 'nest-left' }, 'Everything fits on this sheet.'));
     else {
       kids.push(h('div', { class: 'lbl', 'data-testid': 'nest-left' }, `Left over (${leftN}): `, left.flatMap((p, i) => [i ? ', ' : '', h('b', null, `${result.left[p.id]} × ${p.name}`)]),
@@ -199,16 +199,19 @@ export function openNest(cfg) {
     clearInterval(clock); clock = setInterval(() => { if (phase === 'run') paintFooter(); }, 200);
     const job = { area: cfg.area, gap: cfg.gap, rotations: kept.rotations in ROTATIONS ? kept.rotations : 'all', items, fixed: cfg.fixed, timeLimit: kept.timeLimit };
     let lastDraw = 0;
+    const win = free ? 250 : 120;
+    const paintNow = (pl) => { clearTimeout(trail); trail = 0; lastDraw = performance.now(); paintPreview(pl); };
     const me = run = startNest(job, (s) => {
       if (run !== me) return;
-      progress = s;
-      const now = performance.now();
-      if (now - lastDraw > (free ? 250 : 120)) { lastDraw = now; paintPreview(s.placements); }   // Free angles: at most 4 repaints a second
+      progress = s; dlg.dataset.seen = String(s.placements.length);
+      const wait = lastDraw + win - performance.now();
+      if (wait < 0) paintNow(s.placements);                   // Free angles: at most 4 repaints a second
+      else if (!trail) trail = setTimeout(() => { trail = 0; if (run === me) paintNow(progress.placements); }, wait + 1);   // a skipped step still gets painted when the window ends
       paintFooter();
     });
     me.done.then((r) => {
       if (run !== me) return;
-      run = null; clearInterval(clock);
+      run = null; clearInterval(clock); clearTimeout(trail); trail = 0;
       result = r; phase = 'done';
       paintPreview(r.placements); paintResult(); paintFooter();
       dlg.dataset.ms = String(r.ms);
