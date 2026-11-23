@@ -91,7 +91,8 @@ import * as TK from './track.js';
 import { loadParts, savePart, removePart } from './partstore.js';
 import { baseName, saveDefault, withExt } from './savepath.js';
 import * as RC from './recovery.js';
-import { openExport, paintPage } from './export.js';
+import { openExport, paintPage, today } from './export.js';
+import * as TB from './titleblock.js';
 import { batchFolder, batchOutDir, newBatch, outPath } from './batch-folder.js';
 import { pngSize } from './png-size.js';
 import { openNest } from './nestdlg.js';
@@ -371,7 +372,7 @@ const fmt = (n) => Number(n).toFixed(2);
 const partHid = (p) => {
   const d = curDoc(), part = d?.lay?.parts[p.partId];
   const layer = part?.obj && LD.layersOf(d.lay)[part.raw.entities[0]?.layer];
-  return !!(d?.hiddenParts?.has(p.partId) || layer?.off || layer?.frozen);
+  return !!(d?.hiddenParts?.has(p.partId) || layer?.off || layer?.frozen || (d?.titleBlock?.enabled === false && TB.isTitlePart(part)));       // the Title block switch (PDF dialog) off hides the sheet's title block too
 };
 const partSelectable = (p) => !state.hidden.parts && !partHid(p) && !p.lock;
 let cssCache = null;                // theme colours read from the page once per theme, not at every repaint
@@ -911,7 +912,8 @@ function ribbonContents(kind) {
   if (kind === 'layout') return [...groups,
     group('Parts', btn('Add to layout', '<rect x="3" y="5" width="12" height="14"/><path d="M18 9v8M14 13h8"/>', addToLayout),
       btn('Parts library', '<rect x="3" y="4" width="5" height="16"/><rect x="10" y="4" width="5" height="16"/><path d="M17 5l4 1-3 15-4-1z"/>', showLibrary, { command: 'library' }),
-      btn('Extract part…', '<rect x="3" y="3" width="10" height="10" stroke-dasharray="2 2"/><path d="M10 10l10 10M14 20h6v-6"/>', extractPart, { command: 'extract' })),
+      btn('Extract part…', '<rect x="3" y="3" width="10" height="10" stroke-dasharray="2 2"/><path d="M10 10l10 10M14 20h6v-6"/>', extractPart, { command: 'extract' }),
+      btn('Title block', '<rect x="3" y="4" width="18" height="16"/><path d="M11 20v-5h10M3 15h8M15 15v5"/>', titleBlockCommand, { description: 'One title block per sheet: a block with fields (title, drawing no., rev, scale, sheet size, date, drawn by, material, file). Pressed again it selects it' })),
     group('Step and repeat', ribbonTool('step'), ribbonTool('nest')), group('Modify', stack(ribbonTool('copy', true), ribbonTool('stretch', true)), ribbonTool('rotate'), ribbonTool('fillet', true), ribbonTool('contour'), ribbonTool('break'), ribbonTool('join'), stack(ribbonTool('shape', true), ribbonTool('close', true)), stack(ribbonTool('reverse', true), ribbonTool('lengthen', true))), group('Properties', stack(...colourBtns())), shaping()];
   if (kind === 'drawing') {
     groups.push(group('Modify', stack(ribbonTool('move', true), ribbonTool('rotate', true), ribbonTool('mirror', true)),
@@ -2281,6 +2283,8 @@ function newLayoutTab() {
 }
 function openLayoutFile(lay, name, path, fontNote, titleBlock, dwg = false) {
   lay.name = name;
+  const tp = TB.titlePartOf(lay);
+  if (tp) titleBlock = TB.typedFromEnt(tp.raw.entities[0], TB.titleAuto(lay, name, today()), titleBlock, TB.FROM_FILE);       // a field changed in another CAD app is typed here (the date and file name stay auto unless the settings hold them)
   const doc = { name, path: dwg ? null : path, openPath: path, dirty: false, lay, titleBlock, fromFile: true, ...(dwg && { fromDwg: true }) };
   state.panel = 'main';
   addTab(doc);
@@ -2341,6 +2345,30 @@ function addToLayout() {
   update();
   if (!grid) selectLoose(lay.placed.length - 1);
   note(`${part.name} (${fmtSize(part.w)} × ${fmtSize(part.h)} mm) added to ${t.name}: ` + (grid ? `${layout.count} fit on the sheet` : 'placed on the sheet, on whole mm. ' + SHIFT_HINT));
+}
+
+/** Title block (TODO 9a): one per sheet, bottom-right inside the grippers, as a layout block object with its ATTRIBs; pressed again it selects the block. One undo step. */
+function titleBlockCommand() {
+  const d = curDoc(), lay = d?.lay;
+  if (!lay) { note('Title block: open a layout first'); return; }
+  const have = TB.titlePartOf(lay);
+  if (have) {
+    if (partHid(lay.placed.find((p) => p.partId === have.id))) { note('The title block is switched off: turn on Title block in the PDF dialog to show it'); return; }
+    selectLoose(lay.placed.findIndex((p) => p.partId === have.id));
+    note('Title block selected: double-click it to edit its fields');
+    return;
+  }
+  const spot = TB.titleSpot(lay.s);
+  if (!spot) { note('Title block: the sheet is too small for it (150 × 44 mm inside the grippers)'); return; }
+  pushLay(d, null, '', 'Title block');
+  if (d.titleBlock?.enabled === false) d.titleBlock = { ...d.titleBlock, enabled: true };       // one switch: inserting turns it on
+  const blocks = { [TB.TITLE_NAME]: { base: [0, 0], xref: false, entities: TB.titleBlockEntities() } };
+  const ent = TB.titleInsert(...spot, TB.titleValues(d.titleBlock, TB.titleAuto(lay, d.name, today())));
+  const part = LD.objectPart('tb' + uid(), 'Title block', ent, LD.layersOf(lay), {}, blocks);
+  lay.parts[part.id] = part; lay.placed.push(LD.objectPlacement(part));
+  touch(d); update();
+  selectLoose(lay.placed.length - 1);
+  note('Title block added at the bottom right. Double-click it to edit its fields. Ctrl+Z takes it back');
 }
 
 /** Pick the part of the step-and-repeat grid: one of the layout's parts, or one from the library (it is added to the layout). */
@@ -2466,7 +2494,8 @@ const fmt1 = (v) => Number(v).toFixed(1);
 const centrePivot = () => ({ kind: 'centre', x: 0, y: 0 });
 const laySnap = (lay) => ({ sw: lay.s.sheetW, sh: lay.s.sheetH, s: structuredClone(lay.s), placed: lay.placed.map((p) => ({ ...p })), gridPart: lay.s.gridPart, parts: { ...lay.parts }, layers: LD.layersOf(lay), grids: structuredClone(lay.grids || {}),
   lsel: lay === (curLay() || {}) ? selIdxs().map((i) => placedNow[i]).filter((p) => p.src === 'loose').map((p) => p.i) : [],      // lsel: which loose parts were selected (undo brings the selection back)
-  bl: state.docs.find((t) => t.lay === lay)?.balloons });      // bl: the tab's balloon set (immutable, so the reference is the snapshot)
+  bl: state.docs.find((t) => t.lay === lay)?.balloons,      // bl: the tab's balloon set (immutable, so the reference is the snapshot)
+  tb: state.docs.find((t) => t.lay === lay)?.titleBlock });      // tb: the tab's title block settings (typed fields; replaced, never changed in place): the sheet's title block undoes with them
 const layHist = (d) => d.lhist || (d.lhist = Ed.createHistory());
 /** Keeps the layout as it is now for undo; the same key within 0.8 s (arrow key held down) keeps only the first. */
 function pushLay(d, snap, key = '', label) {
@@ -2481,6 +2510,7 @@ function layRestore(d, st, dirty = true) {
   const sized = st.sw != null && (st.sw !== d.lay.s.sheetW || st.sh !== d.lay.s.sheetH);
   if (sized) { d.lay.s.sheetW = st.sw; d.lay.s.sheetH = st.sh; syncFields(); }
   if ('bl' in st) d.balloons = st.bl;
+  if ('tb' in st) d.titleBlock = st.tb;
   d.lay.placed = st.placed; d.lay.parts = st.parts; if (st.layers) d.lay.layers = st.layers; if (st.grids) d.lay.grids = st.grids; Object.assign(d.lay.s, structuredClone(st.s));       // every setting (grippers, gaps, rows, marks, grid part, guides) comes back with the parts
   if (st.renamed) {       // a layer rename (or its Undo / Redo): the current layer, Layers + Add names and hidden objects follow
     const [a, b] = st.renamed;
@@ -3835,8 +3865,9 @@ function hideMenu() {
 // ---- PDF / Print (export.js is the dialog, pdf-export.js the pages) ----
 /** The layout without the parts hidden in the Objects tab (their places and the grid, if the grid is made of one): what print and PDF use. */
 function shownLayout(d) {
-  const hid = d.hiddenParts;
-  if (!hid || !hid.size) return d.lay;
+  const hid = new Set(d.hiddenParts), title = d.titleBlock?.enabled === false && TB.titlePartOf(d.lay);
+  if (title) hid.add(title.id);
+  if (!hid.size) return d.lay;
   return { ...d.lay, s: { ...d.lay.s, gridPart: hid.has(d.lay.s.gridPart) ? null : d.lay.s.gridPart }, placed: d.lay.placed.filter((p) => !hid.has(p.partId)) };
 }
 /** What the PDF is made from: the active tab's drawing (a layout's Sheet and Marks layers are not artwork), or null (nothing open yet). */
@@ -3900,7 +3931,7 @@ async function savePdfPages() {
 async function exportPdf() {
   const d = curDoc(), s = exportSource(), pics = s?.fl.items.some((it) => it.k === 'i') ? await pdfPictures(s) : new Map();         // no await without pictures
   openExport({ source: (selectionOnly, cut) => { const src = exportSource(selectionOnly, cut); return src && { ...src, titleBlock: d.titleBlock, pics }; }, sheet: () => ({ w: state.sheetW, h: state.sheetH }), readDrawing, note,
-    setTitleBlock: (value) => { d.titleBlock = value; d.dirty = true; renderTabs(); } });
+    setTitleBlock: (value) => { d.titleBlock = value; d.dirty = true; renderTabs(); if (d.lay && curDoc() === d) update(); } });       // a layout's title block follows the typed fields and the switch
 }
 
 const rawForSave = (d) => withTitleBlock(d.lay ? LD.layoutRaw(d.lay) : nativeDimensionOverrides(d.raw), d.titleBlock);
@@ -6493,6 +6524,7 @@ function layDimsSettle(lay, names) {
 function update(refit = false, dimNames) {
   const lay = curLay();
   if (lay) layDimsSettle(lay, dimNames);
+  if (lay) { const d = curDoc(); LD.syncTitle(lay, d.titleBlock, d.name, today(), () => 'tb' + uid()); }       // the title block's auto fields (sheet size, date, file) stay live
   if (lay) LD.refreshAttributes(lay);
   layout = gridNow();
   for (let i = 0; i < 3 && pruneGaps(); i++) layout = gridNow();
@@ -11535,6 +11567,7 @@ function attributePick(e, command = false) {
   if (rows && !rows.length) { note('That block has no editable attributes.'); return true; }
   pdrag = null; state.drawingRotate = null; state.mode = 'select'; renderCommand();
   let loose = placed?.src === 'loose' ? placed.i : null;
+  const title = !!d.lay && TB.isTitlePart(part) && ent.type === 'INSERT', auto = title && TB.titleAuto(d.lay, d.name, today());       // the sheet's title block: typed fields go to the tab's settings, Reset puts a field back to auto
   openAttributes(ent, raw.blocks, (next) => {
     if (d.lay) {
       const g = startGesture(d, ent.type === 'ATTDEF' ? 'Edit Attribute Definition' : 'Attribute editor');
@@ -11547,13 +11580,14 @@ function attributePick(e, command = false) {
       // A wider value can change the reference corner; keep the geometry in place, including after reopening.
       const origin = mapply(placedMat(old, pl, 0), updated.box[0], updated.box[1]);
       gMark(g);
+      if (title) d.titleBlock = TB.typedFromEnt(next, auto, d.titleBlock);       // after gMark: the undo step keeps the old settings
       if (loose == null) loose = gLoose(g, slot);
       d.lay.parts[id] = { ...old, ...updated };
       d.lay.placed[loose] = { ...pl, partId: id, x: origin[0], y: -origin[1] };
       if (!shared) delete d.lay.parts[old.id];
       gCommit(g); update();
     } else if (!commit(d, { entities: d.raw.entities.map((x, i) => i === hit ? next : x), blocks: d.raw.blocks }, ent.type === 'ATTDEF' ? 'Edit Attribute Definition' : 'Attribute editor')) return;       // too nested: commit showed why
-  });
+  }, title ? TB.titleValues({}, auto) : null);
   return true;
 }
 

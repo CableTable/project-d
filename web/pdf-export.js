@@ -12,6 +12,7 @@ import { mmul, mapply, mscale, arcSweep, opsBox, strokeWidth, dotDash } from './
 import { shownItems, itemVisible } from './doc.js';
 import { markGeometry, EDGES, gripOf } from './layout.js';
 import { addBlock, text as dxfText } from './dxf-write.js';
+import { SHEET_KEYS } from './titleblock.js';
 import { PAGES_LAYER } from './pdf-read.js';
 
 export const PAPERS = { A4: [297, 210], A3: [420, 297], A2: [594, 420], A1: [841, 594], A0: [1189, 841] };   // landscape, mm
@@ -59,7 +60,7 @@ export const TITLE_BLOCK = 'PD_PDF_TITLE';
 /** Only typed strings are overrides; an empty string deliberately hides that field. */
 export function cleanTitleBlock(value) {
   const out = { enabled: value?.enabled !== false };
-  for (const key of TITLE_FIELDS) if (typeof value?.[key] === 'string') out[key] = value[key];
+  for (const key of [...TITLE_FIELDS, ...SHEET_KEYS]) if (typeof value?.[key] === 'string') out[key] = value[key];       // SHEET_KEYS: the fields of a Layouts sheet's title block (titleblock.js)
   return out;
 }
 

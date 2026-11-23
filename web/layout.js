@@ -25,10 +25,11 @@ export function presetFor(w, h) {
 /** A gripper size from state: a number of mm, never negative. */
 export const gripOf = (o, edge) => Math.max(0, Number(o[GRIP_KEYS[edge]]) || 0);
 
-/** The area parts may use: each side keeps clear by its own gripper (no margin). */
+/** The area parts may use: each side keeps clear by its own gripper (no margin), the bottom also by the title block's height (o.titleH).
+ * shortcut: the title block's strip is taken across the full width (a rectangle stays a rectangle), upgrade when a nest must use the space beside it. */
 export function usableArea(o) {
   const l = gripOf(o, 'left'), t = gripOf(o, 'top');
-  return { x: l, y: t, w: o.sheetW - l - gripOf(o, 'right'), h: o.sheetH - t - gripOf(o, 'bottom') };
+  return { x: l, y: t, w: o.sheetW - l - gripOf(o, 'right'), h: o.sheetH - t - gripOf(o, 'bottom') - Math.max(0, +o.titleH || 0) };
 }
 
 /** Extra gaps ([{ after, mm }], after = 1-based row / column the gap follows) as { after → mm }, last one wins, bad ones left out. */

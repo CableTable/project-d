@@ -4,6 +4,7 @@
 import { h, fill, icon } from './dom.js';
 import { fitBase, zoomAt, panBy, paintView, FIT } from './pdf-view.js';
 import { baseName, saveDefault, withExt } from './savepath.js';
+import { SHEET_KEYS } from './titleblock.js';
 import { planPdf, DEFAULT_OPTIONS, tileGrid, scaleText, titleBlockTexts, cleanTitleBlock, readTitleBlock, PAPERS, PART_BORDER, marginsOf, OFFICE_MARGINS, MARGIN_MAX, parseScale, percentText, PageCapError } from './pdf-export.js';
 import { batchPdfSource } from './pdf-source.js';
 import { batchFolder, batchOutDir, newBatch, outPath } from './batch-folder.js';
@@ -36,7 +37,7 @@ const partSettings = { ...DEFAULT_OPTIONS, ...customSettings(savedPart), mirror:
   marginPreset: ['standard', 'office', 'custom'].includes(savedPart.marginPreset) ? savedPart.marginPreset : 'standard',
   margins: marginsOf({ margins: savedPart.margins || OFFICE_MARGINS }), batch: layoutSettings.batch };
 
-const today = () => { const d = new Date(); return [d.getDate(), d.getMonth() + 1].map((n) => String(n).padStart(2, '0')).join('-') + '-' + d.getFullYear(); };
+export const today = () => { const d = new Date(); return [d.getDate(), d.getMonth() + 1].map((n) => String(n).padStart(2, '0')).join('-') + '-' + d.getFullYear(); };
 const errText = (e) => (e && e.message ? e.message : String(e));
 
 /** Browser fallback: the bytes go to the Downloads folder. */
@@ -210,7 +211,7 @@ export function openExport(host) {
     ref.titleInputs[key] = input;
     return h('label', { class: 'lbl pd-fl' + (key === 'size' || key === 'footnote' ? ' wide' : '') }, label, input);
   };
-  ref.titleReset = h('button', { class: 'btn sm', type: 'button', 'data-testid': 'pdf-title-reset', onclick: () => { titleBlock = { enabled: titleBlock.enabled }; rememberTitle(); } }, 'Reset');
+  ref.titleReset = h('button', { class: 'btn sm', type: 'button', 'data-testid': 'pdf-title-reset', onclick: () => { titleBlock = { ...Object.fromEntries(SHEET_KEYS.filter((k) => k in titleBlock).map((k) => [k, titleBlock[k]])), enabled: titleBlock.enabled }; rememberTitle(); } }, 'Reset');       // a Layouts sheet's own fields (title, rev…) are not on this dialog: they stay
   ref.titleSet = fieldset('Title block',
     h('label', { class: 'row swrow' }, h('span', null, 'Title block'), ref.titleSwitch),
     h('div', { class: 'pd-two pd-title-fields' }, titleField('file', 'File name'), titleField('scale', 'Scale'), titleField('size', 'Part / size / page'), titleField('date', 'Date'), titleField('footnote', 'Footnote')),

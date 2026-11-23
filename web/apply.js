@@ -8,6 +8,7 @@ import { polylines } from './compare.js';
 import { hull as convexHull } from './nestshape.js';
 import { baseName } from './savepath.js';
 import { markGeometry, stepRepeat, usableArea } from './layout.js';
+import { sheetArea } from './titleblock.js';
 import { newDoc, addLayer, addBlock, addEntities, insert, rect, roundRect, line, circle } from './dxf-write.js';
 
 export const LAYERS = { parts: 'Parts', sheet: 'Sheet', marks: 'Marks' };
@@ -95,13 +96,13 @@ export const GRID_KEYS = ['gridPart', 'fit', 'rows', 'cols', 'gapX', 'gapY', 'ro
 /** The grid a grid record G makes on the layout's sheet (a stepRepeat result; count 0 when its part is gone), without anchors: the copies are laid fresh. */
 export function gridLayout(lay, G) {
   const p = lay.parts[G.gridPart];
-  return stepRepeat({ ...lay.s, ...G, partW: p ? p.w : 0, partH: p ? p.h : 0 });
+  return stepRepeat({ ...sheetArea(lay), ...G, partW: p ? p.w : 0, partH: p ? p.h : 0 });
 }
 
 const same = (a, b) => Math.abs(a - b) < 1e-6;
 const turn = (r) => ((r || 0) % 360 + 360) % 360;
 /** What decides where an applied grid's copies sit: its settings (GRID_KEYS, extra gaps) and the sheet's usable area. Equal to G.sig = nothing to lay again. */
-export const gridSig = (lay, G) => JSON.stringify([...GRID_KEYS.map((k) => G[k]), G.extraRows, G.extraCols, usableArea(lay.s)]);
+export const gridSig = (lay, G) => JSON.stringify([...GRID_KEYS.map((k) => G[k]), G.extraRows, G.extraCols, usableArea(sheetArea(lay))]);
 
 /**
  * Records an applied grid and adds its copies to lay.placed, each with `gid`. copies: placements in the grid's order (L.positions);

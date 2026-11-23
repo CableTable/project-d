@@ -12,17 +12,18 @@
 // a negative scale), marks on "Marks" — what any CAD app shows. The settings and the placed parts also travel in a block named
 // PD_LAYOUT that nothing inserts: a few TEXT entities, each holding up to 200 characters of base64 of a JSON text. Other CAD
 // apps ignore (or at most list) an unused block; our reader (drawing.js readDxf) keeps it, and layoutFromRaw() reads it back.
-import { readDxf, flatten, ownBlock } from './drawing.js';
+import { readDxf, flatten, ownBlock, mapply } from './drawing.js';
 import { writeDxf, text as dxfText, addBlock, addEntities, newDoc, insert } from './dxf-write.js';
 import { explodeInsert, explodeDimension, explodeSelection } from './explode.js';
 import { unitFactor, startHidden } from './doc.js';
 import { stepRepeat, markGeometry, MAX_LINE } from './layout.js';
-import { buildLayoutDoc, gridPlacements, placedBox, partFromDrawing, placement1, GRID_KEYS, gridSig } from './apply.js';
+import { buildLayoutDoc, gridPlacements, placedBox, partFromDrawing, placement1, placedMat, GRID_KEYS, gridSig } from './apply.js';
 import { keepOnly, newLayerName, DIM_LAYER, DIM_BLOCK, LDR_BLOCK, dimTag, freeNameWithPrefix } from './edit.js';
 import { followDimensions } from './linked-dimensions.js';
 import { isDimPart, dimName, isSettled, bakeBlock, turnedTag, freeBlockName } from './layoutdim.js';
 import { cleanGuides } from './guides.js';
 import { TITLE_BLOCK } from './pdf-export.js';
+import { sheetArea, titlePartOf, titleAuto, titleValues, withTitleValues } from './titleblock.js';
 import { colourKey, withColour, widthKey, withWidth } from './props.js';
 import { renameLayer, layerUseMap } from './objects.js';
 
@@ -296,6 +297,23 @@ export function changeLayer(lay, name, { to = name, def } = {}, newId) {
   return ids;
 }
 
+/** The title block's ATTRIBs follow the settings (`store`: typed values) and the auto values (sheet size, date, file name): the block becomes a new part (a new id) in the same place. → true when it changed. */
+export function syncTitle(lay, store, name, date, newId) {
+  const old = titlePartOf(lay);
+  if (!old) return false;
+  const ent = old.raw.entities[0], next = withTitleValues(ent, titleValues(store, titleAuto(lay, name, date)));
+  if (next === ent) return false;
+  const part = objectPart(newId(), old.name, next, layersOf(lay), old.raw.header, old.raw.blocks);
+  if (!part) return false;
+  for (const p of lay.placed) {
+    if (p.partId !== old.id) continue;
+    const o = mapply(placedMat(old, p, 0), part.box[0], part.box[1]);       // a wider value can move the box's corner: the drawing stays where it is
+    Object.assign(p, { partId: part.id, x: o[0], y: -o[1] });
+  }
+  delete lay.parts[old.id]; lay.parts[part.id] = part;
+  return true;
+}
+
 // ---------------------------------------------------------------- dimensions on a layout (TODO 156b2c1; layoutdim.js)
 
 /** Block names, ignoring case; drawings' names also reserve a dimension's existing name. */
@@ -474,7 +492,7 @@ export function gridOf(lay) {
     const [x0, y0, x1, y1] = boxOfPlaced(lay, pl);
     return { ...pl, box: [x0, lay.s.sheetH - y1, x1, lay.s.sheetH - y0] };
   });
-  return p ? stepRepeat({ ...lay.s, partW: p.w, partH: p.h, placed }) : null;
+  return p ? stepRepeat({ ...sheetArea(lay), partW: p.w, partH: p.h, placed }) : null;
 }
 
 /** Every placed part: the grid's copies, then the loose ones — [{ partId, x, y, rot, mirrorX, mirrorY, src, i }]. */
