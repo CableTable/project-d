@@ -492,6 +492,7 @@
   "TODO 109c2: Export… as PNG (Layouts): the sheet is the page, size in px = sheet inches x DPI, transparent corner, the layout unchanged": 2.32,
   "TODO 109c2: Export… as PNG (Compare): the compared drawing as a PNG, size in px = inches x DPI, transparent corner, the drawing unchanged": 1.32,
   "TODO 109d1: Export… Line weights and Hidden objects: SVG widths 0.5 / 0.05, a hidden line only with the tick, DXF keeps code 60 by default, the ticks in Layouts, the drawing unchanged": 2.3,
+  "TODO 109d2: Export… A folder at once: SVG and DXF for a folder (a .dwg and a .dxf with one name, a file already there, a bad file skipped and named, own units, no overwrite), the browser downloads, the open drawing unchanged": 2,
   "TODO 52: File → Export for cutter… asks for the tolerance (bad values refused), cancels cleanly, then writes lines / arcs / polylines only; screenshots light and dark": 6.4,
   "Export for cutter: app converts default and edited mm tolerances on an inch drawing": 8.55,
   "TODO 244: Export for cutter on a layout tab leaves out the sheet border and the crop / reg marks, keeps the parts": 5.75,

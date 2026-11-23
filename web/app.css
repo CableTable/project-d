@@ -602,8 +602,15 @@ select.fld { font-family: var(--sans); }
 .attribute-list tbody tr { cursor: pointer; }
 .attribute-list tbody tr:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .cutdlg { width: min(580px, 100%); }
-.export-dxf-dialog { width: min(460px, 100%); }
+.export-dxf-dialog { width: min(460px, 100%); max-height: 100%; overflow-y: auto; }
+.export-dxf-dialog.batch { width: min(640px, 100%); }
 .export-dxf-dialog .fld { width: 100%; }
+.export-dxf-dialog .pd-tabs { padding: 0; flex-shrink: 0; }
+.export-dxf-dialog > * { flex-shrink: 0; }
+.export-dxf-dialog .export-foot { position: sticky; bottom: -16px; background: var(--panel); padding: 8px 0; margin-bottom: -16px; }
+.export-dxf-dialog .export-batch { flex: none; min-height: auto; padding: 0; overflow: visible; gap: 10px; }
+.export-dxf-dialog .export-batch .pd-list { max-height: 150px; }
+.export-dxf-dialog .pd-row .fld { width: auto; }
 .export-dxf-layers { max-height: 150px; overflow: auto; border: 1px solid var(--line); border-radius: var(--r); background: var(--field); padding: 6px 8px; display: grid; gap: 4px; }
 .export-dxf-layers label { display: flex; gap: 8px; align-items: center; overflow-wrap: anywhere; }
 .cutdlg .fld { width: 70px; }

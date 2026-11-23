@@ -92,6 +92,7 @@ import { loadParts, savePart, removePart } from './partstore.js';
 import { baseName, saveDefault, withExt } from './savepath.js';
 import * as RC from './recovery.js';
 import { openExport, paintPage } from './export.js';
+import { batchFolder, batchOutDir, newBatch, outPath } from './batch-folder.js';
 import { pngSize } from './png-size.js';
 import { openNest } from './nestdlg.js';
 import { openTrace } from './tracedlg.js';
@@ -4243,6 +4244,34 @@ async function exportPng(raw, d, { scale, skipLayers, dpi, background, lineWeigh
   return { blob, dpi: size.dpi, capped: size.capped };
 }
 
+/**
+ * One Export of tab-like `d` in `fmt` (dxf | svg | png) with `settings` (units, scale, precision, skipLayers, dpi, background, lineWeights, hidden), written to `destination`
+ * (a path, in the app) or downloaded as `written`. Shared by the dialog's one file and its folder at once.
+ * → { said } the status text that follows "Exported <name>", or { fail } (nothing written: the PNG would be too big).
+ */
+async function exportWrite(d, fmt, curves, settings, written, destination) {
+  const t = window.__TAURI__, svg = fmt === 'svg', png = fmt === 'png', skip = new Set(settings.skipLayers.map((n) => n.toLowerCase()));
+  const saved = rawForSave(d), made = curves ? await exportCurves(saved, d, skip, (svg || png) && settings.hidden) : null, raw = made ? made.raw : saved, tail = made ? made.note : '';
+  if (png) {
+    const pic = await exportPng(raw, d, settings);
+    if (!pic.blob) return { fail: 'PNG not written: this size could not be drawn. Lower the DPI or the Scale' };
+    if (destination) await t.fs.writeFile(destination, new Uint8Array(await pic.blob.arrayBuffer())); else download(written, pic.blob, 'image/png');
+    return { said: (pic.capped ? `. PNG at ${pic.dpi} dpi (largest that fits)` : '') + tail };
+  }
+  if (svg) {
+    const picture = await exportSvg(raw, d, settings);
+    if (destination) await t.fs.writeTextFile(destination, picture); else download(written, picture, 'image/svg+xml');
+    return { said: tail };
+  }
+  return { said: saveReportNote(await writeDrawing(raw, written, destination, settings)) + tail };
+}
+
+/** The Units choice a file starts on: its own unit (in for inches, mm for the other known ones), no conversion for an unknown one ('' = another unit, 'unitless' = none). */
+const ownUnits = (sourceUnits) => [1, 2, 4, 5, 6].includes(sourceUnits) ? sourceUnits === 1 ? 'in' : 'mm' : sourceUnits ? '' : 'unitless';
+
+const exportBatch = newBatch();       // the dialog's A folder at once: the folder, ticks and files stay while the app runs
+const bufferOf = (b) => (b instanceof ArrayBuffer ? b : b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength));
+
 /** Export: the same content as Save through the writer's copy-only settings (Format DXF), or as an SVG picture (Format SVG). */
 function exportDxf() {
   const active = curDoc(), d = active?.cmp ? cmpEdit('export DXF') : active;
@@ -4262,7 +4291,7 @@ function exportDxf() {
   const units = h('select', { class: 'fld', 'data-testid': 'export-dxf-units' }, convertible
     ? [h('option', { value: 'mm' }, 'mm'), h('option', { value: 'in' }, 'in')]
     : h('option', { value: sourceUnits ? '' : 'unitless' }, `${sourceUnits ? UNITS[sourceUnits] || 'Drawing units' : 'Unitless'} (no conversion)`));
-  units.value = convertible ? sourceUnits === 1 ? 'in' : 'mm' : sourceUnits ? '' : 'unitless';
+  units.value = ownUnits(sourceUnits);
   const scale = field('scale', { type: 'text', inputmode: 'decimal', value: '1' });
   const precision = field('precision', { type: 'text', inputmode: 'numeric', value: remembered });
   const text = h('select', { class: 'fld', 'data-testid': 'export-dxf-text' }, h('option', { value: 'text' }, 'Text'), h('option', { value: 'curves' }, 'Curves'));
@@ -4270,7 +4299,7 @@ function exportDxf() {
   const layers = h('div', { class: 'export-dxf-layers', 'data-testid': 'export-dxf-layers' }, ticks.map((box) => h('label', null, box, box.dataset.layer + (box.dataset.layer === '0' ? ' (always kept)' : ''))));
   const lineWeights = h('input', { type: 'checkbox', checked: true, 'data-testid': 'export-line-weights' });
   const hiddenObjects = h('input', { type: 'checkbox', checked: true, 'data-testid': 'export-hidden-objects' });       // on for DXF; showFormat flips it for SVG / PNG until the user has set it here
-  let hiddenSet = false;
+  let hiddenSet = false, tab = 'one', busy = false;       // tab: 'one' (this file) | 'batch' (A folder at once)
   const touched = new Set(), startOff = new Set(ticks.filter((box) => !box.checked && !(d.lay && /^(Parts|Marks)$/.test(box.dataset.layer))));
   for (const box of ticks) box.addEventListener('change', () => touched.add(box));
   const syncOff = () => { for (const box of startOff) if (!touched.has(box)) box.checked = fmt.value !== 'dxf' && hiddenObjects.checked; };   // SVG / PNG: Hidden objects on draws the file's off / frozen layers too
@@ -4278,7 +4307,7 @@ function exportDxf() {
   const err = h('div', { class: 'pd-bad', role: 'alert', hidden: true, 'data-testid': 'export-dxf-err' });
   const validate = () => {
     const problems = [
-      [name, !name.value.trim() || /[<>:"/\\|?*\x00-\x1f]/.test(name.value) ? 'Type a file name without < > : " / \\ | ? *' : ''],
+      [name, tab === 'one' && (!name.value.trim() || /[<>:"/\\|?*\x00-\x1f]/.test(name.value)) ? 'Type a file name without < > : " / \\ | ? *' : ''],
       [scale, scaleFactor(scale.value) === null ? 'Scale must be a number above 0' : ''],
       [precision, fmt.value !== 'png' && (!/^\d$/.test(precision.value.trim()) || +precision.value > 8) ? 'Precision must be a whole number from 0 to 8' : ''],
       [dpi, fmt.value === 'png' && (!/^\d{2,4}$/.test(dpi.value.trim()) || +dpi.value < 72 || +dpi.value > 1200) ? 'DPI must be a whole number from 72 to 1200' : ''],
@@ -4307,50 +4336,99 @@ function exportDxf() {
         destination = path;
         written = path.split(/[\\/]/).pop();
       }
-      const saved = rawForSave(d), skip = new Set(skipLayers.map((n) => n.toLowerCase())), made = curves ? await exportCurves(saved, d, skip, (svg || png) && settings.hidden) : null;
-      if (png) {
-        const pic = await exportPng(made ? made.raw : saved, d, settings);
-        if (!pic.blob) { note('PNG not written: this size could not be drawn. Lower the DPI or the Scale'); return; }
-        if (destination) await t.fs.writeFile(destination, new Uint8Array(await pic.blob.arrayBuffer())); else download(written, pic.blob, 'image/png');
-        note('Exported ' + written + (pic.capped ? `. PNG at ${pic.dpi} dpi (largest that fits)` : '') + (made ? made.note : ''));
-        return;
-      }
-      if (svg) {
-        const picture = await exportSvg(made ? made.raw : saved, d, settings);
-        if (destination) await t.fs.writeTextFile(destination, picture); else download(written, picture, 'image/svg+xml');
-        note('Exported ' + written + (made ? made.note : ''));
-        return;
-      }
-      const report = await writeDrawing(made ? made.raw : saved, written, destination, settings);
-      note('Exported ' + written + saveReportNote(report) + (made ? made.note : ''));
+      const r = await exportWrite(d, ext, curves, settings, written, destination);
+      if (r.fail) note(r.fail); else note('Exported ' + written + r.said);
     } catch (e) { note('Export failed: ' + (e?.message || e)); }
   };
+  // A folder at once: every .dxf / .dwg in a folder, one file each with these settings (R3: its visible layers, or all of them with Hidden objects ticked; Units = its own)
+  const B = exportBatch, t0 = window.__TAURI__, inApp = !!(t0?.dialog?.open && t0.fs?.readDir && t0.fs.readFile);
+  const batchEnd = h('div', { class: 'lbl', role: 'status', hidden: true, 'data-testid': 'export-batch-end' });
+  const goBatch = async () => {
+    if (busy) return;
+    const bad = validate(); if (bad) { bad.focus(); return; }
+    const todo = B.all.filter((e) => e.include && B[e.type] && !e.na);
+    if (!todo.length) return;
+    const outDir = await batchOutDir(B, t0, inApp);
+    if (outDir === false) return;
+    const kind = fmt.value, curves = text.value === 'curves', hidden = hiddenObjects.checked;        // read now: the dialog may be closed while it runs
+    const common = { scale: +scale.value, precision: +precision.value, escapeUnicode: true, dpi: +dpi.value, background: bg.value, lineWeights: lineWeights.checked, hidden };
+    busy = true; batchEnd.textContent = ''; batchEnd.hidden = true; showTab();
+    const used = new Set(), skipped = []; let ok = 0;
+    for (const e of todo) {
+      const set = (pct, text, status = 'progress') => { e.status = { kind: status, pct, text }; batchFiles.renderList(); };
+      try {
+        set(10);
+        let buf = e.type === 'dwg' && e.path ? null : e.file ? await e.file.arrayBuffer() : await t0.fs.readFile(e.path);       // a .dwg on disk is converted from its path
+        if (e.type === 'dwg') { buf = await dwgBytes(e.name, e.path, buf && bufferOf(buf)); if (!buf) throw new Error('could not convert this DWG'); }
+        set(30);
+        const r = await readDrawing(bufferOf(buf));
+        if (!r.ok) throw new Error(r.sorry || r.error || 'could not read this drawing');
+        await attachPictures(r, e.path);
+        const doc = { name: e.name, path: e.path || null, ...tabFields(r.doc, r.result) };
+        set(55);
+        const settings = { ...common, units: ownUnits(+doc.raw.header?.$INSUNITS || 0) || undefined, skipLayers: hidden ? [] : exportLayerRows(doc).filter(([, on]) => !on).map(([layer]) => layer) };
+        const app = !!(e.path && t0.fs?.[kind === 'png' ? 'writeFile' : 'writeTextFile']);
+        const dest = await outPath(app ? outDir || e.dir : null, baseName(e.name) + '-export', kind, used, app ? (p) => t0.fs.exists(p) : async () => false);
+        const made = await exportWrite(doc, kind, curves, settings, dest.split(/[\\/]/).pop(), app ? dest : null);
+        if (made.fail) throw new Error(made.fail);
+        ok++; set(100, 'Done', 'done');
+      } catch (err) { skipped.push(e.rel); set(0, 'Failed: ' + (err?.message || String(err)), 'fail'); }
+    }
+    busy = false;
+    const said = `Exported ${ok}, skipped ${skipped.length}` + (skipped.length ? ': ' + skipped.join(', ') : '');
+    batchEnd.textContent = said; batchEnd.hidden = false; note(said);
+    showTab();
+  };
+  const goBtn = h('button', { class: 'btn primary', type: 'button', 'data-testid': 'export-dxf-go', onclick: () => (tab === 'one' ? go() : goBatch()) }, 'Export');
+  const hint = h('span', { class: 'lbl', style: 'flex:1' }, 'Next: native file picker');
+  const batchFiles = batchFolder({ B, t: t0, inApp, note, prefix: 'export', onChange: () => showTab(), onTick: () => showTab(),
+    unsupported: (type) => type === 'cdr' ? 'CorelDRAW: not built yet' : '',
+    empty: inApp ? 'No drawings here yet. Browse to a folder.' : 'No drawings yet. Browse to a folder (the files go to Downloads).' });
+  const batchBody = h('div', { class: 'pd-batch export-batch' }, batchFiles.folderRow, batchFiles.extRow, batchFiles.list,
+    h('label', { class: 'lbl pd-fl' }, 'Save to', batchFiles.saveTo), batchEnd);
+  const tabBtn = (id, text, testid) => {
+    const b = h('button', { class: 'pd-tab', role: 'tab', type: 'button', 'data-testid': testid }, text);
+    b.addEventListener('click', () => { if (!busy) { tab = id; showTab(); } });
+    return b;
+  };
+  const tabOne = tabBtn('one', d.lay ? 'This layout' : 'This drawing', 'export-tab-one'), tabBatch = tabBtn('batch', 'A folder at once', 'export-tab-batch');
   const row = (label, input) => h('label', { class: 'qs-row' }, h('span', null, label), input);
+  const nameRow = row('File name', name), layersRow = h('div', { class: 'qs-row' }, h('span', null, 'Layers'), layers);
   const unitsRow = row('Units', units), precisionRow = row('Precision', precision), dpiRow = row('DPI', dpi), bgRow = row('Background', bg), weightsRow = row('Line weights', lineWeights);
-  const showFormat = () => {         // Units / Precision are for DXF and SVG; DPI / Background for PNG; Line weights for SVG and PNG
+  const showFormat = () => {         // Units / Precision are for DXF and SVG (Units: one file only, a folder keeps each file's own); DPI / Background for PNG; Line weights for SVG and PNG
     const png = fmt.value === 'png';
-    for (const [r, shown] of [[unitsRow, !png], [precisionRow, !png], [dpiRow, png], [bgRow, png], [weightsRow, fmt.value !== 'dxf']]) r.style.display = shown ? '' : 'none';
+    for (const [r, shown] of [[unitsRow, !png && tab === 'one'], [precisionRow, !png], [dpiRow, png], [bgRow, png], [weightsRow, fmt.value !== 'dxf']]) r.style.display = shown ? '' : 'none';
     if (!hiddenSet) hiddenObjects.checked = fmt.value === 'dxf';
     syncOff();
     validate();
   };
+  function showTab() {
+    const one = tab === 'one', n = B.all.filter((e) => e.include && B[e.type] && !e.na).length;
+    for (const [b, on] of [[tabOne, one], [tabBatch, !one]]) { b.classList.toggle('on', on); b.setAttribute('aria-selected', String(on)); }
+    for (const [r, shown] of [[nameRow, one], [layersRow, one], [batchBody, !one]]) r.style.display = shown ? '' : 'none';
+    dlg.classList.toggle('batch', !one);
+    goBtn.textContent = one ? 'Export' : `Export ${n} ${n === 1 ? 'file' : 'files'}`;
+    goBtn.disabled = busy || (!one && !n);
+    hint.textContent = one ? 'Next: native file picker' : '';
+    if (!one) batchFiles.renderList();
+    showFormat();
+  }
   fmt.addEventListener('change', () => { name.value = named(name.value, fmt.value); showFormat(); });
-  showFormat();
   const cancel = h('button', { class: 'btn', type: 'button', 'data-testid': 'export-dxf-cancel', onclick: finish }, 'Cancel');
   const close = h('button', { class: 'btn sm', type: 'button', 'aria-label': 'Close', onclick: finish }, '×');
   const dlg = h('div', { class: 'pop-dialog export-dxf-dialog', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Export', 'data-testid': 'export-dxf-dialog' },
     h('div', { class: 'row between' }, h('strong', null, 'Export'), close),
     h('span', { class: 'lbl' }, 'Write a DXF, SVG or PNG copy with export settings.'),
-    row('Format', fmt), row('File name', name), unitsRow, row('Scale', scale), precisionRow, dpiRow, bgRow, row('Text', text),
-    h('div', { class: 'qs-row' }, h('span', null, 'Layers'), layers), weightsRow, row('Hidden objects', hiddenObjects),
+    h('div', { class: 'pd-tabs', role: 'tablist' }, tabOne, tabBatch), batchBody,
+    row('Format', fmt), nameRow, unitsRow, row('Scale', scale), precisionRow, dpiRow, bgRow, row('Text', text),
+    layersRow, weightsRow, row('Hidden objects', hiddenObjects),
     h('span', { class: 'lbl' }, 'Scale is applied about 0,0. Precision sets decimal places for coordinates and lengths.'), err,
-    h('div', { class: 'row' }, h('span', { class: 'lbl', style: 'flex:1' }, 'Next: native file picker'),
-      cancel,
-      h('button', { class: 'btn primary', type: 'button', 'data-testid': 'export-dxf-go', onclick: go }, 'Export')));
+    h('div', { class: 'row export-foot' }, hint, cancel, goBtn));
+  showTab();
   const back = h('div', { class: 'pop-back' }, dlg);
   const onKey = (e) => {
     if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish(); }
-    else if (e.key === 'Enter' && dlg.contains(document.activeElement)) {
+    else if (e.key === 'Enter' && tab === 'one' && dlg.contains(document.activeElement)) {
       e.preventDefault(); e.stopPropagation();
       if ([cancel, close].includes(document.activeElement)) finish(); else go();
     }

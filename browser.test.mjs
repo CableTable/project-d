@@ -26792,6 +26792,101 @@ try {
     }
   });
 
+  await step('TODO 109d2: Export… A folder at once: SVG and DXF for a folder (a .dwg and a .dxf with one name, a file already there, a bad file skipped and named, own units, no overwrite), the browser downloads, the open drawing unchanged', async () => {
+    await closeTabs(/./); await menuItem('View', 'Theme: light');
+    const bytesOf = (raw) => [...Buffer.from(writeDxf(raw))];
+    const layered = (units, lines) => { const raw = newDoc(units); addLayer(raw, 'Cut', { aci: 1 }); addLayer(raw, 'Off', { aci: 3, off: true }); addEntities(raw, ...lines.map(([y, layer]) => dxfLine(0, y, 100, y, { layer }))); return raw; };
+    const files = {
+      'C:\\source\\open109d2.dxf': bytesOf(layered(4, [[0, 'Cut']])),
+      'C:\\parts\\bracket.dxf': bytesOf(layered(4, [[0, 'Cut'], [20, 'Off']])),                 // the Off layer is off: left out unless Hidden objects is ticked
+      'C:\\parts\\bracket.dwg-converted': bytesOf(layered(4, [[0, 'Cut'], [10, 'Cut']])),
+      'C:\\parts\\plate.dxf': bytesOf(layered(1, [[0, 'Cut']])),                                // inches: its own unit
+      'C:\\parts\\bad.dxf': [...Buffer.from('this is not a drawing')],
+    };
+    await page.evaluate(([f]) => {
+      window.__exp109d2 = { wrote: [], opened: 0 };
+      const bytes = (p) => { if (!f[p]) throw new Error('no such file ' + p); return new Uint8Array(f[p]); };
+      window.__TAURI__ = {
+        dialog: { open: async (o) => (o && o.directory ? 'C:\\parts' : 'C:\\source\\open109d2.dxf'), ask: async () => true, save: async (o) => o.defaultPath },
+        core: { invoke: async (cmd, args) => { if (cmd === 'dwg_to_dxf' && args.path === 'C:\\parts\\bracket.dwg') return bytes('C:\\parts\\bracket.dwg-converted').buffer; throw new Error('unexpected ' + cmd); } },
+        fs: {
+          readDir: async () => ['bracket.dxf', 'bracket.dwg', 'plate.dxf', 'bad.dxf', 'notes.cdr'].map((name) => ({ name, isDirectory: false })),
+          readFile: async (p) => bytes(p),
+          exists: async (p) => p === 'C:\\parts\\plate-export.svg' || p === 'C:\\parts\\bracket-export.dxf',          // already there: never overwritten
+          writeTextFile: async (path, text) => { window.__exp109d2.wrote.push({ path, text }); },
+        },
+      };
+    }, [files]);
+    const wrote = () => page.evaluate(() => window.__exp109d2.wrote);
+    const shows = (id, re) => page.waitForFunction(([i, src]) => new RegExp(src).test(document.querySelector(`[data-testid=${i}]`)?.textContent || ''), [id, re.source], { timeout: 5000 });
+    const ended = (re) => page.waitForFunction((src) => new RegExp(src).test(document.querySelector('[data-testid=export-batch-end]')?.textContent || ''), re.source, { timeout: 20000 });
+    try {
+      await menuItem('File', 'Open…'); await waitTab(page, 'open109d2.dxf');
+      const before = await t('drawing').evaluate((el) => el.toDataURL());
+      await menuItem('File', 'Export…'); await svgDialog.waitFor();
+      assert.equal(await t('export-tab-one').getAttribute('aria-selected'), 'true', 'the one-file tab is first');
+      await t('export-tab-batch').click();
+      await shows('export-dxf-go', /^Export 0 files$/); assert.equal(await t('export-dxf-go').isDisabled(), true);
+      for (const id of ['export-dxf-name', 'export-dxf-units', 'export-dxf-layers']) assert.equal(await t(id).isVisible(), false, id + ' belongs to one file: hidden in a folder');
+      assert.deepEqual(await svgDialog.locator('.export-batch .pd-row').allTextContents().then((a) => a.map((x) => x.trim())), ['.dxf', '.dwg', '.cdr', 'Subfolders too']);
+      assert.deepEqual(await t('export-batch-save').locator('option').allTextContents(), ['Same folder as each file', 'Choose a folder…']);
+      await t('export-browse').click();
+      await page.waitForFunction(() => document.querySelectorAll('[data-testid=export-include]').length === 5);
+      await shows('export-dxf-go', /^Export 4 files$/);                                            // the .cdr is listed but not counted
+      assert.equal(await t('export-include').nth(3).isDisabled(), true, 'notes.cdr cannot be ticked');
+      assert.match((await t('export-status').allTextContents())[3], /CorelDRAW/);
+      await t('export-format').selectOption('svg');
+      await page.screenshot({ path: `${shotDir}/export-109d2-light.png` });
+      await t('export-dxf-go').click(); await ended(/^Exported \d+, skipped \d+/);
+      await shows('export-batch-end', /^Exported 3, skipped 1: bad\.dxf$/);                      // the bad file is skipped and named, the loop went on
+      const first = await wrote(), pathsOf = (p) => (first.find((w) => w.path === p)?.text.match(/<path /g) || []).length;
+      assert.deepEqual(first.map((w) => w.path).sort(), ['C:\\parts\\bracket-export (2).svg', 'C:\\parts\\bracket-export.svg', 'C:\\parts\\plate-export (2).svg'], 'one name each: a clash and a file already there get a free name');
+      assert.deepEqual([pathsOf('C:\\parts\\bracket-export.svg'), pathsOf('C:\\parts\\bracket-export (2).svg')], [2, 1], 'the .dwg stub gave two lines; the .dxf its visible layer only (the off layer is left out)');
+      assert.match(first.find((w) => w.path.includes('plate')).text, /^<svg [^>]*width="[\d.]+in"/, 'plate.dxf is in inches: its own unit');
+      assert.match(first.find((w) => w.path.includes('bracket-export.svg')).text, /^<svg [^>]*width="[\d.]+mm"/);
+      const statuses = await t('export-status').allTextContents();
+      assert.match(statuses[0], /^Failed: /); assert.deepEqual(statuses.slice(1), ['Done', 'Done', 'CorelDRAW: not built yet', 'Done'], 'bad.dxf, bracket.dwg, bracket.dxf, notes.cdr, plate.dxf');
+      await said(/Exported 3, skipped 1: bad\.dxf/);
+      await page.screenshot({ path: `${shotDir}/export-109d2-after-light.png` });
+      // DXF, Hidden objects ticked (the DXF default): every layer of each file
+      await t('export-format').selectOption('dxf');
+      await t('export-dxf-go').click(); await ended(/^Exported 3, skipped 1/);
+      const second = (await wrote()).slice(3);
+      assert.deepEqual(second.map((w) => w.path).sort(), ['C:\\parts\\bracket-export (2).dxf', 'C:\\parts\\bracket-export (3).dxf', 'C:\\parts\\plate-export.dxf'], 'bracket-export.dxf is already on disk: the next free names');
+      assert.equal(readDxf(second.find((w) => w.path.endsWith('(3).dxf')).text).entities.some((e) => e.layer === 'Off'), true, 'Hidden objects ticked: the off layer of bracket.dxf is exported');
+      await page.keyboard.press('Escape'); await svgDialog.waitFor({ state: 'detached' });
+      await menuItem('View', 'Theme: dark');
+      await menuItem('File', 'Export…'); await svgDialog.waitFor(); await t('export-tab-batch').click(); await t('export-format').selectOption('svg');
+      await page.screenshot({ path: `${shotDir}/export-109d2-dark.png` });
+      const size = page.viewportSize(); await page.setViewportSize({ width: 1024, height: 700 });
+      await page.screenshot({ path: `${shotDir}/export-109d2-1024-dark.png` }); await page.setViewportSize(size);
+      await page.keyboard.press('Escape'); await svgDialog.waitFor({ state: 'detached' });
+      await menuItem('View', 'Theme: light');
+      // the browser: no folder access, the files go to Downloads with distinct names
+      await page.evaluate(() => { delete window.__TAURI__; });
+      await menuItem('File', 'Export…'); await svgDialog.waitFor(); await t('export-tab-batch').click(); await t('export-format').selectOption('svg');
+      const got = [];
+      const onDl = async (dl) => got.push(dl.suggestedFilename());
+      page.on('download', onDl);
+      const one = { mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(layered(4, [[0, 'Cut']]))) };
+      await t('export-dirpicker').setInputFiles([{ name: 'dup.dxf', ...one }, { name: 'dup.dxf', ...one }]);
+      await page.waitForFunction(() => document.querySelectorAll('[data-testid=export-include]').length === 2);
+      await t('export-dxf-go').click(); await ended(/^Exported 2, skipped 0$/);
+      for (let i = 0; i < 100 && got.length < 2; i++) await page.waitForTimeout(100);
+      page.off('download', onDl);
+      assert.deepEqual(got.sort(), ['dup-export (2).svg', 'dup-export.svg'], 'two files with one name: two downloads');
+      await page.keyboard.press('Escape'); await svgDialog.waitFor({ state: 'detached' });
+      assert.equal(await t('drawing').evaluate((el) => el.toDataURL()), before, 'the open drawing is unchanged');
+      assert.equal(await page.locator('.tabs .dtab').count(), 1, 'no tab was opened for the files'); assert.equal(await page.locator('.tabs .dtab.on .dot').count(), 0, 'the open drawing stays clean');
+      for (const shot of ['light', 'after-light', 'dark', '1024-dark']) assert.ok(readFileSync(`${shotDir}/export-109d2-${shot}.png`).length > 1000);
+      console.log(`109d2: ${first.length} SVGs + ${second.length} DXFs, ${got.length} downloads; screenshots ${shotDir}/export-109d2-{light,after-light,dark,1024-dark}.png`);
+    } finally {
+      await page.evaluate(() => { delete window.__TAURI__; delete window.__exp109d2; });
+      await page.keyboard.press('Escape');
+      await closeTabs(/./);
+    }
+  });
+
   await step('TODO 52: File → Export for cutter… asks for the tolerance (bad values refused), cancels cleanly, then writes lines / arcs / polylines only; screenshots light and dark', async () => {
     await closeTabs(/./);
     const d = newDoc(4); addEntities(d, [dxfPoly([[0, 0], [100, 0], [100, 60], [0, 60]], { closed: true }), dxfCircle(50, 30, 15), dxfText(10, 10, 5, 'HELLO')]);

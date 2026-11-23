@@ -96,10 +96,10 @@ const trimNum = (n, d = 2) => String(Number(n.toFixed(d)));
 
 // ---------------------------------------------------------------- the plan
 
-/** The first of "base.pdf", "base (2).pdf", … that `taken(name)` (async) says is free: a batch never replaces a PDF that is already there. */
-export async function freePdfName(base, taken) {
-  let name = base + '.pdf', n = 2;
-  while (await taken(name)) name = `${base} (${n++}).pdf`;
+/** The first of "base.pdf", "base (2).pdf", … (any `ext`) that `taken(name)` (async) says is free: a batch never replaces a file that is already there. */
+export async function freeName(base, taken, ext = 'pdf') {
+  let name = `${base}.${ext}`, n = 2;
+  while (await taken(name)) name = `${base} (${n++}).${ext}`;
   return name;
 }
 

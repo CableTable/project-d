@@ -30,6 +30,8 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Background picture**: A dimmed, locked JPG, PNG or rendered PDF page beneath a drawing that can be scaled, rotated and measured but is left out of DXF Save and part PDF output. Where: `DECISIONS.md`, Background, Part PDF and Autosave and recovery.
 
+**Batch export**: The Export… dialog's tab A folder at once: every .dxf and .dwg in a folder (Subfolders too optional) exported to DXF, SVG or PNG with the dialog's Format, Text, Scale, Precision, Line weights and Hidden objects; each file keeps its own units and exports its visible layers (all of them with Hidden objects ticked), to `<name>-export.<ext>` beside the file or in a chosen folder. Never overwrites (a taken name gets `(2)`, `(3)`…); a file that fails is skipped and named in the end line. Where: `web/batch-folder.js` (shared with Save as PDF's A folder at once), `web/app.js`; `DECISIONS.md`, Batch export (TODO 109d2). Avoid: Publish.
+
 **Balloon**: A numbered inspection callout placed by hand on a drawing, PDF or picture, with its data saved in a separate balloon file. Where: `DECISIONS.md`, Inspection balloons. Avoid: Dimension.
 
 **Base point**: The reference point from which Move measures displacement to its target. Click it with snaps or type absolute x,y in mm; a typed target pair is dx,dy from this point. Where: `DECISIONS.md`, Move tool (TODO 66a).

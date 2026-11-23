@@ -4,8 +4,9 @@
 import { h, fill, icon } from './dom.js';
 import { fitBase, zoomAt, panBy, paintView, FIT } from './pdf-view.js';
 import { baseName, saveDefault, withExt } from './savepath.js';
-import { planPdf, freePdfName, DEFAULT_OPTIONS, tileGrid, scaleText, titleBlockTexts, cleanTitleBlock, readTitleBlock, PAPERS, PART_BORDER, marginsOf, OFFICE_MARGINS, MARGIN_MAX, parseScale, percentText, PageCapError } from './pdf-export.js';
+import { planPdf, DEFAULT_OPTIONS, tileGrid, scaleText, titleBlockTexts, cleanTitleBlock, readTitleBlock, PAPERS, PART_BORDER, marginsOf, OFFICE_MARGINS, MARGIN_MAX, parseScale, percentText, PageCapError } from './pdf-export.js';
 import { batchPdfSource } from './pdf-source.js';
+import { batchFolder, batchOutDir, newBatch, outPath } from './batch-folder.js';
 import { pictureBitmap } from './pictures.js';
 
 /** Shared by PDF dialogs: the drawing/layout and Part settings keep their existing split, even without storage. */
@@ -27,7 +28,7 @@ const layoutSettings = {
   ...DEFAULT_OPTIONS, ...customSettings(savedLayout), tab: 'one', pageIdx: 0, labelGap: savedLayout.labelGap === true,
   marginPreset: ['standard', 'office', 'custom'].includes(savedLayout.marginPreset) ? savedLayout.marginPreset : 'standard',
   margins: marginsOf({ margins: savedLayout.margins || OFFICE_MARGINS }),
-  batch: { folder: '', dxf: true, dwg: true, cdr: true, sub: false, mode: 'same', saveTo: 'same', saveDir: null, all: [], busy: false },
+  batch: { ...newBatch(), mode: 'same', busy: false },
 };
 
 /** The Part screen's own settings: one page, as drawn (no mirror, no marks, no separations), fitted to A4 unless changed. */
@@ -35,10 +36,8 @@ const partSettings = { ...DEFAULT_OPTIONS, ...customSettings(savedPart), mirror:
   marginPreset: ['standard', 'office', 'custom'].includes(savedPart.marginPreset) ? savedPart.marginPreset : 'standard',
   margins: marginsOf({ margins: savedPart.margins || OFFICE_MARGINS }), batch: layoutSettings.batch };
 
-const joinPath = (dir, name) => String(dir).replace(/[\\/]+$/, '') + (String(dir).includes('\\') ? '\\' : '/') + name;
 const today = () => { const d = new Date(); return [d.getDate(), d.getMonth() + 1].map((n) => String(n).padStart(2, '0')).join('-') + '-' + d.getFullYear(); };
 const errText = (e) => (e && e.message ? e.message : String(e));
-const TYPES = { dxf: 'DXF', dwg: 'DWG', cdr: 'CorelDRAW' };
 
 /** Browser fallback: the bytes go to the Downloads folder. */
 function downloadBytes(name, bytes) {
@@ -295,30 +294,14 @@ export function openExport(host) {
 
   // ---- A folder at once
   const B = settings.batch;
-  ref.folder = h('input', { class: 'fld', value: B.folder, placeholder: 'Choose a folder with Browse…', 'aria-label': 'Folder', 'data-testid': 'pdf-folder' });
-  ref.folder.addEventListener('change', async () => { B.folder = ref.folder.value.trim(); if (inApp && B.folder) await scanFolder(B.folder); });
-  ref.dirInput = h('input', { type: 'file', hidden: true, multiple: true, accept: '.dxf,.dwg,.cdr', 'data-testid': 'pdf-dirpicker' });
-  ref.dirInput.addEventListener('change', () => fromFiles([...ref.dirInput.files]));
-  const ext = (key, text) => {
-    const i = h('input', { type: 'checkbox', checked: B[key], 'data-testid': 'pdf-ext-' + key });
-    i.addEventListener('change', () => { B[key] = i.checked; renderList(); });
-    return h('label', { class: 'pd-row' }, i, ' ' + text);
-  };
-  const subs = h('input', { type: 'checkbox', checked: B.sub, 'data-testid': 'pdf-sub' });
-  subs.addEventListener('change', async () => { B.sub = subs.checked; if (inApp && B.folder) await scanFolder(B.folder); else renderList(); });
-  ref.list = h('div', { class: 'pd-list', 'data-testid': 'pdf-list' });
+  const { folderRow, extRow, list, saveTo, renderList } = batchFolder({ B, t, inApp, note: host.note, prefix: 'pdf', onChange: () => refresh(),
+    unsupported: (type) => type === 'dxf' ? '' : type === 'dwg' ? 'DWG: open it in a tab first' : 'CorelDRAW: not built yet',
+    empty: inApp ? 'No drawings here yet. Browse to a folder.' : 'No drawings yet. Browse to a folder (the PDFs go to Downloads).' });
   ref.mode = sel([['same', 'Same as “This layout”'], ['check', 'Check print, A4 fit'], ['plain', 'Sheet size 1:1, no film options']], B.mode, (v) => { B.mode = v; refresh(); }, { 'data-testid': 'pdf-batch-mode' });      // refresh: an invalid custom scale blocks Convert in "Same as This layout" only
-  ref.saveTo = sel([['same', 'Same folder as each file'], ['choose', 'Choose a folder…']], B.saveTo, (v) => { B.saveTo = v; B.saveDir = null; }, { 'data-testid': 'pdf-batch-save' });
-  const batchBody = h('div', { class: 'pd-batch' },
-    h('div', { style: 'display:flex;gap:8px;align-items:flex-end' },
-      h('label', { class: 'lbl pd-fl', style: 'flex:1' }, 'Folder', ref.folder),
-      h('button', { class: 'btn', type: 'button', 'data-testid': 'pdf-browse', onclick: browse }, 'Browse…'), ref.dirInput),
-    h('div', { class: 'row', style: 'display:flex;gap:18px;align-items:center' }, ext('dxf', '.dxf'), ext('dwg', '.dwg'), ext('cdr', '.cdr'),
-      h('label', { class: 'pd-row' }, subs, ' Subfolders too')),
-    ref.list,
+  const batchBody = h('div', { class: 'pd-batch' }, folderRow, extRow, list,
     h('div', { class: 'pd-two' },
       h('label', { class: 'lbl pd-fl' }, 'Settings', ref.mode),
-      h('label', { class: 'lbl pd-fl' }, 'Save PDFs to', ref.saveTo)));
+      h('label', { class: 'lbl pd-fl' }, 'Save PDFs to', saveTo)));
 
   // ---- the frame: title, tabs, body, footer
   const tabBtn = (id, text, testid) => {
@@ -604,57 +587,6 @@ export function openExport(host) {
   }
 
   // ---- A folder at once
-  const entryOf = (name, rel, extra) => {
-    const type = (name.match(/\.(dxf|dwg|cdr)$/i) || [])[1].toLowerCase();
-    const na = type !== 'dxf';
-    return { name, rel, type, include: !na, status: na ? { kind: 'na', text: (type === 'dwg' ? 'DWG: open it in a tab first' : 'CorelDRAW: not built yet') } : { kind: 'waiting', text: 'Waiting' }, ...extra };
-  };
-  async function scan(dir, rel, depth) {
-    const out = [];
-    for (const e of await t.fs.readDir(dir)) {
-      if (e.isDirectory) { if (B.sub && depth < 8) out.push(...await scan(joinPath(dir, e.name), rel + e.name + '/', depth + 1)); }
-      else if (/\.(dxf|dwg|cdr)$/i.test(e.name)) out.push(entryOf(e.name, rel + e.name, { path: joinPath(dir, e.name), dir }));
-      if (out.length > 500) break;
-    }
-    return out;
-  }
-  async function scanFolder(dir) {
-    try { B.all = (await scan(dir, '', 0)).sort((x, y) => x.rel.localeCompare(y.rel)); B.folder = dir; ref.folder.value = dir; } catch (e) { B.all = []; host.note('Folder: ' + errText(e)); }
-    refresh();
-  }
-  function fromFiles(files) {
-    const list = files.filter((f) => /\.(dxf|dwg|cdr)$/i.test(f.name)).map((f) => ({ f, rel: f.webkitRelativePath || f.name }))
-      .filter((x) => B.sub || x.rel.split('/').length <= 2);
-    B.all = list.map((x) => entryOf(x.f.name, x.rel, { file: x.f })).sort((x, y) => x.rel.localeCompare(y.rel));
-    const first = files[0] && files[0].webkitRelativePath;
-    B.folder = first ? first.split('/')[0] : '';
-    ref.folder.value = B.folder;
-    refresh();
-  }
-  async function browse() {
-    if (!inApp || !t.dialog.open) { ref.dirInput.value = ''; ref.dirInput.click(); return; }
-    try {
-      const picked = await t.dialog.open({ directory: true, multiple: false });
-      const dir = Array.isArray(picked) ? picked[0] : picked;
-      if (dir) await scanFolder(String(dir));
-    } catch (e) { host.note('Browse failed: ' + errText(e)); }
-  }
-  function renderList() {
-    const shown = B.all.filter((e) => B[e.type]);
-    const row = (cells, extra) => h('div', { class: 'pd-grid' + (extra || '') }, cells);
-    fill(ref.list,
-      row([h('span'), h('span', null, 'File'), h('span', null, 'Type'), h('span', null, 'Status')], ' head'),
-      shown.length ? shown.map((e) => {
-        const box = h('input', { type: 'checkbox', checked: e.include, disabled: e.type !== 'dxf', 'aria-label': 'Include ' + e.rel, 'data-testid': 'pdf-include' });
-        box.addEventListener('change', () => { e.include = box.checked; e.status = box.checked ? { kind: 'waiting', text: 'Waiting' } : { kind: 'skipped', text: 'Skipped' }; refresh(); });
-        const s = e.status;
-        const status = s.kind === 'progress'
-          ? h('div', { class: 'pd-prog' }, h('div', { role: 'progressbar', 'aria-label': 'Converting ' + e.name, 'aria-valuenow': s.pct, 'aria-valuemin': 0, 'aria-valuemax': 100 }, h('div', { style: `width:${s.pct}%` })), h('span', { class: 'lbl mono' }, s.pct + '%'))
-          : h('span', { class: s.kind === 'done' ? 'pd-ok' : s.kind === 'fail' ? 'pd-bad' : 'lbl', 'data-testid': 'pdf-status' }, s.text);
-        return row([box, h('span', { style: e.include ? '' : 'color:var(--muted)', title: e.rel }, e.rel), h('span', { class: 'lbl' }, TYPES[e.type]), status], s.kind === 'progress' ? ' active' : '');
-      }) : h('div', { class: 'pd-empty lbl' }, inApp ? 'No drawings here yet. Browse to a folder.' : 'No drawings yet. Browse to a folder (the PDFs go to Downloads).'));
-  }
-
   function batchOptions() {
     const cur = opts();
     if (B.mode === 'check') return { ...cur, page: 'check', checkPaper: 'A4', separate: false, mirror: false, negative: false };
@@ -663,16 +595,8 @@ export function openExport(host) {
   }
   async function convertAll() {
     const todo = B.all.filter((e) => e.include && e.type === 'dxf' && B[e.type]);
-    let outDir = null;
-    if (B.saveTo === 'choose' && inApp) {
-      if (!B.saveDir) {
-        const picked = await t.dialog.open({ directory: true, multiple: false });
-        const d = Array.isArray(picked) ? picked[0] : picked;
-        if (!d) return;
-        B.saveDir = String(d);
-      }
-      outDir = B.saveDir;
-    }
+    const outDir = await batchOutDir(B, t, inApp);
+    if (outDir === false) return;
     const o = batchOptions(), sheet = host.sheet(), used = new Set();
     let ok = 0;
     for (const e of todo) {
@@ -695,8 +619,7 @@ export function openExport(host) {
         if (e.path) {
           const dir = outDir || e.dir;
           // not a name used in this run, and not a file already on disk (a customer's bracket.pdf next to bracket.dxf)
-          const want = joinPath(dir, await freePdfName(baseName(out), async (nm) => { const p = joinPath(dir, nm); return used.has(p.toLowerCase()) || await t.fs.exists(p); }));
-          used.add(want.toLowerCase());
+          const want = await outPath(dir, baseName(out), 'pdf', used, (p) => t.fs.exists(p));
           await t.fs.writeFile(want, bytes);
           out = want;
         } else downloadBytes(out, bytes);
