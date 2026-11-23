@@ -99,7 +99,7 @@ import * as TO from './textoutline.js';
 import { loadFont } from './fontload.js';
 import { fontForStyle, fontSubstitutions } from './fontsub.js';
 import { outlineOf } from './nestshape.js';
-import { partSource, readTitleBlock, withTitleBlock, planPagesPdf, isPagePicture } from './pdf-export.js';
+import { partSource, readTitleBlock, withTitleBlock, planPagesPdf, hasPagePictures } from './pdf-export.js';
 import { readPdf, renderPdfPage, renderPdfPages, renderPdfPictures, isPdf, pageLayout } from './pdf-read.js';
 import { readTiff } from './tiff.js';
 import { preloadPictures, rawPixels } from './pictures.js';
@@ -573,7 +573,7 @@ function buildMenus() {
   // an item: [text, action, shortcut hint (shown, and only a hint for a key that is really bound), enabled? (a function, asked when the menu opens)]
   const menus = {
     File: () => [['Open…', openFile], ['New layout', newLayoutTab], ['Save', () => save(false), 'Ctrl+S'], ['Save As…', () => save(true), 'Ctrl+Shift+S'], ['Export DXF…', exportDxf], ['Export for cutter…', exportCutter], ['Compare drawings…', cmpStart], ['Import background…', () => ui.bgPicker.click()], ['Rotate background', rotateBackground], ['Trace bitmap…', traceBitmap], ['PDF / Print…', exportPdf],
-      ['Save as PDF (pages)', savePdfPages, null, () => hasPdfPages(curDoc()), hasPdfPages(curDoc()) ? null : 'No PDF pages in this drawing'],
+      ['Save as PDF (pages)', savePdfPages, null, () => hasPdfPages(), hasPdfPages() ? null : 'No PDF pages in this drawing'],
       ...recentItems()],
     Edit: [['Undo', () => undoCurrent(), 'Ctrl+Z', () => ui.startScreen.hidden && (!!state.paste || !!state.grip || !!historyOf(curDoc())?.canUndo)],
       ['Redo', () => undoCurrent(true), 'Ctrl+Y', () => ui.startScreen.hidden && !!historyOf(curDoc())?.canRedo],
@@ -1410,7 +1410,7 @@ async function openPdf(name, buf, path = null, copies = null, batch = {}) {
     const yes = batch.pdfOpen === 'background' || await confirmAsk(name + ' has no vector lines, only a picture (or text). Use it as a background picture instead?', 'Use as background');
     if (yes) { await importBackgroundPdf(name, bytes, true, path); return; }
     // TODO 358a: not a background: offer its pages as pictures (the batch reuses this answer)
-    if (await confirmAsk(name + ' has no vector lines. Open its pages as pictures (edit and save as PDF) instead?', 'Pictures')) { batch.pdfOpen ??= 'pictures'; await openPdfPictures(name, bytes, path); return; }
+    if (await confirmAsk(name + ' has no vector lines. Open its pages as pictures (edit and save as PDF) instead?', 'Pictures')) { if (batch.pdfOpen === undefined) batch.pdfOpen = 'pictures'; await openPdfPictures(name, bytes, path); return; }
     note(name + ': no vector lines to open');
     return;
   }
@@ -3838,7 +3838,7 @@ function exportSource(selectionOnly = false, cut = true) {
     const lay = shownLayout(d);
     if (!LD.placedAll(lay).length) return null;
     const { gripTop, gripRight, gripBottom, gripLeft } = lay.s, hasSelection = !!selectedPlaced();
-    const sheet = (l) => ({ name: d.name, path, fl: flatten(LD.layoutRaw(l)), factor: 1, off: new Set(), sheetW: d.lay.s.sheetW, sheetH: d.lay.s.sheetH, grippers: { gripTop, gripRight, gripBottom, gripLeft }, gaps: labelGaps(LD.gridOf(l), l.s.sheetH), hide: ['Sheet', 'Marks'], hasSelection });
+    const sheet = (l) => { const fl = flatten(LD.layoutRaw(l)), defs = LD.layersOf(l); return { name: d.name, path, fl, factor: 1, off: new Set(fl.layers.flatMap((x, i) => (defs[x.name]?.off || defs[x.name]?.frozen ? [i] : []))), sheetW: d.lay.s.sheetW, sheetH: d.lay.s.sheetH, grippers: { gripTop, gripRight, gripBottom, gripLeft }, gaps: labelGaps(LD.gridOf(l), l.s.sheetH), hide: ['Sheet', 'Marks'], hasSelection }; };
     if (!selectionOnly) return sheet(lay);
     const picked = selIdxs().map((i) => placedNow[i]).filter((p) => !(d.hiddenParts && d.hiddenParts.has(p.partId)));       // the selected parts only (a grid copy is placed loose, in the same place); hidden ones stay out
     if (!picked.length) return null;
@@ -3855,17 +3855,17 @@ function exportSource(selectionOnly = false, cut = true) {
   return null;
 }
 /** The drawing's pictures as raw pixels for the file (TODO 305a); no await when there are none. */
-async function pdfPictures(d) {
+async function pdfPictures(src) {
   const pics = new Map();
-  for (const it of d?.fl?.items || []) if (it.k === 'i' && !pics.has(it.px)) { try { pics.set(it.px, { px: it.px, ...await rawPixels(it.px) }); } catch { /* that picture stays out of the file */ } }
+  for (const it of src?.fl?.items || []) if (it.k === 'i' && !pics.has(it.px)) { try { pics.set(it.px, { px: it.px, ...await rawPixels(it.px) }); } catch { /* that picture stays out of the file */ } }
   return pics;
 }
-/** Does this tab hold a PDF page picture (TODO 358a: an IMAGE on layer "PDF pages")? A layout or a compare has none. */
-const hasPdfPages = (d) => !!d && !d.lay && !d.cmp && !!d.fl?.items.some((it) => isPagePicture(d.fl, it));
+/** Does this tab hold a shown PDF page picture (TODO 358a: an IMAGE on layer "PDF pages", 358c1: on any tab, through a layout part's block, hidden layers out)? */
+const hasPdfPages = () => hasPagePictures(exportSource());
 /** TODO 358b: File > Save as PDF (pages): one PDF page per page picture (the picture, then what is drawn on it as vector); objects outside every page are counted, not saved. */
 async function savePdfPages() {
-  const d = curDoc(), src = hasPdfPages(d) && exportSource();
-  const plan = src && planPagesPdf({ ...src, pics: await pdfPictures(d) });
+  const d = curDoc(), src = exportSource();
+  const plan = hasPagePictures(src) && planPagesPdf({ ...src, pics: await pdfPictures(src) });
   if (!plan || !plan.pages.length) { note('No PDF pages in this drawing'); return; }
   const want = baseName(d.name) + '-pages.pdf', t = window.__TAURI__;
   try {
@@ -3884,7 +3884,7 @@ async function savePdfPages() {
   } catch (e) { note('Save as PDF (pages) failed: ' + (e && e.message ? e.message : e)); }
 }
 async function exportPdf() {
-  const d = curDoc(), pics = d?.fl?.items.some((it) => it.k === 'i') ? await pdfPictures(d) : new Map();         // no await without pictures
+  const d = curDoc(), s = exportSource(), pics = s?.fl.items.some((it) => it.k === 'i') ? await pdfPictures(s) : new Map();         // no await without pictures
   openExport({ source: (selectionOnly, cut) => { const src = exportSource(selectionOnly, cut); return src && { ...src, titleBlock: d.titleBlock, pics }; }, sheet: () => ({ w: state.sheetW, h: state.sheetH }), readDrawing, note,
     setTitleBlock: (value) => { d.titleBlock = value; d.dirty = true; renderTabs(); } });
 }

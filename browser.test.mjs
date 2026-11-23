@@ -9073,6 +9073,97 @@ try {
     } finally { await context.close(); }
   });
 
+  await step('TODO 358c1: Save as PDF (pages) on a Layouts tab: a page per page picture, each with its image, the line on page 1; a hidden layer is left out', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    try {
+      const p = await context.newPage(), q = (id) => p.getByTestId(id);
+      p.on('pageerror', (e) => errors.push(String(e)));
+      const item = () => p.getByRole('menuitem', { name: 'Save as PDF (pages)', exact: true });
+      const menu = async () => { await p.locator('[data-menu=File]').click(); await item().click(); };
+      const prompt = (text) => p.waitForFunction((text) => document.querySelector('[data-testid=cmd-prompt]').textContent.startsWith(text), text);
+      const typeCmd = async (text) => { const i = q('cmd-input'); if (!(await i.isVisible())) { await q('cmd-echo').click(); await i.waitFor({ state: 'visible' }); } await i.fill(text); await i.press('Enter'); };
+      const greyed = async () => { await p.locator('[data-menu=File]').click(); const g = await item().isDisabled(), title = await item().getAttribute('title'); await p.keyboard.press('Escape'); await p.mouse.click(5, 450); return [g, title]; };
+      await p.goto(URL_ + '?autosave=86400000'); await q('picker').waitFor({ state: 'attached' });
+      await p.evaluate(() => {
+        window.__pdfopenManual = true;
+        window.__pages358c = { files: {} };
+        window.__TAURI__ = {
+          dialog: { save: async () => 'C:/jobs/layout-pages.pdf', open: async () => 'C:/jobs/pages.pdf', ask: async () => true },
+          fs: { exists: async () => false, readFile: async () => { throw new Error('missing'); }, writeFile: async (path, bytes) => { window.__pages358c.files[path] = [...bytes]; }, writeTextFile: async () => {} },
+        };
+      });
+      const sheet = new Page(80, 50); sheet.rect(10, 10, 30, 20); sheet.stroke();
+      await q('picker').setInputFiles({ name: 'two-pages.pdf', mimeType: 'application/pdf', buffer: Buffer.from(writePdf([sheet, new Page(120, 90)])) });
+      await q('pdfopen-dialog').waitFor(); await q('pdfopen-pictures').click();
+      await prompt('Opened two-pages.pdf as 2 page pictures'); await waitTab(p, 'two-pages.dxf');
+      await p.locator('[data-tool=line]').click();                                  // over page 1 (x 0..80, y 40..90)
+      await typeCmd('10,60'); await typeCmd('70,70'); await p.keyboard.press('Escape');
+      await p.locator('[data-tool=select]').click();
+      await q('ptab-objects').click();                                              // hide "PDF pages" on the drawing: no page left, the item is greyed
+      await p.waitForFunction(() => document.querySelectorAll('.layer .nm').length === 2);
+      await p.locator('.or.layer', { hasText: 'PDF pages' }).locator('[data-act=vis]').click();
+      assert.deepEqual(await greyed(), [true, 'No PDF pages in this drawing'], 'the page pictures are hidden');
+      await p.locator('.or.layer', { hasText: 'PDF pages' }).locator('[data-act=vis]').click();
+      assert.deepEqual(await greyed(), [false, null], 'shown again');
+      await q('ptab-drawing').click();
+      await p.locator('[data-menu=Layout]').click(); await p.getByRole('menuitem', { name: /^Add to layout/ }).click();       // the drawing as the layout's part: a sheet's grid would repeat it, so one copy
+      await p.waitForFunction(() => document.querySelector('.tabs .dtab.on').dataset.kind === 'layout');
+      await q('ptab-step').click(); await q('fit-switch').click();
+      await p.locator('[data-key=rows]').fill('1'); await p.locator('[data-key=rows]').press('Enter');
+      await p.locator('[data-key=cols]').fill('1'); await p.locator('[data-key=cols]').press('Enter');
+      await q('ptab-drawing').click();
+      const saved = async () => {                                                   // Save as PDF (pages) on this tab: the page contents (not the picture bytes), the image count
+        await p.evaluate(() => { window.__pages358c.files = {}; });
+        await menu();
+        await p.waitForFunction(() => window.__pages358c.files['C:/jobs/layout-pages.pdf']);
+        const t = Buffer.from(await p.evaluate(() => window.__pages358c.files['C:/jobs/layout-pages.pdf'])).toString('latin1');
+        return { t, streams: [...t.matchAll(/stream\n([\s\S]*?)endstream/g)].map((m) => m[1]).filter((s) => /^[\d.]+ 0 0 [\d.]+ 0 0 cm\n/.test(s)), images: (t.match(/\/Subtype \/Image/g) || []).length };
+      };
+      const segs = (s) => (s.match(/\nS\n/g) || []).length;                         // strokes on a page: its clip is not stroked, a picture is an image
+      const one = await saved();
+      assert.deepEqual([...one.t.matchAll(/\/MediaBox \[0 0 ([\d.]+) ([\d.]+)\]/g)].map((m) => [Math.round(m[1] / 72 * 25.4), Math.round(m[2] / 72 * 25.4)]), [[80, 50], [120, 90]], 'a page per picture, at its size');
+      assert.equal(one.images, 2, 'each page holds its image, not only a frame');
+      assert.equal(one.streams.length, 2);
+      assert.deepEqual(one.streams.map(segs), [1, 0], 'the line is on page 1 only; the sheet and its marks are not artwork');
+      await p.screenshot({ path: shotDir + '/358c1-layout-pages-light.png' });
+      await p.locator('[data-menu=View]').click(); await p.getByRole('menuitemcheckbox', { name: /Theme: dark/ }).click();
+      await p.screenshot({ path: shotDir + '/358c1-layout-pages-dark.png' });
+      await p.setViewportSize({ width: 1024, height: 700 });
+      await p.screenshot({ path: shotDir + '/358c1-layout-pages-1024.png' });
+      await p.setViewportSize({ width: 1440, height: 900 });
+      // a layout object across the whole sheet reaches both pages; its layer hidden: it is left out (the layout branch passes the hidden layers)
+      const [W, H] = [await p.locator('[data-key=sheetW]').inputValue(), await p.locator('[data-key=sheetH]').inputValue()];
+      await p.locator('[data-tool=line]').click();
+      await typeCmd('0,0'); await typeCmd(W + ',' + H); await p.keyboard.press('Escape');
+      await p.locator('[data-tool=select]').click();
+      assert.deepEqual((await saved()).streams.map(segs), [2, 1], 'the layout object is on both pages');
+      await q('ptab-objects').click();
+      const layer0 = p.locator('.or.layer').filter({ has: p.locator('.nm', { hasText: /^0$/ }) });
+      await layer0.locator('[data-act=vis]').click();
+      assert.deepEqual((await saved()).streams.map(segs), [1, 0], 'a hidden layer is not saved');
+      await layer0.locator('[data-act=vis]').click();
+      assert.deepEqual((await saved()).streams.map(segs), [2, 1], 'shown again');
+    } finally { await context.close(); }
+  });
+
+  await step('TODO 358c1: Esc on a vector PDF\'s open ask is kept: a later picture-only PDF in the batch is asked again, not opened as pictures unasked', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    try {
+      const p = await context.newPage(), q = (id) => p.getByTestId(id);
+      p.on('pageerror', (e) => errors.push(String(e)));
+      await p.goto(URL_ + '?autosave=86400000'); await q('picker').waitFor({ state: 'attached' });
+      await p.evaluate(() => { window.__pdfopenManual = true; });
+      const asked = [], answers = [false, true, false, true];                       // each picture-only PDF: not a background, yes pictures
+      p.on('dialog', async (d) => { asked.push(d.message()); if (answers.shift()) await d.accept(); else await d.dismiss(); });
+      const file = (name, from) => ({ name, mimeType: 'application/pdf', buffer: readFileSync(from) });
+      await q('picker').setInputFiles([file('vec.pdf', 'fixtures/vector.pdf'), file('pic-a.pdf', 'fixtures/text-only.pdf'), file('pic-b.pdf', 'fixtures/text-only.pdf')]);
+      await q('pdfopen-dialog').waitFor(); await p.keyboard.press('Escape');
+      await waitTab(p, 'pic-b.dxf');
+      assert.equal(asked.length, 4, 'pic-a asks, and pic-b asks again: the Esc did not turn into Pictures');
+      assert.deepEqual((await p.locator('.dtab .tname').allTextContents()).sort(), ['pic-a.dxf', 'pic-b.dxf'], 'the Esc file is not opened');
+    } finally { await context.close(); }
+  });
+
   await step('TODO 341: refused picture paths still save the DXF first, grant plain names, and warn "N picture(s) not saved"', async () => {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
     try {

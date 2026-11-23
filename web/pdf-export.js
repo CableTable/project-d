@@ -482,6 +482,9 @@ function drawItems(page, items, { fl, F, org, M0, ws, bg, inkOf, pics }) {
 /** Is this item a PDF page picture (an IMAGE on layer "PDF pages", TODO 358a)? */
 export const isPagePicture = (fl, it) => it.k === 'i' && fl.layers[it.L[0]]?.name.toLowerCase() === PAGES_LAYER.toLowerCase();
 
+/** Does this source (exportSource's shape: fl, off) hold a shown PDF page picture, also one inside a layout part's block? A picture on a hidden layer is not a page. */
+export const hasPagePictures = (src) => !!src?.fl && shownItems(src.fl).some((it) => isPagePicture(src.fl, it) && itemVisible(it, src.off || new Set()));
+
 /**
  * TODO 358b: the page pictures of a drawing as a PDF, one page per picture at its (turned) box, left to right as placed. Each page: the picture, then every
  * other shown object whose box touches its frame, as vector, clipped at the page edge (so one across two pages is cut on each). src as planPdf's (fl, factor, off, name, pics).
@@ -490,7 +493,8 @@ export const isPagePicture = (fl, it) => it.k === 'i' && fl.layers[it.L[0]]?.nam
  */
 export function planPagesPdf(src) {
   const { fl, factor: F } = src, off = src.off || new Set();
-  const items = shownItems(fl).filter((it) => itemVisible(it, off));
+  const hide = new Set((src.hide || []).map((s) => s.toLowerCase()));                  // a layout's Sheet and Marks layers are not artwork
+  const items = shownItems(fl).filter((it) => itemVisible(it, off) && !it.L.some((l) => hide.has(fl.layers[l].name.toLowerCase())));
   const boxOf = (it) => it.b.map((v) => v * F);
   const pics = items.filter((it) => isPagePicture(fl, it) && boxOf(it)[2] > boxOf(it)[0] && boxOf(it)[3] > boxOf(it)[1]).sort((a, b) => a.b[0] - b.b[0]);
   const others = items.filter((it) => !isPagePicture(fl, it));
