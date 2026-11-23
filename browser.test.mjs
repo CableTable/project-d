@@ -18845,6 +18845,7 @@ try {
     const tab = (name) => p.locator('.dtab').filter({ has: p.locator('.tname', { hasText: name.replace(/\.dxf$/, '') }) });
     const row = (n) => p.locator(`.layer[data-layer-name="${n}"]`);
     const fileNames = async () => (await p.locator('[data-file-layer] .nm').allTextContents()).sort();
+    const namesAre = async (want) => { await p.waitForFunction((w) => JSON.stringify([...document.querySelectorAll('[data-file-layer] .nm')].map((e) => e.textContent).sort()) === w, JSON.stringify(want)).catch(() => {}); return fileNames(); };       // waits for the panel to show `want` (a miss falls through to the assert)
     const heard = (re) => p.waitForFunction((s) => new RegExp(s).test(document.querySelector('[data-testid=cmd-prompt]').textContent), re.source);
     const rename = async (from, to) => { await row(from).locator('.nm').dblclick(); await q('layer-rename').fill(to); await q('layer-rename').press('Enter'); };
     const refused = async (from, to, why) => {
@@ -18887,19 +18888,19 @@ try {
       assert.deepEqual(await fileNames(), ['0', 'Notes', 'Plate']);
       assert.equal(await row('Notes').locator('.nm').getAttribute('title'), 'Double-click to rename');
       await rename('Notes', 'Marks');
-      assert.deepEqual(await fileNames(), ['0', 'Marks', 'Plate'], 'the panel follows the rename');
+      assert.deepEqual(await namesAre(['0', 'Marks', 'Plate']), ['0', 'Marks', 'Plate'], 'the panel follows the rename');
       await heard(/^Layer Notes is now Marks/);
       let out = await saved();
       assert.equal(count(out, 'Marks'), 1); assert.equal(count(out, 'Notes'), 0); assert.ok(out.layers.Marks && !out.layers.Notes, 'the LAYER table has the new name only');
       await p.keyboard.press('Control+z');
-      assert.deepEqual(await fileNames(), ['0', 'Notes', 'Plate'], 'one Undo takes the whole rename back');
+      assert.deepEqual(await namesAre(['0', 'Notes', 'Plate']), ['0', 'Notes', 'Plate'], 'one Undo takes the whole rename back');
       out = await saved(); assert.equal(count(out, 'Notes'), 1); assert.equal(count(out, 'Marks'), 0); assert.ok(out.layers.Notes);
       await p.keyboard.press('Control+y');
-      assert.deepEqual(await fileNames(), ['0', 'Marks', 'Plate'], 'Redo renames again');
+      assert.deepEqual(await namesAre(['0', 'Marks', 'Plate']), ['0', 'Marks', 'Plate'], 'Redo renames again');
       await p.keyboard.press('Control+z');
       await row('Notes').locator('[data-act=vis]').click();       // hidden by name: the rename and its Undo keep it hidden
-      await rename('Notes', 'Marks'); assert.match(await row('Marks').getAttribute('class'), /hidden-layer/);
-      await p.keyboard.press('Control+z'); assert.match(await row('Notes').getAttribute('class'), /hidden-layer/);
+      await rename('Notes', 'Marks'); await row('Marks').waitFor(); assert.match(await row('Marks').getAttribute('class'), /hidden-layer/);
+      await p.keyboard.press('Control+z'); await row('Notes').waitFor(); assert.match(await row('Notes').getAttribute('class'), /hidden-layer/);
       await row('Notes').locator('[data-act=vis]').click();
       // 0 and Defpoints keep their names; a taken, empty or illegal name is refused with a note and a red field
       await row('0').locator('.nm').dblclick();
@@ -18931,7 +18932,7 @@ try {
       assert.equal(await row('A').count(), 0); assert.equal(await row('Cut').count(), 1);
       out = await saved();
       assert.equal(count(out, 'Cut'), 1); assert.equal(count(out, 'A'), 0); assert.ok(out.layers.Cut && !out.layers.A, 'the layout file has the new name');
-      await p.keyboard.press('Control+z');
+      await p.keyboard.press('Control+z'); await row('A').waitFor();
       assert.equal(await row('A').count(), 1); assert.equal(await row('Cut').count(), 0, 'one Undo');
       const curIs = (n) => p.waitForFunction((n) => document.querySelector('.layer.current .nm')?.textContent === n, n);       // the current layer follows the rename, Undo and Redo
       await row('A').click(); await rename('A', 'Cut'); await curIs('Cut');
@@ -18943,7 +18944,14 @@ try {
       await colour('B', '#ff8010');
       assert.notEqual(await swatch('B'), redB, 'the row swatch follows');
       out = await saved(); assert.equal(out.layers.B.tc & 0xffffff, 0xff8010, 'the layout file has the colour');
-      await p.keyboard.press('Control+z'); assert.equal(await swatch('B'), redB, 'one Undo');
+      await p.keyboard.press('Control+z'); await p.waitForFunction((c) => { const e = document.querySelector('.layer[data-layer-name="B"] [data-testid=layer-colour]'); return e && getComputedStyle(e).backgroundColor === c; }, redB); assert.equal(await swatch('B'), redB, 'one Undo');
+      const partB = p.locator('.or[data-part]').filter({ hasText: 'Object 2' }), dimmed = (on) => p.waitForFunction((on) => [...document.querySelectorAll('.or[data-part]')].find((r) => r.textContent.includes('Object 2'))?.classList.contains('dim') === on, on);
+      await partB.locator('[data-act=vis]').click(); await dimmed(true);       // a hidden object stays hidden through a layer colour change, its Undo and Redo
+      await colour('B', '#ff8010'); await dimmed(true);
+      await p.keyboard.press('Control+z'); await dimmed(true); assert.equal(await swatch('B'), redB, 'Undo of the colour');
+      await p.keyboard.press('Control+y'); await dimmed(true); assert.notEqual(await swatch('B'), redB, 'Redo of the colour');
+      await p.keyboard.press('Control+z'); await dimmed(true);
+      await partB.locator('[data-act=vis]').click(); await dimmed(false);
       await shots('layouts');
       // ---- Compare
       await open('cmp1-8a.dxf');       // Compare lists the open drawing and the first other one: snapshot 2 is one-8a.dxf

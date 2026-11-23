@@ -4,7 +4,6 @@ import * as O from './web/objects.js';
 import { newDoc, addEntities, addBlock, addLayer, writeDxf, line, circle, arc, lwpoly, rect, text, insert } from './web/dxf-write.js';
 import { readDxf, flatten } from './web/drawing.js';
 import { removeEntities } from './web/edit.js';
-import { withColour } from './web/props.js';
 
 let n = 0;
 function test(name, fn) { fn(); n++; console.log('ok', name); }
@@ -140,16 +139,6 @@ test('renameLayer: also the layer of a POLYLINE\'s VERTEX records (an old-style 
   assert.equal(back.entities[0].layer, 'Out');
   assert.deepEqual(back.entities[0].kids.map((k) => k.v[k.c.indexOf(8)]), ['Out', 'Out']);
   assert.deepEqual(raw.entities[0].kids.map((k) => k.v[k.c.indexOf(8)]), ['Cut', 'Cut'], 'the original is not touched');
-});
-
-test('TODO 8a: a renamed and recoloured layer is written as the new name (LAYER table + every entity\'s code 8) with the new colour', () => {
-  const { raw } = sample(), r = O.renameLayer(raw, 'Cut', 'Outline'), layers = { ...r.layers, Outline: withColour(r.layers.Outline, 'tc:' + 0xff8000) };
-  const text = writeDxf({ ...raw, ...r, layers }), back = readDxf(text);
-  assert.ok(back.layers.Outline && !back.layers.Cut, 'the LAYER table has the new name only');
-  assert.equal(back.layers.Outline.tc & 0xffffff, 0xff8000, 'the new colour is in the LAYER record');
-  assert.equal(back.entities.filter((e) => e.layer === 'Outline').length, 5);
-  assert.equal(back.entities.filter((e) => e.layer === 'Cut').length, 0);
-  assert.equal(back.layers.Engrave.aci, 5, 'the other layers are as they were');
 });
 
 test('Objects search (TODO 77): a layer whose name matches stays with all its objects', () => {

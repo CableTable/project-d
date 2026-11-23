@@ -2486,8 +2486,8 @@ function layRestore(d, st, dirty = true) {
     const [a, b] = st.renamed;
     if (d.curLayer === a) d.curLayer = b;
     if (d.addedLayers?.delete(a)) d.addedLayers.add(b);
-    if (st.hid && d.hiddenParts) { d.hiddenParts.clear(); for (const id of st.hid) d.hiddenParts.add(id); }
   }
+  if (st.hid && d.hiddenParts) { d.hiddenParts.clear(); for (const id of st.hid) d.hiddenParts.add(id); }       // a layer rename or colour change: the layer's objects get new ids, the hidden ones follow
   gapSig = ''; syncFields();                                           // the extra-gap rows hold the old gap objects: rebuilt
   state.mode = 'select'; state.pivot = centrePivot(); state.rotCopy = false; pdrag = null; lastPush = { key: '', t: 0, d: null }; if (before !== JSON.stringify(LD.placedAll(d.lay))) { picksArr = []; state.sel = -1; d.stretchSelection = null; }
   linkBase.delete(d.lay);                                              // an undo is not an edit the dimensions follow
@@ -4600,7 +4600,7 @@ function addedSwatch(d, l) {
       if (!rgb) return;
       const next = PR.withColour(def, rgbKey(rgb));
       if (d.lay) {       // a layout: its layer table, and the objects on the layer drawn again
-        pushLay(d, null, '', 'Layer colour → ' + l.name);
+        pushLay(d, { ...laySnap(d.lay), hid: [...(d.hiddenParts || [])] }, '', 'Layer colour → ' + l.name);
         changeLayoutLayer(d, l.name, { def: next });
         usedColour(rgbKey(rgb));
         return;
