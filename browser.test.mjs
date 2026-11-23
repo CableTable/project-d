@@ -27672,6 +27672,14 @@ try {
     assert.equal((await saved()).texts.TITLE, 'Bracket', 'the file keeps it');
     await setSwitch(true);
     assert.equal(await shown(), before);
+    // the dialog's switch has no undo step: undoing a move must not put the old switch back
+    const lineAt = await at(70, 100); await page.mouse.click(lineAt.x, lineAt.y); await page.keyboard.press('ArrowRight'); await frames();
+    const steps = (await histLabels()).length;
+    assert.ok(steps > history.length + 2, 'the move is a step');
+    await setSwitch(false);
+    await undo();
+    assert.equal(await shown(), before - 1, 'the switch stays off after the undo');
+    await setSwitch(true);
     // save and reopen: block and every value stay; the file name is auto again, the typed date stays
     const { doc } = await saved();
     await open('title-9a-again.dxf', doc);

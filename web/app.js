@@ -2360,7 +2360,7 @@ function titleBlockCommand() {
   }
   const spot = TB.titleSpot(lay.s);
   if (!spot) { note('Title block: the sheet is too small for it (150 × 44 mm inside the grippers)'); return; }
-  pushLay(d, null, '', 'Title block');
+  pushLay(d, withTb(laySnap(lay), d), '', 'Title block');
   if (d.titleBlock?.enabled === false) d.titleBlock = { ...d.titleBlock, enabled: true };       // one switch: inserting turns it on
   const blocks = { [TB.TITLE_NAME]: { base: [0, 0], xref: false, entities: TB.titleBlockEntities() } };
   const ent = TB.titleInsert(...spot, TB.titleValues(d.titleBlock, TB.titleAuto(lay, d.name, today())));
@@ -2495,8 +2495,8 @@ const fmt1 = (v) => Number(v).toFixed(1);
 const centrePivot = () => ({ kind: 'centre', x: 0, y: 0 });
 const laySnap = (lay) => ({ sw: lay.s.sheetW, sh: lay.s.sheetH, s: structuredClone(lay.s), placed: lay.placed.map((p) => ({ ...p })), gridPart: lay.s.gridPart, parts: { ...lay.parts }, layers: LD.layersOf(lay), grids: structuredClone(lay.grids || {}),
   lsel: lay === (curLay() || {}) ? selIdxs().map((i) => placedNow[i]).filter((p) => p.src === 'loose').map((p) => p.i) : [],      // lsel: which loose parts were selected (undo brings the selection back)
-  bl: state.docs.find((t) => t.lay === lay)?.balloons,      // bl: the tab's balloon set (immutable, so the reference is the snapshot)
-  tb: state.docs.find((t) => t.lay === lay)?.titleBlock });      // tb: the tab's title block settings (typed fields; replaced, never changed in place): the sheet's title block undoes with them
+  bl: state.docs.find((t) => t.lay === lay)?.balloons });      // bl: the tab's balloon set (immutable, so the reference is the snapshot)
+const withTb = (snap, d) => ({ ...snap, tb: d.titleBlock });      // tb: the tab's title block settings (replaced, never changed in place), kept only by the steps that change them (title insert, attribute edit): the PDF dialog's typing has no undo step, so other steps must not put the old text back
 const layHist = (d) => d.lhist || (d.lhist = Ed.createHistory());
 /** Keeps the layout as it is now for undo; the same key within 0.8 s (arrow key held down) keeps only the first. */
 function pushLay(d, snap, key = '', label) {
@@ -7741,6 +7741,7 @@ function dropLinePoint(d) {
 function stepHist(d, dir, snapshot = d.lay ? laySnap(d.lay) : snapshotOf(d)) {
   const cur = { ...snapshot, ...(!d.lay && { sel: [...(d.sel || [])] }) }, st = (d.lay ? layHist(d) : d.hist)[dir](cur);
   cur.blSize = st?.blSize;
+  if (d.lay) { if (st && 'tb' in st) cur.tb = 'tb' in snapshot ? snapshot.tb : d.titleBlock; else delete cur.tb; }       // the other way of a title block step carries the settings too
   if (st?.renamed) cur.renamed = [...st.renamed].reverse();       // the other way (Redo of an Undo, Undo of a Redo) renames back
   if (st?.kept) cur.kept = st.kept;       // a layer delete: the same layer's marks both ways
   if (d.lay && st?.hid) cur.hid = [...(d.hiddenParts || [])];
@@ -11581,7 +11582,7 @@ function attributePick(e, command = false) {
       // A wider value can change the reference corner; keep the geometry in place, including after reopening.
       const origin = mapply(placedMat(old, pl, 0), updated.box[0], updated.box[1]);
       gMark(g);
-      if (title) d.titleBlock = TB.typedFromEnt(next, auto, d.titleBlock);       // after gMark: the undo step keeps the old settings
+      if (title) { g.snap.tb = d.titleBlock; d.titleBlock = TB.typedFromEnt(next, auto, d.titleBlock); }       // after gMark: the undo step keeps the old settings
       if (loose == null) loose = gLoose(g, slot);
       d.lay.parts[id] = { ...old, ...updated };
       d.lay.placed[loose] = { ...pl, partId: id, x: origin[0], y: -origin[1] };
