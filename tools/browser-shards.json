@@ -788,5 +788,6 @@
   "TODO 358a: a picture-only PDF can open as page pictures, alone and in a batch; the picture is selectable and not a dimmed background": 3,
   "TODO 358b: Save as PDF (pages) writes one PDF page per page picture with the line drawn across both; the line outside is counted, not saved": 4,
   "TODO 358c1: Save as PDF (pages) on a Layouts tab: a page per page picture, each with its image, the line on page 1; a hidden layer is left out": 3,
-  "TODO 358c1: Esc on a vector PDF's open ask is kept: a later picture-only PDF in the batch is asked again, not opened as pictures unasked": 1
+  "TODO 358c1: Esc on a vector PDF's open ask is kept: a later picture-only PDF in the batch is asked again, not opened as pictures unasked": 1,
+  "TODO 358c2: Save as PDF (pages) on a Compare view: a page per page picture at its size, each with its image, the lines in compare colours": 3
 }

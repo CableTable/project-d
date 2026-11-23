@@ -9164,6 +9164,71 @@ try {
     } finally { await context.close(); }
   });
 
+  await step('TODO 358c2: Save as PDF (pages) on a Compare view: a page per page picture at its size, each with its image, the lines in compare colours', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    try {
+      const p = await context.newPage(), q = (id) => p.getByTestId(id);
+      p.on('pageerror', (e) => errors.push(String(e)));
+      const fileMenu = async (name) => { await p.locator('[data-menu=File]').click(); await p.getByRole('menuitem', { name, exact: true }).click(); };
+      const prompt = (text) => p.waitForFunction((text) => document.querySelector('[data-testid=cmd-prompt]').textContent.startsWith(text), text);
+      const typeCmd = async (text) => { const i = q('cmd-input'); if (!(await i.isVisible())) { await q('cmd-echo').click(); await i.waitFor({ state: 'visible' }); } await i.fill(text); await i.press('Enter'); };
+      await p.goto(URL_ + '?autosave=86400000'); await q('picker').waitFor({ state: 'attached' });
+      await p.evaluate(() => {
+        window.__pdfopenManual = true;
+        window.__pics358c2 = { files: {}, next: '' };
+        window.__TAURI__ = {
+          dialog: { save: async () => window.__pics358c2.next, open: async () => window.__pics358c2.next, ask: async () => true },
+          fs: {
+            exists: async () => false,
+            readFile: async (path) => { const b = window.__pics358c2.files[path]; if (!b) throw new Error('missing'); return Uint8Array.from(b); },
+            writeFile: async (path, bytes) => { window.__pics358c2.files[path] = [...bytes]; },
+            writeTextFile: async (path, text) => { window.__pics358c2.files[path] = [...new TextEncoder().encode(text)]; },
+          },
+        };
+      });
+      const sheet = new Page(80, 50); sheet.rect(10, 10, 30, 20); sheet.stroke();
+      const pdf = { name: 'two-pages.pdf', mimeType: 'application/pdf', buffer: Buffer.from(writePdf([sheet, new Page(120, 90)])) };
+      for (const [file, from, to] of [['C:/jobs/a.dxf', '10,60', '70,70'], ['C:/jobs/b.dxf', '30,50', '90,80']]) {       // the same two page pictures, a line over page 1: moved in the second drawing
+        await q('picker').setInputFiles(pdf); await q('pdfopen-dialog').waitFor(); await q('pdfopen-pictures').click();
+        await prompt('Opened two-pages.pdf as 2 page pictures'); await waitTab(p, 'two-pages.dxf');
+        await p.locator('[data-tool=line]').click();
+        await typeCmd(from); await typeCmd(to); await p.keyboard.press('Escape');
+        await p.locator('[data-tool=select]').click();
+        await p.evaluate((file) => { window.__pics358c2.next = file; }, file);
+        await fileMenu('Save As…'); await prompt('Saved ' + file.split('/').pop());
+        await p.locator('.dtab.on .x').click();
+      }
+      for (const file of ['C:/jobs/a.dxf', 'C:/jobs/b.dxf']) {
+        await p.evaluate((file) => { window.__pics358c2.next = file; }, file);
+        await fileMenu('Open…'); await waitTab(p, file.split('/').pop());
+      }
+      await p.locator('.dtab', { hasText: 'a.dxf' }).click(); await fileMenu('Compare drawings…');
+      await p.waitForFunction(() => document.querySelector('.tabs .dtab.on').dataset.kind === 'compare');
+      await p.evaluate(() => { window.__pics358c2.next = 'C:/jobs/compare-pages.pdf'; });
+      await fileMenu('Save as PDF (pages)');
+      await prompt('Saved compare-pages.pdf: 4 pages');
+      await p.screenshot({ path: shotDir + '/358c2-compare-pages-light.png' });
+      await p.locator('[data-menu=View]').click(); await p.getByRole('menuitemcheckbox', { name: /Theme: dark/ }).click();
+      await p.screenshot({ path: shotDir + '/358c2-compare-pages-dark.png' });
+      await p.setViewportSize({ width: 1024, height: 700 });
+      await p.screenshot({ path: shotDir + '/358c2-compare-pages-1024.png' });
+      const t = Buffer.from(await p.evaluate(() => window.__pics358c2.files['C:/jobs/compare-pages.pdf'])).toString('latin1');
+      const streams = [...t.matchAll(/stream\n([\s\S]*?)endstream/g)].map((m) => m[1]).filter((s) => /^[\d.]+ 0 0 [\d.]+ 0 0 cm\n/.test(s));
+      assert.deepEqual([...t.matchAll(/\/MediaBox \[0 0 ([\d.]+) ([\d.]+)\]/g)].map((m) => [Math.round(m[1] / 72 * 25.4), Math.round(m[2] / 72 * 25.4)]), [[80, 50], [80, 50], [120, 90], [120, 90]], 'a page per picture of both drawings, at the picture\'s size (not the compare border box)');
+      assert.equal(streams.length, 4);
+      assert.ok(streams.every((s) => / Do Q\n/.test(s)), 'every page holds its picture, not only a frame');
+      assert.equal(t.match(/\/Subtype \/Image/g).length, 2, 'the two drawings share the same two picture files');
+      const RED = '0.776 0.157 0.157 RG', BLUE = '0.039 0.373 0.761 RG';
+      assert.deepEqual(streams.map((s) => [s.includes(RED), s.includes(BLUE)]), [[true, true], [true, true], [false, false], [false, false]], 'drawing 1\'s line in red, drawing 2\'s in blue, over page 1 of each; none over page 2');
+      await p.setViewportSize({ width: 1440, height: 900 });                         // Add file… reads the saved DXF with its -pageN.png too: a third drawing, two more pages
+      await p.evaluate(() => { window.__pics358c2.next = 'C:/jobs/a.dxf'; });
+      await q('ptab-drawing').click(); await q('cmp-add-file').click();
+      await prompt('Added snapshot: a.dxf');
+      await p.evaluate(() => { window.__pics358c2.next = 'C:/jobs/compare-pages.pdf'; });
+      await fileMenu('Save as PDF (pages)');
+      await prompt('Saved compare-pages.pdf: 6 pages');    } finally { await context.close(); }
+  });
+
   await step('TODO 341: refused picture paths still save the DXF first, grant plain names, and warn "N picture(s) not saved"', async () => {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
     try {

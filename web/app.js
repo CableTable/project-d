@@ -572,8 +572,8 @@ function buildStartScreen() {
 function buildMenus() {
   // an item: [text, action, shortcut hint (shown, and only a hint for a key that is really bound), enabled? (a function, asked when the menu opens)]
   const menus = {
-    File: () => [['Open…', openFile], ['New layout', newLayoutTab], ['Save', () => save(false), 'Ctrl+S'], ['Save As…', () => save(true), 'Ctrl+Shift+S'], ['Export DXF…', exportDxf], ['Export for cutter…', exportCutter], ['Compare drawings…', cmpStart], ['Import background…', () => ui.bgPicker.click()], ['Rotate background', rotateBackground], ['Trace bitmap…', traceBitmap], ['PDF / Print…', exportPdf],
-      ['Save as PDF (pages)', savePdfPages, null, () => hasPdfPages(), hasPdfPages() ? null : 'No PDF pages in this drawing'],
+    File: (pages = hasPdfPages()) => [['Open…', openFile], ['New layout', newLayoutTab], ['Save', () => save(false), 'Ctrl+S'], ['Save As…', () => save(true), 'Ctrl+Shift+S'], ['Export DXF…', exportDxf], ['Export for cutter…', exportCutter], ['Compare drawings…', cmpStart], ['Import background…', () => ui.bgPicker.click()], ['Rotate background', rotateBackground], ['Trace bitmap…', traceBitmap], ['PDF / Print…', exportPdf],
+      ['Save as PDF (pages)', savePdfPages, null, () => pages, pages ? null : 'No PDF pages in this drawing'],
       ...recentItems()],
     Edit: [['Undo', () => undoCurrent(), 'Ctrl+Z', () => ui.startScreen.hidden && (!!state.paste || !!state.grip || !!historyOf(curDoc())?.canUndo)],
       ['Redo', () => undoCurrent(true), 'Ctrl+Y', () => ui.startScreen.hidden && !!historyOf(curDoc())?.canRedo],
@@ -1338,25 +1338,8 @@ async function dwgBytes(name, path, buf) {
     note(`${name}: could not convert this DWG (${String(err && err.message || err).trim().split(/\r?\n/).pop()})`); return null;
   }
 }
-/** Opens a file's bytes as a new tab (path: where it lives on disk, in the app). */
-async function openBytes(name, buf, path = null, batch = {}) {
-  // the same file already open (in the app, where files have paths): show its tab, never a second copy.
-  // Path only: a DXF saved under a new name no longer is its opened file; a DWG / PDF tab has no path of its own, so its source counts
-  const same = path ? state.docs.findIndex((d) => [d.path, (d.fromDwg || d.fromPdf) && d.openPath].some((p) => p && pathKey(p) === pathKey(path))) : -1;
-  if (same >= 0) {
-    state.doc = same; showDoc(); rememberRecent(path);
-    note(`${name} is already open: here is its tab` + (state.docs[same].dirty ? ' (with unsaved changes)' : ''));
-    return;
-  }
-  if (/\.tiff?$/i.test(name)) { await importBackgroundTiff(name, buf, true, path); return; }   // TODO 138: a TIFF is a background picture in a tab of its own
-  if (/\.pdf$/i.test(name) || (!/\.dxf$/i.test(name) && buf.byteLength && isPdf(buf))) { await openPdf(name, buf, path, null, batch); return; }
-  if (/\.ai$/i.test(name)) { note(name + ": this .ai has no PDF part. In Illustrator: Save As .ai with 'Create PDF Compatible File' on, or Save a Copy as PDF."); return; }
-  const dwg = /\.dwg$/i.test(name);
-  if (!dwg && !/\.dxf$/i.test(name)) { note(name + ': Opens DXF or PDF; pictures go in as a background (Background…)'); return; }
-  if (dwg && !(buf = await dwgBytes(name, path, buf))) return;
-  note('Reading ' + name + '…');
-  const r = await readDrawing(buf instanceof ArrayBuffer ? buf : buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength));
-  if (!r.ok) { note(name + ': ' + (r.sorry || 'could not read this drawing' + (r.error ? ' (' + r.error + ')' : ''))); return; }
+/** A read DXF's pictures (TODO 358c2: Open and Compare's Add file… both): the sibling PNGs next to its path become the IMAGEs' pixels, then they are preloaded. */
+async function attachPictures(r, path) {
   const t = window.__TAURI__;
   if (path && t?.fs?.readFile) {
     let attached = false;
@@ -1376,6 +1359,27 @@ async function openBytes(name, buf, path = null, batch = {}) {
     if (attached) r.result = flatten(r.doc);
   }
   await preloadPictures(r.result.items);
+}
+/** Opens a file's bytes as a new tab (path: where it lives on disk, in the app). */
+async function openBytes(name, buf, path = null, batch = {}) {
+  // the same file already open (in the app, where files have paths): show its tab, never a second copy.
+  // Path only: a DXF saved under a new name no longer is its opened file; a DWG / PDF tab has no path of its own, so its source counts
+  const same = path ? state.docs.findIndex((d) => [d.path, (d.fromDwg || d.fromPdf) && d.openPath].some((p) => p && pathKey(p) === pathKey(path))) : -1;
+  if (same >= 0) {
+    state.doc = same; showDoc(); rememberRecent(path);
+    note(`${name} is already open: here is its tab` + (state.docs[same].dirty ? ' (with unsaved changes)' : ''));
+    return;
+  }
+  if (/\.tiff?$/i.test(name)) { await importBackgroundTiff(name, buf, true, path); return; }   // TODO 138: a TIFF is a background picture in a tab of its own
+  if (/\.pdf$/i.test(name) || (!/\.dxf$/i.test(name) && buf.byteLength && isPdf(buf))) { await openPdf(name, buf, path, null, batch); return; }
+  if (/\.ai$/i.test(name)) { note(name + ": this .ai has no PDF part. In Illustrator: Save As .ai with 'Create PDF Compatible File' on, or Save a Copy as PDF."); return; }
+  const dwg = /\.dwg$/i.test(name);
+  if (!dwg && !/\.dxf$/i.test(name)) { note(name + ': Opens DXF or PDF; pictures go in as a background (Background…)'); return; }
+  if (dwg && !(buf = await dwgBytes(name, path, buf))) return;
+  note('Reading ' + name + '…');
+  const r = await readDrawing(buf instanceof ArrayBuffer ? buf : buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength));
+  if (!r.ok) { note(name + ': ' + (r.sorry || 'could not read this drawing' + (r.error ? ' (' + r.error + ')' : ''))); return; }
+  await attachPictures(r, path);
   const fl = r.result;
   if (!fl.items.length && !r.doc.entities.some((e) => e.type === 'IMAGE')) { note(name + (fl.truncated ? ': too big to show all of it, so nothing is drawn' : ': this drawing is empty')); return; }
   const subs = fontSubstitutions(r.doc.styles, fl.items);
@@ -13882,6 +13886,7 @@ async function cmpLoad(d, name, buf, path = null) {
   else if (!/\.dxf$/i.test(name)) { note(name + ': Compare opens DXF drawings'); return; }
   const r = await readDrawing(buf instanceof ArrayBuffer ? buf : buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength));
   if (!r.ok) { note(name + ': ' + (r.sorry || 'could not read this drawing' + (r.error ? ' (' + r.error + ')' : ''))); return; }
+  await attachPictures(r, path);
   if (state.docs.includes(d)) cmpAdd(d, { name, raw: r.doc, fl: r.result, factor: unitFactor(r.result.units), off: startHidden(r.result) });
 }
 
