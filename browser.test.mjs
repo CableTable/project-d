@@ -14,7 +14,7 @@ import { readOverride } from './web/dimension-text.js';
 import { stepRepeat } from './web/layout.js';
 import { readDxf, decodeDxf, flatten, mapply } from './web/drawing.js';
 import { readMeta, newLayout, makePart, layoutRaw, layoutFromRaw, gridOf, objectPart, objectPlacement, objectDoc, layersOf } from './web/layoutdoc.js';
-import { newDoc, addEntities, addLayer, addBlock, entity, insert as dxfInsert, text as dxfText, mtext as dxfMtext, roundRect, circle as dxfCircle, line as dxfLine, arc as dxfArc, ellipse as dxfEllipse, lwpoly as dxfPoly, point, writeDxf } from './web/dxf-write.js';
+import { newDoc, addEntities, addLayer, addBlock, entity, insert as dxfInsert, text as dxfText, mtext as dxfMtext, roundRect, circle as dxfCircle, line as dxfLine, arc as dxfArc, ellipse as dxfEllipse, lwpoly as dxfPoly, point, writeDxf, writeDxfSteps } from './web/dxf-write.js';
 import { placedBox, placedMat } from './web/apply.js';
 import * as GR from './web/grips.js';
 import { rotateEntities } from './web/rotate.js';
@@ -39464,6 +39464,38 @@ try {
     }
     await menuItem('View', 'Theme: light');
     await arcBack347(); await closeTabs(/./);
+  });
+
+  await step('TODO 237c: autosave copy on a busy page', async () => {
+    const ctx = await browser.newContext();
+    try {
+      const p = await ctx.newPage(), faults = [];
+      p.on('pageerror', (e) => faults.push(String(e)));
+      await p.route('**/app.js', (route) => route.fulfill({ contentType: 'text/javascript', body: readFileSync('web/app.js', 'utf8') + `
+        window.t237Size = () => state.docs.length ? curDoc().raw?.entities.length || 0 : 0;
+        window.t237Autosave = async () => {
+          curDoc().dirty = true; window.t237Calls = 0; await autosaveNow();
+          const copies = await RC.loadCopies();
+          return { calls: window.t237Calls, copies: copies.length, entities: copies[0]?.dxf.match(/\\r?\\n(?:LINE|TEXT)\\r?\\n/g)?.length };
+        };` }));
+      await p.addInitScript(() => {                         // a busy page: every idle callback fires by timeout with no idle time left
+        window.t237Calls = 0;
+        window.requestIdleCallback = (fn) => { window.t237Calls++; return setTimeout(() => fn({ didTimeout: true, timeRemaining: () => 0 }), 0); };
+      });
+      await p.goto(URL_ + '?autosave=86400000'); await p.getByTestId('count').waitFor({ state: 'attached' });
+      const doc = newDoc(4), ents = [];
+      for (let i = 0; i < 10000; i++) ents.push(i % 2 ? dxfLine(i % 100, i / 100, i % 100 + .8, i / 100 + .5) : dxfText(i % 100, i / 100, .2, 'T' + i));
+      addEntities(doc, ents);
+      let stepCount = 0; for (const it = writeDxfSteps(doc, { escapeUnicode: true }); !it.next().done;) stepCount++;
+      await p.getByTestId('picker').setInputFiles({ name: 'todo237c.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(doc)) });
+      await p.waitForFunction(() => window.t237Size() >= 10000, null, { timeout: 60000 });
+      const r = await p.evaluate(() => window.t237Autosave());
+      console.log(`TODO 237c: steps=${stepCount} idle calls=${r.calls} copies=${r.copies} entities=${r.entities}`);
+      assert.equal(r.copies, 1, 'the autosave copy finished');
+      assert.equal(r.entities, 10000, 'the copy holds every entity');
+      assert.ok(stepCount > 20 && r.calls < stepCount / 2, `idle calls ${r.calls} not under half of ${stepCount} steps`);
+      assert.deepEqual(faults, []);
+    } finally { await ctx.close(); }
   });
 
   const picked = pickSteps(steps, only, selectStep, until);

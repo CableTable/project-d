@@ -3967,7 +3967,7 @@ const writeIdle = (doc, opts) => new Promise((resolve, reject) => {
     const start = performance.now();
     try {
       let r;
-      while (!(r = steps.next()).done) if (deadline.timeRemaining() < 1 || performance.now() - start > 8) return requestIdleCallback(slice, { timeout: 200 });
+      while (!(r = steps.next()).done) if ((!deadline.didTimeout && deadline.timeRemaining() < 1) || performance.now() - start > 8) return requestIdleCallback(slice, { timeout: 200 });
       resolve(r.value.text);
     } catch (e) { reject(e); }
   };
