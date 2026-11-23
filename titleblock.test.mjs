@@ -5,6 +5,7 @@ import { writeDxf, newDoc, addBlock } from './web/dxf-write.js';
 import * as LD from './web/layoutdoc.js';
 import * as T from './web/titleblock.js';
 import { usableArea, stepRepeat } from './web/layout.js';
+import { gridArea } from './web/apply.js';
 import { cleanTitleBlock } from './web/pdf-export.js';
 
 let n = 0;
@@ -67,15 +68,16 @@ test('TODO 9a: a reopened file reads the fields back except the date and file na
   assert.deepEqual(store, { title: 'Plate', rev: 'B' });
 });
 
-test('TODO 9a: usableArea keeps the title block\'s strip clear, so a grid avoids it', () => {
+test('TODO 9a fix: the title block is an obstacle, not a strip: a grid loses only the cells it covers', () => {
   const lay = withTitle(), plain = LD.newLayout('P');
-  assert.equal(T.sheetArea(lay).titleH, 44);
-  assert.equal(usableArea(T.sheetArea(plain)).h, 700);
-  assert.equal(usableArea(T.sheetArea(lay)).h, 656);
-  const fit = (l) => stepRepeat({ ...T.sheetArea(l), partW: 100, partH: 300, fit: true }).rows;
-  assert.equal(fit(plain), 2); assert.equal(fit(lay), 2);
-  assert.equal(stepRepeat({ ...T.sheetArea(lay), partW: 100, partH: 330, fit: true }).rows, 1, '2 rows of 330 need 660 > 656');
-  assert.equal(stepRepeat({ ...T.sheetArea(plain), partW: 100, partH: 330, fit: true }).rows, 2);
+  assert.equal(T.sheetArea(lay).titleH, 44, 'a new nest still keeps the strip');
+  assert.equal(usableArea(lay.s).h, 700, 'the usable area is the whole sheet');
+  assert.deepEqual(gridArea(lay).occupied, [[850, 656, 1000, 700]], 'the block box, y down');
+  assert.deepEqual(gridArea(plain).occupied, []);
+  const count = (l) => stepRepeat({ ...gridArea(l), partW: 50, partH: 50, fit: true, rotate: '0' });
+  assert.equal(count(plain).count, 18 * 12);
+  assert.equal(count(lay).count, 18 * 12 - 3, 'the block covers 3 cells of the last row (150 × 44 mm), the other 213 stay');
+  assert.equal(count(lay).rows, 12, 'the rows above the block keep their room');
 });
 
 test('TODO 9a: saved as INSERT + ATTRIBs and read back with every value (and the layout settings)', () => {

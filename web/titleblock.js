@@ -56,7 +56,7 @@ export const isTitlePart = (part) => { const e = part?.obj && part.raw.entities[
 /** The title block part of a layout, or undefined. */
 export const titlePartOf = (lay) => Object.values(lay.parts).find((p) => isTitlePart(p) && lay.placed.some((q) => q.partId === p.id));
 
-/** The layout's settings plus the title block's height: what the grid maths (layout.js usableArea) keeps clear. */
+/** The layout's settings plus the title block's height: the strip a new nest keeps clear (grids skip only the block's box: apply.js gridArea). */
 export const sheetArea = (lay) => ({ ...lay.s, titleH: titlePartOf(lay)?.h ?? 0 });
 
 /** The ATTRIB values of an INSERT: { TAG: text }. */

@@ -2427,7 +2427,7 @@ function openNestDialog(counts = null, autoRun = false) {
     return { id: part.id, name: part.name, w: part.w, h: part.h, thumb, count: counts ? (counts[part.id] || 0) : (inLayout ? 1 : 0), outline: () => outlineFor(part) };
   });
   const fixed = LD.placedAll(lay, null).filter((pl) => !lay.parts[pl.partId].obj).map((pl) => { const part = lay.parts[pl.partId]; return outlineFor(part).map(([u, v]) => PL.toSheet(pl, u, v)); });
-  const strip = TB.sheetArea(lay).titleH;       // the sheet's title block keeps the strip along the bottom clear (same as the grid)
+  const strip = TB.sheetArea(lay).titleH;       // the sheet's title block keeps the strip along the bottom clear in a new nest
   const area = { x: s.gripLeft, y: s.gripBottom + strip, w: s.sheetW - s.gripLeft - s.gripRight, h: s.sheetH - s.gripTop - s.gripBottom - strip };
   if (!(area.w > 0 && area.h > 0)) { note('Auto-nest: the grippers leave no room on the sheet'); return; }
   openNest({
