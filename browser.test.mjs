@@ -26576,6 +26576,151 @@ try {
     }
   });
 
+  // TODO 109c2: Export… with Format PNG, in Drawings, Layouts and Compare
+  const pngOpen = async () => { await menuItem('File', 'Export…'); await svgDialog.waitFor(); await t('export-format').selectOption('png'); };
+  const pngMm = (svg) => svg.match(/width="([\d.]+)mm" height="([\d.]+)mm"/).slice(1).map(Number);
+  const pngSig = (buf) => assert.equal(buf.subarray(0, 8).toString('hex'), '89504e470d0a1a0a', 'a PNG signature');
+  /** The PNG's own size and pixels: the dark pixels (alpha > 0, red < 128) and the top-left pixel. */
+  const pngInfo = (buf) => page.evaluate(async (b) => {
+    const img = new Image(); img.src = URL.createObjectURL(new Blob([new Uint8Array(b)], { type: 'image/png' })); await img.decode();
+    const c = document.createElement('canvas'); c.width = img.naturalWidth; c.height = img.naturalHeight;
+    const g = c.getContext('2d'); g.drawImage(img, 0, 0);
+    const px = g.getImageData(0, 0, c.width, c.height).data; let dark = 0, inked = 0;
+    for (let i = 0; i < px.length; i += 4) { if (px[i + 3] > 0) inked++; if (px[i + 3] > 0 && px[i] < 128) dark++; }
+    return { w: img.naturalWidth, h: img.naturalHeight, corner: [...px.slice(0, 4)], dark, inked };
+  }, [...buf]);
+  const pngFake = (bytes, opened) => page.evaluate(([b, name]) => {
+    window.__exp109c2 = { wrote: [], asked: [], svgs: [] };
+    window.__TAURI__ = {
+      dialog: { open: async () => 'C:\\source\\' + name, ask: async () => true, save: async (o) => { window.__exp109c2.asked.push(o); return o.defaultPath; } },
+      fs: { readFile: async () => new Uint8Array(b), exists: async () => false, writeTextFile: async (path, text) => { window.__exp109c2.svgs.push(text); }, writeFile: async (path, data) => { window.__exp109c2.wrote.push({ path, bytes: [...data] }); } },
+    };
+  }, [bytes, opened]);
+  const pngWrote = async (n) => { await page.waitForFunction((k) => window.__exp109c2.wrote.length === k, n); return page.evaluate((k) => window.__exp109c2.wrote[k - 1], n); };
+
+  await step('TODO 109c2: Export… as PNG (Drawings): signature, size in px = inches x DPI, white / transparent background, DPI refused out of 72-1200, size cap note, a null toBlob writes no file, the drawing unchanged', async () => {
+    await closeTabs(/./); await menuItem('View', 'Theme: light');
+    await pngFake(svgDrawing(), 'png-draw.dxf');
+    try {
+      await menuItem('File', 'Open…'); await waitTab(page, 'png-draw.dxf');
+      const before = await t('drawing').evaluate((el) => el.toDataURL());
+      await svgOpen(); await t('export-dxf-go').click();                                  // the SVG gives the page size in mm
+      await page.waitForFunction(() => window.__exp109c2.svgs.length === 1);
+      const [svgW, svgH] = pngMm(await page.evaluate(() => window.__exp109c2.svgs[0]));
+      await menuItem('File', 'Export…'); await svgDialog.waitFor();
+      await t('export-format').selectOption('png'); await svgField('export-dxf-name', 'png-draw-export.png');
+      await svgField('export-dpi', '300'); await svgField('export-bg', 'white');
+      for (const id of ['export-dpi', 'export-bg', 'export-dxf-scale', 'export-dxf-layers', 'export-dxf-text']) assert.equal(await t(id).isVisible(), true, id + ' shown for PNG');
+      for (const id of ['units', 'precision']) assert.equal(await t('export-dxf-' + id).isVisible(), false, id + ' hidden for PNG');
+      await t('export-format').selectOption('dxf'); await svgField('export-dxf-name', 'png-draw-export.dxf');
+      assert.equal(await t('export-dpi').isVisible(), false); assert.equal(await t('export-dxf-units').isVisible(), true);
+      await t('export-format').selectOption('png');
+      await page.screenshot({ path: `${shotDir}/export-png-light.png` });
+      await t('export-dxf-cancel').click(); await svgDialog.waitFor({ state: 'detached' });
+      await menuItem('View', 'Theme: dark'); await pngOpen();
+      await page.screenshot({ path: `${shotDir}/export-png-dark.png` });
+      await page.keyboard.press('Escape'); await svgDialog.waitFor({ state: 'detached' });
+      await menuItem('View', 'Theme: light');
+      await pngOpen(); await t('export-dpi').fill('50');
+      await page.waitForFunction(() => /DPI must be a whole number from 72 to 1200/.test(document.querySelector('[data-testid=export-dxf-err]').textContent));
+      await t('export-dxf-go').click(); assert.equal(await svgDialog.isVisible(), true, 'a bad DPI keeps the dialog open');
+      await t('export-dpi').fill('1201'); assert.equal(await t('export-dxf-err').isVisible(), true);
+      await t('export-dpi').fill('100'); assert.equal(await t('export-dxf-err').isVisible(), false);
+      await t('export-dxf-go').click();
+      const white = await pngWrote(1); const wb = Buffer.from(white.bytes); pngSig(wb);
+      assert.equal(white.path, 'C:\\source\\png-draw-export.png');
+      assert.deepEqual(await page.evaluate(() => window.__exp109c2.asked.map((o) => [o.defaultPath, o.filters[0].extensions])), [['C:\\source\\png-draw-export.svg', ['svg']], ['C:\\source\\png-draw-export.png', ['png']]]);
+      await said(/Exported png-draw-export\.png/);
+      const wi = await pngInfo(wb);
+      assert.equal(wb.readUInt32BE(16), wi.w); assert.equal(wb.readUInt32BE(20), wi.h);
+      assert.ok(Math.abs(wi.w - svgW / 25.4 * 100) <= 1, `width ${svgW} mm at 100 dpi: ${wi.w}`);
+      assert.ok(Math.abs(wi.h - svgH / 25.4 * 100) <= 1, `height ${svgH} mm at 100 dpi: ${wi.h}`);
+      assert.deepEqual(wi.corner, [255, 255, 255, 255], 'white background'); assert.ok(wi.dark > 50, 'the lines and text are drawn: ' + wi.dark);
+      await pngOpen(); await t('export-bg').selectOption('transparent'); await t('export-dpi').fill('72'); await t('export-dxf-go').click();
+      const clear = await pngInfo(Buffer.from((await pngWrote(2)).bytes));
+      assert.equal(clear.corner[3], 0, 'transparent corner'); assert.ok(clear.dark > 20 && clear.inked < clear.w * clear.h, 'only the drawing is inked: ' + clear.inked);
+      assert.ok(Math.abs(clear.w - svgW / 25.4 * 72) <= 1 && Math.abs(clear.h - svgH / 25.4 * 72) <= 1, `size at 72 dpi: ${clear.w}x${clear.h}`);
+      await pngOpen(); await t('export-dxf-text').selectOption('curves'); await t('export-dpi').fill('72'); await t('export-dxf-go').click();
+      assert.ok((await pngInfo(Buffer.from((await pngWrote(3)).bytes))).dark > 20, 'Curves: still drawn');
+      assert.equal(await page.evaluate(() => window.__exp109c2.svgs.length), 1, 'only the SVG went through the text write');
+      // a canvas that makes no picture: a note, no file (never a blank one)
+      await page.evaluate(() => { window.__toBlob = HTMLCanvasElement.prototype.toBlob; HTMLCanvasElement.prototype.toBlob = function (cb) { cb(null); }; });
+      await pngOpen(); await t('export-dxf-go').click(); await said(/PNG not written/);
+      await page.evaluate(() => { HTMLCanvasElement.prototype.toBlob = window.__toBlob; });
+      assert.equal(await page.evaluate(() => window.__exp109c2.wrote.length), 3, 'a null toBlob writes no file');
+      assert.equal(await page.locator('.tabs .dtab.on .dot').count(), 0, 'the open drawing stays clean');
+      assert.equal(await t('drawing').evaluate((el) => el.toDataURL()), before, 'the open drawing is unchanged after the exports');
+      // the size cap: a flat line at Scale 20 is 602 mm wide: 1200 dpi would be 28000 px
+      const flat = newDoc(4); addEntities(flat, dxfLine(0, 0, 30, 0));
+      await t('picker').setInputFiles({ name: 'png-flat.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(flat)) });
+      await waitTab(page, 'png-flat.dxf'); await pngOpen(); await t('export-dxf-scale').fill('20'); await t('export-dpi').fill('1200'); await t('export-dxf-go').click();
+      const capped = Buffer.from((await pngWrote(4)).bytes), ci = await pngInfo(capped);
+      const said2 = (await said(/Exported png-flat-export\.png\. PNG at (\d+) dpi \(largest that fits\)/)).match(/PNG at (\d+) dpi/);
+      assert.ok(ci.w <= 16384 && ci.w > 16000, 'width under the side cap: ' + ci.w);
+      assert.ok(Math.abs(ci.w - 602 / 25.4 * Number(said2[1])) <= 1, `width ${ci.w} = 602 mm at ${said2[1]} dpi`);
+      for (const theme of ['light', 'dark']) assert.ok(readFileSync(`${shotDir}/export-png-${theme}.png`).length > 1000);
+      console.log(`109c2 Drawings: white ${wi.w}x${wi.h} corner ${wi.corner}, transparent corner alpha ${clear.corner[3]}, capped ${ci.w}x${ci.h} at ${said2[1]} dpi; screenshots ${shotDir}/export-png-{light,dark}.png`);
+    } finally {
+      await page.evaluate(() => { if (window.__toBlob) HTMLCanvasElement.prototype.toBlob = window.__toBlob; delete window.__TAURI__; delete window.__exp109c2; });
+      await page.keyboard.press('Escape');
+      await closeTabs(/./);
+    }
+  });
+
+  const pngDownload = async (setup) => { const out = await downloaded(async () => { await pngOpen(); await setup(); await t('export-dxf-go').click(); }); return { name: out.name, buf: Buffer.from(out.text, 'latin1') }; };
+
+  await step('TODO 109c2: Export… as PNG (Layouts): the sheet is the page, size in px = sheet inches x DPI, transparent corner, the layout unchanged', async () => {
+    await closeTabs(/./);
+    const raw = newDoc(4); addEntities(raw, dxfLine(0, 0, 80, 0), dxfLine(0, 0, 0, 40));
+    const lay = newLayout('Png layout'); lay.parts.a = makePart('a', 'Bracket', raw); lay.placed.push({ partId: 'a', x: 50, y: 50, rot: 0 });
+    await t('picker').setInputFiles({ name: 'png-layout.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
+    await waitTab(page, 'png-layout.dxf'); await t('size-strip').waitFor();
+    const before = await t('drawing').evaluate((el) => el.toDataURL());
+    try {
+      const white = await pngDownload(() => t('export-dpi').fill('72'));            // no native bridge: the browser download
+      assert.equal(white.name, 'png-layout-export.png'); pngSig(white.buf);
+      const wi = await pngInfo(white.buf);
+      assert.ok(Math.abs(wi.w - lay.s.sheetW / 25.4 * 72) <= 1 && Math.abs(wi.h - lay.s.sheetH / 25.4 * 72) <= 1, `${lay.s.sheetW}x${lay.s.sheetH} mm at 72 dpi: ${wi.w}x${wi.h}`);
+      assert.deepEqual(wi.corner, [255, 255, 255, 255]); assert.ok(wi.dark > 20, 'the part is drawn: ' + wi.dark);
+      const clear = await pngDownload(async () => { await t('export-bg').selectOption('transparent'); await t('export-dpi').fill('72'); });
+      const ci = await pngInfo(clear.buf);
+      assert.equal(ci.corner[3], 0, 'transparent corner'); assert.ok(ci.dark > 20);
+      const none = await pngDownload(async () => { await t('export-bg').selectOption('transparent'); await t('export-dpi').fill('72'); await page.locator('[data-testid=export-dxf-layer][data-layer="Parts"]').uncheck(); });
+      assert.equal((await pngInfo(none.buf)).inked, 0, 'Parts unticked: nothing drawn');
+      assert.equal(await page.locator('.tabs .dtab.on .dot').count(), 0, 'the layout stays clean');
+      assert.equal(await t('drawing').evaluate((el) => el.toDataURL()), before, 'the layout is unchanged after the exports');
+      console.log(`109c2 Layouts: ${wi.w}x${wi.h} for ${lay.s.sheetW}x${lay.s.sheetH} mm, dark ${wi.dark}, Parts unticked inked ${(await pngInfo(none.buf)).inked}`);
+    } finally {
+      await page.keyboard.press('Escape');
+      await closeTabs(/./);
+    }
+  });
+
+  await step('TODO 109c2: Export… as PNG (Compare): the compared drawing as a PNG, size in px = inches x DPI, transparent corner, the drawing unchanged', async () => {
+    await closeTabs(/./);
+    await t('picker').setInputFiles({ name: 'png-cmp.dxf', mimeType: 'application/dxf', buffer: Buffer.from(svgDrawing()) });
+    await waitTab(page, 'png-cmp.dxf');
+    await menuItem('File', 'Compare drawings…'); await t('cmp-name-1').waitFor();
+    try {
+      await waitTab(page, 'Compare');
+      const svg = await downloaded(async () => { await svgOpen(); await t('export-dxf-go').click(); });
+      const [w, h] = pngMm(svg.text);
+      const white = await pngDownload(() => t('export-dpi').fill('100'));
+      assert.equal(white.name, 'png-cmp-export.png'); pngSig(white.buf);
+      const wi = await pngInfo(white.buf);
+      assert.ok(Math.abs(wi.w - w / 25.4 * 100) <= 1 && Math.abs(wi.h - h / 25.4 * 100) <= 1, `${w}x${h} mm at 100 dpi: ${wi.w}x${wi.h}`);
+      assert.deepEqual(wi.corner, [255, 255, 255, 255]); assert.ok(wi.dark > 50, 'the lines and text are drawn: ' + wi.dark);
+      const clear = await pngDownload(async () => { await t('export-bg').selectOption('transparent'); await t('export-dpi').fill('100'); });
+      assert.equal((await pngInfo(clear.buf)).corner[3], 0, 'transparent corner');
+      await waitTab(page, 'Compare');
+      assert.equal(await page.locator('.tabs .dtab').filter({ hasText: 'png-cmp.dxf' }).locator('.dot').count(), 0, 'the compared drawing stays clean');
+      console.log(`109c2 Compare: ${wi.w}x${wi.h} for ${w}x${h} mm, dark ${wi.dark}`);
+    } finally {
+      await page.keyboard.press('Escape');
+      await closeTabs(/./);
+    }
+  });
+
   await step('TODO 52: File → Export for cutter… asks for the tolerance (bad values refused), cancels cleanly, then writes lines / arcs / polylines only; screenshots light and dark', async () => {
     await closeTabs(/./);
     const d = newDoc(4); addEntities(d, [dxfPoly([[0, 0], [100, 0], [100, 60], [0, 60]], { closed: true }), dxfCircle(50, 30, 15), dxfText(10, 10, 5, 'HELLO')]);

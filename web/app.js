@@ -91,7 +91,8 @@ import * as TK from './track.js';
 import { loadParts, savePart, removePart } from './partstore.js';
 import { baseName, saveDefault, withExt } from './savepath.js';
 import * as RC from './recovery.js';
-import { openExport } from './export.js';
+import { openExport, paintPage } from './export.js';
+import { pngSize } from './png-size.js';
 import { openNest } from './nestdlg.js';
 import { openTrace } from './tracedlg.js';
 import * as TR from './trace.js';
@@ -4210,6 +4211,11 @@ async function exportCurves(raw, d, skip) {
  * a drawing with no conversion is written as mm. → the SVG text.
  */
 async function exportSvg(raw, d, { units, scale, precision, skipLayers }) {
+  return pageToSvg(await exportPage(raw, d, { scale, skipLayers }), { unit: units === 'in' ? 'in' : 'mm', precision });
+}
+
+/** The Page (mm) both SVG and PNG replay: see exportSvg. */
+async function exportPage(raw, d, { scale, skipLayers }) {
   raw = withoutLayers(raw, skipLayers);
   const fl = flatten(raw), mmPer = d.lay ? 1 : { 1: 25.4, 2: 304.8, 4: 1, 5: 10, 6: 1000 }[+d.raw.header?.$INSUNITS] || 1, factor = mmPer * scale;
   const own = { name: d.name, fl, factor, off: new Set(), hide: [] };
@@ -4217,8 +4223,20 @@ async function exportSvg(raw, d, { units, scale, precision, skipLayers }) {
   if (src && !d.lay && !(src.sheetW > 0 && src.sheetH > 0)) src = partSource(own, 1);        // flat as one line: a 1 mm border gives the page an area
   if (!src) throw new Error('nothing to export: no shown objects');
   src.pics = fl.items.some((it) => it.k === 'i') ? await pdfPictures(src) : new Map();
-  const page = planPdf(src, { page: 'sheet', separate: false, mirror: false, negative: false, black: false, strip: false, titleBlock: { enabled: false } }).build(0);
-  return pageToSvg(page, { unit: units === 'in' ? 'in' : 'mm', precision });
+  return planPdf(src, { page: 'sheet', separate: false, mirror: false, negative: false, black: false, strip: false, titleBlock: { enabled: false } }).build(0);
+}
+
+/**
+ * Export's PNG (TODO 109c2): the Page replayed by paintPage on an offscreen canvas at `dpi` (capped, see png-size.js).
+ * background 'transparent' leaves the paper and the page border unpainted. → { blob (null when the canvas could not make one), dpi, capped }
+ */
+async function exportPng(raw, d, { scale, skipLayers, dpi, background }) {
+  const page = await exportPage(raw, d, { scale, skipLayers }), size = pngSize(page.w, page.h, dpi), canvas = document.createElement('canvas');
+  const dpr = window.devicePixelRatio || 1, none = 'rgba(0,0,0,0)';       // paintPage multiplies its box and scale by the device ratio: ask for px / dpr so the canvas is exactly w × h
+  paintPage(canvas, page, { width: size.w / dpr, height: size.h / dpr }, { paper: background === 'white' ? '#ffffff' : none, film: '#000000', line: none },
+    { s: size.dpi / 25.4 / dpr, ox: 0, oy: 0 });
+  const blob = canvas.width === size.w && canvas.height === size.h ? await new Promise((ok) => canvas.toBlob(ok, 'image/png')) : null;
+  return { blob, dpi: size.dpi, capped: size.capped };
 }
 
 /** Export: the same content as Save through the writer's copy-only settings (Format DXF), or as an SVG picture (Format SVG). */
@@ -4233,9 +4251,10 @@ function exportDxf() {
   try { const v = localStorage.getItem('pd-export-dxf-precision'); if (v !== null && Number.isInteger(+v) && +v >= 0 && +v <= 8) remembered = +v; } catch { /* local settings may be unavailable */ }
   const field = (id, attrs) => h('input', { class: 'fld', 'data-testid': 'export-dxf-' + id, ...attrs });
   const name = field('name', { type: 'text', value: baseName(dxfName(d.name)) + '-export.dxf' });
-  const fmt = h('select', { class: 'fld', 'data-testid': 'export-format' }, h('option', { value: 'dxf' }, 'DXF'), h('option', { value: 'svg' }, 'SVG'));
-  const named = (n, ext) => n.replace(/\.(dxf|dwg|svg)$/i, '') + '.' + ext;       // the file name with the Format's extension
-  fmt.addEventListener('change', () => { name.value = named(name.value, fmt.value); });
+  const fmt = h('select', { class: 'fld', 'data-testid': 'export-format' }, h('option', { value: 'dxf' }, 'DXF'), h('option', { value: 'svg' }, 'SVG'), h('option', { value: 'png' }, 'PNG'));
+  const named = (n, ext) => n.replace(/\.(dxf|dwg|svg|png)$/i, '') + '.' + ext;       // the file name with the Format's extension
+  const dpi = h('input', { class: 'fld', type: 'text', inputmode: 'numeric', value: '300', 'data-testid': 'export-dpi' });
+  const bg = h('select', { class: 'fld', 'data-testid': 'export-bg' }, h('option', { value: 'white' }, 'White'), h('option', { value: 'transparent' }, 'Transparent'));
   const units = h('select', { class: 'fld', 'data-testid': 'export-dxf-units' }, convertible
     ? [h('option', { value: 'mm' }, 'mm'), h('option', { value: 'in' }, 'in')]
     : h('option', { value: sourceUnits ? '' : 'unitless' }, `${sourceUnits ? UNITS[sourceUnits] || 'Drawing units' : 'Unitless'} (no conversion)`));
@@ -4250,26 +4269,27 @@ function exportDxf() {
     const problems = [
       [name, !name.value.trim() || /[<>:"/\\|?*\x00-\x1f]/.test(name.value) ? 'Type a file name without < > : " / \\ | ? *' : ''],
       [scale, scaleFactor(scale.value) === null ? 'Scale must be a number above 0' : ''],
-      [precision, !/^\d$/.test(precision.value.trim()) || +precision.value > 8 ? 'Precision must be a whole number from 0 to 8' : ''],
+      [precision, fmt.value !== 'png' && (!/^\d$/.test(precision.value.trim()) || +precision.value > 8) ? 'Precision must be a whole number from 0 to 8' : ''],
+      [dpi, fmt.value === 'png' && (!/^\d{2,4}$/.test(dpi.value.trim()) || +dpi.value < 72 || +dpi.value > 1200) ? 'DPI must be a whole number from 72 to 1200' : ''],
     ];
     for (const [input, why] of problems) flagInvalid(input, !!why);
     const bad = problems.find(([, why]) => why);
     err.textContent = bad?.[1] || ''; err.hidden = !bad;
     return bad?.[0];
   };
-  for (const input of [name, scale, precision]) { clearInvalid(input); input.addEventListener('input', validate); }
+  for (const input of [name, scale, precision, dpi]) { clearInvalid(input); input.addEventListener('input', validate); }
   const finish = () => { back.remove(); document.removeEventListener('keydown', onKey, true); };
   const go = async () => {
     const bad = validate(); if (bad) { bad.focus(); validate(); return; }
-    const skipLayers = ticks.filter((box) => !box.checked).map((box) => box.dataset.layer), curves = text.value === 'curves', svg = fmt.value === 'svg';       // read now: finish() removes the dialog
-    const ext = svg ? 'svg' : 'dxf', want = svg ? named(name.value.trim(), 'svg') : dxfName(name.value.trim()), settings = { units: units.value || undefined, scale: +scale.value, precision: +precision.value, escapeUnicode: true, skipLayers };
+    const skipLayers = ticks.filter((box) => !box.checked).map((box) => box.dataset.layer), curves = text.value === 'curves', svg = fmt.value === 'svg', png = fmt.value === 'png';       // read now: finish() removes the dialog
+    const ext = fmt.value, want = svg || png ? named(name.value.trim(), ext) : dxfName(name.value.trim()), settings = { units: units.value || undefined, scale: +scale.value, precision: +precision.value, escapeUnicode: true, skipLayers, dpi: +dpi.value, background: bg.value };
     finish();
     try {
       const t = window.__TAURI__;
-      try { localStorage.setItem('pd-export-dxf-precision', String(settings.precision)); } catch { /* local settings may be unavailable */ }
+      if (!png) try { localStorage.setItem('pd-export-dxf-precision', String(settings.precision)); } catch { /* local settings may be unavailable */ }
       let written = want, destination = null;
-      if (t && t.dialog?.save && t.fs?.writeTextFile) {
-        let path = await t.dialog.save({ defaultPath: saveDefault(want, d.path || d.openPath), filters: [{ name: svg ? 'SVG picture' : 'DXF drawing', extensions: [ext] }] });
+      if (t && t.dialog?.save && t.fs?.[png ? 'writeFile' : 'writeTextFile']) {
+        let path = await t.dialog.save({ defaultPath: saveDefault(want, d.path || d.openPath), filters: [{ name: png ? 'PNG picture' : svg ? 'SVG picture' : 'DXF drawing', extensions: [ext] }] });
         if (!path) return;
         path = await withExt(t, path, ext); if (!path) return;
         if ([d.openPath, d.path].some((p) => p && pathKey(path) === pathKey(p))) { note('Pick another name: that is the drawing file, and Export never writes over it'); return; }
@@ -4277,6 +4297,13 @@ function exportDxf() {
         written = path.split(/[\\/]/).pop();
       }
       const saved = rawForSave(d), skip = new Set(skipLayers.map((n) => n.toLowerCase())), made = curves ? await exportCurves(saved, d, skip) : null;
+      if (png) {
+        const pic = await exportPng(made ? made.raw : saved, d, settings);
+        if (!pic.blob) { note('PNG not written: this size could not be drawn. Lower the DPI or the Scale'); return; }
+        if (destination) await t.fs.writeFile(destination, new Uint8Array(await pic.blob.arrayBuffer())); else download(written, pic.blob, 'image/png');
+        note('Exported ' + written + (pic.capped ? `. PNG at ${pic.dpi} dpi (largest that fits)` : '') + (made ? made.note : ''));
+        return;
+      }
       if (svg) {
         const picture = await exportSvg(made ? made.raw : saved, d, settings);
         if (destination) await t.fs.writeTextFile(destination, picture); else download(written, picture, 'image/svg+xml');
@@ -4288,12 +4315,20 @@ function exportDxf() {
     } catch (e) { note('Export failed: ' + (e?.message || e)); }
   };
   const row = (label, input) => h('label', { class: 'qs-row' }, h('span', null, label), input);
+  const unitsRow = row('Units', units), precisionRow = row('Precision', precision), dpiRow = row('DPI', dpi), bgRow = row('Background', bg);
+  const showFormat = () => {         // Units / Precision are for DXF and SVG; DPI / Background for PNG
+    const png = fmt.value === 'png';
+    for (const [r, shown] of [[unitsRow, !png], [precisionRow, !png], [dpiRow, png], [bgRow, png]]) r.style.display = shown ? '' : 'none';
+    validate();
+  };
+  fmt.addEventListener('change', () => { name.value = named(name.value, fmt.value); showFormat(); });
+  showFormat();
   const cancel = h('button', { class: 'btn', type: 'button', 'data-testid': 'export-dxf-cancel', onclick: finish }, 'Cancel');
   const close = h('button', { class: 'btn sm', type: 'button', 'aria-label': 'Close', onclick: finish }, '×');
   const dlg = h('div', { class: 'pop-dialog export-dxf-dialog', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Export', 'data-testid': 'export-dxf-dialog' },
     h('div', { class: 'row between' }, h('strong', null, 'Export'), close),
-    h('span', { class: 'lbl' }, 'Write a DXF or SVG copy with export settings.'),
-    row('Format', fmt), row('File name', name), row('Units', units), row('Scale', scale), row('Precision', precision), row('Text', text),
+    h('span', { class: 'lbl' }, 'Write a DXF, SVG or PNG copy with export settings.'),
+    row('Format', fmt), row('File name', name), unitsRow, row('Scale', scale), precisionRow, dpiRow, bgRow, row('Text', text),
     h('div', { class: 'qs-row' }, h('span', null, 'Layers'), layers),
     h('span', { class: 'lbl' }, 'Scale is applied about 0,0. Precision sets decimal places for coordinates and lengths.'), err,
     h('div', { class: 'row' }, h('span', { class: 'lbl', style: 'flex:1' }, 'Next: native file picker'),
