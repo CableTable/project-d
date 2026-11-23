@@ -1332,7 +1332,7 @@ async function dwgBytes(name, path, buf) {
   note('Converting ' + name + '…');
   try {
     // both commands answer with the DXF's raw bytes (an ArrayBuffer): the reader decodes them with $DWGCODEPAGE
-    return path ? await t.core.invoke('dwg_to_dxf', { path }) : await t.core.invoke('dwg_bytes_to_dxf', { name, bytes: Array.from(new Uint8Array(buf)) });
+    return path ? await t.core.invoke('dwg_to_dxf', { path }) : await t.core.invoke('dwg_bytes_to_dxf', new Uint8Array(buf));
   } catch (err) {
     note(`${name}: could not convert this DWG (${String(err && err.message || err).trim().split(/\r?\n/).pop()})`); return null;
   }

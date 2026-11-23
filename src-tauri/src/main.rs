@@ -72,13 +72,21 @@ async fn dwg_to_dxf(app: tauri::AppHandle, path: PathBuf) -> Result<tauri::ipc::
     Ok(tauri::ipc::Response::new(bytes))
 }
 
-/// A dropped .dwg has no path: the web sends its bytes. `name` is the file's name, for the web's messages only.
+/// The bytes of a raw IPC body; a JSON body (the old number array) is refused.
+fn raw_bytes(body: &tauri::ipc::InvokeBody) -> Result<&[u8], String> {
+    match body {
+        tauri::ipc::InvokeBody::Raw(bytes) => Ok(bytes),
+        tauri::ipc::InvokeBody::Json(_) => Err("expected raw bytes".into()),
+    }
+}
+
+/// A dropped .dwg has no path: the web sends its bytes as the raw request body (no JSON number array).
 #[tauri::command]
-async fn dwg_bytes_to_dxf(name: String, bytes: Vec<u8>) -> Result<tauri::ipc::Response, String> {
-    let _ = name;
+async fn dwg_bytes_to_dxf(request: tauri::ipc::Request<'_>) -> Result<tauri::ipc::Response, String> {
     if !cfg!(dwg_helper) {
         return Err(dwg::NOT_INCLUDED.into());
     }
+    let bytes = raw_bytes(request.body())?.to_vec();
     let bytes = tauri::async_runtime::spawn_blocking(move || dwg::convert_bytes(&bytes))
         .await.map_err(|error| error.to_string())??;
     Ok(tauri::ipc::Response::new(bytes))
@@ -108,7 +116,14 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::picture_name_ok;
+    use super::{picture_name_ok, raw_bytes};
+    use tauri::ipc::InvokeBody;
+
+    #[test]
+    fn dwg_bytes_come_from_a_raw_body_only() {
+        assert_eq!(raw_bytes(&InvokeBody::Raw(vec![1, 2, 3])), Ok(&[1u8, 2, 3][..]));
+        assert_eq!(raw_bytes(&InvokeBody::Json(Default::default())), Err("expected raw bytes".to_string()));
+    }
 
     #[test]
     fn picture_names_are_plain_file_names() {

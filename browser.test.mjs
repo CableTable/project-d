@@ -4434,7 +4434,7 @@ try {
     const raw = (text) => new TextEncoder().encode(text).buffer;      // the real commands answer with raw bytes (an ArrayBuffer)
     window.__TAURI__ = {
       core: { invoke: async (cmd, args) => {
-        if (cmd === 'dwg_bytes_to_dxf') { log.calls.push(`${cmd} ${args.name} ${Array.isArray(args.bytes) ? args.bytes.length : 'not an array'}`); return raw(dxf); }
+        if (cmd === 'dwg_bytes_to_dxf') { log.calls.push(`${cmd} ${args instanceof Uint8Array ? args.length : 'not raw'}`); return raw(dxf); }
         if (cmd !== 'dwg_to_dxf') return;
         log.calls.push(`${cmd} ${args.path}`);
         return raw(/lay/.test(args.path) ? layDxf : dxf);
@@ -4457,7 +4457,7 @@ try {
       await p.evaluate(() => { const dt = new DataTransfer(); dt.items.add(new File([new Uint8Array([65, 67, 49, 48])], 'dropped.dwg')); window.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true })); });
       await said(/^Opened dropped\.dwg: \d+ entities.*Converted from DWG by LibreDWG$/);
       assert.equal(await p.locator('.dtab.on .tname')?.textContent(), 'dropped.dwg');
-      assert.deepEqual(await p.evaluate(() => window.__dwg.calls), ['dwg_bytes_to_dxf dropped.dwg 4']);
+      assert.deepEqual(await p.evaluate(() => window.__dwg.calls), ['dwg_bytes_to_dxf 4']);
       assert.equal(await p.evaluate(() => localStorage.getItem('pd-recent')), null, 'a drop has no path, so Recent keeps nothing');
       await p.keyboard.press('Control+s');
       await p.waitForFunction(() => document.querySelector('.dtab.on .tname')?.textContent === 'dropped.dxf');
