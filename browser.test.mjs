@@ -13,7 +13,7 @@ import { decode as decodeText } from './web/text.js';
 import { readOverride } from './web/dimension-text.js';
 import { stepRepeat } from './web/layout.js';
 import { readDxf, decodeDxf, flatten, mapply } from './web/drawing.js';
-import { readMeta, newLayout, makePart, layoutRaw, layoutFromRaw, gridOf, objectPart, objectPlacement, objectDoc } from './web/layoutdoc.js';
+import { readMeta, newLayout, makePart, layoutRaw, layoutFromRaw, gridOf, objectPart, objectPlacement, objectDoc, layersOf } from './web/layoutdoc.js';
 import { newDoc, addEntities, addLayer, addBlock, entity, insert as dxfInsert, text as dxfText, mtext as dxfMtext, roundRect, circle as dxfCircle, line as dxfLine, arc as dxfArc, ellipse as dxfEllipse, lwpoly as dxfPoly, point, writeDxf } from './web/dxf-write.js';
 import { placedBox, placedMat } from './web/apply.js';
 import * as GR from './web/grips.js';
@@ -26,7 +26,8 @@ import { bezierOf, nodeType } from './web/shape.js';
 import { COMMANDS, placeBar } from './web/cmdbar.js';
 import { SNAP_NAME } from './web/snap.js';
 import { Page, writePdf, winAnsi } from './web/pdf-write.js';
-import { tileGrid, PAPERS as PDF_PAPERS } from './web/pdf-export.js';
+import { tileGrid, readTitleBlock, PAPERS as PDF_PAPERS } from './web/pdf-export.js';
+import { titlePartOf, titleTexts } from './web/titleblock.js';
 import { bigDoc } from './tools/gen-big-dxf.mjs';
 import { makeTiff } from './tools/make-tiff-fixture.mjs';
 import { fillHatch, hatchKey } from './web/fill.js';
@@ -27597,6 +27598,103 @@ try {
       await page.evaluate(() => { CanvasRenderingContext2D.prototype.fillText = window.__editorFill; delete window.__editorFill; delete window.__editorTexts; });
       await page.keyboard.press('Escape'); await closeTabs(/./);
     }
+  });
+
+  await step('TODO 9a: title block on a Layouts sheet', async () => {
+    await menuItem('View', 'Theme: light');
+    await closeTabs(/./);
+    mkdirSync('shots-9a', { recursive: true });
+    const dialog = page.getByTestId('attribute-dialog'), field = (name) => dialog.getByRole('textbox', { name, exact: true });
+    const row = (tag) => dialog.locator('tbody tr', { has: page.locator(`td:text-is("${tag}")`) });
+    const open = async (name, doc) => {
+      await closeTabs(/./);
+      await t('picker').setInputFiles({ name, mimeType: 'text/plain', buffer: Buffer.from(writeDxf(doc)) });
+      await waitTab(page, name);
+      await frames();
+    };
+    const dbl = async (x, y) => { const p = await at(x, y); await page.mouse.dblclick(p.x, p.y); await dialog.waitFor(); };
+    const undo = async () => { await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z'); await frames(); };
+    const saved = async () => { const doc = await savedDoc(), lay = layoutFromRaw(doc), part = lay && titlePartOf(lay); return { doc, lay, part, texts: part && titleTexts(part.raw.entities[0]), store: readTitleBlock(doc) }; };
+    const titleBtn = page.getByRole('button', { name: 'Title block', exact: true }), switchOn = () => t('pdf-title-block');
+    const setSwitch = async (on) => { await t('pdf-open').click(); await t('pdf-dialog').waitFor(); await t('pdf-page-check').check(); await switchOn().setChecked(on); await t('pdf-close').click(); await frames(); };
+    const autoDate = await page.evaluate(() => { const d = new Date(); return [d.getDate(), d.getMonth() + 1].map((n) => String(n).padStart(2, '0')).join('-') + '-' + d.getFullYear(); });
+    const sheet = newLayout('Sheet 9a'); sheet.s.sheetW = 420; sheet.s.sheetH = 297;
+    sheet.parts.l = objectPart('l', 'Line', dxfLine(20, 100, 120, 100), layersOf(sheet));       // a drawing on the sheet: with the title block off the PDF still has something to print
+    sheet.placed = [objectPlacement(sheet.parts.l)];
+    await open('title-9a.dxf', layoutRaw(sheet));
+    await page.locator('[data-ribbon-tab=Home]').click();
+    const history = await histLabels();
+    assert.equal((await saved()).part, undefined, 'a new sheet has no title block');
+    // insert: one undo step, auto values, bottom-right inside the sheet outline
+    await titleBtn.click(); await frames();
+    let s = await saved();
+    assert.ok(s.part, 'the button inserts the title block');
+    assert.deepEqual(s.part.box.map(Math.round), [270, 0, 420, 44], 'bottom-right on the sheet');
+    assert.deepEqual(s.texts, { TITLE: '', DRAWING_NO: '', REV: '', SCALE: '1:1', SHEET_SIZE: '420 x 297 mm', DATE: autoDate, DRAWN_BY: '', MATERIAL: '', FILE: 'title-9a.dxf' });
+    assert.deepEqual((await histLabels()).slice(history.length), ['Title block'], 'one undo step');
+    assert.equal(s.part.raw.entities[0].kids.length, 9, 'INSERT + 9 ATTRIBs');
+    assert.ok(Object.values(s.part.raw.blocks).some((b) => b.entities.filter((e) => e.type === 'ATTDEF').length === 9), 'the block has the 9 ATTDEFs');
+    await page.screenshot({ path: 'shots-9a/title-block-inserted-light.png' });
+    // a second press selects it, never a second one
+    await page.keyboard.press('Escape'); await titleBtn.click(); await frames();
+    await t('placed-name').filter({ hasText: /^Title block$/ }).waitFor({ state: 'attached' });       // pressed again: it is selected
+    s = await saved();
+    assert.equal(Object.values(s.lay.parts).filter((p) => titlePartOf({ parts: { p }, placed: [{ partId: p.id }] })).length, 1, 'still one title block');
+    assert.deepEqual((await histLabels()).slice(history.length), ['Title block'], 'selecting adds no step');
+    // double-click opens the attribute dialog; Reset per field; typed values go to the one settings store
+    await page.locator('[data-tool=select]').click();
+    await dbl(345, 22);
+    assert.equal(await dialog.getAttribute('aria-label'), 'Attribute editor');
+    assert.equal(await dialog.locator('tbody tr').count(), 9);
+    assert.equal(await dialog.getByTestId('attribute-reset').count(), 9, 'Reset on every field of the title block');
+    await field('Value').fill('Bracket'); await row('SCALE').click(); await field('Value').fill('1:2');
+    await row('REV').click(); await field('Value').fill('B');
+    await row('SCALE').getByTestId('attribute-reset').click();
+    await page.waitForFunction(() => document.querySelector('[data-testid=attribute-dialog] input[aria-label=Value]').value === '1:1');       // Reset puts the auto text back
+    await row('DATE').click(); await field('Value').fill('01-02-2027');
+    await page.screenshot({ path: 'shots-9a/title-block-dialog-light.png' });
+    await dialog.getByRole('button', { name: 'OK', exact: true }).click();
+    s = await saved();
+    assert.equal(s.texts.TITLE, 'Bracket'); assert.equal(s.texts.REV, 'B'); assert.equal(s.texts.SCALE, '1:1'); assert.equal(s.texts.DATE, '01-02-2027');
+    assert.deepEqual(s.store, { enabled: true, title: 'Bracket', rev: 'B', date: '01-02-2027' }, 'typed values only, in the tab settings');
+    assert.deepEqual((await histLabels()).slice(history.length), ['Title block', 'Attribute editor']);
+    await undo();
+    s = await saved();
+    assert.deepEqual([s.texts.TITLE, s.texts.REV, s.texts.DATE], ['', '', autoDate], 'one undo takes the whole edit back');
+    assert.equal(s.store, undefined, 'and the typed settings with it');
+    await page.keyboard.press('Control+y'); await frames();
+    assert.equal((await saved()).texts.TITLE, 'Bracket', 'redo brings it back');
+    // the Title block switch (PDF dialog) off hides the block, on shows it
+    const shown = () => page.locator('[data-group=parts] [data-i]').count();
+    const before = await shown();
+    await setSwitch(false);
+    assert.equal(await shown(), before - 1, 'switched off: the title block is not drawn');
+    assert.equal((await saved()).texts.TITLE, 'Bracket', 'the file keeps it');
+    await setSwitch(true);
+    assert.equal(await shown(), before);
+    // save and reopen: block and every value stay; the file name is auto again, the typed date stays
+    const { doc } = await saved();
+    await open('title-9a-again.dxf', doc);
+    await page.locator('[data-ribbon-tab=Home]').click();
+    s = await saved();
+    assert.deepEqual(s.texts, { TITLE: 'Bracket', DRAWING_NO: '', REV: 'B', SCALE: '1:1', SHEET_SIZE: '420 x 297 mm', DATE: '01-02-2027', DRAWN_BY: '', MATERIAL: '', FILE: 'title-9a-again.dxf' });
+    await page.locator('[data-tool=select]').click();
+    await dbl(345, 22);
+    await row('TITLE').locator('td').nth(2).filter({ hasText: /^Bracket$/ }).waitFor();       // the typed value came back from the file
+    await row('TITLE').getByTestId('attribute-reset').click(); await dialog.getByRole('button', { name: 'OK', exact: true }).click();
+    assert.equal((await saved()).texts.TITLE, '', 'Reset on the reopened block');
+    await titleBtn.click(); await frames();
+    await t('placed-name').filter({ hasText: /^Title block$/ }).waitFor({ state: 'attached' });       // a reopened sheet that has one selects it
+    // light and dark at 1024 px (a plain block's dialog, no Reset, is checked by TODO 155i3's row texts)
+    for (const theme of ['light', 'dark']) {
+      await page.evaluate((th) => { document.documentElement.dataset.theme = th; }, theme);
+      await page.setViewportSize({ width: 1024, height: 768 }); await frames();
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'the layout top bar fits 1024 px');
+      await page.screenshot({ path: `shots-9a/title-block-1024-${theme}.png` });
+    }
+    await page.evaluate(() => { document.documentElement.dataset.theme = 'light'; });
+    await page.setViewportSize({ width: 1440, height: 900 }); await frames();
+    await closeTabs(/./);
   });
 
   await step('TODO 155i2a: Explode shows ATTDEF tags, BURST keeps both attribute values, loose tags move and snap; Layout and Compare parity', async () => {

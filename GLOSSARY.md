@@ -457,6 +457,8 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Title block**: The optional 22 mm box at the bottom of a fitted/check PDF print. Its file name, scale, part / size / page, date and footnote can be edited in PDF / Print; Reset restores automatic text. Turning it off gives its space to the drawing. Settings belong to the file. Avoid: Job strip (the separate label on a 1:1 sheet or tile).
 
+**Title block (sheet)**: The block object a Layouts sheet carries (Home > Parts > Title block): one per sheet, bottom-right inside the grippers, with attributes for title, drawing no., revision, scale, sheet size, date, drawn by, material and file name. Scale, size, date and file name are automatic until typed; double-click edits them in the Attribute editor, where Reset puts one back to automatic. Typed values belong to the file, with the PDF Title block settings; the switch there hides it. Where: TODO 9a, `web/titleblock.js`. Avoid: Title block (the PDF strip), Block object (any block on a layout).
+
 **Swatch**: One square colour box. Left click sets the selected objects' fill colour, right click their line colour (CorelDRAW; TODO 295).
 
 **Colour picker**: The shared dialog opened from Properties, ribbon, Layers and Contour colour boxes. Edits a draft through HSB, RGB, simple-formula CMYK or hex; OK applies it and Cancel discards it. Add to Swatches remembers a colour on this PC.

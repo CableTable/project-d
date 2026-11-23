@@ -2427,7 +2427,8 @@ function openNestDialog(counts = null, autoRun = false) {
     return { id: part.id, name: part.name, w: part.w, h: part.h, thumb, count: counts ? (counts[part.id] || 0) : (inLayout ? 1 : 0), outline: () => outlineFor(part) };
   });
   const fixed = LD.placedAll(lay, null).filter((pl) => !lay.parts[pl.partId].obj).map((pl) => { const part = lay.parts[pl.partId]; return outlineFor(part).map(([u, v]) => PL.toSheet(pl, u, v)); });
-  const area = { x: s.gripLeft, y: s.gripBottom, w: s.sheetW - s.gripLeft - s.gripRight, h: s.sheetH - s.gripTop - s.gripBottom };
+  const strip = TB.sheetArea(lay).titleH;       // the sheet's title block keeps the strip along the bottom clear (same as the grid)
+  const area = { x: s.gripLeft, y: s.gripBottom + strip, w: s.sheetW - s.gripLeft - s.gripRight, h: s.sheetH - s.gripTop - s.gripBottom - strip };
   if (!(area.w > 0 && area.h > 0)) { note('Auto-nest: the grippers leave no room on the sheet'); return; }
   openNest({
     layName: d.name, sheetW: s.sheetW, sheetH: s.sheetH, area, grips: { top: s.gripTop, right: s.gripRight, bottom: s.gripBottom, left: s.gripLeft },
@@ -5570,12 +5571,12 @@ function partPathD(part) {
   if (pathDs.has(part.fl)) return pathDs.get(part.fl);
   let dd = '';
   for (const it of part.fl.items) {
-    const o = it.ops;
+    const o = it.ops, m = part.fl.mats?.[it.m], pt = (x, y) => (m ? mapply(m, x, y) : [x, y]).join(' ');       // a block's lines are in the block's own units: its INSERT matrix puts them where the part is
     for (let i = 0; o && i < o.length;) {
-      if (o[i] === 0 || o[i] === 1) { dd += (o[i] ? 'L' : 'M') + o[i + 1] + ' ' + o[i + 2]; i += 3; }
+      if (o[i] === 0 || o[i] === 1) { dd += (o[i] ? 'L' : 'M') + pt(o[i + 1], o[i + 2]); i += 3; }
       else if (o[i] === 2) {
         const [cx, cy, r, a0, a1, cw] = o.slice(i + 1, i + 7), [a, sw] = arcSweep(a0, a1, cw), n = Math.max(2, Math.ceil(Math.abs(sw) / (Math.PI / 18)));
-        for (let k = 0; k <= n; k++) dd += (k ? 'L' : 'M') + (cx + r * Math.cos(a + sw * k / n)) + ' ' + (cy + r * Math.sin(a + sw * k / n));
+        for (let k = 0; k <= n; k++) dd += (k ? 'L' : 'M') + pt(cx + r * Math.cos(a + sw * k / n), cy + r * Math.sin(a + sw * k / n));
         i += 7;
       } else i++;
     }
