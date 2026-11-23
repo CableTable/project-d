@@ -18933,6 +18933,11 @@ try {
       assert.equal(count(out, 'Cut'), 1); assert.equal(count(out, 'A'), 0); assert.ok(out.layers.Cut && !out.layers.A, 'the layout file has the new name');
       await p.keyboard.press('Control+z');
       assert.equal(await row('A').count(), 1); assert.equal(await row('Cut').count(), 0, 'one Undo');
+      const curIs = (n) => p.waitForFunction((n) => document.querySelector('.layer.current .nm')?.textContent === n, n);       // the current layer follows the rename, Undo and Redo
+      await row('A').click(); await rename('A', 'Cut'); await curIs('Cut');
+      await p.keyboard.press('Control+z'); await curIs('A');
+      await p.keyboard.press('Control+y'); await curIs('Cut');
+      await p.keyboard.press('Control+z');
       await refused('A', 'b', /already there/); await refused('A', 'Marks', /already there/); await refused('A', 'Sheet', /already there/);
       const redB = await swatch('B');
       await colour('B', '#ff8010');

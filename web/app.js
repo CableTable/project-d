@@ -2482,6 +2482,12 @@ function layRestore(d, st, dirty = true) {
   if (sized) { d.lay.s.sheetW = st.sw; d.lay.s.sheetH = st.sh; syncFields(); }
   if ('bl' in st) d.balloons = st.bl;
   d.lay.placed = st.placed; d.lay.parts = st.parts; if (st.layers) d.lay.layers = st.layers; if (st.grids) d.lay.grids = st.grids; Object.assign(d.lay.s, structuredClone(st.s));       // every setting (grippers, gaps, rows, marks, grid part, guides) comes back with the parts
+  if (st.renamed) {       // a layer rename (or its Undo / Redo): the current layer, Layers + Add names and hidden objects follow
+    const [a, b] = st.renamed;
+    if (d.curLayer === a) d.curLayer = b;
+    if (d.addedLayers?.delete(a)) d.addedLayers.add(b);
+    if (st.hid && d.hiddenParts) { d.hiddenParts.clear(); for (const id of st.hid) d.hiddenParts.add(id); }
+  }
   gapSig = ''; syncFields();                                           // the extra-gap rows hold the old gap objects: rebuilt
   state.mode = 'select'; state.pivot = centrePivot(); state.rotCopy = false; pdrag = null; lastPush = { key: '', t: 0, d: null }; if (before !== JSON.stringify(LD.placedAll(d.lay))) { picksArr = []; state.sel = -1; d.stretchSelection = null; }
   linkBase.delete(d.lay);                                              // an undo is not an edit the dimensions follow
@@ -4960,7 +4966,7 @@ async function renameLayerNow(d, name, to) {
   to ??= await askName({ title: 'Rename layer', label: 'Name', value: name, ok: 'Rename', validate: (v) => layerRenameProblem(d, name, v) });
   if (!to || to === name) return;
   if (d.lay) {
-    pushLay(d, null, '', `Rename layer ${name} → ${to}`);
+    pushLay(d, { ...laySnap(d.lay), renamed: [to, name], hid: [...(d.hiddenParts || [])] }, '', `Rename layer ${name} → ${to}`);       // renamed [from, to] is the Undo direction; hid: the renamed layer's objects get new ids
     changeLayoutLayer(d, name, { to });
   } else {
     if (!commit(d, { ...OB.renameLayer(d.raw, name, to), renamed: [name, to] }, `Rename layer ${name} → ${to}`)) return;
@@ -7667,6 +7673,7 @@ function stepHist(d, dir, snapshot = d.lay ? laySnap(d.lay) : snapshotOf(d)) {
   const cur = { ...snapshot, ...(!d.lay && { sel: [...(d.sel || [])] }) }, st = (d.lay ? layHist(d) : d.hist)[dir](cur);
   cur.blSize = st?.blSize;
   if (st?.renamed) cur.renamed = [...st.renamed].reverse();       // the other way (Redo of an Undo, Undo of a Redo) renames back
+  if (d.lay && st?.hid) cur.hid = [...(d.hiddenParts || [])];
   if (d.lay && dir === 'undo' && layHist(d).labels().future[0]?.startsWith('Paste ')) cur.lsel = [];       // Redo of a paste leaves no selection, as on a drawing.
   if (st?.grip) { cur.grip = true; if (d.lay) cur.lsel = st.lsel; else cur.sel = st.sel; }
   else { delete cur.grip; if (!d.lay) delete cur.sel; }
