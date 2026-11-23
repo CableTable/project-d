@@ -9015,6 +9015,61 @@ try {
     } finally { await context.close(); }
   });
 
+  await step('TODO 358b: Save as PDF (pages) writes one PDF page per page picture with the line drawn across both; the line outside is counted, not saved', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    try {
+      const p = await context.newPage(), q = (id) => p.getByTestId(id);
+      p.on('pageerror', (e) => errors.push(String(e)));
+      const item = () => p.getByRole('menuitem', { name: 'Save as PDF (pages)', exact: true });
+      const menu = async () => { await p.locator('[data-menu=File]').click(); await item().click(); };
+      const prompt = (text) => p.waitForFunction((text) => document.querySelector('[data-testid=cmd-prompt]').textContent.startsWith(text), text);
+      const typeCmd = async (text) => { const i = q('cmd-input'); if (!(await i.isVisible())) { await q('cmd-echo').click(); await i.waitFor({ state: 'visible' }); } await i.fill(text); await i.press('Enter'); };
+      await p.goto(URL_ + '?autosave=86400000'); await q('picker').waitFor({ state: 'attached' });
+      await p.locator('[data-menu=File]').click();                                 // no PDF pages yet: greyed, with the reason
+      assert.ok(await item().isDisabled(), 'greyed in an empty drawing');
+      assert.equal(await item().getAttribute('title'), 'No PDF pages in this drawing');
+      await p.keyboard.press('Escape'); await p.mouse.click(5, 450);
+      await p.evaluate(() => {
+        window.__pdfopenManual = true;
+        window.__pages358b = { files: {} };
+        window.__TAURI__ = {
+          dialog: { save: async () => 'C:/jobs/pages.pdf', open: async () => 'C:/jobs/pages.pdf', ask: async () => true },
+          fs: { exists: async () => false, readFile: async () => { throw new Error('missing'); }, writeFile: async (path, bytes) => { window.__pages358b.files[path] = [...bytes]; }, writeTextFile: async () => {} },
+        };
+      });
+      const sheet = new Page(80, 50); sheet.rect(10, 10, 30, 20); sheet.stroke();
+      await q('picker').setInputFiles({ name: 'two-pages.pdf', mimeType: 'application/pdf', buffer: Buffer.from(writePdf([sheet, new Page(120, 90)])) });
+      await q('pdfopen-dialog').waitFor(); await q('pdfopen-pictures').click();
+      await prompt('Opened two-pages.pdf as 2 page pictures'); await waitTab(p, 'two-pages.dxf');
+      await p.locator('[data-menu=File]').click();
+      assert.ok(await item().isEnabled(), 'enabled once the drawing holds page pictures');
+      assert.equal(await item().getAttribute('title'), null);
+      await p.keyboard.press('Escape'); await p.mouse.click(5, 450);
+      await p.locator('[data-tool=line]').click();                                  // page 1 is x 0..80, page 2 x 90..210, both under y 90
+      await typeCmd('60,60'); await typeCmd('130,60'); await p.keyboard.press('Escape');   // across both pages
+      await p.locator('[data-tool=line]').click();
+      await typeCmd('10,120'); await typeCmd('70,130'); await p.keyboard.press('Escape');  // above every page
+      await p.locator('[data-tool=select]').click();
+      await menu();
+      await prompt('Saved pages.pdf: 2 pages');
+      assert.equal(await q('cmd-prompt').textContent(), 'Saved pages.pdf: 2 pages. 1 objects outside the pages not saved');
+      await p.screenshot({ path: shotDir + '/358b-pdf-pages-light.png' });
+      await p.locator('[data-menu=View]').click(); await p.getByRole('menuitemcheckbox', { name: /Theme: dark/ }).click();
+      await p.screenshot({ path: shotDir + '/358b-pdf-pages-dark.png' });
+      await p.setViewportSize({ width: 1024, height: 700 });
+      await p.screenshot({ path: shotDir + '/358b-pdf-pages-1024.png' });
+      const saved = await p.evaluate(() => window.__pages358b.files), bytes = Buffer.from(saved['C:/jobs/pages.pdf']), t = bytes.toString('latin1');
+      assert.deepEqual([...t.matchAll(/\/MediaBox \[0 0 ([\d.]+) ([\d.]+)\]/g)].map((m) => [Math.round(m[1] / 72 * 25.4), Math.round(m[2] / 72 * 25.4)]), [[80, 50], [120, 90]], 'a page per picture, at its size');
+      const streams = [...t.matchAll(/stream\n([\s\S]*?)endstream/g)].map((m) => m[1]).filter((s) => /^[\d.]+ 0 0 [\d.]+ 0 0 cm\n/.test(s));       // the page contents, not the picture bytes
+      assert.equal(streams.length, 2);
+      assert.ok(/\n60 20 m\n130 20 l\nS/.test(streams[0]), 'page 1 has the line from its own corner (y 60 - 40)');
+      assert.ok(/\n-30 60 m\n40 60 l\nS/.test(streams[1]), 'page 2 has the same line from its own corner (x 60 - 90, y 60 - 0): the page edge cuts it');
+      assert.ok(!/\n10 80 m/.test(streams[0]) && !/\n-80 120 m/.test(streams[1]), 'the line above the pages is in neither');
+      assert.equal(t.match(/\/Subtype \/Image/g).length, 2, 'each page has its picture');
+      await p.setViewportSize({ width: 1440, height: 900 });
+    } finally { await context.close(); }
+  });
+
   await step('TODO 341: refused picture paths still save the DXF first, grant plain names, and warn "N picture(s) not saved"', async () => {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
     try {

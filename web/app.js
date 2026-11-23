@@ -99,7 +99,7 @@ import * as TO from './textoutline.js';
 import { loadFont } from './fontload.js';
 import { fontForStyle, fontSubstitutions } from './fontsub.js';
 import { outlineOf } from './nestshape.js';
-import { partSource, readTitleBlock, withTitleBlock } from './pdf-export.js';
+import { partSource, readTitleBlock, withTitleBlock, planPagesPdf, isPagePicture } from './pdf-export.js';
 import { readPdf, renderPdfPage, renderPdfPages, renderPdfPictures, isPdf, pageLayout } from './pdf-read.js';
 import { readTiff } from './tiff.js';
 import { preloadPictures, rawPixels } from './pictures.js';
@@ -573,6 +573,7 @@ function buildMenus() {
   // an item: [text, action, shortcut hint (shown, and only a hint for a key that is really bound), enabled? (a function, asked when the menu opens)]
   const menus = {
     File: () => [['Open…', openFile], ['New layout', newLayoutTab], ['Save', () => save(false), 'Ctrl+S'], ['Save As…', () => save(true), 'Ctrl+Shift+S'], ['Export DXF…', exportDxf], ['Export for cutter…', exportCutter], ['Compare drawings…', cmpStart], ['Import background…', () => ui.bgPicker.click()], ['Rotate background', rotateBackground], ['Trace bitmap…', traceBitmap], ['PDF / Print…', exportPdf],
+      ['Save as PDF (pages)', savePdfPages, null, () => hasPdfPages(curDoc()), hasPdfPages(curDoc()) ? null : 'No PDF pages in this drawing'],
       ...recentItems()],
     Edit: [['Undo', () => undoCurrent(), 'Ctrl+Z', () => ui.startScreen.hidden && (!!state.paste || !!state.grip || !!historyOf(curDoc())?.canUndo)],
       ['Redo', () => undoCurrent(true), 'Ctrl+Y', () => ui.startScreen.hidden && !!historyOf(curDoc())?.canRedo],
@@ -3853,9 +3854,37 @@ function exportSource(selectionOnly = false, cut = true) {
   if (d.fl) return { name: d.name, path, fl, factor: d.factor, off: d.off, sheetW: state.sheetW, sheetH: state.sheetH, hide: [] };
   return null;
 }
-async function exportPdf() {
-  const d = curDoc(), pics = new Map();               // the drawing's pictures as raw pixels for the file (TODO 305a); no await when there are none
+/** The drawing's pictures as raw pixels for the file (TODO 305a); no await when there are none. */
+async function pdfPictures(d) {
+  const pics = new Map();
   for (const it of d?.fl?.items || []) if (it.k === 'i' && !pics.has(it.px)) { try { pics.set(it.px, { px: it.px, ...await rawPixels(it.px) }); } catch { /* that picture stays out of the file */ } }
+  return pics;
+}
+/** Does this tab hold a PDF page picture (TODO 358a: an IMAGE on layer "PDF pages")? A layout or a compare has none. */
+const hasPdfPages = (d) => !!d && !d.lay && !d.cmp && !!d.fl?.items.some((it) => isPagePicture(d.fl, it));
+/** TODO 358b: File > Save as PDF (pages): one PDF page per page picture (the picture, then what is drawn on it as vector); objects outside every page are counted, not saved. */
+async function savePdfPages() {
+  const d = curDoc(), src = hasPdfPages(d) && exportSource();
+  const plan = src && planPagesPdf({ ...src, pics: await pdfPictures(d) });
+  if (!plan || !plan.pages.length) { note('No PDF pages in this drawing'); return; }
+  const want = baseName(d.name) + '.pdf', t = window.__TAURI__;
+  try {
+    const bytes = plan.bytes();
+    let name = want;
+    if (t && t.dialog && t.dialog.save && t.fs && t.fs.writeFile) {
+      let path = await t.dialog.save({ defaultPath: saveDefault(want, d.path || d.openPath), filters: [{ name: 'PDF', extensions: ['pdf'] }] });
+      if (!path) return;
+      path = await withExt(t, path, 'pdf');
+      if (!path) return;
+      if (d.openPath && pathKey(path) === pathKey(d.openPath)) { note('Pick another name: that is the opened file, and Save as PDF never writes over it'); return; }
+      await t.fs.writeFile(path, bytes);
+      name = path.split(/[\\/]/).pop();
+    } else download(name, bytes, 'application/pdf');
+    note(`Saved ${name}: ${plan.pages.length} ${plan.pages.length === 1 ? 'page' : 'pages'}` + (plan.outside ? `. ${plan.outside} objects outside the pages not saved` : ''));
+  } catch (e) { note('Save as PDF (pages) failed: ' + (e && e.message ? e.message : e)); }
+}
+async function exportPdf() {
+  const d = curDoc(), pics = d?.fl?.items.some((it) => it.k === 'i') ? await pdfPictures(d) : new Map();         // no await without pictures
   openExport({ source: (selectionOnly, cut) => { const src = exportSource(selectionOnly, cut); return src && { ...src, titleBlock: d.titleBlock, pics }; }, sheet: () => ({ w: state.sheetW, h: state.sheetH }), readDrawing, note,
     setTitleBlock: (value) => { d.titleBlock = value; d.dirty = true; renderTabs(); } });
 }
