@@ -8708,7 +8708,7 @@ try {
         assert.equal(await p.locator('.dtab').count(), before + (choice === 'editable' ? 1 : 0));
         if (choice === 'editable') assert.deepEqual(await p.locator('.dtab .tname').allTextContents(), ['editable-one.dxf', 'editable-two.dxf']);
       }
-      assert.equal(picturesAsked, 2);
+      assert.equal(picturesAsked, 4, 'each picture-only PDF asks Background, then (No) Pictures');   // TODO 358a
     } finally { await context.close(); }
   });
 
@@ -8949,6 +8949,7 @@ try {
       assert.equal(await p.locator('.dtab.on').getAttribute('data-kind'), 'drawing');
       await p.waitForFunction(() => document.querySelector('[data-testid=bg-name]').textContent === '');   // pictures, not a background
       await q('ptab-objects').click();
+      await p.waitForFunction(() => document.querySelectorAll('.layer .nm').length === 2);
       assert.deepEqual((await p.locator('.layer .nm').allTextContents()).sort(), ['0', 'PDF pages'].sort());
       await q('ptab-drawing').click();
       await p.locator('[data-tool=line]').click();
@@ -8973,7 +8974,44 @@ try {
       for (let i = 0; i < 80 && await whites() < 5000; i++) await p.waitForTimeout(100);
       assert.ok(await whites() > 5000, 'the pages come back as pictures');
       await q('ptab-objects').click();
+      await p.waitForFunction(() => document.querySelectorAll('.layer .nm').length === 2);
       assert.deepEqual((await p.locator('.layer .nm').allTextContents()).sort(), ['0', 'PDF pages'].sort());
+    } finally { await context.close(); }
+  });
+
+  await step('TODO 358a: a picture-only PDF can open as page pictures, alone and in a batch; the picture is selectable and not a dimmed background', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    try {
+      const p = await context.newPage(), q = (id) => p.getByTestId(id);
+      p.on('pageerror', (e) => errors.push(String(e)));
+      await p.goto(URL_ + '?autosave=86400000'); await q('picker').waitFor({ state: 'attached' });
+      await p.evaluate(() => { window.__pdfopenManual = true; });
+      const asked = [], answers = [];                                              // the native questions, answered in turn: false = No, true = Yes
+      p.on('dialog', async (d) => { asked.push(d.message()); if (answers.shift()) await d.accept(); else await d.dismiss(); });
+      const picture = readFileSync('fixtures/text-only.pdf');
+      const file = (name) => ({ name, mimeType: 'application/pdf', buffer: picture });
+      answers.push(false, true);                                                    // not a background, yes pictures
+      await q('picker').setInputFiles(file('alone.pdf'));
+      await waitTab(p, 'alone.dxf');
+      assert.equal(asked.length, 2); assert.match(asked[0], /no vector lines.*background/); assert.match(asked[1], /no vector lines.*pictures/);
+      assert.equal(await p.locator('.dtab.on').getAttribute('data-kind'), 'drawing');
+      await p.waitForFunction(() => document.querySelector('[data-testid=bg-name]').textContent === '');   // a picture, not a background
+      await q('ptab-objects').click();
+      await p.waitForFunction(() => document.querySelectorAll('.layer .nm').length === 2);
+      assert.deepEqual((await p.locator('.layer .nm').allTextContents()).sort(), ['0', 'PDF pages'].sort());
+      await q('ptab-drawing').click();
+      await p.locator('[data-tool=select]').click();
+      const box = await q('drawing').boundingBox();
+      await p.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+      await p.waitForFunction(() => document.querySelector('[data-testid=sel-layer]').textContent.includes('PDF pages'));   // the click picked the page picture
+      const white = await q('drawing').evaluate((c) => { const d = c.getContext('2d').getImageData(c.width >> 1, c.height >> 1, 1, 1).data; return [d[0], d[1], d[2]]; });
+      assert.ok(Math.min(...white) > 240, 'the page picture is white paper, not dimmed: ' + white);
+      // a batch of two: the first answer (Pictures) is reused, so only the first file asks
+      asked.length = 0; answers.push(false, true);
+      await q('picker').setInputFiles([file('b-one.pdf'), file('b-two.pdf')]);
+      await waitTab(p, 'b-two.dxf');
+      assert.equal(asked.length, 2, 'the second picture-only PDF reuses the answer');
+      assert.ok(await p.locator('.dtab .tname').allTextContents().then((t) => t.includes('b-one.dxf') && t.includes('b-two.dxf')));
     } finally { await context.close(); }
   });
 

@@ -1407,8 +1407,10 @@ async function openPdf(name, buf, path = null, copies = null, batch = {}) {
     if (copies) throw new Error('source PDF has no vector lines');
     if (batch.pdfOpen === 'pictures') { await openPdfPictures(name, bytes, path); return; }   // TODO 358a: the batch chose Pictures: a picture-only PDF goes in as pictures too
     const yes = batch.pdfOpen === 'background' || await confirmAsk(name + ' has no vector lines, only a picture (or text). Use it as a background picture instead?', 'Use as background');
-    if (yes) await importBackgroundPdf(name, bytes, true, path);
-    else note(name + ': no vector lines to open');
+    if (yes) { await importBackgroundPdf(name, bytes, true, path); return; }
+    // TODO 358a: not a background: offer its pages as pictures (the batch reuses this answer)
+    if (await confirmAsk(name + ' has no vector lines. Open its pages as pictures (edit and save as PDF) instead?', 'Pictures')) { batch.pdfOpen ??= 'pictures'; await openPdfPictures(name, bytes, path); return; }
+    note(name + ': no vector lines to open');
     return;
   }
   if (!copies) {
