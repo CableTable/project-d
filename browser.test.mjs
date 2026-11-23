@@ -9033,7 +9033,7 @@ try {
         window.__pdfopenManual = true;
         window.__pages358b = { files: {} };
         window.__TAURI__ = {
-          dialog: { save: async () => 'C:/jobs/pages.pdf', open: async () => 'C:/jobs/pages.pdf', ask: async () => true },
+          dialog: { save: async (o) => { window.__pages358b.def = o.defaultPath; return window.__pages358b.accept ? o.defaultPath : 'C:/jobs/pages.pdf'; }, open: async () => 'C:/jobs/pages.pdf', ask: async () => true },
           fs: { exists: async () => false, readFile: async () => { throw new Error('missing'); }, writeFile: async (path, bytes) => { window.__pages358b.files[path] = [...bytes]; }, writeTextFile: async () => {} },
         };
       });
@@ -9066,6 +9066,10 @@ try {
       assert.ok(!/\n10 80 m/.test(streams[0]) && !/\n-80 120 m/.test(streams[1]), 'the line above the pages is in neither');
       assert.equal(t.match(/\/Subtype \/Image/g).length, 2, 'each page has its picture');
       await p.setViewportSize({ width: 1440, height: 900 });
+      await p.evaluate(() => { window.__pages358b.accept = true; window.__pages358b.files = {}; });   // accepting the default must not hit the opened two-pages.pdf
+      await menu();
+      await prompt('Saved two-pages-pages.pdf: 2 pages');
+      assert.deepEqual(await p.evaluate(() => Object.keys(window.__pages358b.files).map((k) => k.split('/').pop())), ['two-pages-pages.pdf']);
     } finally { await context.close(); }
   });
 

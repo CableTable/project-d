@@ -3867,7 +3867,7 @@ async function savePdfPages() {
   const d = curDoc(), src = hasPdfPages(d) && exportSource();
   const plan = src && planPagesPdf({ ...src, pics: await pdfPictures(d) });
   if (!plan || !plan.pages.length) { note('No PDF pages in this drawing'); return; }
-  const want = baseName(d.name) + '.pdf', t = window.__TAURI__;
+  const want = baseName(d.name) + '-pages.pdf', t = window.__TAURI__;
   try {
     const bytes = plan.bytes();
     let name = want;
