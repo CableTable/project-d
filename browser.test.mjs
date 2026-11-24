@@ -39692,7 +39692,21 @@ try {
     });
   });
 
-  const picked = pickSteps(steps, only, selectStep, until);
+  await step('TODO 10b2 fix: Section on before the first Parts open adds no fake solid rows', async () => {
+    if (only) await closeTabs(/./);
+    await inWebgl(async () => {
+      await t('picker').setInputFiles('fixtures/sample-parts.step');
+      await waitTab(page, 'sample-parts.step');
+      await page.waitForSelector('[data-testid=model-host] .pv-info', { timeout: 60000 });
+      const pv = (label) => page.locator(`[data-testid=model-host] .pv-btn:text-is("${label}")`).click();
+      await pv('Section');
+      await pv('Parts');
+      assert.equal(await page.locator('[data-testid=pv-parts-list] .pv-part').count(), 3, 'the group Box and its two solids, no helper meshes');
+      await closeTabs(/./);
+    });
+  });
+
+  const picked =pickSteps(steps, only, selectStep, until);
   for (const entry of picked) await runStep(page, entry, shotDir);
 } catch (e) {
   if (until !== undefined && e.message.startsWith('--until')) {

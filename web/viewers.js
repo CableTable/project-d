@@ -375,9 +375,11 @@ async function model3d(root, blob, name, undo) {
       const named = o.isMesh && generic ? (o.parent && o.parent !== group && o.parent.name ? o.parent.name + ' · ' : '') + 'solid ' + ++n
         : o.name || '';
       const shown = o !== group && (o.isMesh || (named && o.children.some((c) => c.isMesh || c.isGroup || c.isObject3D)));
-      const kids = o.children.filter((c) => c.isMesh || (c.isGroup || c.type === 'Object3D'));
+      // Section's hidden helper meshes are not parts
+      const real = (c) => !(cut.stencils || []).includes(c);
+      const kids = o.children.filter((c) => real(c) && (c.isMesh || (c.isGroup || c.type === 'Object3D')));
       // a part that's its named group's only one is that group's row
-      const alone = o.isMesh && o.parent && o.parent !== group && o.parent.name && o.parent.children.filter((c) => c.isMesh || c.isGroup).length === 1;
+      const alone = o.isMesh && o.parent && o.parent !== group && o.parent.name && o.parent.children.filter((c) => real(c) && (c.isMesh || c.isGroup)).length === 1;
       if (shown && !alone) {
         const box = h('input', { type: 'checkbox', checked: true, 'aria-label': 'Show ' + named, onchange: () => { o.visible = box.checked; draw(); } });
         const row = h('div', { class: 'pv-part' }, box,
