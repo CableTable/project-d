@@ -166,6 +166,12 @@ try {
   browser = patchContexts(await chromium.launch(exe ? { executablePath: exe } : {}));
   // WebGL for the 3D viewer steps only: headless Chromium draws it in software when asked, but that flag changes 2D canvas pixels, so it gets its own browser
   const launchWebgl = async () => webglBrowser ??= patchContexts(await chromium.launch({ args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'], ...(exe ? { executablePath: exe } : {}) }));
+  // runs fn in a fresh page of the WebGL browser, then puts the main page back
+  const inWebgl = async (fn) => {
+    const mainPage = page, wctx = await (await launchWebgl()).newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    page = await wctx.newPage();
+    try { await page.goto(URL_); await fn(); } finally { page = mainPage; await wctx.close(); }
+  };
   const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
   page = await ctx.newPage();
   if (process.env.SLOWRAF) await page.addInitScript(() => { const r = window.requestAnimationFrame.bind(window); window.requestAnimationFrame = (f) => r(() => setTimeout(() => f(performance.now()), 150)); });
@@ -39515,10 +39521,7 @@ try {
   });
 
   await step('TODO 10a: a 3D model opens as its own tab; the 3D viewer button is live; Measure, Section and Esc work; 2D drawing returns to the last drawing', async () => {
-    const mainPage = page, wctx = await (await launchWebgl()).newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
-    page = await wctx.newPage();
-    try {
-    await page.goto(URL_);
+    await inWebgl(async () => {
     await closeTabs(/./);
     await t('picker').setInputFiles('fixtures/outline.dxf');
     await waitTab(page, 'outline.dxf');
@@ -39591,10 +39594,11 @@ try {
       assert.equal(await page.locator('.tabs .dtab[data-kind=model]').count(), 1, 'the same path never opens twice');
       assert.equal(await t('mode-3d').getAttribute('aria-pressed'), 'true');
     } finally { await page.evaluate(() => { delete window.__TAURI__; }); }
-    } finally { page = mainPage; await wctx.close(); }
+    });
   });
 
   await step('TODO 10b1: a STEP file opens in the 3D viewer (occt worker), its size in mm; Measure a face and an angle; Section; Esc goes back', async () => {
+    await inWebgl(async () => {
     await closeTabs(/./);
     await t('picker').setInputFiles('fixtures/sample.step');
     await waitTab(page, 'sample.step');
@@ -39623,6 +39627,7 @@ try {
     await page.locator('[data-testid=model-host] .pv-info').waitFor();       // a theme change drew the viewer again: Section is off in the fresh one
     await page.keyboard.press('Escape');
     assert.equal(await t('start-screen').getAttribute('class'), 'start-screen', 'Esc leaves the viewer (no drawing tab: Start)');
+    });
   });
 
   const picked = pickSteps(steps, only, selectStep, until);
