@@ -13,7 +13,8 @@ import { idbStore, localStore } from './idbstore.js';
 import { WORK_AREAS, workAreaDark } from './workarea.js';
 import { FOLDS, ribbonTabs, nextFold, doubleFold } from './ribbon.js';
 import { PRESETS, presetFor, stepRepeat, gridCellNote, GRIP_KEYS, gripOf } from './layout.js';
-import { unitFactor, convertedNote, startHidden, entityCount, layerCounts, patchedCounts, drawingBoxMm, fitRect, cursorMm, fitsSheet, spaceOf, boxOnSheet, itemVisible, addRecent, removeRecent, trimRecent, setPin, orderRecent, recentMax, closePrompt, BIG_FILE, bigFileAsk, backupPath, dupName } from './doc.js';
+import { unitFactor, convertedNote, startHidden, entityCount, layerCounts, patchedCounts, drawingBoxMm, fitRect, cursorMm, fitsSheet, spaceOf, boxOnSheet, itemVisible, addRecent, removeRecent, trimRecent, setPin, orderRecent, recentMax, recentKey, staleThumbs, closePrompt, BIG_FILE, bigFileAsk, backupPath, dupName } from './doc.js';
+import { loadThumbs, saveThumb, thumbIds, dropThumbs } from './thumbstore.js';
 import * as Ed from './edit.js';
 import { follow as followGroups, remap as remapGroups, splice as spliceGroups, swap as swapGroups, copy as copyGroups, group as groupDrawing, ungroup as ungroupDrawing, groupOf, selectionOf, wholeGroup as wholeDrawingGroup } from './groups.js';
 import * as AD from './autodim.js';
@@ -538,7 +539,10 @@ function showOptions() {
   document.body.append(back); document.addEventListener('keydown', onKey, true); mode.focus();
 }
 let lastDrawing = null, lastModel = null;       // the tabs "2D drawing" and "3D viewer" go back to
+let recentQuery = '', startUrls = [], startGen = 0;       // the Search recent text; the thumbnails' blob URLs; which build of the list a late thumbnail load belongs to (TODO 136b)
+const FILE_ICON = '<path d="M7 3h7l4 4v14H7z"/><path d="M14 3v4h4"/>';
 function showStartScreen(on) {
+  const fresh = on && ui.startScreen.hidden;     // coming back to Start: the search is empty again
   const model = !on && curDoc()?.model;           // a model tab's viewer is shown in the Start screen's place (TODO 10a): the same "no drawing here" gates apply
   ui.startScreen.hidden = !on && !model;
   ui.startScreen.classList.toggle('model', !!model);
@@ -551,7 +555,10 @@ function showStartScreen(on) {
   syncMode();
   renderRibbon();
   if (!on) return;
-  const items = recentItems();
+  const items = recentItems(), gen = ++startGen;
+  for (const u of startUrls) URL.revokeObjectURL(u);
+  startUrls = [];
+  if (fresh) recentQuery = '';
   ui.startRecent.replaceChildren();
   if (!items.length) { ui.startRecent.append(h('p', null, 'Recent files show in the desktop app')); return; }
   ui.startRecent.append(h('h2', null, 'Recent files'));
@@ -568,13 +575,35 @@ function showStartScreen(on) {
             try { await navigator.clipboard.writeText(path); note('Full path copied'); } catch { note('Could not copy full path'); }
           }]]);
         } },
+      h('span', { class: 'start-thumb', 'aria-hidden': 'true' }, icon(FILE_ICON, { size: 28, cap: 'round', join: 'round' }), h('b', null, (path.match(/\.([a-z0-9]+)$/i)?.[1] || '').toUpperCase())),
       h('strong', null, path.split(/[\\/]/).pop()), h('small', null, path.slice(0, Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))))),
       h('button', { type: 'button', class: 'start-pin', 'data-testid': 'start-pin', 'aria-label': pinned ? 'Unpin' : 'Pin', 'aria-pressed': String(pinned),
         title: pinned ? 'Unpin' : 'Pin to the top', onclick: () => pinRecent(path, !pinned) }, icon('<path d="M9 4h6l-1 6 3.5 3.5h-11L10 10z"/><path d="M12 13.5V20"/>', { size: 18, cap: 'round', join: 'round' })));
   };
-  const pinnedRows = items.filter((it) => isPinned(it[4]));
-  if (pinnedRows.length) ui.startRecent.append(h('div', { class: 'start-pinned', role: 'group', 'aria-label': 'Pinned files' }, pinnedRows.map(rowOf)));
-  ui.startRecent.append(...items.filter((it) => !isPinned(it[4])).map(rowOf));
+  const list = h('div', { class: 'start-list' }), urls = new Map();
+  let thumbs = null;                                  // path key → PNG blob, once the store has answered
+  const fillThumbs = () => {                          // in place, so a row keeps its focus
+    if (!thumbs) return;
+    for (const row of list.querySelectorAll('.start-recent-row')) {
+      const slot = row.querySelector('span.start-thumb'), key = recentKey(row.firstChild.title), blob = thumbs.get(key);
+      if (!slot || !blob) continue;
+      if (!urls.has(key)) { const u = URL.createObjectURL(blob); urls.set(key, u); startUrls.push(u); }
+      slot.replaceWith(h('img', { class: 'start-thumb', src: urls.get(key), alt: '', 'data-testid': 'start-thumb' }));
+    }
+  };
+  const render = () => {
+    const q = recentQuery.trim().toLowerCase(), shown = items.filter((it) => !q || it[4].toLowerCase().includes(q));
+    const pinnedRows = shown.filter((it) => isPinned(it[4]));
+    list.replaceChildren(...(pinnedRows.length ? [h('div', { class: 'start-pinned', role: 'group', 'aria-label': 'Pinned files' }, pinnedRows.map(rowOf))] : []),
+      ...shown.filter((it) => !isPinned(it[4])).map(rowOf), ...(shown.length ? [] : [h('p', null, 'No recent file matches')]));
+    fillThumbs();
+  };
+  const search = h('input', { class: 'fld', type: 'text', placeholder: 'Search recent', 'aria-label': 'Search recent', 'data-testid': 'start-search', autocomplete: 'off', value: recentQuery });
+  search.addEventListener('input', () => { recentQuery = search.value; render(); });
+  search.addEventListener('keydown', (e) => { if (e.key === 'Escape' && search.value) { e.preventDefault(); e.stopPropagation(); search.value = recentQuery = ''; render(); } });
+  ui.startRecent.append(search, list);
+  render();
+  loadThumbs().then((m) => { if (gen === startGen) { thumbs = m; fillThumbs(); } }).catch(() => { /* no storage: the icons stay */ });
 }
 function buildStartScreen() {
   const action = (id, label, run) => h('button', { class: 'btn', type: 'button', 'data-testid': 'start-' + id,
@@ -1337,6 +1366,7 @@ function tabFields(raw, fl) {
 
 function addTab(d, replaceEmpty = true) {
   if (d.path) rememberRecent(d.path);
+  thumbWanted.add(d);
   if (d.raw) { d.hist = Ed.createHistory(); d.sel = new Set(); d.hl = []; d.ed = null; warm(d); }
   const cur = curDoc();
   if (cur?.parked || replaceEmpty && cur && cur.empty && !cur.dirty && !d.empty) state.docs[state.doc] = d;      // the parked doc (Start screen only) and an untouched empty tab are used up
@@ -1598,13 +1628,31 @@ function recentCount() {
 const recentOrdered = () => orderRecent(recentList(), recentPins());
 function rememberRecent(path) {
   try { localStorage.setItem('pd-recent', JSON.stringify(addRecent(recentList(), String(path), recentCount(), recentPins()))); } catch { /* storage may be blocked */ }
+  pruneThumbs();
 }
 function forgetRecent(path) {
   try {
     localStorage.setItem('pd-recent', JSON.stringify(removeRecent(recentList(), path)));
     localStorage.setItem('pd-recent-pins', JSON.stringify(setPin(recentPins(), path, false)));
   } catch { note('Could not update Recent files'); }
+  pruneThumbs();
   if (!ui.startScreen.hidden) showStartScreen(true);
+}
+/** A path that left Recent (forgotten, trimmed by the count or a new file) drops its thumbnail: kept are the recent paths and the pins (TODO 136b). */
+async function pruneThumbs() {
+  try { await dropThumbs(staleThumbs(await thumbIds(), recentList(), recentPins())); } catch { /* no storage: nothing to prune */ }
+}
+const thumbWanted = new WeakSet();            // tabs whose first full paint makes their thumbnail
+/** The drawn view (canvas c) as a PNG of about 160 x 110 under the tab's file path, kept in IndexedDB; none when the tab has no path that is in Recent. */
+function snapThumb(d, c) {
+  const path = d.path || d.openPath;
+  if (!path || d.model || !c.width || !c.height || !recentList().some((p) => recentKey(p) === recentKey(path))) return;
+  const W = 160, H = 110, t = document.createElement('canvas');
+  t.width = W; t.height = H;
+  const g = t.getContext('2d'), r = Math.min(W / c.width, H / c.height);
+  g.fillStyle = workDark() ? '#1e1e22' : '#ffffff'; g.fillRect(0, 0, W, H);
+  g.drawImage(c, (W - c.width * r) / 2, (H - c.height * r) / 2, c.width * r, c.height * r);
+  t.toBlob((blob) => { if (blob) saveThumb(recentKey(path), blob).catch(() => {}); }, 'image/png');
 }
 function pinRecent(path, on) {
   try {
@@ -1612,6 +1660,7 @@ function pinRecent(path, on) {
     localStorage.setItem('pd-recent-pins', JSON.stringify(pins));
     if (!on) localStorage.setItem('pd-recent', JSON.stringify(trimRecent(recentList(), recentCount(), pins)));   // back among the others: the count may push it off
   } catch { note('Could not pin the file'); }
+  pruneThumbs();
   if (ui.startScreen.hidden) return;
   showStartScreen(true);
   [...ui.startRecent.querySelectorAll('.start-recent-row')].find((r) => r.firstChild.title === path)?.querySelector('.start-pin').focus();   // the row moved: keep the keyboard on its pin
@@ -1622,6 +1671,7 @@ function setRecentCount(value) {
     localStorage.setItem('pd-recent-max', String(n));
     localStorage.setItem('pd-recent', JSON.stringify(trimRecent(recentList(), n, recentPins())));   // a lower count drops the older unpinned rows for good
   } catch { note('Could not remember Recent files'); }
+  pruneThumbs();
   if (!ui.startScreen.hidden) showStartScreen(true);
   return n;
 }
@@ -4309,7 +4359,7 @@ async function save(forceAs) {
     const balloonsSaved = await balSave(d) !== false;
     d.dirty = !!unitError || !balloonsSaved;
     if (!d.dirty) dropCopy(d);
-    if (path) rememberRecent(path);
+    if (path) { rememberRecent(path); if (d === curDoc() && ui.startScreen.hidden) snapThumb(d, ui.dcanvas); }       // Save and Save As: a Recent row (F7) and its thumbnail (TODO 136b)
     if (d.lay) d.lay.name = name;
     if (bad.length) d.acceptedLoss = true;
     renderTabs();
@@ -6049,6 +6099,7 @@ function paintOverlay(gesture = false) {
     if (d?.lay) layOverlay(c, d, base, marks, lifted);
     if (d?.cmp?.dragged) cmpPaint(c, d.cmp, base, marks, true);
     if (quick) { c.dataset.quick = '1'; snapTimer = setTimeout(() => { settle = big; paintOverlay(); }, 120); }
+    else if (d && thumbWanted.delete(d)) snapThumb(d, c);       // the first full paint of a tab opened from a file (TODO 136b)
     ui.cmdUI.place();
   });
 }

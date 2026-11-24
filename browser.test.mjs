@@ -530,6 +530,81 @@ try {
       console.log('136a: pin on hover / always when pinned, own group on top, reload, File menu, row menu Pin / Unpin, Remove drops the pin, count 2 / 0 / 50; light/dark screenshots');
     } finally { await context.close(); }
   });
+  await step('TODO 136b: Start screen Recent: a thumbnail per opened / saved file (icon until then, dropped with its row); Search recent filters name + path (pinned too), Esc clears; Save As records a row', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    try {
+      const p = await context.newPage(), q = (id) => p.getByTestId(id);
+      p.on('pageerror', (e) => errors.push(String(e)));
+      const paths = ['C:/jobs/plate.dxf', 'D:/older/outline.dxf', 'E:/misc/bracket.dxf'], dxf = readFileSync('fixtures/outline.dxf', 'utf8');
+      await p.addInitScript(({ paths, dxf }) => {
+        localStorage.setItem('pd-start-mode', 'start');
+        if (!sessionStorage.getItem('seeded136b')) { sessionStorage.setItem('seeded136b', '1'); localStorage.setItem('pd-recent', JSON.stringify(paths)); localStorage.removeItem('pd-recent-pins'); }
+        window.__TAURI__ = { event: { listen: async () => () => {} }, core: { invoke: async () => [] },
+          fs: { exists: async () => false, readFile: async () => new TextEncoder().encode(dxf), writeTextFile: async () => {} },
+          dialog: { open: async () => null, save: async () => 'E:/saved/copy-as.dxf' } };
+      }, { paths, dxf });
+      await p.goto(URL_ + '?autosave=86400000'); await q('start-screen').waitFor();
+      const rows = p.locator('.start-recent-row'), search = p.getByLabel('Search recent', { exact: true }), key = (path) => path.replace(/\//g, '\\').toLowerCase();
+      const ids = () => p.evaluate(async () => (await import('./thumbstore.js')).thumbIds());
+      const haveThumb = (path) => p.waitForFunction(async (k) => (await (await import('./thumbstore.js')).thumbIds()).includes(k), key(path));
+      const names = () => p.evaluate(() => [...document.querySelectorAll('[data-testid=start-recent] strong')].map((e) => e.textContent));
+      assert.equal(await rows.count(), 3);
+      assert.equal(await q('start-thumb').count(), 0, 'no thumbnail yet: the icon');
+      assert.equal(await p.locator('span.start-thumb svg').count(), 3, 'a file icon on each row');
+      for (const path of paths) {
+        await rows.filter({ hasText: path.split('/').pop() }).getByTestId('start-recent').click();
+        await q('start-screen').waitFor({ state: 'hidden' }); await haveThumb(path);
+        await q('start-tab').click(); await q('start-screen').waitFor();
+      }
+      await p.waitForFunction(() => document.querySelectorAll('[data-testid=start-thumb]').length === 3);
+      assert.equal(await q('start-thumb').first().evaluate((e) => e.src.startsWith('blob:') && e.complete && e.naturalWidth === 160 && e.naturalHeight === 110), true, 'a 160 x 110 PNG from a blob URL');
+      assert.equal(await p.locator('span.start-thumb').count(), 0);
+      assert.deepEqual(await names(), ['bracket.dxf', 'outline.dxf', 'plate.dxf'], 'last opened first');
+      for (const theme of ['light', 'dark']) {
+        await p.emulateMedia({ colorScheme: theme });
+        const path = `${shotDir}/todo136b-start-${theme}.png`;
+        await p.screenshot({ path }); assert.ok(readFileSync(path).length > 1000);
+      }
+      await p.setViewportSize({ width: 1024, height: 700 });
+      await p.screenshot({ path: `${shotDir}/todo136b-start-1024.png` });
+      await p.setViewportSize({ width: 1440, height: 900 });
+      assert.equal(await search.count(), 1);
+      await search.fill('BRACK');
+      assert.deepEqual(await names(), ['bracket.dxf'], 'case-insensitive name match');
+      await search.fill('older');
+      assert.deepEqual(await names(), ['outline.dxf'], 'the folder in the path matches too');
+      await search.fill('zzz');
+      assert.equal(await rows.count(), 0); assert.equal(await q('start-screen').getByText('No recent file matches').count(), 1);
+      await search.press('Escape');
+      assert.equal(await p.evaluate(() => document.querySelector('[data-testid=start-search]').value), ''); assert.equal(await rows.count(), 3, 'Esc shows all');
+      assert.equal(await q('start-screen').isVisible(), true, 'Esc cleared the box only');
+      await rows.filter({ hasText: 'plate.dxf' }).getByTestId('start-pin').click();
+      assert.equal(await p.locator('.start-pinned .start-recent-row').count(), 1);
+      await search.fill('bracket');
+      assert.equal(await p.locator('.start-pinned .start-recent-row').count(), 0, 'the pinned group is filtered too');
+      assert.deepEqual(await names(), ['bracket.dxf']);
+      await search.fill('plate');
+      assert.equal(await p.locator('.start-pinned .start-recent-row').count(), 1);
+      assert.equal(await rows.count(), 1);
+      await search.press('Escape');
+      await p.locator('.start-recent-row', { hasText: 'bracket.dxf' }).getByTestId('start-recent').click({ button: 'right' });
+      await q('ctx-menu').getByRole('menuitem', { name: 'Remove from list', exact: true }).click();
+      await p.waitForFunction(async (k) => !(await (await import('./thumbstore.js')).thumbIds()).includes(k), key(paths[2]));
+      assert.deepEqual((await ids()).sort(), [key(paths[0]), key(paths[1])].sort(), 'its thumbnail went with its row; the others stay');
+      await p.reload(); await q('start-screen').waitFor();
+      await p.waitForFunction(() => document.querySelectorAll('img.start-thumb').length === 2);
+      assert.equal(await p.locator('span.start-thumb').count(), 0, 'both rows keep their thumbnail after a reload');
+      await rows.filter({ hasText: 'outline.dxf' }).getByTestId('start-recent').click();
+      await q('start-screen').waitFor({ state: 'hidden' });
+      await p.locator('[data-menu=File]').click(); await p.getByRole('menuitem', { name: 'Save As…' }).click();
+      await p.waitForFunction(() => JSON.parse(localStorage.getItem('pd-recent'))[0] === 'E:/saved/copy-as.dxf');
+      await haveThumb('E:/saved/copy-as.dxf');
+      await q('start-tab').click();
+      await p.waitForFunction(() => document.querySelectorAll('img.start-thumb').length === 3);
+      assert.equal(await p.locator('.start-recent-row:has([title="E:/saved/copy-as.dxf"]) img.start-thumb').count(), 1, 'Save As to a new path: a row with its thumbnail');
+      console.log('136b: icon then thumbnail (160 x 110, blob URL), search by name / path / pinned, Esc clears, Remove drops the thumbnail, reload keeps it, Save As row + thumbnail; light/dark/1024 screenshots');
+    } finally { await context.close(); }
+  });
   await step('TODO 343: no default Drawing 1 tab: Start mode boots on Start only; × on the last tab parks the empty doc; + / New drawing / New layout use it; a real untouched Drawing 1 keeps its tab', async () => {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
     try {

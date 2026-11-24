@@ -120,7 +120,13 @@ export function fitsSheet(boxMm, sheetW, sheetH) {
   return !boxMm || (boxMm[0] >= 0 && boxMm[1] >= 0 && boxMm[2] <= sheetW && boxMm[3] <= sheetH);
 }
 
-const recentKey = (p) => String(p).replace(/\//g, '\\').toLowerCase();
+export const recentKey = (p) => String(p).replace(/\//g, '\\').toLowerCase();
+
+/** The thumbnail keys (recentKey of a path) in `ids` to delete: a thumbnail stays only for a path that is in the recent list or pinned (TODO 136b). */
+export function staleThumbs(ids, list, pins = []) {
+  const keep = new Set([...(Array.isArray(list) ? list : []), ...(Array.isArray(pins) ? pins : [])].filter((p) => typeof p === 'string').map(recentKey));
+  return ids.filter((id) => !keep.has(id));
+}
 
 /** The Options "Recent files" count: a whole number 0-50, 20 when unset or not a number (TODO 136a). */
 export function recentMax(v) {

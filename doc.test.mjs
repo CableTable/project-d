@@ -5,7 +5,7 @@ import { decodeDxf, readDxf, flatten } from './web/drawing.js';
 import { mapply } from './web/drawing.js';
 import { buildTree } from './web/objects.js';
 import { makeDimension, addDimension } from './web/edit.js';
-import { unitFactor, convertedNote, spaceOf, shownItems, itemVisible, startHidden, entityCount, layerCounts, drawingBoxMm, placement, boxOnSheet, fitRect, cursorMm, fitsSheet, addRecent, removeRecent, trimRecent, setPin, orderRecent, recentMax, closePrompt, BIG_FILE, bigFileAsk, backupPath, dupName } from './web/doc.js';
+import { unitFactor, convertedNote, spaceOf, shownItems, itemVisible, startHidden, entityCount, layerCounts, drawingBoxMm, placement, boxOnSheet, fitRect, cursorMm, fitsSheet, addRecent, removeRecent, trimRecent, setPin, orderRecent, recentMax, recentKey, staleThumbs, closePrompt, BIG_FILE, bigFileAsk, backupPath, dupName } from './web/doc.js';
 
 const load = (f) => flatten(readDxf(decodeDxf(readFileSync(f))));
 let n = 0;
@@ -142,6 +142,13 @@ test('TODO 136a: max 0 keeps only pinned paths; remove of a pinned path drops th
   const list = ['A:/a', 'A:/p'], pins = ['A:/p'];
   assert.deepEqual([removeRecent(list, 'a:/P'), setPin(pins, 'a:/P', false)], [['A:/a'], []]);
   assert.deepEqual(pins, ['A:/p'], 'input left alone');
+});
+test('TODO 136b: thumbnails are pruned to the recent paths and the pins (any case or slash)', () => {
+  const ids = ['A:/a.dxf', 'A:/b.dxf', 'A:/gone.dxf', 'A:/pin.dxf'].map(recentKey);
+  assert.deepEqual(staleThumbs(ids, ['a:\\A.dxf', 'A:/b.dxf'], ['A:/PIN.dxf']), [recentKey('A:/gone.dxf')], 'only the path that left Recent');
+  assert.deepEqual(staleThumbs(ids, [], []), ids, 'an empty list drops them all');
+  assert.deepEqual(staleThumbs(ids, null, ['a:/a.dxf']), ids.slice(1), 'a pin alone keeps its thumbnail');
+  assert.deepEqual(staleThumbs([], ['A:/a.dxf']), []);
 });
 test('TODO 136a: recentMax is a whole number 0-50, 20 when unset or not a number', () => {
   assert.deepEqual([null, undefined, '', 'x', NaN].map(recentMax), [20, 20, 20, 20, 20]);

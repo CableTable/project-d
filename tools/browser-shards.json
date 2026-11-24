@@ -51,6 +51,7 @@
   "start state: one empty \"Drawing 1\", no sample data, Apply disabled with its hint": 0.38,
   "× on the only tab leaves the Start screen and no tab (TODO 343); + gives \"Drawing 1\", then \"Drawing 2\"; × closes any tab": 0.3,
   "TODO 136a: Start screen Recent: a pushpin pins a row to the top (kept after a reload, in the File menu too); Pin / Unpin in the row menu; Options \"Recent files\" count 0-50 keeps pins": 4,
+  "TODO 136b: Start screen Recent: a thumbnail per opened / saved file (icon until then, dropped with its row); Search recent filters name + path (pinned too), Esc clears; Save As records a row": 1.8,
   "TODO 343: no default Drawing 1 tab: Start mode boots on Start only; × on the last tab parks the empty doc; + / New drawing / New layout use it; a real untouched Drawing 1 keeps its tab": 3.2,
   "TODO 62: Open keeps drawn, edited and saved tabs; only an untouched new tab is replaced": 14.03,
   "Many tabs: only the tab strip scrolls at 1024; widening to 1440 keeps the menu and toolbar in place and + New layout on one line": 0.94,

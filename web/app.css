@@ -228,6 +228,13 @@ select.fld { font-family: var(--sans); }
 .start-recent strong { font-size: 16px; }
 .start-recent small { font-size: 12px; color: var(--muted); }
 .start-recent strong, .start-recent small { max-width: 100%; overflow-wrap: anywhere; }
+.start-recent { display: grid; grid-template-columns: 112px minmax(0, 1fr); column-gap: 12px; row-gap: 5px; align-items: center; align-content: center; }
+.start-recent .start-thumb { grid-row: 1 / span 2; }
+.start-recent strong { align-self: end; }
+.start-recent small { align-self: start; }
+.start-thumb { width: 112px; height: 77px; object-fit: contain; box-sizing: border-box; border: 1px solid var(--line); border-radius: 4px; background: #fff; }
+span.start-thumb { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; background: var(--panel); color: var(--muted); font-size: 11px; }
+.start-recents > .fld { width: 100%; box-sizing: border-box; margin-bottom: 8px; }
 .start-recent-row { position: relative; }
 .start-recent-row .start-recent { padding-right: 48px; }
 .start-pin { position: absolute; top: 8px; right: 8px; display: grid; place-items: center; width: 32px; height: 32px; padding: 0; border: 0; border-radius: var(--r); background: none; color: var(--muted); cursor: pointer; opacity: 0; }
