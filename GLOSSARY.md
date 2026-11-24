@@ -253,6 +253,8 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **1:1**: A drawing or output size in which one mm of geometry represents one physical mm. Where: `DECISIONS.md`, 1:1 scale and Output. Avoid: Fit to window.
 
+**3D viewer**: The mode that shows a 3D model file (mesh or STEP / IGES / BREP) for looking, measuring and sectioning; it never edits the model. Where: `web/viewers.js`, `web/geom.js`. Avoid: 3D editor; model view.
+
 **3DFACE**: A DXF face whose edges can be shown by the 2D reader but which is left out of cutter export. Where: `web/drawing.js`, `web/dxf-cutter.js`.
 
 **ACAD_TABLE**: A DXF table that the reader draws through its referenced block. Where: `web/drawing.js`.

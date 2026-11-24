@@ -627,7 +627,7 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
     9a. ✅ (built S56: King `694010c` + fixes `e26937d` (King), `d6c2693` (Bishop); rv-9afix2 ship, Lows `runs56/lows.txt`; unit 1451/0) Title block on a Layouts sheet: insert button, ATTDEF fields, auto values, edit via the attribute dialog with Reset, DXF save / reopen keeps block + ATTRIB values; one undo; a second press selects.
     9b. ✅ (built S56: Bishop `b9fa6dd` (cherry-pick `48b4e0a`); rv-9b2 ship, Lows `runs56/lows.txt`; unit 1451/0; 9b fix `5589dfd` Add revision guards, rv-9bfix ship, S57) Revision rows (Q4) + Add revision (Q5) in the attribute dialog, one undo, DXF round trip.
     9c. ✅ (built S56: King `8d21e06` (cherry-pick `4f92eec`, S57); rv-9c ship; unit 1452/0) PDF one source (Q8): a sheet with the block prints the block and no strip; Drawings / Compare strip reads the same field names; all 3 tabs print.
-10. The 3D viewer ported from Project R (mock-up "3D viewer").
+10. The 3D viewer ported from Project R (no mock-up file exists; UI follows Project R; grill `runs57/grill-10.md`, tickets 10a mesh / 10b STEP / 10c Snap).
 
 ## Later (scope §5)
 
