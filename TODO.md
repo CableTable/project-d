@@ -215,7 +215,7 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
     109d. ✅ Line weights, hidden objects, batch export (grill `rook-hq/runs56/grill-109d.md` + `grill-109d-regrill.md`, Rook S56f 2026-11-23), split:
       109d1. ✅ (built, King, Rook S56f 2026-11-23: `8147300` + fix `e605dd0`, review ship after fix 1, suite `SUITE unit=0 browser=0` on e605dd0) Export… ticks: Line weights (off = 0.05 mm hairlines, SVG / PNG) and Hidden objects (code-60 + off / frozen layers; DXF default on, SVG / PNG off).
       109d2. ✅ (built, King, Rook S56g 2026-11-23: `42f90c2` -> `c8baa04`, review ship as is, base-check browser `FAIL` on e605dd0, suite `SUITE unit=0 browser=0` on c8baa04; exe folder picker + writes PASS on the 68b520a exe, never overwrote, Bishop `runs56/exe56.md` item 4) Batch: 'A folder at once' tab in Export…, PDF batch pattern, never overwrites, failures skipped and named.
-110. **Ribbon on top like AutoCAD** (L, ask, T27): see T27 in support/tickets.md. Grill first.
+110. ✅ (110a-d all built S21; T27 row says merged) **Ribbon on top like AutoCAD** (L, ask, T27): see T27 in support/tickets.md. Grill first.
     110a. ✅ Theme: AutoCAD dark, CorelDRAW light (built, session 21).
     110b. ✅ Ribbon frame: Option A, per-kind tabs, remembered fold states, Home / View / Output (built, Knight).
     110c. ✅ Remaining tab contents (Draw, Modify, Annotate, Layout, Compare) and the contextual Part tab.
