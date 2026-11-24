@@ -50,6 +50,9 @@ export async function encodePng(w, h, rgba) {
 /** Is this a PNG data URL (what r.px holds; a recovery record is data, not trusted)? */
 export const isPng = (s) => typeof s === 'string' && /^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(s);
 
+/** A document's IMAGEs in the order writeDxf numbers their PNGs: the blocks' first, then the model's (a layout's picture is in a block: IMAGE cannot be baked, TODO 11). */
+export const docImages = (doc) => [...Object.values(doc.blocks || {}).flatMap((b) => b.entities || []), ...(doc.entities || [])].filter((e) => e.type === 'IMAGE');
+
 // ---------------------------------------------------------------- browser only
 
 const decoded = new Map();                            // px → the loaded <img> (or the loading one)

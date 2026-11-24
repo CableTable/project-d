@@ -39768,6 +39768,84 @@ try {
     });
   });
 
+  await step('TODO 11: Snap on a layout puts the picture on the sheet: the layout tab is the last 2D tab, 150 mm wide, selected, pixels drawn; Undo / Redo, move, rotate, Auto-nest leaves it; a recovered copy, Save As + reopen and Save as PDF keep it', async () => {
+    await inWebgl(async () => {
+      await page.goto(URL_ + '?autosave=300'); await t('count').waitFor({ state: 'attached' });
+      await t('picker').setInputFiles('fixtures/sample.step');
+      await waitTab(page, 'sample.step');
+      await page.waitForSelector('[data-testid=model-host] .pv-info', { timeout: 60000 });
+      await t('new-layout').click();                                   // a Layouts tab as the last 2D tab
+      await t('mode-3d').click();
+      await page.waitForSelector('[data-testid=model-host] .pv-info');
+      const colours = () => t('drawing').evaluate((c) => { const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data, s = new Set(); for (let i = 0; i < d.length; i += 4) s.add((d[i] << 16) | (d[i + 1] << 8) | d[i + 2]); return s.size; });
+      const coloursWhen = async (ok, why) => { let n = 0; for (let i = 0; i < 80; i++) { n = await colours(); if (ok(n)) return n; await page.waitForTimeout(100); } assert.fail(why + ': ' + n + ' colours'); };
+      // a layout has no sel-count (drawing tabs only) and its Objects panel redraws only when open: the selection box on the sheet is the selection
+      const selected = async (n) => { const h = await page.waitForFunction((k) => { const c = document.querySelectorAll('[data-group=tools] .sel-box').length; return c === k ? c : null; }, n, { timeout: 15000, polling: 100 }); return h.jsonValue(); };
+      const field = async (id, want, tol = 0.05) => { let v; for (let i = 0; i < 60; i++) { v = Number((await t(id).inputValue()).replace('°', '')); if (Math.abs(v - want) <= tol) return v; await page.waitForTimeout(100); } assert.fail(`${id} is ${v}, want ${want}`); };
+      const pics = () => page.evaluate(async () => (await (await import('./recovery.js')).loadCopies()).filter((c) => c.kind === 'layout').map((c) => c.pics.length));
+      await page.locator('[data-testid=model-host] [data-testid=pv-snap]').click();
+      assert.equal(await selected(1), 1, 'the picture is selected');
+      assert.equal((await tabNames()).length, 2, 'no new drawing tab: the layout got it');
+      const onTab = await page.locator('.dtab.on .tname').textContent();
+      assert.notEqual(onTab, 'sample.step', 'the layout tab is on show');
+      assert.equal(await t('start-screen').isHidden(), true);
+      assert.equal(await nParts(), 1, 'one picture object on the sheet');
+      assert.ok(Math.abs(await field('pw', 150, 0.5) - 150) <= 0.5, 'about 150 mm wide');
+      const x0 = Number(await t('px').inputValue()), y0 = Number(await t('py').inputValue());
+      assert.ok(x0 > 0 && y0 > 0, `on the sheet: ${x0}, ${y0}`);
+      assert.ok(await coloursWhen((n) => n >= 20, 'the picture is drawn with pixels (not a blank)') >= 20);
+      await shotBoth('layout-snap');
+      await page.setViewportSize({ width: 1024, height: 700 });
+      await page.waitForTimeout(300);
+      await page.screenshot({ path: `${shotDir}/s12-layout-snap-1024.png` });
+      assert.ok(await page.evaluate(() => { const r = document.querySelector('.rowtools').getBoundingClientRect(); return r.right <= window.innerWidth; }), 'the top bar fits at 1024 px');
+      await page.setViewportSize({ width: 1440, height: 900 });
+      assert.deepEqual((await histLabels()).slice(-1), ['Snap view'], 'one Undo step');
+      await page.evaluate(() => document.activeElement?.blur());
+      await page.keyboard.press('Control+z');
+      await coloursWhen((n) => n <= 4, 'one Undo removes the picture');
+      assert.equal(await nParts(), 0);
+      await page.keyboard.press('Control+y');
+      await coloursWhen((n) => n >= 20, 'Redo brings it back');
+      assert.equal(await nParts(), 1);
+      assert.equal(await selected(1), 1, 'Redo keeps it selected');
+      await t('px').fill(String(x0 + 20)); await t('px').press('Enter');
+      await field('px', x0 + 20);
+      await t('pa').fill('30'); await t('pa').press('Enter');
+      await field('pa', 30);
+      assert.equal(await nParts(), 1);
+      await coloursWhen((n) => n >= 20, 'the moved, turned picture is drawn');
+      await t('nest').click(); assert.equal(await page.locator('[data-testid^=nest-row-]').count(), 0, 'Auto-nest has no part to move: the picture stays'); await t('nest-cancel').click();
+      // a recovered copy keeps the pixels (the autosave copy holds the block's IMAGE)
+      let n = []; for (let i = 0; i < 60 && n[0] !== 1; i++) { n = await pics(); if (n[0] !== 1) await page.waitForTimeout(150); }
+      assert.deepEqual(n, [1], 'the layout copy holds the picture\'s pixels');
+      await page.reload(); await t('recover-dialog').waitFor(); await t('recover-ok').click();
+      await t('recover-dialog').waitFor({ state: 'detached' });
+      await page.waitForFunction(() => document.querySelector('[data-testid=cmd-prompt]').textContent.startsWith('Recovered'));
+      assert.equal(await nParts(), 1, 'the recovered layout has the picture');
+      await coloursWhen((n) => n >= 20, 'the recovered picture has its pixels');
+      // Save as PDF: an image on the page
+      await t('pdf-open').click(); await page.locator('[data-testid=pdf-dialog]').waitFor();       // (openPdf's dialog locator is the main page's)
+      await page.waitForFunction(() => { const c = document.querySelector('[data-testid=pdf-preview]'); return c && c.width > 100; }, null, { polling: 100 });
+      const pdf = await downloaded(() => t('pdf-go').click());
+      assert.ok((pdf.text.match(/\/Subtype \/Image/g) || []).length >= 1, 'the sheet\'s PDF has the picture');
+      await page.evaluate(() => { window.__snap11 = { files: {} }; window.__TAURI__ = {
+        dialog: { save: async () => 'C:/jobs/snap.dxf', open: async () => 'C:/jobs/snap.dxf', ask: async () => true },
+        fs: { exists: async () => false, readFile: async (p) => { const b = window.__snap11.files[p]; if (!b) throw new Error('missing'); return Uint8Array.from(b); }, writeFile: async (p, bytes) => { window.__snap11.files[p] = [...bytes]; }, writeTextFile: async (p, text) => { window.__snap11.files[p] = [...new TextEncoder().encode(text)]; } } }; });
+      await menuItem('File', 'Save As…');
+      await page.waitForFunction(() => document.querySelector('[data-testid=cmd-prompt]').textContent.startsWith('Saved snap.dxf'));
+      const saved = await page.evaluate(() => window.__snap11.files);
+      assert.deepEqual(Object.keys(saved).sort(), ['C:/jobs/snap-img1.png', 'C:/jobs/snap.dxf']);
+      const raw = readDxf(Buffer.from(saved['C:/jobs/snap.dxf']).toString('utf8'));
+      assert.equal(Object.values(raw.blocks).flatMap((b) => b.entities).filter((e) => e.type === 'IMAGE').length, 1, 'the picture is an IMAGE in a block');
+      await page.locator('.dtab.on .x').click();
+      await menuItem('File', 'Open…');
+      await page.waitForFunction(() => document.querySelector('[data-testid=cmd-prompt]').textContent.startsWith('Opened snap.dxf'));
+      assert.equal(await nParts(), 1, 'the reopened layout has its one picture');
+      await coloursWhen((n) => n >= 20, 'the reopened picture has its pixels');
+    });
+  });
+
   const picked =pickSteps(steps, only, selectStep, until);
   for (const entry of picked) await runStep(page, entry, shotDir);
 } catch (e) {

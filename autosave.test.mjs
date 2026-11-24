@@ -5,6 +5,7 @@ import * as PS from './web/pdf-sheets.js';
 import * as BAL from './web/balloons.js';
 import { newDoc, writeDxf } from './web/dxf-write.js';
 import { readDxf } from './web/drawing.js';
+import { docImages } from './web/pictures.js';
 
 // Exercise the private app function without loading its DOM or changing app exports.
 const source = readFileSync(new URL('./web/app.js', import.meta.url), 'utf8').match(/^async function autosaveNow\(\) \{\r?\n[\s\S]*?^\}/m)?.[0];
@@ -15,7 +16,7 @@ for (const kind of ['drawing', 'layout']) {
   let text = 'first DXF', serializations = 0;
   const autosaveNow = runInNewContext(`${source}\nautosaveNow`, {
     autosaving: false, dropping: false, state, PS, BAL, newDoc, balOf: (d) => d.balloons || BAL.EMPTY, uid: () => kind,
-    rawForSave: (d) => d.raw,
+    rawForSave: (d) => d.raw, docImages,
     writeIdle: async () => { serializations++; return text; },          // TODO 237b: autosave writes in idle slices; the fake is the writer itself
     RC: { saveCopy: async (copy) => { writes.push(copy); } },
     dropCopy: async () => assert.fail('a dirty tab must keep its recovery copy'),
@@ -76,7 +77,7 @@ const drawing = { ...second, drawingUnit: 'inch', balloons: BAL.add(BAL.EMPTY, {
 const writes = [], state = { docs: [drawing] };
 const autosaveNow = runInNewContext(`${source}\nautosaveNow`, {
   autosaving: false, dropping: false, state, PS, BAL, newDoc, balOf: (d) => d.balloons || BAL.EMPTY, uid: () => 'pdf',
-  rawForSave: (d) => d.raw, writeIdle: async (doc, opts) => writeDxf(doc, opts),
+  rawForSave: (d) => d.raw, docImages, writeIdle: async (doc, opts) => writeDxf(doc, opts),
   RC: { saveCopy: async (copy) => { writes.push(copy); } }, dropCopy: async () => assert.fail('dirty sheet'), console,
 });
 await autosaveNow(); assert.equal(writes.length, 2);

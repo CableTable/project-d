@@ -106,7 +106,7 @@ import { partSource, readTitleBlock, withTitleBlock, planPagesPdf, hasPagePictur
 import { pageToSvg } from './svg-write.js';
 import { readPdf, renderPdfPage, renderPdfPages, renderPdfPictures, isPdf, pageLayout } from './pdf-read.js';
 import { readTiff } from './tiff.js';
-import { preloadPictures, rawPixels, isPng } from './pictures.js';
+import { preloadPictures, rawPixels, isPng, docImages } from './pictures.js';
 import { panelWidth } from './docker.js';
 
 const SVGNS = 'http://www.w3.org/2000/svg';
@@ -1389,15 +1389,27 @@ async function drawModel(d) {
   if (state.docs.includes(d)) d.model.done = done; else done();
 }
 const SNAP_MM = 150;
-/** Snap (TODO 10c): the 3D view's PNG becomes an IMAGE, SNAP_MM wide and centred on the view, on the last drawing tab (an empty tab becomes the drawing; a layout, Compare, a many-page PDF or no tab: a new drawing tab). It is selected; one Undo removes it. */
+/** Snap (TODO 10c, 11): the 3D view's PNG becomes an IMAGE, SNAP_MM wide and centred on the view, on the last 2D tab: a drawing (an empty tab becomes the drawing) or a layout (one layout object on the current layer, saved as a block); Compare, a many-page PDF or no tab: a new drawing tab. It is selected; one Undo removes it. */
 async function snapView(blob, w, h) {
   const px = await new Promise((ok, no) => { const r = new FileReader(); r.onload = () => ok(r.result); r.onerror = () => no(r.error); r.readAsDataURL(blob); });
   if (!isPng(px) || !(w > 0 && h > 0)) { note('Snap: could not make a picture of this view'); return; }
   await preloadPictures([{ k: 'i', px }]);
   const last = state.docs.includes(lastDrawing) ? lastDrawing : state.docs.findLast((t) => !t.model && !t.parked);
-  const plain = last && !last.parked && !last.lay && !last.cmp && !(last.pdf?.pages > 1);
+  const plain = last && !last.parked && !last.cmp && !(last.pdf?.pages > 1);
   if (plain) { state.doc = state.docs.indexOf(last); showDoc(); } else addTab(emptyDoc());
   ensureScratch(curDoc());
+  const lay = curDoc().lay;
+  if (lay) {                                                        // sheet mm, y up: the picture is a layout object (156b2 path: one pushLay, one Undo)
+    const r = ui.canvas.getBoundingClientRect(), at = sheetAt(r.left + r.width / 2, r.top + r.height / 2), side = SNAP_MM / w, layer = curLayerName(curDoc());
+    const pic = entity('IMAGE', [[10, at[0] - SNAP_MM / 2], [20, at[1] - side * h / 2], [30, 0], [11, side], [21, 0], [31, 0], [12, 0], [22, side], [32, 0], [13, w], [23, h]], { layer });
+    pic.r.px = px;
+    view.fitted = false;
+    const made = layObjectsAdd(curDoc(), 'Snap view', [pic]);
+    if (!made) { note('Snap: could not put the picture on the sheet'); return; }
+    selectLoose(lay.placed.indexOf(made));
+    note('View placed on ' + curDoc().name);
+    return;
+  }
   const d = editable();
   if (!d) { note('Snap: could not put the picture on a drawing'); return; }
   const fresh = !d.raw.entities.length, r = ui.canvas.getBoundingClientRect(), at = fresh ? [0, 0] : toDrawing(d, r.left + r.width / 2, r.top + r.height / 2);
@@ -4050,13 +4062,13 @@ async function autosaveNow() {
         const raw = page.raw, titleBlock = d.titleBlock, tab = state.docs.indexOf(d);
         const balloons = d.balloons ? BAL.encode(balOf(d), { source: d.balName || d.name, pages: d.pdf ? d.pdf.pages : 1 }) : null, unit = d.drawingUnit || null;
         if (!page.lay && r.autoTab === tab && r.autoEnts === raw?.entities && r.autoBlocks === raw?.blocks && r.autoLayers === raw?.layers && r.autoGroups === raw?.groups && r.autoLtypes === raw?.ltypes && r.autoHeader === raw?.header && r.autoTitle === titleBlock && r.autoBalloons === balloons && r.autoUnit === unit) continue;        // a drawing's state is replaced at every change: same one, same tab index, same copy
-        let dxf;
-        try { dxf = await writeIdle(rawForSave({ ...page, raw: raw || newDoc(), titleBlock }), { escapeUnicode: true, extents: page.lay || !page.fl ? null : page.fl.boxes.model }); } catch (e) { console.warn('Autosave: could not write', page.name, e); continue; }
+        let dxf, saved;
+        try { saved = rawForSave({ ...page, raw: raw || newDoc(), titleBlock }); dxf = await writeIdle(saved, { escapeUnicode: true, extents: page.lay || !page.fl ? null : page.fl.boxes.model }); } catch (e) { console.warn('Autosave: could not write', page.name, e); continue; }
         if (dropping) return;                                                                          // the window closed while the slices ran: its copies are already dropped
         if (page.lay && r.hasCopy && r.autoTab === tab && r.autoDxf === dxf && r.autoBalloons === balloons && r.autoUnit === unit) continue;                    // a layout: the same text, balloons, unit and tab index as the last copy
         const name = n == null ? page.name : `${d.pdf.name} sheet ${n}`;
         await RC.saveCopy({ id: r.rid, name, path: page.path || null, openPath: d.openPath || null, pdfPages: d.pdf?.pages || null, pdfHash: d.pdf?.hash || null, kind: page.lay ? 'layout' : 'drawing', dxf, t: Date.now(),
-          tab, sheet: n, balloons, unit, saved: !!page.saved, fromFile: !!d.fromFile, fromPdf: d.fromPdf || null, acceptedLoss: !!page.acceptedLoss, pics: (raw?.entities || []).filter((e) => e.type === 'IMAGE' && e.r?.px) });
+          tab, sheet: n, balloons, unit, saved: !!page.saved, fromFile: !!d.fromFile, fromPdf: d.fromPdf || null, acceptedLoss: !!page.acceptedLoss, pics: docImages(saved).filter((e) => e.r?.px) });
         r.hasCopy = true; r.autoTab = tab; r.autoBalloons = balloons; r.autoUnit = unit; if (page.lay) r.autoDxf = dxf;
         if (!page.lay) { r.autoEnts = raw?.entities; r.autoBlocks = raw?.blocks; r.autoLayers = raw?.layers; r.autoGroups = raw?.groups; r.autoLtypes = raw?.ltypes; r.autoHeader = raw?.header; r.autoTitle = titleBlock; }
         if (!state.docs.includes(d) || !PS.pageState(d, n)?.dirty || (d.pdf && !PS.sheetNumbers(d.pdf).includes(n))) await dropCopy({ recovery: r }); // closed, saved or deleted while writing
@@ -4089,7 +4101,7 @@ async function recoverOne(c, target = null) {
     const r = await readDrawing(new TextEncoder().encode(c.dxf).buffer);
     if (!r.ok) return false;
     if (c.pics?.length) {
-      const images = r.doc.entities.filter((e) => e.type === 'IMAGE' && /^drawing-(img|page)\d+\.png$/.test(e.r.file));
+      const images = docImages(r.doc).filter((e) => /^drawing-(img|page)\d+\.png$/.test(e.r.file));
       if (images.length === c.pics.length) images.forEach((e, i) => { e.r.px = c.pics[i].r.px; });
       else r.doc.entities.push(...c.pics); // 305a recovery copies predate IMAGE output.
       r.result = flatten(r.doc); await preloadPictures(r.result.items);
