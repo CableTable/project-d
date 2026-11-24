@@ -811,5 +811,6 @@
   "TODO 10b2: the Parts tree of a two-part STEP (hide, Only, Show all); the second open of the file comes from the cache and starts no worker; a broken IndexedDB reads it again, no error": 4,
   "TODO 10b2 fix: Section on before the first Parts open adds no fake solid rows": 3,
   "TODO 10c: Snap puts the 3D view on a drawing: a new drawing tab when none is open, else the last drawing tab; 150 mm wide, picture selected, pixels drawn, one Undo removes it": 5,
-  "TODO 11: Snap on a layout puts the picture on the sheet: the layout tab is the last 2D tab, 150 mm wide, selected, pixels drawn; Undo / Redo, move, rotate, Auto-nest leaves it; a recovered copy, Save As + reopen and Save as PDF keep it": 12
+  "TODO 11: Snap on a layout puts the picture on the sheet: the layout tab is the last 2D tab, 150 mm wide, selected, pixels drawn; Undo / Redo, move, rotate, Auto-nest leaves it; a recovered copy, Save As + reopen and Save as PDF keep it": 12,
+  "TODO 111c: pasted picture": 6
 }

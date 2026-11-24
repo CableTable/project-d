@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { copySnapshot, copyPlacedSnapshot, pasteSnapshot, partFromSnapshot } from './web/clipboard.js';
+import { copySnapshot, copyPlacedSnapshot, pasteSnapshot, partFromSnapshot, imageOfPaste, pasteChoice } from './web/clipboard.js';
 import { makePart } from './web/layoutdoc.js';
 import { newDoc, addEntities, addLayer, addBlock, line, circle, insert, entity, writeDxf } from './web/dxf-write.js';
 import { readDxf, flatten } from './web/drawing.js';
@@ -258,4 +258,20 @@ test('untranslated native dimensions and hatches can paste; unsupported scaling 
   const t = target(), before = structuredClone(t.raw);
   assert.throws(() => pasteSnapshot(copyAll(raw, 25.4), t), /Cannot scale UNKNOWN/);
   assert.deepEqual(t.raw, before);
+});
+
+test('TODO 111c: imageOfPaste takes the image item or file, pasteChoice lets the latest copy win', () => {
+  const file = { type: 'image/png' }, text = { type: 'text/plain' };
+  assert.equal(imageOfPaste({ items: [{ kind: 'string', type: 'text/plain' }, { kind: 'file', type: 'image/png', getAsFile: () => file }], files: [] }), file, 'an image item');
+  assert.equal(imageOfPaste({ items: [], files: [text, file] }), file, 'an image file when there is no item');
+  assert.equal(imageOfPaste({ items: [{ kind: 'file', type: 'application/pdf', getAsFile: () => text }], files: [text] }), null, 'a file that is not an image');
+  assert.equal(imageOfPaste({ items: [{ kind: 'string', type: 'text/plain' }], files: [] }), null, 'text only');
+  assert.equal(imageOfPaste(null), null, 'no clipboardData');
+  assert.equal(pasteChoice(file, '', 'Project D copy x'), 'picture', 'an image and no marker text');
+  assert.equal(pasteChoice(file, 'a screenshot caption', 'Project D copy x'), 'picture', 'an image with other text');
+  assert.equal(pasteChoice(file, 'Project D copy x', 'Project D copy x'), 'objects', 'the marker text: the in-app copy is the latest');
+  assert.equal(pasteChoice(file, '', ''), 'picture', 'no in-app copy yet: an empty text is not a marker');
+  assert.equal(pasteChoice(null, 'Project D copy x', 'Project D copy x'), 'objects', 'marker, no image');
+  assert.equal(pasteChoice(null, 'plain text from a browser', 'Project D copy x'), 'objects', 'text from another program: the in-app objects');
+  assert.equal(pasteChoice(null, '', ''), 'objects', 'nothing: the in-app paste says so');
 });

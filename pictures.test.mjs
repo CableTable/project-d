@@ -67,3 +67,21 @@ test('TODO 305a: a recovery copy keeps its pictures, whole and only valid ones',
   assert.deepEqual(c.pics, [pic]);
   assert.deepEqual(RC.cleanCopies([{ id: 'a', name: 'n', kind: 'drawing', dxf: 'x' }])[0].pics, []);
 });
+
+test('TODO 111c: a pasted picture is 96 dpi, fits 80% of the view when larger, long side capped at 4096 px', () => {
+  const near = (a, b) => assert.ok(Math.abs(a - b) < 1e-9, `${a} vs ${b}`);
+  const small = PIC.pictureSize(800, 600);
+  assert.deepEqual([small.w, small.h], [800, 600]);
+  near(small.mm[0], 800 * 25.4 / 96); near(small.mm[0], 211.6666666666667);                 // an 800 px screenshot = 212 mm
+  const fit = PIC.pictureSize(800, 600, [1000, 1000]);
+  assert.deepEqual(fit.mm, small.mm, 'smaller than 80% of the view: true size');
+  const tight = PIC.pictureSize(800, 600, [200, 1000]);
+  near(tight.mm[0], 160); near(tight.mm[1], 120);                                           // width-limited: 80% of 200, same shape
+  const tall = PIC.pictureSize(800, 600, [1000, 100]);
+  near(tall.mm[1], 80); near(tall.mm[0] / tall.mm[1], 800 / 600);                           // height-limited
+  const photo = PIC.pictureSize(8192, 4096);
+  assert.deepEqual([photo.w, photo.h], [4096, 2048], 'long side 4096, same shape');
+  near(photo.mm[0], 4096 * 25.4 / 96);
+  assert.deepEqual([PIC.pictureSize(4096, 100).w, PIC.pictureSize(4096, 100).h], [4096, 100], 'exactly 4096 is kept');
+  assert.deepEqual([PIC.pictureSize(10000, 1).w, PIC.pictureSize(10000, 1).h], [4096, 1], 'a thin strip keeps one row');
+});

@@ -77,7 +77,7 @@ import * as LD from './layoutdoc.js';
 import { labelGaps } from './pdf-source.js';
 import { isDimPart, isSettled, dimNoun, insertPlacement } from './layoutdim.js';
 import { dropPart } from './dropin.js';
-import { copySnapshot, copyPlacedSnapshot, drawingFromPlaced, pasteSnapshot, partFromSnapshot } from './clipboard.js';
+import { copySnapshot, copyPlacedSnapshot, drawingFromPlaced, pasteSnapshot, partFromSnapshot, imageOfPaste, pasteChoice } from './clipboard.js';
 import * as PL from './place.js';
 import * as A from './arrange.js';
 import * as G from './guides.js';
@@ -107,7 +107,7 @@ import { partSource, readTitleBlock, withTitleBlock, planPagesPdf, hasPagePictur
 import { pageToSvg } from './svg-write.js';
 import { readPdf, renderPdfPage, renderPdfPages, renderPdfPictures, isPdf, pageLayout } from './pdf-read.js';
 import { readTiff } from './tiff.js';
-import { preloadPictures, rawPixels, isPng, docImages } from './pictures.js';
+import { preloadPictures, rawPixels, isPng, docImages, pictureSize } from './pictures.js';
 import { panelWidth } from './docker.js';
 
 const SVGNS = 'http://www.w3.org/2000/svg';
@@ -629,8 +629,8 @@ function buildMenus() {
       ['Redo', () => undoCurrent(true), 'Ctrl+Y', () => ui.startScreen.hidden && !!historyOf(curDoc())?.canRedo],
       ['Copy', copySelection, 'Ctrl+C', () => curLay() ? !!selItems().length : !!editable()?.sel.size],
       ['Cut', cutSelection, null, () => ui.startScreen.hidden && !!editable()?.sel.size],
-      ['Paste', pasteSelection, 'Ctrl+V', () => !!clipboard && (!!cmpDoc() || !!curDoc()?.lay || !!editable())],
-      ['Paste in place', pasteInPlace, 'Ctrl+Shift+V', () => ui.startScreen.hidden && !!clipboard && (!!cmpDoc() || !!curDoc()?.lay || !!editable())],
+      ['Paste', pasteSelection, 'Ctrl+V'],       // always enabled: the system clipboard may hold a picture (TODO 111c); "Nothing to paste" says when it holds nothing
+      ['Paste in place', pasteInPlace, 'Ctrl+Shift+V', () => ui.startScreen.hidden],
       ['Undo history…', showHistory, null, () => !!historyOf(curDoc())],
       ['Select all', selectAll, 'Ctrl+A', () => ui.startScreen.hidden && (!!editable() || !!curLay())],
       ['Delete', () => (curLay() ? deletePlaced() : deleteSelection()), 'Del', () => { const d = editable(); return ui.startScreen.hidden && (d ? d.sel.size > 0 : !!selectedPlaced() || !!balSelItem(curLay() && curDoc())); }]],
@@ -948,7 +948,7 @@ function ribbonContents(kind) {
       onkeydown: (e) => { if (e.key === 'Enter') e.target.blur(); } })),
       btn('Show differences', EYE, () => { cmpDoc().cmp.show = !cmpDoc().cmp.show; update(); }, { small: true, pressed: () => cmpDoc().cmp.show }),
       btn('Compare', '<rect x="3" y="6" width="12" height="13"/><rect x="9" y="5" width="12" height="13" stroke-dasharray="2 2"/>', () => cmpRun(cmpDoc()), { enabled: () => cmpDoc().cmp.items.filter((x) => x.checked).length >= 2 }))];
-  const groups = [group('Clipboard', btn('Paste', paste, pasteSelection, { enabled: () => !!clipboard && (!!cmpDoc() || !!editable() || !!curLay()) }),
+  const groups = [group('Clipboard', btn('Paste', paste, pasteSelection),
     stack(btn('Cut', TOOLS.find((t) => t.id === 'trim').svg, cutSelection, { small: true, enabled: () => !!editable()?.sel.size }),
       btn('Copy', copy, copySelection, { small: true, enabled: () => curLay() ? !!selItems().length : !!editable()?.sel.size }),
       btn('Select all', '<rect x="4" y="4" width="16" height="16" stroke-dasharray="3 2"/><path d="M8 12l3 3 5-6"/>', selectAll, { small: true, enabled: () => !!editable() || !!curLay() })))];
@@ -1429,6 +1429,13 @@ async function drawModel(d) {
   if (state.docs.includes(d)) d.model.done = done; else done();
 }
 const SNAP_MM = 150;
+/** An IMAGE entity `width` wide (drawing units) with its lower-left corner at [x, y]; w × h are the pixels of the PNG data URL `px` (Snap and a pasted picture). */
+function imageEntity(px, w, h, x, y, width, layer) {
+  const side = width / w;
+  const pic = entity('IMAGE', [[10, x], [20, y], [30, 0], [11, side], [21, 0], [31, 0], [12, 0], [22, side], [32, 0], [13, w], [23, h]], { layer });
+  pic.r.px = px;
+  return pic;
+}
 /** Snap (TODO 10c, 11): the 3D view's PNG becomes an IMAGE, SNAP_MM wide and centred on the view, on the last 2D tab: a drawing (an empty tab becomes the drawing) or a layout (one layout object on the current layer, saved as a block); Compare, a many-page PDF or no tab: a new drawing tab. It is selected; one Undo removes it. */
 async function snapView(blob, w, h) {
   const px = await new Promise((ok, no) => { const r = new FileReader(); r.onload = () => ok(r.result); r.onerror = () => no(r.error); r.readAsDataURL(blob); });
@@ -1441,8 +1448,7 @@ async function snapView(blob, w, h) {
   const lay = curDoc().lay;
   if (lay) {                                                        // sheet mm, y up: the picture is a layout object (156b2 path: one pushLay, one Undo)
     const r = ui.canvas.getBoundingClientRect(), at = sheetAt(r.left + r.width / 2, r.top + r.height / 2), side = SNAP_MM / w, layer = curLayerName(curDoc());
-    const pic = entity('IMAGE', [[10, at[0] - SNAP_MM / 2], [20, at[1] - side * h / 2], [30, 0], [11, side], [21, 0], [31, 0], [12, 0], [22, side], [32, 0], [13, w], [23, h]], { layer });
-    pic.r.px = px;
+    const pic = imageEntity(px, w, h, at[0] - SNAP_MM / 2, at[1] - side * h / 2, SNAP_MM, layer);
     view.fitted = false;
     const made = layObjectsAdd(curDoc(), 'Snap view', [pic]);
     if (!made) { note('Snap: could not put the picture on the sheet'); return; }
@@ -1454,8 +1460,7 @@ async function snapView(blob, w, h) {
   if (!d) { note('Snap: could not put the picture on a drawing'); return; }
   const fresh = !d.raw.entities.length, r = ui.canvas.getBoundingClientRect(), at = fresh ? [0, 0] : toDrawing(d, r.left + r.width / 2, r.top + r.height / 2);
   const width = SNAP_MM / d.factor, side = width / w, layer = curLayerName(d);
-  const pic = entity('IMAGE', [[10, at[0] - width / 2], [20, at[1] - side * h / 2], [30, 0], [11, side], [21, 0], [31, 0], [12, 0], [22, side], [32, 0], [13, w], [23, h]], { layer });
-  pic.r.px = px;
+  const pic = imageEntity(px, w, h, at[0] - width / 2, at[1] - side * h / 2, width, layer);
   if (!fresh) view.fitted = false;                                  // the view stays where it is, as when he draws
   if (!commit(d, { entities: [...d.raw.entities, pic], blocks: d.raw.blocks, layers: layersWith(d.raw, layer) }, 'Snap view')) return;
   setSel(d, new Set([d.raw.entities.indexOf(pic)]));
@@ -7182,6 +7187,7 @@ function copySelection() {
     const items = selItems();
     if (!items.length) return;
     clipboard = copyPlacedSnapshot(lay.parts, items.map((x) => placementOf(x.p)));
+    markCopy();
     renderRibbon();
     note(`Copied ${items.length} placed part${items.length === 1 ? '' : 's'}`);
     return;
@@ -7190,6 +7196,7 @@ function copySelection() {
   if (!d?.sel.size) { note('Nothing selected to copy'); return; }
   const name = baseName(d.name) + (d.pdf && PS.sheetNumbers(d.pdf).length > 1 ? ` sheet ${d.pdf.page}` : '');
   clipboard = copySnapshot(d.raw, d.sel, d.factor, name, baseName(d.name));
+  markCopy();
   renderRibbon();
   note(`Copied ${d.sel.size} drawing object${d.sel.size === 1 ? '' : 's'}`);
 }
@@ -7197,13 +7204,64 @@ function cutSelection() {
   if (!editable()?.sel.size) return;
   copySelection(); deleteSelection();
 }
-function pasteSelection() { return pasteClipboard(false); }
-function pasteInPlace() { return pasteClipboard(true); }
-async function pasteClipboard(inPlace) {
+let copyMarker = '';       // the text the last in-app Ctrl+C put on the system clipboard (TODO 111c): that text there means the in-app objects are the latest copy
+function markCopy() {
+  copyMarker = `Project D copy ${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+  try { navigator.clipboard.writeText(copyMarker).catch((err) => console.warn('Copy: system clipboard not written', err)); } catch (err) { console.warn('Copy: system clipboard not written', err); }
+}
+/** Edit > Paste, the ribbon, Ctrl+Shift+V: read the system clipboard (a picture from another program?), else the in-app objects. Ctrl+V itself arrives as a `paste` event. */
+async function pasteSystem(inPlace) {
+  let image = null, text = '';
+  try {
+    for (const it of await navigator.clipboard.read()) {
+      const type = it.types.find((t) => /^image\//.test(t));
+      if (type && !image) image = await it.getType(type);
+      if (it.types.includes('text/plain')) text = await (await it.getType('text/plain')).text();
+    }
+  } catch { /* refused or empty: the in-app objects */ }
+  return pasteFrom(image, text, inPlace);
+}
+function pasteSelection() { return pasteSystem(false); }
+function pasteInPlace() { return pasteSystem(true); }
+function pasteFrom(image, text, inPlace) {
+  if (!ui.startScreen.hidden) { note('Open or start a drawing first'); return; }       // the Start screen: no paste behind it (as every other key there)
+  return pasteChoice(image, text, copyMarker) === 'picture' ? pastePicture(image) : pasteClipboard(inPlace);
+}
+/** A picture from another program: drawn to a canvas and stored as PNG (long side at most 4096 px), then follow paste like the objects: an IMAGE on a drawing or PDF sheet, a layout object on a layout (TODO 111c). */
+async function pastePicture(blob) {
+  let tab = curDoc();
+  if (tab?.cmp) { note('Pictures paste in Drawings and Layouts tabs'); return; }
+  if (!tab || tab.model || tab.parked) { note('Paste: open a drawing or layout first'); return; }
+  let bitmap;
+  try { bitmap = await createImageBitmap(blob); } catch { note('Paste: could not read this picture'); return; }
+  const size = pictureSize(bitmap.width, bitmap.height), canvas = document.createElement('canvas');
+  canvas.width = size.w; canvas.height = size.h;
+  canvas.getContext('2d').drawImage(bitmap, 0, 0, size.w, size.h);
+  bitmap.close();
+  const px = canvas.toDataURL('image/png');
+  canvas.width = canvas.height = 0;
+  if (!isPng(px)) { note('Paste: could not read this picture'); return; }
+  await preloadPictures([{ k: 'i', px }]);
+  if (tab !== curDoc()) { note('Paste: the tab changed, paste again'); return; }
+  if (!tab.raw && !tab.lay) ensureScratch(tab);
+  const d = tab.lay ? tab : editable(), r = ui.canvas.getBoundingClientRect();
+  if (!d) { note('Paste: open a drawing or layout first'); return; }
+  const at = (x, y) => (d.lay ? sheetAt(x, y) : toDrawing(d, x, y).map((v) => v * d.factor)), a = at(r.left, r.top), b = at(r.right, r.bottom);
+  const fresh = !d.lay && !d.raw.entities.length, big = pictureSize(size.w, size.h, fresh ? null : [Math.abs(b[0] - a[0]), Math.abs(b[1] - a[1])]);
+  const layer = curLayerName(d), pic = imageEntity(px, size.w, size.h, 0, 0, big.mm[0] / (d.lay ? 1 : d.factor), layer);
+  if (d.lay) {
+    const part = LD.objectPart('o' + uid(), LD.nextName('Picture', new Set(Object.values(d.lay.parts).map((p) => p.name))), pic, LD.layersOf(d.lay), {}, {});
+    if (!part) { note('Paste: could not put the picture on the sheet'); return; }
+    return pasteClipboard(false, { parts: { [part.id]: part }, placed: [LD.objectPlacement(part)] });
+  }
+  return pasteClipboard(false, { raw: { header: {}, layers: {}, ltypes: {}, blocks: {}, entities: [pic] }, factor: d.factor, name: 'Picture' });
+}
+async function pasteClipboard(inPlace, snap = clipboard) {
   const d = cmpDoc() || editable() || curDoc();
-  if (!clipboard) { note('Nothing to paste: copy drawing objects first'); return; }
+  if (!snap) { note('Nothing to paste: copy drawing objects first'); return; }
+  if (!d) { note('Paste: open a drawing or layout first'); return; }       // the Start screen: Paste is always on now
   if (!d?.cmp && !d?.lay && !editable()) {
-    if (!d.raw) ensureScratch(d, clipboard.raw?.header?.$INSUNITS);
+    if (!d.raw) ensureScratch(d, snap.raw?.header?.$INSUNITS);
     if (!editable()) { note('Paste: open a drawing or layout first'); return; }
   }
   try {
@@ -7211,7 +7269,7 @@ async function pasteClipboard(inPlace) {
     state.paste = null;
     if (d.cmp) {
       if (d.cmp.items.length >= CMP.MAX_ITEMS) { note('Compare holds five drawings; remove one first'); return; }
-      const source = { ...structuredClone(clipboard.placed ? drawingFromPlaced(clipboard) : clipboard), name: clipboard.name || 'Layout paste', off: new Set() };
+      const source = { ...structuredClone(snap.placed ? drawingFromPlaced(snap) : snap), name: snap.name || 'Layout paste', off: new Set() };
       source.fl = flatten(source.raw);
       const item = CMP.addItem(d.cmp.items, source).at(-1), box = item.box;
       if (inPlace) { cmpAddPart(d, source, [0, 0]); return; }
@@ -7223,9 +7281,9 @@ async function pasteClipboard(inPlace) {
     }
     if (d.lay) {
       let parts, placed, part;
-      if (clipboard.placed) ({ parts, placed } = structuredClone(clipboard));
+      if (snap.placed) ({ parts, placed } = structuredClone(snap));
       else {
-        part = partFromSnapshot(clipboard, uid(), lib.items.map((r) => r.name));
+        part = partFromSnapshot(snap, uid(), lib.items.map((r) => r.name));
         if (!part) { note('Paste: the selection has no size (kept dimensions are not part of a part)'); return; }
         parts = { [part.id]: part };
         placed = [placement1(part.id, part.box[0] * part.factor, part.box[1] * part.factor)];
@@ -7241,7 +7299,7 @@ async function pasteClipboard(inPlace) {
       return;
     }
     const names = new Set([...Object.keys(d.raw.layers), ...d.fl.layers.map((l) => l.name)]);
-    const r = pasteSnapshot(clipboard, { raw: d.raw, factor: d.factor, names, hidden: hiddenLayerNames(d), locked: d.locked || [], cur: curLayerName(d), space: spaceOf(d.fl), dp: state.dp });
+    const r = pasteSnapshot(snap, { raw: d.raw, factor: d.factor, names, hidden: hiddenLayerNames(d), locked: d.locked || [], cur: curLayerName(d), space: spaceOf(d.fl), dp: state.dp });
     const sel = new Set(Array.from({ length: r.count }, (_, i) => r.from + i));
     if (!inPlace) {
       const preview = flatten({ ...d.raw, ...r, entities: r.entities.slice(r.from) });
@@ -12824,7 +12882,7 @@ function editKey(e) {
   const key = SC.eventKey(e), ext = extraCommand(e);       // an extra key acts as its command's main key would at this place (save / save as: see the Ctrl+S listener)
   const own = ownCommands.find((c) => c.key && c.key === key && !SC.fixedKey(c.name)) || (ext && !SC.fixedKey(ext.name) ? ext : null);
   if (key === 'Ctrl+C' || key === 'Ctrl+V' || key === 'Ctrl+Shift+V') {
-    if (inField || e.target?.isContentEditable) return;
+    if (inField || e.target?.isContentEditable || key === 'Ctrl+V') return;       // Ctrl+V is not stopped: the page's `paste` event runs it (TODO 111c: it carries a picture from another program)
     e.preventDefault(); FIXED_RUN[key === 'Ctrl+C' ? 'copy' : key === 'Ctrl+Shift+V' ? 'pasteorig' : 'paste'](); return;
   }
   if (ext && SC.fixedKey(ext.name) && ext.name !== 'save' && ext.name !== 'saveas') {
@@ -14697,6 +14755,11 @@ async function init() {
     else { const x = extraCommand(e); if (x?.name === 'save' || x?.name === 'saveas') { e.preventDefault(); save(x.name === 'saveas'); } }       // an extra key of Save / Save as, as Ctrl+S: also in a field
     ctrlTap = e.key === 'Control' && !e.repeat;                       // 163a: a Ctrl tap (down, up, nothing between) cycles a hot grip's options
     editKey(e);
+  });
+  document.addEventListener('paste', (e) => {                       // Ctrl+V (TODO 111c): the system clipboard's picture, else the in-app objects; text fields, dialogs and the 3D / PDF dialogs keep their own paste
+    if (!ui.startScreen.hidden || e.target?.closest?.('input, textarea, select') || e.target?.isContentEditable || document.querySelector('.pop-back, .pdlg-back, dialog[open], [data-testid=pdf-dialog], [data-testid=qselect-dialog]')) return;
+    e.preventDefault();
+    pasteFrom(imageOfPaste(e.clipboardData), e.clipboardData?.getData('text/plain') || '', false);
   });
   document.addEventListener('keyup', (e) => { if (e.key === 'Control' && ctrlTap) { ctrlTap = false; gripOptionCycle(); } });
   const arcFlip = (on) => { const T = state.draw; if (drawLive() && T.kind === 'arc' && T.flip !== on) { T.flip = on; paintOverlay(); } };       // 347b: Ctrl held turns the Arc the other way: the preview follows the key, not only the pointer

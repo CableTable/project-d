@@ -13183,7 +13183,7 @@ try {
         const actual = /X (-?[\d.]+), Y (-?[\d.]+)/.exec(await q('cmp-hint').textContent()).slice(1).map(Number);
         actual.forEach((v, i) => assert.ok(Math.abs(v - want[i]) < .02, `offset ${actual} vs ${want}`));
       };
-      const count = async (n) => assert.equal(await q('cmp-item').count(), n);
+      const count = async (n) => { await p.waitForFunction((n) => document.querySelectorAll('[data-testid=cmp-item]').length === n, n).catch(() => {}); assert.equal(await q('cmp-item').count(), n); };       // TODO 111c: Paste in place reads the system clipboard first, so it lands a moment later
       const noGhost = () => p.waitForFunction(() => +document.querySelector('[data-testid=drawing]').dataset.preview === 0);
       const follow = async () => {
         await move(70, 110); await key('Control+v');
@@ -13267,7 +13267,7 @@ try {
       }
       for (let i = 0; i < 4; i++) await command('pasteorig');
       await count(5); await offset([0, 0]);
-      for (const paste of ['paste', 'pasteorig']) { await command(paste); await count(5); await offset([0, 0]); assert.equal(await q('cmd-prompt').textContent(), 'Compare holds five drawings; remove one first'); }
+      for (const paste of ['paste', 'pasteorig']) { await p.evaluate(() => { document.querySelector('[data-testid=cmd-prompt]').textContent = ''; }); await command(paste); await p.waitForFunction(() => document.querySelector('[data-testid=cmd-prompt]').textContent === 'Compare holds five drawings; remove one first'); await count(5); await offset([0, 0]); assert.equal(await q('cmd-prompt').textContent(), 'Compare holds five drawings; remove one first'); }
       await key('Control+z'); await count(4); await offset([0, 0]);
       for (const kind of ['drawing', 'layout']) for (const theme of ['light', 'dark']) assert.ok(readFileSync(`${shotDir}/todo211c-${kind}-follow-${theme}.png`).length > 1000);
     } finally { await context.close(); }
@@ -13457,6 +13457,7 @@ try {
         await p.locator('.dtab', { hasText: sourceName }).click(); await p.locator('.coords').click();
         await p.keyboard.press('Control+a'); await p.keyboard.press('Delete');
         await q('new-tab').click(); await p.keyboard.press('Control+Shift+v');
+        await p.waitForFunction(() => /Pasted 2 drawing objects at the same coordinates/.test(document.querySelector('[data-testid=cmd-prompt]').textContent));       // TODO 111c: Paste in place reads the system clipboard first
         assert.match(await q('cmd-prompt').textContent(), /Pasted 2 drawing objects at the same coordinates/);
         const inPlace = await save();
         assert.deepEqual(geometry(inPlace), expected, 'paste in place keeps the snapshot after editing its source');
@@ -13631,7 +13632,7 @@ try {
     const copiedHeight = readDim('PD_DIM_R1', source.blocks.PD_DIM_R1).params.textH;
     await open('clipboard-A.dxf', source);
     await page.locator('[data-menu=Edit]').click();
-    assert.equal(await editItem('Copy').isDisabled(), true); assert.equal(await editItem('Paste').isDisabled(), true);
+    assert.equal(await editItem('Copy').isDisabled(), true); assert.equal(await editItem('Paste').isDisabled(), false);       // TODO 111c: Paste is always on (the system clipboard may hold a picture)
     await page.keyboard.press('Escape');
     await page.keyboard.press('Control+a'); await page.keyboard.press('Control+c');
     assert.match(await prompt(), /Copied 2 drawing objects/);
@@ -18745,10 +18746,12 @@ try {
         await gripWhen(grid.grips[i]);
       }
       if (kind === 'Compare') {
-        const immediate = await page.evaluate(() => {
+        // TODO 111c: Paste in place reads the system clipboard first, so it lands a few ms after the key (not in the same task): the grips go in the same task as the paste
+        const immediate = await page.evaluate(async (n) => {
           document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'V', ctrlKey: true, shiftKey: true, bubbles: true }));
+          while (document.querySelectorAll('[data-testid=cmp-item]').length < n) await new Promise((ok) => setTimeout(ok, 1));
           return { snapshots: document.querySelectorAll('[data-testid=cmp-item]').length, grips: document.querySelectorAll('[data-testid=grip], [data-testid=grip-hot]').length };
-        });
+        }, items0 + 1);
         assert.deepEqual(immediate, { snapshots: items0 + 1, grips: 0 }, 'Compare paste drops the selected linked source\'s grips before the queued paint');
         await frames(); await gripWhen(0);
       }
@@ -39997,6 +40000,150 @@ try {
       assert.equal(await nParts(), 1, 'the reopened layout has its one picture');
       await coloursWhen((n) => n >= 20, 'the reopened picture has its pixels');
     });
+  });
+
+  await step('TODO 111c: pasted picture', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, permissions: ['clipboard-read', 'clipboard-write'] });
+    try {
+      const p = await context.newPage(), q = (id) => p.getByTestId(id);
+      p.on('pageerror', (e) => errors.push(String(e)));
+      await p.goto(URL_); await q('count').waitFor({ state: 'attached' });
+      const menu = async (name, item) => { await p.locator(`[data-menu=${name}]`).click(); await p.getByRole(item.startsWith('Theme:') ? 'menuitemcheckbox' : 'menuitem', { name: item.startsWith('Theme:') ? new RegExp(item + '\\b') : item, exact: true }).click(); };
+      const said = (re) => p.waitForFunction((src) => new RegExp(src).test(document.querySelector('[data-testid=cmd-prompt]').textContent), re.source);
+      const saveDoc = async () => {
+        await p.waitForTimeout(110);
+        const [dl] = await Promise.all([p.waitForEvent('download', { predicate: (d) => d.suggestedFilename().endsWith('.dxf') }), p.keyboard.press('Control+s')]);
+        return readDxf(readFileSync(await dl.path(), 'latin1'));
+      };
+      const atPoint = (x, y) => p.evaluate(([x, y]) => {
+        const sheet = document.querySelector('rect.sheet'), b = sheet.getBoundingClientRect(), sc = b.width / +sheet.getAttribute('width');
+        return { x: b.x + x * sc, y: b.y + (+sheet.getAttribute('height') - y) * sc };
+      }, [x, y]);
+      const move = async (x, y) => { const a = await atPoint(x, y); await p.mouse.move(a.x, a.y); };
+      const click = async (x, y) => { const a = await atPoint(x, y); await p.mouse.click(a.x, a.y); };
+      // a paste event as another program's picture makes it: a File of this type in clipboardData (text: what else is on the clipboard)
+      const pastePic = (type = 'image/png', w = 40, h = 20, text = '') => p.evaluate(async ([type, w, h, text]) => {
+        const c = document.createElement('canvas'); c.width = w; c.height = h;
+        const g = c.getContext('2d');
+        for (let x = 0; x < w; x++) { g.fillStyle = `hsl(${x * 9},80%,50%)`; g.fillRect(x, 0, 1, h); }
+        const blob = await new Promise((ok) => c.toBlob(ok, type)), dt = new DataTransfer();
+        dt.items.add(new File([blob], 'clip', { type: blob.type }));
+        if (text) dt.setData('text/plain', text);
+        document.body.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+      }, [type, w, h, text]);
+      const follows = () => said(/follows the cursor, click to place/);
+      const images = (doc) => doc.entities.filter((e) => e.type === 'IMAGE');
+      const field = (e, code) => +e.r.v[e.r.c.indexOf(code)];
+      const nObjects = () => p.locator('[data-group=parts] .part-hit').count();
+      const shots = async (name) => {
+        await p.waitForTimeout(250); await p.screenshot({ path: `${shotDir}/s12-${name}-light.png` });
+        await menu('View', 'Theme: dark'); await p.waitForTimeout(300); await p.screenshot({ path: `${shotDir}/s12-${name}-dark.png` });
+        await menu('View', 'Theme: light');
+        await p.setViewportSize({ width: 1024, height: 700 }); await p.waitForTimeout(300); await p.screenshot({ path: `${shotDir}/s12-${name}-1024.png` });
+        assert.ok(await p.evaluate(() => document.querySelector('.rowtools').getBoundingClientRect().right <= window.innerWidth), 'the top bar fits at 1024 px');
+        await p.setViewportSize({ width: 1440, height: 900 });
+      };
+      const tauri = () => p.evaluate(() => { window.__p111 = { files: {}, next: '' }; window.__TAURI__ = {
+        dialog: { save: async () => window.__p111.next, open: async () => window.__p111.next, ask: async () => true },
+        fs: { exists: async () => false, readFile: async (f) => { const b = window.__p111.files[f]; if (!b) throw new Error('missing'); return Uint8Array.from(b); }, writeFile: async (f, bytes) => { window.__p111.files[f] = [...bytes]; }, writeTextFile: async (f, text) => { window.__p111.files[f] = [...new TextEncoder().encode(text)]; } } }; });
+      // Save As, close, Open, Save As again under another name: the sidecar PNG keeps the same pixels
+      const roundTrip = async (base) => {
+        const save = async (name) => { await p.evaluate((f) => { window.__p111.next = f; }, `C:/jobs/${name}.dxf`); await menu('File', 'Save As…'); await said(new RegExp('^Saved ' + name + '\\.dxf')); };
+        await save(base);
+        const first = await p.evaluate(() => window.__p111.files);
+        assert.ok(first[`C:/jobs/${base}.dxf`] && first[`C:/jobs/${base}-img1.png`] && !first[`C:/jobs/${base}-img2.png`], 'the DXF and one sidecar PNG');
+        const png = Buffer.from(first[`C:/jobs/${base}-img1.png`]);
+        assert.deepEqual([...png.subarray(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10], 'the sidecar is a PNG');
+        assert.equal(png.readUInt32BE(16), 40, 'the pasted pixels: 40 wide'); assert.equal(png.readUInt32BE(20), 20);
+        await p.locator('.dtab.on .x').click();
+        await menu('File', 'Open…'); await said(new RegExp('^Opened ' + base + '\\.dxf'));
+        await save(base + '2');
+        const second = await p.evaluate(() => window.__p111.files);
+        assert.deepEqual(second[`C:/jobs/${base}2-img1.png`], first[`C:/jobs/${base}-img1.png`], 'the reopened picture has the same pixels');
+      };
+
+      // ---- the Start screen: no paste behind it (Ctrl+V does nothing, Edit > Paste says so)
+      const errorsBefore = errors.length;
+      await q('start-tab').click(); await q('start-screen').waitFor();
+      await pastePic(); await p.waitForTimeout(200);
+      assert.equal(errors.length, errorsBefore, 'a picture pasted on the Start screen raises no error');
+      assert.equal(await q('start-screen').isVisible(), true, 'and the Start screen stays');
+      await menu('Edit', 'Paste'); await said(/Open or start a drawing first/);
+      // ---- a drawing tab
+      const target = newDoc(4); addEntities(target, dxfLine(0, 0, 220, 220), dxfLine(140, 140, 180, 140));
+      await q('picker').setInputFiles({ name: '111c target.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(target)) });
+      await waitTab(p, '111c target.dxf');
+      await p.locator('[data-testid=canvas]').getByRole('button', { name: 'Fit', exact: true }).click();
+      await move(60, 100); await pastePic(); await follows();
+      await move(90, 120); await p.waitForTimeout(150); await p.screenshot({ path: `${shotDir}/s12-paste-picture-follow.png` });
+      await p.keyboard.press('Escape'); await said(/Paste cancelled/);
+      assert.equal(images(await saveDoc()).length, 0, 'Esc cancels: no picture');
+      await move(60, 100); await pastePic('image/jpeg'); await follows();      // any type: a JPEG is drawn to a canvas and stored as PNG
+      await move(90, 120); await click(90, 120);
+      await p.waitForFunction(() => document.querySelector('[data-testid=sel-count]').textContent.trim() === '1 selected');
+      await said(/Pasted 1 drawing object at the cursor/);
+      let doc = await saveDoc(), pic = images(doc);
+      assert.equal(pic.length, 1, 'one IMAGE');
+      assert.equal(doc.entities.length, 3);
+      assert.ok(Math.abs(field(pic[0], 11) - 25.4 / 96) < 1e-6, `96 dpi: ${field(pic[0], 11)} mm a pixel`);
+      assert.deepEqual([field(pic[0], 13), field(pic[0], 23)], [40, 20]);
+      assert.ok(Math.abs(field(pic[0], 10) - 90) < 15 && Math.abs(field(pic[0], 20) + 20 * 25.4 / 96 - 120) < 15, `its top-left corner is at the click: ${field(pic[0], 10)}, ${field(pic[0], 20)}`);
+      await shots('paste-picture');
+      await p.keyboard.press('Control+z');
+      await p.waitForFunction(() => document.querySelector('[data-testid=sel-count]').textContent.trim() !== '1 selected');
+      assert.equal(images(await saveDoc()).length, 0, 'one Undo takes the picture away');
+
+      // ---- in-app Ctrl+C then Ctrl+V still pastes the objects, and the latest copy wins over a picture left on the clipboard
+      await p.locator('.coords').click(); await p.keyboard.press('Control+a'); await p.keyboard.press('Control+c');
+      await said(/Copied 2 drawing objects/);
+      await p.waitForFunction(() => navigator.clipboard.readText().then((t) => /^Project D copy /.test(t)));
+      const marker = await p.evaluate(() => navigator.clipboard.readText());
+      await move(60, 100); await p.keyboard.press('Control+v'); await follows();
+      await click(60, 100);
+      doc = await saveDoc();
+      assert.equal(doc.entities.length, 4, 'Ctrl+C then Ctrl+V pasted the two objects');
+      assert.equal(images(doc).length, 0);
+      await move(60, 100); await pastePic('image/png', 40, 20, marker); await follows(); await p.keyboard.press('Escape');
+      await p.keyboard.press('Control+z');
+      assert.equal(images(await saveDoc()).length, 0, 'an image with the marker text: the in-app objects, not a picture');
+      // Edit > Paste reads the system clipboard: a real image there is a picture
+      await p.evaluate(async () => {
+        const c = document.createElement('canvas'); c.width = 40; c.height = 20; const g = c.getContext('2d'); g.fillStyle = '#c00'; g.fillRect(0, 0, 40, 20);
+        await navigator.clipboard.write([new ClipboardItem({ 'image/png': await new Promise((ok) => c.toBlob(ok, 'image/png')) })]);
+      });
+      await menu('Edit', 'Paste'); await follows(); await click(60, 100);
+      assert.equal(images(await saveDoc()).length, 1, 'Edit > Paste took the picture from the system clipboard');
+      await p.keyboard.press('Control+z');
+
+      // ---- a layout tab: the picture is a layout object (TODO 11)
+      await q('new-layout').click(); await p.locator('rect.sheet').waitFor();
+      assert.equal(await nObjects(), 0);
+      await move(60, 100); await pastePic(); await follows();
+      await move(90, 120); await p.keyboard.press('Escape'); await said(/Paste cancelled/);
+      assert.equal(await nObjects(), 0, 'Esc cancels');
+      await move(60, 100); await pastePic(); await follows(); await click(90, 120);
+      await p.waitForFunction(() => document.querySelectorAll('[data-group=tools] .sel-box').length === 1);
+      assert.equal(await nObjects(), 1, 'one picture object on the sheet');
+      await said(/Pasted 1 placed part at the cursor/);
+      await shots('paste-picture-layout');
+      await p.keyboard.press('Escape');
+      await p.keyboard.press('Control+z');
+      await p.waitForFunction(() => document.querySelectorAll('[data-group=parts] .part-hit').length === 0);
+      await p.keyboard.press('Control+y');
+      await p.waitForFunction(() => document.querySelectorAll('[data-group=parts] .part-hit').length === 1);
+      await p.keyboard.press('Control+z');
+      assert.equal(await nObjects(), 0, 'one Undo took it away, and Redo brought it back');
+      await p.keyboard.press('Control+y');
+      await tauri();                                                  // from here Save goes to the fake disk, not a download
+      await roundTrip('lay111');
+      assert.equal(await nObjects(), 1, 'the reopened layout has its picture');
+      await q('picker').setInputFiles({ name: '111c disk.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(target)) });
+      await waitTab(p, '111c disk.dxf');
+      await p.locator('[data-testid=canvas]').getByRole('button', { name: 'Fit', exact: true }).click();
+      await move(60, 100); await pastePic(); await follows(); await click(90, 120);
+      await p.waitForFunction(() => document.querySelector('[data-testid=sel-count]').textContent.trim() === '1 selected');
+      await roundTrip('pic111');
+    } finally { await context.close(); }
   });
 
   const picked =pickSteps(steps, only, selectStep, until);
