@@ -1,6 +1,7 @@
 // Copies the third-party code the page loads into web/vendor/ (not ours, not linted).   node tools/vendor.mjs   (npm run vendor)
 // pdf.js (pdfjs-dist, the legacy ES-module build: it runs in WebView2 / Chromium and older): the library and its worker.
 import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { build } from 'esbuild';
 
 const src = 'node_modules/pdfjs-dist/legacy/build/', dst = 'web/vendor/pdfjs/';
 mkdirSync(dst, { recursive: true });
@@ -35,3 +36,11 @@ mkdirSync(pc, { recursive: true });
 writeFileSync(pc + 'polygon-clipping.js', 'const module = { exports: {} }, exports = module.exports;\n' + readFileSync('node_modules/polygon-clipping/dist/polygon-clipping.umd.js', 'utf8') + '\nexport default module.exports;\n');
 copyFileSync('node_modules/polygon-clipping/LICENSE.md', pc + 'LICENSE');
 console.log('polygon-clipping ' + JSON.parse(readFileSync('node_modules/polygon-clipping/package.json', 'utf8')).version + ' -> ' + pc);
+
+// three.js (MIT, pinned to 0.186.1 in package.json) bundled with esbuild from tools/view-entry-three.mjs: the 3D viewer (web/viewers.js) loads it when a model opens.
+// Its fflate (MIT, inside three's examples) is bundled too, so LICENSE holds both.
+const th = 'web/vendor/three/';
+mkdirSync(th, { recursive: true });
+await build({ entryPoints: ['tools/view-entry-three.mjs'], bundle: true, format: 'esm', platform: 'browser', minify: true, legalComments: 'eof', outfile: th + 'three-view.js', logLevel: 'warning' });
+writeFileSync(th + 'LICENSE', readFileSync('node_modules/three/LICENSE', 'utf8').trimEnd() + '\n\n---\n\nfflate (bundled by three\'s 3MF and glTF loaders), MIT License\nCopyright (c) 2023 Arjun Barrett\nhttps://github.com/101arrowz/fflate/blob/master/LICENSE\n');
+console.log('three ' + JSON.parse(readFileSync('node_modules/three/package.json', 'utf8')).version + ' -> ' + th);

@@ -391,6 +391,7 @@ function setTheme(mode) {
   if (mode === 'light' || mode === 'dark') root.dataset.theme = mode; else delete root.dataset.theme;
   try { localStorage.setItem('pd-theme', mode); } catch { /* storage may be blocked */ }
   renderWorkArea();
+  for (const d of state.docs) if (d.model?.done) drawModel(d).catch((err) => note(d.name + ': ' + err.message));       // a viewer takes its colours when drawn
   if (ui.dcanvas && layout) { paintOverlay(); renderLayers(); }
   if (cmpDoc()) update(); // Compare colours and drawing tints are per theme
   renderRibbon();
@@ -534,13 +535,18 @@ function showOptions() {
     h('button', { class: 'btn', type: 'button', onclick: close }, 'Close')));
   document.body.append(back); document.addEventListener('keydown', onKey, true); mode.focus();
 }
+let lastDrawing = null, lastModel = null;       // the tabs "2D drawing" and "3D viewer" go back to
 function showStartScreen(on) {
-  ui.startScreen.hidden = !on;
+  const model = !on && curDoc()?.model;           // a model tab's viewer is shown in the Start screen's place (TODO 10a): the same "no drawing here" gates apply
+  ui.startScreen.hidden = !on && !model;
+  ui.startScreen.classList.toggle('model', !!model);
+  if (model) { if (ui.modelHost.firstChild !== model.el) ui.modelHost.replaceChildren(model.el); } else ui.modelHost.replaceChildren();
   ui.startTab.classList.toggle('on', on);
   ui.startTab.setAttribute('aria-pressed', String(on));
-  for (const b of Object.values(ui.toolBtns)) b.disabled = on;
+  for (const b of Object.values(ui.toolBtns)) b.disabled = on || !!model;
   railContour();
-  for (const b of ui.menuBtns) if (['Draw', 'Modify'].includes(b.dataset.menu)) b.disabled = on;
+  for (const b of ui.menuBtns) if (['Draw', 'Modify'].includes(b.dataset.menu)) b.disabled = on || !!model;
+  syncMode();
   renderRibbon();
   if (!on) return;
   const items = recentItems();
@@ -567,7 +573,8 @@ function buildStartScreen() {
   ui.startScreen = h('section', { class: 'start-screen', hidden: true, 'data-testid': 'start-screen', 'aria-label': 'Start screen' },
     h('h1', null, 'Start'), h('div', { class: 'start-content' },
       h('div', { class: 'start-actions' }, action('new', 'New drawing', () => { if (!curDoc().empty || curDoc().parked) addTab(emptyDoc()); }), action('layout', 'New layout', newLayoutTab),
-        action('open', 'Open…', openFile), action('compare', 'Compare drawings…', cmpStart)), ui.startRecent));
+        action('open', 'Open…', openFile), action('compare', 'Compare drawings…', cmpStart)), ui.startRecent),
+    ui.modelHost = h('div', { class: 'model-host', 'data-testid': 'model-host' }));
   // The overlay's pointer events belong to its controls, not the drawing underneath.
   for (const name of ['pointerdown', 'pointermove', 'pointerup', 'click', 'dblclick', 'wheel', 'contextmenu']) ui.startScreen.addEventListener(name, (e) => e.stopPropagation());
   return ui.startScreen;
@@ -1022,11 +1029,8 @@ function buildTabs() {
   });
   for (const event of ['pointerup', 'pointercancel', 'lostpointercapture']) ui.tabs.addEventListener(event, () => { drag = null; });
   ui.tabs.addEventListener('click', (e) => { if (dragged) { e.preventDefault(); e.stopPropagation(); dragged = false; } }, true);
-  const modeBtns = [['2D drawing', true], ['3D viewer', false]].map(([text, on]) => {
-    const b = h('button', { class: 'seg' + (on ? ' on' : ' off'), type: 'button', title: on ? null : 'Not built yet', 'aria-disabled': on ? null : 'true' }, text);
-    if (!on) b.addEventListener('click', () => note('3D viewer: not built yet'));
-    return b;
-  });
+  const modeBtns = ui.modeBtns = [['2D drawing', 'mode-2d', backTo2D], ['3D viewer', 'mode-3d', toModel]].map(([text, id, go]) =>
+    h('button', { class: 'seg' + (id === 'mode-2d' ? ' on' : ''), type: 'button', 'data-testid': id, 'aria-pressed': String(id === 'mode-2d'), onclick: () => { if ((id === 'mode-3d') !== ui.startScreen.classList.contains('model')) go(); } }, text));
   return h('div', { class: 'tabsrow' },
     ui.startTab = h('button', { class: 'dtab', type: 'button', 'data-testid': 'start-tab', 'aria-pressed': 'false', onclick: () => showStartScreen(true) },
       icon('<path d="M3 10l9-7 9 7M5 9v12h14V9M9 21v-8h6v8"/>', { size: 14 }), 'Start'),
@@ -1075,7 +1079,7 @@ function renderTabs() {
       if (d.parked) return null;            // the Start screen is all there is: no tab until a drawing is made or opened
       const x = h('span', { class: 'x', 'aria-label': 'Close ' + d.name, role: 'button' }, '×');
       x.addEventListener('click', (e) => { e.stopPropagation(); closeTab(d); });
-      const b = h('button', { class: 'dtab' + (i === state.doc ? ' on' : ''), type: 'button', 'data-kind': d.lay ? 'layout' : d.cmp ? 'compare' : d.pdf?.pages > 1 ? 'pdf' : 'drawing' },
+      const b = h('button', { class: 'dtab' + (i === state.doc ? ' on' : ''), type: 'button', 'data-kind': d.lay ? 'layout' : d.cmp ? 'compare' : d.model ? 'model' : d.pdf?.pages > 1 ? 'pdf' : 'drawing' },
         d.lay && icon(GRID_ICON, { size: 14 }), h('span', { class: 'tname' }, d.name),
         PS.hasChanges(d) && h('span', { class: 'dot', title: 'Not saved yet' }, ' •'), x);
       b.addEventListener('click', () => { state.doc = i; showDoc(); });
@@ -1208,6 +1212,7 @@ async function closeTab(d) {
     tab.cmp.items = tab.cmp.items.map((x) => x.tabId === d.tabId ? { ...x, tabId: null } : x);
   }
   PS.pageStates(d).forEach(dropCopy);
+  d.model?.done?.();
   state.docs.splice(i, 1);
   const lastClosed = !state.docs.length;
   if (lastClosed) state.docs.push(Object.assign(emptyDoc(), { parked: true }));   // Start screen only: the empty doc stays, its tab is not drawn
@@ -1263,6 +1268,7 @@ function cycleTab(step) {
 
 /** The active tab changed: its drawing, layers and status, and Fit if the view is still fitted. */
 function showDoc() {
+  if (curDoc().model) lastModel = curDoc(); else if (!curDoc().parked) lastDrawing = curDoc();
   showStartScreen(!!curDoc().parked);
   const changed = shownDoc !== curDoc();
   if (changed) {
@@ -1365,21 +1371,54 @@ async function attachPictures(r, path) {
   }
   await preloadPictures(r.result.items);
 }
+const MODEL_RE = /\.(stl|obj|ply|glb|gltf|3mf)$/i;
+/** A 3D model (TODO 10a) as a tab of its own: the viewer (viewers.js) fills the canvas area while the tab is current. It edits nothing, so Close never asks to save. */
+async function openModel(name, buf, path) {
+  const doc = { name, path: null, openPath: path, dirty: false, model: { el: h('div'), blob: new Blob([buf]) } };      // no path of its own: Save can never write over the model
+  addTab(doc);
+  note('Reading ' + name + '…');
+  try { await drawModel(doc); } catch (err) { await closeTab(doc); note(name + ': ' + (err.message || 'could not read this 3D file')); return; }
+  if (!state.docs.includes(doc)) return;          // closed while it was loading
+  if (path) rememberRecent(path);
+  note('Opened ' + name);
+}
+/** Draws (or, after a theme change, draws again) a model tab's viewer. */
+async function drawModel(d) {
+  d.model.done?.(); d.model.done = null;
+  const done = await (await import('./viewers.js')).renderPreview(d.model.el, d.model.blob, '3d', d.name);
+  if (state.docs.includes(d)) d.model.done = done; else done();
+}
+/** The mode buttons: "3D viewer" is on while a model is on show, else "2D drawing". */
+function syncMode() {
+  const on3d = ui.startScreen.classList.contains('model');
+  ui.modeBtns?.forEach((b, i) => { b.classList.toggle('on', (i === 1) === on3d); b.setAttribute('aria-pressed', String((i === 1) === on3d)); });
+}
+/** "2D drawing" on a model: the last drawing tab, else the Start screen. */
+function backTo2D() {
+  const drawing = state.docs.includes(lastDrawing) ? lastDrawing : state.docs.findLast((d) => !d.model && !d.parked);
+  if (drawing) { state.doc = state.docs.indexOf(drawing); showDoc(); } else showStartScreen(true);
+}
+/** "3D viewer": the last model tab. */
+function toModel() {
+  const model = state.docs.includes(lastModel) ? lastModel : state.docs.findLast((d) => d.model);
+  if (model) { state.doc = state.docs.indexOf(model); showDoc(); } else note('No 3D model is open: Open an STL, OBJ, PLY, glTF or 3MF file');
+}
 /** Opens a file's bytes as a new tab (path: where it lives on disk, in the app). */
 async function openBytes(name, buf, path = null, batch = {}) {
   // the same file already open (in the app, where files have paths): show its tab, never a second copy.
   // Path only: a DXF saved under a new name no longer is its opened file; a DWG / PDF tab has no path of its own, so its source counts
-  const same = path ? state.docs.findIndex((d) => [d.path, (d.fromDwg || d.fromPdf) && d.openPath].some((p) => p && pathKey(p) === pathKey(path))) : -1;
+  const same = path ? state.docs.findIndex((d) => [d.path, (d.fromDwg || d.fromPdf || d.model) && d.openPath].some((p) => p && pathKey(p) === pathKey(path))) : -1;
   if (same >= 0) {
     state.doc = same; showDoc(); rememberRecent(path);
     note(`${name} is already open: here is its tab` + (state.docs[same].dirty ? ' (with unsaved changes)' : ''));
     return;
   }
+  if (MODEL_RE.test(name)) { await openModel(name, buf, path); return; }
   if (/\.tiff?$/i.test(name)) { await importBackgroundTiff(name, buf, true, path); return; }   // TODO 138: a TIFF is a background picture in a tab of its own
   if (/\.pdf$/i.test(name) || (!/\.dxf$/i.test(name) && buf.byteLength && isPdf(buf))) { await openPdf(name, buf, path, null, batch); return; }
   if (/\.ai$/i.test(name)) { note(name + ": this .ai has no PDF part. In Illustrator: Save As .ai with 'Create PDF Compatible File' on, or Save a Copy as PDF."); return; }
   const dwg = /\.dwg$/i.test(name);
-  if (!dwg && !/\.dxf$/i.test(name)) { note(name + ': Opens DXF or PDF; pictures go in as a background (Background…)'); return; }
+  if (!dwg && !/\.dxf$/i.test(name)) { note(name + ': Opens DXF, PDF or 3D models (STL, OBJ, PLY, glTF, 3MF); pictures go in as a background (Background…)'); return; }
   if (dwg && !(buf = await dwgBytes(name, path, buf))) return;
   note('Reading ' + name + '…');
   const r = await readDrawing(buf instanceof ArrayBuffer ? buf : buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength));
@@ -1495,7 +1534,7 @@ async function openFile() {
   const t = window.__TAURI__;
   if (!t || !t.dialog || !t.dialog.open) { ui.picker.value = ''; ui.picker.click(); return; }
   try {
-    const picked = await t.dialog.open({ multiple: false, filters: [{ name: 'Drawings', extensions: ['dxf', 'dwg', 'pdf', 'ai', 'tif', 'tiff'] }] });
+    const picked = await t.dialog.open({ multiple: false, filters: [{ name: 'Drawings', extensions: ['dxf', 'dwg', 'pdf', 'ai', 'tif', 'tiff'] }, { name: '3D models', extensions: ['stl', 'obj', 'ply', 'glb', 'gltf', '3mf'] }] });
     const path = Array.isArray(picked) ? picked[0] : picked;
     if (path) await openPath(String(path));
   } catch (err) {
@@ -1520,7 +1559,7 @@ async function openPath(path, recent = false, batch = {}) {
   if (!t || !t.fs || !t.fs.readFile) return;
   try {
     if (!(await bigOk([{ name, size: await pathSize(path) }])).length) return;
-    if (!/\.(dxf|pdf|ai|tiff?)$/i.test(name)) {                                  // a .dwg is converted from its path; other names are refused
+    if (!/\.(dxf|pdf|ai|tiff?)$/i.test(name) && !MODEL_RE.test(name)) {                               // a .dwg is converted from its path; other names are refused
       if (recent && t.fs.exists && !(await t.fs.exists(path))) throw new Error('not found');   // a DXF's readFile fails by itself; the helper's error would not say "moved"
       await openBytes(name, new ArrayBuffer(0), path, batch); return;
     }
@@ -1928,7 +1967,7 @@ function buildCanvas() {
   // the opened drawing: a canvas over the sheet, same view (applyView), drawn at true size
   ui.dcanvas = h('canvas', { class: 'drawing-layer', 'data-testid': 'drawing' });
   ui.gridDisplay = h('div', { class: 'drawing-grid', hidden: true, 'aria-hidden': 'true', 'data-testid': 'drawing-grid' });
-  ui.picker = h('input', { type: 'file', accept: '.dxf,.dwg,.pdf,.ai,.json,.tif,.tiff', hidden: true, 'data-testid': 'picker', multiple: true });
+  ui.picker = h('input', { type: 'file', accept: '.dxf,.dwg,.pdf,.ai,.json,.tif,.tiff,.stl,.obj,.ply,.glb,.gltf,.3mf', hidden: true, 'data-testid': 'picker', multiple: true });
   ui.picker.addEventListener('change', async () => { const files = [...ui.picker.files], batch = {}; ui.picker.value = ''; for (const f of balFirst(await bigOk(files))) await openPicked(f, batch); });   // emptied, so the same file can be picked again
   ui.bgPicker = h('input', { type: 'file', accept: '.png,.jpg,.jpeg,.pdf,.tif,.tiff', hidden: true, 'data-testid': 'bg-picker' });
   ui.bgPicker.addEventListener('change', async () => {
@@ -12602,7 +12641,10 @@ function editKey(e) {
   if ((e.key === 'F10' || e.key === 'F11') && !e.ctrlKey && !e.altKey && !e.shiftKey) { e.preventDefault(); if (e.key === 'F10') polarSet(!state.polar.on); else otrackSet(!state.otrack); return; }
   if (e.key === 'F2' && !e.ctrlKey && !e.altKey && !e.shiftKey) { e.preventDefault(); ui.cmdUI.toggleHistory(); return; }
   if (!ui.startScreen.hidden) {       // the Start screen: a typed letter opens the command bar (open / compare) and Esc shuts it; no other key reaches the hidden drawing
-    if (e.key === 'Escape') { if (!inField || e.target === ui.cmd) ui.cmdUI.escape(); return; }
+    if (e.key === 'Escape') {
+      if (!inField || e.target === ui.cmd) { if (!ui.cmdUI.escape() && ui.startScreen.classList.contains('model') && !document.querySelector('.pop-back, .pdlg-back, dialog[open]')) backTo2D(); }       // Esc closes the 3D viewer
+      return;
+    }
     const seed = CB.keyOpensBar(e, { inField: !!inField || !!e.target?.isContentEditable, dialog: !!document.querySelector('.pop-back, .pdlg-back, dialog[open]'), active: !!activeCmd() });
     if (seed != null) { e.preventDefault(); ui.cmdUI.open(seed); }
     return;

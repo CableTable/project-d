@@ -148,7 +148,8 @@ async function runStep(page, { name, fn, afterStep }, shotDir) {
 try {
   await waitForServer();
   const exe = chromePath();
-  browser = await chromium.launch(exe ? { executablePath: exe } : {});
+  // WebGL for the 3D viewer: headless Chromium draws it in software only when asked to
+  browser = await chromium.launch({ args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'], ...(exe ? { executablePath: exe } : {}) });
   const newContext = browser.newContext.bind(browser);
   browser.newContext = async (...args) => {
     const context = await newContext(...args);
@@ -4316,7 +4317,7 @@ try {
       assert.equal(await p.evaluate(() => window.__launchLog.maxActive), 1, 'launch batches open sequentially');
       for (const [path, expected] of [
         ['C:/jobs/missing.dxf', /Open failed: file not found/],
-        ['C:/jobs/unsupported.xyz', /Opens DXF or PDF/],
+        ['C:/jobs/unsupported.xyz', /Opens DXF, PDF or 3D models \(STL, OBJ, PLY, glTF, 3MF\)/],
         ['C:/jobs/unbuilt.dwg', /unbuilt\.dwg: could not convert this DWG \(unexpected grant\)/],      // this stub has no dwg_to_dxf
       ]) {
         await p.evaluate(async (path) => { window.__launchQueue.push([path, null]); await window.__launch(); }, path);
@@ -10273,8 +10274,9 @@ try {
   });
 
   await step('review: opening a picture says what opens and where pictures go', async () => {
+    if (only) { await t('picker').setInputFiles('fixtures/outline.dxf'); await waitTab(page, 'outline.dxf'); }
     await t('picker').setInputFiles('fixtures/bg.png');
-    await page.waitForFunction(() => /Opens DXF or PDF; pictures go in as a background \(Background…\)/.test(document.querySelector('[data-testid=cmd-prompt]').textContent));
+    await page.waitForFunction(() => /Opens DXF, PDF or 3D models \(STL, OBJ, PLY, glTF, 3MF\); pictures go in as a background \(Background…\)/.test(document.querySelector('[data-testid=cmd-prompt]').textContent));
     assert.deepEqual(await tabNames(), ['outline.dxf'], 'no new tab');
   });
 
@@ -39506,6 +39508,81 @@ try {
       assert.ok(stepCount > 20 && r.calls < stepCount / 2, `idle calls ${r.calls} not under half of ${stepCount} steps`);
       assert.deepEqual(faults, []);
     } finally { await ctx.close(); }
+  });
+
+  await step('TODO 10a: a 3D model opens as its own tab; the 3D viewer button is live; Measure, Section and Esc work; 2D drawing returns to the last drawing', async () => {
+    await closeTabs(/./);
+    await t('picker').setInputFiles('fixtures/outline.dxf');
+    await waitTab(page, 'outline.dxf');
+    assert.equal(await t('mode-3d').getAttribute('aria-pressed'), 'false');
+    await t('mode-3d').click();
+    await page.waitForFunction(() => /No 3D model is open/.test(document.querySelector('[data-testid=cmd-prompt]').textContent));
+    await t('picker').setInputFiles('fixtures/sample.stl');
+    await waitTab(page, 'sample.stl');
+    const info = await page.waitForSelector('[data-testid=model-host] .pv-info', { timeout: 30000 }).then((e) => e.textContent());
+    assert.match(info, /^40 × 30 × 30 · 24 triangles/);
+    assert.equal(await page.locator('.tabs .dtab[data-kind=model]').count(), 1);
+    assert.equal(await t('mode-3d').getAttribute('aria-pressed'), 'true');
+    assert.equal(await t('mode-2d').getAttribute('aria-pressed'), 'false');
+    assert.equal(await t('start-screen').getAttribute('class'), 'start-screen model');
+    const pv = (label) => page.locator(`[data-testid=model-host] .pv-btn:text-is("${label}")`).click();
+    const onModel = async (dx = 0) => { const r = await page.locator('[data-testid=model-host] .pv-body > canvas').boundingBox(); await page.mouse.click(r.x + r.width / 2 + dx, r.y + r.height / 2); };
+    await pv('Measure'); await onModel();
+    await page.waitForFunction(() => /A point/.test(document.querySelector('[data-testid=pv-readout]').textContent));
+    await onModel(40);
+    await page.waitForFunction(() => /^Distance/.test(document.querySelector('[data-testid=pv-readout] strong').textContent), null, { timeout: 5000 });
+    await pv('Measure');
+    assert.equal(await t('pv-readout').isHidden(), true, 'Measure off puts the readout away');
+    await pv('Section');
+    assert.equal(await page.locator('[data-testid=model-host] .pv-section input[type=range]').isVisible(), true);
+    await page.locator('[data-testid=model-host] .pv-section [data-axis="0"]').click();
+    assert.equal(await page.locator('[data-testid=model-host] .pv-section [data-axis="0"]').getAttribute('aria-pressed'), 'true');
+    await shotBoth('viewer3d');
+    await page.setViewportSize({ width: 1024, height: 700 });
+    await page.waitForTimeout(300);
+    await page.screenshot({ path: `${shotDir}/s12-viewer3d-1024.png` });
+    assert.ok(await page.evaluate(() => { const r = document.querySelector('.rowtools').getBoundingClientRect(); return r.right <= window.innerWidth; }), 'the top bar fits at 1024 px');
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.locator('[data-testid=model-host] .pv-info').waitFor();       // a theme change drew the viewer again, in the new colours: Section is off in the fresh one
+    assert.equal(await page.locator('[data-testid=model-host] .pv-section').isHidden(), true);
+    await page.keyboard.press('Escape');
+    assert.equal(await t('start-screen').isHidden(), true, 'Esc closes the viewer');
+    assert.equal(await t('mode-2d').getAttribute('aria-pressed'), 'true');
+    assert.deepEqual(await page.locator('.tabs .dtab.on .tname').allTextContents(), ['outline.dxf'], '2D drawing: the last drawing tab');
+    await t('mode-3d').click();
+    await page.waitForSelector('[data-testid=model-host] .pv-info');
+    await t('mode-2d').click();
+    assert.equal(await t('start-screen').isHidden(), true);
+    await t('mode-3d').click();
+    await page.locator('.tabs .dtab[data-kind=model] .x').click();
+    assert.equal(await page.locator('.pop-back').count(), 0, 'Close never asks to save');
+    assert.deepEqual(await tabNames(), ['outline.dxf']);
+    assert.equal(await t('start-screen').isHidden(), true);
+    await closeTabs(/./);
+    await t('picker').setInputFiles('fixtures/sample.stl');
+    await waitTab(page, 'sample.stl');
+    await page.waitForSelector('[data-testid=model-host] .pv-info', { timeout: 30000 });
+    await t('mode-2d').click();
+    assert.equal(await t('start-screen').isHidden(), false, 'no drawing tab: 2D drawing goes to Start');
+    assert.equal(await t('start-screen').getAttribute('class'), 'start-screen');
+    // the app's own way in (a stand-in for Tauri's dialog and file read): File → Open… with the "3D models" filter, the bytes read by path, the same file twice
+    await closeTabs(/./);
+    await page.evaluate((bytes) => {
+      window.__dialogFilters = null;
+      window.__TAURI__ = { fs: { readFile: async () => new Uint8Array(bytes), exists: async () => true }, dialog: { open: async (o) => { window.__dialogFilters = o.filters; return 'C:/jobs/bracket.stl'; } } };
+    }, [...readFileSync('fixtures/sample.stl')]);
+    try {
+      const openMenu = async () => { await page.locator('[data-menu=File]').click(); await page.getByRole('menuitem', { name: 'Open…', exact: true }).click(); };
+      await openMenu();
+      await waitTab(page, 'bracket.stl');
+      await page.waitForSelector('[data-testid=model-host] .pv-info', { timeout: 30000 });
+      assert.deepEqual(await page.evaluate(() => window.__dialogFilters.map((f) => f.name + ':' + f.extensions.join())), ['Drawings:dxf,dwg,pdf,ai,tif,tiff', '3D models:stl,obj,ply,glb,gltf,3mf']);
+      await t('mode-2d').click();
+      await openMenu();
+      await page.waitForFunction(() => /bracket\.stl is already open: here is its tab/.test(document.querySelector('[data-testid=cmd-prompt]').textContent));
+      assert.equal(await page.locator('.tabs .dtab[data-kind=model]').count(), 1, 'the same path never opens twice');
+      assert.equal(await t('mode-3d').getAttribute('aria-pressed'), 'true');
+    } finally { await page.evaluate(() => { delete window.__TAURI__; }); }
   });
 
   const picked = pickSteps(steps, only, selectStep, until);
