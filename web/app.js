@@ -33,7 +33,7 @@ import { paintDrawing, paintDrawingSteps, paintMarks, drawMarks, drawContour, dr
 import { overlayBox } from './preview.js';
 import { snapPlace, snapUsable, heavy, sameBase, runChunks, blitCovers, panStrips, QUICK_PX, slice as timeSlice } from './perf.js';
 import { flatten, flattenEdit, patchWidths, primeSplines, unionBox, CAP, ACI, UNITS, mapply, mmul, pickIndex, arcSweep, DrawingError } from './drawing.js';
-import { writeDxf, writeDxfSteps, writeDxfWithReport, withoutLayers, saveReportNote, unwritable, addLayer, newDoc, lwpoly, point } from './dxf-write.js';
+import { writeDxf, writeDxfSteps, writeDxfWithReport, withoutLayers, saveReportNote, unwritable, addLayer, newDoc, lwpoly, point, entity } from './dxf-write.js';
 import * as SH from './shaping.js';
 import { explodeSelection } from './explode.js';
 import { breakApart } from './breakapart.js';
@@ -106,7 +106,7 @@ import { partSource, readTitleBlock, withTitleBlock, planPagesPdf, hasPagePictur
 import { pageToSvg } from './svg-write.js';
 import { readPdf, renderPdfPage, renderPdfPages, renderPdfPictures, isPdf, pageLayout } from './pdf-read.js';
 import { readTiff } from './tiff.js';
-import { preloadPictures, rawPixels } from './pictures.js';
+import { preloadPictures, rawPixels, isPng } from './pictures.js';
 import { panelWidth } from './docker.js';
 
 const SVGNS = 'http://www.w3.org/2000/svg';
@@ -1385,8 +1385,29 @@ async function openModel(name, buf, path) {
 /** Draws (or, after a theme change, draws again) a model tab's viewer. */
 async function drawModel(d) {
   d.model.done?.(); d.model.done = null;
-  const done = await (await import('./viewers.js')).renderPreview(d.model.el, d.model.blob, '3d', d.name);
+  const done = await (await import('./viewers.js')).renderPreview(d.model.el, d.model.blob, '3d', d.name, { snap: (blob, w, h) => snapView(blob, w, h) });
   if (state.docs.includes(d)) d.model.done = done; else done();
+}
+const SNAP_MM = 150;
+/** Snap (TODO 10c): the 3D view's PNG becomes an IMAGE, SNAP_MM wide and centred on the view, on the last drawing tab (an empty tab becomes the drawing; a layout, Compare, a many-page PDF or no tab: a new drawing tab). It is selected; one Undo removes it. */
+async function snapView(blob, w, h) {
+  const px = await new Promise((ok, no) => { const r = new FileReader(); r.onload = () => ok(r.result); r.onerror = () => no(r.error); r.readAsDataURL(blob); });
+  if (!isPng(px) || !(w > 0 && h > 0)) { note('Snap: could not make a picture of this view'); return; }
+  await preloadPictures([{ k: 'i', px }]);
+  const last = state.docs.includes(lastDrawing) ? lastDrawing : state.docs.findLast((t) => !t.model && !t.parked);
+  const plain = last && !last.parked && !last.lay && !last.cmp && !(last.pdf?.pages > 1);
+  if (plain) { state.doc = state.docs.indexOf(last); showDoc(); } else addTab(emptyDoc());
+  ensureScratch(curDoc());
+  const d = editable();
+  if (!d) { note('Snap: could not put the picture on a drawing'); return; }
+  const fresh = !d.raw.entities.length, r = ui.canvas.getBoundingClientRect(), at = fresh ? [0, 0] : toDrawing(d, r.left + r.width / 2, r.top + r.height / 2);
+  const width = SNAP_MM / d.factor, side = width / w, layer = curLayerName(d);
+  const pic = entity('IMAGE', [[10, at[0] - width / 2], [20, at[1] - side * h / 2], [30, 0], [11, side], [21, 0], [31, 0], [12, 0], [22, side], [32, 0], [13, w], [23, h]], { layer });
+  pic.r.px = px;
+  if (!fresh) view.fitted = false;                                  // the view stays where it is, as when he draws
+  if (!commit(d, { entities: [...d.raw.entities, pic], blocks: d.raw.blocks, layers: layersWith(d.raw, layer) }, 'Snap view')) return;
+  setSel(d, new Set([d.raw.entities.indexOf(pic)]));
+  note('View placed on ' + d.name);
 }
 /** The mode buttons: "3D viewer" is on while a model is on show, else "2D drawing". */
 function syncMode() {

@@ -39716,6 +39716,58 @@ try {
     });
   });
 
+  await step('TODO 10c: Snap puts the 3D view on a drawing: a new drawing tab when none is open, else the last drawing tab; 150 mm wide, picture selected, pixels drawn, one Undo removes it', async () => {
+    await inWebgl(async () => {
+      await closeTabs(/./);
+      await t('picker').setInputFiles('fixtures/sample.step');
+      await waitTab(page, 'sample.step');
+      await page.waitForSelector('[data-testid=model-host] .pv-info', { timeout: 60000 });
+      const snap = () => page.locator('[data-testid=model-host] [data-testid=pv-snap]').click();
+      const colours = () => t('drawing').evaluate((c) => { const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data, s = new Set(); for (let i = 0; i < d.length; i += 4) s.add((d[i] << 16) | (d[i + 1] << 8) | d[i + 2]); return s.size; });
+      const placed = (name) => page.waitForFunction((n) => document.querySelector('[data-testid=cmd-prompt]').textContent === 'View placed on ' + n, name, { timeout: 15000 });
+      assert.equal(await page.locator('[data-testid=pv-snap]').getAttribute('title'), 'Put this view on the drawing');
+      await snap(); await placed('Drawing 1');
+      assert.deepEqual(await tabNames(), ['sample.step', 'Drawing 1'], 'no drawing tab: a new one');
+      assert.equal(await t('start-screen').isHidden(), true, 'the drawing tab is on show');
+      await page.waitForFunction(() => document.querySelector('[data-testid=sel-count]').textContent.trim() === '1 selected');
+      await page.waitForFunction(() => document.querySelector('[data-testid=sel-w]').value === '150.00');
+      await page.waitForFunction(() => document.querySelector('[data-testid=sel-layer]').textContent.includes('0'));
+      for (let i = 0; i < 80 && await colours() < 20; i++) await page.waitForTimeout(100);
+      assert.ok(await colours() >= 20, 'the picture is drawn with pixels (not a blank): ' + await colours() + ' colours');
+      await shotBoth('viewer3d-snap');
+      await page.setViewportSize({ width: 1024, height: 700 });
+      await page.waitForTimeout(300);
+      await page.screenshot({ path: `${shotDir}/s12-viewer3d-snap-1024.png` });
+      assert.ok(await page.evaluate(() => { const r = document.querySelector('.rowtools').getBoundingClientRect(); return r.right <= window.innerWidth; }), 'the top bar fits at 1024 px');
+      await page.setViewportSize({ width: 1440, height: 900 });
+      await page.keyboard.press('Control+z');
+      await page.waitForFunction(() => document.querySelector('[data-testid=sel-count]').textContent.trim() !== '1 selected');
+      for (let i = 0; i < 80 && await colours() > 4; i++) await page.waitForTimeout(100);
+      assert.ok(await colours() <= 4, 'one Undo removes the picture');
+      await page.keyboard.press('Control+y');                         // Redo brings it back
+      await page.waitForFunction(() => document.querySelector('[data-testid=cmd-prompt]').textContent.length > 0);
+      for (let i = 0; i < 80 && await colours() < 20; i++) await page.waitForTimeout(100);
+      assert.ok(await colours() >= 20, 'Redo puts it back');
+      await page.keyboard.press('Control+z');
+      // a second Snap goes to the same (last) drawing tab
+      await t('mode-3d').click();
+      await page.waitForSelector('[data-testid=model-host] .pv-info');
+      await snap(); await placed('Drawing 1');
+      assert.deepEqual(await tabNames(), ['sample.step', 'Drawing 1'], 'the last drawing tab, no second one');
+      await page.waitForFunction(() => document.querySelector('[data-testid=sel-count]').textContent.trim() === '1 selected');
+      // Save As goes through the existing IMAGE + sidecar PNG path
+      const downloads = []; page.on('download', (d) => downloads.push(d));
+      await Promise.all([page.waitForEvent('download', { predicate: (d) => d.suggestedFilename() === 'Drawing 1-img1.png' }), (async () => { await page.locator('[data-menu=File]').click(); await page.getByRole('menuitem', { name: 'Save As…', exact: true }).click(); })()]);
+      const files = new Map();
+      for (const d of downloads) files.set(d.suggestedFilename(), readFileSync(await d.path()));
+      assert.deepEqual([...files.keys()].sort(), ['Drawing 1-img1.png', 'Drawing 1.dxf']);
+      assert.deepEqual([...files.get('Drawing 1-img1.png').subarray(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10]);
+      assert.ok(files.get('Drawing 1-img1.png').readUInt32BE(16) > 100, 'the sidecar PNG is the view\'s pixels');
+      assert.equal(readDxf(files.get('Drawing 1.dxf').toString('utf8')).entities.filter((e) => e.type === 'IMAGE').length, 1);
+      await closeTabs(/./);
+    });
+  });
+
   const picked =pickSteps(steps, only, selectStep, until);
   for (const entry of picked) await runStep(page, entry, shotDir);
 } catch (e) {

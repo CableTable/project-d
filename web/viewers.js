@@ -2,7 +2,7 @@
 // Right; Ortho); Edges (where the surface bends); X-ray; Section (a cut along X, Y or Z, its face filled); Measure
 // (point to point: geom.js); Smooth shading for the mesh kinds below. three.js (web/vendor/three/three-view.js, npm run vendor)
 // loads only when a model is first opened. STEP / IGES / BREP (sizes in mm; faces, holes and angles to Measure) are read off the page's
-// thread by occt-worker.js (TODO 10b1); the read-model cache (IndexedDB) and the Parts tree are done in 10b2, Snap comes in T10c.
+// thread by occt-worker.js (TODO 10b1); the read-model cache (IndexedDB) and the Parts tree are done in 10b2; Snap (10c) hands the view's PNG to opts.snap(blob, w, h).
 //
 //   const done = await renderPreview(el, blob, '3d', 'bracket.stl');   … later: done();
 //
@@ -15,14 +15,14 @@ const KINDS = { '3d': model3d };
 const SORRY = { '3d': 'Couldn\'t read this 3D file.' };
 
 /** Draws a preview of `blob` into `el` (in the page, sized, position: relative); resolves with a cleanup function. */
-export async function renderPreview(el, blob, kind, name) {
+export async function renderPreview(el, blob, kind, name, opts = {}) {
   const draw = KINDS[kind];
   if (!draw) throw new Error('No preview for this kind of file.');
   const root = h('div', { class: 'pv pv-' + kind });
   el.append(root);
   const undo = [];                          // what to put away when the viewer closes
   try {
-    await draw(root, blob, name || '', (fn) => undo.push(fn));
+    await draw(root, blob, name || '', (fn) => undo.push(fn), opts);
   } catch (e) {
     tidy(undo); root.remove();
     if (!(e instanceof FriendlyError)) console.warn('Preview failed:', e);
@@ -90,7 +90,7 @@ export async function loadMesh(T, ext, blob, metal) {
   return group;
 }
 
-async function model3d(root, blob, name, undo) {
+async function model3d(root, blob, name, undo, opts = {}) {
   const ext = (name.match(/\.([a-z0-9]+)$/i) || [, ''])[1].toLowerCase();
   if (!CAD.has(ext) && !MESH_KINDS.includes(ext)) throw sorry('This kind of 3D file can\'t be previewed.');
   const local = [];                                  // put away on close
@@ -447,7 +447,9 @@ async function model3d(root, blob, name, undo) {
       canvas.style.cursor = on ? 'crosshair' : '';
       if (on) say(START); else { readout.hidden = true; picks = []; clearMarks(); draw(); }
     }),
-    meshes.length > 1 ? toggle('Parts', (on) => { partsBox.hidden = !on; if (on && !partsList.children.length) buildParts(); if (!on) light(null); }) : null
+    meshes.length > 1 ? toggle('Parts', (on) => { partsBox.hidden = !on; if (on && !partsList.children.length) buildParts(); if (!on) light(null); }) : null,
+    // Snap (TODO 10c): the canvas is read right after the render in this one handler, so the buffer needs no preserveDrawingBuffer
+    opts.snap ? btn('Snap', () => { renderer.render(scene, camera); canvas.toBlob((b) => { if (b) opts.snap(b, canvas.width, canvas.height); }, 'image/png'); }, { title: 'Put this view on the drawing', 'data-testid': 'pv-snap' }) : null
   ];
 
   const fmt = (n) => G.fmtLength(n);
