@@ -39702,6 +39702,16 @@ try {
       await pv('Section');
       await pv('Parts');
       assert.equal(await page.locator('[data-testid=pv-parts-list] .pv-part').count(), 3, 'the group Box and its two solids, no helper meshes');
+      // Edges on then off, then Show all / Only must not draw the edge lines again
+      await pv('Section');
+      await pv('Edges'); await pv('Edges');
+      const shot = async () => { await page.waitForTimeout(250); return page.locator('[data-testid=model-host] .pv-body > canvas').screenshot(); };
+      const noEdges = await shot();
+      await page.locator('[data-testid=pv-parts] .pv-btn:text-is("Show all")').click();
+      assert.ok((await shot()).equals(noEdges), 'Show all leaves the edges off');
+      await page.locator('[data-testid=pv-parts-list] .pv-part').nth(1).locator('.pv-part-only').click();
+      await page.locator('[data-testid=pv-parts] .pv-btn:text-is("Show all")').click();
+      assert.ok((await shot()).equals(noEdges), 'Only then Show all leaves the edges off');
       await closeTabs(/./);
     });
   });

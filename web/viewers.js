@@ -362,8 +362,10 @@ async function model3d(root, blob, name, undo) {
   }
   const partsList = h('div', { class: 'pv-parts-list', 'data-testid': 'pv-parts-list' });
   const partsBox = h('div', { class: 'pv-parts', 'data-testid': 'pv-parts', hidden: true },
-    h('div', { class: 'pv-parts-head' }, h('strong', null, 'Parts'), btn('Show all', () => { group.traverse((o) => { o.visible = true; }); syncBoxes(); draw(); })),
+    h('div', { class: 'pv-parts-head' }, h('strong', null, 'Parts'), btn('Show all', () => { setVis(group, true); syncBoxes(); draw(); })),
     partsList);
+  // parts only: the Edges and Section buttons own the edge lines and the stencil helper meshes
+  function setVis(root, v) { root.traverse((x) => { if (!x.isLineSegments && !(cut.stencils || []).includes(x)) x.visible = v; }); }
   function syncBoxes() { for (const row of partsList.children) row.box.checked = row.obj.visible; }
   function buildParts() {
     const rows = [];
@@ -385,8 +387,8 @@ async function model3d(root, blob, name, undo) {
         const row = h('div', { class: 'pv-part' }, box,
           h('button', { type: 'button', class: 'pv-part-name', title: named, style: 'padding-left:' + (depth * 12) + 'px', onclick: () => light(o) }, named),
           h('button', { type: 'button', class: 'pv-part-only', onclick: () => {
-            group.traverse((x) => { x.visible = false; });
-            o.traverse((x) => { x.visible = true; });
+            setVis(group, false);
+            setVis(o, true);
             for (let p = o.parent; p; p = p.parent) p.visible = true;
             syncBoxes(); draw();
           } }, 'Only'));
