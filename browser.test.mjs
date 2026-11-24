@@ -50,7 +50,7 @@ const selectStep = shard
   : () => true;
 const URL_ = `http://localhost:${PORT}/`;
 const server = spawn(process.execPath, ['serve.mjs', String(PORT)], { stdio: ['ignore', 'pipe', 'inherit'], env: { ...process.env, PORT: String(PORT) } });
-let browser, page;
+let browser, page, webglBrowser;
 const said = async (re) => (await page.waitForFunction((s) => { const x = document.querySelector('[data-testid=cmd-prompt]').textContent; return new RegExp(s).test(x) && x; }, re.source)).jsonValue();
 const waitTab = (p, name) => p.waitForFunction((n) => document.querySelector('.dtab.on .tname')?.textContent === n, name); // ?.: a fresh page boots on Start with no tab (TODO 343)
 const stop = () => { try { server.kill(); } catch { /* already gone */ } };
@@ -148,20 +148,24 @@ async function runStep(page, { name, fn, afterStep }, shotDir) {
 try {
   await waitForServer();
   const exe = chromePath();
-  // WebGL for the 3D viewer: headless Chromium draws it in software only when asked to
-  browser = await chromium.launch({ args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'], ...(exe ? { executablePath: exe } : {}) });
-  const newContext = browser.newContext.bind(browser);
-  browser.newContext = async (...args) => {
-    const context = await newContext(...args);
-    await context.addInitScript(acceptEditablePdf);
-    await context.addInitScript(() => {
-      if (!localStorage.getItem('pd-test-start-initialized')) {
-        localStorage.setItem('pd-start-mode', 'blank');
-        localStorage.setItem('pd-test-start-initialized', '1');
-      }
-    });
-    return context;
+  const patchContexts = (b) => {
+    const newContext = b.newContext.bind(b);
+    b.newContext = async (...args) => {
+      const context = await newContext(...args);
+      await context.addInitScript(acceptEditablePdf);
+      await context.addInitScript(() => {
+        if (!localStorage.getItem('pd-test-start-initialized')) {
+          localStorage.setItem('pd-start-mode', 'blank');
+          localStorage.setItem('pd-test-start-initialized', '1');
+        }
+      });
+      return context;
+    };
+    return b;
   };
+  browser = patchContexts(await chromium.launch(exe ? { executablePath: exe } : {}));
+  // WebGL for the 3D viewer steps only: headless Chromium draws it in software when asked, but that flag changes 2D canvas pixels, so it gets its own browser
+  const launchWebgl = async () => webglBrowser ??= patchContexts(await chromium.launch({ args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'], ...(exe ? { executablePath: exe } : {}) }));
   const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
   page = await ctx.newPage();
   if (process.env.SLOWRAF) await page.addInitScript(() => { const r = window.requestAnimationFrame.bind(window); window.requestAnimationFrame = (f) => r(() => setTimeout(() => f(performance.now()), 150)); });
@@ -8650,7 +8654,7 @@ try {
       const p = await context.newPage(), q = (id) => p.getByTestId(id), prompt = (text) => p.waitForFunction((s) => document.querySelector('[data-testid=cmd-prompt]').textContent.includes(s), text);
       await p.goto(URL_ + '?autosave=86400000'); await q('picker').waitFor({ state: 'attached' });
       assert.match(await q('bg-picker').getAttribute('accept'), /\.tif,\.tiff$/);
-      assert.match(await q('picker').getAttribute('accept'), /\.tif,\.tiff$/);
+      assert.match(await q('picker').getAttribute('accept'), /\.tif,\.tiff(,|$)/);   // 10a appends the 3D types
       await q('bg-picker').setInputFiles('fixtures/two-pages-lzw.tif');   // page 1: 300 × 150 px at 150 dpi, page 2: 200 × 200 px at 100 dpi (both 2 in wide)
       await prompt('2 pages side by side, true size from the TIFF');
       const bgName = (name) => p.waitForFunction((s) => document.querySelector('[data-testid=bg-name]')?.textContent === s, name);
@@ -39511,6 +39515,10 @@ try {
   });
 
   await step('TODO 10a: a 3D model opens as its own tab; the 3D viewer button is live; Measure, Section and Esc work; 2D drawing returns to the last drawing', async () => {
+    const mainPage = page, wctx = await (await launchWebgl()).newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    page = await wctx.newPage();
+    try {
+    await page.goto(URL_);
     await closeTabs(/./);
     await t('picker').setInputFiles('fixtures/outline.dxf');
     await waitTab(page, 'outline.dxf');
@@ -39583,6 +39591,7 @@ try {
       assert.equal(await page.locator('.tabs .dtab[data-kind=model]').count(), 1, 'the same path never opens twice');
       assert.equal(await t('mode-3d').getAttribute('aria-pressed'), 'true');
     } finally { await page.evaluate(() => { delete window.__TAURI__; }); }
+    } finally { page = mainPage; await wctx.close(); }
   });
 
   await step('TODO 10b1: a STEP file opens in the 3D viewer (occt worker), its size in mm; Measure a face and an angle; Section; Esc goes back', async () => {
@@ -39628,6 +39637,7 @@ try {
   }
 } finally {
   if (browser) await browser.close();
+  if (webglBrowser) await webglBrowser.close();
   stop();
 }
 if (failed || process.exitCode) { if (failed) console.log(failed + ' failed'); process.exit(1); }
