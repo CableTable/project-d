@@ -205,6 +205,19 @@ select.fld { font-family: var(--sans); }
 .pv-readout { position: absolute; left: 50%; transform: translateX(-50%); bottom: 34px; z-index: 3; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px;
   max-width: calc(100% - 24px); box-sizing: border-box; padding: 6px 6px 6px 14px; border-radius: 12px; background: var(--panel); border: 1px solid var(--line); color: var(--text); font-size: 15px; }
 .pv-readout span { color: var(--muted); font-size: 12px; }
+.pv-parts { position: absolute; top: 52px; right: 8px; bottom: 34px; width: 260px; z-index: 3; display: flex; flex-direction: column;
+  border-radius: 12px; background: var(--panel); border: 1px solid var(--line); color: var(--text); }
+.pv-parts[hidden] { display: none; }
+.pv-parts-head { display: flex; align-items: center; justify-content: space-between; padding: 6px 6px 6px 12px; border-bottom: 1px solid var(--line); }
+.pv-parts-list { flex: 1; min-height: 0; overflow: auto; padding: 4px; }
+.pv-part { display: flex; align-items: center; gap: 2px; border-radius: 8px; padding: 0 2px 0 6px; }
+.pv-part.on { background: var(--sel); }
+.pv-part input { flex: none; accent-color: var(--accent); margin: 0 4px 0 0; }
+.pv-part-name { flex: 1; min-width: 0; border: 0; background: none; color: inherit; font: inherit; font-size: 13px; text-align: left; padding: 7px 4px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+.pv-part-only { flex: none; border: 0; background: none; color: var(--muted); font: inherit; font-size: 12px; padding: 4px 6px; cursor: pointer; }
+.pv-part-only:hover, .pv-part-only:focus-visible { color: var(--accent); }
+@media (max-width: 600px) { .pv-parts { top: auto; left: 8px; width: auto; height: 42%; } .pv-readout { bottom: 30px; } }
 .pv-info { position: absolute; left: 6px; bottom: 6px; font-size: 12px; color: var(--text); background: var(--panel); border-radius: 6px; padding: 2px 6px; pointer-events: none; z-index: 2; }
 .start-content { display: flex; flex-wrap: wrap; gap: 32px; }
 .start-actions { display: flex; flex-direction: column; align-items: stretch; gap: 12px; width: 210px; }

@@ -2,7 +2,7 @@
 // Right; Ortho); Edges (where the surface bends); X-ray; Section (a cut along X, Y or Z, its face filled); Measure
 // (point to point: geom.js); Smooth shading for the mesh kinds below. three.js (web/vendor/three/three-view.js, npm run vendor)
 // loads only when a model is first opened. STEP / IGES / BREP (sizes in mm; faces, holes and angles to Measure) are read off the page's
-// thread by occt-worker.js (TODO 10b1); the read-model cache, the Parts tree and Snap come in a later build (T10b2, T10c).
+// thread by occt-worker.js (TODO 10b1); the read-model cache (IndexedDB) and the Parts tree are done in 10b2, Snap comes in T10c.
 //
 //   const done = await renderPreview(el, blob, '3d', 'bracket.stl');   … later: done();
 //
@@ -125,7 +125,7 @@ async function model3d(root, blob, name, undo) {
   await after(30);                                               // let the message paint
   let group;
   if (CAD.has(ext)) {
-    const r = await inWorker(await blob.arrayBuffer(), ext, put);
+    const r = await readCad(await blob.arrayBuffer(), ext, put, root);
     if (!r.meshes.length) throw sorry('Couldn\'t read this 3D file.');
     group = new T.Group(); group.add(cadTree(T, r, metal));
   } else group = await loadMesh(T, ext, blob, metal);
@@ -348,14 +348,70 @@ async function model3d(root, blob, name, undo) {
     draw();
   }
 
-  // ---- clicks on the model (a press without a drag): measure
+  // ---- Parts: the assembly's tree; a click lights a part up, the box shows or hides it, Only shows just it
+  let lit = null;
+  function light(obj) {
+    const set = (o, on) => o.traverse((n) => { if (n.isMesh) for (const m of [].concat(n.material)) if (m.emissive) m.emissive.setHex(on ? 0xa87a1c : 0); });
+    if (lit) set(lit, false);
+    lit = obj && obj !== lit ? obj : null;
+    if (lit) set(lit, true);
+    for (const row of partsList.children) row.classList.toggle('on', row.obj === lit);
+    const row = [...partsList.children].find((r) => r.obj === lit);
+    if (row) row.scrollIntoView({ block: 'nearest' });
+    draw();
+  }
+  const partsList = h('div', { class: 'pv-parts-list', 'data-testid': 'pv-parts-list' });
+  const partsBox = h('div', { class: 'pv-parts', 'data-testid': 'pv-parts', hidden: true },
+    h('div', { class: 'pv-parts-head' }, h('strong', null, 'Parts'), btn('Show all', () => { group.traverse((o) => { o.visible = true; }); syncBoxes(); draw(); })),
+    partsList);
+  function syncBoxes() { for (const row of partsList.children) row.box.checked = row.obj.visible; }
+  function buildParts() {
+    const rows = [];
+    let n = 0;
+    const walk = (o, depth) => {
+      if (rows.length > 2000) return;
+      // a solid with no name of its own ("SOLID", or none) is its group's, numbered
+      const generic = !o.name || /^(solid|body|shape|part|mesh)\s*\d*$/i.test(o.name) || /open cascade/i.test(o.name);
+      const named = o.isMesh && generic ? (o.parent && o.parent !== group && o.parent.name ? o.parent.name + ' · ' : '') + 'solid ' + ++n
+        : o.name || '';
+      const shown = o !== group && (o.isMesh || (named && o.children.some((c) => c.isMesh || c.isGroup || c.isObject3D)));
+      const kids = o.children.filter((c) => c.isMesh || (c.isGroup || c.type === 'Object3D'));
+      // a part that's its named group's only one is that group's row
+      const alone = o.isMesh && o.parent && o.parent !== group && o.parent.name && o.parent.children.filter((c) => c.isMesh || c.isGroup).length === 1;
+      if (shown && !alone) {
+        const box = h('input', { type: 'checkbox', checked: true, 'aria-label': 'Show ' + named, onchange: () => { o.visible = box.checked; draw(); } });
+        const row = h('div', { class: 'pv-part' }, box,
+          h('button', { type: 'button', class: 'pv-part-name', title: named, style: 'padding-left:' + (depth * 12) + 'px', onclick: () => light(o) }, named),
+          h('button', { type: 'button', class: 'pv-part-only', onclick: () => {
+            group.traverse((x) => { x.visible = false; });
+            o.traverse((x) => { x.visible = true; });
+            for (let p = o.parent; p; p = p.parent) p.visible = true;
+            syncBoxes(); draw();
+          } }, 'Only'));
+        row.obj = o; row.box = box;
+        rows.push(row);
+        depth++;
+      }
+      for (const c of kids) if (!c.isLineSegments) walk(c, depth);
+    };
+    walk(group, 0);
+    partsList.replaceChildren(...rows);
+  }
+
+  // ---- clicks on the model (a press without a drag): measure, or pick a part
   let down = null, mode = null;
   const onDown = (e) => { down = e.button === 0 ? [e.clientX, e.clientY] : null; };
   const onUp = (e) => {
     if (!down || Math.hypot(e.clientX - down[0], e.clientY - down[1]) > 5) return;
     down = null;
     const hit = pickAt(e);
-    if (mode === 'measure' && hit) measurePick(hit);
+    if (mode === 'measure') { if (hit) measurePick(hit); }
+    else if (!partsBox.hidden) {
+      let o = hit ? hit.object : null;
+      // the part's row may be its group's
+      while (o && ![...partsList.children].some((r) => r.obj === o)) o = o.parent;
+      light(o);
+    }
   };
   canvas.addEventListener('pointerdown', onDown);
   canvas.addEventListener('pointerup', onUp);
@@ -386,13 +442,14 @@ async function model3d(root, blob, name, undo) {
       mode = on ? 'measure' : null;
       canvas.style.cursor = on ? 'crosshair' : '';
       if (on) say(START); else { readout.hidden = true; picks = []; clearMarks(); draw(); }
-    })
+    }),
+    meshes.length > 1 ? toggle('Parts', (on) => { partsBox.hidden = !on; if (on && !partsList.children.length) buildParts(); if (!on) light(null); }) : null
   ];
 
   const fmt = (n) => G.fmtLength(n);
   body.replaceChildren(canvas,
     h('div', { class: 'pv-float' }, h('div', { class: 'pv-tools' }, tools), viewsRow, sectionRow),
-    readout,
+    readout, partsBox,
     h('div', { class: 'pv-info', 'data-testid': 'pv-info' }, fmt(size.x) + ' × ' + fmt(size.y) + ' × ' + fmt(size.z) + (unitName ? ' ' + unitName : '')
       + (tris ? ' · ' + Math.round(tris).toLocaleString('en') + ' triangles' : '')));
   watchSize(body, (cw, ch) => {
@@ -439,6 +496,64 @@ function cadTree(T, r, metal) {
     return g;
   };
   return node(r.root || { meshes: meshes.map((_, i) => i), children: [] });
+}
+
+/** A STEP / IGES / BREP file as triangles: from this device's store when read before, else read in the worker. root.dataset.cache says which. */
+async function readCad(bytes, ext, put, root) {
+  const key = await digest(bytes, ext);
+  const kept = key && await store('get', key);
+  root.dataset.cache = kept ? 'hit' : 'miss';
+  if (kept) return kept.result;
+  const r = await inWorker(bytes, ext, put);
+  if (r && key) store('put', key, { result: r, at: Date.now() });
+  return r;
+}
+
+async function digest(bytes, extra) {
+  try {
+    const d = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
+    return 'v1:' + extra + ':' + [...d].map((b) => b.toString(16).padStart(2, '0')).join('');
+  } catch { return null; }
+}
+
+/** This device's store of read models (IndexedDB): the 12 last opened. `ages` (key → last opened, ms) is
+ *  its own store, so eviction never loads a model. Any failure is just a miss. */
+const KEEP_MODELS = 12;
+function store(op, key, value) {
+  return new Promise((done) => {
+    let req;
+    try { req = indexedDB.open('project-d-3d', 1); } catch { done(null); return; }
+    req.onupgradeneeded = () => {
+      for (const n of ['models', 'ages']) if (!req.result.objectStoreNames.contains(n)) req.result.createObjectStore(n);
+    };
+    req.onerror = () => done(null);
+    req.onblocked = () => done(null);
+    req.onsuccess = () => {
+      const db = req.result;
+      try {
+        const tx = db.transaction(['models', 'ages'], 'readwrite');
+        const os = tx.objectStore('models'); const ages = tx.objectStore('ages');
+        let out = null;
+        if (op === 'get') {
+          const g = os.get(key);
+          g.onsuccess = () => { out = g.result || null; if (out) ages.put(Date.now(), key); };
+        } else {
+          os.put(value, key); ages.put(value.at, key);
+          // the oldest go, past the last KEEP_MODELS; a model with no age counts as 0
+          const mk = os.getAllKeys(); const ak = ages.getAllKeys(); const av = ages.getAll();
+          av.onsuccess = () => {
+            const age = new Map(ak.result.map((k, i) => [k, av.result[i]]));
+            const have = new Set(mk.result);
+            for (const k of ak.result) if (!have.has(k)) ages.delete(k);
+            const old = [...mk.result].sort((a, b) => (age.get(a) || 0) - (age.get(b) || 0));
+            for (const k of old.slice(0, Math.max(0, old.length - KEEP_MODELS))) { os.delete(k); ages.delete(k); }
+          };
+        }
+        tx.oncomplete = () => { db.close(); done(out); };
+        tx.onerror = tx.onabort = () => { db.close(); done(null); };
+      } catch { db.close(); done(null); }
+    };
+  });
 }
 
 /** A STEP / IGES / BREP file as triangles, read off the page's thread (occt-worker.js, the only file that loads the LGPL reader). */

@@ -39630,6 +39630,68 @@ try {
     });
   });
 
+  await step('TODO 10b2: the Parts tree of a two-part STEP (hide, Only, Show all); the second open of the file comes from the cache and starts no worker; a broken IndexedDB reads it again, no error', async () => {
+    await inWebgl(async () => {
+    await page.evaluate(() => { window.__workers = 0; const W = window.Worker; window.Worker = function (...a) { window.__workers++; return new W(...a); }; });
+    await closeTabs(/./);
+    const open = async () => {
+      await t('picker').setInputFiles('fixtures/sample-parts.step');
+      await waitTab(page, 'sample-parts.step');
+      return page.waitForSelector('[data-testid=model-host] .pv-info', { timeout: 60000 }).then((e) => e.textContent());
+    };
+    const cache = () => page.locator('[data-testid=model-host] .pv').getAttribute('data-cache');
+    const workers = () => page.evaluate(() => window.__workers);
+    assert.match(await open(), /^90 × 20 × 10 mm/);
+    assert.equal(await cache(), 'miss', 'a fresh browser has nothing stored');
+    assert.equal(await workers(), 1);
+    const pv = (label) => page.locator(`[data-testid=model-host] .pv-btn:text-is("${label}")`).click();
+    const rows = page.locator('[data-testid=pv-parts-list] .pv-part');
+    const ticks = () => rows.locator('input').evaluateAll((xs) => xs.map((x) => x.checked));
+    const canvas = async () => { await page.waitForTimeout(250); return page.locator('[data-testid=model-host] .pv-body > canvas').screenshot(); };
+    assert.equal(await page.locator('[data-testid=pv-parts]').isHidden(), true);
+    await pv('Parts');
+    assert.equal(await rows.count(), 3, 'the group Box and its two solids');
+    assert.deepEqual(await ticks(), [true, true, true]);
+    const all = await canvas();
+    await rows.nth(1).locator('input').uncheck();
+    assert.deepEqual(await ticks(), [true, false, true]);
+    const hidden = await canvas();
+    assert.ok(!all.equals(hidden), 'a part left the picture');
+    await rows.nth(1).locator('.pv-part-only').click();
+    assert.deepEqual(await ticks(), [true, true, false], 'Only: the one part (and its group)');
+    const only = await canvas();
+    assert.ok(!only.equals(all) && !only.equals(hidden), 'the other part alone');
+    await page.locator('[data-testid=pv-parts] .pv-btn:text-is("Show all")').click();
+    assert.deepEqual(await ticks(), [true, true, true]);
+    assert.ok((await canvas()).equals(all), 'Show all brings the first picture back');
+    await rows.nth(2).locator('.pv-part-name').click();
+    assert.equal(await rows.nth(2).getAttribute('class'), 'pv-part on', 'a click lights the part');
+    const showParts = async () => {                                  // a theme change draws the viewer again: Parts is closed in the fresh one
+      await page.locator('[data-testid=model-host] .pv-info').waitFor();
+      if (await page.locator('[data-testid=pv-parts]').isHidden()) await pv('Parts');
+      await rows.nth(2).locator('input').uncheck();
+      await page.waitForTimeout(300);
+    };
+    await shotBoth('viewer3d-parts', showParts);
+    await page.setViewportSize({ width: 1024, height: 700 });
+    await showParts();
+    await page.screenshot({ path: `${shotDir}/s12-viewer3d-parts-1024.png` });
+    assert.ok(await page.evaluate(() => { const r = document.querySelector('.rowtools').getBoundingClientRect(); return r.right <= window.innerWidth; }), 'the top bar fits at 1024 px');
+    await page.setViewportSize({ width: 1440, height: 900 });
+    assert.equal(await workers(), 1, 'the redraws for the theme came from the cache');
+    await closeTabs(/./);
+    assert.match(await open(), /^90 × 20 × 10 mm/);
+    assert.equal(await cache(), 'hit', 'the second open of the file is read from the store');
+    assert.equal(await workers(), 1, 'and starts no worker');
+    await closeTabs(/./);
+    await page.evaluate(() => { indexedDB.open = () => { throw new Error('private mode'); }; });
+    assert.match(await open(), /^90 × 20 × 10 mm/);
+    assert.equal(await cache(), 'miss', 'no store: read again');
+    assert.equal(await workers(), 2);
+    await closeTabs(/./);
+    });
+  });
+
   const picked = pickSteps(steps, only, selectStep, until);
   for (const entry of picked) await runStep(page, entry, shotDir);
 } catch (e) {
