@@ -228,6 +228,14 @@ select.fld { font-family: var(--sans); }
 .start-recent strong { font-size: 16px; }
 .start-recent small { font-size: 12px; color: var(--muted); }
 .start-recent strong, .start-recent small { max-width: 100%; overflow-wrap: anywhere; }
+.start-recent-row { position: relative; }
+.start-recent-row .start-recent { padding-right: 48px; }
+.start-pin { position: absolute; top: 8px; right: 8px; display: grid; place-items: center; width: 32px; height: 32px; padding: 0; border: 0; border-radius: var(--r); background: none; color: var(--muted); cursor: pointer; opacity: 0; }
+.start-recent-row:hover .start-pin, .start-pin:focus-visible, .start-pin[aria-pressed='true'] { opacity: 1; }
+.start-pin:hover { background: var(--sel); color: var(--text); }
+.start-pin[aria-pressed='true'] { color: var(--accenttext); }
+.start-pin[aria-pressed='true'] svg { fill: currentColor; }
+.start-pinned { margin-bottom: 12px; padding-bottom: 4px; border-bottom: 1px solid var(--line); }
 .canvas[data-work-area='Light'] {
   --selection: #2f7bd0; --alignment-guide: #2f7bd0; --crossing: #00f434; --edge-opacity: .35; --hot: #d92d20; --mark: #c2410c; --dim: #0f766e; --guide: #0f766e;
   background: #e9e9e9;

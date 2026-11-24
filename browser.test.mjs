@@ -377,7 +377,7 @@ try {
           return value === theme && value;
         }, theme)).jsonValue(), theme);
         await rows.first().click({ button: 'right' });
-        assert.deepEqual(await menu.getByRole('menuitem').allTextContents(), ['Open', 'Remove from list', 'Copy full path']);
+        assert.deepEqual(await menu.getByRole('menuitem').allTextContents(), ['Open', 'Pin', 'Remove from list', 'Copy full path']);
         assert.deepEqual(await p.evaluate(() => window.startReads), [], 'right-click does not open');
         const path = `${shotDir}/todo307b-start-menu-${theme}.png`;
         await p.screenshot({ path }); assert.ok(readFileSync(path).length > 1000);
@@ -450,6 +450,84 @@ try {
         return text === 'Entities 0' && text;
       })).jsonValue(), 'Entities 0', 'Undo still works after leaving Start');
       console.log('307b: Open/Remove/Copy success+failure, immediate Recent refresh, disabled tools, typed refusal/open/compare, Options/tabs; light/dark menu screenshots verified');
+    } finally { await context.close(); }
+  });
+  await step('TODO 136a: Start screen Recent: a pushpin pins a row to the top (kept after a reload, in the File menu too); Pin / Unpin in the row menu; Options "Recent files" count 0-50 keeps pins', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    try {
+      const p = await context.newPage(), q = (id) => p.getByTestId(id);
+      p.on('pageerror', (e) => errors.push(String(e)));
+      const J = (name) => `C:/jobs/${name}.dxf`, all = ['a', 'b', 'c', 'd'].map(J), menu = q('ctx-menu');
+      await p.addInitScript((all) => {
+        localStorage.setItem('pd-start-mode', 'start');
+        if (!sessionStorage.getItem('seeded136a')) { sessionStorage.setItem('seeded136a', '1'); localStorage.setItem('pd-recent', JSON.stringify(all)); localStorage.removeItem('pd-recent-pins'); localStorage.removeItem('pd-recent-max'); }
+        window.__TAURI__ = { event: { listen: async () => () => {} }, core: { invoke: async () => [] }, fs: { exists: async () => true, readFile: async () => new TextEncoder().encode('0\nEOF\n') }, dialog: { open: async () => null } };
+      }, all);
+      await p.goto(URL_ + '?autosave=86400000'); await q('start-screen').waitFor();
+      const titles = () => p.evaluate(() => [...document.querySelectorAll('[data-testid=start-recent]')].map((b) => b.title));
+      const store = (key) => p.evaluate((key) => JSON.parse(localStorage.getItem(key)), key);
+      const pin = (i) => p.locator('.start-recent-row').nth(i).getByTestId('start-pin');
+      const optionCount = async (value) => {
+        await p.locator('[data-menu=Tools]').click(); await p.getByRole('menuitem', { name: 'Options…', exact: true }).click();
+        const field = p.getByLabel('Recent files:'); await field.fill(String(value)); await field.press('Tab');
+        const shown = await field.inputValue(); await p.keyboard.press('Escape'); return shown;
+      };
+      assert.deepEqual(await titles(), all);
+      await p.mouse.move(2, 2);
+      assert.equal(await pin(2).getAttribute('aria-label'), 'Pin');
+      assert.equal(await pin(2).getAttribute('aria-pressed'), 'false');
+      assert.equal(await pin(2).evaluate((e) => getComputedStyle(e).opacity), '0', 'the pushpin shows on hover or focus only');
+      await p.locator('.start-recent-row').nth(2).hover();
+      assert.equal(await pin(2).evaluate((e) => getComputedStyle(e).opacity), '1', 'visible on hover');
+      await pin(2).click();
+      assert.deepEqual(await titles(), [J('c'), J('a'), J('b'), J('d')], 'the pinned row moves to the top');
+      assert.equal(await p.locator('.start-pinned .start-recent-row').count(), 1, 'its own group');
+      await p.mouse.move(2, 2);
+      assert.equal(await pin(0).getAttribute('aria-label'), 'Unpin');
+      assert.equal(await pin(0).getAttribute('aria-pressed'), 'true');
+      assert.equal(await pin(0).evaluate((e) => getComputedStyle(e).opacity), '1', 'always visible on a pinned row');
+      assert.equal(await p.evaluate(() => document.activeElement.dataset.testid), 'start-pin', 'focus stays on the pin');
+      assert.deepEqual(await store('pd-recent-pins'), [J('c')]);
+      await p.reload(); await q('start-screen').waitFor();
+      assert.deepEqual(await titles(), [J('c'), J('a'), J('b'), J('d')], 'still on top after reopening');
+      await p.locator('[data-menu=File]').click();
+      assert.equal(await p.getByRole('menuitem', { name: '1  c.dxf', exact: true }).count(), 1, 'the File menu lists the pinned file first');
+      assert.equal(await p.getByRole('menuitem', { name: '2  a.dxf', exact: true }).count(), 1);
+      await p.keyboard.press('Escape');
+      for (const theme of ['light', 'dark']) {
+        await p.emulateMedia({ colorScheme: theme });
+        const path = `${shotDir}/todo136a-start-${theme}.png`;
+        await p.screenshot({ path }); assert.ok(readFileSync(path).length > 1000);
+      }
+      await q('start-recent').nth(1).click({ button: 'right' });
+      assert.deepEqual(await menu.getByRole('menuitem').allTextContents(), ['Open', 'Pin', 'Remove from list', 'Copy full path']);
+      await menu.getByRole('menuitem', { name: 'Pin', exact: true }).click();
+      assert.deepEqual(await titles(), [J('a'), J('c'), J('b'), J('d')], 'two pinned: last-opened order inside the group');
+      await q('start-recent').nth(0).click({ button: 'right' });
+      assert.deepEqual(await menu.getByRole('menuitem').allTextContents(), ['Open', 'Unpin', 'Remove from list', 'Copy full path']);
+      await menu.getByRole('menuitem', { name: 'Unpin', exact: true }).click();
+      assert.deepEqual(await titles(), [J('c'), J('a'), J('b'), J('d')], 'unpinned: back in last-opened order');
+      await q('start-recent').nth(0).click({ button: 'right' }); await menu.getByRole('menuitem', { name: 'Remove from list', exact: true }).click();
+      assert.deepEqual(await titles(), [J('a'), J('b'), J('d')]);
+      assert.deepEqual(await store('pd-recent-pins'), [], 'removing a pinned file drops its pin');
+      await p.evaluate((all) => { localStorage.setItem('pd-recent', JSON.stringify(all)); localStorage.setItem('pd-recent-pins', JSON.stringify([all[3]])); }, all);
+      await p.reload(); await q('start-screen').waitFor();
+      assert.deepEqual(await titles(), [J('d'), J('a'), J('b'), J('c')]);
+      assert.equal(await optionCount(2), '2');
+      assert.deepEqual(await titles(), [J('d'), J('a'), J('b')], 'Recent files 2: one pinned and two shown');
+      assert.deepEqual(await store('pd-recent'), [J('a'), J('b'), J('d')], 'the older unpinned row is dropped for good');
+      assert.equal(await optionCount(0), '0');
+      assert.deepEqual(await titles(), [J('d')], 'Recent files 0: the pin stays');
+      await pin(0).click();
+      assert.deepEqual(await titles(), []);
+      assert.equal(await q('start-screen').getByText('Recent files', { exact: true }).count(), 0, 'Recent files 0: the list is hidden');
+      assert.equal(await q('start-screen').getByText('No recent files yet').count(), 0);
+      assert.deepEqual(await store('pd-recent'), []);
+      assert.equal(await optionCount(99), '50', 'the count stops at 50');
+      assert.equal(await p.evaluate(() => localStorage.getItem('pd-recent-max')), '50');
+      assert.equal(await optionCount(''), '20', 'empty: back to 20');
+      assert.equal(await q('start-screen').getByText('No recent files yet').count(), 1);
+      console.log('136a: pin on hover / always when pinned, own group on top, reload, File menu, row menu Pin / Unpin, Remove drops the pin, count 2 / 0 / 50; light/dark screenshots');
     } finally { await context.close(); }
   });
   await step('TODO 343: no default Drawing 1 tab: Start mode boots on Start only; × on the last tab parks the empty doc; + / New drawing / New layout use it; a real untouched Drawing 1 keeps its tab', async () => {

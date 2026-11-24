@@ -13,7 +13,7 @@ import { idbStore, localStore } from './idbstore.js';
 import { WORK_AREAS, workAreaDark } from './workarea.js';
 import { FOLDS, ribbonTabs, nextFold, doubleFold } from './ribbon.js';
 import { PRESETS, presetFor, stepRepeat, gridCellNote, GRIP_KEYS, gripOf } from './layout.js';
-import { unitFactor, convertedNote, startHidden, entityCount, layerCounts, patchedCounts, drawingBoxMm, fitRect, cursorMm, fitsSheet, spaceOf, boxOnSheet, itemVisible, addRecent, removeRecent, closePrompt, BIG_FILE, bigFileAsk, backupPath, dupName } from './doc.js';
+import { unitFactor, convertedNote, startHidden, entityCount, layerCounts, patchedCounts, drawingBoxMm, fitRect, cursorMm, fitsSheet, spaceOf, boxOnSheet, itemVisible, addRecent, removeRecent, trimRecent, setPin, orderRecent, recentMax, closePrompt, BIG_FILE, bigFileAsk, backupPath, dupName } from './doc.js';
 import * as Ed from './edit.js';
 import { follow as followGroups, remap as remapGroups, splice as spliceGroups, swap as swapGroups, copy as copyGroups, group as groupDrawing, ungroup as ungroupDrawing, groupOf, selectionOf, wholeGroup as wholeDrawingGroup } from './groups.js';
 import * as AD from './autodim.js';
@@ -516,7 +516,7 @@ const labelled = (text, input, cls = 'lbl inline') => h('label', { class: cls },
 function recentItems() {
   const t = window.__TAURI__;
   if (!t || !t.fs || !t.fs.readFile) return [];
-  const list = recentList();
+  const list = recentOrdered();
   if (!list.length) return [['Recent files: none yet', () => {}, null, () => false, null, true]];
   return list.map((p, i) => [`${i + 1}  ${p.split(/[\\/]/).pop()}`, () => openPath(p, true), null, null, p, i === 0]);
 }
@@ -528,10 +528,12 @@ function showOptions() {
   const mode = select([['start', 'Start screen'], ['blank', 'Blank drawing']], startMode(), (value) => {
     try { localStorage.setItem('pd-start-mode', value); } catch { note('Could not remember At start'); }
   });
+  const count = h('input', { type: 'number', min: 0, max: 50, step: 1, value: recentCount(), 'data-testid': 'opt-recent-count' });
+  count.addEventListener('change', () => { count.value = setRecentCount(count.value); });
   const close = () => { back.remove(); document.removeEventListener('keydown', onKey, true); ui.menuBtns.find((b) => b.dataset.menu === 'Tools').focus(); };
   const onKey = (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); } };
   const back = h('div', { class: 'pop-back' }, h('div', { class: 'pop-dialog', role: 'dialog', 'aria-label': 'Options' },
-    h('strong', null, 'Options'), labelled('At start:', mode),
+    h('strong', null, 'Options'), labelled('At start:', mode), labelled('Recent files:', count),
     h('button', { class: 'btn', type: 'button', onclick: close }, 'Close')));
   document.body.append(back); document.addEventListener('keydown', onKey, true); mode.focus();
 }
@@ -553,18 +555,26 @@ function showStartScreen(on) {
   ui.startRecent.replaceChildren();
   if (!items.length) { ui.startRecent.append(h('p', null, 'Recent files show in the desktop app')); return; }
   ui.startRecent.append(h('h2', null, 'Recent files'));
-  if (!items[0][4]) { ui.startRecent.append(h('p', null, 'No recent files yet')); return; }
-  for (const [, action, , , path] of items) {
+  if (!items[0][4]) { ui.startRecent.replaceChildren(...(recentCount() ? [h('h2', null, 'Recent files'), h('p', null, 'No recent files yet')] : [])); return; }   // Recent files 0: no list (a pinned file brings it back)
+  const pins = new Set(recentPins().map((p) => p.replace(/\//g, '\\').toLowerCase())), isPinned = (path) => pins.has(path.replace(/\//g, '\\').toLowerCase());
+  const rowOf = ([, action, , , path]) => {
     const open = async () => { await action(); showStartScreen(!!curDoc().parked); };
-    ui.startRecent.append(h('button', { type: 'button', class: 'start-recent', title: path, 'data-testid': 'start-recent',
-      onclick: open, oncontextmenu: (e) => {
-        e.preventDefault();
-        popMenu(e.clientX, e.clientY, [['Open', open], ['Remove from list', () => forgetRecent(path)], ['Copy full path', async () => {
-          try { await navigator.clipboard.writeText(path); note('Full path copied'); } catch { note('Could not copy full path'); }
-        }]]);
-      } },
-    h('strong', null, path.split(/[\\/]/).pop()), h('small', null, path.slice(0, Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))))));
-  }
+    const pinned = isPinned(path);
+    return h('div', { class: 'start-recent-row' + (pinned ? ' pinned' : '') },
+      h('button', { type: 'button', class: 'start-recent', title: path, 'data-testid': 'start-recent',
+        onclick: open, oncontextmenu: (e) => {
+          e.preventDefault();
+          popMenu(e.clientX, e.clientY, [['Open', open], [pinned ? 'Unpin' : 'Pin', () => pinRecent(path, !pinned)], ['Remove from list', () => forgetRecent(path)], ['Copy full path', async () => {
+            try { await navigator.clipboard.writeText(path); note('Full path copied'); } catch { note('Could not copy full path'); }
+          }]]);
+        } },
+      h('strong', null, path.split(/[\\/]/).pop()), h('small', null, path.slice(0, Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))))),
+      h('button', { type: 'button', class: 'start-pin', 'data-testid': 'start-pin', 'aria-label': pinned ? 'Unpin' : 'Pin', 'aria-pressed': String(pinned),
+        title: pinned ? 'Unpin' : 'Pin to the top', onclick: () => pinRecent(path, !pinned) }, icon('<path d="M9 4h6l-1 6 3.5 3.5h-11L10 10z"/><path d="M12 13.5V20"/>', { size: 18, cap: 'round', join: 'round' })));
+  };
+  const pinnedRows = items.filter((it) => isPinned(it[4]));
+  if (pinnedRows.length) ui.startRecent.append(h('div', { class: 'start-pinned', role: 'group', 'aria-label': 'Pinned files' }, pinnedRows.map(rowOf)));
+  ui.startRecent.append(...items.filter((it) => !isPinned(it[4])).map(rowOf));
 }
 function buildStartScreen() {
   const action = (id, label, run) => h('button', { class: 'btn', type: 'button', 'data-testid': 'start-' + id,
@@ -1576,15 +1586,44 @@ async function openFile() {
 }
 
 // ---- Recent files (in the app only: a browser gives no paths), kept in localStorage, newest first ----
-function recentList() {
-  try { const v = JSON.parse(localStorage.getItem('pd-recent') || '[]'); return Array.isArray(v) ? v.filter((p) => typeof p === 'string') : []; } catch { return []; }
+function storedPaths(key) {
+  try { const v = JSON.parse(localStorage.getItem(key) || '[]'); return Array.isArray(v) ? v.filter((p) => typeof p === 'string') : []; } catch { return []; }
 }
+const recentList = () => storedPaths('pd-recent');
+const recentPins = () => storedPaths('pd-recent-pins');             // pinned paths (TODO 136a): kept across sessions, never pushed off, not counted in the count
+function recentCount() {
+  try { return recentMax(localStorage.getItem('pd-recent-max')); } catch { return 20; }
+}
+/** The recent paths in display order: pinned first, then last-opened. */
+const recentOrdered = () => orderRecent(recentList(), recentPins());
 function rememberRecent(path) {
-  try { localStorage.setItem('pd-recent', JSON.stringify(addRecent(recentList(), String(path)))); } catch { /* storage may be blocked */ }
+  try { localStorage.setItem('pd-recent', JSON.stringify(addRecent(recentList(), String(path), recentCount(), recentPins()))); } catch { /* storage may be blocked */ }
 }
 function forgetRecent(path) {
-  try { localStorage.setItem('pd-recent', JSON.stringify(removeRecent(recentList(), path))); } catch { note('Could not update Recent files'); }
+  try {
+    localStorage.setItem('pd-recent', JSON.stringify(removeRecent(recentList(), path)));
+    localStorage.setItem('pd-recent-pins', JSON.stringify(setPin(recentPins(), path, false)));
+  } catch { note('Could not update Recent files'); }
   if (!ui.startScreen.hidden) showStartScreen(true);
+}
+function pinRecent(path, on) {
+  try {
+    const pins = setPin(recentPins(), path, on);
+    localStorage.setItem('pd-recent-pins', JSON.stringify(pins));
+    if (!on) localStorage.setItem('pd-recent', JSON.stringify(trimRecent(recentList(), recentCount(), pins)));   // back among the others: the count may push it off
+  } catch { note('Could not pin the file'); }
+  if (ui.startScreen.hidden) return;
+  showStartScreen(true);
+  [...ui.startRecent.querySelectorAll('.start-recent-row')].find((r) => r.firstChild.title === path)?.querySelector('.start-pin').focus();   // the row moved: keep the keyboard on its pin
+}
+function setRecentCount(value) {
+  const n = recentMax(value);
+  try {
+    localStorage.setItem('pd-recent-max', String(n));
+    localStorage.setItem('pd-recent', JSON.stringify(trimRecent(recentList(), n, recentPins())));   // a lower count drops the older unpinned rows for good
+  } catch { note('Could not remember Recent files'); }
+  if (!ui.startScreen.hidden) showStartScreen(true);
+  return n;
 }
 /** Shared by File → Open, Explorer launches and Recent files. */
 async function openPath(path, recent = false, batch = {}) {

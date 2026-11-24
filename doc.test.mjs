@@ -5,7 +5,7 @@ import { decodeDxf, readDxf, flatten } from './web/drawing.js';
 import { mapply } from './web/drawing.js';
 import { buildTree } from './web/objects.js';
 import { makeDimension, addDimension } from './web/edit.js';
-import { unitFactor, convertedNote, spaceOf, shownItems, itemVisible, startHidden, entityCount, layerCounts, drawingBoxMm, placement, boxOnSheet, fitRect, cursorMm, fitsSheet, addRecent, removeRecent, closePrompt, BIG_FILE, bigFileAsk, backupPath, dupName } from './web/doc.js';
+import { unitFactor, convertedNote, spaceOf, shownItems, itemVisible, startHidden, entityCount, layerCounts, drawingBoxMm, placement, boxOnSheet, fitRect, cursorMm, fitsSheet, addRecent, removeRecent, trimRecent, setPin, orderRecent, recentMax, closePrompt, BIG_FILE, bigFileAsk, backupPath, dupName } from './web/doc.js';
 
 const load = (f) => flatten(readDxf(decodeDxf(readFileSync(f))));
 let n = 0;
@@ -108,15 +108,44 @@ test('inch.dxf converts to mm', () => {
   assert.equal(entityCount(raw, fl), 3);
   assert.equal(convertedNote(fl.units), 'converted from inch');
 });
-test('recent files: newest first, no repeats (any case or slash), at most 8', () => {
+test('recent files: newest first, no repeats (any case or slash), at most 20 (TODO 136a: was 8)', () => {
   let r = addRecent(null, 'C:\\a\\one.dxf');
   r = addRecent(r, 'C:\\a\\two.dxf');
   r = addRecent(r, 'c:/A/ONE.dxf');
   assert.deepEqual(r, ['c:/A/ONE.dxf', 'C:\\a\\two.dxf']);
-  for (let i = 0; i < 10; i++) r = addRecent(r, 'C:\\f' + i + '.dxf');
-  assert.equal(r.length, 8);
-  assert.equal(r[0], 'C:\\f9.dxf');
+  for (let i = 0; i < 30; i++) r = addRecent(r, 'C:\\f' + i + '.dxf');
+  assert.equal(r.length, 20);
+  assert.equal(r[0], 'C:\\f29.dxf');
   assert.deepEqual(addRecent(['x', 5, null], 'y'), ['y', 'x']);
+});
+test('TODO 136a: a pinned path is kept past the max and not counted; unpinning puts it back in last-opened order', () => {
+  let list = [];
+  for (const p of ['A:/pin.dxf', 'A:/b.dxf', 'A:/c.dxf']) list = addRecent(list, p, 2);
+  assert.deepEqual(list, ['A:/c.dxf', 'A:/b.dxf'], 'unpinned, the oldest fell off at max 2');
+  let pins = setPin([], 'a:\\PIN.dxf');
+  list = ['A:/c.dxf', 'A:/b.dxf', 'A:/pin.dxf'];
+  for (const p of ['A:/d.dxf', 'A:/e.dxf', 'A:/f.dxf']) list = addRecent(list, p, 2, pins);
+  assert.deepEqual(list, ['A:/f.dxf', 'A:/e.dxf', 'A:/pin.dxf'], 'pin stays, 2 unpinned shown');
+  assert.deepEqual(orderRecent(['A:/f.dxf', 'A:/e.dxf', 'A:/pin.dxf'], pins), ['A:/pin.dxf', 'A:/f.dxf', 'A:/e.dxf'], 'pinned group first');
+  assert.deepEqual(trimRecent(['A:/f.dxf', 'A:/e.dxf', 'A:/pin.dxf'], 1, pins), ['A:/f.dxf', 'A:/pin.dxf'], 'lowering the count trims unpinned rows only');
+  pins = setPin(pins, 'A:/pin.dxf', false);
+  assert.deepEqual(pins, []);
+  assert.deepEqual(orderRecent(['A:/f.dxf', 'A:/e.dxf', 'A:/pin.dxf'], pins), ['A:/f.dxf', 'A:/e.dxf', 'A:/pin.dxf'], 'unpinned: back in last-opened place');
+  assert.deepEqual(setPin(setPin([], 'X:/a'), 'x:\\A'), ['x:\\A'], 'pin once per path key');
+  assert.deepEqual(orderRecent(['one'], ['gone']), ['one'], 'a pin with no row is ignored');
+});
+test('TODO 136a: max 0 keeps only pinned paths; remove of a pinned path drops the pin too', () => {
+  assert.deepEqual(addRecent(['A:/a'], 'A:/new', 0), []);
+  assert.deepEqual(addRecent(['A:/a', 'A:/p'], 'A:/new', 0, ['a:\\P']), ['A:/p']);
+  assert.deepEqual(trimRecent(['A:/a', 'A:/p'], 0, ['A:/p']), ['A:/p']);
+  assert.deepEqual(trimRecent(['A:/a', 'A:/p'], 0), []);
+  const list = ['A:/a', 'A:/p'], pins = ['A:/p'];
+  assert.deepEqual([removeRecent(list, 'a:/P'), setPin(pins, 'a:/P', false)], [['A:/a'], []]);
+  assert.deepEqual(pins, ['A:/p'], 'input left alone');
+});
+test('TODO 136a: recentMax is a whole number 0-50, 20 when unset or not a number', () => {
+  assert.deepEqual([null, undefined, '', 'x', NaN].map(recentMax), [20, 20, 20, 20, 20]);
+  assert.deepEqual([0, '0', 7.9, '12', 50, 51, -3, 1e9].map(recentMax), [0, 0, 7, 12, 50, 50, 0, 50]);
 });
 test('TODO 307b: removeRecent matches Windows case and slashes, keeps order and leaves its input alone', () => {
   const list = ['C:\\jobs\\One.dxf', 'D:/two.dwg', 'c:/JOBS/one.DXF', 'E:/three.pdf'];
