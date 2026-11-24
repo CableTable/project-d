@@ -4317,7 +4317,7 @@ try {
       assert.equal(await p.evaluate(() => window.__launchLog.maxActive), 1, 'launch batches open sequentially');
       for (const [path, expected] of [
         ['C:/jobs/missing.dxf', /Open failed: file not found/],
-        ['C:/jobs/unsupported.xyz', /Opens DXF, PDF or 3D models \(STL, OBJ, PLY, glTF, 3MF\)/],
+        ['C:/jobs/unsupported.xyz', /Opens DXF, PDF or 3D models \(STL, OBJ, PLY, glTF, 3MF, STEP, IGES, BREP\)/],
         ['C:/jobs/unbuilt.dwg', /unbuilt\.dwg: could not convert this DWG \(unexpected grant\)/],      // this stub has no dwg_to_dxf
       ]) {
         await p.evaluate(async (path) => { window.__launchQueue.push([path, null]); await window.__launch(); }, path);
@@ -10276,7 +10276,7 @@ try {
   await step('review: opening a picture says what opens and where pictures go', async () => {
     if (only) { await t('picker').setInputFiles('fixtures/outline.dxf'); await waitTab(page, 'outline.dxf'); }
     await t('picker').setInputFiles('fixtures/bg.png');
-    await page.waitForFunction(() => /Opens DXF, PDF or 3D models \(STL, OBJ, PLY, glTF, 3MF\); pictures go in as a background \(Background…\)/.test(document.querySelector('[data-testid=cmd-prompt]').textContent));
+    await page.waitForFunction(() => /Opens DXF, PDF or 3D models \(STL, OBJ, PLY, glTF, 3MF, STEP, IGES, BREP\); pictures go in as a background \(Background…\)/.test(document.querySelector('[data-testid=cmd-prompt]').textContent));
     assert.deepEqual(await tabNames(), ['outline.dxf'], 'no new tab');
   });
 
@@ -39576,13 +39576,44 @@ try {
       await openMenu();
       await waitTab(page, 'bracket.stl');
       await page.waitForSelector('[data-testid=model-host] .pv-info', { timeout: 30000 });
-      assert.deepEqual(await page.evaluate(() => window.__dialogFilters.map((f) => f.name + ':' + f.extensions.join())), ['Drawings:dxf,dwg,pdf,ai,tif,tiff', '3D models:stl,obj,ply,glb,gltf,3mf']);
+      assert.deepEqual(await page.evaluate(() => window.__dialogFilters.map((f) => f.name + ':' + f.extensions.join())), ['Drawings:dxf,dwg,pdf,ai,tif,tiff', '3D models:stl,obj,ply,glb,gltf,3mf,step,stp,iges,igs,brep']);
       await t('mode-2d').click();
       await openMenu();
       await page.waitForFunction(() => /bracket\.stl is already open: here is its tab/.test(document.querySelector('[data-testid=cmd-prompt]').textContent));
       assert.equal(await page.locator('.tabs .dtab[data-kind=model]').count(), 1, 'the same path never opens twice');
       assert.equal(await t('mode-3d').getAttribute('aria-pressed'), 'true');
     } finally { await page.evaluate(() => { delete window.__TAURI__; }); }
+  });
+
+  await step('TODO 10b1: a STEP file opens in the 3D viewer (occt worker), its size in mm; Measure a face and an angle; Section; Esc goes back', async () => {
+    await closeTabs(/./);
+    await t('picker').setInputFiles('fixtures/sample.step');
+    await waitTab(page, 'sample.step');
+    const info = await page.waitForSelector('[data-testid=model-host] .pv-info', { timeout: 60000 }).then((e) => e.textContent());
+    assert.match(info, /^40 × 20 × 10 mm/);
+    const pv = (label) => page.locator(`[data-testid=model-host] .pv-btn:text-is("${label}")`).click();
+    const onModel = async () => { const r = await page.locator('[data-testid=model-host] .pv-body > canvas').boundingBox(); await page.mouse.click(r.x + r.width / 2, r.y + r.height / 2); };
+    const readout = () => page.locator('[data-testid=pv-readout]').textContent();
+    await pv('Views'); await pv('Top'); await pv('Ortho'); await pv('Measure');
+    await onModel();
+    await page.waitForFunction(() => /Flat face/.test(document.querySelector('[data-testid=pv-readout]').textContent), null, { timeout: 5000 });
+    await pv('Right'); await onModel();
+    await page.waitForFunction(() => /Angle 90°/.test(document.querySelector('[data-testid=pv-readout]').textContent), null, { timeout: 5000 });
+    assert.match(await readout(), /Angle 90°/);
+    await pv('Measure');
+    await pv('Section');
+    assert.equal(await page.locator('[data-testid=model-host] .pv-section input[type=range]').isVisible(), true);
+    await page.waitForTimeout(300);
+    await pv('Iso'); await page.waitForTimeout(300);                  // the cut seen from an angle for the shots
+    await shotBoth('viewer3d-step');
+    await page.setViewportSize({ width: 1024, height: 700 });
+    await page.waitForTimeout(300);
+    await page.screenshot({ path: `${shotDir}/s12-viewer3d-step-1024.png` });
+    assert.ok(await page.evaluate(() => { const r = document.querySelector('.rowtools').getBoundingClientRect(); return r.right <= window.innerWidth; }), 'the top bar fits at 1024 px');
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.locator('[data-testid=model-host] .pv-info').waitFor();       // a theme change drew the viewer again: Section is off in the fresh one
+    await page.keyboard.press('Escape');
+    assert.equal(await t('start-screen').getAttribute('class'), 'start-screen', 'Esc leaves the viewer (no drawing tab: Start)');
   });
 
   const picked = pickSteps(steps, only, selectStep, until);

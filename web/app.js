@@ -1371,7 +1371,7 @@ async function attachPictures(r, path) {
   }
   await preloadPictures(r.result.items);
 }
-const MODEL_RE = /\.(stl|obj|ply|glb|gltf|3mf)$/i;
+const MODEL_RE = /\.(stl|obj|ply|glb|gltf|3mf|step|stp|iges|igs|brep)$/i;
 /** A 3D model (TODO 10a) as a tab of its own: the viewer (viewers.js) fills the canvas area while the tab is current. It edits nothing, so Close never asks to save. */
 async function openModel(name, buf, path) {
   const doc = { name, path: null, openPath: path, dirty: false, model: { el: h('div'), blob: new Blob([buf]) } };      // no path of its own: Save can never write over the model
@@ -1418,7 +1418,7 @@ async function openBytes(name, buf, path = null, batch = {}) {
   if (/\.pdf$/i.test(name) || (!/\.dxf$/i.test(name) && buf.byteLength && isPdf(buf))) { await openPdf(name, buf, path, null, batch); return; }
   if (/\.ai$/i.test(name)) { note(name + ": this .ai has no PDF part. In Illustrator: Save As .ai with 'Create PDF Compatible File' on, or Save a Copy as PDF."); return; }
   const dwg = /\.dwg$/i.test(name);
-  if (!dwg && !/\.dxf$/i.test(name)) { note(name + ': Opens DXF, PDF or 3D models (STL, OBJ, PLY, glTF, 3MF); pictures go in as a background (Background…)'); return; }
+  if (!dwg && !/\.dxf$/i.test(name)) { note(name + ': Opens DXF, PDF or 3D models (STL, OBJ, PLY, glTF, 3MF, STEP, IGES, BREP); pictures go in as a background (Background…)'); return; }
   if (dwg && !(buf = await dwgBytes(name, path, buf))) return;
   note('Reading ' + name + '…');
   const r = await readDrawing(buf instanceof ArrayBuffer ? buf : buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength));
@@ -1534,7 +1534,7 @@ async function openFile() {
   const t = window.__TAURI__;
   if (!t || !t.dialog || !t.dialog.open) { ui.picker.value = ''; ui.picker.click(); return; }
   try {
-    const picked = await t.dialog.open({ multiple: false, filters: [{ name: 'Drawings', extensions: ['dxf', 'dwg', 'pdf', 'ai', 'tif', 'tiff'] }, { name: '3D models', extensions: ['stl', 'obj', 'ply', 'glb', 'gltf', '3mf'] }] });
+    const picked = await t.dialog.open({ multiple: false, filters: [{ name: 'Drawings', extensions: ['dxf', 'dwg', 'pdf', 'ai', 'tif', 'tiff'] }, { name: '3D models', extensions: ['stl', 'obj', 'ply', 'glb', 'gltf', '3mf', 'step', 'stp', 'iges', 'igs', 'brep'] }] });
     const path = Array.isArray(picked) ? picked[0] : picked;
     if (path) await openPath(String(path));
   } catch (err) {
@@ -1967,7 +1967,7 @@ function buildCanvas() {
   // the opened drawing: a canvas over the sheet, same view (applyView), drawn at true size
   ui.dcanvas = h('canvas', { class: 'drawing-layer', 'data-testid': 'drawing' });
   ui.gridDisplay = h('div', { class: 'drawing-grid', hidden: true, 'aria-hidden': 'true', 'data-testid': 'drawing-grid' });
-  ui.picker = h('input', { type: 'file', accept: '.dxf,.dwg,.pdf,.ai,.json,.tif,.tiff,.stl,.obj,.ply,.glb,.gltf,.3mf', hidden: true, 'data-testid': 'picker', multiple: true });
+  ui.picker = h('input', { type: 'file', accept: '.dxf,.dwg,.pdf,.ai,.json,.tif,.tiff,.stl,.obj,.ply,.glb,.gltf,.3mf,.step,.stp,.iges,.igs,.brep', hidden: true, 'data-testid': 'picker', multiple: true });
   ui.picker.addEventListener('change', async () => { const files = [...ui.picker.files], batch = {}; ui.picker.value = ''; for (const f of balFirst(await bigOk(files))) await openPicked(f, batch); });   // emptied, so the same file can be picked again
   ui.bgPicker = h('input', { type: 'file', accept: '.png,.jpg,.jpeg,.pdf,.tif,.tiff', hidden: true, 'data-testid': 'bg-picker' });
   ui.bgPicker.addEventListener('change', async () => {

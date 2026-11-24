@@ -1,7 +1,8 @@
 // The 3D viewer (ported from Project R's viewers.js, TODO 10a): a model to turn, with Fit; Views (Iso, Front, Top,
 // Right; Ortho); Edges (where the surface bends); X-ray; Section (a cut along X, Y or Z, its face filled); Measure
 // (point to point: geom.js); Smooth shading for the mesh kinds below. three.js (web/vendor/three/three-view.js, npm run vendor)
-// loads only when a model is first opened. STEP / IGES / BREP, the Parts tree and Snap come in a later build (T10b, T10c).
+// loads only when a model is first opened. STEP / IGES / BREP (sizes in mm; faces, holes and angles to Measure) are read off the page's
+// thread by occt-worker.js (TODO 10b1); the read-model cache, the Parts tree and Snap come in a later build (T10b2, T10c).
 //
 //   const done = await renderPreview(el, blob, '3d', 'bracket.stl');   … later: done();
 //
@@ -49,7 +50,7 @@ function watchSize(box, fn, undo) {
 
 // ---------------------------------------------------------------- 3D models
 
-const Z_UP = new Set(['stl', 'ply', '3mf']);          // obj and glTF stand on Y
+const Z_UP = new Set(['stl', 'ply', '3mf', 'step', 'stp', 'iges', 'igs', 'brep']);   // CAD files stand on Z; obj and glTF on Y
 const CAD = new Set(['step', 'stp', 'iges', 'igs', 'brep']);
 const after = (ms) => new Promise((r) => setTimeout(r, ms));
 const ACCENT = 0xf2b544, CUT = 0xd9775f;
@@ -91,12 +92,12 @@ export async function loadMesh(T, ext, blob, metal) {
 
 async function model3d(root, blob, name, undo) {
   const ext = (name.match(/\.([a-z0-9]+)$/i) || [, ''])[1].toLowerCase();
-  if (CAD.has(ext)) throw sorry('STEP / IGES opens in a later build');
-  if (!MESH_KINDS.includes(ext)) throw sorry('This kind of 3D file can\'t be previewed.');
+  if (!CAD.has(ext) && !MESH_KINDS.includes(ext)) throw sorry('This kind of 3D file can\'t be previewed.');
   const local = [];                                  // put away on close
   const put = (fn) => local.push(fn);
   undo(() => tidy(local));
-  const body = h('div', { class: 'pv-body' }, note('Loading…'));
+  const unitName = CAD.has(ext) ? 'mm' : '';
+  const body = h('div', { class: 'pv-body' }, note(CAD.has(ext) ? 'Reading the model… a big one takes a while.' : 'Loading…'));
   root.append(body);
   const [T, G] = await Promise.all([import('./vendor/three/three-view.js'), import('./geom.js')]);
 
@@ -122,7 +123,12 @@ async function model3d(root, blob, name, undo) {
   put(() => metal.dispose());
 
   await after(30);                                               // let the message paint
-  const group = await loadMesh(T, ext, blob, metal);
+  let group;
+  if (CAD.has(ext)) {
+    const r = await inWorker(await blob.arrayBuffer(), ext, put);
+    if (!r.meshes.length) throw sorry('Couldn\'t read this 3D file.');
+    group = new T.Group(); group.add(cadTree(T, r, metal));
+  } else group = await loadMesh(T, ext, blob, metal);
   // each part its own material (so one can be seen through); faces sit back a hair so edges draw clean
   const meshes = [];
   group.traverse((n) => {
@@ -197,14 +203,20 @@ async function model3d(root, blob, name, undo) {
     camera = next; controls.object = next; controls.update(); draw();
   }
 
-  // ---- edges: where the surface bends; found when first asked for
+  // ---- edges: a STEP file's true ones (where faces meet), else where the surface bends; found when first asked for
   let edges = null;
   const edgeMat = new T.LineBasicMaterial({ color: dark ? 0xe3e6ec : 0x1b1e24 });
   put(() => edgeMat.dispose());
   function makeEdges() {
     edges = [];
     for (const n of meshes) {
-      const l = new T.LineSegments(new T.EdgesGeometry(n.geometry, 30), edgeMat);
+      const g = n.geometry, faces = n.userData.faces;
+      let lg;
+      if (faces && faces.length && g.index) {
+        lg = new T.BufferGeometry();
+        lg.setAttribute('position', new T.BufferAttribute(G.featureEdges(g.getAttribute('position').array, g.index.array, faceOf(n), radius * 1e-6), 3));
+      } else lg = new T.EdgesGeometry(g, 30);
+      const l = new T.LineSegments(lg, edgeMat);
       l.renderOrder = 2;
       n.add(l); edges.push(l);
     }
@@ -259,9 +271,34 @@ async function model3d(root, blob, name, undo) {
     placeCut();
   }
 
-  // ---- picking: which point of the model a click lands on
+  // ---- picking: which point, which face (a STEP file's faces are runs of triangles)
   const ray = new T.Raycaster();
   const visibleUp = (n) => { for (let o = n; o; o = o.parent) if (!o.visible) return false; return true; };
+  function faceOf(n) {                               // triangle → its face number
+    if (n.userData.faceOf) return n.userData.faceOf;
+    const f = new Int32Array(n.geometry.index.count / 3).fill(-1);
+    n.userData.faces.forEach((x, i) => f.fill(i, x.first, x.last + 1));
+    return (n.userData.faceOf = f);
+  }
+  function faceAt(n, tri) {                          // → { face: geom.js's, first, last } in world terms, or null
+    const faces = n.userData.faces;
+    if (!faces || !faces.length || !n.geometry.index) return null;
+    const i = faceOf(n)[tri];
+    if (i < 0) return null;
+    const cache = n.userData.kinds || (n.userData.kinds = new Map());
+    if (!cache.has(i)) {
+      const g = n.geometry, nor = g.getAttribute('normal');
+      cache.set(i, G.classifyFace(g.getAttribute('position').array, nor ? nor.array : null, g.index.array, faces[i].first, faces[i].last));
+    }
+    return { face: toWorld(cache.get(i), n), first: faces[i].first, last: faces[i].last };
+  }
+  function toWorld(f, n) {
+    if (f.kind === 'other') return f;
+    const pt = (p) => new T.Vector3(...p).applyMatrix4(n.matrixWorld).toArray();
+    const dir = (d) => new T.Vector3(...d).transformDirection(n.matrixWorld).toArray();
+    return f.kind === 'plane' ? { kind: 'plane', normal: dir(f.normal), point: pt(f.point) }
+      : { ...f, axis: dir(f.axis), centre: pt(f.centre), radius: f.radius * n.matrixWorld.getMaxScaleOnAxis() };
+  }
   function pickAt(e) {
     const r = canvas.getBoundingClientRect();
     camera.updateMatrixWorld();                      // a click right after a view change comes before the next render
@@ -270,32 +307,43 @@ async function model3d(root, blob, name, undo) {
     return hits.find((x) => !cut.on || cut.plane.distanceToPoint(x.point) >= 0) || null;
   }
 
-  // ---- Measure: one pick is a point; two say how far apart
+  // ---- Measure: one pick says what it is (Ø, R, a flat face); two say how far apart, or the angle
   const marks = new T.Group(); scene.add(marks);
   const markMat = new T.MeshBasicMaterial({ color: ACCENT, depthTest: false });
+  const faceMat = new T.MeshBasicMaterial({ color: ACCENT, transparent: true, opacity: 0.45, side: T.DoubleSide, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
   const lineMat = new T.LineBasicMaterial({ color: ACCENT, depthTest: false });
   const dotGeo = new T.SphereGeometry(1, 16, 12);
-  put(() => { clearMarks(); markMat.dispose(); lineMat.dispose(); dotGeo.dispose(); });
+  put(() => { clearMarks(); markMat.dispose(); faceMat.dispose(); lineMat.dispose(); dotGeo.dispose(); });
   function clearMarks() { for (const o of marks.children.slice()) { if (o.geometry && o.geometry !== dotGeo) o.geometry.dispose(); marks.remove(o); } }
   let picks = [];
   const readout = h('div', { class: 'pv-readout', 'data-testid': 'pv-readout', hidden: true });
   function say(text, hint) {
     readout.hidden = false;
     readout.replaceChildren(...[h('strong', null, text), hint ? h('span', null, hint) : null].filter(Boolean),
-      btn('Clear', () => { picks = []; clearMarks(); say('Pick a point.'); draw(); }));
+      btn('Clear', () => { picks = []; clearMarks(); say(START); draw(); }));
   }
+  const START = CAD.has(ext) ? 'Pick a face, a hole or a point.' : 'Pick a point.';
   function measurePick(hit) {
-    const pick = { point: hit.point.toArray(), face: null };
+    const n = hit.object, f = faceAt(n, hit.faceIndex);
+    const pick = { point: hit.point.toArray(), face: f ? f.face : null };
     if (picks.length >= 2) { picks = []; clearMarks(); }
     picks.push(pick);
     const dot = new T.Mesh(dotGeo, markMat); dot.renderOrder = 9;
     dot.scale.setScalar(radius * 0.012); dot.position.copy(hit.point); marks.add(dot);
-    if (picks.length === 1) say(G.label(G.describe(pick)), 'Pick another point.');
+    if (f && f.face.kind !== 'other') {               // the face, lit up
+      const g = new T.BufferGeometry();
+      g.setAttribute('position', n.geometry.getAttribute('position'));
+      g.setIndex(new T.BufferAttribute(n.geometry.index.array.slice(f.first * 3, (f.last + 1) * 3), 1));
+      const m = new T.Mesh(g, faceMat); m.matrixAutoUpdate = false; m.matrix.copy(n.matrixWorld); m.renderOrder = 3; marks.add(m);
+    }
+    if (picks.length === 1) say(G.label(G.describe(pick), unitName), CAD.has(ext) ? 'Pick another face or point to measure between.' : 'Pick another point.');
     else {
       const m = G.measure(picks[0], picks[1]);
-      const g = new T.BufferGeometry().setFromPoints([new T.Vector3(...picks[0].point), new T.Vector3(...picks[1].point)]);
-      const l = new T.LineSegments(g, lineMat); l.renderOrder = 9; marks.add(l);
-      say(G.label(m), 'Pick again to start over.');
+      if (m.kind === 'points') {
+        const g = new T.BufferGeometry().setFromPoints([new T.Vector3(...picks[0].point), new T.Vector3(...picks[1].point)]);
+        const l = new T.LineSegments(g, lineMat); l.renderOrder = 9; marks.add(l);
+      }
+      say(G.label(m, unitName), 'Pick again to start over.');
     }
     draw();
   }
@@ -337,7 +385,7 @@ async function model3d(root, blob, name, undo) {
     toggle('Measure', (on) => {
       mode = on ? 'measure' : null;
       canvas.style.cursor = on ? 'crosshair' : '';
-      if (on) say('Pick a point.'); else { readout.hidden = true; picks = []; clearMarks(); draw(); }
+      if (on) say(START); else { readout.hidden = true; picks = []; clearMarks(); draw(); }
     })
   ];
 
@@ -345,7 +393,7 @@ async function model3d(root, blob, name, undo) {
   body.replaceChildren(canvas,
     h('div', { class: 'pv-float' }, h('div', { class: 'pv-tools' }, tools), viewsRow, sectionRow),
     readout,
-    h('div', { class: 'pv-info', 'data-testid': 'pv-info' }, fmt(size.x) + ' × ' + fmt(size.y) + ' × ' + fmt(size.z)
+    h('div', { class: 'pv-info', 'data-testid': 'pv-info' }, fmt(size.x) + ' × ' + fmt(size.y) + ' × ' + fmt(size.z) + (unitName ? ' ' + unitName : '')
       + (tris ? ' · ' + Math.round(tris).toLocaleString('en') + ' triangles' : '')));
   watchSize(body, (cw, ch) => {
     if (!cw || !ch) return;
@@ -356,4 +404,53 @@ async function model3d(root, blob, name, undo) {
     if (!controls.userChanged) { fit(); } else draw();
   }, put);
   controls.addEventListener('start', () => { controls.userChanged = true; });
+}
+
+/** A STEP file's parts tree as three.js groups; each mesh keeps its faces (triangle runs) for picking and edges. */
+function cadTree(T, r, metal) {
+  const meshes = r.meshes.map((m) => {
+    const g = new T.BufferGeometry();
+    g.setAttribute('position', new T.BufferAttribute(m.position, 3));
+    if (m.normal) g.setAttribute('normal', new T.BufferAttribute(m.normal, 3));
+    g.setIndex(new T.BufferAttribute(m.index, 1));
+    if (!m.normal) g.computeVertexNormals();
+    const faces = m.brep_faces || [];
+    let mat = metal;
+    if (faces.some((f) => f.color)) {               // faces coloured in the file: each its own
+      const base = m.color || [0.667, 0.698, 0.741], col = new Float32Array(m.position.length);
+      for (let i = 0; i < col.length; i += 3) col.set(base, i);
+      for (const f of faces) {
+        if (!f.color) continue;
+        for (let t = f.first; t <= f.last; t++) for (let k = 0; k < 3; k++) col.set(f.color, m.index[t * 3 + k] * 3);
+      }
+      g.setAttribute('color', new T.BufferAttribute(col, 3));
+      mat = new T.MeshStandardMaterial({ vertexColors: true, metalness: 0.2, roughness: 0.5, side: T.DoubleSide });
+    } else if (m.color) mat = new T.MeshStandardMaterial({ color: new T.Color(m.color[0], m.color[1], m.color[2]), metalness: 0.2, roughness: 0.5, side: T.DoubleSide });
+    const mesh = new T.Mesh(g, mat);
+    mesh.name = m.name || '';
+    mesh.userData.faces = faces;
+    return mesh;
+  });
+  const node = (n) => {
+    const g = new T.Group();
+    g.name = n.name || '';
+    for (const i of n.meshes || []) if (meshes[i]) g.add(meshes[i]);
+    for (const c of n.children || []) g.add(node(c));
+    return g;
+  };
+  return node(r.root || { meshes: meshes.map((_, i) => i), children: [] });
+}
+
+/** A STEP / IGES / BREP file as triangles, read off the page's thread (occt-worker.js, the only file that loads the LGPL reader). */
+function inWorker(bytes, ext, put) {
+  return new Promise((ok, no) => {
+    const w = new Worker(new URL('./occt-worker.js', import.meta.url), { type: 'module' });
+    put(() => w.terminate());
+    w.onmessage = (e) => {
+      w.terminate();
+      if (e.data.ok) ok(e.data.result); else no(sorry('Couldn\'t read this 3D file.'));
+    };
+    w.onerror = (e) => { e.preventDefault(); w.terminate(); no(new Error(e.message || 'worker failed')); };
+    w.postMessage({ bytes, ext, fine: false }, [bytes]);
+  });
 }
