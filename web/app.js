@@ -6091,6 +6091,8 @@ function paintOverlay(gesture = false) {
       c.dataset.preview = 0;
       drawn = cmpPaint(c, d.cmp, base, state.paste?.d === d || preview ? null : marks, false, keepBase(ckey));
       cmpTop(c, d, base, marks, preview);
+      const sel = cmpSelected(d.cmp);
+      if (kept?.still && cmpStillsUnder(d.cmp, sel)) { const mine = kept; setTimeout(() => requestIdleCallback(() => { const now = cmpSelected(d.cmp); if (kept === mine && curDoc() === d && cmpStillsUnder(d.cmp, now)) cmpStills(d.cmp, base, cw, chh, now); }), 1000); }     // the first grip drag then finds its stills ready (TODO 359b)
     } else if (d && d.lay) {                // a layout: each part painted once for all the places it is placed at (its matrix per place)
       paintDrawing(c, { ...base, fl: null, factor: 1 });                                      // clears
       for (const call of calls) drawn += paintDrawing(c, { ...base, keep: true, ...call });
@@ -14510,10 +14512,10 @@ function cmpZoom(d, x) {
 }
 
 /** One pass of Compare's snapshots: the stills (lifted false) or the one a drag moves (lifted true). part: see paintEditable ('over' paints only the edited drawing's selection and previews). */
-function cmpItems(canvas, c, base, marks, lifted, part) {
+function cmpItems(canvas, c, base, marks, lifted, part, skip, only) {
   let drawn = 0;
   for (const sd of c.items) {
-    if (!sd.visible || (sd.id === c.dragged) !== lifted) continue;
+    if (!sd.visible || (sd.id === c.dragged) !== lifted || sd === skip || (only && sd !== only)) continue;
     const target = sd.id === c.selected && cmpSourceTab(sd), placed = { ...base, ox: base.ox - sd.offset[0], oy: base.oy + sd.offset[1], keep: true, tint: cmpCss(sd.colour), cmpOff: sd.off };
     if (target) drawn += paintEditable(canvas, target, placed, state.tool === 'measure' ? null : marks, part);
     else if (part !== 'over') drawn += paintDrawing(canvas, { ...placed, fl: sd.fl, off: sd.off, factor: sd.factor });
@@ -14573,11 +14575,26 @@ function cmpKeepKey(d, base, cw, chh) {
   if (target) key.push(...paintKey(target, base, cw, chh));
   return key;
 }
-const dragCv = document.createElement('canvas');                                            // the grabbed snapshot of a Compare drag, painted once where it was grabbed
+/** A grip drag's base is the other snapshots (kept once per view, TODO 359b) with the grabbed drawing painted over: only when that drawing is the topmost visible one, so the layer order holds. */
+const cmpStillsUnder = (c, sel) => { const vis = c.items.filter((x) => x.visible); return vis.length > 1 && vis.at(-1) === sel && !!cmpSourceTab(sel); };
+let stillsCv = null, stillsKey = null;
+function cmpStills(c, base, w, h, sel) {
+  const key = [c, base.ox, base.oy, base.scale, w, h, base.dpr, base.dark, base.wireframe, base.sheetH];
+  for (const sd of c.items) if (sd.visible && sd !== sel) key.push(sd.fl, sd.factor, cmpCss(sd.colour), ...sd.offset, ...[...(sd.off || [])].sort((a, b) => a - b), null);
+  if (stillsCv && sameBase(stillsKey, key)) return stillsCv;
+  stillsCv = stillsCv || document.createElement('canvas');
+  stillsCv.width = w; stillsCv.height = h;
+  cmpItems(stillsCv, c, base, null, false, 'base', sel);
+  stillsKey = key;
+  return stillsCv;
+}
+const dragCv = document.createElement('canvas');                                          // the grabbed snapshot of a Compare drag, painted once where it was grabbed
 /** Paints the stills (the edited drawing without the entities a grip moves) on `canvas`; for a body drag also the grabbed snapshot into dragCv: { off, box } (its offset and its px box then). */
 function cmpBase(canvas, c, base) {
   paintDrawing(canvas, { ...base, fl: null, factor: 1 });                                      // clears
-  cmpItems(canvas, c, base, null, false, 'base');
+  const sel = cmpSelected(c), under = !c.dragged && cmpStillsUnder(c, sel);
+  if (under) { const g = canvas.getContext('2d'); g.setTransform(1, 0, 0, 1, 0, 0); g.drawImage(cmpStills(c, base, canvas.width, canvas.height, sel), 0, 0); cmpItems(canvas, c, base, null, false, 'base', null, sel); }
+  else cmpItems(canvas, c, base, null, false, 'base');
   const sd = c.items.find((x) => x.id === c.dragged);
   if (!sd) return null;
   dragCv.width = canvas.width; dragCv.height = canvas.height;
