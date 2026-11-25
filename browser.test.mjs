@@ -33543,6 +33543,47 @@ try {
     } finally { await ctx.close(); }
   });
 
+  await step('TODO 359b: Compare grip drag takes the cached stills (warmed in idle slices) and the mid-drag picture equals a full paint', async () => {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    try {
+      const p = await ctx.newPage(), drawing = p.getByTestId('drawing'), errors = [];
+      p.on('pageerror', (e) => errors.push(String(e)));
+      await p.route('**/app.js', (route) => route.fulfill({ contentType: 'text/javascript', body: readFileSync('web/app.js', 'utf8') + '\nwindow.t359Paint = () => paintOverlay(); window.t359Stills = () => ({ cv: stillsCv, done: !!stillsKey });' }));
+      const frame = () => p.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+      await p.goto(URL_ + '?autosave=86400000'); await p.getByTestId('count').waitFor({ state: 'attached' });
+      const buffer = Buffer.from(writeDxf(bigDoc(20000)));
+      for (const name of ['t359-a.dxf', 't359-b.dxf', 't359-c.dxf']) {
+        await p.getByTestId('picker').setInputFiles({ name, mimeType: 'text/plain', buffer });
+        await waitTab(p, name);
+      }
+      await p.locator('[data-menu=File]').click(); await p.getByRole('menuitem', { name: 'Compare drawings…', exact: true }).click();
+      await p.getByTestId('canvas').getByRole('button', { name: 'Fit', exact: true }).click(); await frame();
+      await p.locator('[data-tool=select]').first().click();
+      const box = await p.getByTestId('canvas').boundingBox();
+      await p.mouse.click(box.x + box.width / 2, box.y + box.height / 2); await frame();
+      assert.ok(await p.getByTestId('grip').count() > 0, 'the click selects an object with grips');
+      await p.waitForFunction(() => window.t359Stills().done, null, { timeout: 15000 });      // the idle warm-up (a snapshot per task) finishes by itself
+      const pixels = () => p.evaluate(() => { const cv = window.t359Stills().cv, d = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data; let n = 0; for (let i = 3; i < d.length; i += 4) if (d[i]) n++; return n; });
+      assert.ok(await pixels() > 0, 'the cached stills hold the other snapshots');
+      const g = await p.getByTestId('grip').first().evaluate((el) => { const b = el.getBoundingClientRect(); return { x: b.x + b.width / 2, y: b.y + b.height / 2 }; });
+      await p.mouse.move(g.x, g.y); await p.mouse.down(); await frame();
+      for (let i = 1; i <= 10; i++) { await p.mouse.move(g.x + i * 4, g.y + i * 2); await frame(); }
+      assert.equal(await drawing.getAttribute('data-keep'), '1', 'the drag paints over the kept base');
+      await drawing.evaluate((c) => { window.__A = c.getContext('2d').getImageData(0, 0, c.width, c.height); c.dataset.nokeep = '1'; });
+      await p.evaluate(() => { window.t359Paint(); }); await frame();
+      const diff = await drawing.evaluate((c) => {
+        const a = window.__A, b = c.getContext('2d').getImageData(0, 0, c.width, c.height);
+        delete c.dataset.nokeep; delete window.__A;
+        let n = 0;
+        for (let i = 0; i < a.data.length; i += 4) for (let j = 0; j < 4; j++) if (Math.abs(a.data[i + j] - b.data[i + j]) > 2) { n++; break; }
+        return n;
+      });
+      assert.equal(diff, 0, 'the picture through the cached stills equals a full paint');
+      await p.mouse.up(); await frame();
+      assert.deepEqual(errors, []);
+    } finally { await ctx.close(); }
+  });
+
   await step('TODO 316: the Compare button on a big pair runs in slices: "Comparing… n%", no differences until done, a second click and a closed tab drop a run', async () => {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
     try {

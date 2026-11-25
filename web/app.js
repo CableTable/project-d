@@ -6092,7 +6092,10 @@ function paintOverlay(gesture = false) {
       drawn = cmpPaint(c, d.cmp, base, state.paste?.d === d || preview ? null : marks, false, keepBase(ckey));
       cmpTop(c, d, base, marks, preview);
       const sel = cmpSelected(d.cmp);
-      if (kept?.still && cmpStillsUnder(d.cmp, sel)) { const mine = kept; setTimeout(() => requestIdleCallback(() => { const now = cmpSelected(d.cmp); if (kept === mine && curDoc() === d && cmpStillsUnder(d.cmp, now)) cmpStills(d.cmp, base, cw, chh, now); }), 1000); }     // the first grip drag then finds its stills ready (TODO 359b)
+      if (kept?.still && cmpStillsUnder(d.cmp, sel)) {     // the first grip drag then finds its stills ready (TODO 359b); one snapshot per idle task
+        const mine = kept, warm = () => { const now = cmpSelected(d.cmp); if (kept === mine && curDoc() === d && cmpStillsUnder(d.cmp, now) && !cmpStills(d.cmp, base, cw, chh, now, true)) requestIdleCallback(warm); };
+        setTimeout(() => requestIdleCallback(warm), 1000);
+      }
     } else if (d && d.lay) {                // a layout: each part painted once for all the places it is placed at (its matrix per place)
       paintDrawing(c, { ...base, fl: null, factor: 1 });                                      // clears
       for (const call of calls) drawn += paintDrawing(c, { ...base, keep: true, ...call });
@@ -14577,15 +14580,19 @@ function cmpKeepKey(d, base, cw, chh) {
 }
 /** A grip drag's base is the other snapshots (kept once per view, TODO 359b) with the grabbed drawing painted over: only when that drawing is the topmost visible one, so the layer order holds. */
 const cmpStillsUnder = (c, sel) => { const vis = c.items.filter((x) => x.visible); return vis.length > 1 && vis.at(-1) === sel && !!cmpSourceTab(sel); };
-let stillsCv = null, stillsKey = null;
-function cmpStills(c, base, w, h, sel) {
+let stillsCv = null, stillsKey = null, stillsPart = null;
+/** The other snapshots painted once on one canvas, in layer order. `slice`: paint one snapshot and return null while more are left (the idle warm-up, so no task holds the thread for all of them); without it, finish at once. */
+function cmpStills(c, base, w, h, sel, slice = false) {
   const key = [c, base.ox, base.oy, base.scale, w, h, base.dpr, base.dark, base.wireframe, base.sheetH];
   for (const sd of c.items) if (sd.visible && sd !== sel) key.push(sd.fl, sd.factor, cmpCss(sd.colour), ...sd.offset, ...[...(sd.off || [])].sort((a, b) => a - b), null);
   if (stillsCv && sameBase(stillsKey, key)) return stillsCv;
-  stillsCv = stillsCv || document.createElement('canvas');
-  stillsCv.width = w; stillsCv.height = h;
-  cmpItems(stillsCv, c, base, null, false, 'base', sel);
-  stillsKey = key;
+  if (!(stillsPart && sameBase(stillsPart.key, key))) {
+    stillsCv = stillsCv || document.createElement('canvas');
+    stillsCv.width = w; stillsCv.height = h; stillsKey = null;
+    stillsPart = { key, todo: c.items.filter((sd) => sd.visible && sd !== sel) };
+  }
+  while (stillsPart.todo.length) { cmpItems(stillsCv, c, base, null, false, 'base', null, stillsPart.todo.shift()); if (slice && stillsPart.todo.length) return null; }
+  stillsKey = key; stillsPart = null;
   return stillsCv;
 }
 const dragCv = document.createElement('canvas');                                          // the grabbed snapshot of a Compare drag, painted once where it was grabbed
