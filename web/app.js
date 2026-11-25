@@ -5919,7 +5919,7 @@ let paintFull = true, snap = null, snapCv = null, snapTimer = 0, paintSize = nul
 let quickNext = false, lastHeavy = false;
 const BIG_ITEMS = 50000;
 // A drawing tab whose own paint is slow keeps its bitmap (without selection, marks, previews): a hover or a select click paints only those on top (TODO 258 / 259).
-let kept = null, keptCv = null, panCv = null;
+let kept = null, keptCv = null, panCv = null, mendCv = null;
 // Zoom end (TODO 324b): the sharp paint in bands over timer ticks (zoomChunks); chunk = { view, key } while they run, chunkGen cancels them.
 let chunk = null, chunkGen = 0, chunkCv = null, settle = false;       // settle: the paint the 120 ms snapTimer sends; only it may use bands
 const KEEP_MS = 10;
@@ -6181,9 +6181,12 @@ function mendKept(d, base, want, box) {
   if (![x0, x1, y0, y1].every(Number.isFinite)) return false;
   if (x1 <= x0 || y1 <= y0) return true;
   if ((x1 - x0) * (y1 - y0) * 2 > want.w * want.h) return false;
+  // the full paint's own calls on a canvas of the view's size (a strip or a clip batches and rounds its strokes differently: its picture is not the full paint's), only the items near the box traced; its box then replaces the kept one
+  mendCv = mendCv || document.createElement('canvas');
+  mendCv.width = want.w; mendCv.height = want.h;
+  paintEditable(mendCv, d, { ...base, minPx: undefined, clip: [x0, y0, x1, y1] }, null, 'base');
   const kg = keptCv.getContext('2d');
-  kg.setTransform(1, 0, 0, 1, 0, 0); kg.clearRect(x0, y0, x1 - x0, y1 - y0);
-  paintStrip(kg, d, { ...base, minPx: undefined }, want, null, [x0, y0, x1, y1]);
+  kg.setTransform(1, 0, 0, 1, 0, 0); kg.clearRect(x0, y0, x1 - x0, y1 - y0); kg.drawImage(mendCv, x0, y0, x1 - x0, y1 - y0, x0, y0, x1 - x0, y1 - y0);
   return true;
 }
 
