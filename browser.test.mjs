@@ -33531,8 +33531,9 @@ try {
               const path = `${shotDir}/t317-${kind}-${theme}.png`;
               await p.screenshot({ path }); assert.ok(readFileSync(path).length > 1000, 'required screenshot exists');
               const during = await paints();
-              await p.mouse.up(); await frame();
-              assert.equal(await paints() - during, 1, `${label}: the release gives one full paint`);
+              await p.mouse.up();
+              const released = await (await p.waitForFunction((n) => { const v = +document.querySelector('[data-testid=drawing]').dataset.paints; return v > n && v; }, during)).jsonValue();       // waits for the release paint: a read after two frames was red 1 in 4 (359b review)
+              assert.equal(released - during, 1, `${label}: the release gives one full paint`);
               assert.notDeepEqual(await gripAt(), at, `${label}: the grip drag moved the grip`);
             }
           }
