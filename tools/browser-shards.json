@@ -595,6 +595,7 @@
   "lag harness: layout and Compare counts": 50.24,
   "TODO 322c: a 150k drawing opens and redraws after Delete, Ctrl+Z and Ctrl+Y as one quick frame, then its sliced full paint; the settled picture equals a full paint": 5.5,
   "TODO 322c: on a 20k drawing a pick and a snap at a deleted spot find nothing, and find it again after Ctrl+Z (the patched pick index)": 7,
+  "TODO 359d: an edit repaints only the changed box on the kept picture (Move, Delete, paste, INSERT move), pixel-equal to a full paint": 12,
   "TODO 72: Shift+right-click while a tool is on opens Enter / Cancel / Close / Undo last point and the snap types; plain right-click still finishes": 4.53,
   "fix72: Shift+right-click Cancel keeps a pending polyline and returns to Select; one Undo removes it": 4.54,
   "TODO 72: the menu in Move, Measure and Dimension has Cancel and the snap types; a snap row ticks the type and the Snap types list follows": 3.45,

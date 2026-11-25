@@ -33829,6 +33829,95 @@ try {
     } finally { await ctx.close(); }
   });
 
+  await step('TODO 359d: an edit repaints only the changed box on the kept picture (Move, Delete, paste, INSERT move), pixel-equal to a full paint', async () => {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    try {
+      const p = await ctx.newPage(), drawing = p.getByTestId('drawing'), errors = [];
+      p.on('pageerror', (e) => errors.push(String(e)));
+      await p.route('**/app.js', (route) => route.fulfill({ contentType: 'text/javascript', body: readFileSync('web/app.js', 'utf8') + '\nwindow.t359Paint = () => paintOverlay();' }));
+      await p.addInitScript(() => {       // partial repaints: the records whose new value is '1' (a record's new value is the next record's old one)
+        window.t359Partial = 0;
+        new MutationObserver((rs) => { rs.forEach((r, i) => { if ((rs[i + 1] ? rs[i + 1].oldValue : r.target.dataset.dirty) === '1') window.t359Partial++; }); }).observe(document, { subtree: true, attributes: true, attributeOldValue: true, attributeFilter: ['data-dirty'] });
+      });
+      const frame = () => p.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+      const paints = async () => Number(await drawing.getAttribute('data-paints'));
+      // lines that touch nothing: a Delete moves the run ends of the later items, which changes a pixel only where two strokes overlap (by 1 level, seen on bigDoc), so the byte compare needs a drawing without overlaps
+      const doc = addEntities(newDoc(4), Array.from({ length: 20000 }, (_, i) => dxfLine((i % 142) * 10, Math.floor(i / 142) * 10, (i % 142) * 10 + 8, Math.floor(i / 142) * 10 + 5)));
+      addBlock(doc, 'T359', [dxfLine(0, 0, 8, 0), dxfLine(8, 0, 8, 8), dxfLine(8, 8, 0, 8), dxfLine(0, 8, 0, 0)]);
+      addEntities(doc, [dxfInsert('T359', 1284, 1480)]);       // above the grid of bigDoc (142 columns, 141 rows of 10 mm cells)
+      await p.goto(URL_ + '?autosave=86400000'); await p.getByTestId('count').waitFor({ state: 'attached' });
+      await p.getByTestId('picker').setInputFiles({ name: 't359d.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(doc)) });
+      await p.waitForFunction(() => Number(document.querySelector('[data-testid=entities]').textContent.replace(/\D/g, '')) === 20001, null, { timeout: 60000 });
+      await p.getByTestId('canvas').getByRole('button', { name: 'Fit', exact: true }).click(); await frame();
+      await p.waitForTimeout(2000); await frame();       // the pick index is built in idle slices
+      const at = (x, y) => p.locator('rect.sheet').evaluate((el, [x, y]) => {
+        const b = el.getBoundingClientRect(), k = b.width / Number(el.getAttribute('width'));
+        return { x: b.x + x * k, y: b.y + (Number(el.getAttribute('height')) - y) * k };
+      }, [x, y]);
+      const select = async (x, y) => {       // entity 2400 is the line (1280, 160)-(1288, 165) of bigDoc's grid: the mid of any grid line is a point of its own
+        const s = await at(x, y);
+        await p.locator('[data-tool=select]').click(); await p.keyboard.press('Escape'); await p.mouse.move(s.x, s.y); await frame();
+        await p.mouse.click(s.x, s.y); await frame();
+        await p.waitForFunction(() => document.querySelector('[data-testid=sel-count]').textContent === '1 selected');       // the click at x, y selects one entity
+        return s;
+      };
+      const exact = async (label, act, allow = 0) => {       // the kept picture after `act` against a forced full paint of the same state, byte for byte (allow: a Delete moves the run ends of every later item, which flips the end pixel of a few tiny lines elsewhere: 16 bytes of 2.6 million seen)
+        const full0 = await paints();
+        await p.evaluate(() => { window.t359Partial = 0; });
+        await act();
+        await p.waitForFunction(() => window.t359Partial >= 1, null, { timeout: 15000 }).catch(() => assert.fail(`${label}: no partial paint`));
+        await frame();
+        assert.equal(await paints(), full0, `${label}: no full paint`);
+        await drawing.evaluate((c) => { window.__A = c.getContext('2d').getImageData(0, 0, c.width, c.height); c.dataset.nokeep = '1'; });
+        await p.evaluate(() => window.t359Paint()); await frame();
+        const over = await drawing.evaluate((c) => {
+          const a = window.__A, b = c.getContext('2d').getImageData(0, 0, c.width, c.height);
+          delete c.dataset.nokeep; delete window.__A;
+          let n = 0;
+          for (let i = 0; i < a.data.length; i++) if (a.data[i] !== b.data[i]) n++;
+          return n;
+        });
+        assert.ok(over <= allow, `${label}: the partial paint equals a full paint (${over} bytes differ, ${allow} allowed)`);
+        console.log(`T359d: ${label}: partial paint, 0 full paints, ${over} differing bytes`);
+      };
+      const move = async (s, dx, dy) => {
+        await p.locator('[data-tool=move]').first().click(); await p.mouse.move(s.x, s.y); await frame();
+        await p.mouse.click(s.x, s.y); await frame();
+        await p.mouse.move(s.x + dx, s.y + dy); await frame();
+        await p.mouse.click(s.x + dx, s.y + dy);
+      };
+      assert.ok(Number(await drawing.getAttribute('data-drawn')) > 15000, 'the fitted drawing is heavy: its picture is kept');
+      let s = await select(1284, 162.5);
+      await exact('Move', () => move(s, 60, -40));       // up: a path that leaves the canvas is rasterised by another Skia route, a row of its neighbours then differs (seen with +40)
+      await p.keyboard.press('Escape'); await frame();
+      s = await select(1284, 252.5);
+      await exact('Delete', () => p.keyboard.press('Delete'), 32);
+      s = await select(1284, 342.5);
+      await p.keyboard.press('Control+c');
+      await exact('paste', async () => {
+        await p.keyboard.press('Control+v');
+        await p.waitForFunction(() => /follows the cursor, click to place/.test(document.querySelector('[data-testid=cmd-prompt]').textContent));
+        await p.mouse.move(s.x + 50, s.y - 30); await frame();
+        await p.mouse.click(s.x + 50, s.y - 30);
+      });
+      await p.keyboard.press('Escape'); await frame();
+      s = await select(1288, 1480);       // the INSERT's right edge
+      await exact('INSERT move', () => move(s, -50, 30));
+      await p.keyboard.press('Escape'); await frame();
+      const light = `${shotDir}/t359d-light.png`; await p.screenshot({ path: light });
+      assert.ok(readFileSync(light).length > 1000, 'required screenshot exists');
+      await p.locator('[data-menu=View]').click();
+      await p.getByRole('menuitemcheckbox', { name: /Theme: dark\b/ }).click();
+      await p.waitForTimeout(800); await frame();
+      const dark = `${shotDir}/t359d-dark.png`; await p.screenshot({ path: dark });
+      assert.ok(readFileSync(dark).length > 1000, 'required screenshot exists');
+      await p.setViewportSize({ width: 1024, height: 700 }); await p.waitForTimeout(800); await frame();
+      const narrow = `${shotDir}/t359d-1024.png`; await p.screenshot({ path: narrow });
+      assert.ok(readFileSync(narrow).length > 1000, 'required screenshot exists');
+      assert.deepEqual(errors, []);
+    } finally { await ctx.close(); }
+  });
+
   await step('TODO 322c: on a 20k drawing a pick and a snap at a deleted spot find nothing, and find it again after Ctrl+Z (the patched pick index)', async () => {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
     try {
