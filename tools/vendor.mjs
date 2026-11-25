@@ -1,6 +1,7 @@
 // Copies the third-party code the page loads into web/vendor/ (not ours, not linted).   node tools/vendor.mjs   (npm run vendor)
 // pdf.js (pdfjs-dist, the legacy ES-module build: it runs in WebView2 / Chromium and older): the library and its worker.
 import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { build } from 'esbuild';
 
 const src = 'node_modules/pdfjs-dist/legacy/build/', dst = 'web/vendor/pdfjs/';
 mkdirSync(dst, { recursive: true });
@@ -35,3 +36,51 @@ mkdirSync(pc, { recursive: true });
 writeFileSync(pc + 'polygon-clipping.js', 'const module = { exports: {} }, exports = module.exports;\n' + readFileSync('node_modules/polygon-clipping/dist/polygon-clipping.umd.js', 'utf8') + '\nexport default module.exports;\n');
 copyFileSync('node_modules/polygon-clipping/LICENSE.md', pc + 'LICENSE');
 console.log('polygon-clipping ' + JSON.parse(readFileSync('node_modules/polygon-clipping/package.json', 'utf8')).version + ' -> ' + pc);
+
+// three.js (MIT, pinned to 0.186.1 in package.json) bundled with esbuild from tools/view-entry-three.mjs: the 3D viewer (web/viewers.js) loads it when a model opens.
+// Its fflate (MIT, inside three's examples) is bundled too, so LICENSE holds both.
+const th = 'web/vendor/three/';
+mkdirSync(th, { recursive: true });
+await build({ entryPoints: ['tools/view-entry-three.mjs'], bundle: true, format: 'esm', platform: 'browser', minify: true, legalComments: 'eof', outfile: th + 'three-view.js', logLevel: 'warning' });
+writeFileSync(th + 'LICENSE', readFileSync('node_modules/three/LICENSE', 'utf8').trimEnd() + '\n\n---\n\nfflate (bundled by three\'s 3MF and glTF loaders), MIT License\nCopyright (c) 2023 Arjun Barrett\nhttps://github.com/101arrowz/fflate/blob/master/LICENSE\n');
+console.log('three ' + JSON.parse(readFileSync('node_modules/three/package.json', 'utf8')).version + ' -> ' + th);
+
+// occt-import-js (LGPL-2.1, pinned to 0.0.23 in package.json; OpenCascade as WebAssembly) bundled from tools/view-entry-occt.mjs: the STEP / IGES / BREP reader.
+// Only web/occt-worker.js loads it, at runtime, from its own folder: the LGPL files stay separate and replaceable, never inside app code.
+// Its Emscripten glue makes each C++ function's wrapper with new Function(...), which the page's Content-Security-Policy refuses (no 'unsafe-eval'):
+// the swap below writes those two spots as plain closures, and throws if the library changes so they no longer fit.
+const WRAPPER_FROM = 'let[args,invokerFnBody]=createJsInvoker(argTypes,isClassMethodFunc,returns,isAsync);args.push(invokerFnBody);var invokerFn=newFunc(Function,args)(...closureArgs);';
+const WRAPPER_TO = `var invokerFn=function(...callArgs){
+  var dtors=needsDestructorStack?[]:null, wired=[cppTargetFunc], n=argTypes.length-2, first=isClassMethodFunc?1:2;
+  if(isClassMethodFunc)wired.push(argTypes[1].toWireType(dtors,this));
+  for(var i=0;i<n;++i)wired.push(argTypes[i+2].toWireType(dtors,callArgs[i]));
+  var rv=cppInvokerFunc(...wired);
+  if(needsDestructorStack)runDestructors(dtors);
+  else for(var i=first;i<argTypes.length;++i)if(argTypes[i].destructorFunction!==null)argTypes[i].destructorFunction(wired[i-first+1]);
+  if(returns)return argTypes[0].fromWireType(rv);
+};`;
+// The same for reading the options object passed in (the facets' size, the unit): a method caller per signature.
+const CALLER_FROM = 'var invokerFunction=newFunc(Function,params)(...args);';
+const CALLER_TO = `var invokerFunction=function(obj,func,destructorsRef,argsPtr){
+  var vals=[], off=0;
+  for(var i=0;i<argCount;++i){vals.push(types[i].readValueFromPointer(argsPtr+off));off+=types[i].argPackAdvance;}
+  var rv=kind===1?new func(...vals):kind===0?func.call(obj,...vals):func.call(...vals);
+  if(!retType.isVoid)return emval_returnValue(retType,destructorsRef,rv);
+};`;
+const noEval = {
+  name: 'no-eval',
+  setup(b) {
+    b.onLoad({ filter: /occt-import-js\.js$/ }, (a) => {
+      const src = readFileSync(a.path, 'utf8');
+      if (!src.includes(WRAPPER_FROM) || !src.includes(CALLER_FROM)) throw new Error('occt-import-js changed: tools/vendor.mjs no-eval swap no longer fits');
+      return { contents: src.replace(WRAPPER_FROM, WRAPPER_TO).replace(CALLER_FROM, CALLER_TO), loader: 'js' };
+    });
+  }
+};
+const oc = 'web/vendor/occt/';
+mkdirSync(oc, { recursive: true });
+// the library looks for node's modules in its node branch; the page never takes it
+await build({ entryPoints: ['tools/view-entry-occt.mjs'], bundle: true, format: 'esm', platform: 'browser', minify: true, legalComments: 'eof', outfile: oc + 'occt.js', logLevel: 'warning', external: ['fs', 'path'], plugins: [noEval] });
+copyFileSync('node_modules/occt-import-js/dist/occt-import-js.wasm', oc + 'occt-import-js.wasm');
+copyFileSync('node_modules/occt-import-js/LICENSE.md', oc + 'LICENSE');
+console.log('occt-import-js ' + JSON.parse(readFileSync('node_modules/occt-import-js/package.json', 'utf8')).version + ' -> ' + oc);

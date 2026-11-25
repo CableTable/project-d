@@ -268,7 +268,7 @@ export function* packSteps(job) {
     for (let i = 0; i < Math.min(MAX_PIECES, Math.max(0, Math.floor(it.count) || 0)); i++) pieces.push({ it, n, i, a });
   });
   pieces.sort((p, q) => q.a - p.a || p.n - q.n || p.i - q.i);
-  if (job.angles) pieces.forEach((pc, k) => { if (job.angles[k] != null) pc.deg = job.angles[k]; });     // a try's angle: that piece is tried at it alone
+  if (job.angles) pieces.forEach((pc, k) => { if (job.angles[k] != null) pc.deg = ((Math.round(job.angles[k]) % 360) + 360) % 360; });     // a try's angle: that piece is tried at it alone
   if (job.order && job.order.length === pieces.length) pieces = job.order.map((k) => pieces[k]);
   const placements = [], left = {}, cache = lru();           // one cache for the masks (`id|deg`) and the no-fit marks (`\0id|deg`)
   const total = pieces.length;

@@ -20,7 +20,7 @@ export function openAttributes(ent, blocks, save, auto = null, revision = null) 
   const button = (label, fn) => h('button', { type: 'button', class: 'btn', onclick: fn }, label);
   const ok = button('OK', () => attempt(() => { if (write()) finish(); })); ok.classList.add('primary');
   const value = h('input', { type: 'text', class: 'fld', 'aria-label': definition ? 'Default' : 'Value', value: definition ? draft.value : rows[0].value,
-    oninput: () => { if (definition) draft.value = value.value; else { rows[selected].value = value.value; cells[selected].textContent = value.value; } } });
+    oninput: () => { if (definition) draft.value = value.value; else { rows[selected].value = value.value; cells[selected].textContent = value.value; full(); } } });
   const cells = [], rowEls = [], picks = [];
   const contents = [];
   if (definition) {
@@ -55,7 +55,7 @@ export function openAttributes(ent, blocks, save, auto = null, revision = null) 
     if (!set) return;
     rows.forEach((r, i) => { if (r.tag in set) { r.value = set[r.tag]; cells[i].textContent = r.value; } });
     const first = rows.findIndex((r) => r.tag in set && r.tag !== 'REV');       // the new revision row's first field is picked and scrolled into view (the list scrolls)
-    picks[first](); rowEls[first].scrollIntoView?.({ block: 'nearest' });
+    if (first >= 0) { picks[first](); rowEls[first].scrollIntoView?.({ block: 'nearest' }); }
     write(); full();
   }) }, 'Add revision');
   const full = () => { if (!add) return; const none = !revision.next(values()); add.disabled = none; add.title = none ? revision.reason : ''; };

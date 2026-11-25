@@ -13,7 +13,8 @@ import { idbStore, localStore } from './idbstore.js';
 import { WORK_AREAS, workAreaDark } from './workarea.js';
 import { FOLDS, ribbonTabs, nextFold, doubleFold } from './ribbon.js';
 import { PRESETS, presetFor, stepRepeat, gridCellNote, GRIP_KEYS, gripOf } from './layout.js';
-import { unitFactor, convertedNote, startHidden, entityCount, layerCounts, patchedCounts, drawingBoxMm, fitRect, cursorMm, fitsSheet, spaceOf, boxOnSheet, itemVisible, addRecent, removeRecent, closePrompt, BIG_FILE, bigFileAsk, backupPath, dupName } from './doc.js';
+import { unitFactor, convertedNote, startHidden, entityCount, layerCounts, patchedCounts, drawingBoxMm, fitRect, cursorMm, fitsSheet, spaceOf, boxOnSheet, itemVisible, addRecent, removeRecent, trimRecent, setPin, orderRecent, recentMax, recentKey, staleThumbs, closePrompt, BIG_FILE, bigFileAsk, backupPath, dupName } from './doc.js';
+import { loadThumbs, saveThumb, thumbIds, dropThumbs } from './thumbstore.js';
 import * as Ed from './edit.js';
 import { follow as followGroups, remap as remapGroups, splice as spliceGroups, swap as swapGroups, copy as copyGroups, group as groupDrawing, ungroup as ungroupDrawing, groupOf, selectionOf, wholeGroup as wholeDrawingGroup } from './groups.js';
 import * as AD from './autodim.js';
@@ -31,9 +32,9 @@ import * as BAL from './balloons.js';
 import * as PS from './pdf-sheets.js';
 import { paintDrawing, paintDrawingSteps, paintMarks, drawMarks, drawContour, drawDimPreview, ink, FONT_FAMILY } from './render.js';
 import { overlayBox } from './preview.js';
-import { snapPlace, snapUsable, heavy, sameBase, runChunks, blitCovers, panStrips, QUICK_PX, slice as timeSlice } from './perf.js';
-import { flatten, flattenEdit, patchWidths, primeSplines, unionBox, CAP, ACI, UNITS, mapply, mmul, pickIndex, arcSweep, DrawingError } from './drawing.js';
-import { writeDxf, writeDxfSteps, writeDxfWithReport, withoutLayers, saveReportNote, unwritable, addLayer, newDoc, lwpoly, point } from './dxf-write.js';
+import { snapPlace, snapUsable, heavy, sameBase, runChunks, blitCovers, panStrips, QUICK_PX, slice as timeSlice, drain as finishSteps } from './perf.js';
+import { flatten, flattenEdit, patchWidths, primeSplines, unionBox, CAP, ACI, UNITS, mapply, mmul, snapIndex, arcSweep, DrawingError, flId, penBox } from './drawing.js';
+import { writeDxf, writeDxfSteps, writeDxfWithReport, withoutLayers, saveReportNote, unwritable, addLayer, newDoc, lwpoly, point, entity } from './dxf-write.js';
 import * as SH from './shaping.js';
 import { explodeSelection } from './explode.js';
 import { breakApart } from './breakapart.js';
@@ -76,7 +77,7 @@ import * as LD from './layoutdoc.js';
 import { labelGaps } from './pdf-source.js';
 import { isDimPart, isSettled, dimNoun, insertPlacement } from './layoutdim.js';
 import { dropPart } from './dropin.js';
-import { copySnapshot, copyPlacedSnapshot, drawingFromPlaced, pasteSnapshot, partFromSnapshot } from './clipboard.js';
+import { copySnapshot, copyPlacedSnapshot, drawingFromPlaced, pasteSnapshot, partFromSnapshot, imageOfPaste, pasteChoice } from './clipboard.js';
 import * as PL from './place.js';
 import * as A from './arrange.js';
 import * as G from './guides.js';
@@ -106,7 +107,7 @@ import { partSource, readTitleBlock, withTitleBlock, planPagesPdf, hasPagePictur
 import { pageToSvg } from './svg-write.js';
 import { readPdf, renderPdfPage, renderPdfPages, renderPdfPictures, isPdf, pageLayout } from './pdf-read.js';
 import { readTiff } from './tiff.js';
-import { preloadPictures, rawPixels } from './pictures.js';
+import { preloadPictures, rawPixels, isPng, docImages, pictureSize } from './pictures.js';
 import { panelWidth } from './docker.js';
 
 const SVGNS = 'http://www.w3.org/2000/svg';
@@ -391,6 +392,7 @@ function setTheme(mode) {
   if (mode === 'light' || mode === 'dark') root.dataset.theme = mode; else delete root.dataset.theme;
   try { localStorage.setItem('pd-theme', mode); } catch { /* storage may be blocked */ }
   renderWorkArea();
+  for (const d of state.docs) if (d.model?.done) drawModel(d).catch((err) => note(d.name + ': ' + err.message));       // a viewer takes its colours when drawn
   if (ui.dcanvas && layout) { paintOverlay(); renderLayers(); }
   if (cmpDoc()) update(); // Compare colours and drawing tints are per theme
   renderRibbon();
@@ -515,7 +517,7 @@ const labelled = (text, input, cls = 'lbl inline') => h('label', { class: cls },
 function recentItems() {
   const t = window.__TAURI__;
   if (!t || !t.fs || !t.fs.readFile) return [];
-  const list = recentList();
+  const list = recentOrdered();
   if (!list.length) return [['Recent files: none yet', () => {}, null, () => false, null, true]];
   return list.map((p, i) => [`${i + 1}  ${p.split(/[\\/]/).pop()}`, () => openPath(p, true), null, null, p, i === 0]);
 }
@@ -527,38 +529,81 @@ function showOptions() {
   const mode = select([['start', 'Start screen'], ['blank', 'Blank drawing']], startMode(), (value) => {
     try { localStorage.setItem('pd-start-mode', value); } catch { note('Could not remember At start'); }
   });
+  const count = h('input', { type: 'number', min: 0, max: 50, step: 1, value: recentCount(), 'data-testid': 'opt-recent-count' });
+  count.addEventListener('change', () => { count.value = setRecentCount(count.value); });
   const close = () => { back.remove(); document.removeEventListener('keydown', onKey, true); ui.menuBtns.find((b) => b.dataset.menu === 'Tools').focus(); };
   const onKey = (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); } };
   const back = h('div', { class: 'pop-back' }, h('div', { class: 'pop-dialog', role: 'dialog', 'aria-label': 'Options' },
-    h('strong', null, 'Options'), labelled('At start:', mode),
+    h('strong', null, 'Options'), labelled('At start:', mode), labelled('Recent files:', count),
     h('button', { class: 'btn', type: 'button', onclick: close }, 'Close')));
   document.body.append(back); document.addEventListener('keydown', onKey, true); mode.focus();
 }
+let lastDrawing = null, lastModel = null;       // the tabs "2D drawing" and "3D viewer" go back to
+let recentQuery = '', startUrls = [], startGen = 0;       // the Search recent text; the thumbnails' blob URLs; which build of the list a late thumbnail load belongs to (TODO 136b)
+const FILE_ICON = '<path d="M7 3h7l4 4v14H7z"/><path d="M14 3v4h4"/>';
 function showStartScreen(on) {
-  ui.startScreen.hidden = !on;
+  const fresh = on && ui.startScreen.hidden;     // coming back to Start: the search is empty again
+  const model = !on && curDoc()?.model;           // a model tab's viewer is shown in the Start screen's place (TODO 10a): the same "no drawing here" gates apply
+  ui.startScreen.hidden = !on && !model;
+  ui.startScreen.classList.toggle('model', !!model);
+  if (model) { if (ui.modelHost.firstChild !== model.el) ui.modelHost.replaceChildren(model.el); } else ui.modelHost.replaceChildren();
   ui.startTab.classList.toggle('on', on);
   ui.startTab.setAttribute('aria-pressed', String(on));
-  for (const b of Object.values(ui.toolBtns)) b.disabled = on;
+  for (const b of Object.values(ui.toolBtns)) b.disabled = on || !!model;
   railContour();
-  for (const b of ui.menuBtns) if (['Draw', 'Modify'].includes(b.dataset.menu)) b.disabled = on;
+  for (const b of ui.menuBtns) if (['Draw', 'Modify'].includes(b.dataset.menu)) b.disabled = on || !!model;
+  syncMode();
   renderRibbon();
   if (!on) return;
-  const items = recentItems();
+  const items = recentItems(), gen = ++startGen;
+  for (const u of startUrls) URL.revokeObjectURL(u);
+  startUrls = [];
+  if (fresh) recentQuery = '';
   ui.startRecent.replaceChildren();
   if (!items.length) { ui.startRecent.append(h('p', null, 'Recent files show in the desktop app')); return; }
   ui.startRecent.append(h('h2', null, 'Recent files'));
-  if (!items[0][4]) { ui.startRecent.append(h('p', null, 'No recent files yet')); return; }
-  for (const [, action, , , path] of items) {
+  if (!items[0][4]) { ui.startRecent.replaceChildren(...(recentCount() ? [h('h2', null, 'Recent files'), h('p', null, 'No recent files yet')] : [])); return; }   // Recent files 0: no list (a pinned file brings it back)
+  const pins = new Set(recentPins().map((p) => p.replace(/\//g, '\\').toLowerCase())), isPinned = (path) => pins.has(path.replace(/\//g, '\\').toLowerCase());
+  const rowOf = ([, action, , , path]) => {
     const open = async () => { await action(); showStartScreen(!!curDoc().parked); };
-    ui.startRecent.append(h('button', { type: 'button', class: 'start-recent', title: path, 'data-testid': 'start-recent',
-      onclick: open, oncontextmenu: (e) => {
-        e.preventDefault();
-        popMenu(e.clientX, e.clientY, [['Open', open], ['Remove from list', () => forgetRecent(path)], ['Copy full path', async () => {
-          try { await navigator.clipboard.writeText(path); note('Full path copied'); } catch { note('Could not copy full path'); }
-        }]]);
-      } },
-    h('strong', null, path.split(/[\\/]/).pop()), h('small', null, path.slice(0, Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))))));
-  }
+    const pinned = isPinned(path);
+    return h('div', { class: 'start-recent-row' + (pinned ? ' pinned' : '') },
+      h('button', { type: 'button', class: 'start-recent', title: path, 'data-testid': 'start-recent',
+        onclick: open, oncontextmenu: (e) => {
+          e.preventDefault();
+          popMenu(e.clientX, e.clientY, [['Open', open], [pinned ? 'Unpin' : 'Pin', () => pinRecent(path, !pinned)], ['Remove from list', () => forgetRecent(path)], ['Copy full path', async () => {
+            try { await navigator.clipboard.writeText(path); note('Full path copied'); } catch { note('Could not copy full path'); }
+          }]]);
+        } },
+      h('span', { class: 'start-thumb', 'aria-hidden': 'true' }, icon(FILE_ICON, { size: 28, cap: 'round', join: 'round' }), h('b', null, (path.match(/\.([a-z0-9]+)$/i)?.[1] || '').toUpperCase())),
+      h('strong', null, path.split(/[\\/]/).pop()), h('small', null, path.slice(0, Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))))),
+      h('button', { type: 'button', class: 'start-pin', 'data-testid': 'start-pin', 'aria-label': pinned ? 'Unpin' : 'Pin', 'aria-pressed': String(pinned),
+        title: pinned ? 'Unpin' : 'Pin to the top', onclick: () => pinRecent(path, !pinned) }, icon('<path d="M9 4h6l-1 6 3.5 3.5h-11L10 10z"/><path d="M12 13.5V20"/>', { size: 18, cap: 'round', join: 'round' })));
+  };
+  const list = h('div', { class: 'start-list' }), urls = new Map();
+  let thumbs = null;                                  // path key → PNG blob, once the store has answered
+  const fillThumbs = () => {                          // in place, so a row keeps its focus
+    if (!thumbs) return;
+    for (const row of list.querySelectorAll('.start-recent-row')) {
+      const slot = row.querySelector('span.start-thumb'), key = recentKey(row.firstChild.title), blob = thumbs.get(key);
+      if (!slot || !blob) continue;
+      if (!urls.has(key)) { const u = URL.createObjectURL(blob); urls.set(key, u); startUrls.push(u); }
+      slot.replaceWith(h('img', { class: 'start-thumb', src: urls.get(key), alt: '', 'data-testid': 'start-thumb' }));
+    }
+  };
+  const render = () => {
+    const q = recentQuery.trim().toLowerCase(), shown = items.filter((it) => !q || it[4].toLowerCase().includes(q));
+    const pinnedRows = shown.filter((it) => isPinned(it[4]));
+    list.replaceChildren(...(pinnedRows.length ? [h('div', { class: 'start-pinned', role: 'group', 'aria-label': 'Pinned files' }, pinnedRows.map(rowOf))] : []),
+      ...shown.filter((it) => !isPinned(it[4])).map(rowOf), ...(shown.length ? [] : [h('p', null, 'No recent file matches')]));
+    fillThumbs();
+  };
+  const search = h('input', { class: 'fld', type: 'text', placeholder: 'Search recent', 'aria-label': 'Search recent', 'data-testid': 'start-search', autocomplete: 'off', value: recentQuery });
+  search.addEventListener('input', () => { recentQuery = search.value; render(); });
+  search.addEventListener('keydown', (e) => { if (e.key === 'Escape' && search.value) { e.preventDefault(); e.stopPropagation(); search.value = recentQuery = ''; render(); } });
+  ui.startRecent.append(search, list);
+  render();
+  loadThumbs().then((m) => { if (gen === startGen) { thumbs = m; fillThumbs(); } }).catch(() => { /* no storage: the icons stay */ });
 }
 function buildStartScreen() {
   const action = (id, label, run) => h('button', { class: 'btn', type: 'button', 'data-testid': 'start-' + id,
@@ -567,7 +612,8 @@ function buildStartScreen() {
   ui.startScreen = h('section', { class: 'start-screen', hidden: true, 'data-testid': 'start-screen', 'aria-label': 'Start screen' },
     h('h1', null, 'Start'), h('div', { class: 'start-content' },
       h('div', { class: 'start-actions' }, action('new', 'New drawing', () => { if (!curDoc().empty || curDoc().parked) addTab(emptyDoc()); }), action('layout', 'New layout', newLayoutTab),
-        action('open', 'Open…', openFile), action('compare', 'Compare drawings…', cmpStart)), ui.startRecent));
+        action('open', 'Open…', openFile), action('compare', 'Compare drawings…', cmpStart)), ui.startRecent),
+    ui.modelHost = h('div', { class: 'model-host', 'data-testid': 'model-host' }));
   // The overlay's pointer events belong to its controls, not the drawing underneath.
   for (const name of ['pointerdown', 'pointermove', 'pointerup', 'click', 'dblclick', 'wheel', 'contextmenu']) ui.startScreen.addEventListener(name, (e) => e.stopPropagation());
   return ui.startScreen;
@@ -583,8 +629,8 @@ function buildMenus() {
       ['Redo', () => undoCurrent(true), 'Ctrl+Y', () => ui.startScreen.hidden && !!historyOf(curDoc())?.canRedo],
       ['Copy', copySelection, 'Ctrl+C', () => curLay() ? !!selItems().length : !!editable()?.sel.size],
       ['Cut', cutSelection, null, () => ui.startScreen.hidden && !!editable()?.sel.size],
-      ['Paste', pasteSelection, 'Ctrl+V', () => !!clipboard && (!!cmpDoc() || !!curDoc()?.lay || !!editable())],
-      ['Paste in place', pasteInPlace, 'Ctrl+Shift+V', () => ui.startScreen.hidden && !!clipboard && (!!cmpDoc() || !!curDoc()?.lay || !!editable())],
+      ['Paste', pasteSelection, 'Ctrl+V'],       // always enabled: the system clipboard may hold a picture (TODO 111c); "Nothing to paste" says when it holds nothing
+      ['Paste in place', pasteInPlace, 'Ctrl+Shift+V', () => ui.startScreen.hidden],
       ['Undo history…', showHistory, null, () => !!historyOf(curDoc())],
       ['Select all', selectAll, 'Ctrl+A', () => ui.startScreen.hidden && (!!editable() || !!curLay())],
       ['Delete', () => (curLay() ? deletePlaced() : deleteSelection()), 'Del', () => { const d = editable(); return ui.startScreen.hidden && (d ? d.sel.size > 0 : !!selectedPlaced() || !!balSelItem(curLay() && curDoc())); }]],
@@ -902,7 +948,7 @@ function ribbonContents(kind) {
       onkeydown: (e) => { if (e.key === 'Enter') e.target.blur(); } })),
       btn('Show differences', EYE, () => { cmpDoc().cmp.show = !cmpDoc().cmp.show; update(); }, { small: true, pressed: () => cmpDoc().cmp.show }),
       btn('Compare', '<rect x="3" y="6" width="12" height="13"/><rect x="9" y="5" width="12" height="13" stroke-dasharray="2 2"/>', () => cmpRun(cmpDoc()), { enabled: () => cmpDoc().cmp.items.filter((x) => x.checked).length >= 2 }))];
-  const groups = [group('Clipboard', btn('Paste', paste, pasteSelection, { enabled: () => !!clipboard && (!!cmpDoc() || !!editable() || !!curLay()) }),
+  const groups = [group('Clipboard', btn('Paste', paste, pasteSelection),
     stack(btn('Cut', TOOLS.find((t) => t.id === 'trim').svg, cutSelection, { small: true, enabled: () => !!editable()?.sel.size }),
       btn('Copy', copy, copySelection, { small: true, enabled: () => curLay() ? !!selItems().length : !!editable()?.sel.size }),
       btn('Select all', '<rect x="4" y="4" width="16" height="16" stroke-dasharray="3 2"/><path d="M8 12l3 3 5-6"/>', selectAll, { small: true, enabled: () => !!editable() || !!curLay() })))];
@@ -1022,11 +1068,8 @@ function buildTabs() {
   });
   for (const event of ['pointerup', 'pointercancel', 'lostpointercapture']) ui.tabs.addEventListener(event, () => { drag = null; });
   ui.tabs.addEventListener('click', (e) => { if (dragged) { e.preventDefault(); e.stopPropagation(); dragged = false; } }, true);
-  const modeBtns = [['2D drawing', true], ['3D viewer', false]].map(([text, on]) => {
-    const b = h('button', { class: 'seg' + (on ? ' on' : ' off'), type: 'button', title: on ? null : 'Not built yet', 'aria-disabled': on ? null : 'true' }, text);
-    if (!on) b.addEventListener('click', () => note('3D viewer: not built yet'));
-    return b;
-  });
+  const modeBtns = ui.modeBtns = [['2D drawing', 'mode-2d', backTo2D], ['3D viewer', 'mode-3d', toModel]].map(([text, id, go]) =>
+    h('button', { class: 'seg' + (id === 'mode-2d' ? ' on' : ''), type: 'button', 'data-testid': id, 'aria-pressed': String(id === 'mode-2d'), onclick: () => { if ((id === 'mode-3d') !== ui.startScreen.classList.contains('model')) go(); } }, text));
   return h('div', { class: 'tabsrow' },
     ui.startTab = h('button', { class: 'dtab', type: 'button', 'data-testid': 'start-tab', 'aria-pressed': 'false', onclick: () => showStartScreen(true) },
       icon('<path d="M3 10l9-7 9 7M5 9v12h14V9M9 21v-8h6v8"/>', { size: 14 }), 'Start'),
@@ -1075,7 +1118,7 @@ function renderTabs() {
       if (d.parked) return null;            // the Start screen is all there is: no tab until a drawing is made or opened
       const x = h('span', { class: 'x', 'aria-label': 'Close ' + d.name, role: 'button' }, '×');
       x.addEventListener('click', (e) => { e.stopPropagation(); closeTab(d); });
-      const b = h('button', { class: 'dtab' + (i === state.doc ? ' on' : ''), type: 'button', 'data-kind': d.lay ? 'layout' : d.cmp ? 'compare' : d.pdf?.pages > 1 ? 'pdf' : 'drawing' },
+      const b = h('button', { class: 'dtab' + (i === state.doc ? ' on' : ''), type: 'button', 'data-kind': d.lay ? 'layout' : d.cmp ? 'compare' : d.model ? 'model' : d.pdf?.pages > 1 ? 'pdf' : 'drawing' },
         d.lay && icon(GRID_ICON, { size: 14 }), h('span', { class: 'tname' }, d.name),
         PS.hasChanges(d) && h('span', { class: 'dot', title: 'Not saved yet' }, ' •'), x);
       b.addEventListener('click', () => { state.doc = i; showDoc(); });
@@ -1208,6 +1251,7 @@ async function closeTab(d) {
     tab.cmp.items = tab.cmp.items.map((x) => x.tabId === d.tabId ? { ...x, tabId: null } : x);
   }
   PS.pageStates(d).forEach(dropCopy);
+  d.model?.done?.();
   state.docs.splice(i, 1);
   const lastClosed = !state.docs.length;
   if (lastClosed) state.docs.push(Object.assign(emptyDoc(), { parked: true }));   // Start screen only: the empty doc stays, its tab is not drawn
@@ -1263,6 +1307,7 @@ function cycleTab(step) {
 
 /** The active tab changed: its drawing, layers and status, and Fit if the view is still fitted. */
 function showDoc() {
+  if (curDoc().model) lastModel = curDoc(); else if (!curDoc().parked) lastDrawing = curDoc();
   showStartScreen(!!curDoc().parked);
   const changed = shownDoc !== curDoc();
   if (changed) {
@@ -1321,6 +1366,7 @@ function tabFields(raw, fl) {
 
 function addTab(d, replaceEmpty = true) {
   if (d.path) rememberRecent(d.path);
+  thumbWanted.add(d);
   if (d.raw) { d.hist = Ed.createHistory(); d.sel = new Set(); d.hl = []; d.ed = null; warm(d); }
   const cur = curDoc();
   if (cur?.parked || replaceEmpty && cur && cur.empty && !cur.dirty && !d.empty) state.docs[state.doc] = d;      // the parked doc (Start screen only) and an untouched empty tab are used up
@@ -1365,21 +1411,92 @@ async function attachPictures(r, path) {
   }
   await preloadPictures(r.result.items);
 }
+const MODEL_RE = /\.(stl|obj|ply|glb|gltf|3mf|step|stp|iges|igs|brep)$/i;
+/** A 3D model (TODO 10a) as a tab of its own: the viewer (viewers.js) fills the canvas area while the tab is current. It edits nothing, so Close never asks to save. */
+async function openModel(name, buf, path) {
+  const doc = { name, path: null, openPath: path, dirty: false, model: { el: h('div'), blob: new Blob([buf]) } };      // no path of its own: Save can never write over the model
+  addTab(doc);
+  note('Reading ' + name + '…');
+  try { await drawModel(doc); } catch (err) { await closeTab(doc); note(name + ': ' + (err.message || 'could not read this 3D file')); return; }
+  if (!state.docs.includes(doc)) return;          // closed while it was loading
+  if (path) rememberRecent(path);
+  note('Opened ' + name);
+}
+/** Draws (or, after a theme change, draws again) a model tab's viewer. */
+async function drawModel(d) {
+  d.model.done?.(); d.model.done = null;
+  const done = await (await import('./viewers.js')).renderPreview(d.model.el, d.model.blob, '3d', d.name, { snap: (blob, w, h) => snapView(blob, w, h) });
+  if (state.docs.includes(d)) d.model.done = done; else done();
+}
+const SNAP_MM = 150;
+/** An IMAGE entity `width` wide (drawing units) with its lower-left corner at [x, y]; w × h are the pixels of the PNG data URL `px` (Snap and a pasted picture). */
+function imageEntity(px, w, h, x, y, width, layer) {
+  const side = width / w;
+  const pic = entity('IMAGE', [[10, x], [20, y], [30, 0], [11, side], [21, 0], [31, 0], [12, 0], [22, side], [32, 0], [13, w], [23, h]], { layer });
+  pic.r.px = px;
+  return pic;
+}
+/** Snap (TODO 10c, 11): the 3D view's PNG becomes an IMAGE, SNAP_MM wide and centred on the view, on the last 2D tab: a drawing (an empty tab becomes the drawing) or a layout (one layout object on the current layer, saved as a block); Compare, a many-page PDF or no tab: a new drawing tab. It is selected; one Undo removes it. */
+async function snapView(blob, w, h) {
+  const px = await new Promise((ok, no) => { const r = new FileReader(); r.onload = () => ok(r.result); r.onerror = () => no(r.error); r.readAsDataURL(blob); });
+  if (!isPng(px) || !(w > 0 && h > 0)) { note('Snap: could not make a picture of this view'); return; }
+  await preloadPictures([{ k: 'i', px }]);
+  const last = state.docs.includes(lastDrawing) ? lastDrawing : state.docs.findLast((t) => !t.model && !t.parked);
+  const plain = last && !last.parked && !last.cmp && !(last.pdf?.pages > 1);
+  if (plain) { state.doc = state.docs.indexOf(last); showDoc(); } else addTab(emptyDoc());
+  ensureScratch(curDoc());
+  const lay = curDoc().lay;
+  if (lay) {                                                        // sheet mm, y up: the picture is a layout object (156b2 path: one pushLay, one Undo)
+    const r = ui.canvas.getBoundingClientRect(), at = sheetAt(r.left + r.width / 2, r.top + r.height / 2), side = SNAP_MM / w, layer = curLayerName(curDoc());
+    const pic = imageEntity(px, w, h, at[0] - SNAP_MM / 2, at[1] - side * h / 2, SNAP_MM, layer);
+    view.fitted = false;
+    const made = layObjectsAdd(curDoc(), 'Snap view', [pic]);
+    if (!made) { note('Snap: could not put the picture on the sheet'); return; }
+    selectLoose(lay.placed.indexOf(made));
+    note('View placed on ' + curDoc().name);
+    return;
+  }
+  const d = editable();
+  if (!d) { note('Snap: could not put the picture on a drawing'); return; }
+  const fresh = !d.raw.entities.length, r = ui.canvas.getBoundingClientRect(), at = fresh ? [0, 0] : toDrawing(d, r.left + r.width / 2, r.top + r.height / 2);
+  const width = SNAP_MM / d.factor, side = width / w, layer = curLayerName(d);
+  const pic = imageEntity(px, w, h, at[0] - width / 2, at[1] - side * h / 2, width, layer);
+  if (!fresh) view.fitted = false;                                  // the view stays where it is, as when he draws
+  if (!commit(d, { entities: [...d.raw.entities, pic], blocks: d.raw.blocks, layers: layersWith(d.raw, layer) }, 'Snap view')) return;
+  setSel(d, new Set([d.raw.entities.indexOf(pic)]));
+  note('View placed on ' + d.name);
+}
+/** The mode buttons: "3D viewer" is on while a model is on show, else "2D drawing". */
+function syncMode() {
+  const on3d = ui.startScreen.classList.contains('model');
+  ui.modeBtns?.forEach((b, i) => { b.classList.toggle('on', (i === 1) === on3d); b.setAttribute('aria-pressed', String((i === 1) === on3d)); });
+}
+/** "2D drawing" on a model: the last drawing tab, else the Start screen. */
+function backTo2D() {
+  const drawing = state.docs.includes(lastDrawing) ? lastDrawing : state.docs.findLast((d) => !d.model && !d.parked);
+  if (drawing) { state.doc = state.docs.indexOf(drawing); showDoc(); } else showStartScreen(true);
+}
+/** "3D viewer": the last model tab. */
+function toModel() {
+  const model = state.docs.includes(lastModel) ? lastModel : state.docs.findLast((d) => d.model);
+  if (model) { state.doc = state.docs.indexOf(model); showDoc(); } else note('No 3D model is open: Open an STL, OBJ, PLY, glTF or 3MF file');
+}
 /** Opens a file's bytes as a new tab (path: where it lives on disk, in the app). */
 async function openBytes(name, buf, path = null, batch = {}) {
   // the same file already open (in the app, where files have paths): show its tab, never a second copy.
   // Path only: a DXF saved under a new name no longer is its opened file; a DWG / PDF tab has no path of its own, so its source counts
-  const same = path ? state.docs.findIndex((d) => [d.path, (d.fromDwg || d.fromPdf) && d.openPath].some((p) => p && pathKey(p) === pathKey(path))) : -1;
+  const same = path ? state.docs.findIndex((d) => [d.path, (d.fromDwg || d.fromPdf || d.model) && d.openPath].some((p) => p && pathKey(p) === pathKey(path))) : -1;
   if (same >= 0) {
     state.doc = same; showDoc(); rememberRecent(path);
     note(`${name} is already open: here is its tab` + (state.docs[same].dirty ? ' (with unsaved changes)' : ''));
     return;
   }
+  if (MODEL_RE.test(name)) { await openModel(name, buf, path); return; }
   if (/\.tiff?$/i.test(name)) { await importBackgroundTiff(name, buf, true, path); return; }   // TODO 138: a TIFF is a background picture in a tab of its own
   if (/\.pdf$/i.test(name) || (!/\.dxf$/i.test(name) && buf.byteLength && isPdf(buf))) { await openPdf(name, buf, path, null, batch); return; }
   if (/\.ai$/i.test(name)) { note(name + ": this .ai has no PDF part. In Illustrator: Save As .ai with 'Create PDF Compatible File' on, or Save a Copy as PDF."); return; }
   const dwg = /\.dwg$/i.test(name);
-  if (!dwg && !/\.dxf$/i.test(name)) { note(name + ': Opens DXF or PDF; pictures go in as a background (Background…)'); return; }
+  if (!dwg && !/\.dxf$/i.test(name)) { note(name + ': Opens DXF, PDF or 3D models (STL, OBJ, PLY, glTF, 3MF, STEP, IGES, BREP); pictures go in as a background (Background…)'); return; }
   if (dwg && !(buf = await dwgBytes(name, path, buf))) return;
   note('Reading ' + name + '…');
   const r = await readDrawing(buf instanceof ArrayBuffer ? buf : buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength));
@@ -1495,7 +1612,7 @@ async function openFile() {
   const t = window.__TAURI__;
   if (!t || !t.dialog || !t.dialog.open) { ui.picker.value = ''; ui.picker.click(); return; }
   try {
-    const picked = await t.dialog.open({ multiple: false, filters: [{ name: 'Drawings', extensions: ['dxf', 'dwg', 'pdf', 'ai', 'tif', 'tiff'] }] });
+    const picked = await t.dialog.open({ multiple: false, filters: [{ name: 'Drawings', extensions: ['dxf', 'dwg', 'pdf', 'ai', 'tif', 'tiff'] }, { name: '3D models', extensions: ['stl', 'obj', 'ply', 'glb', 'gltf', '3mf', 'step', 'stp', 'iges', 'igs', 'brep'] }] });
     const path = Array.isArray(picked) ? picked[0] : picked;
     if (path) await openPath(String(path));
   } catch (err) {
@@ -1504,15 +1621,64 @@ async function openFile() {
 }
 
 // ---- Recent files (in the app only: a browser gives no paths), kept in localStorage, newest first ----
-function recentList() {
-  try { const v = JSON.parse(localStorage.getItem('pd-recent') || '[]'); return Array.isArray(v) ? v.filter((p) => typeof p === 'string') : []; } catch { return []; }
+function storedPaths(key) {
+  try { const v = JSON.parse(localStorage.getItem(key) || '[]'); return Array.isArray(v) ? v.filter((p) => typeof p === 'string') : []; } catch { return []; }
 }
+const recentList = () => storedPaths('pd-recent');
+const recentPins = () => storedPaths('pd-recent-pins');             // pinned paths (TODO 136a): kept across sessions, never pushed off, not counted in the count
+function recentCount() {
+  try { return recentMax(localStorage.getItem('pd-recent-max')); } catch { return 20; }
+}
+/** The recent paths in display order: pinned first, then last-opened. */
+const recentOrdered = () => orderRecent(recentList(), recentPins());
 function rememberRecent(path) {
-  try { localStorage.setItem('pd-recent', JSON.stringify(addRecent(recentList(), String(path)))); } catch { /* storage may be blocked */ }
+  try { localStorage.setItem('pd-recent', JSON.stringify(addRecent(recentList(), String(path), recentCount(), recentPins()))); } catch { /* storage may be blocked */ }
+  pruneThumbs();
 }
 function forgetRecent(path) {
-  try { localStorage.setItem('pd-recent', JSON.stringify(removeRecent(recentList(), path))); } catch { note('Could not update Recent files'); }
+  try {
+    localStorage.setItem('pd-recent', JSON.stringify(removeRecent(recentList(), path)));
+    localStorage.setItem('pd-recent-pins', JSON.stringify(setPin(recentPins(), path, false)));
+  } catch { note('Could not update Recent files'); }
+  pruneThumbs();
   if (!ui.startScreen.hidden) showStartScreen(true);
+}
+/** A path that left Recent (forgotten, trimmed by the count or a new file) drops its thumbnail: kept are the recent paths and the pins (TODO 136b). */
+async function pruneThumbs() {
+  try { await dropThumbs(staleThumbs(await thumbIds(), recentList(), recentPins())); } catch { /* no storage: nothing to prune */ }
+}
+const thumbWanted = new WeakSet();            // tabs whose first full paint makes their thumbnail
+/** The drawn view (canvas c) as a PNG of about 160 x 110 under the tab's file path, kept in IndexedDB; none when the tab has no path that is in Recent. */
+function snapThumb(d, c) {
+  const path = d.path || d.openPath;
+  if (!path || d.model || !c.width || !c.height || !recentList().some((p) => recentKey(p) === recentKey(path))) return;
+  const W = 160, H = 110, t = document.createElement('canvas');
+  t.width = W; t.height = H;
+  const g = t.getContext('2d'), r = Math.min(W / c.width, H / c.height);
+  g.fillStyle = workDark() ? '#1e1e22' : '#ffffff'; g.fillRect(0, 0, W, H);
+  g.drawImage(c, (W - c.width * r) / 2, (H - c.height * r) / 2, c.width * r, c.height * r);
+  t.toBlob((blob) => { if (blob) saveThumb(recentKey(path), blob).catch(() => {}); }, 'image/png');
+}
+function pinRecent(path, on) {
+  try {
+    const pins = setPin(recentPins(), path, on);
+    localStorage.setItem('pd-recent-pins', JSON.stringify(pins));
+    if (!on) localStorage.setItem('pd-recent', JSON.stringify(trimRecent(recentList(), recentCount(), pins)));   // back among the others: the count may push it off
+  } catch { note('Could not pin the file'); }
+  pruneThumbs();
+  if (ui.startScreen.hidden) return;
+  showStartScreen(true);
+  [...ui.startRecent.querySelectorAll('.start-recent-row')].find((r) => r.firstChild.title === path)?.querySelector('.start-pin').focus();   // the row moved: keep the keyboard on its pin
+}
+function setRecentCount(value) {
+  const n = recentMax(value);
+  try {
+    localStorage.setItem('pd-recent-max', String(n));
+    localStorage.setItem('pd-recent', JSON.stringify(trimRecent(recentList(), n, recentPins())));   // a lower count drops the older unpinned rows for good
+  } catch { note('Could not remember Recent files'); }
+  pruneThumbs();
+  if (!ui.startScreen.hidden) showStartScreen(true);
+  return n;
 }
 /** Shared by File → Open, Explorer launches and Recent files. */
 async function openPath(path, recent = false, batch = {}) {
@@ -1520,7 +1686,7 @@ async function openPath(path, recent = false, batch = {}) {
   if (!t || !t.fs || !t.fs.readFile) return;
   try {
     if (!(await bigOk([{ name, size: await pathSize(path) }])).length) return;
-    if (!/\.(dxf|pdf|ai|tiff?)$/i.test(name)) {                                  // a .dwg is converted from its path; other names are refused
+    if (!/\.(dxf|pdf|ai|tiff?)$/i.test(name) && !MODEL_RE.test(name)) {                               // a .dwg is converted from its path; other names are refused
       if (recent && t.fs.exists && !(await t.fs.exists(path))) throw new Error('not found');   // a DXF's readFile fails by itself; the helper's error would not say "moved"
       await openBytes(name, new ArrayBuffer(0), path, batch); return;
     }
@@ -1928,7 +2094,7 @@ function buildCanvas() {
   // the opened drawing: a canvas over the sheet, same view (applyView), drawn at true size
   ui.dcanvas = h('canvas', { class: 'drawing-layer', 'data-testid': 'drawing' });
   ui.gridDisplay = h('div', { class: 'drawing-grid', hidden: true, 'aria-hidden': 'true', 'data-testid': 'drawing-grid' });
-  ui.picker = h('input', { type: 'file', accept: '.dxf,.dwg,.pdf,.ai,.json,.tif,.tiff', hidden: true, 'data-testid': 'picker', multiple: true });
+  ui.picker = h('input', { type: 'file', accept: '.dxf,.dwg,.pdf,.ai,.json,.tif,.tiff,.stl,.obj,.ply,.glb,.gltf,.3mf,.step,.stp,.iges,.igs,.brep', hidden: true, 'data-testid': 'picker', multiple: true });
   ui.picker.addEventListener('change', async () => { const files = [...ui.picker.files], batch = {}; ui.picker.value = ''; for (const f of balFirst(await bigOk(files))) await openPicked(f, batch); });   // emptied, so the same file can be picked again
   ui.bgPicker = h('input', { type: 'file', accept: '.png,.jpg,.jpeg,.pdf,.tif,.tiff', hidden: true, 'data-testid': 'bg-picker' });
   ui.bgPicker.addEventListener('change', async () => {
@@ -3884,7 +4050,7 @@ function exportSource(selectionOnly = false, cut = true) {
     const lay = shownLayout(d);
     if (!LD.placedAll(lay).length) return null;
     const { gripTop, gripRight, gripBottom, gripLeft } = lay.s, hasSelection = !!selectedPlaced();
-    const sheet = (l) => { const fl = flatten(LD.layoutRaw(l)), defs = LD.layersOf(l); return { name: d.name, path, fl, factor: 1, off: new Set(fl.layers.flatMap((x, i) => (defs[x.name]?.off || defs[x.name]?.frozen ? [i] : []))), sheetW: d.lay.s.sheetW, sheetH: d.lay.s.sheetH, grippers: { gripTop, gripRight, gripBottom, gripLeft }, gaps: labelGaps(LD.gridOf(l), l.s.sheetH), hide: ['Sheet', 'Marks'], hasSelection }; };
+    const sheet = (l) => { const fl = flatten(LD.layoutRaw(l)), defs = LD.layersOf(l); return { name: d.name, path, fl, factor: 1, off: new Set(fl.layers.flatMap((x, i) => (defs[x.name]?.off || defs[x.name]?.frozen ? [i] : []))), sheetW: d.lay.s.sheetW, sheetH: d.lay.s.sheetH, grippers: { gripTop, gripRight, gripBottom, gripLeft }, gaps: labelGaps(LD.gridOf(l), l.s.sheetH), hide: ['Sheet', 'Marks'], hasSelection, hasTitle: !!TB.titlePartOf(l) }; };
     if (!selectionOnly) return sheet(lay);
     const picked = selIdxs().map((i) => placedNow[i]).filter((p) => !(d.hiddenParts && d.hiddenParts.has(p.partId)));       // the selected parts only (a grid copy is placed loose, in the same place); hidden ones stay out
     if (!picked.length) return null;
@@ -3967,7 +4133,7 @@ const writeIdle = (doc, opts) => new Promise((resolve, reject) => {
     const start = performance.now();
     try {
       let r;
-      while (!(r = steps.next()).done) if (deadline.timeRemaining() < 1 || performance.now() - start > 8) return requestIdleCallback(slice, { timeout: 200 });
+      while (!(r = steps.next()).done) if ((!deadline.didTimeout && deadline.timeRemaining() < 1) || performance.now() - start > 8) return requestIdleCallback(slice, { timeout: 200 });
       resolve(r.value.text);
     } catch (e) { reject(e); }
   };
@@ -3990,13 +4156,13 @@ async function autosaveNow() {
         const raw = page.raw, titleBlock = d.titleBlock, tab = state.docs.indexOf(d);
         const balloons = d.balloons ? BAL.encode(balOf(d), { source: d.balName || d.name, pages: d.pdf ? d.pdf.pages : 1 }) : null, unit = d.drawingUnit || null;
         if (!page.lay && r.autoTab === tab && r.autoEnts === raw?.entities && r.autoBlocks === raw?.blocks && r.autoLayers === raw?.layers && r.autoGroups === raw?.groups && r.autoLtypes === raw?.ltypes && r.autoHeader === raw?.header && r.autoTitle === titleBlock && r.autoBalloons === balloons && r.autoUnit === unit) continue;        // a drawing's state is replaced at every change: same one, same tab index, same copy
-        let dxf;
-        try { dxf = await writeIdle(rawForSave({ ...page, raw: raw || newDoc(), titleBlock }), { escapeUnicode: true, extents: page.lay || !page.fl ? null : page.fl.boxes.model }); } catch (e) { console.warn('Autosave: could not write', page.name, e); continue; }
+        let dxf, saved;
+        try { saved = rawForSave({ ...page, raw: raw || newDoc(), titleBlock }); dxf = await writeIdle(saved, { escapeUnicode: true, extents: page.lay || !page.fl ? null : page.fl.boxes.model }); } catch (e) { console.warn('Autosave: could not write', page.name, e); continue; }
         if (dropping) return;                                                                          // the window closed while the slices ran: its copies are already dropped
         if (page.lay && r.hasCopy && r.autoTab === tab && r.autoDxf === dxf && r.autoBalloons === balloons && r.autoUnit === unit) continue;                    // a layout: the same text, balloons, unit and tab index as the last copy
         const name = n == null ? page.name : `${d.pdf.name} sheet ${n}`;
         await RC.saveCopy({ id: r.rid, name, path: page.path || null, openPath: d.openPath || null, pdfPages: d.pdf?.pages || null, pdfHash: d.pdf?.hash || null, kind: page.lay ? 'layout' : 'drawing', dxf, t: Date.now(),
-          tab, sheet: n, balloons, unit, saved: !!page.saved, fromFile: !!d.fromFile, fromPdf: d.fromPdf || null, acceptedLoss: !!page.acceptedLoss, pics: (raw?.entities || []).filter((e) => e.type === 'IMAGE' && e.r?.px) });
+          tab, sheet: n, balloons, unit, saved: !!page.saved, fromFile: !!d.fromFile, fromPdf: d.fromPdf || null, acceptedLoss: !!page.acceptedLoss, pics: docImages(saved).filter((e) => e.r?.px) });
         r.hasCopy = true; r.autoTab = tab; r.autoBalloons = balloons; r.autoUnit = unit; if (page.lay) r.autoDxf = dxf;
         if (!page.lay) { r.autoEnts = raw?.entities; r.autoBlocks = raw?.blocks; r.autoLayers = raw?.layers; r.autoGroups = raw?.groups; r.autoLtypes = raw?.ltypes; r.autoHeader = raw?.header; r.autoTitle = titleBlock; }
         if (!state.docs.includes(d) || !PS.pageState(d, n)?.dirty || (d.pdf && !PS.sheetNumbers(d.pdf).includes(n))) await dropCopy({ recovery: r }); // closed, saved or deleted while writing
@@ -4029,7 +4195,7 @@ async function recoverOne(c, target = null) {
     const r = await readDrawing(new TextEncoder().encode(c.dxf).buffer);
     if (!r.ok) return false;
     if (c.pics?.length) {
-      const images = r.doc.entities.filter((e) => e.type === 'IMAGE' && /^drawing-(img|page)\d+\.png$/.test(e.r.file));
+      const images = docImages(r.doc).filter((e) => /^drawing-(img|page)\d+\.png$/.test(e.r.file));
       if (images.length === c.pics.length) images.forEach((e, i) => { e.r.px = c.pics[i].r.px; });
       else r.doc.entities.push(...c.pics); // 305a recovery copies predate IMAGE output.
       r.result = flatten(r.doc); await preloadPictures(r.result.items);
@@ -4198,7 +4364,7 @@ async function save(forceAs) {
     const balloonsSaved = await balSave(d) !== false;
     d.dirty = !!unitError || !balloonsSaved;
     if (!d.dirty) dropCopy(d);
-    if (path) rememberRecent(path);
+    if (path) { rememberRecent(path); if (d === curDoc() && ui.startScreen.hidden) snapThumb(d, ui.dcanvas); }       // Save and Save As: a Recent row (F7) and its thumbnail (TODO 136b)
     if (d.lay) d.lay.name = name;
     if (bad.length) d.acceptedLoss = true;
     renderTabs();
@@ -5753,7 +5919,7 @@ let paintFull = true, snap = null, snapCv = null, snapTimer = 0, paintSize = nul
 let quickNext = false, lastHeavy = false;
 const BIG_ITEMS = 50000;
 // A drawing tab whose own paint is slow keeps its bitmap (without selection, marks, previews): a hover or a select click paints only those on top (TODO 258 / 259).
-let kept = null, keptCv = null, panCv = null;
+let kept = null, keptCv = null, panCv = null, mendCv = null;
 // Zoom end (TODO 324b): the sharp paint in bands over timer ticks (zoomChunks); chunk = { view, key } while they run, chunkGen cancels them.
 let chunk = null, chunkGen = 0, chunkCv = null, settle = false;       // settle: the paint the 120 ms snapTimer sends; only it may use bands
 const KEEP_MS = 10;
@@ -5837,12 +6003,15 @@ function paintOverlay(gesture = false) {
     if (chunk && full && nk && !dkey && !quick && chunk.view.w === want.w && chunk.view.h === want.h && chunk.view.dpr === want.dpr && chunk.view.view.ox === view.ox && chunk.view.view.oy === view.oy
       && chunk.view.view.scale === view.scale && sameBase(chunk.key, nk)) { ui.cmdUI.place(); return; }
     chunk = null; chunkGen++;
-    c.dataset.snap = ''; c.dataset.keep = ''; c.dataset.quick = ''; c.dataset.pan = ''; c.dataset.chunk = '';    if (full && dkey && c.dataset.nokeep !== '1' && !(kept && sameBase(kept.key, dkey))) {
+    c.dataset.snap = ''; c.dataset.keep = ''; c.dataset.quick = ''; c.dataset.pan = ''; c.dataset.chunk = ''; c.dataset.dirty = '';    if (full && dkey && c.dataset.nokeep !== '1' && !(kept && sameBase(kept.key, dkey))) {
       // a drag starts, or the view moved under it: the base without what is dragged is painted off screen once, so it is no counted full paint (TODO 317 / 320)
-      snap = null; keptCv = keptCv || document.createElement('canvas'); keptCv.width = cw; keptCv.height = chh;
-      kept = { key: dkey, drag: null };
-      if (d.cmp) kept.drag = cmpBase(keptCv, d.cmp, base);
-      else paintEditable(keptCv, d, base, null, 'base');
+      snap = null; keptCv = keptCv || document.createElement('canvas');
+      if (d.cmp || d.lay || dkey !== ekey || !dragBase(d, base, want, dkey)) {
+        keptCv.width = cw; keptCv.height = chh;
+        kept = { key: dkey, drag: null };
+        if (d.cmp) kept.drag = cmpBase(keptCv, d.cmp, base);
+        else paintEditable(keptCv, d, base, null, 'base');
+      }
     }
     const keepSnap = (k) => {
       snapCv = snapCv || document.createElement('canvas');
@@ -5888,6 +6057,16 @@ function paintOverlay(gesture = false) {
       ui.cmdUI.place();
       return;
     }
+    // Edit commit (TODO 359d): the kept base is of the draw this one was patched from: only the box the edit changed is painted again (a big drawing's quick frame is not needed then)
+    if (full && ekey && !dkey && (!quick || big) && c.dataset.nokeep !== '1' && keptCv && dirtyPaint(d, base, want, ekey)) {
+      const g = c.getContext('2d');
+      g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, cw, chh); g.drawImage(keptCv, 0, 0);
+      paintEditable(c, d, base, marks, 'over');
+      keepSnap(null);
+      c.dataset.dirty = '1';
+      ui.cmdUI.place();
+      return;
+    }
     // Pan end (TODO 324a): the same scale and the same drawing as the kept base, only moved: that base is shifted and only the strip it no longer covers is painted
     if (full && nk && !dkey && !quick && c.dataset.nokeep !== '1' && kept?.view
       && panShift(c, d, base, want, calls, d.lay ? layKey : d.cmp ? (v) => cmpKeepKey(d, v, cw, chh) : (v) => paintKey(d, v, cw, chh), nk)) {
@@ -5925,6 +6104,11 @@ function paintOverlay(gesture = false) {
       c.dataset.preview = 0;
       drawn = cmpPaint(c, d.cmp, base, state.paste?.d === d || preview ? null : marks, false, keepBase(ckey));
       cmpTop(c, d, base, marks, preview);
+      const sel = cmpSelected(d.cmp);
+      if (kept?.still && cmpStillsUnder(d.cmp, sel)) {     // the first grip drag then finds its stills ready (TODO 359b); one snapshot per idle task
+        const mine = kept, warm = () => { const now = cmpSelected(d.cmp); if (kept === mine && curDoc() === d && cmpStillsUnder(d.cmp, now) && !cmpStills(d.cmp, base, cw, chh, now, true)) requestIdleCallback(warm); };
+        setTimeout(() => requestIdleCallback(warm), 1000);
+      }
     } else if (d && d.lay) {                // a layout: each part painted once for all the places it is placed at (its matrix per place)
       paintDrawing(c, { ...base, fl: null, factor: 1 });                                      // clears
       for (const call of calls) drawn += paintDrawing(c, { ...base, keep: true, ...call });
@@ -5938,6 +6122,7 @@ function paintOverlay(gesture = false) {
     if (d?.lay) layOverlay(c, d, base, marks, lifted);
     if (d?.cmp?.dragged) cmpPaint(c, d.cmp, base, marks, true);
     if (quick) { c.dataset.quick = '1'; snapTimer = setTimeout(() => { settle = big; paintOverlay(); }, 120); }
+    else if (d && thumbWanted.delete(d)) snapThumb(d, c);       // the first full paint of a tab opened from a file (TODO 136b)
     ui.cmdUI.place();
   });
 }
@@ -5959,6 +6144,51 @@ function panShift(c, d, base, want, calls, keyOf, nkey) {
   const kg = keptCv.getContext('2d');
   kg.setTransform(1, 0, 0, 1, 0, 0); kg.clearRect(0, 0, want.w, want.h); kg.drawImage(c, 0, 0);
   kept = { key: nkey, still: !!d.cmp, view: want };
+  return true;
+}
+
+/**
+ * Edit commit (TODO 359d): d.fl was patched from the draw the kept base shows (fl.dirty.from) and nothing else in the paint key changed (a drag's base lacks only the edited entities):
+ * the box of the edit (padded by its widest pen + 2 px, rounded out to device px, clipped to the view) is painted again onto keptCv, which then takes the new key. A box off the view paints nothing.
+ * False (nothing touched) when the caller paints in full: no dirty box, another key part changed, or the box covers over half the view.
+ */
+function dirtyPaint(d, base, want, nkey) {
+  const dirty = d.fl.dirty, old = kept?.key, cut = old?.drag ? old.lastIndexOf(null) : old?.length;
+  if (!dirty || nkey[1] !== d.fl || old?.[0] !== d || flId(old[1]) !== dirty.from || cut !== nkey.length || !nkey.every((v, i) => i === 1 || i === 2 || v === old[i]) || !old.slice(cut + 1).every((e) => dirty.ents.includes(e))) return false;
+  if (!mendKept(d, base, want, dirty)) return false;
+  kept = { key: nkey, still: false, view: want };
+  return true;
+}
+
+/**
+ * A drag starts (TODO 359d): the kept base of this very draw, minus the hidden entities (`dkey`: the paint key, then null, then their numbers), is the kept base with just their box painted again
+ * (what the drag hides, painted without them), instead of the whole drawing painted again. False (nothing touched) when the caller paints in full.
+ */
+function dragBase(d, base, want, dkey) {
+  const old = kept?.key, cut = dkey.lastIndexOf(null), hide = new Set(dkey.slice(cut + 1));
+  if (!keptCv || old?.[0] !== d || old.drag || old.length !== cut || !old.every((v, i) => v === dkey[i])) return false;
+  const box = penBox(d.fl.items.filter((it) => hide.has(it.e)), d.fl.mats);
+  if (!box || !mendKept(d, base, want, box)) return false;
+  kept = { key: dkey, drag: null };
+  return true;
+}
+
+/** `box` (x0, y0, x1, y1 in drawing units, lw / w: its widest pens) of keptCv painted again: padded by the widest pen + 2 px, rounded out to device px, clipped to the view. True when done (a box off the view needs none); false (nothing touched) when it covers over half the view. */
+function mendKept(d, base, want, box) {
+  const k = want.view.scale * want.dpr, f = d.factor, { ox, oy } = want.view, pad = Math.max(box.lw * k, box.w * f * k, 1.2 * want.dpr) + 2 * want.dpr;
+  const rx0 = Math.floor((box.x0 * f - ox) * k - pad), rx1 = Math.ceil((box.x1 * f - ox) * k + pad);
+  const ry0 = Math.floor((base.sheetH - box.y1 * f - oy) * k - pad), ry1 = Math.ceil((base.sheetH - box.y0 * f - oy) * k + pad);
+  if (![rx0, rx1, ry0, ry1].every(Number.isFinite)) return false;
+  const x0 = Math.max(0, rx0), x1 = Math.min(want.w, rx1), y0 = Math.max(0, ry0), y1 = Math.min(want.h, ry1);
+  if (x1 <= x0 || y1 <= y0) return true;
+  if (rx0 <= 0 || ry0 <= 0 || rx1 >= want.w || ry1 >= want.h) return false;       // the padded box touches or crosses the view edge: the full paint (review rv-359d 3)
+  if ((x1 - x0) * (y1 - y0) * 2 > want.w * want.h) return false;
+  // the full paint's own calls on a canvas of the view's size (a strip or a clip batches and rounds its strokes differently: its picture is not the full paint's), only the items near the box traced; its box then replaces the kept one
+  mendCv = mendCv || document.createElement('canvas');
+  mendCv.width = want.w; mendCv.height = want.h;
+  paintEditable(mendCv, d, { ...base, minPx: undefined, clip: [x0, y0, x1, y1] }, null, 'base');
+  const kg = keptCv.getContext('2d');
+  kg.setTransform(1, 0, 0, 1, 0, 0); kg.clearRect(x0, y0, x1 - x0, y1 - y0); kg.drawImage(mendCv, x0, y0, x1 - x0, y1 - y0, x0, y0, x1 - x0, y1 - y0);
   return true;
 }
 
@@ -7020,6 +7250,7 @@ function copySelection() {
     const items = selItems();
     if (!items.length) return;
     clipboard = copyPlacedSnapshot(lay.parts, items.map((x) => placementOf(x.p)));
+    markCopy();
     renderRibbon();
     note(`Copied ${items.length} placed part${items.length === 1 ? '' : 's'}`);
     return;
@@ -7028,6 +7259,7 @@ function copySelection() {
   if (!d?.sel.size) { note('Nothing selected to copy'); return; }
   const name = baseName(d.name) + (d.pdf && PS.sheetNumbers(d.pdf).length > 1 ? ` sheet ${d.pdf.page}` : '');
   clipboard = copySnapshot(d.raw, d.sel, d.factor, name, baseName(d.name));
+  markCopy();
   renderRibbon();
   note(`Copied ${d.sel.size} drawing object${d.sel.size === 1 ? '' : 's'}`);
 }
@@ -7035,13 +7267,64 @@ function cutSelection() {
   if (!editable()?.sel.size) return;
   copySelection(); deleteSelection();
 }
-function pasteSelection() { return pasteClipboard(false); }
-function pasteInPlace() { return pasteClipboard(true); }
-async function pasteClipboard(inPlace) {
+let copyMarker = '';       // the text the last in-app Ctrl+C put on the system clipboard (TODO 111c): that text there means the in-app objects are the latest copy
+function markCopy() {
+  copyMarker = `Project D copy ${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+  try { navigator.clipboard.writeText(copyMarker).catch((err) => console.warn('Copy: system clipboard not written', err)); } catch (err) { console.warn('Copy: system clipboard not written', err); }
+}
+/** Edit > Paste, the ribbon, Ctrl+Shift+V: read the system clipboard (a picture from another program?), else the in-app objects. Ctrl+V itself arrives as a `paste` event. */
+async function pasteSystem(inPlace) {
+  let image = null, text = '';
+  try {
+    for (const it of await navigator.clipboard.read()) {
+      const type = it.types.find((t) => /^image\//.test(t));
+      if (type && !image) image = await it.getType(type);
+      if (it.types.includes('text/plain')) text = await (await it.getType('text/plain')).text();
+    }
+  } catch { /* refused or empty: the in-app objects */ }
+  return pasteFrom(image, text, inPlace);
+}
+function pasteSelection() { return pasteSystem(false); }
+function pasteInPlace() { return pasteSystem(true); }
+function pasteFrom(image, text, inPlace) {
+  if (!ui.startScreen.hidden) { note('Open or start a drawing first'); return; }       // the Start screen: no paste behind it (as every other key there)
+  return pasteChoice(image, text, copyMarker) === 'picture' ? pastePicture(image) : pasteClipboard(inPlace);
+}
+/** A picture from another program: drawn to a canvas and stored as PNG (long side at most 4096 px), then follow paste like the objects: an IMAGE on a drawing or PDF sheet, a layout object on a layout (TODO 111c). */
+async function pastePicture(blob) {
+  let tab = curDoc();
+  if (tab?.cmp) { note('Pictures paste in Drawings and Layouts tabs'); return; }
+  if (!tab || tab.model || tab.parked) { note('Paste: open a drawing or layout first'); return; }
+  let bitmap;
+  try { bitmap = await createImageBitmap(blob); } catch { note('Paste: could not read this picture'); return; }
+  const size = pictureSize(bitmap.width, bitmap.height), canvas = document.createElement('canvas');
+  canvas.width = size.w; canvas.height = size.h;
+  canvas.getContext('2d').drawImage(bitmap, 0, 0, size.w, size.h);
+  bitmap.close();
+  const px = canvas.toDataURL('image/png');
+  canvas.width = canvas.height = 0;
+  if (!isPng(px)) { note('Paste: could not read this picture'); return; }
+  await preloadPictures([{ k: 'i', px }]);
+  if (tab !== curDoc()) { note('Paste: the tab changed, paste again'); return; }
+  if (!tab.raw && !tab.lay) ensureScratch(tab);
+  const d = tab.lay ? tab : editable(), r = ui.canvas.getBoundingClientRect();
+  if (!d) { note('Paste: open a drawing or layout first'); return; }
+  const at = (x, y) => (d.lay ? sheetAt(x, y) : toDrawing(d, x, y).map((v) => v * d.factor)), a = at(r.left, r.top), b = at(r.right, r.bottom);
+  const fresh = !d.lay && !d.raw.entities.length, big = pictureSize(size.w, size.h, fresh ? null : [Math.abs(b[0] - a[0]), Math.abs(b[1] - a[1])]);
+  const layer = curLayerName(d), pic = imageEntity(px, size.w, size.h, 0, 0, big.mm[0] / (d.lay ? 1 : d.factor), layer);
+  if (d.lay) {
+    const part = LD.objectPart('o' + uid(), LD.nextName('Picture', new Set(Object.values(d.lay.parts).map((p) => p.name))), pic, LD.layersOf(d.lay), {}, {});
+    if (!part) { note('Paste: could not put the picture on the sheet'); return; }
+    return pasteClipboard(false, { parts: { [part.id]: part }, placed: [LD.objectPlacement(part)] });
+  }
+  return pasteClipboard(false, { raw: { header: {}, layers: {}, ltypes: {}, blocks: {}, entities: [pic] }, factor: d.factor, name: 'Picture' });
+}
+async function pasteClipboard(inPlace, snap = clipboard) {
   const d = cmpDoc() || editable() || curDoc();
-  if (!clipboard) { note('Nothing to paste: copy drawing objects first'); return; }
+  if (!snap) { note('Nothing to paste: copy drawing objects first'); return; }
+  if (!d) { note('Paste: open a drawing or layout first'); return; }       // the Start screen: Paste is always on now
   if (!d?.cmp && !d?.lay && !editable()) {
-    if (!d.raw) ensureScratch(d, clipboard.raw?.header?.$INSUNITS);
+    if (!d.raw) ensureScratch(d, snap.raw?.header?.$INSUNITS);
     if (!editable()) { note('Paste: open a drawing or layout first'); return; }
   }
   try {
@@ -7049,7 +7332,7 @@ async function pasteClipboard(inPlace) {
     state.paste = null;
     if (d.cmp) {
       if (d.cmp.items.length >= CMP.MAX_ITEMS) { note('Compare holds five drawings; remove one first'); return; }
-      const source = { ...structuredClone(clipboard.placed ? drawingFromPlaced(clipboard) : clipboard), name: clipboard.name || 'Layout paste', off: new Set() };
+      const source = { ...structuredClone(snap.placed ? drawingFromPlaced(snap) : snap), name: snap.name || 'Layout paste', off: new Set() };
       source.fl = flatten(source.raw);
       const item = CMP.addItem(d.cmp.items, source).at(-1), box = item.box;
       if (inPlace) { cmpAddPart(d, source, [0, 0]); return; }
@@ -7061,9 +7344,9 @@ async function pasteClipboard(inPlace) {
     }
     if (d.lay) {
       let parts, placed, part;
-      if (clipboard.placed) ({ parts, placed } = structuredClone(clipboard));
+      if (snap.placed) ({ parts, placed } = structuredClone(snap));
       else {
-        part = partFromSnapshot(clipboard, uid(), lib.items.map((r) => r.name));
+        part = partFromSnapshot(snap, uid(), lib.items.map((r) => r.name));
         if (!part) { note('Paste: the selection has no size (kept dimensions are not part of a part)'); return; }
         parts = { [part.id]: part };
         placed = [placement1(part.id, part.box[0] * part.factor, part.box[1] * part.factor)];
@@ -7079,7 +7362,7 @@ async function pasteClipboard(inPlace) {
       return;
     }
     const names = new Set([...Object.keys(d.raw.layers), ...d.fl.layers.map((l) => l.name)]);
-    const r = pasteSnapshot(clipboard, { raw: d.raw, factor: d.factor, names, hidden: hiddenLayerNames(d), locked: d.locked || [], cur: curLayerName(d), space: spaceOf(d.fl), dp: state.dp });
+    const r = pasteSnapshot(snap, { raw: d.raw, factor: d.factor, names, hidden: hiddenLayerNames(d), locked: d.locked || [], cur: curLayerName(d), space: spaceOf(d.fl), dp: state.dp });
     const sel = new Set(Array.from({ length: r.count }, (_, i) => r.from + i));
     if (!inPlace) {
       const preview = flatten({ ...d.raw, ...r, entities: r.entities.slice(r.from) });
@@ -7160,7 +7443,7 @@ async function placePaste() {
 const compareEditIndexes = new WeakMap();
 /** The edit index of a tab (pick grid, ends), built on first use and again after a change. */
 function edIndex(d) {
-  if (!d.ed) { const pre = d.ixPre?.fl === d.fl ? d.ixPre.ix : undefined; d.ixPre = null; d.ed = Ed.makeIndex(d.raw, d.fl, d.off, hidIdx(d), undefined, d.edPrev, pre); d.edPrev = null; }       // edPrev: the index before the last edit, its parts for unchanged items are kept (TODO 319c); ixPre: the pick index warm() built in slices (TODO 322a)
+  if (!d.ed) { const pre = d.ixPre?.fl === d.fl ? d.ixPre.ix : d.ixSteps?.fl === d.fl ? finishSteps(d.ixSteps.steps) : undefined; d.ixPre = d.ixSteps = null; d.ed = Ed.makeIndex(d.raw, d.fl, d.off, hidIdx(d), undefined, d.edPrev, pre); d.edPrev = null; }       // edPrev: the index before the last edit, its parts for unchanged items are kept (TODO 319c); ixPre: the pick index warm() built in slices (TODO 322a)
   const item = cmpEditingItem(d);
   if (!item || item.off.size === d.off.size && [...item.off].every((i) => d.off.has(i))) return d.ed;
   const c = compareEditIndexes.get(item.off);
@@ -7188,22 +7471,16 @@ function warm(d) {
   requestAnimationFrame(() => setTimeout(() => {
     const fl = d.fl;
     if (!fl || d.ed || fl.items.length < 20000) return ready();       // small: one go
-    if (d.edPrev) {       // an edit that keeps most of the old index: its pick index is patched in one task and the rest in the next (TODO 322d); the old index is spent either way
-      const prev = d.edPrev, steps = Ed.pickSteps(fl, prev);
-      d.edPrev = null;
-      let r;
-      while (!(r = steps.next()).done);
-      d.ixPre = { fl, ix: r.value };
-      return setTimeout(ready, 0);
-    }
-    // a big drawing's pick index is the longest task of its open (150k items: 0.5 s): build it in idle slices, a hover meanwhile builds it whole
-    const steps = Ed.pickSteps(fl), slice = (deadline) => {
+    // a big drawing's pick index is the longest task of its open (150k items: 0.5 s) and of an edit (128 ms): build it in idle slices; a hover, snap or pick meanwhile finishes the rest at once (edIndex), never a half index.
+    // After an edit it keeps the old index's parts for the items that stayed (TODO 322d, the old index is spent either way); the one-task patch is sliced too (TODO 359d).
+    const steps = Ed.pickSteps(fl, d.edPrev), slice = (deadline) => {
       if (!state.docs.includes(d) || d.fl !== fl || d.ed) return ready();
       const start = performance.now();
       let r;
       while (!(r = steps.next()).done) if (deadline.timeRemaining() < 1 || performance.now() - start > 8) return requestIdleCallback(slice);
-      d.ixPre = { fl, ix: r.value }; ready();
+      d.ixPre = { fl, ix: r.value }; d.ixSteps = null; setTimeout(ready, 0);       // its own task: the edit index and the panels are not part of the last slice
     };
+    d.edPrev = null; d.ixSteps = { fl, steps };
     requestIdleCallback(slice);
   }, 0));
 }
@@ -12602,7 +12879,10 @@ function editKey(e) {
   if ((e.key === 'F10' || e.key === 'F11') && !e.ctrlKey && !e.altKey && !e.shiftKey) { e.preventDefault(); if (e.key === 'F10') polarSet(!state.polar.on); else otrackSet(!state.otrack); return; }
   if (e.key === 'F2' && !e.ctrlKey && !e.altKey && !e.shiftKey) { e.preventDefault(); ui.cmdUI.toggleHistory(); return; }
   if (!ui.startScreen.hidden) {       // the Start screen: a typed letter opens the command bar (open / compare) and Esc shuts it; no other key reaches the hidden drawing
-    if (e.key === 'Escape') { if (!inField || e.target === ui.cmd) ui.cmdUI.escape(); return; }
+    if (e.key === 'Escape') {
+      if (!inField || e.target === ui.cmd) { if (!ui.cmdUI.escape() && ui.startScreen.classList.contains('model') && !document.querySelector('.pop-back, .pdlg-back, dialog[open]')) backTo2D(); }       // Esc closes the 3D viewer
+      return;
+    }
     const seed = CB.keyOpensBar(e, { inField: !!inField || !!e.target?.isContentEditable, dialog: !!document.querySelector('.pop-back, .pdlg-back, dialog[open]'), active: !!activeCmd() });
     if (seed != null) { e.preventDefault(); ui.cmdUI.open(seed); }
     return;
@@ -12659,7 +12939,7 @@ function editKey(e) {
   const key = SC.eventKey(e), ext = extraCommand(e);       // an extra key acts as its command's main key would at this place (save / save as: see the Ctrl+S listener)
   const own = ownCommands.find((c) => c.key && c.key === key && !SC.fixedKey(c.name)) || (ext && !SC.fixedKey(ext.name) ? ext : null);
   if (key === 'Ctrl+C' || key === 'Ctrl+V' || key === 'Ctrl+Shift+V') {
-    if (inField || e.target?.isContentEditable) return;
+    if (inField || e.target?.isContentEditable || key === 'Ctrl+V') return;       // Ctrl+V is not stopped: the page's `paste` event runs it (TODO 111c: it carries a picture from another program)
     e.preventDefault(); FIXED_RUN[key === 'Ctrl+C' ? 'copy' : key === 'Ctrl+Shift+V' ? 'pasteorig' : 'paste'](); return;
   }
   if (ext && SC.fixedKey(ext.name) && ext.name !== 'save' && ext.name !== 'saveas') {
@@ -14079,6 +14359,7 @@ async function cmpRefresh(d) {
     if (previous?.length === next.length && next.every((v, i) => v === previous[i])) continue;
     c.items = c.items.map((x) => x.tabId === d.tabId ? { ...x, ...CMP.refreshGeometry(x, d) } : x);
     c.sources.set(d.tabId, next);
+    cmpWarm(c);
     await cmpCalc(c);
   }
 }
@@ -14122,7 +14403,7 @@ function cmpAdd(d, source, offset = null) {
     if (curDoc() === d) setTool('select');
     c.selected = c.items.at(-1).id; c.res = null; c.stale = false;
     if (offset) ui.grips.replaceChildren();       // A pasted snapshot has no editable source: drop old grips before the queued paint.
-    cmpMoved(d, !offset); note('Added snapshot: ' + source.name);
+    cmpMoved(d, !offset); cmpWarm(c); note('Added snapshot: ' + source.name);
   } catch (err) { note(err.message); }
 }
 
@@ -14156,6 +14437,7 @@ function cmpStart() {
   }
   c.items = CMP.lineUpItems(c.items, c.mode); c.selected = c.items.at(-1)?.id;
   addTab({ name: 'Compare', path: null, factor: 1, dirty: false, cmp: c });
+  cmpWarm(c);
   note('Compare: add up to 5 snapshots. The first ticked drawing is the reference');
 }
 
@@ -14285,10 +14567,10 @@ function cmpZoom(d, x) {
 }
 
 /** One pass of Compare's snapshots: the stills (lifted false) or the one a drag moves (lifted true). part: see paintEditable ('over' paints only the edited drawing's selection and previews). */
-function cmpItems(canvas, c, base, marks, lifted, part) {
+function cmpItems(canvas, c, base, marks, lifted, part, skip, only) {
   let drawn = 0;
   for (const sd of c.items) {
-    if (!sd.visible || (sd.id === c.dragged) !== lifted) continue;
+    if (!sd.visible || (sd.id === c.dragged) !== lifted || sd === skip || (only && sd !== only)) continue;
     const target = sd.id === c.selected && cmpSourceTab(sd), placed = { ...base, ox: base.ox - sd.offset[0], oy: base.oy + sd.offset[1], keep: true, tint: cmpCss(sd.colour), cmpOff: sd.off };
     if (target) drawn += paintEditable(canvas, target, placed, state.tool === 'measure' ? null : marks, part);
     else if (part !== 'over') drawn += paintDrawing(canvas, { ...placed, fl: sd.fl, off: sd.off, factor: sd.factor });
@@ -14348,11 +14630,30 @@ function cmpKeepKey(d, base, cw, chh) {
   if (target) key.push(...paintKey(target, base, cw, chh));
   return key;
 }
-const dragCv = document.createElement('canvas');                                            // the grabbed snapshot of a Compare drag, painted once where it was grabbed
+/** A grip drag's base is the other snapshots (kept once per view, TODO 359b) with the grabbed drawing painted over: only when that drawing is the topmost visible one, so the layer order holds. */
+const cmpStillsUnder = (c, sel) => { const vis = c.items.filter((x) => x.visible); return vis.length > 1 && vis.at(-1) === sel && !!cmpSourceTab(sel); };
+let stillsCv = null, stillsKey = null, stillsPart = null;
+/** The other snapshots painted once on one canvas, in layer order. `slice`: paint one snapshot and return null while more are left (the idle warm-up, so no task holds the thread for all of them); without it, finish at once. */
+function cmpStills(c, base, w, h, sel, slice = false) {
+  const key = [c, base.ox, base.oy, base.scale, w, h, base.dpr, base.dark, base.wireframe, base.sheetH];
+  for (const sd of c.items) if (sd.visible && sd !== sel) key.push(sd.fl, sd.factor, cmpCss(sd.colour), ...sd.offset, ...[...(sd.off || [])].sort((a, b) => a - b), null);
+  if (stillsCv && sameBase(stillsKey, key)) return stillsCv;
+  if (!(stillsPart && sameBase(stillsPart.key, key))) {
+    stillsCv = stillsCv || document.createElement('canvas');
+    stillsCv.width = w; stillsCv.height = h; stillsKey = null;
+    stillsPart = { key, todo: c.items.filter((sd) => sd.visible && sd !== sel) };
+  }
+  while (stillsPart.todo.length) { cmpItems(stillsCv, c, base, null, false, 'base', null, stillsPart.todo.shift()); if (slice && stillsPart.todo.length) return null; }
+  stillsKey = key; stillsPart = null;
+  return stillsCv;
+}
+const dragCv = document.createElement('canvas');                                          // the grabbed snapshot of a Compare drag, painted once where it was grabbed
 /** Paints the stills (the edited drawing without the entities a grip moves) on `canvas`; for a body drag also the grabbed snapshot into dragCv: { off, box } (its offset and its px box then). */
 function cmpBase(canvas, c, base) {
   paintDrawing(canvas, { ...base, fl: null, factor: 1 });                                      // clears
-  cmpItems(canvas, c, base, null, false, 'base');
+  const sel = cmpSelected(c), under = !c.dragged && cmpStillsUnder(c, sel);
+  if (under) { const g = canvas.getContext('2d'); g.setTransform(1, 0, 0, 1, 0, 0); g.drawImage(cmpStills(c, base, canvas.width, canvas.height, sel), 0, 0); cmpItems(canvas, c, base, null, false, 'base', null, sel); }
+  else cmpItems(canvas, c, base, null, false, 'base');
   const sd = c.items.find((x) => x.id === c.dragged);
   if (!sd) return null;
   dragCv.width = canvas.width; dragCv.height = canvas.height;
@@ -14390,10 +14691,19 @@ const cmpSnapEd = (sd) => {
   if (c?.off === sd.off) return c;
   const space = spaceOf(sd.fl), items = sd.fl.items;
   const vis = Uint8Array.from(items, (it) => (it.ps ? 1 : 0) === space && itemVisible(it, sd.off));
-  const index = { ix: c?.ix || pickIndex(sd.fl, space === 1), items, vis, off: sd.off };
+  const index = { ix: snapIndex(sd.fl, space === 1), items, vis, off: sd.off };       // a drag before cmpWarm is done finishes the rest here, never a half index
   cmpSnaps.set(sd.fl, index);
   return index;
 };
+/** Builds every snapshot's pick index in idle slices after Compare starts or a snapshot is added, so the first drag move does not (TODO 359b). */
+function cmpWarm(c) {
+  const slice = (deadline) => {
+    if (!state.docs.some((t) => t.cmp === c)) return;
+    const start = performance.now();
+    for (const x of c.items) while (!snapIndex(x.fl, spaceOf(x.fl) === 1, true)) if (deadline.timeRemaining() < 1 || performance.now() - start > 8) return requestIdleCallback(slice);
+  };
+  requestIdleCallback(slice);
+}
 /** The snap near sheet point p (mm) on a side drawn at offset o (follows the SNAP button): { x, y (mm), kind } or null. */
 function cmpSnap(sd, o, p) {
   const f = sd.factor, sn = Ed.snapPick(cmpSnapEd(sd), (p[0] - o[0]) / f, (p[1] - o[1]) / f, 7 / (view.scale * f), state.snap, -1, state.snapTypes);
@@ -14532,6 +14842,11 @@ async function init() {
     else { const x = extraCommand(e); if (x?.name === 'save' || x?.name === 'saveas') { e.preventDefault(); save(x.name === 'saveas'); } }       // an extra key of Save / Save as, as Ctrl+S: also in a field
     ctrlTap = e.key === 'Control' && !e.repeat;                       // 163a: a Ctrl tap (down, up, nothing between) cycles a hot grip's options
     editKey(e);
+  });
+  document.addEventListener('paste', (e) => {                       // Ctrl+V (TODO 111c): the system clipboard's picture, else the in-app objects; text fields, dialogs and the 3D / PDF dialogs keep their own paste
+    if (!ui.startScreen.hidden || e.target?.closest?.('input, textarea, select') || e.target?.isContentEditable || document.querySelector('.pop-back, .pdlg-back, dialog[open], [data-testid=pdf-dialog], [data-testid=qselect-dialog]')) return;
+    e.preventDefault();
+    pasteFrom(imageOfPaste(e.clipboardData), e.clipboardData?.getData('text/plain') || '', false);
   });
   document.addEventListener('keyup', (e) => { if (e.key === 'Control' && ctrlTap) { ctrlTap = false; gripOptionCycle(); } });
   const arcFlip = (on) => { const T = state.draw; if (drawLive() && T.kind === 'arc' && T.flip !== on) { T.flip = on; paintOverlay(); } };       // 347b: Ctrl held turns the Arc the other way: the preview follows the key, not only the pointer

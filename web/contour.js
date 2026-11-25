@@ -270,7 +270,7 @@ export function offsetLoop(loop, t, opts = {}) {
   const live = pieces.filter((p) => !p.gone);
   if ((open && live.length !== pieces.length) || (!open && live.length < 2 && !(live.length === 1 && live[0].b && Math.abs(sweepOf(live[0])) > 0))) return { ok: false, why: 'it would close up' };
   // the pieces in order, each with the original corner that follows it (the centre of a gone arc between two pieces stands in for it)
-  const ring = [];
+  let ring = [];
   for (let i = 0; i < pieces.length; i++) {
     const p = pieces[i];
     if (p.gone) continue;
@@ -279,10 +279,12 @@ export function offsetLoop(loop, t, opts = {}) {
     ring.push({ ...p, V });
   }
   let n = ring.length;
+  const last = n - 1, alive = ring.map(() => true), nx = ring.map((_, i) => (i + 1) % n);   // while pieces are dropped a piece keeps its index; nx / pv link the live ones
+  let pv = ring.map((_, i) => (i + n - 1) % n);
   // 2. the corner after each piece
   const corner = (i, round) => {
-    if (open && i === n - 1) return { kind: 'end' };
-    const A = ring[i], B = ring[(i + 1) % n], ua = endTan(A), ub = startTan(B), cr = crs(ua, ub), dt = dot(ua, ub);
+    if (open && i === last) return { kind: 'end' };
+    const A = ring[i], B = ring[nx[i]], ua = endTan(A), ub = startTan(B), cr = crs(ua, ub), dt = dot(ua, ub);
     const P = A.p1, Q = B.p0;
     if (Math.abs(cr) <= 2e-5 && dt > 0 && dist(P, Q) <= 1e-6 * size + 3e-5 * Math.abs(t)) return { kind: 'cont', X: mul(add(P, Q), 0.5) };     // smooth: a file keeps 6 decimals
     const gap = cr * t > 1e-12 || (Math.abs(cr) <= 1e-12 && dt < 0);
@@ -298,27 +300,55 @@ export function offsetLoop(loop, t, opts = {}) {
     const X = cands[0], eA = grow(A, X, true), eB = grow(B, X, false);
     return eA >= -tolJ && eB >= -tolJ && dist(X, A.V) <= limit * Math.abs(t) ? { kind: 'miter', X } : { kind: 'bevel', P, Q };
   };
-  const joins = ring.map((_, i) => corner(i, rounded));
+  let joins = ring.map((_, i) => corner(i, rounded));
   const growth = (i) => {
-    const s = ring[i], jin = open && i === 0 ? {} : joins[(i + n - 1) % n], jout = joins[i];
+    const s = ring[i], jin = open && i === 0 ? {} : joins[pv[i]], jout = joins[i];
     return (jin.X ? grow(s, jin.X, false) : 0) + (jout.X ? grow(s, jout.X, true) : 0);
   };
   // Retry only the two corners beside a piece lost to rounding, before emitting any neighbours. A piece still eaten (the offset of a short piece
-  // on a concave stretch tighter than the distance) is dropped, the most eaten first, and its neighbours meet at their own corner; repeat until none is left.
+  // on a concave stretch tighter than the distance) is dropped, the most eaten first (the last of equals), and its neighbours meet at their own corner; repeat until none is left.
+  // A drop changes only the corners beside it, so a min-heap of [eaten, index, version] is refreshed for the neighbours; outdated entries are skipped.
+  const thr = tolJ * 10, ver = ring.map(() => 0), heap = [];
+  const before = (a, b) => a[0] < b[0] || (a[0] === b[0] && a[1] > b[1]);
+  const refresh = (id) => {
+    ver[id]++;
+    const v = extent(ring[id]) + growth(id);
+    if (!(v <= thr)) return;
+    let k = heap.push([v, id, ver[id]]) - 1;
+    while (k > 0 && before(heap[k], heap[(k - 1) >> 1])) { const q = (k - 1) >> 1; [heap[k], heap[q]] = [heap[q], heap[k]]; k = q; }
+  };
+  const pop = () => {
+    const top = heap[0], end = heap.pop();
+    if (heap.length) {
+      heap[0] = end;
+      for (let k = 0; ;) {
+        let m = k; const l = 2 * k + 1, r = l + 1;
+        if (l < heap.length && before(heap[l], heap[m])) m = l;
+        if (r < heap.length && before(heap[r], heap[m])) m = r;
+        if (m === k) break;
+        [heap[k], heap[m]] = [heap[m], heap[k]]; k = m;
+      }
+    }
+    return top;
+  };
+  for (let k = 0; k < n; k++) refresh(k);
   for (;;) {
-    let i = -1, low = tolJ * 10;
-    for (let k = 0; k < n; k++) { const v = extent(ring[k]) + growth(k); if (v <= low) { i = k; low = v; } }
-    if (i < 0) break;
-    const prev = (i + n - 1) % n;
+    while (heap.length && (!alive[heap[0][1]] || heap[0][2] !== ver[heap[0][1]])) pop();
+    if (!heap.length) break;
+    const i = pop()[1], prev = pv[i], next = nx[i];
     if (joins[prev].kind === 'round' || joins[i].kind === 'round') {
       joins[prev] = corner(prev, false); joins[i] = corner(i, false);
     }
-    if (extent(ring[i]) + growth(i) > tolJ * 10) continue;
-    if (n <= 3 || (open && (i === 0 || i === n - 1))) return { ok: false, why: 'it would close up' };                // a triangle losing a side is a sliver: closed up
+    if (extent(ring[i]) + growth(i) > thr) { refresh(prev); refresh(i); refresh(next); continue; }
+    if (n <= 3 || (open && (i === 0 || i === last))) return { ok: false, why: 'it would close up' };                // a triangle losing a side is a sliver: closed up
     ring[prev].V = ring[i].V;
-    ring.splice(i, 1); joins.splice(i, 1); n--;
-    const p = i === 0 ? n - 1 : prev;                                           // prev's index after the splice (it shifts when i was 0)
-    joins[p] = corner(p, rounded);
+    alive[i] = false; nx[prev] = next; pv[next] = prev; n--;
+    joins[prev] = corner(prev, rounded);
+    refresh(prev); refresh(next);
+  }
+  if (n < alive.length) {
+    ring = ring.filter((_, k) => alive[k]); joins = joins.filter((_, k) => alive[k]);
+    pv = ring.map((_, i) => (i + n - 1) % n);
   }
   // 3. each piece with its ends moved to its corners; the pieces for round and bevel corners between
   const out = [];

@@ -107,7 +107,8 @@ export function* paintDrawingSteps(canvas, o, due) {
   const xs = [ox / factor, (ox + w / scale) / factor];
   const ys = [(sheetH - oy - h / scale) / factor, (sheetH - oy) / factor];
   const vr = [Math.min(...xs), ys[0], Math.max(...xs), ys[1]];
-  const drawn = over ? 0 : yield* paintItems(c, fl, off, T, k, vr, dpr, col, sheetBg, o.hide, factor, o.wireframe, o.minPx, due);
+  const cr = o.clip && [(o.clip[0] - T[4]) / T[0], (o.clip[3] - T[5]) / T[3], (o.clip[2] - T[4]) / T[0], (o.clip[1] - T[5]) / T[3]];       // o.clip (device px, TODO 359d): only the items near this box are traced (the rest are styled and run as in a full paint); the box in drawing units
+  const drawn = over ? 0 : yield* paintItems(c, fl, off, T, k, vr, dpr, col, sheetBg, o.hide, factor, o.wireframe, o.minPx, due, cr);
   if (o.part === 'base') return drawn;
   if (o.hl && o.hl.length) highlight(c, o.hl, fl.mats, T, k, dpr, o.accent || '#4f46e5', o.wireframe);
   if (o.dim) drawDimPreview(c, o.dim, T, dpr, o.dimCol || DIM_LIGHT);
@@ -165,10 +166,18 @@ function paintPictures(c, fl, off, T, vr, hide) {
 }
 
 /** The shown items through T (drawing units → canvas pixels), k pixels per unit; vr culls to the view (drawing units), or null. */
-function* paintItems(c, fl, off, T, k, vr, dpr, col, sheetBg, hide, factor, wireframe, minPx, due) {
+function* paintItems(c, fl, off, T, k, vr, dpr, col, sheetBg, hide, factor, wireframe, minPx, due, cr) {       // cr (TODO 359d): the box a partial paint covers; items clear of it are counted, styled and run like the rest but not traced
   const mats = fl.mats;
   let cur = -1, kk = k, pxPerUnit = 0, open = false, pc = null, pw = 0, pd = null, cap = null, join = null, origin = [0, 0], drawn = 0, run = 0;
-  const flush = () => { if (open) { if (wireframe) wireStroke(c, dpr); else c.stroke(); } open = false; };
+  const buf = cr ? [] : null; let near = false, ppu = 0;       // a partial paint holds a run back: a run with an item near the box is traced whole (the same path as a full paint, so Skia fills it the same way), one clear of it not at all
+  const flush = () => {
+    if (open && (!buf || near)) {
+      if (buf) for (const ops of buf) trace(c, ops, origin, ppu);
+      if (wireframe) wireStroke(c, dpr); else c.stroke();
+    }
+    if (buf) { buf.length = 0; near = false; }
+    open = false;
+  };
   if (!wireframe) paintPictures(c, fl, off, T, vr, hide);                   // under every line and text; Wireframe hides them like the background
   for (const it of shownItems(fl)) {
     if (it.k === 'i') continue;
@@ -178,6 +187,7 @@ function* paintItems(c, fl, off, T, k, vr, dpr, col, sheetBg, hide, factor, wire
     if (it.k !== 'n' && subPixel(b, pad, k, minPx)) continue;       // under 0.4 px (minPx: the quick paint's 1 px)
     if (!itemVisible(it, off)) continue;
     if (hide && hide.has(it.e)) continue;                                  // an entity being dragged by a grip is drawn by the overlay
+    const clear = cr && outsideView(b, Math.max(pad, 0.6 * dpr / k) * 5 + 4 * dpr / k, cr);       // a miter reaches 5 half widths, a point 3 px
     if (it.m !== cur) { flush(); cur = it.m; const M = mats[cur], V = mmul(T, M); origin = viewOrigin(V); c.setTransform(...V.slice(0, 4), ...mapply(V, ...origin)); kk = k * mscale(M) || k; pxPerUnit = maxScale(V); }
     drawn++;
     const mode = wireframe && it.attachedFill ? null : paintMode(it, wireframe);
@@ -195,10 +205,12 @@ function* paintItems(c, fl, off, T, k, vr, dpr, col, sheetBg, hide, factor, wire
         c.lineCap = cap = nextCap; c.lineJoin = join = nextJoin; c.miterLimit = 10;
         c.beginPath(); open = true; pc = css; pw = lw; pd = dash;
       }
-      trace(c, it.ops, origin, dash ? 0 : pxPerUnit);
+      ppu = dash ? 0 : pxPerUnit;
+      if (!buf) trace(c, it.ops, origin, ppu); else { buf.push(it.ops); if (!clear) near = true; }
       continue;
     }
     flush();
+    if (clear) continue;
     if (mode === 'fill') { c.beginPath(); trace(c, it.ops, origin, pxPerUnit); c.globalAlpha = it.a == null ? 1 : it.a; c.fillStyle = col(it.css, it.exact); c.fill('evenodd'); c.globalAlpha = 1; }
     else if (mode === 'mask') { c.beginPath(); trace(c, it.ops, origin, pxPerUnit); c.fillStyle = sheetBg; c.fill(); }
     else if (mode === 'point') {

@@ -50,6 +50,17 @@ export async function encodePng(w, h, rgba) {
 /** Is this a PNG data URL (what r.px holds; a recovery record is data, not trusted)? */
 export const isPng = (s) => typeof s === 'string' && /^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(s);
 
+export const PASTE_MAX_PX = 4096;
+/** A pasted picture (TODO 111c): the long side capped at PASTE_MAX_PX pixels, then 96 dpi true size in mm, shrunk to fit 80% of the visible view [w, h] mm (null: no view to fit) when larger. */
+export function pictureSize(w, h, view = null) {
+  const k = Math.min(1, PASTE_MAX_PX / Math.max(w, h)), pw = Math.max(1, Math.round(w * k)), ph = Math.max(1, Math.round(h * k));
+  const mw = pw * 25.4 / 96, mh = ph * 25.4 / 96, fit = view ? Math.min(1, 0.8 * view[0] / mw, 0.8 * view[1] / mh) : 1;
+  return { w: pw, h: ph, mm: [mw * fit, mh * fit] };
+}
+
+/** A document's IMAGEs in the order writeDxf numbers their PNGs: the blocks' first, then the model's (a layout's picture is in a block: IMAGE cannot be baked, TODO 11). */
+export const docImages = (doc) => [...Object.values(doc.blocks || {}).flatMap((b) => b.entities || []), ...(doc.entities || [])].filter((e) => e.type === 'IMAGE');
+
 // ---------------------------------------------------------------- browser only
 
 const decoded = new Map();                            // px → the loaded <img> (or the loading one)

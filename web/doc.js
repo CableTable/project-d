@@ -120,15 +120,48 @@ export function fitsSheet(boxMm, sheetW, sheetH) {
   return !boxMm || (boxMm[0] >= 0 && boxMm[1] >= 0 && boxMm[2] <= sheetW && boxMm[3] <= sheetH);
 }
 
-/** The recent-files list with `path` put first: no repeats (Windows paths match whatever the case), at most `max`. */
-export function addRecent(list, path, max = 8) {
-  return [path, ...removeRecent(list, path)].slice(0, max);
+export const recentKey = (p) => String(p).replace(/\//g, '\\').toLowerCase();
+
+/** The thumbnail keys (recentKey of a path) in `ids` to delete: a thumbnail stays only for a path that is in the recent list or pinned (TODO 136b). */
+export function staleThumbs(ids, list, pins = []) {
+  const keep = new Set([...(Array.isArray(list) ? list : []), ...(Array.isArray(pins) ? pins : [])].filter((p) => typeof p === 'string').map(recentKey));
+  return ids.filter((id) => !keep.has(id));
+}
+
+/** The Options "Recent files" count: a whole number 0-50, 20 when unset or not a number (TODO 136a). */
+export function recentMax(v) {
+  const n = Math.floor(Number(v));
+  return v === null || v === undefined || v === '' || !Number.isFinite(n) ? 20 : Math.min(50, Math.max(0, n));
+}
+
+/** The list cut to `max` unpinned paths; pinned paths (`pins`) always stay and do not count against `max`. */
+export function trimRecent(list, max = 20, pins = []) {
+  const pinned = new Set((Array.isArray(pins) ? pins : []).map(recentKey));
+  let n = 0;
+  return (Array.isArray(list) ? list : []).filter((p) => pinned.has(recentKey(p)) || n++ < max);
+}
+
+/** The recent-files list with `path` put first: no repeats (Windows paths match whatever the case), at most `max` unpinned. */
+export function addRecent(list, path, max = 20, pins = []) {
+  return trimRecent([path, ...removeRecent(list, path)], max, pins);
 }
 
 /** Remove a recent path using the same Windows path key as addRecent, preserving the remaining order. */
 export function removeRecent(list, path) {
-  const key = (p) => String(p).replace(/\//g, '\\').toLowerCase();
-  return (Array.isArray(list) ? list : []).filter((p) => typeof p === 'string' && key(p) !== key(path));
+  return (Array.isArray(list) ? list : []).filter((p) => typeof p === 'string' && recentKey(p) !== recentKey(path));
+}
+
+/** The pinned paths with `path` pinned (`on`) or unpinned: no repeats, same Windows path key. Removing a recent file unpins it with this. */
+export function setPin(pins, path, on = true) {
+  const rest = removeRecent(pins, path);
+  return on ? [...rest, path] : rest;
+}
+
+/** The recent list in display order: pinned paths first, then the others, each group in last-opened order. A pin with no row is ignored. */
+export function orderRecent(list, pins = []) {
+  const pinned = new Set((Array.isArray(pins) ? pins : []).map(recentKey));
+  const rows = (Array.isArray(list) ? list : []).filter((p) => typeof p === 'string');
+  return [...rows.filter((p) => pinned.has(recentKey(p))), ...rows.filter((p) => !pinned.has(recentKey(p)))];
 }
 
 /** First free duplicate number across all tab names, before the file extension. */

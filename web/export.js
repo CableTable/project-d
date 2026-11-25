@@ -201,17 +201,21 @@ export function openExport(host) {
   ref.canvas.addEventListener('dblclick', () => openFull());
   ref.prevBox = h('div', { class: 'pd-prev' }, ref.canvas, ref.fullBtn);
 
-  const rememberTitle = () => { host.setTitleBlock(titleBlock); refresh(); };
+  const rememberTitle = (again) => {                                 // again: the sheet's own title block is drawn from these fields (or the switch may show / hide it), so the source is read again (TODO 9c)
+    host.setTitleBlock(titleBlock);
+    if (again) { const next = host.source(selectionOnly, selCut); srcFull = next && { ...next, date, name: baseName(next.name) }; }
+    refresh();
+  };
   ref.titleSwitch = h('input', { type: 'checkbox', role: 'switch', class: 'swin', checked: titleBlock.enabled, 'aria-label': 'Title block', 'data-testid': 'pdf-title-block' });
-  ref.titleSwitch.addEventListener('change', () => { titleBlock = { ...titleBlock, enabled: ref.titleSwitch.checked }; rememberTitle(); });
+  ref.titleSwitch.addEventListener('change', () => { titleBlock = { ...titleBlock, enabled: ref.titleSwitch.checked }; rememberTitle(true); });
   ref.titleInputs = {};
   const titleField = (key, label) => {
     const input = h('input', { class: 'fld', type: 'text', 'data-testid': 'pdf-title-' + key });
-    input.addEventListener('input', () => { titleBlock = { ...titleBlock, [key]: input.value }; rememberTitle(); });
+    input.addEventListener('input', () => { titleBlock = { ...titleBlock, [key]: input.value }; rememberTitle(srcFull?.hasTitle); });
     ref.titleInputs[key] = input;
     return h('label', { class: 'lbl pd-fl' + (key === 'size' || key === 'footnote' ? ' wide' : '') }, label, input);
   };
-  ref.titleReset = h('button', { class: 'btn sm', type: 'button', 'data-testid': 'pdf-title-reset', onclick: () => { titleBlock = { ...Object.fromEntries(SHEET_KEYS.filter((k) => k in titleBlock).map((k) => [k, titleBlock[k]])), enabled: titleBlock.enabled }; rememberTitle(); } }, 'Reset');       // a Layouts sheet's own fields (title, rev…) are not on this dialog: they stay
+  ref.titleReset = h('button', { class: 'btn sm', type: 'button', 'data-testid': 'pdf-title-reset', onclick: () => { titleBlock = { ...Object.fromEntries(SHEET_KEYS.filter((k) => k in titleBlock).map((k) => [k, titleBlock[k]])), enabled: titleBlock.enabled }; rememberTitle(srcFull?.hasTitle); } }, 'Reset');       // a Layouts sheet's own fields (title, rev…) are not on this dialog: they stay
   ref.titleSet = fieldset('Title block',
     h('label', { class: 'row swrow' }, h('span', null, 'Title block'), ref.titleSwitch),
     h('div', { class: 'pd-two pd-title-fields' }, titleField('file', 'File name'), titleField('scale', 'Scale'), titleField('size', 'Part / size / page'), titleField('date', 'Date'), titleField('footnote', 'Footnote')),

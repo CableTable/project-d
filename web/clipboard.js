@@ -1,4 +1,4 @@
-// In-app drawing snapshots and same-coordinate paste; no browser clipboard access.
+// In-app drawing snapshots and same-coordinate paste, and which one a Ctrl+V takes: a picture from another program or the in-app objects (the browser's clipboard reads stay in app.js).
 import { blocksUsed, extractRaw, makePart } from './layoutdoc.js';
 import { dropPart } from './dropin.js';
 import { relabelDims } from './edit.js';
@@ -12,6 +12,16 @@ export function copySnapshot(raw, selection, factor, name, source = name) {
   raw.entities.forEach((_, i) => { if (selection.has(i)) indexes.set(i, [indexes.size]); });
   return structuredClone({ raw: { ...raw, entities, groups: remap(raw.groups, indexes), blocks: blocksUsed(raw.blocks, entities) }, factor, name, source });
 }
+
+/** The first image of a paste event's clipboardData (a screenshot item or a copied picture file), or null. */
+export function imageOfPaste(cd) {
+  const isImage = (f) => !!f && /^image\//.test(f.type);
+  const item = [...(cd?.items || [])].find((it) => it.kind === 'file' && /^image\//.test(it.type));
+  return item?.getAsFile() || [...(cd?.files || [])].find(isImage) || null;
+}
+
+/** Latest copy wins (TODO 111c): an image on the system clipboard is a picture, unless the text there is the marker the last in-app Ctrl+C wrote; else the in-app objects. */
+export const pasteChoice = (image, text, marker) => (image && !(marker && text === marker) ? 'picture' : 'objects');
 
 /** Selected placements keep their library ids and own their part geometry. */
 export function copyPlacedSnapshot(parts, placed) {

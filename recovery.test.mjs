@@ -7,6 +7,7 @@ import { runInNewContext } from 'node:vm';
 import * as BAL from './web/balloons.js';
 import * as DU from './web/units.js';
 import * as PS from './web/pdf-sheets.js';
+import { docImages } from './web/pictures.js';
 
 const at = (y, mo, d, h, mi) => new Date(y, mo - 1, d, h, mi).getTime();
 let n = 0;
@@ -93,7 +94,7 @@ assert.equal(target.fromPdf, 'source.pdf');
 n++; console.log('ok TODO 271: restoring a PDF sheet keeps other sheets balloons and its own recovery id');
 // TODO 358a: a reopen matches the page pictures' names (drawing-pageN.png) as well as drawing-imgN.png, and gives each its pixels back
 const picRecover = runInNewContext(`${source}\nrecoverOne`, {
-  BAL, DU, PS, TextEncoder, console, state: {}, Ed: { createHistory: () => ({}) }, balOf: () => BAL.EMPTY, baseName: (name) => name,
+  BAL, DU, PS, TextEncoder, console, state: {}, Ed: { createHistory: () => ({}) }, balOf: () => BAL.EMPTY, baseName: (name) => name, docImages,
   readDrawing: async () => ({ ok: true, doc: { header: {}, entities: [{ type: 'IMAGE', r: { file: 'drawing-page1.png' } }, { type: 'IMAGE', r: { file: 'drawing-page2.png' } }, { type: 'IMAGE', r: { file: 'other.png' } }] } }),
   flatten: () => ({}), preloadPictures: async () => {}, tabFields: (doc) => ({ doc }), addTab: (doc) => { restored = doc; },
 });
@@ -101,6 +102,17 @@ const pagePics = [{ type: 'IMAGE', r: { px: 'one' } }, { type: 'IMAGE', r: { px:
 assert.equal(await picRecover({ id: 'pg', kind: 'drawing', name: 'pages.dxf', dxf: '', pics: pagePics }), true);
 assert.deepEqual(restored.doc.entities.map((e) => e.r.px), ['one', 'two', undefined], 'the two page pictures get their pixels; the other file is left alone');
 n++; console.log('ok TODO 358a: recovery matches drawing-pageN.png');
+// TODO 11: a layout's picture is an IMAGE in a block (written before the model's IMAGEs): the copy's pixels reach it, and docImages lists blocks first
+const blockImg = { type: 'IMAGE', r: { file: 'drawing-img1.png' } }, modelImg = { type: 'IMAGE', r: { file: 'drawing-img2.png' } };
+assert.deepEqual(docImages({ blocks: { B: { entities: [{ type: 'LINE' }, blockImg] } }, entities: [modelImg] }), [blockImg, modelImg]);
+const blockRecover = runInNewContext(`${source}\nrecoverOne`, {
+  BAL, DU, PS, TextEncoder, console, state: {}, Ed: { createHistory: () => ({}) }, balOf: () => BAL.EMPTY, baseName: (name) => name, docImages,
+  readDrawing: async () => ({ ok: true, doc: { header: {}, blocks: { B: { entities: [blockImg] } }, entities: [modelImg] } }),
+  flatten: () => ({}), preloadPictures: async () => {}, tabFields: (doc) => ({ doc }), addTab: (doc) => { restored = doc; },
+});
+assert.equal(await blockRecover({ id: 'bk', kind: 'drawing', name: 'block.dxf', dxf: '', pics: [{ type: 'IMAGE', r: { px: 'inBlock' } }, { type: 'IMAGE', r: { px: 'inModel' } }] }), true);
+assert.deepEqual([blockImg.r.px, modelImg.r.px], ['inBlock', 'inModel']);
+n++; console.log('ok TODO 11: recovery gives a block IMAGE its pixels');
 
 const pdfSource = readFileSync(new URL('./web/app.js', import.meta.url), 'utf8').match(/^async function openPdf\([^\r\n]*\) \{\r?\n[\s\S]*?^\}/m)?.[0];
 assert.ok(pdfSource, 'openPdf exists');

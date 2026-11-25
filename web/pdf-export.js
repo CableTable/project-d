@@ -179,12 +179,13 @@ const colourName = (g) => (g.index == null ? 'ALL' : g.name.toUpperCase());
 
 /**
  * src: { fl, factor (mm per drawing unit), off (Set of hidden layer indexes), sheetW, sheetH, name (for the strip),
- *        date (text for the strip), hide (layer names that are not artwork, e.g. ['sheet', 'marks'] on a layout) }
+ *        date (text for the strip), hasTitle (the sheet has its title block: no strip), hide (layer names that are not artwork, e.g. ['sheet', 'marks'] on a layout) }
  * Returns { options, pages: [{ n, of, w, h, layer, tile, scale }], count, build(i) → Page, bytes() → Uint8Array }.
  */
 export function planPdf(src, opts) {
   const o = { ...DEFAULT_OPTIONS, ...opts };
   o.titleBlock = cleanTitleBlock(o.titleBlock);
+  if (src.hasTitle) o.titleBlock = { ...o.titleBlock, enabled: false };      // TODO 9c: a sheet with its own title block (a drawn object, printed with the sheet) gets no strip and keeps no room for one
   const { fl, off, sheetW: W, sheetH: H } = src;
   const org = src.origin || [0, 0];                                  // where the sheet's corner is, in drawing mm (a part's page: its corner less the border)
   const hide = new Set((src.hide || []).map((s) => s.toLowerCase()));

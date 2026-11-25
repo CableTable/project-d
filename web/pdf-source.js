@@ -1,5 +1,6 @@
 // Batch PDFs size every file as max(batch sheet, drawing box) and hide nothing; a layout file only adds its four grippers.
 import { layoutFromRaw, gridOf } from './layoutdoc.js';
+import { titlePartOf } from './titleblock.js';
 import { drawingBoxMm, startHidden, unitFactor } from './doc.js';
 
 /**
@@ -34,6 +35,7 @@ export function batchPdfSource({ doc, result: fl }, sheet) {
     const { gripTop, gripRight, gripBottom, gripLeft } = lay.s;
     src.grippers = { gripTop, gripRight, gripBottom, gripLeft };
     src.gaps = labelGaps(gridOf(lay), lay.s.sheetH);
+    src.hasTitle = !!titlePartOf(lay);
   }
   return src;
 }

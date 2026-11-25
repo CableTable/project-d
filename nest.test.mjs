@@ -216,6 +216,12 @@ t('a piece at 37° keeps the gap to its neighbours and the sheet edge, and is pl
   }
 });
 
+t('a try angle is rounded to a whole degree (37.4 packs as 37, -0.4 as 0)', () => {
+  const items = [{ id: 'a', count: 4, poly: rect(50, 30) }, { id: 'L', count: 2, poly: L }], area = { x: 5, y: 7, w: 200, h: 150 };
+  const run = (a) => pack({ area, gap: 3, rotations: 'all', items, angles: Array(6).fill(a), order: null });
+  assert.deepEqual(run(37.4), run(37)); assert.deepEqual(run(36.6), run(37)); assert.deepEqual(run(-0.4), run(0));
+});
+
 t('apply.js placement and the dialog outline at 37° match the packer outline (R6)', () => {
   const part = { w: 50, h: 30, box: [0, 0, 50, 30], factor: 1 }, pl = { partId: 'a', x: 40, y: 25, rot: 37 }, sheetH = 300;
   const want = polyAt(rect(50, 30), 37, pl.x, pl.y), m = placedMat(part, pl, sheetH);
