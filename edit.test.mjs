@@ -1120,10 +1120,36 @@ test('area and perimeter of a rounded outline (100 x 60, r 10)', () => {
   near(r.perimeter, 320 - 80 + 20 * Math.PI, 'perimeter', 1e-4);
 });
 
-function loopIndex(entities) {
-  const doc = W.newDoc(4); W.addEntities(doc, entities);
+function loopIndex(entities, blocks = {}) {
+  const doc = W.newDoc(4);
+  for (const [name, ents] of Object.entries(blocks)) W.addBlock(doc, name, ents);
+  W.addEntities(doc, entities);
   const raw = D.readDxf(W.writeDxf(doc)); return E.makeIndex(raw, D.flatten(raw));
 }
+
+test('TODO 359a: area is the exact arc area at 3° chords, perimeter the exact arc length', () => {
+  const rel = (a, b, m) => assert.ok(Math.abs(a - b) <= 1e-9 * Math.abs(b), `${m}: ${a} !~ ${b}`);
+  const measure = (ents, blocks) => { const ed = loopIndex(ents, blocks); return E.areaPerimeter(ed, new Set(ed.shown), 1, 1e-6); };
+  const half = (o) => [W.arc(0, 0, 5, 0, 180, o), W.line(5, 0, -5, 0, o)];
+  let r = measure([W.circle(3, 4, 7)]);
+  rel(r.area, Math.PI * 49, 'circle area'); rel(r.perimeter, 14 * Math.PI, 'circle perimeter');
+  r = measure([W.line(0, -5, 20, -5), W.line(0, 5, 20, 5), W.arc(20, 0, 5, -90, 90), W.arc(0, 0, 5, 90, 270)]);
+  rel(r.area, 200 + 25 * Math.PI, 'slot area'); rel(r.perimeter, 40 + 10 * Math.PI, 'slot perimeter');
+  r = measure([W.rect(0, 0, 100, 100), W.circle(50, 50, 4)]);
+  rel(r.area, 10000 - 16 * Math.PI, 'square with a circular hole'); assert.equal(r.holes, 1);
+  r = measure([W.line(0, 0, 10, 0), W.line(10, 0, 10, 10), W.arc(5, 10, 5, 180, 360), W.line(0, 10, 0, 0)]);   // the top side of a 10 x 10 square bulges inward
+  rel(r.area, 100 - 12.5 * Math.PI, 'an arc bulging inward'); rel(r.perimeter, 30 + 5 * Math.PI, 'its perimeter');
+  r = measure([W.arc(0, 0, 5, 0, 180), W.line(5, 0, -5, 0)]);                // the line is joined reversed
+  rel(r.area, 12.5 * Math.PI, 'half disc, line reversed');
+  r = measure([W.line(5, 0, -5, 0), W.arc(0, 0, 5, 0, 180)]);                // the arc is joined reversed
+  rel(r.area, 12.5 * Math.PI, 'half disc, arc reversed'); rel(r.perimeter, 10 + 5 * Math.PI, 'half disc perimeter');
+  r = measure([W.insert('H', 30, 0, { sx: -1, sy: 1 })], { H: half() });      // a mirror: det -1
+  rel(r.area, 12.5 * Math.PI, 'mirrored insert'); rel(r.perimeter, 10 + 5 * Math.PI, 'mirrored perimeter');
+  r = measure([W.insert('C', 0, 0, { sx: 2, sy: 1 })], { C: [W.circle(0, 0, 5)] });   // an ellipse 10 x 5: the area stays exact
+  rel(r.area, 50 * Math.PI, 'non-uniform scale of a circle');
+  r = measure([W.insert('H', 0, 0, { sx: 3, sy: 3, rot: 30 })], { H: half() });
+  rel(r.area, 9 * 12.5 * Math.PI, 'uniform scale and turn'); rel(r.perimeter, 3 * (10 + 5 * Math.PI), 'its perimeter');
+});
 
 // The old depth calculation, without a box reject, is the reference for all returned fields.
 function bruteLoopMeasure(ed, factor = 1, tol = 1e-6) {

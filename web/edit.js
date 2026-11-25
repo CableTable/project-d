@@ -61,7 +61,7 @@ function arcSweepOp(a0, a1, acw) {
  */
 export const outlineLoops = (ed, ents, tol) => drain(outlineLoopsSteps(ed, ents, tol));
 /** outlineLoops as a generator (TODO 316): yields its progress whenever due() says so, returns the same result. */
-export function* outlineLoopsSteps(ed, ents, tol = 1e-6, due = slice()) {
+export function* outlineLoopsSteps(ed, ents, tol = 1e-6, due = slice(), step = Math.PI / 720) {
   const { fl, items, raw } = ed, pieces = [], total = ents.size ?? ents.length ?? 1;
   let len = 0, seen = 0;
   for (const e of ents) {
@@ -72,28 +72,32 @@ export function* outlineLoopsSteps(ed, ents, tol = 1e-6, due = slice()) {
       const it = items[i];
       if (it.k !== 'p' || it.fill) continue;
       const m = fl.mats[it.m], ops = it.ops;
-      let cur = null;
-      const add = (x, y) => { const p = mapply(m, x, y); if (cur.length) { const q = cur[cur.length - 1]; len += Math.hypot(p[0] - q[0], p[1] - q[1]); } cur.push(p); };
+      let cur = null, seg = 0;                                 // seg: the circular-segment areas between this piece's chords and its arcs (signed, along the piece), so area and length stay exact
+      const det = m[0] * m[3] - m[1] * m[2], sc = Math.hypot(m[0], m[1]);
+      const uniform = Math.abs(sc - Math.hypot(m[2], m[3])) <= 1e-9 * sc && Math.abs(m[0] * m[2] + m[1] * m[3]) <= 1e-9 * sc * sc;
+      const add = (x, y, chord = true) => { const p = mapply(m, x, y); if (chord && cur.length) { const q = cur[cur.length - 1]; len += Math.hypot(p[0] - q[0], p[1] - q[1]); } cur.push(p); };
       for (let k = 0; k < ops.length;) {
         const op = ops[k];
-        if (op === 0) { if (cur && cur.length > 1) pieces.push({ pts: cur, closed: false, ents: new Set([e]) }); cur = []; add(ops[k + 1], ops[k + 2]); k += 3; }
+        if (op === 0) { if (cur && cur.length > 1) pieces.push({ pts: cur, closed: false, ents: new Set([e]), seg }); cur = []; seg = 0; add(ops[k + 1], ops[k + 2]); k += 3; }
         else if (op === 1) { add(ops[k + 1], ops[k + 2]); k += 3; }
         else if (op === 2) {
           const [cx, cy, r, a0, a1] = [ops[k + 1], ops[k + 2], ops[k + 3], ops[k + 4], ops[k + 5]], sw = arcSweepOp(a0, a1, ops[k + 6] === 1);
-          const n = Math.max(2, Math.ceil(Math.abs(sw) / (Math.PI / 720)));         // ¼° steps: well under 0.01 mm on a part
+          const n = Math.max(2, Math.ceil(Math.abs(sw) / (uniform ? step : Math.PI / 720)));   // a non-uniform scale makes an ellipse: its chords stay at ¼°
           if (!cur) cur = [];
-          for (let s = cur.length ? 1 : 0; s <= n; s++) add(cx + r * Math.cos(a0 + sw * s / n), cy + r * Math.sin(a0 + sw * s / n));
+          for (let s = cur.length ? 1 : 0; s <= n; s++) add(cx + r * Math.cos(a0 + sw * s / n), cy + r * Math.sin(a0 + sw * s / n), !uniform);
+          const d = sw / n; seg += n * r * r / 2 * (d - Math.sin(d)) * det;         // an affine map scales every area by det, so this holds under any insert
+          if (uniform) len += r * Math.abs(sw) * sc;
           k += 7;
-        } else { if (cur && cur.length > 1) { add(cur[0][0], cur[0][1]); pieces.push({ pts: cur, closed: true, ents: new Set([e]) }); cur = null; } k++; }
+        } else { if (cur && cur.length > 1) { add(cur[0][0], cur[0][1]); pieces.push({ pts: cur, closed: true, ents: new Set([e]), seg }); cur = null; seg = 0; } k++; }
       }
-      if (cur && cur.length > 1) pieces.push({ pts: cur, closed: false, ents: new Set([e]) });
+      if (cur && cur.length > 1) pieces.push({ pts: cur, closed: false, ents: new Set([e]), seg });
     }
   }
   if (!pieces.length) return null;
   const near = (p, q) => Math.hypot(p[0] - q[0], p[1] - q[1]) <= tol;
   const loops = [];
   for (const p of pieces) {                                    // one piece that ends where it starts (a circle, a closed polyline)
-    if (p.closed || (p.pts.length > 2 && near(p.pts[0], p.pts[p.pts.length - 1]))) { loops.push({ pts: p.pts, ents: p.ents }); p.used = true; }
+    if (p.closed || (p.pts.length > 2 && near(p.pts[0], p.pts[p.pts.length - 1]))) { loops.push({ pts: p.pts, ents: p.ents, seg: p.seg }); p.used = true; }
   }
   if (due()) yield 0.5;
   const open = pieces.filter((p) => !p.used), gapTol = tol * 10;
@@ -115,7 +119,7 @@ export function* outlineLoopsSteps(ed, ents, tol = 1e-6, due = slice()) {
     joined++;
     if (start.used) continue;
     start.used = true;
-    let path = start.pts.slice(), closed = false;
+    let path = start.pts.slice(), closed = false, seg = start.seg;   // a piece joined the other way round has its seg negated
     const es = new Set(start.ents);
     for (;;) {
       if (path.length > 2 && near(path[0], path[path.length - 1])) { closed = true; break; }
@@ -123,6 +127,7 @@ export function* outlineLoopsSteps(ed, ents, tol = 1e-6, due = slice()) {
       const next = nextTo(end);
       if (!next) break;
       next.used = true; for (const x of next.ents) es.add(x);
+      seg += near(next.pts[0], end) ? next.seg : -next.seg;
       path = path.concat((near(next.pts[0], end) ? next.pts : next.pts.slice().reverse()).slice(1));
     }
     while (!closed) {                                          // stuck: grow it from its other end too
@@ -130,12 +135,13 @@ export function* outlineLoopsSteps(ed, ents, tol = 1e-6, due = slice()) {
       const prev = nextTo(head);
       if (!prev) break;
       prev.used = true; for (const x of prev.ents) es.add(x);
+      seg += near(prev.pts[prev.pts.length - 1], head) ? prev.seg : -prev.seg;
       path = (near(prev.pts[prev.pts.length - 1], head) ? prev.pts : prev.pts.slice().reverse()).slice(0, -1).concat(path);
       if (near(path[0], path[path.length - 1])) closed = true;
     }
     // a tiny gap left between its two ends (up to 10 × tol): closed across it for the area, and counted (TODO 46 fixes them)
     if (!closed && path.length > 2 && Math.hypot(path[0][0] - path[path.length - 1][0], path[0][1] - path[path.length - 1][1]) <= gapTol) { closed = true; gaps++; }
-    if (closed) loops.push({ pts: path, ents: es }); else start.open = true;
+    if (closed) loops.push({ pts: path, ents: es, seg }); else start.open = true;
   }
   const openPieces = open.filter((p) => p.open);
   return { loops, len, gaps, open: openPieces.length, openEnts: new Set(openPieces.flatMap((p) => [...p.ents])) };
@@ -150,10 +156,10 @@ export function* outlineLoopsSteps(ed, ents, tol = 1e-6, due = slice()) {
 export const areaPerimeter = (ed, ents, factor, tol) => drain(areaPerimeterSteps(ed, ents, factor, tol));
 /** areaPerimeter as a generator (TODO 316): the hole test is the slow part on a drawing of many loops. */
 export function* areaPerimeterSteps(ed, ents, factor = 1, tol = 1e-6, due = slice()) {
-  const r = yield* scaled(outlineLoopsSteps(ed, ents, tol, due), 0, 0.3);
+  const r = yield* scaled(outlineLoopsSteps(ed, ents, tol, due, Math.PI / 60), 0, 0.3);   // 3° chords; the arcs' segment areas make the area exact
   if (!r) return null;
   const { len, gaps, open } = r, loops = r.loops.map((l) => l.pts);
-  const shoelace = (pts) => { let s = 0; for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) s += pts[j][0] * pts[i][1] - pts[i][0] * pts[j][1]; return Math.abs(s) / 2; };
+  const shoelace = ({ pts, seg }) => { let s = 0; for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) s += pts[j][0] * pts[i][1] - pts[i][0] * pts[j][1]; return Math.abs(s / 2 + seg); };
   const inside = (pt, poly) => {
     let c = false;
     for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
@@ -162,7 +168,7 @@ export function* areaPerimeterSteps(ed, ents, factor = 1, tol = 1e-6, due = slic
     }
     return c;
   };
-  const a = loops.map(shoelace);
+  const a = r.loops.map(shoelace);
   const boxes = [], sizes = [];
   for (let j = 0; j < loops.length; j++) {
     if (due()) yield 0.3 + 0.1 * j / loops.length;
