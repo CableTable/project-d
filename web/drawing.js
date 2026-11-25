@@ -704,7 +704,29 @@ function appendEntities(before, after, fl, hidden) {
   const items = fl.items.concat(made), left = { ...fl.left };
   for (const [type, n] of Object.entries(sub.left)) left[type] = (left[type] || 0) + n;
   const insertions = fl.insertions.concat(sub.insertions.map((v) => ({ ...v, start: v.start + at, end: v.end + at })));
-  return { ...fl, items, layers, mats, left, insertions, boxes: boxesOf(fl, layers, items), visits: fl.visits + sub.visits };
+  return dirtyOf(fl, { ...fl, items, layers, mats, left, insertions, boxes: boxesOf(fl, layers, items), visits: fl.visits + sub.visits }, mats, [], made, []);
+}
+
+const flIds = new WeakMap();
+let flSeq = 0;
+/** A number for a draw (plain data, so a clone of `fl` keeps it): `dirty.from` names the draw an edit was patched from. */
+export const flId = (fl) => flIds.get(fl) ?? (flIds.set(fl, ++flSeq), flSeq);
+
+/**
+ * TODO 359d: what a patch changed on screen, as `fl.dirty`: the box (drawing units) of the old and the new items, the widest pens in them (lw: sheet mm; w: drawing units),
+ * `from` (flId of the draw it was patched from: only a picture of that draw may be mended with it) and `ents` (the edited entities, old numbers). Not set when no item has a box.
+ * It goes on `next` (the patched draw) as a hidden property: a full flatten has none, and a copy of `next` ({ ...fl }, a clone) loses it, so it never claims a box for other items.
+ */
+function dirtyOf(from, next, mats, old, made, ents) {
+  const b = penBox(old.concat(made), mats);
+  return b ? Object.defineProperty(next, 'dirty', { value: { ...b, from: flId(from), ents } }) : next;
+}
+
+/** The box of some items { x0, y0, x1, y1 } (drawing units) with their widest pens (lw: sheet mm; w: drawing units); null when none has a box. */
+export function penBox(items, mats) {
+  let b = null, lw = 0, w = 0;
+  for (const it of items) { b = unionBox(b, it.b); lw = Math.max(lw, (it.lw || 0) / 100); w = Math.max(w, (it.w || 0) * mscale(mats[it.m])); }
+  return b && { x0: b[0], y0: b[1], x1: b[2], y1: b[3], lw, w };
 }
 
 /**
@@ -740,7 +762,7 @@ function patchEntities(before, after, fl, hidden) {
   if (!newBlocks(before, after)) return null;
   const old = before.entities, next = after.entities, deleting = next.length < old.length;
   if (next.length > old.length) return appendEntities(before, after, fl, hidden);
-  const edits = [], moves = new Map(), seenLayers = new Set();
+  const edits = [], moves = new Map(), seenLayers = new Set(), gone = [];       // gone: the old items of the edited entities (their box is dirty)
   let checkHoles = false, j = 0;
   for (let i = 0; i < old.length; i++) {
     const e = old[i], replacement = next[j];
@@ -786,6 +808,7 @@ function patchEntities(before, after, fl, hidden) {
       if (offsets) offsets[pos] = out;
       pos++;
     }
+    for (let k = start; k < pos; k++) gone.push(fl.items[k]);
     if (deleting) removed++;
     else {
       while (rebuilt[patch]?.e === e) items.push(rebuilt[patch++]);
@@ -797,7 +820,8 @@ function patchEntities(before, after, fl, hidden) {
   if (offsets) offsets[pos] = items.length;
   let insertions = offsets ? fl.insertions.map((v) => ({ ...v, start: offsets[v.start], end: offsets[v.end] })) : fl.insertions;
   if (moves.size && !(insertions = movedInsertions(fl, sub, edits, moves))) return null;
-  return { ...fl, items, layers, mats: joined?.mats || fl.mats, boxes: boxesOf(fl, layers, items), insertions, visits: fl.visits - removed };       // a moved INSERT walks the same block as before: the same visits
+  const mats = joined?.mats || fl.mats;
+  return dirtyOf(fl, { ...fl, items, layers, mats, boxes: boxesOf(fl, layers, items), insertions, visits: fl.visits - removed }, mats, gone, rebuilt, edits);       // a moved INSERT walks the same block as before: the same visits
 }
 
 /** A filled arrowhead at `tip`, pointing away from `from`. */
@@ -1349,8 +1373,8 @@ export function* pickIndexSteps(fl, paper, visible = () => true, extremeFrame = 
   if (!Number.isFinite(x0)) return { pieces, snaps, G: 0 };
   const G = gridSize(pieces, snaps, fl.items);
   Object.assign(ix, { G, cell: Math.max(x1 - x0, y1 - y0, 1e-9) / G, x0, y0, x1, y1, pc: new Map(), sc: new Map(), wide: [] });
-  pieces.forEach((p, n) => gridPiece(ix, p, n));
-  snaps.forEach((s, n) => gridSnap(ix, s, n));
+  for (let n = 0; n < pieces.length; n++) { if (n % 4096 === 4095) yield; gridPiece(ix, pieces[n], n); }       // in slices too (TODO 359d): a patch that falls back (a moved part left the old extent) builds the whole grid
+  for (let n = 0; n < snaps.length; n++) { if (n % 4096 === 4095) yield; gridSnap(ix, snaps[n], n); }
   return ix;
 }
 

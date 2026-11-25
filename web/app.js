@@ -32,8 +32,8 @@ import * as BAL from './balloons.js';
 import * as PS from './pdf-sheets.js';
 import { paintDrawing, paintDrawingSteps, paintMarks, drawMarks, drawContour, drawDimPreview, ink, FONT_FAMILY } from './render.js';
 import { overlayBox } from './preview.js';
-import { snapPlace, snapUsable, heavy, sameBase, runChunks, blitCovers, panStrips, QUICK_PX, slice as timeSlice } from './perf.js';
-import { flatten, flattenEdit, patchWidths, primeSplines, unionBox, CAP, ACI, UNITS, mapply, mmul, snapIndex, arcSweep, DrawingError } from './drawing.js';
+import { snapPlace, snapUsable, heavy, sameBase, runChunks, blitCovers, panStrips, QUICK_PX, slice as timeSlice, drain as finishSteps } from './perf.js';
+import { flatten, flattenEdit, patchWidths, primeSplines, unionBox, CAP, ACI, UNITS, mapply, mmul, snapIndex, arcSweep, DrawingError, flId, penBox } from './drawing.js';
 import { writeDxf, writeDxfSteps, writeDxfWithReport, withoutLayers, saveReportNote, unwritable, addLayer, newDoc, lwpoly, point, entity } from './dxf-write.js';
 import * as SH from './shaping.js';
 import { explodeSelection } from './explode.js';
@@ -6003,12 +6003,15 @@ function paintOverlay(gesture = false) {
     if (chunk && full && nk && !dkey && !quick && chunk.view.w === want.w && chunk.view.h === want.h && chunk.view.dpr === want.dpr && chunk.view.view.ox === view.ox && chunk.view.view.oy === view.oy
       && chunk.view.view.scale === view.scale && sameBase(chunk.key, nk)) { ui.cmdUI.place(); return; }
     chunk = null; chunkGen++;
-    c.dataset.snap = ''; c.dataset.keep = ''; c.dataset.quick = ''; c.dataset.pan = ''; c.dataset.chunk = '';    if (full && dkey && c.dataset.nokeep !== '1' && !(kept && sameBase(kept.key, dkey))) {
+    c.dataset.snap = ''; c.dataset.keep = ''; c.dataset.quick = ''; c.dataset.pan = ''; c.dataset.chunk = ''; c.dataset.dirty = '';    if (full && dkey && c.dataset.nokeep !== '1' && !(kept && sameBase(kept.key, dkey))) {
       // a drag starts, or the view moved under it: the base without what is dragged is painted off screen once, so it is no counted full paint (TODO 317 / 320)
-      snap = null; keptCv = keptCv || document.createElement('canvas'); keptCv.width = cw; keptCv.height = chh;
-      kept = { key: dkey, drag: null };
-      if (d.cmp) kept.drag = cmpBase(keptCv, d.cmp, base);
-      else paintEditable(keptCv, d, base, null, 'base');
+      snap = null; keptCv = keptCv || document.createElement('canvas');
+      if (d.cmp || d.lay || dkey !== ekey || !dragBase(d, base, want, dkey)) {
+        keptCv.width = cw; keptCv.height = chh;
+        kept = { key: dkey, drag: null };
+        if (d.cmp) kept.drag = cmpBase(keptCv, d.cmp, base);
+        else paintEditable(keptCv, d, base, null, 'base');
+      }
     }
     const keepSnap = (k) => {
       snapCv = snapCv || document.createElement('canvas');
@@ -6051,6 +6054,16 @@ function paintOverlay(gesture = false) {
       else paintEditable(c, d, base, marks, 'over');
       if (snap?.stale) keepSnap(null);       // the picture a zoom end's bands made, now with its overlays
       c.dataset.keep = '1';
+      ui.cmdUI.place();
+      return;
+    }
+    // Edit commit (TODO 359d): the kept base is of the draw this one was patched from: only the box the edit changed is painted again (a big drawing's quick frame is not needed then)
+    if (full && ekey && !dkey && (!quick || big) && c.dataset.nokeep !== '1' && keptCv && dirtyPaint(d, base, want, ekey)) {
+      const g = c.getContext('2d');
+      g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, cw, chh); g.drawImage(keptCv, 0, 0);
+      paintEditable(c, d, base, marks, 'over');
+      keepSnap(null);
+      c.dataset.dirty = '1';
       ui.cmdUI.place();
       return;
     }
@@ -6131,6 +6144,46 @@ function panShift(c, d, base, want, calls, keyOf, nkey) {
   const kg = keptCv.getContext('2d');
   kg.setTransform(1, 0, 0, 1, 0, 0); kg.clearRect(0, 0, want.w, want.h); kg.drawImage(c, 0, 0);
   kept = { key: nkey, still: !!d.cmp, view: want };
+  return true;
+}
+
+/**
+ * Edit commit (TODO 359d): d.fl was patched from the draw the kept base shows (fl.dirty.from) and nothing else in the paint key changed (a drag's base lacks only the edited entities):
+ * the box of the edit (padded by its widest pen + 2 px, rounded out to device px, clipped to the view) is painted again onto keptCv, which then takes the new key. A box off the view paints nothing.
+ * False (nothing touched) when the caller paints in full: no dirty box, another key part changed, or the box covers over half the view.
+ */
+function dirtyPaint(d, base, want, nkey) {
+  const dirty = d.fl.dirty, old = kept?.key, cut = old?.drag ? old.lastIndexOf(null) : old?.length;
+  if (!dirty || nkey[1] !== d.fl || old?.[0] !== d || flId(old[1]) !== dirty.from || cut !== nkey.length || !nkey.every((v, i) => i === 1 || i === 2 || v === old[i]) || !old.slice(cut + 1).every((e) => dirty.ents.includes(e))) return false;
+  if (!mendKept(d, base, want, dirty)) return false;
+  kept = { key: nkey, still: false, view: want };
+  return true;
+}
+
+/**
+ * A drag starts (TODO 359d): the kept base of this very draw, minus the hidden entities (`dkey`: the paint key, then null, then their numbers), is the kept base with just their box painted again
+ * (what the drag hides, painted without them), instead of the whole drawing painted again. False (nothing touched) when the caller paints in full.
+ */
+function dragBase(d, base, want, dkey) {
+  const old = kept?.key, cut = dkey.lastIndexOf(null), hide = new Set(dkey.slice(cut + 1));
+  if (!keptCv || old?.[0] !== d || old.drag || old.length !== cut || !old.every((v, i) => v === dkey[i])) return false;
+  const box = penBox(d.fl.items.filter((it) => hide.has(it.e)), d.fl.mats);
+  if (!box || !mendKept(d, base, want, box)) return false;
+  kept = { key: dkey, drag: null };
+  return true;
+}
+
+/** `box` (x0, y0, x1, y1 in drawing units, lw / w: its widest pens) of keptCv painted again: padded by the widest pen + 2 px, rounded out to device px, clipped to the view. True when done (a box off the view needs none); false (nothing touched) when it covers over half the view. */
+function mendKept(d, base, want, box) {
+  const k = want.view.scale * want.dpr, f = d.factor, { ox, oy } = want.view, pad = Math.max(box.lw * k, box.w * f * k, 1.2 * want.dpr) + 2 * want.dpr;
+  const x0 = Math.max(0, Math.floor((box.x0 * f - ox) * k - pad)), x1 = Math.min(want.w, Math.ceil((box.x1 * f - ox) * k + pad));
+  const y0 = Math.max(0, Math.floor((base.sheetH - box.y1 * f - oy) * k - pad)), y1 = Math.min(want.h, Math.ceil((base.sheetH - box.y0 * f - oy) * k + pad));
+  if (![x0, x1, y0, y1].every(Number.isFinite)) return false;
+  if (x1 <= x0 || y1 <= y0) return true;
+  if ((x1 - x0) * (y1 - y0) * 2 > want.w * want.h) return false;
+  const kg = keptCv.getContext('2d');
+  kg.setTransform(1, 0, 0, 1, 0, 0); kg.clearRect(x0, y0, x1 - x0, y1 - y0);
+  paintStrip(kg, d, { ...base, minPx: undefined }, want, null, [x0, y0, x1, y1]);
   return true;
 }
 
@@ -7385,7 +7438,7 @@ async function placePaste() {
 const compareEditIndexes = new WeakMap();
 /** The edit index of a tab (pick grid, ends), built on first use and again after a change. */
 function edIndex(d) {
-  if (!d.ed) { const pre = d.ixPre?.fl === d.fl ? d.ixPre.ix : undefined; d.ixPre = null; d.ed = Ed.makeIndex(d.raw, d.fl, d.off, hidIdx(d), undefined, d.edPrev, pre); d.edPrev = null; }       // edPrev: the index before the last edit, its parts for unchanged items are kept (TODO 319c); ixPre: the pick index warm() built in slices (TODO 322a)
+  if (!d.ed) { const pre = d.ixPre?.fl === d.fl ? d.ixPre.ix : d.ixSteps?.fl === d.fl ? finishSteps(d.ixSteps.steps) : undefined; d.ixPre = d.ixSteps = null; d.ed = Ed.makeIndex(d.raw, d.fl, d.off, hidIdx(d), undefined, d.edPrev, pre); d.edPrev = null; }       // edPrev: the index before the last edit, its parts for unchanged items are kept (TODO 319c); ixPre: the pick index warm() built in slices (TODO 322a)
   const item = cmpEditingItem(d);
   if (!item || item.off.size === d.off.size && [...item.off].every((i) => d.off.has(i))) return d.ed;
   const c = compareEditIndexes.get(item.off);
@@ -7413,22 +7466,16 @@ function warm(d) {
   requestAnimationFrame(() => setTimeout(() => {
     const fl = d.fl;
     if (!fl || d.ed || fl.items.length < 20000) return ready();       // small: one go
-    if (d.edPrev) {       // an edit that keeps most of the old index: its pick index is patched in one task and the rest in the next (TODO 322d); the old index is spent either way
-      const prev = d.edPrev, steps = Ed.pickSteps(fl, prev);
-      d.edPrev = null;
-      let r;
-      while (!(r = steps.next()).done);
-      d.ixPre = { fl, ix: r.value };
-      return setTimeout(ready, 0);
-    }
-    // a big drawing's pick index is the longest task of its open (150k items: 0.5 s): build it in idle slices, a hover meanwhile builds it whole
-    const steps = Ed.pickSteps(fl), slice = (deadline) => {
+    // a big drawing's pick index is the longest task of its open (150k items: 0.5 s) and of an edit (128 ms): build it in idle slices; a hover, snap or pick meanwhile finishes the rest at once (edIndex), never a half index.
+    // After an edit it keeps the old index's parts for the items that stayed (TODO 322d, the old index is spent either way); the one-task patch is sliced too (TODO 359d).
+    const steps = Ed.pickSteps(fl, d.edPrev), slice = (deadline) => {
       if (!state.docs.includes(d) || d.fl !== fl || d.ed) return ready();
       const start = performance.now();
       let r;
       while (!(r = steps.next()).done) if (deadline.timeRemaining() < 1 || performance.now() - start > 8) return requestIdleCallback(slice);
-      d.ixPre = { fl, ix: r.value }; ready();
+      d.ixPre = { fl, ix: r.value }; d.ixSteps = null; setTimeout(ready, 0);       // its own task: the edit index and the panels are not part of the last slice
     };
+    d.edPrev = null; d.ixSteps = { fl, steps };
     requestIdleCallback(slice);
   }, 0));
 }

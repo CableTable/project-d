@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { flatten, flattenEdit, MAX_VISITS, pickAt, pickIndex, readDxf } from './web/drawing.js';
+import { flatten, flattenEdit, flId, MAX_VISITS, pickAt, pickIndex, readDxf } from './web/drawing.js';
 import { addBlock, addEntities, addLayer, circle, insert, line, newDoc, writeDxf } from './web/dxf-write.js';
 import { addDimension, makeDimension, moveEntities, removeEntities } from './web/edit.js';
 import { bigDoc } from './tools/gen-big-dxf.mjs';
@@ -164,4 +164,24 @@ test('356 on a bigger drawing the pick grid is patched (a new insertion snap, a 
     assert.deepEqual(patched.pc, fresh.pc);
     assert.deepEqual([patched.G, patched.head, patched.snaps.length, patched.pieces.length], [fresh.G, fresh.head, fresh.snaps.length, fresh.pieces.length]);
   }
+});
+
+test('359d a patch says where it differs (fl.dirty): Move, Delete, add; a full draw and a copy say nothing', () => {
+  const raw = drawing(), fl = flatten(raw), hidden = new Set(), box = ({ x0, y0, x1, y1 }) => [x0, y0, x1, y1];
+  assert.equal(fl.dirty, undefined, 'a full flatten has no dirty box');
+  const moved = flattenEdit(raw, { ...raw, ...moveEntities(raw, new Set([1]), -12, 20) }, fl, hidden), a = fl.items[1].b, b = moved.items[1].b;
+  assert.deepEqual(box(moved.dirty), [Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[2], b[2]), Math.max(a[3], b[3])], 'Move: the old box and the new one');
+  assert.equal(moved.dirty.from, flId(fl));
+  assert.deepEqual(moved.dirty.ents, [1]);
+  assert.equal(Object.keys(moved).includes('dirty'), false, 'hidden: equal to a fresh flatten, gone from a copy');
+  assert.equal({ ...moved }.dirty, undefined);
+  const gone = flattenEdit(raw, { ...raw, ...removeEntities(raw, new Set([1])) }, fl, hidden);
+  assert.deepEqual(box(gone.dirty), fl.items[1].b, 'Delete: the old box');
+  const next = { ...raw, ...dimension(raw) }, added = flattenEdit(raw, next, fl, hidden), tail = added.items.slice(fl.items.length);
+  assert.deepEqual(box(added.dirty), tail.map((it) => it.b).reduce((u, c) => [Math.min(u[0], c[0]), Math.min(u[1], c[1]), Math.max(u[2], c[2]), Math.max(u[3], c[3])]), 'add: the new items');
+  assert.deepEqual(added.dirty.ents, []);
+  const layered = flattenEdit(raw, { ...raw, ...moveEntities(raw, new Set([1]), 1, 1), layers: { ...raw.layers, Marks: { ...raw.layers.Marks, aci: 1 } } }, fl, hidden);
+  assert.equal(layered.dirty, undefined, 'a layer table change is a full flatten');
+  assert.equal(flattenEdit(raw, raw, fl, hidden), fl, 'no edit: the same draw, its picture stays');
+  assert.ok(moved.dirty.lw >= 0 && Number.isFinite(moved.dirty.w));
 });
