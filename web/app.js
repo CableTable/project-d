@@ -6176,10 +6176,12 @@ function dragBase(d, base, want, dkey) {
 /** `box` (x0, y0, x1, y1 in drawing units, lw / w: its widest pens) of keptCv painted again: padded by the widest pen + 2 px, rounded out to device px, clipped to the view. True when done (a box off the view needs none); false (nothing touched) when it covers over half the view. */
 function mendKept(d, base, want, box) {
   const k = want.view.scale * want.dpr, f = d.factor, { ox, oy } = want.view, pad = Math.max(box.lw * k, box.w * f * k, 1.2 * want.dpr) + 2 * want.dpr;
-  const x0 = Math.max(0, Math.floor((box.x0 * f - ox) * k - pad)), x1 = Math.min(want.w, Math.ceil((box.x1 * f - ox) * k + pad));
-  const y0 = Math.max(0, Math.floor((base.sheetH - box.y1 * f - oy) * k - pad)), y1 = Math.min(want.h, Math.ceil((base.sheetH - box.y0 * f - oy) * k + pad));
-  if (![x0, x1, y0, y1].every(Number.isFinite)) return false;
+  const rx0 = Math.floor((box.x0 * f - ox) * k - pad), rx1 = Math.ceil((box.x1 * f - ox) * k + pad);
+  const ry0 = Math.floor((base.sheetH - box.y1 * f - oy) * k - pad), ry1 = Math.ceil((base.sheetH - box.y0 * f - oy) * k + pad);
+  if (![rx0, rx1, ry0, ry1].every(Number.isFinite)) return false;
+  const x0 = Math.max(0, rx0), x1 = Math.min(want.w, rx1), y0 = Math.max(0, ry0), y1 = Math.min(want.h, ry1);
   if (x1 <= x0 || y1 <= y0) return true;
+  if (rx0 <= 0 || ry0 <= 0 || rx1 >= want.w || ry1 >= want.h) return false;       // the padded box touches or crosses the view edge: the full paint (review rv-359d 3)
   if ((x1 - x0) * (y1 - y0) * 2 > want.w * want.h) return false;
   // the full paint's own calls on a canvas of the view's size (a strip or a clip batches and rounds its strokes differently: its picture is not the full paint's), only the items near the box traced; its box then replaces the kept one
   mendCv = mendCv || document.createElement('canvas');

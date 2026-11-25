@@ -33861,13 +33861,19 @@ try {
         await p.waitForFunction(() => document.querySelector('[data-testid=sel-count]').textContent === '1 selected');       // the click at x, y selects one entity
         return s;
       };
-      const exact = async (label, act, allow = 0) => {       // the kept picture after `act` against a forced full paint of the same state, byte for byte (allow: a Delete moves the run ends of every later item, which flips the end pixel of a few tiny lines elsewhere: 16 bytes of 2.6 million seen)
+      const exact = async (label, act, allow = 0, edge = false) => {       // edge: the box crosses the view edge, so the edit takes the full paint (review rv-359d 3)       // the kept picture after `act` against a forced full paint of the same state, byte for byte (allow: a Delete moves the run ends of every later item, which flips the end pixel of a few tiny lines elsewhere: 16 bytes of 2.6 million seen)
         const full0 = await paints();
         await p.evaluate(() => { window.t359Partial = 0; });
         await act();
-        await p.waitForFunction(() => window.t359Partial >= 1, null, { timeout: 15000 }).catch(() => assert.fail(`${label}: no partial paint`));
-        await frame();
-        assert.equal(await paints(), full0, `${label}: no full paint`);
+        if (edge) {
+          await p.waitForFunction((n) => +document.querySelector('[data-testid=drawing]').dataset.paints > n, full0, { timeout: 15000 }).catch(() => assert.fail(`${label}: no full paint`));
+          await frame();
+          assert.equal(await p.evaluate(() => window.t359Partial), 0, `${label}: no partial paint`);
+        } else {
+          await p.waitForFunction(() => window.t359Partial >= 1, null, { timeout: 15000 }).catch(() => assert.fail(`${label}: no partial paint`));
+          await frame();
+          assert.equal(await paints(), full0, `${label}: no full paint`);
+        }
         await drawing.evaluate((c) => { window.__A = c.getContext('2d').getImageData(0, 0, c.width, c.height); c.dataset.nokeep = '1'; });
         await p.evaluate(() => window.t359Paint()); await frame();
         const over = await drawing.evaluate((c) => {
@@ -33903,6 +33909,9 @@ try {
       await p.keyboard.press('Escape'); await frame();
       s = await select(1288, 1480);       // the INSERT's right edge
       await exact('INSERT move', () => move(s, -50, 30));
+      await p.keyboard.press('Escape'); await frame();
+      s = await select(1284, 2.5);       // a bottom-row line (13 px above the canvas edge at Fit), moved 12 px down: its padded box crosses the view edge (+40 would click outside the canvas)
+      await exact('Move across the view edge', () => move(s, 0, 12), 0, true);
       await p.keyboard.press('Escape'); await frame();
       const light = `${shotDir}/t359d-light.png`; await p.screenshot({ path: light });
       assert.ok(readFileSync(light).length > 1000, 'required screenshot exists');

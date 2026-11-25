@@ -67,6 +67,6 @@ export function dropPart(part, target, at) {
 
   const from = target.raw.entities.length;
   const fresh = Object.keys(part.raw.ltypes || {}).some((k) => !(k in (target.raw.ltypes || {})));
-  const ltypes = fresh ? { ...part.raw.ltypes, ...target.raw.ltypes } : target.raw.ltypes;       // the same tables when nothing is new: the drawing is then patched, not drawn again (TODO 359d)
+  const ltypes = fresh ? { ...part.raw.ltypes, ...target.raw.ltypes } : target.raw.ltypes || {};     // the same tables when nothing is new: the drawing is then patched, not drawn again (TODO 359d)
   return { entities: [...target.raw.entities, ...entities], blocks: merged, layers: made.length ? layers : target.raw.layers, ltypes, from, count: entities.length, moved, made };
 }
