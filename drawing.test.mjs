@@ -444,3 +444,19 @@ test('TODO 322a: the pick index built in slices is the same index, and a makeInd
   assert.equal(pre.ix, r.value, 'the index that was built is the one used');
   assert.deepEqual([pre.shown.length, pre.boxGrid.bc.size], [plain.shown.length, plain.boxGrid.bc.size]);
 });
+
+test('TODO 359b: a snapshot index is cached by its items array, built in slices or finished whole', async () => {
+  const { bigDoc } = await import('./tools/gen-big-dxf.mjs');
+  const fl = D.flatten(bigDoc(5000)), copy = { ...fl }, whole = D.pickIndex(fl, false);
+  let slices = 0, ix;
+  while (!(ix = D.snapIndex(fl, false, true))) slices++;
+  assert.ok(slices >= 1, 'a 5000-item drawing takes more than one slice: ' + slices);
+  assert.equal(D.snapIndex(copy, false), ix, 'a copy of fl (a second snapshot of the tab) shares the index');
+  assert.deepEqual([ix.pieces.length, ix.snaps.length, ix.G], [whole.pieces.length, whole.snaps.length, whole.G]);
+  const other = { ...fl, items: [...fl.items] }, half = D.snapIndex(other, false, true);       // a drag before the slices finish
+  assert.equal(half, null);
+  const done = D.snapIndex(other, false);
+  assert.notEqual(done, ix, 'another items array (a source edit) gets its own index');
+  assert.equal(done.pieces.length, whole.pieces.length);
+  assert.equal(D.snapIndex(other, false, true), done, 'asking again after the finish returns the finished index');
+});

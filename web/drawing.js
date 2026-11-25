@@ -1230,6 +1230,20 @@ export function pickIndex(...args) {
   do r = g.next(); while (!r.done);
   return r.value;
 }
+const snapIxs = new WeakMap();
+/**
+ * A Compare snapshot's own pick index, cached by its items array: a snapshot copies fl, so snapshots of one tab share it, and the
+ * tab's index (patched in place by an edit) is never reused. step: build one slice and return null until done; else finish it whole.
+ */
+export function snapIndex(fl, paper, step = false) {
+  let c = snapIxs.get(fl.items);
+  if (c?.paper !== paper) snapIxs.set(fl.items, c = { paper, steps: pickIndexSteps(fl, paper), ix: null });
+  if (c.ix) return c.ix;
+  let r = c.steps.next();
+  while (!step && !r.done) r = c.steps.next();
+  if (r.done) { c.ix = r.value; c.steps = null; }
+  return c.ix;
+}
 /** pickIndex as a generator: it yields every 2048 items, so a caller can build a big drawing's index in slices (TODO 322a). */
 export function* pickIndexSteps(fl, paper, visible = () => true, extremeFrame = IDENT, prev = null) {
   // Spline segments already live in ops: retain an item/op address, not another object and four boxed coordinates per segment.

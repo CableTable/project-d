@@ -33,7 +33,7 @@ import * as PS from './pdf-sheets.js';
 import { paintDrawing, paintDrawingSteps, paintMarks, drawMarks, drawContour, drawDimPreview, ink, FONT_FAMILY } from './render.js';
 import { overlayBox } from './preview.js';
 import { snapPlace, snapUsable, heavy, sameBase, runChunks, blitCovers, panStrips, QUICK_PX, slice as timeSlice } from './perf.js';
-import { flatten, flattenEdit, patchWidths, primeSplines, unionBox, CAP, ACI, UNITS, mapply, mmul, pickIndex, arcSweep, DrawingError } from './drawing.js';
+import { flatten, flattenEdit, patchWidths, primeSplines, unionBox, CAP, ACI, UNITS, mapply, mmul, snapIndex, arcSweep, DrawingError } from './drawing.js';
 import { writeDxf, writeDxfSteps, writeDxfWithReport, withoutLayers, saveReportNote, unwritable, addLayer, newDoc, lwpoly, point, entity } from './dxf-write.js';
 import * as SH from './shaping.js';
 import { explodeSelection } from './explode.js';
@@ -14302,6 +14302,7 @@ async function cmpRefresh(d) {
     if (previous?.length === next.length && next.every((v, i) => v === previous[i])) continue;
     c.items = c.items.map((x) => x.tabId === d.tabId ? { ...x, ...CMP.refreshGeometry(x, d) } : x);
     c.sources.set(d.tabId, next);
+    cmpWarm(c);
     await cmpCalc(c);
   }
 }
@@ -14345,7 +14346,7 @@ function cmpAdd(d, source, offset = null) {
     if (curDoc() === d) setTool('select');
     c.selected = c.items.at(-1).id; c.res = null; c.stale = false;
     if (offset) ui.grips.replaceChildren();       // A pasted snapshot has no editable source: drop old grips before the queued paint.
-    cmpMoved(d, !offset); note('Added snapshot: ' + source.name);
+    cmpMoved(d, !offset); cmpWarm(c); note('Added snapshot: ' + source.name);
   } catch (err) { note(err.message); }
 }
 
@@ -14379,6 +14380,7 @@ function cmpStart() {
   }
   c.items = CMP.lineUpItems(c.items, c.mode); c.selected = c.items.at(-1)?.id;
   addTab({ name: 'Compare', path: null, factor: 1, dirty: false, cmp: c });
+  cmpWarm(c);
   note('Compare: add up to 5 snapshots. The first ticked drawing is the reference');
 }
 
@@ -14613,10 +14615,19 @@ const cmpSnapEd = (sd) => {
   if (c?.off === sd.off) return c;
   const space = spaceOf(sd.fl), items = sd.fl.items;
   const vis = Uint8Array.from(items, (it) => (it.ps ? 1 : 0) === space && itemVisible(it, sd.off));
-  const index = { ix: c?.ix || pickIndex(sd.fl, space === 1), items, vis, off: sd.off };
+  const index = { ix: snapIndex(sd.fl, space === 1), items, vis, off: sd.off };       // a drag before cmpWarm is done finishes the rest here, never a half index
   cmpSnaps.set(sd.fl, index);
   return index;
 };
+/** Builds every snapshot's pick index in idle slices after Compare starts or a snapshot is added, so the first drag move does not (TODO 359b). */
+function cmpWarm(c) {
+  const slice = (deadline) => {
+    if (!state.docs.some((t) => t.cmp === c)) return;
+    const start = performance.now();
+    for (const x of c.items) while (!snapIndex(x.fl, spaceOf(x.fl) === 1, true)) if (deadline.timeRemaining() < 1 || performance.now() - start > 8) return requestIdleCallback(slice);
+  };
+  requestIdleCallback(slice);
+}
 /** The snap near sheet point p (mm) on a side drawn at offset o (follows the SNAP button): { x, y (mm), kind } or null. */
 function cmpSnap(sd, o, p) {
   const f = sd.factor, sn = Ed.snapPick(cmpSnapEd(sd), (p[0] - o[0]) / f, (p[1] - o[1]) / f, 7 / (view.scale * f), state.snap, -1, state.snapTypes);

@@ -356,6 +356,7 @@
   "Compare: distinct colours, Line up Centres and Manual (arrow keys nudge by the step, a drag moves drawing 2), Add file… picks another drawing": 1.42,
   "Compare: run once, move, \"out of date\" mark, run again, mark gone (TODO 113)": 1.11,
   "Compare: dragging drawing 2 snaps its corner onto drawing 1's corner, with a marker and a name; SNAP off drops where released (TODO 112)": 0.53,
+  "TODO 359b: a Compare snapshot snaps from its own index: same corner after a source edit, and the deleted circle's centre no longer snaps": 3,
   "Compare: five snapshots from tabs, library and disk; tick, eye, reference, selection, removal and coloured table (TODO 114)": 2.71,
   "Compare: a library card dropped on the canvas or the panel joins Compare; five is the limit; a hint follows the pointer (T49)": 1.96,
   "Compare: screenshots, light and dark; the top bar still fits at 1024": 3.87,

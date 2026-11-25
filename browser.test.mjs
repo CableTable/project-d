@@ -20409,6 +20409,28 @@ try {
     await t('cmp-lineup-bl').click();
   });
 
+  await step('TODO 359b: a Compare snapshot snaps from its own index: same corner after a source edit, and the deleted circle\'s centre no longer snaps', async () => {
+    const drop = async (x, y) => {                                      // drawing 2's corner (0, 0), dropped 4 px short and 3 px high of (x, y): where the hint says it landed
+      await t('cmp-lineup-bl').click(); await t('cmp-lineup-manual').click();
+      await t('canvas').getByRole('button', { name: 'Fit', exact: true }).click();
+      const a = await at(0, 0), z = await at(x, y);
+      await page.mouse.move(a.x, a.y); await page.mouse.down(); await page.mouse.move(z.x - 4, z.y - 3, { steps: 6 }); await page.mouse.up();
+      return page.evaluate(() => /X (-?[\d.]+), Y (-?[\d.]+)/.exec(document.querySelector('[data-testid=cmp-hint]').textContent).slice(1).map(Number));
+    };
+    assert.deepEqual(await drop(300, 0), [300, 0], 'the corner snaps');
+    assert.deepEqual(await drop(80, 90), [80, 90], 'the circle centre snaps');
+    await page.locator('.tabs .dtab', { hasText: 'plate-b' }).click();
+    await t('canvas').getByRole('button', { name: 'Fit', exact: true }).click();
+    await click(110, 90); await page.keyboard.press('Delete');           // the circle at (80, 90), r 30
+    await page.locator('.tabs .dtab', { hasText: 'Compare' }).click();
+    assert.deepEqual(await drop(300, 0), [300, 0], 'the same corner snaps after the source edit');
+    assert.notDeepEqual(await drop(80, 90), [80, 90], 'the deleted circle\'s centre is not in the snapshot\'s index any more');
+    await page.locator('.tabs .dtab', { hasText: 'plate-b' }).click(); await page.keyboard.press('Control+z');       // the next steps compare the whole plate
+    await page.locator('.tabs .dtab', { hasText: 'Compare' }).click();
+    assert.deepEqual(await drop(80, 90), [80, 90], 'Undo brings the circle centre back into the snapshot');
+    await t('cmp-lineup-bl').click();
+  });
+
   await step('Compare: five snapshots from tabs, library and disk; tick, eye, reference, selection, removal and coloured table (TODO 114)', async () => {
     // Make a real library part through Extract, so the source picker has no fixture-only path.
     await t('picker').setInputFiles(plateDxf('compare-library-source.dxf', 30.9));
