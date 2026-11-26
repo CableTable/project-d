@@ -5942,6 +5942,7 @@ function paintOverlay(gesture = false) {
     drawOvl(true);
     const { w, h: ch } = canvasSize(), dpr = window.devicePixelRatio || 1, c = ui.dcanvas;
     const cw = Math.max(1, Math.round(w * dpr)), chh = Math.max(1, Math.round(ch * dpr));
+    const burstMs = +c.dataset.burstms || 120;       // a burst of pans / zooms ends this long after its last input; data-burstms is a test hook (a slow runner leaves longer gaps between inputs)
     if (w !== paintSize?.w || ch !== paintSize.h || dpr !== paintSize.dpr) {
       paintSize = { w, h: ch, dpr };
       kept = keptCv = null;
@@ -6030,7 +6031,7 @@ function paintOverlay(gesture = false) {
     };
     if (!full && snapUsable(snap, want)) {
       drawSnap();
-      snapTimer = setTimeout(() => { settle = true; paintOverlay(); }, 120);
+      snapTimer = setTimeout(() => { settle = true; paintOverlay(); }, burstMs);
       ui.cmdUI.place();
       return;
     }
@@ -6121,7 +6122,7 @@ function paintOverlay(gesture = false) {
     if (isHeavy) { keepSnap(quick ? null : key); if (big) { snap.big = true; lastHeavy = true; } }       // a quick bitmap may scale under a wheel, but never stands in for a paint; a big open / edit's one is the picture its sharp bands paint over (322c)
     if (d?.lay) layOverlay(c, d, base, marks, lifted);
     if (d?.cmp?.dragged) cmpPaint(c, d.cmp, base, marks, true);
-    if (quick) { c.dataset.quick = '1'; snapTimer = setTimeout(() => { settle = big; paintOverlay(); }, 120); }
+    if (quick) { c.dataset.quick = '1'; snapTimer = setTimeout(() => { settle = big; paintOverlay(); }, burstMs); }
     else if (d && thumbWanted.delete(d)) snapThumb(d, c);       // the first full paint of a tab opened from a file (TODO 136b)
     ui.cmdUI.place();
   });

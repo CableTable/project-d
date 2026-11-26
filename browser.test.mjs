@@ -32897,6 +32897,7 @@ try {
       try {
         const p = await ctx.newPage(), drawing = p.getByTestId('drawing'), errors = [];
         p.on('pageerror', (e) => errors.push(String(e)));
+        if (process.env.THROTTLE) await (await ctx.newCDPSession(p)).send('Emulation.setCPUThrottlingRate', { rate: Number(process.env.THROTTLE) });
         await p.route('**/app.js', (route) => route.fulfill({ contentType: 'text/javascript', body: readFileSync('web/app.js', 'utf8') + '\nwindow.t324 = () => paintOverlay();' }));
         const frame = () => p.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
         const paints = async () => Number(await drawing.getAttribute('data-paints'));
@@ -32951,6 +32952,7 @@ try {
         for (let i = 0; !out && i < 20 && (ink.x0 > 4 || ink.y0 > 4 || ink.x1 < ink.w - 5 || ink.y1 < ink.h - 5); i++) { await p.mouse.wheel(0, -100); await frame(); await settled(); ink = await inkBox(); }
         assert.ok(Number(await drawing.getAttribute('data-drawn')) > (out ? 5000 : 15000), `${kind}: the view is heavy (${await drawing.getAttribute('data-drawn')} items drawn; a layout part is small on its sheet, the 150000 items still make the paint slow)`);
         ink = await inkBox();
+        await drawing.evaluate((c) => { c.dataset.burstms = '2000'; });       // a slow runner takes over 120 ms between two moves: the burst must not end mid-drag
         const w = await drawing.evaluate((c) => c.width), h = await drawing.evaluate((c) => c.height), R = Math.round(20 * Math.abs(pans[1][0]) * dpr), V = Math.round(20 * Math.abs(pans[1][1]) * dpr);
         const pan = async (label, sx, sy) => {
           const before = await paints();
@@ -32998,6 +33000,7 @@ try {
       try {
         const p = await ctx.newPage(), drawing = p.getByTestId('drawing'), errors = [];
         p.on('pageerror', (e) => errors.push(String(e)));
+        if (process.env.THROTTLE) await (await ctx.newCDPSession(p)).send('Emulation.setCPUThrottlingRate', { rate: Number(process.env.THROTTLE) });
         await p.route('**/app.js', (route) => route.fulfill({ contentType: 'text/javascript', body: readFileSync('web/app.js', 'utf8') + '\nwindow.t324 = () => paintOverlay();' }));
         const frame = () => p.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
         const paints = async () => Number(await drawing.getAttribute('data-paints'));
@@ -33046,6 +33049,7 @@ try {
         });
         const b = await p.getByTestId('canvas').boundingBox(), cx = b.x + b.width / 2, cy = b.y + b.height / 2;
         await p.mouse.move(cx, cy); await frame();
+        await drawing.evaluate((c) => { c.dataset.burstms = '2000'; });       // a slow runner takes over 120 ms between two wheel turns (under the 300 frames waited for the bands below)
         let before = await paints();
         for (let i = 0; i < 2; i++) { await p.mouse.wheel(0, -100); await frame(); }
         assert.equal(await drawing.getAttribute('data-snap'), '1', `${kind}: the burst uses the kept picture`);
