@@ -271,7 +271,7 @@ const ICONS = {
 // writes that layout's own. A drawing tab has no sheet; it keeps the idle settings, only so a drawing has a frame (0,0 at the
 // bottom-left of a 700 mm tall page) to be placed, picked and measured in.
 const state = {
-  gapSel: null,       // the extra gap being edited { axis: 'r' | 'c', after } (extra gaps [{ after, mm }]: rows from the top, columns from the left)
+  gapSel: null,       // the extra gap being edited { axis: 'r' | 'c', after, gid } (extra gaps [{ after, mm }]: rows from the top, columns from the left; gid: of an applied grid, null: the live one)
   tool: 'select', msg: null,             // (sel, below: the selected placed part of the open layout, an index into placedNow; picks: the whole selection when it is several)
   mode: 'select',                        // 'select' (size handles) or 'rotate' (turn arrows and the pivot) for the selected placed part
   pivot: { kind: 'centre', x: 0, y: 0 }, // the turn's pivot: 'centre', 'bl' (the part's own lower-left corner) or 'custom' (x, y: sheet mm, y up)
@@ -2001,6 +2001,7 @@ function setTool(id) {
   state.pointDoc = curDoc();
   for (const [k, b] of Object.entries(ui.toolBtns)) b.classList.toggle('on', k === id);
   ui.canvas.classList.toggle('pan', id === 'pan');
+  ui.canvas.classList.toggle('nogridgaps', id !== 'select' && id !== 'step');       // applied grids' gap strips (app.css)
 
   const t = TOOLS.find((x) => x.id === id);
   if (ui.toolChip) ui.toolChip.textContent = 'Tool: ' + t.label;
@@ -2543,6 +2544,7 @@ function pickGridPart(v) {
   if (!lay) return;
   const G = gridEdit(), own = G || lay.s;           // an applied grid has a part always: "No grid" does nothing there
   if (G && !v) { update(); return; }
+  state.gapSel = null;                              // a new grid: its gaps, not a picked applied one's
   if (v.startsWith('lib:')) {
     const rec = lib.items.find((r) => r.id === v.slice(4)), part = rec && libPart(rec);
     if (!part) { note('This part could not be read'); update(); return; }
@@ -2572,10 +2574,15 @@ function updateGrid() {
   if (!G) return;
   if (!gridLayout(lay, G).count) { note('Nothing fits on the sheet, so there is nothing to lay out'); return; }
   pushLay(d, null, '', 'Update the grid');
-  const r = relayGrid(lay, cur.gid), at = lay.placed.indexOf(cur);
-  selLooseMany = [at >= 0 ? at : lay.placed.findIndex((p) => p.gid === cur.gid)];
+  relayShown(lay, cur.gid, cur);
+}
+/** Lays an applied grid again, keeps the selected copy `cur` (if any) selected and says what happened. */
+function relayShown(lay, gid, cur) {
+  const r = relayGrid(lay, gid);
+  if (cur) { const at = lay.placed.indexOf(cur); selLooseMany = [at >= 0 ? at : lay.placed.findIndex((p) => p.gid === gid)]; }
   touch(); update();
-  note(`Grid updated: ${r.moved} copies laid again${r.added ? `, ${r.added} added` : ''}${r.dropped ? `, ${r.dropped} taken off` : ''}. Copies moved by hand stay where they are`);
+  note(r ? `Grid updated: ${r.moved} copies laid again${r.added ? `, ${r.added} added` : ''}${r.dropped ? `, ${r.dropped} taken off` : ''}. Copies moved by hand stay where they are`
+    : 'Nothing fits on the sheet, so there is nothing to lay out');
 }
 
 // ---- Auto-nest (nestdlg.js is the dialog, nest.js the packer): the preview is only applied by Apply, as one undo step ----
@@ -3267,7 +3274,7 @@ function layoutBoxSelect(r, e) {
   if (!lay) return;
   if (!r.moved) {
     // an empty click with the Select (or Shape: its nodes go with it) tool clears; Ctrl/Cmd keeps; Stretch / Step / Contour picks stay
-    if ((state.tool === 'select' || state.tool === 'step' || state.tool === 'shape') && !layModLive()) { if (selIdxs().length && !r.shift && !r.ctrl) { selectMany([]); update(); note('Selection cleared'); } }
+    if ((state.tool === 'select' || state.tool === 'step' || state.tool === 'shape') && !layModLive()) { if (selIdxs().length && !r.shift && !r.ctrl) { selectMany([]); update(); note('Selection cleared'); } else if (state.gapSel?.gid && !selIdxs().length) { state.gapSel = null; update(); } }
     else if (selIdxs().length > 1 && !r.shift) { selectMany(groupIdxs(state.sel), state.sel); update(); note('Selection: just the main part'); }
     return;
   }
@@ -6586,7 +6593,7 @@ function attachCanvasEvents() {
     end();
     state.entityDrag = null;
   });
-  c.addEventListener('click', (e) => { const gh = e.target.closest && e.target.closest('[data-gap]'); if (gh && !state.setlen && state.tool !== 'measure') pickGap(gh.dataset.gap); });
+  c.addEventListener('click', (e) => { const gh = e.target.closest && e.target.closest('[data-gap]'); if (gh && !state.setlen && state.tool !== 'measure') { if (gh.dataset.ask) note('Select a copy of the grid first'); else pickGap(gh.dataset.gap); } });
   c.addEventListener('mousedown', (e) => { if (curLay() && e.button === 0 && e.detail === 2) { textDblClick(e); if (state.text.ed?.dim || state.text.ed?.lsl) e.preventDefault(); } });       // layout selection rebuilds its SVG before dblclick can fire
   c.addEventListener('dblclick', (e) => { if (drawLive() && state.draw.kind === 'pen' && DR.toolBusy(state.draw)) { state.msg = null; if (state.draw.pts.length < 2) drawCancel(); else drawFinish(); return; } if (state.dimHot) { state.dimHot.g.cancelled = true; state.dimHot = state.dimDrag = null; paintOverlay(); } if (!balDbl(e) && !shapeDblClick(e)) textDblClick(e); });       // the double-click on a dimension's text edits it: its first click did not leave a hot grip (345b2)
   c.addEventListener('mousedown', (e) => { if (e.button === 0 && state.tool === 'text' && !e.target.closest('.texted, .zoombox, .contourpanel')) e.preventDefault(); });      // the click places a text: it must not take the focus from the box it opens
@@ -6770,6 +6777,7 @@ function update(refit = false, dimNames) {
     if (l.length) { state.sel = l[l.length - 1]; picksArr = l.length > 1 ? l : []; }
   }
   clampSel();
+  if (state.gapSel && lay && (state.gapSel.gid || null) !== gapGrid()) { state.gapSel = null; pruneGaps(); }       // the picked gap belongs to a grid that is no longer shown
   state.msg = null;
   ui.svg.setAttribute('aria-label', lay ? `Sheet ${state.sheetW} by ${state.sheetH} mm with ${placedNow.length} placed parts` : 'Sheet');
   renderStep(); renderPartsList(); renderCommand(); renderProps(); renderLayers(); drawSheet(); renderStatus(); renderEdit(); renderGaps(); renderGuidePanel(); renderCompare(); railContour();
@@ -7127,30 +7135,57 @@ function shapeSelection(op) {
 }
 
 // ---- extra gaps: click the gap between two rows or columns, type the extra mm (layout.js does the maths) ----
-/** Invisible strips (10 px wide on screen, whatever the zoom) over each gap, and the picked gap's shading. */
+/** Invisible strips (10 px wide on screen, whatever the zoom) over each gap, and the picked gap's shading. L: the live grid. */
 function gapShapes(L) {
-  const out = [];
-  if (!L.count) return out;
-  const sel = state.gapSel;
-  for (const g of L.rowGaps) {
-    const y = g.at + g.size / 2, on = sel && sel.axis === 'r' && sel.after === g.after;
-    if (on) out.push(s('rect', { class: 'gap-sel', x: L.x0, y: g.at, width: L.gridW, height: g.size }));
-    out.push(s('path', { class: 'gap-hit', 'data-gap': 'r' + g.after, d: `M${L.x0} ${y}h${L.gridW}` }));
-  }
-  for (const g of L.colGaps) {
-    const x = g.at + g.size / 2, on = sel && sel.axis === 'c' && sel.after === g.after;
-    if (on) out.push(s('rect', { class: 'gap-sel', x: g.at, y: L.y0, width: g.size, height: L.gridH }));
-    out.push(s('path', { class: 'gap-hit', 'data-gap': 'c' + g.after, d: `M${x} ${L.y0}v${L.gridH}` }));
+  const out = [], lay = curLay(), gid = gapGrid();
+  const draw = (L, gid, ask) => {
+    if (!L.count) return;
+    const sel = state.gapSel && (state.gapSel.gid || null) === gid ? state.gapSel : null;
+    for (const g of L.rowGaps) {
+      const y = g.at + g.size / 2, on = sel && sel.axis === 'r' && sel.after === g.after;
+      if (on) out.push(s('rect', { class: 'gap-sel', x: L.x0, y: g.at, width: L.gridW, height: g.size }));
+      out.push(s('path', { class: 'gap-hit', 'data-gap': 'r' + g.after, 'data-applied': gid, 'data-ask': ask, d: `M${L.x0} ${y}h${L.gridW}` }));
+    }
+    for (const g of L.colGaps) {
+      const x = g.at + g.size / 2, on = sel && sel.axis === 'c' && sel.after === g.after;
+      if (on) out.push(s('rect', { class: 'gap-sel', x: g.at, y: L.y0, width: g.size, height: L.gridH }));
+      out.push(s('path', { class: 'gap-hit', 'data-gap': 'c' + g.after, 'data-applied': gid, 'data-ask': ask, d: `M${x} ${L.y0}v${L.gridH}` }));
+    }
+  };
+  if (!gid) draw(L, null);
+  else draw(gridLayout(lay, lay.grids[gid]), gid);
+  if (lay && !selIdxs().length && !lay.s.gridPart) {          // 2+ grids, nothing selected: their gaps answer a click with "select a copy"
+    const ids = appliedGids(lay);
+    if (ids.length > 1) for (const id of ids) if (id !== gid) draw(gridLayout(lay, lay.grids[id]), id, '1');
   }
   return out;
 }
-const gapList = (axis) => (axis === 'r' ? state.extraRows : state.extraCols);
+/** The applied grids that still have a copy on its slot. */
+const appliedGids = (lay) => [...new Set(lay.placed.map((p) => p.gid).filter(Boolean))].filter((id) => lay.placed.some((p) => p.gid === id && slotOf(lay, p) >= 0));
+/** The applied grid whose extra gaps are shown and edited (TODO 361), or null for the live grid: the selected copy's; with nothing selected the picked gap's, else the only one when there is no live grid. */
+function gapGrid() {
+  const lay = curLay();
+  if (!lay) return null;
+  if (selIdxs().length) return gridEdit() ? lay.placed[placedNow[state.sel].i].gid : null;
+  const ids = appliedGids(lay), picked = state.gapSel?.gid;
+  if (picked && ids.includes(picked)) return picked;
+  return !lay.s.gridPart && ids.length === 1 ? ids[0] : null;
+}
+const gapKey = (axis) => (axis === 'r' ? 'extraRows' : 'extraCols');
+const gapOwner = (gid) => { const lay = curLay(); return gid ? lay?.grids?.[gid] : (lay ? lay.s : idleSettings); };
+const gapList = (axis, gid) => gapOwner(gid)[gapKey(axis)];
+/** One change to a gap list as one undo step; on an applied grid its copies are laid again (TODO 361). */
+function gapEdit(gid, key, label, change) {
+  pushLay(curDoc(), null, key, label);
+  change();
+  if (gid) relayShown(curDoc().lay, gid); else update();
+}
 const gapName = (axis, after) => 'After ' + (axis === 'r' ? 'row ' : 'column ') + after;
 
 /** A click on a gap: it is shaded and its extra gets a field in the panel (rows from the top, columns from the left). */
 function pickGap(key) {
-  const axis = key[0], after = Number(key.slice(1)), list = gapList(axis);
-  state.gapSel = { axis, after };
+  const axis = key[0], after = Number(key.slice(1)), gid = gapGrid(), list = gapList(axis, gid);       // gid before the deselect below: it stays the target
+  state.gapSel = { axis, after, gid };
   if (!list.some((e) => e.after === after)) list.push({ after, mm: 0 });
   if (selIdxs().length) selectMany([]);                                  // 282b1: Extra gaps show with no part selected (grill-282b Q6)
   if (state.ptab !== 'drawing' || docker.folded) setPtab('drawing');   // and on the Properties tab
@@ -7161,19 +7196,23 @@ function pickGap(key) {
 /** Drops extra gaps that have no gap to sit in (beyond the last row / column), and empty ones nobody is editing. */
 function pruneGaps() {
   let changed = false;
+  const g = state.gapSel, own = gapOwner(null), grids = Object.entries(curLay()?.grids || {});
+  const edited = (gid, axis, e) => g && (g.gid || null) === gid && g.axis === axis && g.after === e.after;
   for (const [axis, key, base] of [['r', 'extraRows', layout.baseRows], ['c', 'extraCols', layout.baseCols]]) {
-    const keep = state[key].filter((e) => e.after >= 1 && e.after < base && (e.mm > 0 || (state.gapSel && state.gapSel.axis === axis && state.gapSel.after === e.after)));
-    if (keep.length !== state[key].length) { state[key] = keep; changed = true; }
+    const keep = own[key].filter((e) => e.after >= 1 && e.after < base && (e.mm > 0 || edited(null, axis, e)));
+    if (keep.length !== own[key].length) { own[key] = keep; changed = true; }
+    // applied grids lose only the empty ones: dropping a typed gap here would change the grid with no undo step
+    for (const [gid, G] of grids) G[key] = G[key].filter((e) => e.mm > 0 || edited(gid, axis, e));
   }
-  const g = state.gapSel;
-  if (g && !gapList(g.axis).some((e) => e.after === g.after)) { state.gapSel = null; changed = true; }
+  if (g && !gapOwner(g.gid)?.[gapKey(g.axis)].some((e) => e.after === g.after)) { state.gapSel = null; changed = true; }
   return changed;
 }
 let gapSig = '';
 /** The list in the Step and repeat panel: one row per extra gap, rebuilt only when the set of gaps changes (so typing keeps its field). */
 function renderGaps() {
-  const items = [...state.extraRows.map((e) => ['r', e]), ...state.extraCols.map((e) => ['c', e])].sort((a, b) => (a[0] === b[0] ? a[1].after - b[1].after : a[0] < b[0] ? 1 : -1));
-  const sig = items.map(([a, e]) => a + e.after).join();
+  const gid = gapGrid();
+  const items = [...gapList('r', gid).map((e) => ['r', e]), ...gapList('c', gid).map((e) => ['c', e])].sort((a, b) => (a[0] === b[0] ? a[1].after - b[1].after : a[0] < b[0] ? 1 : -1));
+  const sig = items.length ? gid + ':' + items.map(([a, e]) => a + e.after).join() : '';
   const mark = () => { for (const r of ui.gapList.children) r.classList.toggle('on', !!state.gapSel && r.dataset.gapRow === state.gapSel.axis + state.gapSel.after); };
   if (sig === gapSig) { mark(); return; }
   gapSig = sig;
@@ -7184,8 +7223,9 @@ function renderGaps() {
     inp.addEventListener('input', () => {
       const v = Number(inp.value.trim().replace(',', '.'));
       flagInvalid(inp, bad());
-      if (inp.value.trim() === '' || !Number.isFinite(v) || v < 0) { if (inp.value.trim() === '') { pushLay(curDoc(), null, 'gap' + key, 'Extra gap'); e.mm = 0; update(); } return; }
-      pushLay(curDoc(), null, 'gap' + key, 'Extra gap'); e.mm = v; update();
+      const set = (mm) => gapEdit(gid, 'gap' + gid + key, 'Extra gap', () => { e.mm = mm; });
+      if (inp.value.trim() === '' || !Number.isFinite(v) || v < 0) { if (inp.value.trim() === '') set(0); return; }
+      set(v);
     });
     inp.addEventListener('change', () => {                          // refused: say so, mark it, and show the gap as it still is
       if (!bad()) return;
@@ -7193,13 +7233,12 @@ function renderGaps() {
       inp.value = e.mm > 0 ? String(e.mm) : ''; flagInvalid(inp, true);
     });
     clearInvalid(inp);
-    inp.addEventListener('focus', () => { if (!state.gapSel || state.gapSel.axis !== axis || state.gapSel.after !== e.after) { state.gapSel = { axis, after: e.after }; drawSheet(); } });
+    inp.addEventListener('focus', () => { if (!state.gapSel || state.gapSel.axis !== axis || state.gapSel.after !== e.after) { state.gapSel = { axis, after: e.after, gid }; drawSheet(); } });
     inp.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') inp.blur(); });
     const x = h('button', { class: 'tog', type: 'button', 'aria-label': 'Remove ' + gapName(axis, e.after), 'data-gap-remove': key, onclick: () => {
-      const list = gapList(axis), i = list.indexOf(e);
-      if (i >= 0) { pushLay(curDoc(), null, '', 'Remove extra gap'); list.splice(i, 1); }
+      const list = gapList(axis, gid), i = list.indexOf(e);
       if (state.gapSel && state.gapSel.axis === axis && state.gapSel.after === e.after) state.gapSel = null;
-      update();
+      if (i >= 0) gapEdit(gid, '', 'Remove extra gap', () => list.splice(i, 1)); else update();
     } }, '×');
     return h('div', { class: 'gaprow', 'data-gap-row': key },
       h('span', { class: 'lbl' }, gapName(axis, e.after) + ': +'), inp, h('span', { class: 'lbl' }, 'mm'), x);

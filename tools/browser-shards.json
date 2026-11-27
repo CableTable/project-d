@@ -182,6 +182,7 @@
   "placing: Duplicate along X or Y (gap edge to edge), Copy once / Ctrl+D, Delete, off the sheet is tinted and said once": 3.48,
   "TODO 342: a turned part inside the sheet is not orange; a part in the top gripper is, with the gripper note once": 3,
   "placing: a part of the step and repeat grid becomes a placed part of its own when it is changed": 2.77,
+  "TODO 361: after Apply, no copy selected, click a gap / edit the gap list, type 10: the placed rows after it move 10 mm": 3.74,
   "placing: saved with its rotation and mirror, reopened the same, the PDF draws it; screenshots light and dark": 8.54,
   "TODO 36: Shift-click adds and removes parts; a rubber band selects the parts fully inside; the pick-order numbers, the box and its readout, the Arrange section": 4.65,
   "Select all in a layout: Ctrl+A and Edit → Select all pick every placed part; Delete removes them all as one step; Ctrl+Z brings them back": 0.22,

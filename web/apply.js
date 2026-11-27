@@ -90,8 +90,8 @@ export const gridPlacements = (L, sheetH, partId) => placements(L, sheetH).map((
 
 // ---- applied grids (TODO 283): the copies Apply makes keep a grid id (placement.gid); lay.grids[gid] holds that grid's settings and
 // its slots ({ x, y, rot, r, c }: where each copy was laid, row r from the top, column c from the left), so "Update grid" can lay them again.
-/** The step-and-repeat settings the panel shows and edits for an applied grid (its extra gaps are kept as applied). */
-export const GRID_KEYS = ['gridPart', 'fit', 'rows', 'cols', 'gapX', 'gapY', 'rotate', 'align'];
+/** The step-and-repeat settings the panel shows and edits for an applied grid. */
+export const GRID_KEYS = ['gridPart', 'fit', 'rows', 'cols', 'gapX', 'gapY', 'rotate', 'align', 'extraRows', 'extraCols'];
 
 /** The grid a grid record G makes on the layout's sheet (a stepRepeat result; count 0 when its part is gone), without anchors: the copies are laid fresh. */
 export function gridLayout(lay, G) {
@@ -101,8 +101,8 @@ export function gridLayout(lay, G) {
 
 const same = (a, b) => Math.abs(a - b) < 1e-6;
 const turn = (r) => ((r || 0) % 360 + 360) % 360;
-/** What decides where an applied grid's copies sit: its settings (GRID_KEYS, extra gaps) and the sheet's usable area. Equal to G.sig = nothing to lay again. */
-export const gridSig = (lay, G) => JSON.stringify([...GRID_KEYS.map((k) => G[k]), G.extraRows, G.extraCols, usableArea(lay.s), gridArea(lay).occupied]);
+/** What decides where an applied grid's copies sit: its settings (GRID_KEYS) and the sheet's usable area. Equal to G.sig = nothing to lay again. */
+export const gridSig = (lay, G) => JSON.stringify([...GRID_KEYS.map((k) => G[k]), usableArea(lay.s), gridArea(lay).occupied]);
 
 /** The layout's settings plus the sheet's title block as an obstacle (sheet mm, y down): cells it covers are skipped, the rest of the sheet stays usable. */
 export function gridArea(lay) {

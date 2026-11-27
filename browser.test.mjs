@@ -11235,6 +11235,78 @@ try {
     await closeTabs(/./);
   });
 
+  await step('TODO 361: after Apply, no copy selected, click a gap / edit the gap list, type 10: the placed rows after it move 10 mm', async () => {
+    await closeTabs(/./);
+    const made = newLayout('Gap after apply'), small = newDoc(4), other = newDoc(4);
+    addEntities(small, roundRect(0, 0, 100, 60, 0)); addEntities(other, roundRect(0, 0, 50, 50, 0));
+    made.parts.grid = makePart('grid', 'Grid part', small, 1); made.parts.other = makePart('other', 'Other part', other, 1);
+    made.placed.push({ partId: 'other', x: 900, y: 20, rot: 0, mirrorX: true });   // keeps the second part in the file; mirrored, so the second grid does not anchor on it
+    Object.assign(made.s, { sheetW: 1000, sheetH: 700, gridPart: 'grid', rows: 3, cols: 2, fit: false, align: 'topleft', gripTop: 0, gripBottom: 0, gripLeft: 0, gripRight: 0 });
+    await t('picker').setInputFiles({ name: 'gap-after.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(layoutRaw(made))) });
+    await waitTab(page, 'gap-after.dxf');
+    await page.locator('[data-tool=select]').click(); await t('ptab-drawing').click();
+    // the distinct left / top edges (sheet mm, y down) of the 100 mm wide copies of the grid part
+    const edges = (k) => page.evaluate((k) => [...new Set([...document.querySelectorAll('[data-group=parts] .part-hit')].map((p) => p.getAttribute('points').split(' ').map((q) => q.split(',').map(Number)))
+      .filter((pts) => Math.abs(Math.max(...pts.map((q) => q[0])) - Math.min(...pts.map((q) => q[0])) - 100) < 0.01)
+      .map((pts) => Math.round(Math.min(...pts.map((q) => q[k])) * 100) / 100))].sort((a, b) => a - b), k);
+    const copy = () => page.locator('[data-group=parts] [data-i="1"] .part-hit').click({ force: true });        // [0] is the other part
+    const xs = () => edges(0), ys = () => edges(1);
+    const gap = (g) => page.locator(`[data-gap=${g}]`).click({ force: true, position: g[0] === 'r' ? { x: 30, y: 5 } : { x: 5, y: 30 }, timeout: 5000 });
+    const field = (g) => page.locator(`[data-gap-row=${g}] input`);
+    const key = async (k) => { await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press(k); };
+    await t('apply').click();
+    assert.equal(await nParts(), 7); assert.deepEqual(await ys(), [0, 65, 130]);
+    // under a drawing tool the strips let clicks through to the sheet and parts; Select takes them again
+    const through = () => page.locator('[data-gap=r1]').evaluate((e) => getComputedStyle(e).pointerEvents);
+    await page.locator('[data-tool=line]').click(); assert.equal(await through(), 'none');
+    await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click(); assert.equal(await through(), 'stroke');
+    // nothing selected, one applied grid: click the gap, type 10
+    await gap('r1');
+    assert.equal(await field('r1').evaluate((i) => i === document.activeElement), true, 'its field has the focus');
+    await page.keyboard.type('10');
+    assert.deepEqual(await ys(), [0, 75, 140], 'the rows after row 1 moved 10 mm');
+    assert.equal(await nParts(), 7);
+    await key('Control+z'); assert.deepEqual(await ys(), [0, 65, 130], 'typing 10 is one undo step');
+    await key('Control+y'); assert.deepEqual(await ys(), [0, 75, 140]);
+    // the gap list in the panel
+    await page.waitForTimeout(900);       // past pushLay's 0.8 s merge window
+    await field('r1').fill('20');
+    assert.deepEqual(await ys(), [0, 85, 150], 'editing the listed gap moves them again');
+    await shotBoth('361-gap-after-apply');
+    await page.setViewportSize({ width: 1024, height: 700 }); await page.waitForTimeout(200);
+    await page.screenshot({ path: `${shotDir}/s12-361-gap-after-apply-1024.png` });
+    await page.setViewportSize({ width: 1440, height: 900 });
+    // ×
+    await page.locator('[data-gap-remove=r1]').click();
+    assert.deepEqual(await ys(), [0, 65, 130], '× puts the rows back');
+    assert.equal(await page.locator('[data-gap-row]').count(), 0);
+    await key('Control+z'); assert.deepEqual(await ys(), [0, 85, 150], '× is one undo step'); await key('Control+y');
+    // a copy selected: its grid's gaps are clickable
+    await copy();
+    await gap('c1');
+    await page.keyboard.type('10');
+    assert.deepEqual(await xs(), [0, 115], 'the column after column 1 moved 10 mm');
+    assert.deepEqual(await ys(), [0, 65, 130]);
+    // two applied grids, nothing selected: the command line asks for a copy, and nothing changes
+    await page.waitForTimeout(900);
+    await page.keyboard.press('Escape'); await key('Escape');
+    await t('ptab-step').click();
+    await t('part').selectOption('other'); await panelControl(page, page.locator('[data-key=rows]')).fill('2'); await panelControl(page, page.locator('[data-key=cols]')).fill('2'); await t('align').selectOption('centre');
+    await t('apply').click();
+    assert.equal(await nParts(), 11);
+    await page.locator('[data-gap=c1]').first().click({ force: true, position: { x: 5, y: 30 } });
+    await page.waitForFunction(() => document.querySelector('[data-testid=cmd-prompt]').textContent === 'Select a copy of the grid first', null, { timeout: 5000 });
+    assert.equal(await page.locator('[data-gap-row]').count(), 0);
+    assert.deepEqual(await xs().then((x) => x.slice(0, 2)), [0, 115], 'nothing moved');
+    // a copy of the first grid selected: its gaps only
+    await copy();
+    assert.deepEqual(await page.locator('[data-gap]').evaluateAll((g) => g.map((e) => e.dataset.gap)), ['r1', 'r2', 'c1']);
+    await gap('r2'); await page.keyboard.type('10');
+    assert.deepEqual((await ys()).filter((y) => y === 140), [140], 'its third row moved 10 mm');
+    assert.deepEqual(await page.locator('[data-gap-row] .lbl:first-child').allTextContents(), ['After row 2: +', 'After column 1: +']);
+    await closeTabs(/./);
+  });
+
   await step('placing: saved with its rotation and mirror, reopened the same, the PDF draws it; screenshots light and dark', async () => {
     await freshLayoutWithPlate();
     await partTab(); await t('px').fill('200'); await t('px').press('Enter'); await partTab(); await t('py').fill('300'); await t('py').press('Enter');
