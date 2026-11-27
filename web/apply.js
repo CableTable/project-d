@@ -93,7 +93,7 @@ export const gridPlacements = (L, sheetH, partId) => placements(L, sheetH).map((
 /** The step-and-repeat settings the panel shows and edits for an applied grid. */
 export const GRID_KEYS = ['gridPart', 'fit', 'rows', 'cols', 'gapX', 'gapY', 'rotate', 'align', 'extraRows', 'extraCols'];
 
-/** The grid a grid record G makes on the layout's sheet (a stepRepeat result; count 0 when its part is gone), without anchors: the copies are laid fresh. */
+/** The grid a grid record G makes on the layout's sheet (a stepRepeat result; count 0 when its part is gone). Parts on the sheet do not anchor it: only G.at, the top-left saved at Apply by an anchored grid. */
 export function gridLayout(lay, G) {
   const p = lay.parts[G.gridPart];
   return stepRepeat({ ...gridArea(lay), ...G, partW: p ? p.w : 0, partH: p ? p.h : 0 });
@@ -125,6 +125,7 @@ export function bakeGrid(lay, gid, copies, L, s = lay.s) {
   const G = lay.grids[gid] = {
     ...Object.fromEntries(GRID_KEYS.map((k) => [k, s[k]])), rows: L.rows, cols: L.cols,
     extraRows: s.extraRows.map((e) => ({ ...e })), extraCols: s.extraCols.map((e) => ({ ...e })), slots,
+    ...(L.anchor ? { at: L.anchor } : {}),
   };
   G.sig = gridSig(lay, G);
   for (const p of copies) lay.placed.push({ ...p, gid });

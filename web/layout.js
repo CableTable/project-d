@@ -111,7 +111,9 @@ export function stepRepeat(o) {
     p.box[2] <= area.x + area.w + 1e-9 && p.box[3] <= area.y + area.h + 1e-9);
   const anchor = partW > 0 && partH > 0 && candidates.sort((a, b) => Math.hypot(a.box[0], a.box[1]) - Math.hypot(b.box[0], b.box[1]))[0];
   let rotated = false;
+  const at = o.at;                              // [x, y, rotated]: an applied grid that was anchored, laid again from its own top-left
   if (anchor) rotated = angle(anchor) === 270;
+  else if (at && String(rotate) === 'best') rotated = !!at[2];
   else if (String(rotate) === '90') rotated = true;
   else if (String(rotate) === 'best' && !manual) rotated = a90.cols * a90.rows > a0.cols * a0.rows;
   let { cols, rows } = rotated ? a90 : a0;
@@ -123,11 +125,13 @@ export function stepRepeat(o) {
   const pw = rotated ? partH : partW, ph = rotated ? partW : partH;
   const matching = candidates.filter((p) => angle(p) === (rotated ? 270 : 0));
   let gridW = lay(cols, pw, gapX, ex, 0).len, gridH = lay(rows, ph, gapY, ey, 0).len;
-  let x0 = anchor ? anchor.box[0] : align === 'topleft' ? area.x : area.x + (area.w - gridW) / 2;
-  let y0 = anchor ? anchor.box[1] : align === 'topleft' ? area.y : area.y + (area.h - gridH) / 2;
-  const xs = anchor && !manual ? anchoredLine(area.x, area.w, pw, gapX, ex, x0) : lay(cols, pw, gapX, ex, x0).at;
-  const ys = anchor && !manual ? anchoredLine(area.y, area.h, ph, gapY, ey, y0) : lay(rows, ph, gapY, ey, y0).at;
-  if (anchor && !manual) {
+  let x0 = at ? at[0] : anchor ? anchor.box[0] : align === 'topleft' ? area.x : area.x + (area.w - gridW) / 2;
+  let y0 = at ? at[1] : anchor ? anchor.box[1] : align === 'topleft' ? area.y : area.y + (area.h - gridH) / 2;
+  // from `at`: only to the right / down, so row and column numbers stay those of the applied grid
+  const line = (start, avail, size, gap, extra, from) => (at ? lay(fitCount(start + avail - from, size, gap, extra), size, gap, extra, from).at : anchoredLine(start, avail, size, gap, extra, from));
+  const xs = (anchor || at) && !manual ? line(area.x, area.w, pw, gapX, ex, x0) : lay(cols, pw, gapX, ex, x0).at;
+  const ys = (anchor || at) && !manual ? line(area.y, area.h, ph, gapY, ey, y0) : lay(rows, ph, gapY, ey, y0).at;
+  if ((anchor || at) && !manual) {
     cols = xs.length; rows = ys.length;
     x0 = xs[0] ?? x0; y0 = ys[0] ?? y0;
     gridW = cols ? xs[cols - 1] + pw - x0 : 0; gridH = rows ? ys[rows - 1] + ph - y0 : 0;
@@ -137,7 +141,7 @@ export function stepRepeat(o) {
   let skipped = 0, dropped = 0, taken = 0;
   for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
     const x = xs[c], y = ys[r];
-    if (anchor && (x < area.x - 1e-9 || y < area.y - 1e-9 || x + pw > area.x + area.w + 1e-9 || y + ph > area.y + area.h + 1e-9)) { dropped++; continue; }
+    if ((anchor || at) && (x < area.x - 1e-9 || y < area.y - 1e-9 || x + pw > area.x + area.w + 1e-9 || y + ph > area.y + area.h + 1e-9)) { dropped++; continue; }
     if (matching.some(({ box: b }) => Math.abs(x - b[0]) < 1e-9 && Math.abs(y - b[1]) < 1e-9)) { taken++; continue; }
     if (occupied.some((b) => x < b[2] - 1e-9 && x + pw > b[0] + 1e-9 && y < b[3] - 1e-9 && y + ph > b[1] + 1e-9)) { skipped++; continue; }
     positions.push({ x, y }); cells.push([r, c]);
@@ -145,14 +149,14 @@ export function stepRepeat(o) {
   const count = positions.length;
   const colGaps = xs.slice(0, -1).map((x, i) => ({ after: i + 1, at: x + pw, size: xs[i + 1] - x - pw }));
   const rowGaps = ys.slice(0, -1).map((y, i) => ({ after: i + 1, at: y + ph, size: ys[i + 1] - y - ph }));
-  const base = manual ? { cols, rows } : anchor ? {
-    cols: anchoredLine(area.x, area.w, pw, gapX, new Map(), anchor.box[0]).length,
-    rows: anchoredLine(area.y, area.h, ph, gapY, new Map(), anchor.box[1]).length,
+  const base = manual ? { cols, rows } : anchor || at ? {
+    cols: line(area.x, area.w, pw, gapX, new Map(), at ? at[0] : anchor.box[0]).length,
+    rows: line(area.y, area.h, ph, gapY, new Map(), at ? at[1] : anchor.box[1]).length,
   } : rotated ? base90 : base0;
   const sheetArea = o.sheetW * o.sheetH;
   const usedPct = sheetArea > 0 ? (count * partW * partH) / sheetArea * 100 : 0;
-  const fits = count > 0 && (!!anchor || (gridW <= area.w + 1e-9 && gridH <= area.h + 1e-9));
-  return { cols, rows, baseCols: base.cols, baseRows: base.rows, count, skipped, dropped, taken, rotated, partW: pw, partH: ph, x0, y0, gridW, gridH, usedPct, area, positions, cells, colGaps, rowGaps, manual, fits };
+  const fits = count > 0 && (!!(anchor || at) || (gridW <= area.w + 1e-9 && gridH <= area.h + 1e-9));
+  return { cols, rows, baseCols: base.cols, baseRows: base.rows, count, skipped, dropped, taken, rotated, partW: pw, partH: ph, x0, y0, gridW, gridH, usedPct, area, positions, cells, colGaps, rowGaps, manual, fits, anchor: anchor ? [x0, y0, rotated] : at };
 }
 
 /**

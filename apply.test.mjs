@@ -314,6 +314,29 @@ test('TODO 283: a grid lined up with an existing copy: Update with nothing chang
   assert.ok(!lay.placed.filter((p) => p.gid === 'a').some((p) => hits(lay, p, lay.placed[0])), 'no copy over the existing one');
 });
 
+test('TODO 361: a grid laid around a part on the sheet re-lays from its own top-left: a gap moves only the rows after it', () => {
+  for (const fit of [true, false]) for (const rot of [0, 270]) {
+    const { lay, L } = liveApplied([A.placement1('p', 405, 300, rot)], 3, 3, { fit, rotate: 'best' });
+    assert.equal(L.taken, 1, 'anchored on the loose part'); assert.equal(L.rotated, rot === 270);
+    const spots = (l) => l.placed.map((p) => [p.x, p.y, p.rot]), before = spots(lay);
+    const back = LD.layoutFromRaw(D.readDxf(W.writeDxf(LD.layoutRaw(lay))), 'x');
+    delete back.grids.a.sig;                            // forces a full re-lay with no setting changed
+    assert.deepEqual(A.relayGrid(back, 'a'), { moved: before.length - 1, added: 0, dropped: 0 });
+    spots(back).forEach((p, i) => p.forEach((v, k) => near(v, before[i][k], `no change, copy ${i} (fit ${fit}, rot ${rot})`)));
+    const G = lay.grids.a, cell = new Map(lay.placed.slice(1).map((p) => [p, G.slots[A.slotOf(lay, p)]]));
+    const was = new Map([...cell.keys()].map((p) => [p, [p.x, p.y]]));
+    G.extraRows = [{ after: 1, mm: 10 }];
+    const r = A.relayGrid(lay, 'a');
+    assert.equal(r.added, 0);
+    for (const [p, s] of cell) if (lay.placed.includes(p)) {                     // a row pushed off the sheet drops
+      near(p.x, was.get(p)[0], 'x stays'); near(p.y, was.get(p)[1] - (s.r >= 1 ? 10 : 0), `row ${s.r} (fit ${fit}, rot ${rot})`);
+    }
+    const now = A.gridLayout(lay, G);
+    near(now.y0, L.y0, 'the gap strips start at the grid\'s top');
+    near(now.rowGaps[0].at, L.rowGaps[0].at, 'strip 1 under row 1'); near(now.rowGaps[0].size, L.rowGaps[0].size + 10, 'and 10 mm wider');
+  }
+});
+
 test('TODO 283: a whole column skipped at Apply keeps its numbering through a save, an Update and Update again', () => {
   const { lay } = liveApplied([A.placement1('q', 345, 0)], 2, 3);
   const cols = () => lay.grids.a.slots.filter((s) => s.x != null).map((s) => s.c).sort().join('');
