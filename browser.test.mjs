@@ -11304,6 +11304,10 @@ try {
     await gap('r2'); await page.keyboard.type('10');
     assert.deepEqual((await ys()).filter((y) => y === 140), [140], 'its third row moved 10 mm');
     assert.deepEqual(await page.locator('[data-gap-row] .lbl:first-child').allTextContents(), ['After row 2: +', 'After column 1: +']);
+    // with a copy selected the list cannot be typed in: its panel is hidden (282b1)
+    await copy();
+    await t('ptab-drawing').click();
+    assert.equal(await t('gap-panel').isVisible(), false);
     await closeTabs(/./);
   });
 

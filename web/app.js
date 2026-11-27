@@ -7176,9 +7176,10 @@ const gapOwner = (gid) => { const lay = curLay(); return gid ? lay?.grids?.[gid]
 const gapList = (axis, gid) => gapOwner(gid)[gapKey(axis)];
 /** One change to a gap list as one undo step; on an applied grid its copies are laid again (TODO 361). */
 function gapEdit(gid, key, label, change) {
+  const cur = gid && selIdxs().length ? curDoc().lay.placed[placedNow[state.sel].i] : null;   // kept selected if the re-lay drops rows before it
   pushLay(curDoc(), null, key, label);
   change();
-  if (gid) relayShown(curDoc().lay, gid); else update();
+  if (gid) relayShown(curDoc().lay, gid, cur); else update();
 }
 const gapName = (axis, after) => 'After ' + (axis === 'r' ? 'row ' : 'column ') + after;
 
