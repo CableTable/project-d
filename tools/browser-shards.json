@@ -351,6 +351,7 @@
   "TODO 348: the top gripper line drags at once and snaps to a part's top edge (0.01 mm, \"Snapped to part\"); Alt skips (whole mm); Esc cancels; one Undo; parts stay on the screen": 2.5,
   "TODO 348: every side's gripper line moves its sheet edge, the parts stay where they are on the screen; a gripper-0 side drags by its handle and snaps to a part edge": 1.5,
   "TODO 348: Measure snaps to the gripper line (its middle), not on a side with gripper 0": 1,
+  "TODO 362: every sheet resize path snaps to a part edge within 10 px: a gripper side puts the sheet edge or the gripper line on it (line or handle drag), click-then-click, a second layout tab; Alt skips": 6,
   "TODO 150: Layouts: hovering where two placed parts cross shows the intersection marker; a Line starts exactly there": 2.5,
   "Compare: File → Compare drawings… opens a Compare tab with the open drawings as 1 and 2, differences listed and glowing": 2.93,
   "Compare: tolerance is editable (bad values refused), Show differences hides the glow, a click on a difference zooms to it": 0.29,

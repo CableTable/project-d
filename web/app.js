@@ -13149,12 +13149,14 @@ function sheetMove(e, force = false) {
   if (!g) return;
   if (!g.moved && !g.hot && !force) { if (Math.hypot(e.clientX - g.cx, e.clientY - g.cy) <= 4) return; g.moved = true; }
   if (!g.moved && !g.hot) return;
-  // the dragged line (the side, or its gripper line: the side then lies its gripper's mm outside it) goes where the pointer is, or onto the
-  // nearest outer edge of a part within 6 px (TODO 348; Alt skips): snapped to 0.01 mm, else whole mm
-  const lay = curLay(), x = g.side === 'left' || g.side === 'right', off = g.off || 0, p = sheetAt(e.clientX, e.clientY);
-  const edge = !e.altKey && lay ? partEdgeSnap(lay.parts, snapPlaced(), x ? 'x' : 'y', p[x ? 0 : 1], 6 / view.scale) : null;
-  const v = edge ?? p[x ? 0 : 1], lo = off ? Math.ceil(SHEET_MIN + gripOf(state, x ? 'left' : 'top') + gripOf(state, x ? 'right' : 'bottom')) : SHEET_MIN;
-  g.snapped = edge != null;
+  // the dragged line (the side, or its gripper line: the side then lies its gripper's mm outside it) goes where the pointer is, unless it or the
+  // side's other line comes within 10 px of a part's outer edge: the nearer one goes onto it (TODO 348, 362; Alt skips): snapped to 0.01 mm, else whole mm
+  const lay = curLay(), x = g.side === 'left' || g.side === 'right', off = g.off || 0, at = sheetAt(e.clientX, e.clientY)[x ? 0 : 1];
+  const other = (g.side === 'top' || g.side === 'right' ? 1 : -1) * (off || -gripOf(state, g.side));          // from the dragged line to the other one
+  const near = e.altKey || !lay ? [] : [0, other].flatMap((d) => { const edge = partEdgeSnap(lay.parts, snapPlaced(), x ? 'x' : 'y', at + d, 10 / view.scale); return edge == null ? [] : [edge - d]; });
+  near.sort((a, b) => Math.abs(a - at) - Math.abs(b - at));
+  const v = near[0] ?? at, lo = off ? Math.ceil(SHEET_MIN + gripOf(state, x ? 'left' : 'top') + gripOf(state, x ? 'right' : 'bottom')) : SHEET_MIN;
+  g.snapped = near.length > 0;
   const cl = (s) => Math.max(lo, Math.min(SHEET_MAX, g.snapped ? Math.round(s * 100) / 100 : Math.round(s)));
   g.newW = g.side === 'right' ? cl(v + off) : g.side === 'left' ? cl(g.W - v + off) : g.W;
   g.newH = g.side === 'top' ? cl(v + off) : g.side === 'bottom' ? cl(g.H - v + off) : g.H;

@@ -20287,6 +20287,51 @@ try {
     await page.keyboard.press('Escape');
   });
 
+  // Plate A is 100 × 60: (100,420), (700,360) here; a Dial at (400,300)
+  await step('TODO 362: every sheet resize path snaps to a part edge within 10 px: a gripper side puts the sheet edge or the gripper line on it (line or handle drag), click-then-click, a second layout tab; Alt skips', async () => {
+    await threeParts();
+    const bad = [];
+    // the pointer is left at `to` (+ dx screen px) with the drag held, the readout and note are read, Esc cancels
+    const tries = async (name, side, to, want, o = {}) => {
+      const a = side ? await handleAt(side) : await at(...o.from), b = await at(...to);
+      b.x += o.dx || 0;
+      await page.mouse.move(a.x, a.y);
+      if (o.clicks) { await page.mouse.down(); await page.mouse.up(); } else await page.mouse.down();
+      await page.mouse.move((a.x + b.x) / 2, (a.y + b.y) / 2, { steps: 3 });
+      if (o.alt) await page.keyboard.down('Alt');
+      await page.mouse.move(b.x, b.y, { steps: 3 });
+      await frames();
+      const got = `${await t('sheet-readout').textContent()} / ${await page.locator('.ssel-whole').textContent()}`;
+      if (o.alt) await page.keyboard.up('Alt');
+      await page.keyboard.press('Escape'); if (!o.clicks) await page.mouse.up();
+      await page.waitForFunction(() => !document.querySelector('[data-testid=sheet-readout]'));
+      if (!(want instanceof RegExp ? want.test(got) : got === want)) bad.push(`${name}: ${got}`);
+    };
+    const snapped = (w, h) => `W ${w} × H ${h} mm / Snapped to part`;
+    await setGrips({ Top: 20, Right: 20, Bottom: 20, Left: 20 });
+    await page.keyboard.press('Escape');
+    await tries('top line, sheet edge', null, [300, 463], snapped(1000, 480), { from: [300, 680] });
+    await tries('right line, sheet edge', null, [783, 600], snapped(800, 700), { from: [980, 600] });
+    await tries('left line, sheet edge', null, [123, 600], snapped(900, 700), { from: [20, 600] });
+    await tries('bottom line, sheet edge', null, [300, 383], snapped(1000, 340), { from: [300, 20] });
+    if (!(await page.locator('[data-testid=sheet-handle]').count())) { await layoutTab(); await t('sheet-select').click(); }
+    await tries('right handle on a gripper side, gripper line','right', [823, 350], snapped(820, 700));
+    await tries('right handle on a gripper side, sheet edge', 'right', [803, 350], snapped(800, 700));
+    await setGrips({ Top: 0, Right: 0, Bottom: 0, Left: 0 });
+    if (!(await page.locator('[data-testid=sheet-handle]').count())) { await layoutTab(); await t('sheet-select').click(); }
+    await tries('click then click', 'right', [803, 350], snapped(800, 700), { clicks: true });
+    await tries('8 px off', 'right', [800, 350], snapped(800, 700), { dx: 8 });
+    await tries('13 px off', 'right', [800, 350], /Whole mm only$/, { dx: 13 });
+    await tries('Alt', 'right', [803, 350], /Whole mm only$/, { alt: true });
+    await page.keyboard.press('Escape');
+    await freshLayoutWithPlate();                                                       // a second layout tab
+    await partTab(); await t('px').fill('700'); await partTab(); await t('py').fill('360'); await t('py').press('Enter'); await t('px').press('Enter');
+    await layoutTab(); await t('sheet-select').click();
+    await tries('second layout tab', 'right', [803, 350], snapped(800, 700));
+    await page.keyboard.press('Escape');
+    assert.deepEqual(bad, []);
+  });
+
   await step('TODO 348: Measure snaps to the gripper line (its middle), not on a side with gripper 0', async () => {
     await threeParts();
     await setGrips({ Top: 20 });
