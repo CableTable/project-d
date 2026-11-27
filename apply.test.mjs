@@ -331,6 +331,7 @@ test('TODO 361: a grid laid around a part on the sheet re-lays from its own top-
     for (const [p, s] of cell) if (lay.placed.includes(p)) {                     // a row pushed off the sheet drops
       near(p.x, was.get(p)[0], 'x stays'); near(p.y, was.get(p)[1] - (s.r >= 1 ? 10 : 0), `row ${s.r} (fit ${fit}, rot ${rot})`);
     }
+    assert.ok(!lay.placed.filter((p) => p.gid === 'a').some((p) => hits(lay, p, lay.placed[0])), `no copy over the anchor part (fit ${fit}, rot ${rot})`);
     const now = A.gridLayout(lay, G);
     near(now.y0, L.y0, 'the gap strips start at the grid\'s top');
     near(now.rowGaps[0].at, L.rowGaps[0].at, 'strip 1 under row 1'); near(now.rowGaps[0].size, L.rowGaps[0].size + 10, 'and 10 mm wider');

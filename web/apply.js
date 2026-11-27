@@ -93,10 +93,10 @@ export const gridPlacements = (L, sheetH, partId) => placements(L, sheetH).map((
 /** The step-and-repeat settings the panel shows and edits for an applied grid. */
 export const GRID_KEYS = ['gridPart', 'fit', 'rows', 'cols', 'gapX', 'gapY', 'rotate', 'align', 'extraRows', 'extraCols'];
 
-/** The grid a grid record G makes on the layout's sheet (a stepRepeat result; count 0 when its part is gone). Parts on the sheet do not anchor it: only G.at, the top-left saved at Apply by an anchored grid. */
-export function gridLayout(lay, G) {
+/** The grid a grid record G makes on the layout's sheet (a stepRepeat result; count 0 when its part is gone). Parts on the sheet do not anchor it: only G.at, the top-left saved at Apply by an anchored grid. placed: [{ box }] obstacles for stepRepeat. */
+export function gridLayout(lay, G, placed) {
   const p = lay.parts[G.gridPart];
-  return stepRepeat({ ...gridArea(lay), ...G, partW: p ? p.w : 0, partH: p ? p.h : 0 });
+  return stepRepeat({ ...gridArea(lay), ...G, partW: p ? p.w : 0, partH: p ? p.h : 0, placed });
 }
 
 const same = (a, b) => Math.abs(a - b) < 1e-6;
@@ -161,7 +161,8 @@ export function slotOf(lay, p) {
  * → { moved, added, dropped } or null when nothing fits (then nothing is changed).
  */
 export function relayGrid(lay, gid) {
-  const G = lay.grids && lay.grids[gid], L = G && gridLayout(lay, G);
+  const G = lay.grids && lay.grids[gid];
+  let L = G && gridLayout(lay, G);
   if (!L || !L.count) return null;
   const out = { moved: 0, added: 0, dropped: 0 }, sig = gridSig(lay, G);
   if (G.sig === sig) return out;
@@ -172,6 +173,7 @@ export function relayGrid(lay, gid) {
     const [x0, y0, x1, y1] = placedBox(lay.parts[p.partId], p);
     return [x0, H - y1, x1, H - y0];
   });                                                            // sheet mm, y down, as stepRepeat's
+  if (G.at) L = gridLayout(lay, G, others.map((box) => ({ box })));   // laid around parts at Apply: they block cells again, a copy pushed onto one goes; boxes alone never re-anchor it
   const blocked = (x, y) => others.some((b) => x < b[2] - 1e-9 && x + pw > b[0] + 1e-9 && y < b[3] - 1e-9 && y + ph > b[1] + 1e-9);
   const old = new Map(G.slots.map((s, k) => [s.r + ',' + s.c, k])), spots = gridPlacements(L, H, G.gridPart), slots = [], fresh = [];
   spots.forEach((sp, i) => {
