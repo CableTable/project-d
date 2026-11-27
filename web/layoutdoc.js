@@ -605,8 +605,9 @@ function cleanGrids(grids, lay) {
     const G = grids[gid];
     if (!G || typeof G !== 'object' || typeof G.gridPart !== 'string' || !lay.parts[G.gridPart] || !Array.isArray(G.slots)) continue;
     const s = cleanSettings(G), n = (v) => Number.isFinite(+v) && v !== null && v !== '';
-    out[gid] = { ...Object.fromEntries(GRID_KEYS.map((k) => [k, s[k]])), extraRows: s.extraRows, extraCols: s.extraCols,
+    out[gid] = { ...Object.fromEntries(GRID_KEYS.map((k) => [k, s[k]])),
       slots: G.slots.filter((q) => q && Number.isInteger(q.r) && Number.isInteger(q.c)).map((q) => (n(q.x) && n(q.y) && n(q.rot) ? { x: +q.x, y: +q.y, rot: +q.rot, r: q.r, c: q.c } : { r: q.r, c: q.c })) };       // a slot without a position is an empty one
+    if (Array.isArray(G.at) && n(G.at[0]) && n(G.at[1])) out[gid].at = [+G.at[0], +G.at[1], !!G.at[2]];
     if (G.sig && G.sig === gridSig(lay, out[gid])) out[gid].sig = G.sig;       // as laid: values typed but not updated before the save differ from the saved sig, so Update after reopen re-lays
   }
   return out;

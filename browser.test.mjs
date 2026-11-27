@@ -11235,6 +11235,82 @@ try {
     await closeTabs(/./);
   });
 
+  await step('TODO 361: after Apply, no copy selected, click a gap / edit the gap list, type 10: the placed rows after it move 10 mm', async () => {
+    await closeTabs(/./);
+    const made = newLayout('Gap after apply'), small = newDoc(4), other = newDoc(4);
+    addEntities(small, roundRect(0, 0, 100, 60, 0)); addEntities(other, roundRect(0, 0, 50, 50, 0));
+    made.parts.grid = makePart('grid', 'Grid part', small, 1); made.parts.other = makePart('other', 'Other part', other, 1);
+    made.placed.push({ partId: 'other', x: 900, y: 20, rot: 0, mirrorX: true });   // keeps the second part in the file; mirrored, so the second grid does not anchor on it
+    Object.assign(made.s, { sheetW: 1000, sheetH: 700, gridPart: 'grid', rows: 3, cols: 2, fit: false, align: 'topleft', gripTop: 0, gripBottom: 0, gripLeft: 0, gripRight: 0 });
+    await t('picker').setInputFiles({ name: 'gap-after.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(layoutRaw(made))) });
+    await waitTab(page, 'gap-after.dxf');
+    await page.locator('[data-tool=select]').click(); await t('ptab-drawing').click();
+    // the distinct left / top edges (sheet mm, y down) of the 100 mm wide copies of the grid part
+    const edges = (k) => page.evaluate((k) => [...new Set([...document.querySelectorAll('[data-group=parts] .part-hit')].map((p) => p.getAttribute('points').split(' ').map((q) => q.split(',').map(Number)))
+      .filter((pts) => Math.abs(Math.max(...pts.map((q) => q[0])) - Math.min(...pts.map((q) => q[0])) - 100) < 0.01)
+      .map((pts) => Math.round(Math.min(...pts.map((q) => q[k])) * 100) / 100))].sort((a, b) => a - b), k);
+    const copy = () => page.locator('[data-group=parts] [data-i="1"] .part-hit').click({ force: true });        // [0] is the other part
+    const xs = () => edges(0), ys = () => edges(1);
+    const gap = (g) => page.locator(`[data-gap=${g}]`).click({ force: true, position: g[0] === 'r' ? { x: 30, y: 5 } : { x: 5, y: 30 }, timeout: 5000 });
+    const field = (g) => page.locator(`[data-gap-row=${g}] input`);
+    const key = async (k) => { await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press(k); };
+    await t('apply').click();
+    assert.equal(await nParts(), 7); assert.deepEqual(await ys(), [0, 65, 130]);
+    // under a drawing tool the strips let clicks through to the sheet and parts; Select takes them again
+    const through = () => page.locator('[data-gap=r1]').evaluate((e) => getComputedStyle(e).pointerEvents);
+    await page.locator('[data-tool=line]').click(); assert.equal(await through(), 'none');
+    await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click(); assert.equal(await through(), 'stroke');
+    // nothing selected, one applied grid: click the gap, type 10
+    await gap('r1');
+    assert.equal(await field('r1').evaluate((i) => i === document.activeElement), true, 'its field has the focus');
+    await page.keyboard.type('10');
+    assert.deepEqual(await ys(), [0, 75, 140], 'the rows after row 1 moved 10 mm');
+    assert.equal(await nParts(), 7);
+    await key('Control+z'); assert.deepEqual(await ys(), [0, 65, 130], 'typing 10 is one undo step');
+    await key('Control+y'); assert.deepEqual(await ys(), [0, 75, 140]);
+    // the gap list in the panel
+    await page.waitForTimeout(900);       // past pushLay's 0.8 s merge window
+    await field('r1').fill('20');
+    assert.deepEqual(await ys(), [0, 85, 150], 'editing the listed gap moves them again');
+    await shotBoth('361-gap-after-apply');
+    await page.setViewportSize({ width: 1024, height: 700 }); await page.waitForTimeout(200);
+    await page.screenshot({ path: `${shotDir}/s12-361-gap-after-apply-1024.png` });
+    await page.setViewportSize({ width: 1440, height: 900 });
+    // ×
+    await page.locator('[data-gap-remove=r1]').click();
+    assert.deepEqual(await ys(), [0, 65, 130], '× puts the rows back');
+    assert.equal(await page.locator('[data-gap-row]').count(), 0);
+    await key('Control+z'); assert.deepEqual(await ys(), [0, 85, 150], '× is one undo step'); await key('Control+y');
+    // a copy selected: its grid's gaps are clickable
+    await copy();
+    await gap('c1');
+    await page.keyboard.type('10');
+    assert.deepEqual(await xs(), [0, 115], 'the column after column 1 moved 10 mm');
+    assert.deepEqual(await ys(), [0, 65, 130]);
+    // two applied grids, nothing selected: the command line asks for a copy, and nothing changes
+    await page.waitForTimeout(900);
+    await page.keyboard.press('Escape'); await key('Escape');
+    await t('ptab-step').click();
+    await t('part').selectOption('other'); await panelControl(page, page.locator('[data-key=rows]')).fill('2'); await panelControl(page, page.locator('[data-key=cols]')).fill('2'); await t('align').selectOption('centre');
+    await t('apply').click();
+    assert.equal(await nParts(), 11);
+    await page.locator('[data-gap=c1]').first().click({ force: true, position: { x: 5, y: 30 } });
+    await page.waitForFunction(() => document.querySelector('[data-testid=cmd-prompt]').textContent === 'Select a copy of the grid first', null, { timeout: 5000 });
+    assert.equal(await page.locator('[data-gap-row]').count(), 0);
+    assert.deepEqual(await xs().then((x) => x.slice(0, 2)), [0, 115], 'nothing moved');
+    // a copy of the first grid selected: its gaps only
+    await copy();
+    assert.deepEqual(await page.locator('[data-gap]').evaluateAll((g) => g.map((e) => e.dataset.gap)), ['r1', 'r2', 'c1']);
+    await gap('r2'); await page.keyboard.type('10');
+    assert.deepEqual((await ys()).filter((y) => y === 140), [140], 'its third row moved 10 mm');
+    assert.deepEqual(await page.locator('[data-gap-row] .lbl:first-child').allTextContents(), ['After row 2: +', 'After column 1: +']);
+    // with a copy selected the list cannot be typed in: its panel is hidden (282b1)
+    await copy();
+    await t('ptab-drawing').click();
+    assert.equal(await t('gap-panel').isVisible(), false);
+    await closeTabs(/./);
+  });
+
   await step('placing: saved with its rotation and mirror, reopened the same, the PDF draws it; screenshots light and dark', async () => {
     await freshLayoutWithPlate();
     await partTab(); await t('px').fill('200'); await t('px').press('Enter'); await partTab(); await t('py').fill('300'); await t('py').press('Enter');
@@ -20209,6 +20285,51 @@ try {
     sameOnScreen(await partsOnScreen(), screen, 'right handle');
     await page.keyboard.press('Control+z');
     await page.keyboard.press('Escape');
+  });
+
+  // Plate A is 100 × 60: (100,420), (700,360) here; a Dial at (400,300)
+  await step('TODO 362: every sheet resize path snaps to a part edge within 10 px: a gripper side puts the sheet edge or the gripper line on it (line or handle drag), click-then-click, a second layout tab; Alt skips', async () => {
+    await threeParts();
+    const bad = [];
+    // the pointer is left at `to` (+ dx screen px) with the drag held, the readout and note are read, Esc cancels
+    const tries = async (name, side, to, want, o = {}) => {
+      const a = side ? await handleAt(side) : await at(...o.from), b = await at(...to);
+      b.x += o.dx || 0;
+      await page.mouse.move(a.x, a.y);
+      if (o.clicks) { await page.mouse.down(); await page.mouse.up(); } else await page.mouse.down();
+      await page.mouse.move((a.x + b.x) / 2, (a.y + b.y) / 2, { steps: 3 });
+      if (o.alt) await page.keyboard.down('Alt');
+      await page.mouse.move(b.x, b.y, { steps: 3 });
+      await frames();
+      const got = `${await t('sheet-readout').textContent()} / ${await page.locator('.ssel-whole').textContent()}`;
+      if (o.alt) await page.keyboard.up('Alt');
+      await page.keyboard.press('Escape'); if (!o.clicks) await page.mouse.up();
+      await page.waitForFunction(() => !document.querySelector('[data-testid=sheet-readout]'));
+      if (!(want instanceof RegExp ? want.test(got) : got === want)) bad.push(`${name}: ${got}`);
+    };
+    const snapped = (w, h) => `W ${w} × H ${h} mm / Snapped to part`;
+    await setGrips({ Top: 20, Right: 20, Bottom: 20, Left: 20 });
+    await page.keyboard.press('Escape');
+    await tries('top line, sheet edge', null, [300, 463], snapped(1000, 480), { from: [300, 680] });
+    await tries('right line, sheet edge', null, [783, 600], snapped(800, 700), { from: [980, 600] });
+    await tries('left line, sheet edge', null, [123, 600], snapped(900, 700), { from: [20, 600] });
+    await tries('bottom line, sheet edge', null, [300, 383], snapped(1000, 340), { from: [300, 20] });
+    if (!(await page.locator('[data-testid=sheet-handle]').count())) { await layoutTab(); await t('sheet-select').click(); }
+    await tries('right handle on a gripper side, gripper line','right', [823, 350], snapped(820, 700));
+    await tries('right handle on a gripper side, sheet edge', 'right', [803, 350], snapped(800, 700));
+    await setGrips({ Top: 0, Right: 0, Bottom: 0, Left: 0 });
+    if (!(await page.locator('[data-testid=sheet-handle]').count())) { await layoutTab(); await t('sheet-select').click(); }
+    await tries('click then click', 'right', [803, 350], snapped(800, 700), { clicks: true });
+    await tries('8 px off', 'right', [800, 350], snapped(800, 700), { dx: 8 });
+    await tries('13 px off', 'right', [800, 350], /Whole mm only$/, { dx: 13 });
+    await tries('Alt', 'right', [803, 350], /Whole mm only$/, { alt: true });
+    await page.keyboard.press('Escape');
+    await freshLayoutWithPlate();                                                       // a second layout tab
+    await partTab(); await t('px').fill('700'); await partTab(); await t('py').fill('360'); await t('py').press('Enter'); await t('px').press('Enter');
+    await layoutTab(); await t('sheet-select').click();
+    await tries('second layout tab', 'right', [803, 350], snapped(800, 700));
+    await page.keyboard.press('Escape');
+    assert.deepEqual(bad, []);
   });
 
   await step('TODO 348: Measure snaps to the gripper line (its middle), not on a side with gripper 0', async () => {

@@ -383,6 +383,8 @@ span.start-thumb { display: flex; flex-direction: column; align-items: center; j
 .grid4 { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
 .gap-hit { fill: none; stroke: transparent; stroke-width: 10px; vector-effect: non-scaling-stroke; pointer-events: stroke; cursor: pointer; }
 .gap-hit:hover { stroke: color-mix(in srgb, var(--accent) calc(var(--edge-opacity) * 100%), transparent); }
+/* applied grids' strips lie over real parts: only Select and Step pick them, drawing and dimension clicks go through */
+.nogridgaps .gap-hit[data-applied] { pointer-events: none; }
 .gap-sel { fill: color-mix(in srgb, var(--accent) 30%, transparent); stroke: var(--accent); stroke-width: 1; vector-effect: non-scaling-stroke; pointer-events: none; }
 .bgrow { display: flex; align-items: center; gap: 6px; }
 .bgrow .bgname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

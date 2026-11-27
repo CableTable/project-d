@@ -90,19 +90,19 @@ export const gridPlacements = (L, sheetH, partId) => placements(L, sheetH).map((
 
 // ---- applied grids (TODO 283): the copies Apply makes keep a grid id (placement.gid); lay.grids[gid] holds that grid's settings and
 // its slots ({ x, y, rot, r, c }: where each copy was laid, row r from the top, column c from the left), so "Update grid" can lay them again.
-/** The step-and-repeat settings the panel shows and edits for an applied grid (its extra gaps are kept as applied). */
-export const GRID_KEYS = ['gridPart', 'fit', 'rows', 'cols', 'gapX', 'gapY', 'rotate', 'align'];
+/** The step-and-repeat settings the panel shows and edits for an applied grid. */
+export const GRID_KEYS = ['gridPart', 'fit', 'rows', 'cols', 'gapX', 'gapY', 'rotate', 'align', 'extraRows', 'extraCols'];
 
-/** The grid a grid record G makes on the layout's sheet (a stepRepeat result; count 0 when its part is gone), without anchors: the copies are laid fresh. */
-export function gridLayout(lay, G) {
+/** The grid a grid record G makes on the layout's sheet (a stepRepeat result; count 0 when its part is gone). Parts on the sheet do not anchor it: only G.at, the top-left saved at Apply by an anchored grid. placed: [{ box }] obstacles for stepRepeat. */
+export function gridLayout(lay, G, placed) {
   const p = lay.parts[G.gridPart];
-  return stepRepeat({ ...gridArea(lay), ...G, partW: p ? p.w : 0, partH: p ? p.h : 0 });
+  return stepRepeat({ ...gridArea(lay), ...G, partW: p ? p.w : 0, partH: p ? p.h : 0, placed });
 }
 
 const same = (a, b) => Math.abs(a - b) < 1e-6;
 const turn = (r) => ((r || 0) % 360 + 360) % 360;
-/** What decides where an applied grid's copies sit: its settings (GRID_KEYS, extra gaps) and the sheet's usable area. Equal to G.sig = nothing to lay again. */
-export const gridSig = (lay, G) => JSON.stringify([...GRID_KEYS.map((k) => G[k]), G.extraRows, G.extraCols, usableArea(lay.s), gridArea(lay).occupied]);
+/** What decides where an applied grid's copies sit: its settings (GRID_KEYS) and the sheet's usable area. Equal to G.sig = nothing to lay again. */
+export const gridSig = (lay, G) => JSON.stringify([...GRID_KEYS.map((k) => G[k]), usableArea(lay.s), gridArea(lay).occupied]);
 
 /** The layout's settings plus the sheet's title block as an obstacle (sheet mm, y down): cells it covers are skipped, the rest of the sheet stays usable. */
 export function gridArea(lay) {
@@ -125,6 +125,7 @@ export function bakeGrid(lay, gid, copies, L, s = lay.s) {
   const G = lay.grids[gid] = {
     ...Object.fromEntries(GRID_KEYS.map((k) => [k, s[k]])), rows: L.rows, cols: L.cols,
     extraRows: s.extraRows.map((e) => ({ ...e })), extraCols: s.extraCols.map((e) => ({ ...e })), slots,
+    ...(L.anchor ? { at: L.anchor } : {}),
   };
   G.sig = gridSig(lay, G);
   for (const p of copies) lay.placed.push({ ...p, gid });
@@ -160,7 +161,8 @@ export function slotOf(lay, p) {
  * → { moved, added, dropped } or null when nothing fits (then nothing is changed).
  */
 export function relayGrid(lay, gid) {
-  const G = lay.grids && lay.grids[gid], L = G && gridLayout(lay, G);
+  const G = lay.grids && lay.grids[gid];
+  let L = G && gridLayout(lay, G);
   if (!L || !L.count) return null;
   const out = { moved: 0, added: 0, dropped: 0 }, sig = gridSig(lay, G);
   if (G.sig === sig) return out;
@@ -171,6 +173,7 @@ export function relayGrid(lay, gid) {
     const [x0, y0, x1, y1] = placedBox(lay.parts[p.partId], p);
     return [x0, H - y1, x1, H - y0];
   });                                                            // sheet mm, y down, as stepRepeat's
+  if (G.at) L = gridLayout(lay, G, others.map((box) => ({ box })));   // laid around parts at Apply: they block cells again, a copy pushed onto one goes; boxes alone never re-anchor it
   const blocked = (x, y) => others.some((b) => x < b[2] - 1e-9 && x + pw > b[0] + 1e-9 && y < b[3] - 1e-9 && y + ph > b[1] + 1e-9);
   const old = new Map(G.slots.map((s, k) => [s.r + ',' + s.c, k])), spots = gridPlacements(L, H, G.gridPart), slots = [], fresh = [];
   spots.forEach((sp, i) => {
@@ -180,6 +183,8 @@ export function relayGrid(lay, gid) {
     else if (blocked(L.positions[i].x, L.positions[i].y)) slots.push({ r, c });
     else { fresh.push({ ...placement1(G.gridPart, sp.x, sp.y, sp.rot), gid }); out.added++; slots.push(slot); }
   });
+  const laid = new Set(L.cells.map(([r, c]) => r + ',' + c));       // a slot under a part is no cell now: keep it empty (its copy deleted or dropped here), else it fills once the part goes
+  for (const s of G.slots) if (s.r < L.rows && s.c < L.cols && !laid.has(s.r + ',' + s.c)) slots.push({ r: s.r, c: s.c });
   const gone = new Set(alive.values());
   out.dropped = gone.size;
   lay.placed = lay.placed.filter((p) => !gone.has(p)).concat(fresh);
