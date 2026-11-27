@@ -338,6 +338,19 @@ test('TODO 361: a grid laid around a part on the sheet re-lays from its own top-
   }
 });
 
+test('TODO 361: the anchor\'s empty slot stays empty after the anchor part goes and the grid is laid again', () => {
+  const { lay } = liveApplied([A.placement1('p', 405, 300)], 3, 3, { rotate: 'best' });
+  const G = lay.grids.a, empty = () => G.slots.filter((s) => s.x == null).map((s) => s.r + ',' + s.c).join(' ');
+  assert.equal(empty(), '0,0');
+  G.extraRows = [{ after: 1, mm: 10 }];
+  assert.equal(A.relayGrid(lay, 'a').added, 0);
+  assert.equal(empty(), '0,0', 'kept through a re-lay');
+  lay.placed.shift();                                 // the anchor part deleted
+  G.extraRows = [{ after: 1, mm: 20 }];
+  assert.equal(A.relayGrid(lay, 'a').added, 0, 'no copy put in the empty slot');
+  assert.equal(empty(), '0,0'); assert.equal(G.slots.length, 9);
+});
+
 test('TODO 283: a whole column skipped at Apply keeps its numbering through a save, an Update and Update again', () => {
   const { lay } = liveApplied([A.placement1('q', 345, 0)], 2, 3);
   const cols = () => lay.grids.a.slots.filter((s) => s.x != null).map((s) => s.c).sort().join('');
