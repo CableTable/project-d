@@ -21,6 +21,11 @@ export function onAuthStateChanged(auth, fn) { window.__auth = fn; queueMicrotas
 const storeModule = `
 export const getFirestore = () => ({});
 export const doc = (db, collection, name) => ({name});
+export const collection = (db, name) => ({collection: name});
+export async function addDoc(ref, value) {
+  if (window.__addFails) throw new Error(window.__addFails);
+  (window.__added ||= []).push({collection: ref.collection, ...value});
+}
 export const serverTimestamp = () => 0;
 const listeners = new Map();
 const stamp = (n) => ({toMillis: () => n});
@@ -90,73 +95,190 @@ test('TODO 198b: Rook stuck line shown in IST and hidden on recovery or sign-out
   }
 });
 
-test('TODO U1b: Queue tab lists running runs first, then newest first, as plain text, and sign-out empties it', async (t) => {
-  const shotDir = process.env.SHOTS_DIR || 'shots-U1b';
+// A signed-in page on the real public/ files, with `docs` as the Firestore docs.
+async function openPage(browser, docs, { width = 390, colorScheme = 'light', savedTab } = {}) {
+  const context = await browser.newContext({ viewport: { width, height: 844 }, colorScheme });
+  await context.addInitScript(({ docs, savedTab }) => { window.__docs = docs; if (savedTab) localStorage.setItem('usage-tab', savedTab); }, { docs, savedTab });
+  await context.route('**/*', (route) => {
+    const url = new URL(route.request().url());
+    if (url.hostname === 'usage.test') {
+      const name = url.pathname === '/' ? 'index.html' : url.pathname.slice(1);
+      assert.ok(['index.html', 'app.js', 'app.css', 'firebase-config.js', 'token-chart.js', 'usage-window.js'].includes(name));
+      return route.fulfill({ body: readFileSync(new URL('../usage-site/public/' + name, import.meta.url)), contentType: name.endsWith('.html') ? 'text/html' : name.endsWith('.css') ? 'text/css' : 'text/javascript' });
+    }
+    const body = url.pathname.endsWith('firebase-app.js') ? 'export const initializeApp = () => ({});'
+      : url.pathname.endsWith('firebase-auth.js') ? authModule : url.pathname.endsWith('firebase-firestore.js') ? storeModule : '';
+    return route.fulfill({ body, contentType: body ? 'text/javascript' : 'text/css' });
+  });
+  const page = await context.newPage(), errors = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await page.goto('http://usage.test/');
+  await page.locator('#dashboard').waitFor();
+  return { context, page, errors };
+}
+const fits = async (page) => assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+
+test('TODO upage-a: Questions tab answers by button or text box, marks sent, folds closed lines, opens first on a phone', async (t) => {
+  const browser = await chromium.launch(process.env.CHROME ? { executablePath: process.env.CHROME } : {});
+  t.after(() => browser.close());
+  const q15 = { n: 15, text: 'Ship the build now? <img src=x onerror=alert(1)>', replies: ['go', 'skip'], needed: '2026-11-30' };
+  const q19 = { n: 19, text: 'Which folder should the sample drawings go in?', replies: [] };
+  const q28 = { n: 28, text: 'Answer already on the PC', replies: ['yes'], sent: true };
+  const closed = Array.from({ length: 12 }, (_, i) => ({ n: i + 1, text: 'Closed line ' + (i + 1) }));
+  const forhim = { open: [q15, q19, q28], closed };
+  const { context, page, errors } = await openPage(browser, { forhim }, { savedTab: 'tickets' });
+  try {
+    const tab = (name) => page.locator(`[data-tab=${name}]`);
+    const emit = (value) => page.evaluate((v) => window.__emit('forhim', v), value);
+    const added = () => page.evaluate(() => window.__added || []);
+    const card = (n) => page.locator('.ud-question').filter({ has: page.getByText(n + '.', { exact: true }) });
+    const chips = () => page.locator('#strip .ud-chip').allTextContents();
+    assert.equal(await page.locator('#trend, #chart, #analysis, #notes, #queue').count(), 0);
+    assert.deepEqual(await page.locator('.page-tabs button').allTextContents(), ['Usage', 'Todo', 'Tickets', 'Questions']);
+    assert.equal(new Set(await page.locator('.page-tabs button').evaluateAll((b) => b.map((x) => x.getBoundingClientRect().top))).size, 1, 'Four tabs share one row on a phone');
+    // Phone + an open question: Questions comes up first, without replacing the remembered tab.
+    assert.equal(await tab('questions').getAttribute('aria-pressed'), 'true');
+    assert.equal(await page.locator('#questions').isVisible(), true);
+    assert.equal(await page.evaluate(() => localStorage.getItem('usage-tab')), 'tickets');
+    assert.deepEqual(await chips(), ['3 for him']);
+    assert.equal(await card(15).locator('p').first().textContent(), '15. ' + q15.text);
+    assert.equal(await card(15).locator('p.ud-muted').textContent(), 'needed by 2026-11-30');
+    assert.deepEqual(await card(15).locator('button').allTextContents(), ['go', 'skip', 'Send']);
+    assert.deepEqual(await card(19).locator('button').allTextContents(), ['Send']);
+    assert.equal(await card(28).locator('p.ud-muted').textContent(), 'sent, waiting for Rook'); // the agent's own flag
+    assert.equal(await card(28).locator('button, input').count(), 0);
+    assert.equal(await page.locator('#questions img').count(), 0);
+    await fits(page);
+    mkdirSync(process.env.SHOTS_DIR || 'shots', { recursive: true });
+    await page.screenshot({ path: `${process.env.SHOTS_DIR || 'shots'}/upage-questions-phone.png`, fullPage: true });
+
+    await card(15).getByRole('button', { name: 'go' }).click();
+    await card(15).getByText('sent, waiting for Rook').waitFor();
+    assert.deepEqual(await added(), [{ collection: 'answers', n: 15, text: 'go', at: 0 }]);
+    assert.equal(await card(15).locator('button, input').count(), 0);
+    await emit(forhim);
+    assert.equal(await card(15).getByText('sent, waiting for Rook').count(), 1, 'sent survives a redraw');
+
+    // An empty Send writes nothing; typed text and focus survive a redraw; a failed send keeps the text.
+    await card(19).getByRole('button', { name: 'Send' }).click();
+    const box = page.getByLabel('Answer to question 19');
+    await box.fill('  in samples  ');
+    await emit({ ...forhim, open: [q15, q19, q28, { n: 30, text: 'New one', replies: [] }] });
+    assert.equal(await box.inputValue(), '  in samples  ');
+    assert.equal(await box.evaluate((node) => node === document.activeElement), true);
+    await page.evaluate(() => { window.__addFails = 'no network'; });
+    await box.press('Enter');
+    await card(19).getByText('Not sent: no network').waitFor();
+    assert.equal(await box.inputValue(), '  in samples  ');
+    assert.equal((await added()).length, 1);
+    await page.evaluate(() => { window.__addFails = ''; });
+    await card(19).getByRole('button', { name: 'Send' }).click();
+    await card(19).getByText('sent, waiting for Rook').waitFor();
+    assert.deepEqual((await added())[1], { collection: 'answers', n: 19, text: 'in samples', at: 0 });
+
+    // Closed: the last 10, folded, and the fold stays open across a redraw.
+    const fold = page.locator('#question-list details');
+    assert.equal(await fold.locator('summary').textContent(), 'Closed (10)');
+    assert.equal(await fold.evaluate((node) => node.open), false);
+    await fold.locator('summary').click();
+    await emit(forhim);
+    assert.equal(await fold.evaluate((node) => node.open), true);
+    assert.deepEqual(await fold.locator('li').first().locator('span').allTextContents(), ['3.', 'Closed line 3']);
+    assert.equal(await fold.locator('li').count(), 10);
+
+    // A line that leaves `open` is forgotten: the same number later is answerable again.
+    await emit({ open: [q19], closed: [] });
+    await emit(forhim);
+    assert.equal(await card(15).getByRole('button', { name: 'go' }).count(), 1);
+    assert.equal(await card(19).getByText('sent, waiting for Rook').count(), 1);
+
+    // A tab he taps stays put.
+    await tab('usage').click();
+    await emit({ open: [q15], closed: [] });
+    assert.equal(await tab('usage').getAttribute('aria-pressed'), 'true');
+    await tab('questions').click();
+
+    // An older doc has a count and ids only: no list.
+    await emit({ open: 3, ids: [15, 19, 28] });
+    assert.equal(await page.locator('#question-list').textContent(), '3 open questions');
+    assert.deepEqual(await chips(), ['3 for him']);
+    await emit({ open: [], closed: [] });
+    assert.equal(await page.locator('#question-list').textContent(), 'No open questions');
+    assert.deepEqual(await chips(), []);
+    await emit(forhim);
+    await page.locator('#signout').click();
+    await page.waitForFunction(() => document.getElementById('dashboard').hidden);
+    assert.equal(await page.locator('.ud-question, #question-list details').count(), 0);
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+  // No open question on a phone, or an open one on a desktop: Usage stays.
+  for (const [docs, width] of [[{ forhim: { open: [], closed } }, 390], [{ forhim: { open: 3, ids: [15, 19, 28] } }, 390], [{ forhim }, 1280]]) {
+    const other = await openPage(browser, docs, { width });
+    try {
+      assert.equal(await other.page.locator('[data-tab=usage]').getAttribute('aria-pressed'), 'true');
+      assert.deepEqual(other.errors, []);
+    } finally { await other.context.close(); }
+  }
+});
+
+test('TODO upage-a: Todo and Tickets rows are number, short title, status chip; screenshots', async (t) => {
+  const shotDir = process.env.SHOTS_DIR || 'shots';
   mkdirSync(shotDir, { recursive: true });
   const browser = await chromium.launch(process.env.CHROME ? { executablePath: process.env.CHROME } : {});
   t.after(() => browser.close());
-  // What the agent's parseQueue (kit/usage-agent.mjs) makes of a small queue.txt, in file order.
-  const queue = { updated: '2026-11-05T18:45:00.000Z', next: ['<img src=x onerror=alert(1)>'], rows: [
-    { kind: 'build', id: 'K1', out: 'runs1/b-K1.txt', state: 'ended', extra: 'ship' },
-    { kind: 'build', id: 'K2', out: 'runs1/b-K2.txt', state: 'running' },
-    { kind: 'review', id: '<img src=x onerror=alert(1)>', out: 'runs1/rv-K2.txt', state: 'ended', extra: 'denied: 2' },
-  ] };
-  for (const colorScheme of ['light', 'dark']) {
-    const context = await browser.newContext({ viewport: { width: 390, height: 844 }, colorScheme });
+  const long = 'Usage page: fewer charts, a simple Todo and Tickets list, and a Questions tab';
+  const item = (num, title, status, extra = {}) => ({ num, title, size: 'M', done: false, text: '(M): long description.', substeps: [{ num: num + 'a', done: false, text: 'a step' }], ...(status ? { status } : {}), ...extra });
+  const now = Date.now(), iso = (ms) => new Date(now + ms).toISOString(), H = 3600e3;
+  const docs = {
+    limits: { rows: ['Rook', 'Bishop', 'King'].flatMap((agent) => ['5h', 'week'].map((window) => ({ agent, window, used_pct: '42', cap_pct: '', starts: iso(-84 * H), resets: iso(window === 'week' ? 84 * H : 3 * H), as_of: iso(0) }))) },
+    tokens: { rows: Array.from({ length: 96 }, (_, i) => ({ t: now - (96 - i) * H, Rook: 4000, Bishop: 2000, King: 3000, Knight: 0 })) },
+    queue: { next: ['356', '357'], nextFrom: 'todo', rows: [{ kind: 'build', id: 'king/355', out: 'b-355.jsonl', state: 'running' }] },
+    todo: { sections: [{ title: 'Whole TODO', items: [
+      item(355, long, 'running'), item(356, 'Trim a polyline', 'planned'), item(357, 'Hatch pick points', 'held'), item(358, 'Block editor'), item(354, 'Usage page build', 'done', { done: true }),
+    ] }] },
+    tickets: { rows: [
+      { id: 'T14', status: 'building', title: long, tags: ['usage-page'], note: 'A note', size: 'M', todo: '355', updated: '2026-11-27' },
+      { id: 'T21', status: 'open', title: 'Open bug', tags: ['bug'] },
+    ] },
+    forhim: { open: [{ n: 15, text: 'Ship the build now?', replies: ['go', 'skip'], needed: '2026-11-30' }], closed: [] },
+    status: { lastUpdate: now - 60_000, lastError: '', lastErrorAt: 0 },
+  };
+  const rows = (page, box) => page.locator(box + ' .ud-row').evaluateAll((all) => all.map((row) => [...row.children].map((c) => c.textContent).join('|')));
+  const cut = long.slice(0, 60).trimEnd() + '…';
+  for (const colorScheme of ['light', 'dark']) for (const width of [390, 1024, 1280]) {
+    const { context, page, errors } = await openPage(browser, docs, { width, colorScheme });
     try {
-      await context.addInitScript((queue) => { window.__docs = { queue }; }, queue);
-      await context.route('**/*', (route) => {
-        const url = new URL(route.request().url());
-        if (url.hostname === 'usage.test') {
-          const name = url.pathname === '/' ? 'index.html' : url.pathname.slice(1);
-          assert.ok(['index.html', 'app.js', 'app.css', 'firebase-config.js', 'token-chart.js', 'usage-window.js'].includes(name));
-          return route.fulfill({ body: readFileSync(new URL('../usage-site/public/' + name, import.meta.url)), contentType: name.endsWith('.html') ? 'text/html' : name.endsWith('.css') ? 'text/css' : 'text/javascript' });
-        }
-        const body = url.pathname.endsWith('firebase-app.js') ? 'export const initializeApp = () => ({});'
-          : url.pathname.endsWith('firebase-auth.js') ? authModule : url.pathname.endsWith('firebase-firestore.js') ? storeModule : '';
-        return route.fulfill({ body, contentType: body ? 'text/javascript' : 'text/css' });
-      });
-      const page = await context.newPage(), errors = [];
-      page.on('pageerror', (e) => errors.push(e.message));
-      await page.goto('http://usage.test/');
-      await page.locator('#dashboard').waitFor();
-      assert.equal(await page.locator('#queue').isVisible(), false);
-      await page.locator('[data-tab=queue]').click();
-      assert.equal(await page.locator('#queue').isVisible(), true);
-      assert.equal(await page.locator('[data-tab=queue]').getAttribute('aria-pressed'), 'true');
-      assert.match(await page.locator('#queue-updated').textContent(), /^Updated Fri,? 6 Nov,? 00:15 IST$/);
-      const ids = () => page.locator('#queue-list .queue-row strong').allTextContents();
-      assert.deepEqual(await ids(), ['building K2', '<img src=x onerror=alert(1)>', 'checked K2', 'built K1']); // Now (running), Next (planned id, shown as text), Done (newest first)
-      assert.deepEqual(await page.locator('#queue-list .ud-chip').evaluateAll((chips) => chips.map((c) => c.className + ':' + c.textContent)), ['ud-chip warn:running', 'ud-chip ok:done', 'ud-chip ok:done']);
-      assert.equal(await page.locator('#queue img').count(), 0);
-      assert.equal(new Set(await page.locator('.page-tabs button').evaluateAll((b) => b.map((x) => x.getBoundingClientRect().top))).size, 1, 'Four tabs share one row on a phone');
-      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
-      await page.screenshot({ path: `${shotDir}/queue-phone-${colorScheme}.png`, fullPage: true });
-      await page.evaluate(() => window.__emit('queue', { rows: [] }));
-      assert.equal(await page.locator('#queue-list').textContent(), 'No runs');
-      assert.equal(await page.locator('#queue-updated').textContent(), '');
-      await page.evaluate(() => window.__emit('queue', { rows: [], next: ['K9'] }));
-      assert.deepEqual(await ids(), ['K9']); // empty rows still show the Next line
-      assert.match(await page.locator('#queue-list').textContent(), /^No runsNext/);
-      await page.evaluate((queue) => window.__emit('queue', queue), queue);
-      assert.equal((await ids()).length, 4);
-      await page.locator('#signout').click();
-      await page.waitForFunction(() => document.getElementById('dashboard').hidden);
-      assert.equal(await page.locator('#queue-list .queue-row').count(), 0);
-      assert.equal(await page.locator('#queue-updated').textContent(), '');
+      const suffix = '-' + width + (colorScheme === 'dark' ? '-dark' : '');
+      const shot = (name) => page.screenshot({ path: `${shotDir}/upage-${name}${suffix}.png`, fullPage: true });
+      await page.locator('[data-tab=usage]').click();
+      assert.deepEqual(await page.locator('#work-list h2').allTextContents(), ['Now', 'Next · from TODO order']);
+      await fits(page); await shot('usage');
+      await page.locator('[data-tab=todo]').click();
+      assert.deepEqual(await rows(page, '#todo'), [`355.|${cut}|running`, '356.|Trim a polyline|planned', '357.|Hatch pick points|held', '358.|Block editor|open']);
+      assert.deepEqual(await page.locator('#todo .ud-chip').evaluateAll((all) => all.map((c) => c.className)), ['ud-chip warn', 'ud-chip info', 'ud-chip bad', 'ud-chip muted']);
+      assert.equal(await page.locator('#todo .ud-row > *').count(), 12, 'three cells a row, nothing else');
+      await fits(page); await shot('todo');
+      await page.locator('#todo-closed').click();
+      assert.deepEqual(await rows(page, '#todo'), ['354.|Usage page build|done']);
+      await page.locator('[data-tab=tickets]').click();
+      assert.deepEqual(await rows(page, '#tickets'), [`T14|${cut}|building`, 'T21|Open bug|open']);
+      assert.equal(await page.locator('#tickets .ud-row > *').count(), 6);
+      await fits(page); await shot('tickets');
+      await page.locator('[data-tab=questions]').click();
+      await fits(page); await shot('questions');
       assert.deepEqual(errors, []);
     } finally { await context.close(); }
   }
 });
 
-test('TODO U1d: Queue row reads Who verb item · short title with a running / done chip and no raw line', async (t) => {
+test('TODO U1d: a Work card row reads Who verb item and short title, with no long sha, and Next says when it comes from TODO order', async (t) => {
   const shotDir = process.env.SHOTS_DIR || 'shots-U1c';
   mkdirSync(shotDir, { recursive: true });
   const browser = await chromium.launch(process.env.CHROME ? { executablePath: process.env.CHROME } : {});
   t.after(() => browser.close());
   const sha = '855b4951d56364408799500f0997906b99300edc';
   // Rows as the agent's parseQueue makes them, in file order.
-  const queue = { updated: '2026-11-05T18:45:00.000Z', rows: [
+  const queue = { updated: '2026-11-05T18:45:00.000Z', next: ['264', 'U1d', 999], nextFrom: 'todo', rows: [
     { kind: 'review', id: sha, out: 'review-277.jsonl', state: 'ended', extra: '' }, // chained review: out is review-<id>, not rv-<id>
     { kind: 'build', id: 'king/273a', out: 'b-273a.jsonl', state: 'ended', extra: '' }, // sub-id: title of TODO 273
     { kind: 'build', id: 'king/280bfix1', out: 'b-280bfix1.jsonl', state: 'ended', extra: '' },
@@ -175,122 +297,44 @@ test('TODO U1d: Queue row reads Who verb item · short title with a running / do
     { num: 277, title: 'Copy objects with undo', done: true },
     { num: 279, title: 'U1c: plain Queue rows', done: false },
     { num: 280, title: 'U1d: simpler Queue tab with Next and short titles', done: true },
-  ] }] };
-  for (const colorScheme of ['light', 'dark']) {
-    const context = await browser.newContext({ viewport: { width: 390, height: 844 }, colorScheme });
-    try {
-      await context.addInitScript((docs) => { window.__docs = docs; }, { queue, todo });
-      await context.route('**/*', (route) => {
-        const url = new URL(route.request().url());
-        if (url.hostname === 'usage.test') {
-          const name = url.pathname === '/' ? 'index.html' : url.pathname.slice(1);
-          assert.ok(['index.html', 'app.js', 'app.css', 'firebase-config.js', 'token-chart.js', 'usage-window.js'].includes(name));
-          return route.fulfill({ body: readFileSync(new URL('../usage-site/public/' + name, import.meta.url)), contentType: name.endsWith('.html') ? 'text/html' : name.endsWith('.css') ? 'text/css' : 'text/javascript' });
-        }
-        const body = url.pathname.endsWith('firebase-app.js') ? 'export const initializeApp = () => ({});'
-          : url.pathname.endsWith('firebase-auth.js') ? authModule : url.pathname.endsWith('firebase-firestore.js') ? storeModule : '';
-        return route.fulfill({ body, contentType: body ? 'text/javascript' : 'text/css' });
-      });
-      const page = await context.newPage(), errors = [];
-      page.on('pageerror', (e) => errors.push(e.message));
-      await page.goto('http://usage.test/');
-      await page.locator('#dashboard').waitFor();
-      await page.locator('[data-tab=queue]').click();
-      await page.getByRole('button', { name: 'Show 5 more' }).click(); // 10 done rows: 5 shown first
-      assert.deepEqual(await page.locator('#queue-list .queue-row strong').allTextContents(), [
-        'King building 275 · Rotate objects about a chosen pivot point', // running first
-        'King built 999', // no TODO 999: no title
-        'checked 855b495', // sha only: short sha
-        'checked 277 · Copy objects with undo',
-        'Full tests 0225cb8',
-        'Bishop job debt47',
-        'Grill check U1c · plain Queue rows', // letter id: title starts with "U1c:", prefix dropped
-        'checked 280abcd',
-        'King built 280b fix · simpler Queue tab with Next and short titles',
-        'King built 273a · Huge files: Hairline on all crashes',
-        'checked 277 · Copy objects with undo',
-      ]);
-      assert.deepEqual(await page.locator('#queue-list .ud-chip').allTextContents(), ['running', ...Array(10).fill('done')]);
-      assert.equal(await page.locator('#queue-list .queue-raw').count(), 0);
-      assert.equal(await page.locator('#queue-list table').count(), 0);
-      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
-      await page.screenshot({ path: `${shotDir}/queue-rows-${colorScheme}.png`, fullPage: true });
-      await page.evaluate(() => window.__emit('todo', { sections: [] }));
-      assert.equal(await page.locator('#queue-list .queue-row strong').first().textContent(), 'King building 275'); // title left out when the TODO has none
-      assert.deepEqual(errors, []);
-    } finally { await context.close(); }
-  }
-});
-
-test('TODO 280b: Queue tab has Now / Next / Done parts, 5 done rows and a Show N more toggle, no long sha, one column on a phone', async (t) => {
-  const shotDir = process.env.SHOTS_DIR || 'shots-280b';
-  mkdirSync(shotDir, { recursive: true });
-  const browser = await chromium.launch(process.env.CHROME ? { executablePath: process.env.CHROME } : {});
-  t.after(() => browser.close());
-  const sha = '855b4951d56364408799500f0997906b99300edc';
-  const ended = (id, out = id + '.jsonl') => ({ kind: 'build', id: 'king/' + id, out, state: 'ended', extra: '' });
-  const queue = { updated: '2026-11-05T18:45:00.000Z', next: ['264', 'U1d', 999], rows: [
-    ended('101'), ended('102'), ended('103'), ended('104'), ended('105'),
-    { kind: 'review', id: sha, out: 'check.jsonl', state: 'ended', extra: '' },
-    { kind: 'suite', id: sha, out: 'suite.log', state: 'ended', extra: '' },
-    { kind: 'build', id: 'king/108', out: 'b-108.jsonl', state: 'running', extra: '' },
-  ] };
-  const todo = { sections: [{ title: 'Whole TODO', items: [
     { num: 264, title: 'Rotate objects about a chosen pivot point with one undo step please', done: false },
-    { num: 280, title: 'U1d: simpler Queue tab', done: false },
   ] }] };
+  const today = new Date().toISOString();
+  for (const row of queue.rows) if (row.state === 'ended') row.ended = today;
   for (const colorScheme of ['light', 'dark']) {
-    const context = await browser.newContext({ viewport: { width: 390, height: 844 }, colorScheme });
+    const { context, page, errors } = await openPage(browser, { queue, todo }, { colorScheme });
     try {
-      await context.addInitScript((docs) => { window.__docs = docs; }, { queue, todo });
-      await context.route('**/*', (route) => {
-        const url = new URL(route.request().url());
-        if (url.hostname === 'usage.test') {
-          const name = url.pathname === '/' ? 'index.html' : url.pathname.slice(1);
-          assert.ok(['index.html', 'app.js', 'app.css', 'firebase-config.js', 'token-chart.js', 'usage-window.js'].includes(name));
-          return route.fulfill({ body: readFileSync(new URL('../usage-site/public/' + name, import.meta.url)), contentType: name.endsWith('.html') ? 'text/html' : name.endsWith('.css') ? 'text/css' : 'text/javascript' });
-        }
-        const body = url.pathname.endsWith('firebase-app.js') ? 'export const initializeApp = () => ({});'
-          : url.pathname.endsWith('firebase-auth.js') ? authModule : url.pathname.endsWith('firebase-firestore.js') ? storeModule : '';
-        return route.fulfill({ body, contentType: body ? 'text/javascript' : 'text/css' });
-      });
-      const page = await context.newPage(), errors = [];
-      page.on('pageerror', (e) => errors.push(e.message));
-      await page.goto('http://usage.test/');
-      await page.locator('#dashboard').waitFor();
-      await page.locator('[data-tab=queue]').click();
-      const lines = () => page.locator('#queue-list .queue-row strong').allTextContents();
-      assert.deepEqual(await page.locator('#queue-list h3').allTextContents(), ['Now', 'Next', 'Done']);
-      assert.deepEqual((await lines()).slice(0, 4), ['King building 108', '264 · Rotate objects about a chosen pivot point with…', 'U1d · simpler Queue tab', '999']); // Next: titles, letter id, none
-      assert.equal((await lines()).length, 9, '1 now + 3 next + 5 done');
-      assert.deepEqual((await lines()).slice(4, 6), ['Full tests 855b495', 'checked 855b495']); // newest done first, sha cut to 7
-      assert.equal(await page.getByRole('button', { name: 'Show 2 more' }).getAttribute('aria-expanded'), 'false');
-      assert.doesNotMatch(await page.locator('#queue').innerText(), /[0-9a-f]{8,}/i); // innerText: textContent glues the "done" chip onto the sha
-      // One column, chip right of the text, nothing wider than the phone.
-      const box = await page.locator('#queue-list').evaluate((list) => ({
-        cards: [...list.querySelectorAll('.ud-card')].map((c) => c.getBoundingClientRect()).map((r) => [r.left, r.right]),
-        chipRight: [...list.querySelectorAll('.queue-row')].filter((r) => r.querySelector('.ud-chip')).every((r) => r.querySelector('.ud-chip').getBoundingClientRect().left >= r.querySelector('strong').getBoundingClientRect().right - 1),
-      }));
-      assert.equal(new Set(box.cards.map((c) => c.join())).size, 1, 'Every part is one full-width column');
-      assert.equal(box.chipRight, true);
-      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
-      await page.screenshot({ path: `${shotDir}/queue-parts-${colorScheme}.png`, fullPage: true });
-      await page.getByRole('button', { name: 'Show 2 more' }).click();
-      assert.equal((await lines()).length, 11);
-      await page.evaluate(() => scrollTo(0, document.documentElement.scrollHeight)); // the button sits just under the fixed tab bar until the page is scrolled to its end
-      await page.getByRole('button', { name: 'Show fewer' }).click();
-      assert.equal((await lines()).length, 9);
-      await page.setViewportSize({ width: 1024, height: 800 });
-      await page.screenshot({ path: `${shotDir}/queue-parts-1024-${colorScheme}.png`, fullPage: true });
-      await page.evaluate(() => window.__emit('queue', { updated: '2026-11-05T18:45:00.000Z', rows: [{ kind: 'build', id: 'king/108', out: 'b-108.jsonl', state: 'ended', extra: '' }] }));
-      assert.equal(await page.locator('#queue-list p').allTextContents().then((p) => p.join('|')), 'Now: nothing running|Next: nothing planned'); // no `next` field yet
-      assert.equal(await page.getByRole('button', { name: /Show/ }).count(), 0);
+      const jobs = () => page.locator('#work-list .job').evaluateAll((all) => all.map((row) => row.children[0].textContent + '|' + row.children[1].textContent));
+      assert.deepEqual(await jobs(), [
+        'King|building 275 Rotate objects about a chosen pivot point', // running first
+        'next|264 Rotate objects about a chosen pivot point with…', // Next: title cut at 8 words, letter id, none
+        'next|U1d simpler Queue tab with Next and short titles',
+        'next|999',
+        'King|built 999', // no TODO 999: no title
+        'review|checked 855b495', // sha only: short sha
+        'review|checked 277 Copy objects with undo',
+        'suite|Full tests 0225cb8',
+        'Bishop|job debt47',
+        'fresh|Grill check U1c plain Queue rows', // letter id: title starts with "U1c:", prefix dropped
+        'review|checked 280abcd',
+        'King|built 280b fix simpler Queue tab with Next and short titles',
+        'King|built 273a Huge files: Hairline on all crashes',
+        'review|checked 277 Copy objects with undo',
+      ]);
+      assert.deepEqual(await page.locator('#work-list h2').allTextContents(), ['Now', 'Next · from TODO order', 'Done today · 10 jobs']);
+      assert.doesNotMatch((await jobs()).join('\n'), /[0-9a-f]{8,}/i);
+      await fits(page);
+      await page.screenshot({ path: `${shotDir}/work-rows-${colorScheme}.png`, fullPage: true });
+      await page.evaluate((queue) => window.__emit('queue', { ...queue, nextFrom: 'queue' }), queue);
+      assert.equal(await page.locator('#work-list h2').nth(1).textContent(), 'Next');
+      await page.evaluate(() => window.__emit('todo', { sections: [] }));
+      assert.equal(await page.locator('#work-list .job > span:last-child').first().textContent(), 'building 275'); // title left out when the TODO has none
       assert.deepEqual(errors, []);
     } finally { await context.close(); }
   }
 });
 
-test('Usage site: remembered TODO sub-steps, tabs, tickets, forecasts and safe refresh failures on phone and desktop', async (t) => {
+test('Usage site: TODO rows, tabs, tickets, forecasts and safe refresh failures on phone and desktop', async (t) => {
   const shotDir = process.env.SHOTS_DIR || 'shots';
   mkdirSync(shotDir, { recursive: true });
   const local = '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
@@ -305,13 +349,7 @@ test('Usage site: remembered TODO sub-steps, tabs, tickets, forecasts and safe r
         window.__failure = 'Rook usage probe failed, exit 1';
         window.__docs = {
           limits: { rows: ['Rook', 'Pip', 'King', 'Rowan'].flatMap((agent) => ['5h', 'week'].map((window) => ({ agent, window, role: 'Builder', model: 'Fixture', used_pct: '42', cap_pct: '', starts: '2026-10-01T00:00:00Z', resets: '2027-01-01T00:00:00Z', as_of: when }))) },
-          history: { rows: ['Rook', 'Pip', 'King', 'Rowan'].flatMap((agent) => ['2026-10-20T18:29:00Z', '2026-10-21T18:30:00Z'].map((when) => ({ when, agent, window: 'week', used_pct: '42' }))) },
           runs: { rows: [{ id: 'run1', agent: 'Rowan', session: '15', task: '<img src=x onerror=alert(1)>', kind: 'build', model: 'Fixture', new_tokens: '10', total_tokens: '20', verdict: 'OK' }] },
-          analysis: { items: [
-            { id: 'a1', topic: 'Pip and Rowan', note: '<script>plain text</script>', as_of: '2026-10-21T18:45:00Z' },
-            { id: 'a2', topic: '2026-10-21T18:45:00Z', note: 'Timestamp topic' },
-            { id: 'a3', topic: 'Invalid date', note: 'Still renders', as_of: '2026-99-99T00:00:00Z' },
-          ] },
           todo,
           // 14 IST days of hourly buckets, Oct 8 00:00 IST to Oct 21 23:00 IST. Every agent's weekly resetsAt is 2027-01-01T00:00Z, so its week resets Fridays 00:00Z (Oct 9 and Oct 16 here).
           tokens: { rows: Array.from({ length: 336 }, (_, i) => ({ t: Date.UTC(2026, 9, 7, 18, 30) + i * 3600e3, Rook: 1000, Bishop: 1010, King: 1015, Knight: 1020 })) },
@@ -379,35 +417,22 @@ test('Usage site: remembered TODO sub-steps, tabs, tickets, forecasts and safe r
       assert.equal(await page.locator('#tokens h2').textContent(), 'Tokens per day');
       assert.equal(await page.locator('#token-note').textContent(), 'Input + output + cache creation; cache reads excluded.'); // no "Today so far": the newest row is in October
       assert.deepEqual(await page.locator('#token-legend span').allTextContents(), ['Rook', 'Bishop', 'King', 'Knight']);
-      assert.match(await page.locator('#notes tr[data-key=a1] td').first().textContent(), /^Bishop and KnightThu,? 22 Oct, 00:15 IST$/);
-      assert.match(await page.locator('#notes tr[data-key=a2] td').first().textContent(), /^Thu,? 22 Oct, 00:15 IST$/);
-      assert.equal(await page.locator('#notes tr[data-key=a3] .ud-muted').textContent(), '2026-99-99T00:00:00Z');
       const noOverflow = async () => assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
       const readableDates = async () => {
         // Wait for the ResizeObserver to redraw at the current viewport width.
         await page.waitForFunction(() => {
-          return ['token-chart', 'chart'].every((id) => {
-            const box = document.getElementById(id);
-            return +box.querySelector('svg').getAttribute('viewBox').split(' ')[2] === Math.max(260, box.clientWidth);
-          });
+          const box = document.getElementById('token-chart');
+          return +box.querySelector('svg').getAttribute('viewBox').split(' ')[2] === Math.max(260, box.clientWidth);
         });
-        for (const id of ['token-chart', 'chart']) {
-          const { labels, box } = await page.locator(`#${id}`).evaluate((chart, y) => ({
-            labels: [...chart.querySelectorAll(`text[y="${y}"]`)].map((node) => {
-              const { left, right } = node.getBoundingClientRect(); return { left, right, text: node.textContent };
-            }),
-            box: chart.getBoundingClientRect().toJSON(),
-          }), id === 'token-chart' ? 118 : 234);
-          assert.equal(labels.at(-1).text, id === 'token-chart' ? 'Wed' : '22-Oct'); // 21 Oct 2026 is a Wednesday
-          if (id === 'chart') assert.deepEqual(labels.map((label) => label.text), ['20-Oct', '21-Oct', '22-Oct']);
-          else assert.deepEqual(labels.map((label) => label.text), ['Thu', 'Fri', 'Sat', 'Sun', 'Mon', 'Tue', 'Wed']); // 15 to 21 Oct
-          assert.ok(labels.length > 1);
-          for (const label of labels) {
-            assert.match(label.text, id === 'token-chart' ? /^[A-Z][a-z]{2}$/ : /^\d{2}-[A-Z][a-z]{2}$/);
-            assert.ok(label.left >= box.x && label.right <= box.x + box.width, `Date labels stay inside ${id}: ${JSON.stringify({ label, box })}`);
-          }
-          for (let i = 1; i < labels.length; i++) assert.ok(labels[i].left > labels[i - 1].right + 4, 'Date labels must have a readable gap');
-        }
+        const { labels, box } = await page.locator('#token-chart').evaluate((chart) => ({
+          labels: [...chart.querySelectorAll('text[y="118"]')].map((node) => {
+            const { left, right } = node.getBoundingClientRect(); return { left, right, text: node.textContent };
+          }),
+          box: chart.getBoundingClientRect().toJSON(),
+        }));
+        assert.deepEqual(labels.map((label) => label.text), ['Thu', 'Fri', 'Sat', 'Sun', 'Mon', 'Tue', 'Wed']); // 15 to 21 Oct 2026
+        for (const label of labels) assert.ok(label.left >= box.x && label.right <= box.x + box.width, `Day labels stay inside the chart: ${JSON.stringify({ label, box })}`);
+        for (let i = 1; i < labels.length; i++) assert.ok(labels[i].left > labels[i - 1].right + 4, 'Day labels must have a readable gap');
       };
       const dayBars = async () => {
         const bars = await page.locator('#token-chart').evaluate((chart) => [...chart.querySelectorAll('.token-bar')].map((node) => ({ h: +node.getAttribute('height'), y: +node.getAttribute('y'), fill: getComputedStyle(node).fill })));
@@ -432,12 +457,6 @@ test('Usage site: remembered TODO sub-steps, tabs, tickets, forecasts and safe r
       await readableDates();
       await dayBars();
       assert.match(await page.locator('#token-chart title').last().textContent(), /^21-Oct IST/);
-      assert.match(await page.locator('#chart title').last().textContent(), /22-Oct 00:00 IST$/);
-      for (const [when, date] of [['2026-10-31T18:30:00Z', '01-Nov'], ['2026-08-31T18:30:00Z', '01-Sep']]) {
-        await page.evaluate((when) => window.__emit('history', { rows: [{ when, agent: 'Rook', window: 'week', used_pct: '42' }] }), when);
-        assert.deepEqual(await page.locator('#chart text[y="234"]').allTextContents(), [date]);
-      }
-      await page.evaluate(() => window.__emit('history', window.__docs.history));
       const task = await page.locator('#runrows td').nth(2).boundingBox();
       const tokens = await page.locator('#runrows td').nth(3).boundingBox();
       assert.ok(task.width > 280 && tokens.width > 280 && tokens.y > task.y, 'Phone runs stack full-width task and new tokens');
@@ -446,38 +465,22 @@ test('Usage site: remembered TODO sub-steps, tabs, tickets, forecasts and safe r
       assert.equal(await page.locator('.page-tabs').evaluate((node) => getComputedStyle(node).position), 'fixed');
       await page.screenshot({ path: `${shotDir}/s15-usage-fix-phone-${colorScheme}.png`, fullPage: true });
 
-      // TODO sub-steps have counts and ticks, remember open and closed, and survive a live update.
+      // TODO rows are number, title and status chip; the tab is remembered across a reload.
       await page.locator('[data-tab=todo]').click();
       assert.equal(await page.locator('#usage').isVisible(), false);
-      const substeps = page.locator('#todo .ud-substeps').first();
-      const checkSubsteps = async (device) => {
-        assert.equal(await substeps.locator('summary').textContent(), '1 of 3 done');
-        assert.equal(await substeps.evaluate((e) => e.open), false);
-        assert.equal(await substeps.locator('li').first().isVisible(), false);
-        await substeps.locator('summary').click();
-        assert.equal(await substeps.locator('[aria-label=Done]').count(), 1);
-        assert.equal(await substeps.locator('[aria-label="Not done"]').count(), 2);
-        assert.match(await substeps.locator('li').nth(1).textContent(), /66b\..*<img src=x/);
-        await page.waitForFunction(() => JSON.parse(localStorage.getItem('usage-todo-open'))?.length === 1);
-        await page.reload(); await substeps.waitFor();
+      const checkTodo = async (device) => {
+        await page.reload(); await page.locator('#todo .ud-row').first().waitFor();
         assert.equal(await page.locator('[data-tab=todo]').getAttribute('aria-pressed'), 'true');
-        assert.equal(await substeps.evaluate((e) => e.open), true);
-        await page.evaluate(() => window.__emit('todo', window.__docs.todo));
-        assert.equal(await substeps.evaluate((e) => e.open), true);
-        await noOverflow();
+        assert.equal(await page.locator('#todo details').count(), 0); // no sub-steps
         assert.equal(await page.locator('#todo img').count(), 0);
+        await noOverflow();
         await page.screenshot({ path: `${shotDir}/todo107-${device}-${colorScheme}.png`, fullPage: true });
-        await substeps.locator('summary').click();
-        await page.waitForFunction(() => JSON.parse(localStorage.getItem('usage-todo-open'))?.length === 0);
-        await page.reload(); await substeps.waitFor();
-        assert.equal(await substeps.evaluate((e) => e.open), false);
-        // TODO Open / Closed: Open is the default, shows not-done items and no folded done list; Closed shows done items only.
-        const titles = (n) => page.locator('#todo-sections > .ud-card').nth(n).locator(':scope > ul > li > .ud-todo-head strong').allTextContents();
+        // TODO Open / Closed: Open is the default and shows not-done items; Closed shows done items only.
+        const titles = (n) => page.locator('#todo-sections > .ud-card').nth(n).locator('.ud-row > span:nth-child(2)').allTextContents();
         const empty = (n) => page.locator('#todo-sections > .ud-card').nth(n).locator(':scope > p').textContent();
         const todoPressed = (id) => page.locator(id).getAttribute('aria-pressed');
         assert.equal(await todoPressed('#todo-open'), 'true');
         assert.equal(await todoPressed('#todo-closed'), 'false');
-        assert.equal(await page.locator('#todo-sections > .ud-card > details').count(), 0);
         assert.deepEqual(await titles(0), ['More Modify tools', '<img src=x>']); // Section with both kinds.
         assert.equal(await empty(1), 'No open items.'); // Section with only done items.
         assert.deepEqual(await titles(2), ['Next up']);
@@ -487,22 +490,13 @@ test('Usage site: remembered TODO sub-steps, tabs, tickets, forecasts and safe r
         assert.deepEqual(await titles(0), ['Finished']);
         assert.deepEqual(await titles(1), ['Old win']);
         assert.equal(await empty(2), 'No closed items.');
-        const finished = page.locator('#todo-sections > .ud-card').first().locator('.ud-substeps');
-        assert.equal(await finished.locator('summary').textContent(), '2 of 2 done');
-        await finished.locator('summary').click();
-        assert.equal(await finished.locator('li').first().isVisible(), true);
-        await page.waitForFunction(() => JSON.parse(localStorage.getItem('usage-todo-open'))?.length === 1);
-        await page.locator('#todo-open').click();
-        await page.locator('#todo-closed').click();
-        assert.equal(await finished.evaluate((e) => e.open), true); // Remembered across redraws.
+        // A done row from an agent that sends no status yet reads "open" (missing status = open).
+        assert.deepEqual(await page.locator('#todo .ud-chip').allTextContents(), ['open', 'open']);
         await noOverflow();
         await page.screenshot({ path: `${shotDir}/todo-closed-${device}-${colorScheme}.png`, fullPage: true });
-        await finished.locator('summary').click();
-        await page.waitForFunction(() => JSON.parse(localStorage.getItem('usage-todo-open'))?.length === 0);
         await page.locator('#todo-open').click();
-        assert.equal(await page.locator('#todo-sections > .ud-card > ul > li').nth(1).locator('details').count(), 0);
       };
-      await checkSubsteps('phone');
+      await checkTodo('phone');
 
       // Ticket Open / Closed buttons + Tag dropdown (AND), All tags restores, tapping a ticket opens its plain-text note.
       await page.locator('[data-tab=tickets]').click();
@@ -536,8 +530,7 @@ test('Usage site: remembered TODO sub-steps, tabs, tickets, forecasts and safe r
       await tagSelect.selectOption('');
       await page.evaluate(() => window.__emit('tickets', window.__docs.tickets));
       assert.deepEqual(await ticketIds(), ['T14', 'T21']);
-      await page.locator('.ticket[data-id=T14] summary').click();
-      assert.equal(await page.locator('.ticket[data-id=T14] .ticket-note').textContent(), '<script>plain note</script>\nSecond line.');
+      assert.deepEqual(await page.locator('.ticket[data-id=T14] > *').allTextContents(), ['T14', '<img src=x onerror=alert(1)>', 'building']); // no note, size, tags or date
       assert.equal(await page.locator('#dashboard img, #dashboard script').count(), 0);
       await noOverflow();
       await page.screenshot({ path: `${shotDir}/tickets-filter-phone-${colorScheme}.png`, fullPage: true });
@@ -570,7 +563,7 @@ test('Usage site: remembered TODO sub-steps, tabs, tickets, forecasts and safe r
       await dayBars();
       await page.screenshot({ path: `${shotDir}/s15-usage-fix-desktop-${colorScheme}.png`, fullPage: true });
       await page.locator('[data-tab=todo]').click();
-      await checkSubsteps('desktop');
+      await checkTodo('desktop');
       for (const tab of ['usage', 'todo', 'tickets']) { await page.locator(`[data-tab=${tab}]`).click(); await noOverflow(); }
 
       // Denied storage still permits all tabs, and signing out clears private ticket DOM.
@@ -578,9 +571,7 @@ test('Usage site: remembered TODO sub-steps, tabs, tickets, forecasts and safe r
       await page.reload(); await page.locator('#agents h3').last().waitFor();
       assert.equal(await page.locator('[data-tab=usage]').getAttribute('aria-pressed'), 'true');
       await page.locator('[data-tab=todo]').click();
-      assert.equal(await substeps.evaluate((e) => e.open), false);
-      await substeps.locator('summary').click();
-      assert.equal(await substeps.locator('li').first().isVisible(), true);
+      assert.equal(await page.locator('#todo .ud-row').first().isVisible(), true);
       await page.locator('[data-tab=tickets]').click();
       await page.locator('#signout').click();
       assert.equal(await page.locator('#dashboard').isVisible(), false);
@@ -741,7 +732,6 @@ test('TODO 353a: status strip, account cards, Now / Next / Done today', async (t
       assert.equal(await fold.evaluate((node) => node.open), false);
       await fold.locator('summary').click();
       assert.equal(await page.locator('#work-list .job:visible').count(), 11);
-      assert.equal(await page.locator('#queue-list button').textContent(), 'Show 2 more', 'the Queue tab keeps its own fold');
       await page.evaluate(() => window.__emit('todo', window.__docs.todo)); // a redraw keeps the fold open
       assert.equal(await fold.evaluate((node) => node.open), true);
       await fold.locator('summary').click();
@@ -832,13 +822,11 @@ test('TODO 353b2: break, CI and for-him chips; Done today by end time', async (t
       const till = new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Kolkata', weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(now + 30 * 60e3)).replace(/,/g, '');
       assert.equal(await page.locator('#agents .ud-card').nth(1).locator('.ud-agent .ud-chip').evaluate((c) => c.className + ':' + c.textContent), 'ud-chip bad:break till ' + till);
       assert.equal(await page.locator('#agents .ud-card').nth(0).locator('.ud-agent .ud-chip').textContent(), 'no cap today');
-      // Done today: rows ended today only (6 of the 8 not running); no end time or yesterday is left out here, and stays on the Queue tab.
+      // Done today: rows ended today only (6 of the 8 not running); no end time or yesterday is left out.
       assert.deepEqual(await page.locator('#work-list h2').allTextContents(), ['Now', 'Done today · 6 jobs']);
       assert.equal(await page.locator('#work-list .job:visible').count(), 6, '1 now + 5 done');
       assert.doesNotMatch(await page.locator('#work-list').textContent(), /190|191/);
       assert.equal(await page.locator('#work-list details.ud-fold summary').textContent(), '1 earlier today');
-      assert.deepEqual(await page.locator('#queue-list h3').allTextContents(), ['Now', 'Done']);
-      assert.match(await page.locator('#queue-list').textContent(), /190[\s\S]*Show 3 more/);
       await noOverflow();
       await page.screenshot({ path: `${shotDir}/usage-353b2-390-${colorScheme}.png`, fullPage: true });
       await page.setViewportSize({ width: 1280, height: 900 });
