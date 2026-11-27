@@ -183,8 +183,8 @@ export function relayGrid(lay, gid) {
     else if (blocked(L.positions[i].x, L.positions[i].y)) slots.push({ r, c });
     else { fresh.push({ ...placement1(G.gridPart, sp.x, sp.y, sp.rot), gid }); out.added++; slots.push(slot); }
   });
-  const laid = new Set(L.cells.map(([r, c]) => r + ',' + c));       // an empty slot under a part is no cell now: keep it, else it fills once the part goes
-  for (const s of G.slots) if (s.x == null && s.r < L.rows && s.c < L.cols && !laid.has(s.r + ',' + s.c)) slots.push({ r: s.r, c: s.c });
+  const laid = new Set(L.cells.map(([r, c]) => r + ',' + c));       // a slot under a part is no cell now: keep it empty (its copy deleted or dropped here), else it fills once the part goes
+  for (const s of G.slots) if (s.r < L.rows && s.c < L.cols && !laid.has(s.r + ',' + s.c)) slots.push({ r: s.r, c: s.c });
   const gone = new Set(alive.values());
   out.dropped = gone.size;
   lay.placed = lay.placed.filter((p) => !gone.has(p)).concat(fresh);

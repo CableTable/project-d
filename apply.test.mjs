@@ -351,6 +351,22 @@ test('TODO 361: the anchor\'s empty slot stays empty after the anchor part goes 
   assert.equal(empty(), '0,0'); assert.equal(G.slots.length, 9);
 });
 
+test('TODO 361: a deleted copy stays gone after a part sat on its cell through a re-lay', () => {
+  const { lay } = liveApplied([A.placement1('p', 405, 300)], 3, 3, { rotate: 'best' });
+  const G = lay.grids.a, copies = () => lay.placed.filter((p) => p.gid === 'a');
+  const k = G.slots.findIndex((s) => s.r === 1 && s.c === 1), gone = copies().find((p) => A.slotOf(lay, p) === k);
+  lay.placed = lay.placed.filter((p) => p !== gone);                   // the copy at 1,1 deleted
+  assert.equal(copies().length, 7);
+  const loose = A.placement1('p', gone.x, gone.y, gone.rot);
+  lay.placed.push(loose);                                              // a part put on its cell
+  G.extraRows = [{ after: 2, mm: 10 }];                               // row 1 does not move
+  assert.equal(A.relayGrid(lay, 'a').added, 0);
+  lay.placed = lay.placed.filter((p) => p !== loose);                  // the part goes
+  G.extraRows = [{ after: 2, mm: 20 }];
+  assert.equal(A.relayGrid(lay, 'a').added, 0, 'no copy put back on 1,1');
+  assert.equal(copies().length, 7);
+});
+
 test('TODO 283: a whole column skipped at Apply keeps its numbering through a save, an Update and Update again', () => {
   const { lay } = liveApplied([A.placement1('q', 345, 0)], 2, 3);
   const cols = () => lay.grids.a.slots.filter((s) => s.x != null).map((s) => s.c).sort().join('');
