@@ -7641,6 +7641,7 @@ try {
       const table = () => q('divisions').locator('tr').evaluateAll((rows) => rows.map((r) => [...r.children].map((c) => c.textContent).join(' ')));
       const menu = async (name) => { await p.locator(`[data-menu=${name}]`).click(); await p.getByRole('menuitem', { name: 'New layout', exact: true }).click(); };
       const undo = async () => { await p.evaluate(() => document.activeElement?.blur()); await p.keyboard.press('Control+z'); };
+      const shows = (sel, want, prop = 'textContent') => p.waitForFunction(([s, w, k]) => document.querySelector(s)?.[k] === w, [sel, want, prop]);
       await p.goto(URL_ + '?autosave=86400000'); await q('count').waitFor({ state: 'attached' });
 
       // + New layout asks first; Esc cancels; the answers are checked
@@ -7657,7 +7658,7 @@ try {
       await q('new-layout').click();
       for (const [l, roll, why] of [['', '', 'Type a jumbo size, or press Skip'], ['123', '', 'A jumbo sheet needs both L and W'], ['', '-5', 'A jumbo size is more than 0 and at most 10000 cm']]) {
         await q('jumbo-l').fill(l); await q('jumbo-roll').fill(roll); await q('jumbo-ok').click();
-        assert.equal(await q('jumbo-error').textContent(), why);
+        await shows('[data-testid=jumbo-error]', why);
       }
       await q('jumbo-skip').click();
       assert.deepEqual([await layouts(), await key('sheetW').inputValue(), await key('sheetH').inputValue()], [1, '1000', '700'], 'Skip: a plain sheet');
@@ -7696,8 +7697,8 @@ try {
       await key('rollW').fill('80');
       assert.equal((await table())[1], '/2 61.50 21.00 40.00');
       await key('rollW').fill('-1'); await key('rollW').blur();
-      assert.equal(await key('rollW').inputValue(), '80', 'a refused size reverts');
-      assert.match(await q('cmd-prompt').textContent(), /Roll width must be 0 cm or more/);
+      await shows('[data-key=rollW]', '80', 'value');                        // a refused size reverts
+      await p.waitForFunction(() => /Roll width must be 0 cm or more/.test(document.querySelector('[data-testid=cmd-prompt]').textContent));
       await undo();
       assert.deepEqual([await key('rollW').inputValue(), (await table())[1]], ['74', '/2 61.50 21.00 37.00'], 'Undo covers a jumbo edit');
 
