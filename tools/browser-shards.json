@@ -125,6 +125,7 @@
   "edit: tidy up the tabs": 0.31,
   "view: a DXF opens on its own drawing tab: only Drawing scale, Outlines and Layers; no sheet, grippers or step and repeat; no Part | Layout switch": 0.2,
   "view: edits on a drawing tab, then Add to layout: the layout tab has the sheet, grippers and step and repeat, no part tools": 0.99,
+  "TODO 364a: New layout asks for the jumbo (Skip, sheet, roll, both); divisions; saved and reopened; an old layout opens without one; grippers in the panel": 1.55,
   "layouts: \"+ New layout\" and File → New layout; each layout has its own sheet settings; an empty drawing tab shows no sheet": 0.63,
   "measure: two clicks on end points give the distance, ΔX, ΔY and angle; a third click starts over; Esc clears": 0.65,
   "TODO 156d1: per-file Guides stay out of DXF; Compare guide snaps and Measure spans visible snapshots": 1.52,

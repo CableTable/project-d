@@ -22,6 +22,9 @@ export function presetFor(w, h) {
   return p ? p.id : 'custom';
 }
 
+/** The divisions of a jumbo size (cm): size / n for n = 2..max, at 2 decimals. */
+export const divisions = (size, max) => Array.from({ length: max - 1 }, (_, i) => ({ n: i + 2, cm: Math.round(size / (i + 2) * 100) / 100 }));
+
 /** A gripper size from state: a number of mm, never negative. */
 export const gripOf = (o, edge) => Math.max(0, Number(o[GRIP_KEYS[edge]]) || 0);
 

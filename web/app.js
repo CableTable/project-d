@@ -12,7 +12,7 @@ import { openShortcuts } from './shortcutdlg.js';
 import { idbStore, localStore } from './idbstore.js';
 import { WORK_AREAS, workAreaDark } from './workarea.js';
 import { FOLDS, ribbonTabs, nextFold, doubleFold } from './ribbon.js';
-import { PRESETS, presetFor, stepRepeat, gridCellNote, GRIP_KEYS, gripOf } from './layout.js';
+import { stepRepeat, gridCellNote, divisions, GRIP_KEYS, gripOf } from './layout.js';
 import { unitFactor, convertedNote, startHidden, entityCount, layerCounts, patchedCounts, drawingBoxMm, fitRect, cursorMm, fitsSheet, spaceOf, boxOnSheet, itemVisible, addRecent, removeRecent, trimRecent, setPin, orderRecent, recentMax, recentKey, staleThumbs, closePrompt, BIG_FILE, bigFileAsk, backupPath, dupName } from './doc.js';
 import { loadThumbs, saveThumb, thumbIds, dropThumbs } from './thumbstore.js';
 import * as Ed from './edit.js';
@@ -428,9 +428,11 @@ function flagInvalid(input, bad) {
   if (bad) input.setAttribute('aria-invalid', 'true'); else input.removeAttribute('aria-invalid');
 }
 const clearInvalid = (input) => { input.addEventListener('focus', () => flagInvalid(input, false)); };
-const SIZE_KEYS = ['sheetW', 'sheetH', ...Object.values(GRIP_KEYS)];     // the numbers shown in the ribbon and in the strip on the right panel
+const SIZE_KEYS = ['sheetW', 'sheetH', ...Object.values(GRIP_KEYS)];     // sheet sizes (the strip on the right panel) and grippers (Print layout tab)
+const JUMBO_KEYS = ['jumboL', 'jumboW', 'rollW'];
 const MAX_SHEET = 100000;              // mm: a sheet side above this is refused (1e308 made invalid SVG)
-/** The limits of the sheet and gripper fields (grippers never add up past the sheet). The ribbon and the strip on the right panel share them. */
+const MAX_JUMBO = MAX_SHEET / 10;      // the same length in cm, for the jumbo sizes
+/** The limits of the sheet and gripper fields (grippers never add up past the sheet). */
 const SIZE_FIELDS = {
   sheetW: ['Width', { min: 1, cap: () => MAX_SHEET, floor: () => Math.max(1, state.gripLeft + state.gripRight) }],
   sheetH: ['Height', { min: 1, cap: () => MAX_SHEET, floor: () => Math.max(1, state.gripTop + state.gripBottom) }],
@@ -439,10 +441,12 @@ const SIZE_FIELDS = {
   gripBottom: ['Bottom', { cap: () => state.sheetH - state.gripTop }],
   gripLeft: ['Left', { cap: () => state.sheetW - state.gripRight }],
 };
-const sheetField = (key, strip) => numField(SIZE_FIELDS[key][0], key, strip ? { ...SIZE_FIELDS[key][1], slot: 'strip_' + key } : SIZE_FIELDS[key][1]);
+const sheetField = (key) => numField(SIZE_FIELDS[key][0], key, SIZE_FIELDS[key][1]);
+const jumboField = (label, key) => numField(label, key, { unit: 'cm', undo: 'Jumbo size', cap: () => MAX_JUMBO });
 function numField(label, key, opts = {}) {
   const caption = key === 'sheetW' ? 'W mm' : key === 'sheetH' ? 'H mm' : label;
-  const input = h('input', { class: 'fld', type: 'text', inputmode: 'decimal', value: String(opts.value ?? state[key]), 'data-key': opts.slot || key });
+  const input = h('input', { class: 'fld', type: 'text', inputmode: 'decimal', value: String(opts.value ?? state[key]), 'data-key': key });
+  const unit = opts.unit || 'mm';
   if (opts.onEnter) {
     input.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); opts.onEnter(input.value); }
@@ -454,9 +458,9 @@ function numField(label, key, opts = {}) {
     const raw = input.value.trim(), v = Number(raw);
     if (!opts.int) {                      // a sheet side, gripper or gap: kept within what the sheet can hold
       const hi = opts.cap ? opts.cap() : Infinity, lo = Math.max(opts.floor ? opts.floor() : 0, opts.min ?? 0);
-      if (raw === '' || !Number.isFinite(v)) return `${label} must be a number in mm: ${lo} ${hi < Infinity ? 'to ' + hi : 'or more'}`;
-      if (v > hi) return `${label} can be ${hi} mm at most`;
-      if (v < lo) return `${label} must be ${lo} mm or more`;
+      if (raw === '' || !Number.isFinite(v)) return `${label} must be a number in ${unit}: ${lo} ${hi < Infinity ? 'to ' + hi : 'or more'}`;
+      if (v > hi) return `${label} can be ${hi} ${unit} at most`;
+      if (v < lo) return `${label} must be ${lo} ${unit} or more`;
       return '';
     }
     if (raw === '' || !Number.isFinite(v) || v < (opts.min ?? 0)) return `${label} must be ${opts.min ?? 0} or more${opts.max ? ` (up to ${opts.max})` : ''}`;
@@ -470,11 +474,10 @@ function numField(label, key, opts = {}) {
     flagInvalid(input, why && input.value.trim() !== '');
     if (why) { if (input.value.trim() !== '') note(why); return; }       // an empty field is only half typed: said when it is left
     const sized = key === 'sheetW' || key === 'sheetH';
-    pushLay(curDoc(), null, sized ? 'sheetsize' : 'set:' + key, sized ? 'Sheet size' : label);
+    pushLay(curDoc(), null, sized ? 'sheetsize' : 'set:' + key, sized ? 'Sheet size' : opts.undo || label);
     state[key] = opts.int ? Math.floor(v) : v;
-    if (key === 'sheetW' || key === 'sheetH') ui.preset.value = presetFor(state.sheetW, state.sheetH);
     touch(); update();
-    if (SIZE_KEYS.includes(key)) syncFields();      // the strip on the right panel and the ribbon fields show the same numbers
+    if (JUMBO_KEYS.includes(key)) renderJumbo();
   });
   input.addEventListener('change', () => {
     const why = curLay() ? refusal() : '';
@@ -483,7 +486,7 @@ function numField(label, key, opts = {}) {
     if (SIZE_KEYS.includes(key)) syncFields();
   });
   clearInvalid(input);
-  ui[opts.slot || key] = input;
+  ui[key] = input;
   return h('label', { class: 'field' }, caption, input);
 }
 
@@ -607,7 +610,7 @@ function showStartScreen(on) {
 }
 function buildStartScreen() {
   const action = (id, label, run) => h('button', { class: 'btn', type: 'button', 'data-testid': 'start-' + id,
-    onclick: async () => { await run(); showStartScreen(!!curDoc().parked); } }, label);
+    onclick: async () => { if (await run() !== 'cancelled') showStartScreen(!!curDoc().parked); } }, label);       // a cancelled New layout stays on Start
   ui.startRecent = h('section', { class: 'start-recents', 'aria-label': 'Recent files' });
   ui.startScreen = h('section', { class: 'start-screen', hidden: true, 'data-testid': 'start-screen', 'aria-label': 'Start screen' },
     h('h1', null, 'Start'), h('div', { class: 'start-content' },
@@ -1094,7 +1097,7 @@ function applyKind() {
   const d = curDoc(), lay = !!(d && d.lay), lib = state.panel === 'library';
   ui.canvas.classList.toggle('part', !lay);
   renderWorkArea();
-  for (const sec of [ui.partsSec, ui.stepSec, ui.stepFoot, ui.gapSec]) sec.hidden = !lay || lib;
+  for (const sec of [ui.partsSec, ui.jumboSec, ui.stepSec, ui.stepFoot, ui.gapSec]) sec.hidden = !lay || lib;
   ui.sizeStrip.hidden = !lay;
   ui.libSec.hidden = !lib;
   if (state.ptab === 'library' && !lib) state.ptab = 'drawing';
@@ -2164,16 +2167,31 @@ function buildCanvas() {
   return ui.canvas;
 }
 
+/** The divisions table under the jumbo sizes: one column per size given, /2 to /5 (or /16). */
+function renderJumbo() {
+  const sizes = [['Sheet L', state.jumboL], ['Sheet W', state.jumboW], ['Roll W', state.rollW]].filter(([, v]) => v > 0);
+  const columns = sizes.map(([, v]) => divisions(v, ui.moreDivs ? 16 : 5));
+  ui.divBox.hidden = !sizes.length;
+  ui.divTable.replaceChildren(
+    h('tr', null, h('th', null, 'cm'), sizes.map(([label]) => h('th', { scope: 'col' }, label))),
+    ...(columns[0] || []).map(({ n }, i) => h('tr', null, h('th', { scope: 'row' }, '/' + n), columns.map((c) => h('td', null, c[i].cm.toFixed(2))))));
+  ui.divMore.textContent = ui.moreDivs ? 'Show /2 to /5 only' : 'Show /6 to /16';
+  ui.divMore.setAttribute('aria-pressed', String(!!ui.moreDivs));
+}
+
+function buildJumboSection() {
+  ui.divTable = h('table', { class: 'divtable mono', 'data-testid': 'divisions', 'aria-label': 'Divisions of the jumbo, cm' });
+  ui.divMore = h('button', { class: 'btn sm', type: 'button', 'data-testid': 'divisions-more', onclick: () => { ui.moreDivs = !ui.moreDivs; renderJumbo(); } });
+  return ui.jumboSec = h('section', { 'data-testid': 'jumbo-panel' },
+    h('h2', { class: 'sec' }, 'Jumbo'),
+    h('span', { class: 'lbl' }, 'Jumbo sheet, cm (0 = none)'),
+    h('div', { class: 'grid2' }, jumboField('Sheet L', 'jumboL'), jumboField('Sheet W', 'jumboW')),
+    h('span', { class: 'lbl' }, 'Jumbo roll, cm (0 = none)'),
+    h('div', { class: 'grid2' }, jumboField('Roll width', 'rollW')),
+    ui.divBox = h('div', { class: 'divbox' }, ui.divTable, ui.divMore));
+}
+
 function buildPanel() {
-  ui.preset = select(PRESETS.map((p) => [p.id, p.label]), 'screen', (id) => {
-    const p = PRESETS.find((q) => q.id === id);
-    if (p && p.w && curLay()) {
-      pushLay(curDoc(), laySnap(curLay() && curDoc().lay), 'sheetsize', 'Sheet size');
-      state.sheetW = p.w; state.sheetH = p.h;
-      syncFields();
-      touch(); update(true);
-    }
-  }, { 'data-testid': 'preset' });
   const check = (key, text) => {
     const c = h('input', { type: 'checkbox', checked: state[key], 'data-key': key });
     c.addEventListener('change', () => { if (!curLay()) return; pushLay(curDoc(), null, 'set:' + key, text); state[key] = c.checked; touch(); update(); });
@@ -2182,10 +2200,7 @@ function buildPanel() {
   };
 
   ui.sheetSec = h('div', { class: 'ribbon-page', 'data-testid': 'sheet-panel' },
-    ribbonGroup('Sheet', ribbonStack(ribbonField('Size', ui.preset),
-      sheetField('sheetW'), sheetField('sheetH')),
-      ui.sheetSelBtn = ribbonButton('Select sheet', '<rect x="3" y="4" width="18" height="16"/>', () => selectSheet(!sheetSelOn()), { small: true, description: 'Or click the sheet edge. Drag a side handle to resize.', pressed: sheetSelOn })),
-    ribbonGroup('Grippers, mm', ribbonStack(sheetField(GRIP_KEYS.top), sheetField(GRIP_KEYS.right), sheetField(GRIP_KEYS.bottom)), ribbonStack(sheetField(GRIP_KEYS.left))),
+    ribbonGroup('Sheet', ui.sheetSelBtn = ribbonButton('Select sheet', '<rect x="3" y="4" width="18" height="16"/>', () => selectSheet(!sheetSelOn()), { small: true, description: 'Or click the sheet edge. Drag a side handle to resize.', pressed: sheetSelOn })),
     ribbonGroup('Marks', check('crop', 'Crop marks'), check('reg', 'Reg marks')),
       ribbonGroup('Guides', ...[['y', '+ Horizontal'], ['x', '+ Vertical']].map(([axis, label]) => ribbonButton(label, axis === 'y' ? '<path d="M3 12h18" stroke-dasharray="3 2"/><path d="M12 5v4M10 7h4"/>' : '<path d="M12 3v18" stroke-dasharray="3 2"/><path d="M17 10h4M19 8v4"/>', () => addTypedGuide(axis, ui.ribbonGuide))), ribbonStack(ribbonField('x or y', ui.ribbonGuide = h('input', { class: 'fld', 'aria-label': 'Guide position in mm', oninput: (e) => flagInvalid(e.target, false) })))),
     ribbonGroup('Parts', ribbonButton('Fit', '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>', fit), ribbonTool('nest'),
@@ -2217,11 +2232,11 @@ function buildPanel() {
     ['drawing', 'Properties'],
     ['objects', 'Objects'],
     ['library', 'Parts library'],
-    ['step', 'Step and repeat'],
+    ['step', 'Print layout'],
   ];
   ui.dockerTabs = tabs.map(([id, label]) => h('button', { class: 'ptab', type: 'button', role: 'tab', title: label, 'aria-label': label,
     id: 'docker-tab-' + id, 'aria-controls': 'docker-body', 'data-tab': id, 'data-testid': id === 'library' ? 'panel-library' : 'ptab-' + id,
-    onclick: () => setPtab(id) }, h('span', { class: 'ptab-name' }, id === 'library' ? 'Library' : id === 'step' ? 'Step' : label)));
+    onclick: () => setPtab(id) }, h('span', { class: 'ptab-name' }, id === 'library' ? 'Library' : label)));
   ui.panelScroll = h('div', { class: 'panel-scroll', id: 'docker-body', role: 'tabpanel', 'aria-labelledby': 'docker-tab-drawing' },
     buildPlacedPanel(),
     ui.guideSec = h('section', { 'data-testid': 'guides-panel' },
@@ -2242,8 +2257,10 @@ function buildPanel() {
       h('label', { class: 'row swrow' }, h('span', null, 'Fit to sheet'), h('span', { class: 'row' }, ui.fitText, ui.fit)),
       h('label', { class: 'field' }, 'Part', ui.partSel),
       h('div', { class: 'grid2' }, rowsF, colsF),
-      h('div', { class: 'grid2' }, numField('Gap X', 'gapX', { cap: () => MAX_SHEET }), numField('Gap Y', 'gapY', { cap: () => MAX_SHEET }),
-        h('label', { class: 'field' }, 'Rotate', ui.rotate), h('label', { class: 'field' }, 'Align', ui.align))),
+      h('div', { class: 'grid2' }, numField('Gap X', 'gapX', { cap: () => MAX_SHEET }), numField('Gap Y', 'gapY', { cap: () => MAX_SHEET })),
+      h('span', { class: 'lbl' }, 'Grippers, mm'),
+      h('div', { class: 'grid2', role: 'group', 'aria-label': 'Grippers, mm', 'data-testid': 'grippers' }, ...Object.values(GRIP_KEYS).map(sheetField)),
+      h('div', { class: 'grid2' }, h('label', { class: 'field' }, 'Rotate', ui.rotate), h('label', { class: 'field' }, 'Align', ui.align))),
     // the count line and Apply stay in view at the bottom of the panel (sticky), however far the panel is scrolled
     ui.stepFoot = h('div', { class: 'stepfoot', 'data-testid': 'step-foot' },
       h('div', { class: 'readout' }, ui.count, h('span', null, ui.grid), ui.pctSheet),
@@ -2264,7 +2281,7 @@ function buildPanel() {
   ui.dockerPanes.drawing.append(ui.partJumps, ui.placedSecs[0], ui.propSec, ui.partsSec, ui.guideSec, ui.placedSecs[1], ui.partTransform, ui.placedSecs[5], ui.placedSecs[2], ui.gapSec, ui.drawSec, ui.outSec, ui.tinySec, ui.dupsSec, ui.balSelBox, ui.balNumBox, ui.cmpSec, ui.diffSec);
   ui.dockerPanes.objects.append(ui.objPanel);
   ui.dockerPanes.library.append(ui.libSec);
-  ui.dockerPanes.step.append(ui.stepSec, ui.stepFoot);
+  ui.dockerPanes.step.append(buildJumboSection(), ui.stepSec, ui.stepFoot);
   ui.panelScroll.replaceChildren(...Object.values(ui.dockerPanes));
   for (const section of ui.panelScroll.querySelectorAll('section')) foldableSection(section);
   ui.secTitle = ui.placedSecs[0].querySelector('.section-title');
@@ -2281,8 +2298,8 @@ function buildPanel() {
     const next = e.key === 'Home' ? 0 : e.key === 'End' ? enabled.length - 1 : (i + (['ArrowRight', 'ArrowDown'].includes(e.key) ? 1 : -1) + enabled.length) % enabled.length;
     enabled[next].click(); enabled[next].focus();
   });
-  // Sheet size and grippers (mm), pinned above the title bar and edge tabs; the same limits as the ribbon's Sheet page.
-  ui.sizeStrip = h('div', { class: 'size-strip', role: 'group', 'aria-label': 'Sheet size and grippers, mm', 'data-testid': 'size-strip', hidden: true }, SIZE_KEYS.map((k) => sheetField(k, true)));
+  // Sheet size (mm), pinned above the title bar and edge tabs.
+  ui.sizeStrip = h('div', { class: 'size-strip', role: 'group', 'aria-label': 'Sheet size, mm', 'data-testid': 'size-strip', hidden: true }, sheetField('sheetW'), sheetField('sheetH'));
   ui.panelTitle = h('strong', { class: 'panel-title' });
   ui.panelEl = h('aside', { class: 'panel', 'aria-label': 'Right panel' },
     buildPanelResize(), ui.sizeStrip, h('div', { class: 'panel-cols' },
@@ -2419,11 +2436,12 @@ function buildPlacedPanel() {
   return h('div', { class: 'contents' }, ui.placedSecs);
 }
 
-/** Puts the open layout's fields (size, grippers, marks, gaps, rotate, align, rows, columns) in step with the layout that is open. */
+/** Puts the open layout's fields (jumbo, size, grippers, marks, gaps, rotate, align, rows, columns) in step with the layout that is open. */
 function syncFields() {
-  for (const k of [...SIZE_KEYS, 'gapX', 'gapY', 'rows', 'cols']) for (const el of [ui[k], ui['strip_' + k]]) if (el && document.activeElement !== el) el.value = String(state[k]);
+  for (const k of [...SIZE_KEYS, ...JUMBO_KEYS, 'gapX', 'gapY', 'rows', 'cols']) { const el = ui[k]; if (el && document.activeElement !== el) el.value = String(state[k]); }
   ui.cropCheck.checked = state.crop; ui.regCheck.checked = state.reg;
-  ui.rotate.value = state.rotate; ui.align.value = state.align; ui.preset.value = presetFor(state.sheetW, state.sheetH);
+  ui.rotate.value = state.rotate; ui.align.value = state.align;
+  renderJumbo();
 }
 
 // ---- layouts: a tab of their own, with their own sheet, parts and step and repeat ----
@@ -2440,12 +2458,55 @@ function freshLayout(base) {
   for (let n = 2; names.has(name); n++) name = base + ' ' + n;
   return { name, path: null, dirty: false, lay: LD.newLayout(name) };
 }
-function newLayoutTab() {
+/** New layout asks for its jumbo first: sheet (L x W), roll (width), both, or Skip. → the settings to set, cm ({} for Skip), or null when cancelled. */
+function askJumbo() {
+  return new Promise((resolve) => {
+    const was = document.activeElement;
+    const field = (id, label) => h('input', { class: 'fld', type: 'text', inputmode: 'decimal', autocomplete: 'off', 'data-testid': 'jumbo-' + id, 'aria-label': label });
+    const l = field('l', 'Jumbo sheet L, cm'), w = field('w', 'Jumbo sheet W, cm'), roll = field('roll', 'Jumbo roll width, cm');
+    const err = h('span', { class: 'lbl warn', role: 'alert', 'data-testid': 'jumbo-error' });
+    const button = (id, text, cls = 'btn') => h('button', { class: cls, type: 'button', 'data-testid': 'jumbo-' + id }, text);
+    const cancel = button('cancel', 'Cancel'), skip = button('skip', 'Skip'), okBtn = button('ok', 'Create', 'btn primary');
+    const dlg = h('div', { class: 'pop-dialog', role: 'dialog', 'aria-label': 'New layout', 'data-testid': 'jumbo-dialog' },
+      h('strong', null, 'New layout'),
+      h('span', { class: 'lbl' }, 'The jumbo the print sheets are cut from. Fill in one or both, or Skip.'),
+      h('span', null, 'Jumbo sheet, cm'),
+      h('div', { class: 'grid2' }, h('label', { class: 'field' }, 'L', l), h('label', { class: 'field' }, 'W', w)),
+      h('span', null, 'Jumbo roll, cm'),
+      h('div', { class: 'grid2' }, h('label', { class: 'field' }, 'Width', roll)),
+      err, h('div', { class: 'row end' }, cancel, skip, okBtn));
+    const back = h('div', { class: 'pop-back', 'data-testid': 'jumbo-back' }, dlg);
+    const finish = (v) => { back.remove(); document.removeEventListener('keydown', onKey, true); was?.focus(); resolve(v); };
+    const submit = () => {
+      const typed = [l, w, roll].map((i) => i.value.trim()), [jumboL, jumboW, rollW] = typed.map(Number);
+      const bad = !typed.some(Boolean) ? 'Type a jumbo size, or press Skip'
+        : typed.some((t) => t && !(Number(t) > 0 && Number(t) <= MAX_JUMBO)) ? `A jumbo size is more than 0 and at most ${MAX_JUMBO} cm`
+          : !typed[0] !== !typed[1] ? 'A jumbo sheet needs both L and W' : '';
+      if (bad) { err.textContent = bad; return; }
+      finish({ jumboL, jumboW, rollW });                  // an empty field is Number('') = 0 = none
+    };
+    const onKey = (e) => {
+      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish(null); }
+      else if (e.key === 'Enter' && dlg.contains(document.activeElement) && document.activeElement !== cancel && document.activeElement !== skip) { e.preventDefault(); e.stopPropagation(); submit(); }
+    };
+    okBtn.addEventListener('click', submit); skip.addEventListener('click', () => finish({})); cancel.addEventListener('click', () => finish(null));
+    back.addEventListener('pointerdown', (e) => { if (e.target === back) finish(null); });
+    dlg.addEventListener('input', () => { err.textContent = ''; });
+    document.addEventListener('keydown', onKey, true);
+    document.body.append(back);
+    l.focus();
+  });
+}
+async function newLayoutTab() {
+  const jumbo = await askJumbo();
+  if (!jumbo) return 'cancelled';
   const names = new Set(state.docs.map((d) => d.name));
   let n = 1;
   while (names.has('Layout ' + n)) n++;
   state.panel = 'main';
-  addTab(freshLayout('Layout ' + n), false);
+  const t = freshLayout('Layout ' + n);
+  Object.assign(t.lay.s, jumbo);
+  addTab(t, false);
   note('New layout: set the sheet, then add parts from the Parts library, or pick a part for step and repeat');
 }
 function openLayoutFile(lay, name, path, fontNote, titleBlock, dwg = false) {

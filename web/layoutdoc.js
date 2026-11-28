@@ -36,6 +36,7 @@ export const DEFAULTS = Object.freeze({
   fit: true, rows: 1, cols: 1, extraRows: [], extraCols: [], gridPart: null,
   guides: [], guidesShow: true, guidesLock: false,       // guidelines (guides.js): per layout, saved with it
   attmode: 1,
+  jumboL: 0, jumboW: 0, rollW: 0,                        // the jumbo sheet (L x W) and jumbo roll (width) the print sheets are cut from, cm (0 = none)
 });
 export const SETTING_KEYS = Object.keys(DEFAULTS);
 
@@ -594,6 +595,7 @@ export function cleanSettings(s) {
     extraRows: gaps(s.extraRows), extraCols: gaps(s.extraCols), gridPart: typeof s.gridPart === 'string' ? s.gridPart : null,
     guides: cleanGuides(s.guides), guidesShow: s.guidesShow !== false, guidesLock: s.guidesLock === true,
     attmode: [0, 1, 2].includes(s.attmode) ? s.attmode : 1,
+    jumboL: num(s.jumboL, 0, 0), jumboW: num(s.jumboW, 0, 0), rollW: num(s.rollW, 0, 0),
   };
 }
 

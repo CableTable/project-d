@@ -97,6 +97,14 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Dimension text override**: Text replacing a dimension's measured label; `<>` inside it shows the live measured value. Empty text or `<>` alone restores the measured label. Where: `DECISIONS.md`, Dimension text edit, both tabs.
 
+**Division**: A side of a Jumbo sheet, or the width of a Jumbo roll, divided by a whole number, in cm. Where: `rook-hq/runs60/grill-T125.md` (TODO 364).
+
+**Jumbo sheet**: The large stock sheet, given by its length and width in cm, that print sheets are cut from. Where: `rook-hq/runs60/grill-T125.md` (TODO 364). Avoid: Sheet (the print sheet on a Layout tab).
+
+**Jumbo roll**: The stock roll, given by its width in cm, that print sheets are cut from. Where: `rook-hq/runs60/grill-T125.md` (TODO 364).
+
+**Print layout**: The panel tab on a Layout tab for planning how parts are printed on sheets cut from the jumbo. Where: `rook-hq/runs60/grill-T125.md` (TODO 364). Avoid: Layout tab (the whole tab).
+
 **Drawing tab**: A tab for editing a drawing and preparing parts before putting them on a layout. Where: `DECISIONS.md`, Layout page.
 
 **Duplicate**: Makes copies of a placed part along a chosen direction, with distance measured edge to edge. Where: `DECISIONS.md`, Duplicate and Duplicate both ways.
@@ -217,7 +225,7 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Shaping**: CorelDRAW-style boolean operations on the selected closed outlines (Weld = union, Intersect = the shared area, Trim = the last picked outline minus the others), giving closed polylines; outlines inside another count as its holes. Simplify keeps each outline's visible part after subtracting outlines in front. Front minus back / Back minus front keep the frontmost / backmost outline minus all others; later in the drawing means in front. Create boundary adds the union on the current layer and keeps the originals. Keep originals is one tick in Modify → Shaping, off by default and remembered on this PC: all six other operations leave their originals in place and add selected results on top; one Undo removes those results. Where: Modify menu, `WELD` / `SHAPETRIM` / `INTERSECT` / `SIMPLIFY` / `FRONTMINUS` / `BACKMINUS` / `BOUNDARY`; `web/shaping.js`. Avoid: Trim (the tool that cuts lines back to cutting edges).
 
-**Sheet**: The physical output rectangle with a custom or preset width and height in mm, whose bottom-left is the layout origin. In a multi-page PDF tab, a sheet is one original PDF page, with its own drawing edits and Undo; deleting another sheet keeps its original page number. Where: `DECISIONS.md`, Sheets and Open DXF; PDF sheets keep their edits (TODO 117). Avoid: Drawing extents; the whole canvas.
+**Sheet**: The physical output rectangle with a typed width and height in mm, whose bottom-left is the layout origin. In a multi-page PDF tab, a sheet is one original PDF page, with its own drawing edits and Undo; deleting another sheet keeps its original page number. Where: `DECISIONS.md`, Sheets and Open DXF; PDF sheets keep their edits (TODO 117). Avoid: Drawing extents; the whole canvas.
 
 **Step and repeat**: Fills a layout with a regular grid of one part using rows, columns, rotation and gaps. Where: `TODO.md`, items 7 and 8; `web/layout.js`. Avoid: Auto-nest of mixed parts.
 
