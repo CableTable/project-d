@@ -32736,7 +32736,8 @@ try {
         await t('text-editor').fill(text);
       };
       const apply = async (text) => { await edit(text); await page.keyboard.press('Enter'); assert.equal(await t('text-edit-box').isVisible(), false); };
-      const start = await save(), history = await histLabels();
+      let start = await save();
+      const history = await histLabels();
       await apply('200');
       const driven = await save(), dim = dimIn(driven);
       same(lineIn(driven), [150, 150, 350, 190]); same(dim.params.a, [150, 150]); same(dim.params.b, [350, 190]);
@@ -32764,6 +32765,9 @@ try {
         await t('ptab-objects').click(); await page.locator('.or.layer[data-layer="0"] [data-act=lock]').click(); await t('ptab-drawing').click();
       } else {
         await click(225, 170); await t('bar-lock').click(); quiet = await histLabels();
+        // The lock is saved in the hidden PD_LAYOUT text, which can grow by one chunk, so every later handle moves up by one: the refusals compare with the locked file.
+        const locked = await save(), noHandle = (raw) => raw.entities.map((e) => ({ ...e, r: { ...e.r, v: e.r.v.slice(1) } }));
+        assert.deepEqual(noHandle(locked), noHandle(start), tab + ': the lock changes handles only'); start = locked;
         await apply('150.00'); assert.doesNotMatch(await prompt(), /locked/, tab + ': the shown number on a locked object says nothing'); await unchanged();
         await apply('-5'); await said(/A locked object: unlock it to change its length/); await unchanged();
       }
