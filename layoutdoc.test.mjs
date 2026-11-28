@@ -253,6 +253,17 @@ test('the settings need several TEXT chunks when long, and still round-trip (man
   assert.equal(back.s.extraRows.length, 60); assert.equal(back.parts.a.name, lay.parts.a.name);
 });
 
+test('TODO 364a: the jumbo (cm) is saved and reopened; a file without one has none; odd values fall back to none', () => {
+  const lay = sample();
+  Object.assign(lay.s, { jumboL: 123, jumboW: 42, rollW: 74.5 });
+  const back = LD.layoutFromRaw(readDxf(writeDxf(LD.layoutRaw(lay))));
+  assert.deepEqual([back.s.jumboL, back.s.jumboW, back.s.rollW], [123, 42, 74.5]);
+  const old = LD.cleanSettings({ sheetW: 800, sheetH: 500 });
+  assert.deepEqual([old.jumboL, old.jumboW, old.rollW], [0, 0, 0]);
+  const odd = LD.cleanSettings({ jumboL: -3, jumboW: 'x', rollW: null });
+  assert.deepEqual([odd.jumboL, odd.jumboW, odd.rollW], [0, 0, 0]);
+});
+
 test('a drawing that is not one of ours is not a layout; odd settings fall back to the defaults', () => {
   assert.equal(LD.layoutFromRaw(load('sample.dxf')), null);
   assert.equal(LD.layoutFromRaw(readDxf(writeDxf(plate(10, 10)))), null);

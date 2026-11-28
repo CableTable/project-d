@@ -1,6 +1,6 @@
 // layout.js — step and repeat.   node layout.test.mjs
 import assert from 'node:assert/strict';
-import { stepRepeat, gridCellNote, usableArea, presetFor, markGeometry, PRESETS } from './web/layout.js';
+import { stepRepeat, gridCellNote, usableArea, presetFor, markGeometry, divisions, PRESETS } from './web/layout.js';
 
 const base = { sheetW: 1000, sheetH: 700, gripTop: 10, gripRight: 10, gripBottom: 30, gripLeft: 10, partW: 120, partH: 80, gapX: 5, gapY: 5, rotate: '0', align: 'centre' };
 const near = (a, b, t = 1e-9) => assert.ok(Math.abs(a - b) <= t, a + ' != ' + b);
@@ -306,6 +306,13 @@ test('anchored Fit keeps extra gaps counted from the top and left and still incl
   assert.deepEqual(r.positions.filter((p) => p.x === 10).map((p) => p.y), [20, 100, 170, 240, 310]);
   assert.equal(r.colGaps[0].size, 30); assert.equal(r.rowGaps[0].size, 20);
   assert.ok(r.positions.every((p) => p.x >= 0 && p.y >= 0 && p.x + r.partW <= 600 && p.y + r.partH <= 400));
+});
+
+test('TODO 364a: a jumbo side divided by 2 to 5 (or to 16), cm at 2 decimals', () => {
+  assert.deepEqual(divisions(123, 5), [{ n: 2, cm: 61.5 }, { n: 3, cm: 41 }, { n: 4, cm: 30.75 }, { n: 5, cm: 24.6 }]);
+  const all = divisions(74, 16);
+  assert.deepEqual([all.length, all[0].n, all.at(-1).n], [15, 2, 16]);
+  assert.deepEqual([all[1].cm, all.at(-1).cm], [24.67, 4.63]);
 });
 
 console.log(n + ' tests passed');

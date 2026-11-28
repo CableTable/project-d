@@ -77,6 +77,13 @@ function acceptEditablePdf() {
   }).observe(document, { childList: true, subtree: true });
 }
 
+// TODO 364a: New layout first asks for the jumbo; every older flow answers Skip. The jumbo step sets __jumboManual to see the question.
+function skipJumboQuestion() {
+  new MutationObserver(() => {
+    if (!window.__jumboManual) document.querySelector('[data-testid=jumbo-skip]')?.click();
+  }).observe(document, { childList: true, subtree: true });
+}
+
 // Older feature flows use controls now spread across docker tabs. Navigate with the UI
 // before an action; visibility assertions still inspect the current screen unchanged.
 function panelControl(page, locator) {
@@ -153,6 +160,7 @@ try {
     b.newContext = async (...args) => {
       const context = await newContext(...args);
       await context.addInitScript(acceptEditablePdf);
+      await context.addInitScript(skipJumboQuestion);
       await context.addInitScript(() => {
         if (!localStorage.getItem('pd-test-start-initialized')) {
           localStorage.setItem('pd-start-mode', 'blank');
@@ -197,6 +205,8 @@ try {
   afterStep = closeModals;
   const t =(id) => panelControl(page, page.locator(`[data-testid=${id}]`));
   const layoutTab = () => page.locator('[data-ribbon-tab=Layout]').click();
+  // TODO 364a: the Size preset list is gone; a sheet size is typed in the strip on the right panel
+  const setSheet = async (w, h) => { for (const [key, v] of [['sheetW', w], ['sheetH', h]]) { const f = panelControl(page, page.locator(`[data-key=${key}]`)); await f.fill(String(v)); await f.blur(); } };
   const partTab = () => page.locator('[data-ribbon-tab=Part]').click();
   // Display toggles moved from the right panel to View in TODO 110b.
   const ribbonToggle = (name) => {
@@ -3525,7 +3535,7 @@ try {
       await q('drawing-panel').waitFor();
       assert.equal(await panel.getAttribute('aria-label'), 'Right panel');
       assert.equal(await p.getByRole('tablist', { name: 'Panel tab' }).getAttribute('aria-orientation'), 'vertical');
-      assert.deepEqual(await p.locator('.ptab-name').allTextContents(), ['Properties', 'Objects', 'Library', 'Step']);
+      assert.deepEqual(await p.locator('.ptab-name').allTextContents(), ['Properties', 'Objects', 'Library', 'Print layout']);
       const r = await panel.boundingBox(), tabs = await p.locator('.ptabs').boundingBox(), body = await p.locator('.panel-scroll').boundingBox();
       assert.ok(Math.abs(tabs.x + tabs.width - r.x - r.width) <= 1 && tabs.x >= body.x + body.width && tabs.width <= 26, 'strip sits on the right edge');
       assert.equal(await q('ptab-drawing').evaluate((e) => getComputedStyle(e).writingMode), 'vertical-rl');
@@ -3637,8 +3647,8 @@ try {
       await p.goto(URL_); await q('count').waitFor({ state: 'attached' });
       await q('picker').setInputFiles('fixtures/outline.dxf');
       await q('drawing-panel').waitFor({ state: 'visible' });
-      assert.deepEqual(await p.locator('.ptab').evaluateAll((els) => els.map((e) => e.getAttribute('aria-label'))), ['Properties', 'Objects', 'Parts library', 'Step and repeat']);
-      assert.deepEqual(await p.locator('.ptab-name:visible').allTextContents(), ['Properties', 'Objects', 'Library', 'Step']);
+      assert.deepEqual(await p.locator('.ptab').evaluateAll((els) => els.map((e) => e.getAttribute('aria-label'))), ['Properties', 'Objects', 'Parts library', 'Print layout']);
+      assert.deepEqual(await p.locator('.ptab-name:visible').allTextContents(), ['Properties', 'Objects', 'Library', 'Print layout']);
       for (const button of await p.locator('.ptab').all()) assert.equal(await button.getAttribute('title'), await button.getAttribute('aria-label'));
       await q('ptab-drawing').focus(); await p.keyboard.press('ArrowRight');
       assert.equal(await q('ptab-objects').getAttribute('aria-selected'), 'true');
@@ -3738,8 +3748,8 @@ try {
     };
     const expected = {
       Drawing: { drawing: ['Properties', 'Select', 'Guides', 'Drawing scale', 'Outlines in this drawing', 'Tiny gaps', 'Duplicates'], objects: [], library: ['Parts'], step: null },
-      Layout: { drawing: ['Properties', 'Select', 'Parts on this layout', 'Extra gaps'], objects: ['Guides'], library: ['Parts'], step: ['Step and repeat'] },
-      'Layout selected': { drawing: ['Selected part', 'Properties', 'Select', 'Arrange', 'Transform', 'Rotate', 'Mirror', 'Nudge', 'Duplicate', 'Group and lock'], objects: ['Guides'], library: ['Parts'], step: ['Step and repeat'] },
+      Layout: { drawing: ['Properties', 'Select', 'Parts on this layout', 'Extra gaps'], objects: ['Guides'], library: ['Parts'], step: ['Jumbo', 'Step and repeat'] },
+      'Layout selected': { drawing: ['Selected part', 'Properties', 'Select', 'Arrange', 'Transform', 'Rotate', 'Mirror', 'Nudge', 'Duplicate', 'Group and lock'], objects: ['Guides'], library: ['Parts'], step: ['Jumbo', 'Step and repeat'] },
       Compare: { drawing: ['Properties', 'Select', 'Guides', 'Compare', 'Differences'], objects: [], library: ['Parts'], step: null },
     };
     const audit = async (kind) => {
@@ -3866,9 +3876,9 @@ try {
       lay.placed.push({ partId: 'p', x: 84, y: 151.5, rot: 0 });
       await q('picker').setInputFiles({ name: 'R19-layout.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
       await tab('Part').waitFor(); assert.equal(await tab('Part').getAttribute('aria-selected'), 'true');
-      await tab('Layout').click(); await q('preset').selectOption('a3');
+      await tab('Layout').click(); await p.locator('[data-key=sheetW]').fill('420'); await p.locator('[data-key=sheetH]').fill('297');
       assert.deepEqual(await p.locator('[data-key=sheetW], [data-key=sheetH]').evaluateAll((els) => els.map((e) => e.value)), ['420', '297']);
-      assert.equal(await p.locator('aside [data-key=sheetW]').count(), 0);
+      assert.equal(await rb.locator('[data-key=sheetW], [data-key=sheetH], [data-key^=grip]').count(), 0, 'TODO 364a: no sizes or grippers on the ribbon');
       assert.equal(await rb.getByRole('button', { name: 'Step and repeat', exact: true }).count(), 0);
       await rb.getByLabel('Guide position in mm').fill('abc');
       await rb.getByRole('button', { name: '+ Horizontal', exact: true }).click();
@@ -5039,10 +5049,10 @@ try {
   }, { needs: ['a DXF opens on a drawing tab (no sheet); Add to layout makes a layout tab and the part fills Step and repeat'] });
 
   await step('preset, gripper sides and top-left align: the count and the first position follow', async () => {
-    await layoutTab(); await t('preset').selectOption('a3');
+    await setSheet(420, 297);
     assert.equal(await panelControl(page, page.locator('[data-key=sheetW]')).inputValue(), '420');
     assert.equal((await readout()).count, stepRepeat({ ...base, gripBottom: 0, sheetW: 420, sheetH: 297 }).count);
-    await layoutTab(); await t('preset').selectOption('screen');
+    await setSheet(1000, 700);
     await layoutTab(); await grip('Top').fill('30'); await layoutTab(); await grip('Bottom').fill('0');
     await t('align').selectOption('topleft');
     const want = stepRepeat({ ...base, gripTop: 30, gripBottom: 0, align: 'topleft' });
@@ -5070,45 +5080,36 @@ try {
   }, { needs: ['preset, gripper sides and top-left align: the count and the first position follow'] });
 
   await step('TODO 282a: page and gripper sizes stay visible on the right panel', async () => {
-    const SIDES = ['sheetW', 'sheetH', 'gripTop', 'gripRight', 'gripBottom', 'gripLeft'];
-    const strip = (k) => panelControl(page, page.locator(`[data-key=strip_${k}]`));
-    const rib = (k) => panelControl(page, page.locator(`[data-key=${k}]`));
-    const both = async (k) => { await layoutTab(); return [await strip(k).inputValue(), await rib(k).inputValue()]; };
+    const f = (k) => panelControl(page, page.locator(`[data-key=${k}]`));
     const prompt = () => t('cmd-prompt').textContent();
+    const values = () => Promise.all(['sheetW', 'gripLeft', 'sheetH'].map((k) => f(k).inputValue()));
     await layoutTab(); await t('ptab-step').click();
     // pinned: the panel scrolled to the bottom, the strip is still on screen, above the docker tabs
     await page.locator('.panel-scroll').evaluate((e) => { e.scrollTop = e.scrollHeight; });
     const box = await t('size-strip').boundingBox(), tabs = await page.locator('.panel .panel-top').boundingBox();
     assert.ok(await t('size-strip').isVisible() && box.y >= 0 && box.y + box.height <= tabs.y + 1, 'strip on screen, above the docker tabs');
-    assert.deepEqual(await page.locator('.size-strip input').evaluateAll((l) => l.map((i) => i.dataset.key)), SIDES.map((k) => 'strip_' + k));
-    for (const k of SIDES) { const [s, r] = await both(k); assert.equal(s, r, k + ': the strip shows what the ribbon shows'); }
-    assert.equal(await both('sheetW').then((v) => v[0]), '1000');
-    // an edit in the strip: the ribbon field and the sheet follow
-    await strip('sheetW').fill('900');
-    assert.equal(await rib('sheetW').inputValue(), '900');
+    // TODO 364a: the strip holds the sheet size; the grippers are on the Print layout tab, next to the gaps
+    assert.deepEqual(await page.locator('.size-strip input').evaluateAll((l) => l.map((i) => i.dataset.key)), ['sheetW', 'sheetH']);
+    assert.deepEqual(await page.locator('[data-testid=step-panel] [data-testid=grippers] input').evaluateAll((l) => l.map((i) => i.dataset.key)), ['gripTop', 'gripRight', 'gripBottom', 'gripLeft']);
+    assert.equal(await f('sheetW').inputValue(), '1000');
+    await f('sheetW').fill('900');
     assert.equal(await page.locator('rect.sheet').evaluate((r) => +r.getAttribute('width')), 900);
-    await strip('gripLeft').fill('12');
-    assert.equal(await rib('gripLeft').inputValue(), '12');
+    await f('gripLeft').fill('12');
     assert.equal(await page.locator('.grip-band[data-edge=left]').count(), 1, 'the left gripper is drawn');
-    // an edit in the ribbon: the strip follows
-    await layoutTab(); await rib('sheetH').fill('650'); await rib('gripTop').fill('7');
-    assert.deepEqual([await strip('sheetH').inputValue(), await strip('gripTop').inputValue()], ['650', '7']);
-    // a gripper sum over the sheet is refused the same way as in the ribbon
-    await strip('gripTop').fill('700'); await strip('gripTop').blur();
-    const stripWhy = await prompt();
-    assert.match(stripWhy, /Top can be \d+ mm at most/);
-    assert.equal(await strip('gripTop').inputValue(), '7', 'the strip field reverts'); assert.equal(await rib('gripTop').inputValue(), '7');
-    await layoutTab(); await rib('gripTop').fill('700'); await rib('gripTop').blur();
-    assert.equal(await prompt(), stripWhy, 'same words in the ribbon');
-    await strip('sheetW').fill('10'); await strip('sheetW').blur();
+    await f('sheetH').fill('650'); await f('gripTop').fill('7');
+    // a gripper sum over the sheet is refused
+    await f('gripTop').fill('700'); await f('gripTop').blur();
+    assert.match(await prompt(), /Top can be \d+ mm at most/);
+    assert.equal(await f('gripTop').inputValue(), '7', 'the field reverts');
+    await f('sheetW').fill('10'); await f('sheetW').blur();
     assert.match(await prompt(), /Width must be \d+ mm or more/);
-    assert.equal(await strip('sheetW').inputValue(), '900');
-    // Undo puts back the typed sizes, in the strip and in the ribbon
+    assert.equal(await f('sheetW').inputValue(), '900');
+    // Undo puts back the typed sizes
     const undo = async () => { await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z'); };
     await undo();
-    assert.deepEqual(await both('gripTop'), ['0', '0']);
+    assert.equal(await f('gripTop').inputValue(), '0');
     for (let i = 0; i < 3; i++) await undo();
-    assert.deepEqual([await both('sheetW'), await both('gripLeft'), await both('sheetH')], [['1000', '1000'], ['0', '0'], ['700', '700']]);
+    assert.deepEqual(await values(), ['1000', '0', '700']);
     // light and dark shots; at 900 x 700 and 1024 x 700 the strip fits in the panel and the panel in the window
     for (const [name, size, theme] of [['light', [900, 700], 'light'], ['dark', [900, 700], 'dark'], ['1024', [1024, 700], 'light']]) {
       await page.evaluate((x) => { document.documentElement.dataset.theme = x; }, theme);
@@ -5177,9 +5178,9 @@ try {
     await page.locator('[data-gap=r3]').click({ force: true, position: { x: 30, y: 5 } }); await page.keyboard.type('10');
     await page.locator('[data-gap=c2]').click({ force: true, position: { x: 5, y: 30 } }); await page.keyboard.type('5');
     assert.equal(await t('gap-list').locator('.gaprow').count(), 2);
-    await layoutTab(); await t('preset').selectOption('a4');                                 // 2 × 2: no gap after row 3 or after column 2
+    await setSheet(297, 210);                                                               // 2 × 2: no gap after row 3 or after column 2
     assert.equal(await t('gap-list').locator('.gaprow').count(), 0);
-    await layoutTab(); await t('preset').selectOption('screen');
+    await setSheet(1000, 700);
     assert.equal(await t('gap-list').locator('.gaprow').count(), 0, 'they do not come back');
     await page.locator('[data-gap=r3]').click({ force: true, position: { x: 30, y: 5 } }); await page.keyboard.type('10');
     await page.locator('[data-gap-remove=r3]').click();
@@ -6025,8 +6026,8 @@ try {
       const pdf = readFileSync(await (await pending).path(), 'latin1');
       for (const text of wanted) assert.ok(pdf.includes('(' + text + ')'), 'saved PDF includes ' + text);
       await p.locator('[data-ribbon-tab=Layout]').click();
-      await p.locator('[data-key=gripTop]').fill('25');
-      await p.locator('[data-key=gripTop]').press('Enter');
+      await panelControl(p, p.locator('[data-key=gripTop]')).fill('25');
+      await panelControl(p, p.locator('[data-key=gripTop]')).press('Enter');
       await clearTexts(); await open();
       assert.ok((await previewTexts()).includes('Gripper 25 mm'), 'source edit reaches a later export');
       await q('pdf-close').click();
@@ -7628,6 +7629,115 @@ try {
     assert.equal(await t('undo').isDisabled(), false, 'and undoable');
   });
 
+  await step('TODO 364a: New layout asks for the jumbo (Skip, sheet, roll, both); divisions; saved and reopened; an old layout opens without one; grippers in the panel', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light', acceptDownloads: true });
+    await context.addInitScript(() => { window.__jumboManual = true; });
+    try {
+      const p = await context.newPage(), q = (id) => p.getByTestId(id), errs = [];
+      p.on('pageerror', (e) => errs.push(String(e)));
+      const key = (k) => p.locator(`[data-key=${k}]`);
+      const layouts = () => p.locator('.tabs .dtab[data-kind=layout]').count();
+      const jumbo = () => Promise.all(['jumboL', 'jumboW', 'rollW'].map((k) => key(k).inputValue()));
+      const table = () => q('divisions').locator('tr').evaluateAll((rows) => rows.map((r) => [...r.children].map((c) => c.textContent).join(' ')));
+      const menu = async (name) => { await p.locator(`[data-menu=${name}]`).click(); await p.getByRole('menuitem', { name: 'New layout', exact: true }).click(); };
+      const undo = async () => { await p.evaluate(() => document.activeElement?.blur()); await p.keyboard.press('Control+z'); };
+      const shows = (sel, want, prop = 'textContent') => p.waitForFunction(([s, w, k]) => document.querySelector(s)?.[k] === w, [sel, want, prop]);
+      await p.goto(URL_ + '?autosave=86400000'); await q('count').waitFor({ state: 'attached' });
+
+      // + New layout asks first; Esc cancels; the answers are checked
+      await q('new-layout').click();
+      assert.equal(await q('jumbo-l').evaluate((e) => e === document.activeElement), true, 'the L field has the focus');
+      assert.equal(await layouts(), 0, 'no layout before the answer');
+      for (const theme of ['light', 'dark']) {
+        await p.evaluate((x) => { document.documentElement.dataset.theme = x; }, theme);
+        await p.screenshot({ path: shotDir + `/todo364a-ask-${theme}.png` });
+      }
+      await p.evaluate(() => { document.documentElement.dataset.theme = 'light'; });
+      await p.keyboard.press('Escape');
+      assert.deepEqual([await q('jumbo-dialog').count(), await layouts()], [0, 0], 'Esc: no layout');
+      await q('new-layout').click();
+      for (const [l, roll, why] of [['', '', 'Type a jumbo size, or press Skip'], ['123', '', 'A jumbo sheet needs both L and W'], ['', '-5', 'A jumbo size is more than 0 and at most 10000 cm']]) {
+        await q('jumbo-l').fill(l); await q('jumbo-roll').fill(roll); await q('jumbo-ok').click();
+        await shows('[data-testid=jumbo-error]', why);
+      }
+      await q('jumbo-skip').click();
+      assert.deepEqual([await layouts(), await key('sheetW').inputValue(), await key('sheetH').inputValue()], [1, '1000', '700'], 'Skip: a plain sheet');
+      await q('ptab-step').click();
+      assert.equal(await q('ptab-step').getAttribute('aria-label'), 'Print layout');
+      assert.deepEqual(await jumbo(), ['0', '0', '0']);
+      assert.equal(await q('divisions').isVisible(), false);
+
+      // roll, from the File menu
+      await menu('File'); await q('jumbo-roll').fill('74'); await q('jumbo-ok').click(); await q('ptab-step').click();
+      assert.deepEqual(await jumbo(), ['0', '0', '74']);
+      assert.deepEqual(await table(), ['cm Roll W', '/2 37.00', '/3 24.67', '/4 18.50', '/5 14.80']);
+      await q('divisions-more').click();
+      const all = await table();
+      assert.deepEqual([all.length, all.at(-1)], [16, '/16 4.63']);
+      await q('divisions-more').click();
+      assert.equal((await table()).length, 5);
+
+      // sheet, from the typed command, Enter creates
+      await q('cmd-echo').click(); await q('cmd-input').fill('newlayout'); await q('cmd-input').press('Enter');
+      assert.equal(await q('jumbo-l').evaluate((e) => e === document.activeElement), true, 'typed command: the L field has the focus');
+      await p.keyboard.type('123'); await q('jumbo-w').fill('42'); await p.keyboard.press('Enter');
+      await q('ptab-step').click();
+      assert.deepEqual(await jumbo(), ['123', '42', '0']);
+      assert.deepEqual((await table()).slice(0, 2), ['cm Sheet L Sheet W', '/2 61.50 21.00']);
+
+      // both, from the Layout menu; edit in the panel, Undo
+      await menu('Layout'); await q('jumbo-l').fill('123'); await q('jumbo-w').fill('42'); await q('jumbo-roll').fill('74'); await q('jumbo-ok').click();
+      await q('ptab-step').click();
+      assert.deepEqual((await table()).slice(0, 2), ['cm Sheet L Sheet W Roll W', '/2 61.50 21.00 37.00']);
+      for (const theme of ['light', 'dark']) {
+        await p.evaluate((x) => { document.documentElement.dataset.theme = x; }, theme);
+        await p.screenshot({ path: shotDir + `/todo364a-both-${theme}.png` });
+      }
+      await p.evaluate(() => { document.documentElement.dataset.theme = 'light'; });
+      await key('rollW').fill('80');
+      assert.equal((await table())[1], '/2 61.50 21.00 40.00');
+      await key('rollW').fill('-1'); await key('rollW').blur();
+      await shows('[data-key=rollW]', '80', 'value');                        // a refused size reverts
+      await p.waitForFunction(() => /Roll width must be 0 cm or more/.test(document.querySelector('[data-testid=cmd-prompt]').textContent));
+      await undo();
+      assert.deepEqual([await key('rollW').inputValue(), (await table())[1]], ['74', '/2 61.50 21.00 37.00'], 'Undo covers a jumbo edit');
+
+      // grippers sit under the gaps, and the ribbon has no size or gripper field
+      await p.locator('[data-ribbon-tab=Layout]').click();
+      assert.equal(await p.locator('.ribbon-body [data-key], .ribbon-body [data-testid=preset]').evaluateAll((l) => l.filter((e) => /^(sheet|grip)|preset/.test(e.dataset.key || e.dataset.testid)).length), 0);
+      await key('gripTop').fill('15'); await key('gripTop').blur();
+      assert.equal(await p.locator('.grip-band[data-edge=top]').count(), 1);
+      await key('gripLeft').scrollIntoViewIfNeeded();
+      const [gap, grip] = [await key('gapY').boundingBox(), await key('gripTop').boundingBox()];
+      assert.ok(grip.y > gap.y && grip.y - gap.y < 90, 'grippers next to Gap X / Gap Y');
+      await p.setViewportSize({ width: 1024, height: 700 });
+      const fit = await q('divisions').evaluate((e) => ({ over: e.closest('.panel-scroll').scrollWidth - e.closest('.panel-scroll').clientWidth, top: document.querySelector('.tabsrow').scrollWidth - document.querySelector('.tabsrow').clientWidth }));
+      assert.deepEqual(fit, { over: 0, top: 0 }, 'nothing is cut off at 1024 px');
+      await p.screenshot({ path: shotDir + '/todo364a-grippers-1024.png' });
+      await p.setViewportSize({ width: 1440, height: 900 });
+
+      // saved in the layout file and reopened, without a question
+      const pending = p.waitForEvent('download'); await p.keyboard.press('Control+s');
+      const text = readFileSync(await (await pending).path(), 'latin1');
+      await q('picker').setInputFiles({ name: 'jumbo-364a.dxf', mimeType: 'text/plain', buffer: Buffer.from(text, 'latin1') });
+      await waitTab(p, 'jumbo-364a.dxf'); await q('ptab-step').click();
+      assert.deepEqual([await q('jumbo-dialog').count(), ...await jumbo()], [0, '123', '42', '74']);
+      assert.equal((await table())[1], '/2 61.50 21.00 37.00');
+
+      // an old layout file has no jumbo fields
+      const old = newLayout('Old 364a'); delete old.s.jumboL; delete old.s.jumboW; delete old.s.rollW;
+      await q('picker').setInputFiles({ name: 'old-364a.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(layoutRaw(old))) });
+      await waitTab(p, 'old-364a.dxf'); await q('ptab-step').click();
+      assert.deepEqual([await q('jumbo-dialog').count(), ...await jumbo()], [0, '0', '0', '0']);
+      assert.equal(await q('divisions').isVisible(), false);
+
+      // cancelled from the Start screen: still on Start
+      await q('start-tab').click(); await q('start-layout').click(); await q('jumbo-cancel').click();
+      assert.deepEqual([await q('jumbo-dialog').count(), await q('start-screen').isVisible()], [0, true]);
+      assert.deepEqual(errs, []);
+    } finally { await context.close(); }
+  });
+
   await step('layouts: "+ New layout" and File → New layout; each layout has its own sheet settings; an empty drawing tab shows no sheet', async () => {
     await t('new-tab').click();
     assert.equal(await vis('sheet-panel'), false);
@@ -7641,7 +7751,7 @@ try {
     assert.equal(await partText(), 'No parts yet');
     assert.match(await t('step-hint').textContent(), /Pick a part to repeat over the sheet, or add parts from the Parts library/);
     assert.equal(await t('apply').isDisabled(), true);
-    await layoutTab(); await t('preset').selectOption('a3');                                         // this layout's own sheet
+    await setSheet(420, 297);                                                                        // this layout's own sheet
     assert.equal(await panelControl(page, page.locator('[data-key=sheetW]')).inputValue(), '420');
     await menuItem('File', 'New layout');
     assert.match((await tabNames()).at(-1), /^Layout 2$/);
@@ -7650,10 +7760,10 @@ try {
     await page.locator('.tabs .dtab', { hasText: /^Layout 1/ }).click();
     assert.equal(await panelControl(page, page.locator('[data-key=sheetW]')).inputValue(), '420');
     assert.equal(await grip('Top').inputValue(), '0');
-    assert.equal(await t('preset').inputValue(), 'a3');
+    assert.equal(await panelControl(page, page.locator('[data-key=sheetH]')).inputValue(), '297');
     assert.equal(await page.locator('rect.sheet').getAttribute('width'), '420');
     await page.locator('.tabs .dtab', { hasText: /^Layout 2/ }).click();
-    assert.equal(await grip('Top').inputValue(), '12'); assert.equal(await t('preset').inputValue(), 'screen');
+    assert.equal(await grip('Top').inputValue(), '12'); assert.equal(await panelControl(page, page.locator('[data-key=sheetH]')).inputValue(), '700');
     assert.equal(await page.locator('rect.sheet').getAttribute('width'), '1000');
     assert.match(await t('cmd-prompt').textContent(), /./);
     await closeTabs(/^Layout \d/);
@@ -10220,7 +10330,7 @@ try {
 
   let saved = null;
   await step('Save a layout: a download with one INSERT per placed part and the settings in a hidden block; reopening it gives a layout tab with the same panel values and parts', async () => {
-    await layoutTab(); await t('preset').selectOption('a3');
+    await setSheet(420, 297);
     await layoutTab(); await grip('Top').fill('12'); await layoutTab(); await grip('Left').fill('8');
     await panelControl(page, page.locator('[data-key=gapX]')).fill('7'); await panelControl(page, page.locator('[data-key=gapY]')).fill('9');
     await t('rotate').selectOption('90'); await t('align').selectOption('topleft');
@@ -10255,8 +10365,7 @@ try {
     assert.ok(!(await tabs()).some((x) => x.includes('•')), 'just opened: no dot');
     await t('ptab-drawing').click();
     const val = (k) => panelControl(page, page.locator(`[data-key=${k}]`)).inputValue();
-    assert.equal(await t('preset').inputValue(), 'a3');
-    assert.deepEqual(await Promise.all(['sheetW', 'sheetH', 'gripTop', 'gripRight', 'gripBottom', 'gripLeft', 'gapX', 'gapY', 'rows', 'cols'].map(val)), ['420', '297', '12', '0', '0', '8', '7', '9', '2', '2']);
+    assert.deepEqual(await Promise.all(['sheetW','sheetH', 'gripTop', 'gripRight', 'gripBottom', 'gripLeft', 'gapX', 'gapY', 'rows', 'cols'].map(val)), ['420', '297', '12', '0', '0', '8', '7', '9', '2', '2']);
     assert.equal(await t('rotate').inputValue(), '90'); assert.equal(await t('align').inputValue(), 'topleft');
     assert.equal(await panelControl(page, page.locator('[data-key=crop]')).isChecked(), false); assert.equal(await panelControl(page, page.locator('[data-key=reg]')).isChecked(), true);
     assert.equal(await t('fit-switch').isChecked(), false);
@@ -11137,7 +11246,7 @@ try {
     assert.doesNotMatch(await prompt(), /off the sheet/);
   });
 
-  await step('TODO 342: a turned part inside the sheet is not orange; a part in the top gripper is, with the gripper note once', async () => {
+  await step('TODO 342: a turned part inside the sheet is not orange; nor is a part in the top gripper (TODO 367), with the gripper note once', async () => {
     await closeTabs(/./);
     await page.evaluate(() => { document.documentElement.dataset.theme = 'light'; });
     const made = newLayout('Gripper 342'), wedge = newDoc(4);              // a right triangle: turned 5° at X 0 its box reaches 5 mm left of the sheet, the triangle does not
@@ -11153,11 +11262,10 @@ try {
     await page.waitForTimeout(300);
     assert.ok(await markPixels() < 20, 'inside the sheet: not drawn in orange');
     await partTab(); await t('py').fill('620'); await t('py').press('Enter');
-    const inGrip = await said(/Wedge moved to X -?\d+\.\d\d Y 620\.00\. Wedge is in the gripper \(drawn in orange\)\. It is still placed:?$/);
-    assert.doesNotMatch(inGrip, /off the sheet/);
-    let orange = await markPixels();
-    for (let i = 0; i < 40 && orange <= 30; i++) { await page.waitForTimeout(50); orange = await markPixels(); }
-    assert.ok(orange > 30, 'a part in the gripper is drawn in the mark colour: ' + orange);
+    const inGrip = await said(/Wedge moved to X -?\d+\.\d\d Y 620\.00\. Wedge is in the gripper\. It is still placed:?$/);
+    assert.doesNotMatch(inGrip, /off the sheet|orange/);
+    await page.waitForTimeout(300);
+    assert.ok(await markPixels() < 20, 'a part in the gripper keeps its normal colour');
     await shotBoth('step-gripper-mark-342');
     await partTab(); await t('py').fill('625'); await t('py').press('Enter');       // still in the gripper: the note is repeated for the new move, never doubled within it
     assert.equal((await said(/Wedge moved to X -?\d+\.\d\d Y 625\.00/)).match(/in the gripper/g).length, 1, 'a second action while the part is still in the gripper carries the gripper note once, not twice');
@@ -20287,6 +20395,52 @@ try {
     await page.keyboard.press('Escape');
   });
 
+  await step('TODO 367 + 368: a part dragged to snap onto the top gripper line is not orange; a gripper line drag that snaps shows the snap marker, gone when it lets go, on Esc and on drop', async () => {
+    await threeParts();
+    await setGrips({ Top: 20, Right: 0, Bottom: 0, Left: 0 });              // the top gripper line is at 680
+    await page.locator('[data-group=parts] [data-i="0"] .part-hit').click({ force: true });
+    await partTab(); await t('py').fill('420.372'); await t('py').press('Enter');      // a position finer than a drag's 0.01 mm
+    await page.keyboard.press('Escape');
+    await sheetLineDrag([130, 450], [130, 649]);                             // its top ends about 1 mm short of the line: the Alignment guide takes it on
+    assert.doesNotMatch(await said(/Plate A moved to X -?\d+\.\d\d Y 620\.00/), /gripper|off the sheet/);
+    await page.waitForTimeout(300);
+    assert.ok(await markPixels() < 20, 'snapped onto the gripper line: not drawn in orange');
+    await shotBoth('s367-part-on-gripper');
+    await page.keyboard.press('Control+z');
+    await page.keyboard.press('Escape');
+    // Plate A's bottom edge is at 420.372; the gripper line snaps to it and its corner is marked
+    const marked = async (want, why) => {
+      const p = await at(200, 420.372);
+      await page.waitForFunction(([x, y, want]) => {
+        const c = document.querySelector('[data-testid=drawing]'), r = c.getBoundingClientRect(), k = c.width / r.width, radius = Math.ceil(9 * k);
+        const d = c.getContext('2d').getImageData(Math.round((x - r.x) * k) - radius, Math.round((y - r.y) * k) - radius, radius * 2, radius * 2).data;
+        return d.some((v, i) => i % 4 === 0 && Math.abs(v - 2) < 6 && Math.abs(d[i + 1] - 157) < 6 && Math.abs(d[i + 2] - 3) < 6 && d[i + 3] > 200) === want;
+      }, [p.x, p.y, want], { timeout: 5000 }).catch(() => assert.fail(why));
+    };
+    const lineTo = async (y) => { const b = await at(300, y); await page.mouse.move(b.x, b.y, { steps: 3 }); };
+    await marked(false, 'no marker before the drag');
+    await sheetLineDrag([300, 680], [300, 420.6], { hold: true });
+    await shows('.ssel-whole', 'Snapped to part');
+    await marked(true, 'the snap marker is on the snapped corner');
+    await lineTo(560);
+    await shows('.ssel-whole', 'Whole mm only');
+    await marked(false, 'the marker goes when the snap lets go');
+    await lineTo(420.6);
+    await marked(true, 'back on the part');
+    await page.keyboard.press('Escape'); await page.mouse.up();
+    await marked(false, 'Esc takes the marker away');
+    await page.keyboard.press('Escape');
+    await sheetLineDrag([300, 680], [300, 420.6], { hold: true });
+    await marked(true, 'a second drag marks it again');
+    await page.mouse.up();
+    await sizeChanged('sheetH', 700);
+    await marked(false, 'the drop takes the marker away');
+    await page.keyboard.press('Control+z');
+    await page.keyboard.press('Escape');
+    await shotBoth('s368-gripper-marker', async () => { await sheetLineDrag([300, 680], [300, 420.6], { hold: true }); await marked(true, 'marked for the screenshot'); }, async () => { await page.keyboard.press('Escape'); await page.mouse.up(); });
+    await page.keyboard.press('Escape');
+  });
+
   // Plate A is 100 × 60: (100,420), (700,360) here; a Dial at (400,300)
   await step('TODO 362: every sheet resize path snaps to a part edge within 10 px: a gripper side puts the sheet edge or the gripper line on it (line or handle drag), click-then-click, a second layout tab; Alt skips', async () => {
     await threeParts();
@@ -25716,7 +25870,7 @@ try {
     await menuItem('View', 'Theme: light');
     await openObjects();
     assert.equal(await t('ptab-layers').count(), 0);
-    assert.deepEqual(await page.locator('.ptab-name').allTextContents(), ['Properties', 'Objects', 'Library', 'Step']);
+    assert.deepEqual(await page.locator('.ptab-name').allTextContents(), ['Properties', 'Objects', 'Library', 'Print layout']);
     assert.equal(await t('obj-search').count(), 1);
     assert.equal(await t('layer-search').count(), 0);
     assert.deepEqual(await oLayers(), ['Cut', 'Engrave', '0']);
@@ -32582,7 +32736,8 @@ try {
         await t('text-editor').fill(text);
       };
       const apply = async (text) => { await edit(text); await page.keyboard.press('Enter'); assert.equal(await t('text-edit-box').isVisible(), false); };
-      const start = await save(), history = await histLabels();
+      let start = await save();
+      const history = await histLabels();
       await apply('200');
       const driven = await save(), dim = dimIn(driven);
       same(lineIn(driven), [150, 150, 350, 190]); same(dim.params.a, [150, 150]); same(dim.params.b, [350, 190]);
@@ -32610,6 +32765,9 @@ try {
         await t('ptab-objects').click(); await page.locator('.or.layer[data-layer="0"] [data-act=lock]').click(); await t('ptab-drawing').click();
       } else {
         await click(225, 170); await t('bar-lock').click(); quiet = await histLabels();
+        // The lock is saved in the hidden PD_LAYOUT text, which can grow by one chunk, so every later handle moves up by one: the refusals compare with the locked file.
+        const locked = await save(), noHandle = (raw) => raw.entities.map((e) => ({ ...e, r: { ...e.r, v: e.r.v.slice(1) } }));
+        assert.deepEqual(noHandle(locked), noHandle(start), tab + ': the lock changes handles only'); start = locked;
         await apply('150.00'); assert.doesNotMatch(await prompt(), /locked/, tab + ': the shown number on a locked object says nothing'); await unchanged();
         await apply('-5'); await said(/A locked object: unlock it to change its length/); await unchanged();
       }

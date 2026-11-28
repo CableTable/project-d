@@ -363,6 +363,12 @@ span.start-thumb { display: flex; flex-direction: column; align-items: center; j
 .docker-folded > .sec .section-toggle svg, .docker-folded > .layers-head .section-toggle svg { transform: rotate(-90deg); }
 .panel .layers-head > .sec { flex: 1; }
 .panel .layers-head > .tog { flex-shrink: 0; }
+.divbox { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+.divbox[hidden] { display: none; }
+.divtable { width: 100%; border-collapse: collapse; font-size: 12px; text-align: right; }
+.divtable th, .divtable td { padding: 1px 4px; border-bottom: 1px solid var(--line); }
+.divtable th { font-weight: 600; }
+.divtable th:first-child { text-align: left; }
 .size-strip { display: flex; flex-wrap: wrap; gap: 2px 4px; padding: 4px 6px; background: var(--panel); border-bottom: 1px solid var(--line); flex-shrink: 0; }
 .size-strip[hidden] { display: none; }
 .size-strip .field { flex: 1 1 40px; min-width: 0; gap: 1px; font-size: 10.5px; }

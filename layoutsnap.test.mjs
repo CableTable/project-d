@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { layoutSnap, layoutTangentObject, layoutCandidates, gripperLines, partEdgeSnap } from './web/layoutsnap.js';
+import { layoutSnap, layoutTangentObject, layoutCandidates, gripperLines, partEdgeSnap, edgePoint } from './web/layoutsnap.js';
 import { makePart } from './web/layoutdoc.js';
 import { newDoc, addEntities, rect, circle, arc } from './web/dxf-write.js';
 import { snapTypes } from './web/snap.js';
@@ -105,6 +105,15 @@ test('TODO 348: a part\'s nearest outer edge on an axis, from its real (turned) 
   const rp = { r: makePart('r', 'Ring', ring, 2) }, turned = [{ partId: 'r', x: 100, y: 100, rot: 45 }];
   const lo = partEdgeSnap(rp, turned, 'x', -1e6, 1e9), hi = partEdgeSnap(rp, turned, 'x', 1e6, 1e9);
   assert.ok(Math.abs(hi - lo - 16) < 1e-6, `a turned circle is 16 mm across, not its turned box's ${16 * Math.SQRT2}: ${hi - lo}`);
+});
+
+test('TODO 368: the point to mark on a snapped edge: on that edge, nearest the pointer along it', () => {
+  const p = { partId: 'p', x: 150, y: 100, rot: 90 };                   // x 110 … 150, y 100 … 180
+  const near = (q, x, y, kind) => { assert.ok(Math.abs(q[0] - x) < 1e-6 && Math.abs(q[1] - y) < 1e-6, JSON.stringify(q)); assert.equal(q[2], kind); };
+  near(edgePoint(parts, [p], 'x', 150, 170), 150, 180, 'end');
+  near(edgePoint(parts, [p], 'x', 150, -40), 150, 100, 'end');
+  near(edgePoint(parts, [p], 'y', 180, 100), 110, 180, 'end');
+  assert.equal(edgePoint(parts, [p], 'x', 149, 100), null, 'no point there');
 });
 
 test('TODO 346b: the line or circle under a sheet point, in sheet mm, with the placement applied', () => {
