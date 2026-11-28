@@ -119,21 +119,40 @@ export function layoutSnap(parts, placed, W, H, x, y, tol, types = DEFAULT_TYPES
   return best;
 }
 
-/** The outer edge of any placed part's real outline (ends, quadrants and extremes of what it draws, turned with it) nearest `v` on `axis` ('x' or 'y', sheet mm, y up) within tol, or null (TODO 348). */
+/** The points that bound a placed part's real outline (ends, quadrants and extremes of what it draws, turned with it): [x, y, kind], sheet mm, y up. */
+function outerPoints(parts, pl) {
+  const part = parts[pl.partId];
+  if (!part?.fl) return [];
+  const ed = partIndex(part, pl), M = placedMat(part, pl, 0), out = [];
+  for (const s of ed.ix.snaps) {
+    if (ed.vis[s.it] !== 1 || (s.kind !== 'end' && s.kind !== 'quadrant' && s.kind !== 'extreme')) continue;
+    const q = mapply(M, s.x, s.y);
+    out.push([q[0], -q[1], s.kind]);
+  }
+  return out;
+}
+
+/** The outer edge of any placed part's outline nearest `v` on `axis` ('x' or 'y', sheet mm, y up) within tol, or null (TODO 348). */
 export function partEdgeSnap(parts, placed, axis, v, tol) {
+  const i = axis === 'x' ? 0 : 1;
   let best = null;
   for (const pl of placed) {
-    const part = parts[pl.partId];
-    if (!part?.fl) continue;
-    const ed = partIndex(part, pl), M = placedMat(part, pl, 0);
     let lo = Infinity, hi = -Infinity;
-    for (const s of ed.ix.snaps) {
-      if (ed.vis[s.it] !== 1 || (s.kind !== 'end' && s.kind !== 'quadrant' && s.kind !== 'extreme')) continue;
-      const q = mapply(M, s.x, s.y), c = axis === 'x' ? q[0] : -q[1];
-      if (c < lo) lo = c;
-      if (c > hi) hi = c;
+    for (const p of outerPoints(parts, pl)) {
+      if (p[i] < lo) lo = p[i];
+      if (p[i] > hi) hi = p[i];
     }
     for (const c of [lo, hi]) if (Math.abs(c - v) <= tol && (best === null || Math.abs(c - v) < Math.abs(best - v))) best = c;
+  }
+  return best;
+}
+
+/** The point on that edge to mark (TODO 368): of the outline points at `edge` on `axis`, the one nearest `along` on the other axis; [x, y, kind] or null. */
+export function edgePoint(parts, placed, axis, edge, along) {
+  const i = axis === 'x' ? 0 : 1;
+  let best = null;
+  for (const pl of placed) for (const p of outerPoints(parts, pl)) {
+    if (Math.abs(p[i] - edge) < 1e-6 && (!best || Math.abs(p[1 - i] - along) < Math.abs(best[1 - i] - along))) best = p;
   }
   return best;
 }

@@ -71,7 +71,7 @@ import { openQuickSelect } from './qselectdlg.js';
 import * as FI from './fill.js';
 import { extendEntity, extendRegion, previewEdit, curveShape, isBoundary, extendable } from './extend.js';
 import { placedMat, placedBox, placement1, GRID_KEYS, gridLayout, bakeGrid, slotOf, relayGrid } from './apply.js';
-import { layoutSnap, placedSnap, layoutCandidates, layoutReference, layoutTangentObject, partIndex, toPart, gripperLines, partEdgeSnap } from './layoutsnap.js';
+import { layoutSnap, placedSnap, layoutCandidates, layoutReference, layoutTangentObject, partIndex, toPart, gripperLines, partEdgeSnap, edgePoint } from './layoutsnap.js';
 import { nearestObject } from './tangent.js';
 import * as LD from './layoutdoc.js';
 import { labelGaps } from './pdf-source.js';
@@ -2879,9 +2879,9 @@ const pivotPoint = (part, pl) => PL.pivotOf(part, pl, state.pivot.kind, [state.p
 const showBox = (i) => { if (multiSel()) { const b = selBox(); return b ? lengthText(b[i]) : '—'; } const s = selectedPlaced(); return s ? lengthText(placedBox(s.part, s.p)[i]) : '—'; };
 const showAngle = () => { if (multiSel()) return '0°'; const s = selectedPlaced(); return s ? +Number(s.p.rot).toFixed(2) + '°' : '—'; };
 const showNudge = () => fmt1(state.nudge);
-/** What to add to a message: that the part is off the sheet, or (only that) in a gripper (it is drawn in orange, and still placed). */
+/** What to add to a message: that the part is off the sheet (drawn in orange), or (only that) in a gripper; it is still placed. */
 const offNote = (lay, part, pl) => (PL.offSheet(part, pl, lay.s.sheetW, lay.s.sheetH) ? `${part.name} is off the sheet (drawn in orange). It is still placed`
-  : PL.inGripper(part, pl, lay.s) ? `${part.name} is in the gripper (drawn in orange). It is still placed` : '');
+  : PL.inGripper(part, pl, lay.s) ? `${part.name} is in the gripper. It is still placed` : '');
 const say = (...bits) => note(bits.filter(Boolean).join('. '));
 
 /** A change in progress: the layout is kept for undo once, when the first thing changes (and thrown away if it is cancelled). */
@@ -5793,10 +5793,10 @@ function drawTools() {
   if (!lay || state.hidden.parts || sheetSelOn()) { g.replaceChildren(); ui.gSel.replaceChildren(); return; }
   const H = state.sheetH, k = 1 / view.scale, Y = (q) => [q[0], H - q[1]], out = [], top = [];
   const poly = (pts) => pts.map((q) => `${+q[0].toFixed(3)},${+q[1].toFixed(3)}`).join(' ');
-  /** A selected part drawn dashed along its own lines and arcs (TODO 352: no box; a part with none, text alone, keeps the box); orange off the sheet or in a gripper. points = the outline area's corners. */
+  /** A selected part drawn dashed along its own lines and arcs (TODO 352: no box; a part with none, text alone, keeps the box); orange off the sheet. points = the outline area's corners. */
   const outline = (x, attrs) => {
     // shortcut: a part of more than OUTLINE_MAX lines keeps the box: a dashed stroke of 20k long lines made every pan / zoom frame slower than the kept picture's settle; upgrade with a clipped or cached outline
-    const dd = x.part.fl?.items.length > OUTLINE_MAX ? '' : partPathD(x.part), a = { ...attrs, class: attrs.class + (x.p.off || x.p.grip ? ' off' : ''), points: poly(PL.corners(x.part, x.p).map(Y)) };
+    const dd = x.part.fl?.items.length > OUTLINE_MAX ? '' : partPathD(x.part), a = { ...attrs, class: attrs.class + (x.p.off ? ' off' : ''), points: poly(PL.corners(x.part, x.p).map(Y)) };
     top.push(dd ? s('path', { ...a, d: dd, transform: `matrix(${placedMat(x.part, x.p, H).join(' ')})` }) : s('polygon', a));
   };
   const done = () => { g.replaceChildren(...out); ui.gSel.replaceChildren(...top); };
@@ -5967,7 +5967,7 @@ function paintOverlay(gesture = false) {
     const L2 = state.setlen || state.meas || state.dim || state.ldr || ((modLive() || layModLive()) && ['move', 'copy', 'stretch', 'rotate', 'scale', 'lengthen', 'align'].includes(state.mod.kind) ? { pts: state.mod.ref && state.mod.ref.step !== 'new' ? state.mod.ref.pts : state.mod.p1 ? [state.mod.p1] : [], hover: state.mod.cur }
       : (modLive() || layModLive()) && state.mod.kind === 'array' && state.mod.type === 'polar' ? { pts: state.mod.center ? [state.mod.center] : [], hover: state.mod.stage === 'center' ? state.mod.cur : null } : null);
     const hv = L2 && (typedAt() || L2.hover);                       // typed cursor fields: the rubber line goes to the typed point
-    const dragSnap = (d?.lay || d?.cmp) && (state.paste?.to || (pdrag?.moved && state.snap && !pdrag.skipSnap && pdrag.to));
+    const dragSnap = (d?.lay || d?.cmp) && (state.paste?.to || (pdrag?.moved && state.snap && !pdrag.skipSnap && pdrag.to) || state.sheetDrag?.to);
     const preview = ownSnapHover(d) || selectSnapPreview(d);       // the selected object's own point wins: it is the grab point (TODO 340)
     const pivotMark = pivotHit && (pdrag?.kind === 'pivot' || state.drawingRotate?.drag?.kind === 'pivot') ? pivotHit : null;
     const marks = preview?.[2] ? [[preview[0], preview[1], preview[2], true]] : pivotMark ? [[pivotMark[0], pivotMark[1], pivotMark[2], true]] : dragSnap?.[2] ? [[dragSnap[0], dragSnap[1], dragSnap[2], true]] : L2 && d ? [...L2.pts.map((q) => [q[0], q[1], q[2], false]), ...(L2.pts.length < 2 && hv ? [[hv[0], hv[1], hv[2], true]] : [])] : null;
@@ -5996,10 +5996,10 @@ function paintOverlay(gesture = false) {
           const fl = state.text.ed?.dim?.raw === part.raw ? state.text.ed.dim.fl : part.fl;
           const slotsOf = (list) => list.map((p) => placedMat(part, p, state.sheetH));
           for (const [list, to] of [[byPart.get(id) || [], calls], [liftedBy.get(id) || [], lifted]]) {
-            const on = list.filter((p) => !p.off && !p.grip && p !== hiDim), outside = list.filter((p) => p.off || p.grip);          // a part off the sheet or in a gripper is drawn in the mark colour
+            const on = list.filter((p) => !p.off && p !== hiDim), outside = list.filter((p) => p.off);          // a part off the sheet is drawn in the mark colour
             if (on.length) to.push({ fl, off: part.off, factor: part.factor || 1, slots: slotsOf(on) });
             if (outside.length) to.push({ fl, off: part.off, factor: part.factor || 1, slots: slotsOf(outside), tint: cssVar('--mark', '#c2410c') });
-            if (list.includes(hiDim) && !hiDim.off && !hiDim.grip) to.push({ fl, off: part.off, factor: 1, slots: slotsOf([hiDim]), tint: cssVar('--selection', '#4f46e5') });
+            if (list.includes(hiDim) && !hiDim.off) to.push({ fl, off: part.off, factor: 1, slots: slotsOf([hiDim]), tint: cssVar('--selection', '#4f46e5') });
           }
         }
       }
@@ -6769,7 +6769,7 @@ function update(refit = false, dimNames) {
   for (let i = 0; i < 3 && pruneGaps(); i++) layout = gridNow();
   placedNow = lay ? LD.placedAll(lay, layout) : [];
   placedLay = lay;
-  for (const p of placedNow) { p.off = PL.offSheet(lay.parts[p.partId], p, lay.s.sheetW, lay.s.sheetH); p.grip = PL.inGripper(lay.parts[p.partId], p, lay.s); }       // off the sheet or in a gripper: drawn in orange (the counts say only p.off)
+  for (const p of placedNow) p.off = PL.offSheet(lay.parts[p.partId], p, lay.s.sheetW, lay.s.sheetH);       // off the sheet: drawn in orange
   if (selLooseMany) {
     curDoc().stretchSelection = null;
     const l =selLooseMany.map((i) => placedNow.findIndex((p) => p.src === 'loose' && p.i === i)).filter((k) => k >= 0);
@@ -13151,16 +13151,19 @@ function sheetMove(e, force = false) {
   if (!g.moved && !g.hot) return;
   // the dragged line (the side, or its gripper line: the side then lies its gripper's mm outside it) goes where the pointer is, unless it or the
   // side's other line comes within 10 px of a part's outer edge: the nearer one goes onto it (TODO 348, 362; Alt skips): snapped to 0.01 mm, else whole mm
-  const lay = curLay(), x = g.side === 'left' || g.side === 'right', off = g.off || 0, at = sheetAt(e.clientX, e.clientY)[x ? 0 : 1];
+  const lay = curLay(), x = g.side === 'left' || g.side === 'right', off = g.off || 0, pt = sheetAt(e.clientX, e.clientY), at = pt[x ? 0 : 1], axis = x ? 'x' : 'y';
   const other = (g.side === 'top' || g.side === 'right' ? 1 : -1) * (off || -gripOf(state, g.side));          // from the dragged line to the other one
-  const near = e.altKey || !lay ? [] : [0, other].flatMap((d) => { const edge = partEdgeSnap(lay.parts, snapPlaced(), x ? 'x' : 'y', at + d, 10 / view.scale); return edge == null ? [] : [edge - d]; });
-  near.sort((a, b) => Math.abs(a - at) - Math.abs(b - at));
-  const v = near[0] ?? at, lo = off ? Math.ceil(SHEET_MIN + gripOf(state, x ? 'left' : 'top') + gripOf(state, x ? 'right' : 'bottom')) : SHEET_MIN;
+  const near = e.altKey || !lay ? [] : [0, other].flatMap((d) => { const edge = partEdgeSnap(lay.parts, snapPlaced(), axis, at + d, 10 / view.scale); return edge == null ? [] : [{ v: edge - d, edge }]; });
+  near.sort((a, b) => Math.abs(a.v - at) - Math.abs(b.v - at));
+  const v = near[0]?.v ?? at, lo = off ? Math.ceil(SHEET_MIN + gripOf(state, x ? 'left' : 'top') + gripOf(state, x ? 'right' : 'bottom')) : SHEET_MIN;
   g.snapped = near.length > 0;
+  const marked = g.to;
+  g.to = off && g.snapped ? edgePoint(lay.parts, snapPlaced(), axis, near[0].edge, pt[x ? 1 : 0]) : null;       // a gripper line drag marks the point it snapped to (TODO 368)
   const cl = (s) => Math.max(lo, Math.min(SHEET_MAX, g.snapped ? Math.round(s * 100) / 100 : Math.round(s)));
   g.newW = g.side === 'right' ? cl(v + off) : g.side === 'left' ? cl(g.W - v + off) : g.W;
   g.newH = g.side === 'top' ? cl(v + off) : g.side === 'bottom' ? cl(g.H - v + off) : g.H;
   drawSheetSel(); renderCommand();
+  if (marked || g.to) paintOverlay();
 }
 function sheetUp() {
   const g = state.sheetDrag;
@@ -13170,11 +13173,12 @@ function sheetUp() {
   drawSheetSel(); renderCommand();
   note('Sheet resize: click the new place, or Esc');
 }
-function sheetCancel() { if (!state.sheetDrag) return; state.sheetDrag = null; drawSheetSel(); renderCommand(); note('Sheet resize cancelled'); }
+function sheetCancel() { if (!state.sheetDrag) return; state.sheetDrag = null; drawSheetSel(); renderCommand(); paintOverlay(); note('Sheet resize cancelled'); }
 function sheetCommit() {
   const g = state.sheetDrag;
   state.sheetDrag = null;
   if (!g) return;
+  if (g.to) paintOverlay();                                             // the snap mark goes on drop
   if (g.newW === g.W && g.newH === g.H) { drawSheetSel(); renderCommand(); note('Sheet size unchanged'); return; }
   resizeSheet(g.side, g.newW, g.newH);
 }

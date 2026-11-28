@@ -167,7 +167,8 @@ export function offSheet(part, pl, W, H) {
 
 /** Does the part's real outline reach into a gripper (a side of the sheet `s` with a gripper; 0 = none)? A point on the band's line is not in it. */
 export function inGripper(part, pl, s) {
-  const t = 1e-6, L = gripOf(s, 'left'), R = gripOf(s, 'right'), T = gripOf(s, 'top'), B = gripOf(s, 'bottom');
+  // snapped drags and sheet resizes are kept to 0.01 mm, so a part on the line may sit half of that past it
+  const t = 0.005 + 1e-6, L = gripOf(s, 'left'), R = gripOf(s, 'right'), T = gripOf(s, 'top'), B = gripOf(s, 'bottom');
   if (!(L || R || T || B)) return false;
   return outlinePoints(part, pl, s.sheetH).some(([x, y]) => L > 0 && x < L - t || R > 0 && x > s.sheetW - R + t || T > 0 && y > s.sheetH - T + t || B > 0 && y < B - t);
 }

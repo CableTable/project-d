@@ -4,7 +4,8 @@ import * as P from './web/place.js';
 import { placedBox, placedMat, placement1 } from './web/apply.js';
 import * as AR from './web/array.js';
 import { makePart } from './web/layoutdoc.js';
-import { newDoc, addEntities, line, rect, circle } from './web/dxf-write.js';
+import { newDoc, addEntities, line, rect, circle, arc } from './web/dxf-write.js';
+import { sheetAlignmentLines, snapBoxToAlignment } from './web/align.js';
 
 const near = (a, b, t = 1e-6) => assert.ok(Math.abs(a - b) <= t, a + ' != ' + b);
 const nearPt = (a, b, t = 1e-5) => { near(a[0], b[0], t); near(a[1], b[1], t); };
@@ -241,6 +242,25 @@ test('342: in a gripper: the outline reaches into a band; on the line is not in;
   assert.equal(P.inGripper(tri, pl(100, 620), s), true, 'the triangle\'s tip (200,680) is in the band');
   assert.equal(P.inGripper(tri, pl(100, 600), s), false);
   assert.equal(P.inGripper(tri, pl(100, 616, 5), s), true); assert.equal(P.inGripper({ w: 100, h: 60 }, pl(100, 620), s), true, 'no outline: the box');
+});
+
+test('367: a part snapped onto a gripper line is not in it (drags and resizes keep 0.01 mm)', () => {
+  const s = { sheetW: 1000, sheetH: 700, gripTop: 30, gripRight: 20, gripBottom: 15, gripLeft: 10 };
+  const r2 = (v) => Math.round(v * 100) / 100;                          // app.js snapPlacedDrag's rounding of the snapped move
+  const box = makePart('r', 'Rect', addEntities(newDoc(4), rect(0, 0, 100.004, 60.004)), 1);
+  const bow = makePart('a', 'Arc', addEntities(newDoc(4), arc(0, 0, 30.0037, 0, 180), line(-30.0037, 0, 30.0037, 0)), 1);
+  const lines = sheetAlignmentLines(s);
+  // each side: the axis, the line, which box edge goes onto it, and which way is into the band
+  const sides = [['top', 'y', 670, 3, 1], ['right', 'x', 980, 2, 1], ['bottom', 'y', 15, 1, -1], ['left', 'x', 10, 0, -1]];
+  for (const [part, rot] of [[box, 0], [box, 30], [bow, 0], [bow, 90]]) for (const [side, axis, mm, edge, into] of sides) for (let f = 0; f < 10; f++) {
+    const p = pl(300 + f * 0.0011, 300 + f * 0.0011, rot), i = axis === 'x' ? 0 : 1;
+    const drag = r2(mm - placedBox(part, p)[edge] - 0.3 * into);        // a free drag ending just short of the line
+    const sn = snapBoxToAlignment(placedBox(part, P.translate(p, i ? 0 : drag, i ? drag : 0)), lines, [], 1, { skipX: axis !== 'x', skipY: axis !== 'y' });
+    const put = P.translate(p, i ? 0 : r2(drag + sn.dx), i ? r2(drag + sn.dy) : 0);
+    assert.ok(Math.abs(placedBox(part, put)[edge] - mm) <= 0.005 + 1e-6, 'snapped onto the line');
+    assert.equal(P.inGripper(part, put, s), false, `${part.name} ${rot}° on the ${side} line, ${f}`);
+    if (part === box) assert.equal(P.inGripper(part, P.translate(put, i ? 0 : 0.02 * into, i ? 0.02 * into : 0), s), true, `0.02 mm past the ${side} line is in`);
+  }
 });
 
 console.log(n + ' tests passed');

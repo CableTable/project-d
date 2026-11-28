@@ -11137,7 +11137,7 @@ try {
     assert.doesNotMatch(await prompt(), /off the sheet/);
   });
 
-  await step('TODO 342: a turned part inside the sheet is not orange; a part in the top gripper is, with the gripper note once', async () => {
+  await step('TODO 342: a turned part inside the sheet is not orange; nor is a part in the top gripper (TODO 367), with the gripper note once', async () => {
     await closeTabs(/./);
     await page.evaluate(() => { document.documentElement.dataset.theme = 'light'; });
     const made = newLayout('Gripper 342'), wedge = newDoc(4);              // a right triangle: turned 5° at X 0 its box reaches 5 mm left of the sheet, the triangle does not
@@ -11153,11 +11153,10 @@ try {
     await page.waitForTimeout(300);
     assert.ok(await markPixels() < 20, 'inside the sheet: not drawn in orange');
     await partTab(); await t('py').fill('620'); await t('py').press('Enter');
-    const inGrip = await said(/Wedge moved to X -?\d+\.\d\d Y 620\.00\. Wedge is in the gripper \(drawn in orange\)\. It is still placed:?$/);
-    assert.doesNotMatch(inGrip, /off the sheet/);
-    let orange = await markPixels();
-    for (let i = 0; i < 40 && orange <= 30; i++) { await page.waitForTimeout(50); orange = await markPixels(); }
-    assert.ok(orange > 30, 'a part in the gripper is drawn in the mark colour: ' + orange);
+    const inGrip = await said(/Wedge moved to X -?\d+\.\d\d Y 620\.00\. Wedge is in the gripper\. It is still placed:?$/);
+    assert.doesNotMatch(inGrip, /off the sheet|orange/);
+    await page.waitForTimeout(300);
+    assert.ok(await markPixels() < 20, 'a part in the gripper keeps its normal colour');
     await shotBoth('step-gripper-mark-342');
     await partTab(); await t('py').fill('625'); await t('py').press('Enter');       // still in the gripper: the note is repeated for the new move, never doubled within it
     assert.equal((await said(/Wedge moved to X -?\d+\.\d\d Y 625\.00/)).match(/in the gripper/g).length, 1, 'a second action while the part is still in the gripper carries the gripper note once, not twice');
@@ -20284,6 +20283,52 @@ try {
     assert.deepEqual(await sheetSize(), ['800.25', '700']);
     sameOnScreen(await partsOnScreen(), screen, 'right handle');
     await page.keyboard.press('Control+z');
+    await page.keyboard.press('Escape');
+  });
+
+  await step('TODO 367 + 368: a part dragged to snap onto the top gripper line is not orange; a gripper line drag that snaps shows the snap marker, gone when it lets go, on Esc and on drop', async () => {
+    await threeParts();
+    await setGrips({ Top: 20, Right: 0, Bottom: 0, Left: 0 });              // the top gripper line is at 680
+    await page.locator('[data-group=parts] [data-i="0"] .part-hit').click({ force: true });
+    await partTab(); await t('py').fill('420.372'); await t('py').press('Enter');      // a position finer than a drag's 0.01 mm
+    await page.keyboard.press('Escape');
+    await sheetLineDrag([130, 450], [130, 649]);                             // its top ends about 1 mm short of the line: the Alignment guide takes it on
+    assert.doesNotMatch(await said(/Plate A moved to X -?\d+\.\d\d Y 620\.00/), /gripper|off the sheet/);
+    await page.waitForTimeout(300);
+    assert.ok(await markPixels() < 20, 'snapped onto the gripper line: not drawn in orange');
+    await shotBoth('s367-part-on-gripper');
+    await page.keyboard.press('Control+z');
+    await page.keyboard.press('Escape');
+    // Plate A's bottom edge is at 420.372; the gripper line snaps to it and its corner is marked
+    const marked = async (want, why) => {
+      const p = await at(200, 420.372);
+      await page.waitForFunction(([x, y, want]) => {
+        const c = document.querySelector('[data-testid=drawing]'), r = c.getBoundingClientRect(), k = c.width / r.width, radius = Math.ceil(9 * k);
+        const d = c.getContext('2d').getImageData(Math.round((x - r.x) * k) - radius, Math.round((y - r.y) * k) - radius, radius * 2, radius * 2).data;
+        return d.some((v, i) => i % 4 === 0 && Math.abs(v - 2) < 6 && Math.abs(d[i + 1] - 157) < 6 && Math.abs(d[i + 2] - 3) < 6 && d[i + 3] > 200) === want;
+      }, [p.x, p.y, want], { timeout: 5000 }).catch(() => assert.fail(why));
+    };
+    const lineTo = async (y) => { const b = await at(300, y); await page.mouse.move(b.x, b.y, { steps: 3 }); };
+    await marked(false, 'no marker before the drag');
+    await sheetLineDrag([300, 680], [300, 420.6], { hold: true });
+    await shows('.ssel-whole', 'Snapped to part');
+    await marked(true, 'the snap marker is on the snapped corner');
+    await lineTo(560);
+    await shows('.ssel-whole', 'Whole mm only');
+    await marked(false, 'the marker goes when the snap lets go');
+    await lineTo(420.6);
+    await marked(true, 'back on the part');
+    await page.keyboard.press('Escape'); await page.mouse.up();
+    await marked(false, 'Esc takes the marker away');
+    await page.keyboard.press('Escape');
+    await sheetLineDrag([300, 680], [300, 420.6], { hold: true });
+    await marked(true, 'a second drag marks it again');
+    await page.mouse.up();
+    await sizeChanged('sheetH', 700);
+    await marked(false, 'the drop takes the marker away');
+    await page.keyboard.press('Control+z');
+    await page.keyboard.press('Escape');
+    await shotBoth('s368-gripper-marker', async () => { await sheetLineDrag([300, 680], [300, 420.6], { hold: true }); await marked(true, 'marked for the screenshot'); }, async () => { await page.keyboard.press('Escape'); await page.mouse.up(); });
     await page.keyboard.press('Escape');
   });
 
